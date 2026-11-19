@@ -142,7 +142,7 @@ export async function listAlbumMatchRejections(
   }
 }
 
-async function hasCurrentTarget(
+export async function hasCurrentAlbumMatch(
   database: MatchDatabase,
   mediaItemId: string,
   target: AlbumMatchRejectionInput,
@@ -274,8 +274,8 @@ function aliasesFromSnapshot(
   return singlePrimaryLinkAlias(target, snapshot.normalizedData)
 }
 
-function isSameTarget(
-  previous: RecordedMatchRejection,
+export function isSameAlbumMatch(
+  previous: AlbumMatchRejectionInput,
   target: AlbumMatchRejectionInput,
 ) {
   return (
@@ -287,6 +287,19 @@ function isSameTarget(
   )
 }
 
+export async function lockAlbumMatch(
+  database: MatchDatabase,
+  mediaItemId: string,
+) {
+  const [locked] = await database
+    .select({ id: mediaItem.id })
+    .from(mediaItem)
+    .innerJoin(album, eq(album.mediaItemId, mediaItem.id))
+    .where(and(eq(mediaItem.id, mediaItemId), eq(mediaItem.mediaType, 'album')))
+    .for('update', { of: mediaItem })
+  if (!locked) throw albumNotFound()
+}
+
 /** Records the owner decision without rewriting the provider's recorded evidence. */
 export async function rejectAlbumMatch(
   mediaItemId: string,
@@ -294,20 +307,12 @@ export async function rejectAlbumMatch(
   userId: string | null,
 ): Promise<AlbumMatchRejection> {
   return db.transaction(async (tx) => {
-    const [locked] = await tx
-      .select({ id: mediaItem.id })
-      .from(mediaItem)
-      .innerJoin(album, eq(album.mediaItemId, mediaItem.id))
-      .where(
-        and(eq(mediaItem.id, mediaItemId), eq(mediaItem.mediaType, 'album')),
-      )
-      .for('update', { of: mediaItem })
-    if (!locked) throw albumNotFound()
+    await lockAlbumMatch(tx, mediaItemId)
 
     const previous = await readAlbumMatchRejections(tx, mediaItemId)
-    const replay = previous.find((row) => isSameTarget(row, target))
+    const replay = previous.find((row) => isSameAlbumMatch(row, target))
     if (replay) return AlbumMatchRejectionSchema.parse(replay)
-    if (!(await hasCurrentTarget(tx, mediaItemId, target)))
+    if (!(await hasCurrentAlbumMatch(tx, mediaItemId, target)))
       throw currentMatchChanged()
 
     const matching = previous.find((row) =>

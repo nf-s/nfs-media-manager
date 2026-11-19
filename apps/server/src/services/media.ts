@@ -8,7 +8,10 @@ import type { BrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
-import { readAlbumMatchRejections } from './album-match-rejections'
+import {
+  readAlbumMatchRejections,
+  readAlbumMatchRejectionsForItems,
+} from './album-match-rejections'
 import { listAlbumRelationshipSources } from './entity-relationships'
 import { albumAddedDates } from './album-added-dates'
 import { albumTrackPlaylistNames } from './album-playlists'
@@ -28,8 +31,13 @@ import {
 } from '@repo/schemas/media'
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
-import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import {
+  createAlbumMatchRejectionPredicate,
+  type RejectedAlbumIdentity,
+} from '@/lib/album-match-identities'
+import { AlbumMetacriticUrlSchema } from '@repo/schemas/provider-identification'
 import { ServerError } from '@/lib/error'
+import { isJsonRecord } from '@/lib/provider-normalizers'
 import { withRymRatingSourceLink } from '@/lib/rym-rating-links'
 import {
   createStableId,
@@ -289,6 +297,44 @@ function buildCommonPayload<TMediaType extends 'album' | 'film'>(
   }
 }
 
+function withAlbumMetacriticMatch(
+  item: CommonPayload<'album'>,
+  rejections: readonly RejectedAlbumIdentity[],
+): CommonPayload<'album'> {
+  if (
+    !rejections.some(
+      ({ provider, referenceType }) =>
+        provider === 'google-custom-search' &&
+        referenceType === 'metacritic-url',
+    )
+  )
+    return item
+  const isRejected = createAlbumMatchRejectionPredicate(
+    'metacritic',
+    rejections,
+  )
+  const browse = item.metadata?.browse
+  return {
+    ...item,
+    links: item.links.filter(({ provider, url }) => {
+      if (!/^https?:\/\/(?:www[.])?metacritic[.]com\//i.test(url)) return true
+      return (
+        provider === 'metacritic' &&
+        AlbumMetacriticUrlSchema.safeParse(url).success &&
+        !isRejected({ referenceType: 'metacritic-url', externalId: url })
+      )
+    }),
+    metadata: {
+      ...item.metadata,
+      browse: {
+        ...(isJsonRecord(browse) ? browse : {}),
+        ratingMetacriticValue: null,
+        ratingMetacriticVotes: null,
+      },
+    },
+  }
+}
+
 function reorderRecords<TRecord extends { id: string }>(
   records: TRecord[],
   ids: string[],
@@ -363,25 +409,29 @@ async function loadAlbums(
     },
   })
 
-  const [preferredTags, artistTags, addedDates, trackPlaylists] =
+  const [preferredTags, artistTags, addedDates, trackPlaylists, rejections] =
     await Promise.all([
       rymTagIds(ids),
       loadArtistTags(ids),
       albumAddedDates(ids),
       albumTrackPlaylistNames(ids),
+      readAlbumMatchRejectionsForItems(db, ids),
     ])
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.album) {
       return []
     }
 
-    const common = buildCommonPayload(
-      {
-        ...record,
-        mediaType: 'album',
-        metadata: { ...record.album.metadata, ...record.metadata },
-      },
-      preferredTags.get(record.id),
+    const common = withAlbumMetacriticMatch(
+      buildCommonPayload(
+        {
+          ...record,
+          mediaType: 'album',
+          metadata: { ...record.album.metadata, ...record.metadata },
+        },
+        preferredTags.get(record.id),
+      ),
+      rejections.get(record.id) ?? [],
     )
     const item: AlbumListItem = {
       ...common,
@@ -528,13 +578,16 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
   }
 
   const addedDate = (await albumAddedDates([id])).get(id)
-  const common = buildCommonPayload(
-    {
-      ...record,
-      mediaType: 'album',
-      metadata: { ...record.album.metadata, ...record.metadata },
-    },
-    (await rymTagIds([id])).get(id),
+  const common = withAlbumMetacriticMatch(
+    buildCommonPayload(
+      {
+        ...record,
+        mediaType: 'album',
+        metadata: { ...record.album.metadata, ...record.metadata },
+      },
+      (await rymTagIds([id])).get(id),
+    ),
+    await readAlbumMatchRejections(db, id),
   )
   const tracks = new Map(
     (

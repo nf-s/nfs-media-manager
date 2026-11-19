@@ -4,7 +4,11 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { PluginResultSchema, type JsonValue } from '@repo/media-plugin-sdk'
-import { MatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
+import {
+  AlbumMetacriticCorrectionInputSchema,
+  MatchDiagnosticsQuerySchema,
+} from '@repo/schemas/match-diagnostics'
+import { AlbumQuerySchema } from '@repo/schemas/media'
 import { env } from '@/env'
 import { getBuiltinProviderCatalog } from '@/lib/provider-catalog'
 import * as schema from '@/schemas/db'
@@ -13,7 +17,13 @@ import {
   readAlbumMatchRejections,
   rejectAlbumMatch,
 } from '@/services/album-match-rejections'
-import { getMediaHistory, getMediaSourceSnapshot } from '@/services/history'
+import { correctAlbumMetacriticMatch } from '@/services/album-metacritic-corrections'
+import {
+  getMediaHistory,
+  getMediaSourceSnapshot,
+  getMediaSources,
+} from '@/services/history'
+import { getAlbumDetail, listAlbums } from '@/services/media'
 import { listMediaMatchDiagnostics } from '@/services/media-match-diagnostics'
 import { applyProviderResult } from '@/services/provider-state'
 
@@ -791,6 +801,198 @@ async function getFixtureMatches(id: string) {
 }
 
 describe('album match rejection history', () => {
+  it('archives a rejected Metacritic rating and records an evidence-backed replacement', async () => {
+    const id = 'verified-metacritic-fixture'
+    const oldUrl = 'https://www.metacritic.com/music/wrong-record/fixture'
+    const url =
+      'https://www.metacritic.com/music/verified-record/fixture/critic-reviews'
+    const rymUrl = 'https://rateyourmusic.com/release/album/fixture/record/'
+    const legacyProvider = 'google-custom-search'
+    const oldPayload = {
+      metacriticGoogle: { link: oldUrl, rating: { value: 99, votes: 15 } },
+      rymGoogle: { link: rymUrl },
+    }
+    await createAlbumFixture(id)
+    await applyProviderResult({
+      mediaItemId: id,
+      mediaType: 'album',
+      provider: legacyProvider,
+      source: 'legacy-fixture',
+      payload: oldPayload,
+      normalized: PluginResultSchema.parse({
+        payload: oldPayload,
+        normalized: {
+          mediaPatch: {
+            metadata: {
+              browse: {
+                ratingMetacriticValue: 99,
+                ratingMetacriticVotes: 15,
+                ratingRymValue: 3,
+              },
+            },
+          },
+          links: [
+            { provider: legacyProvider, label: 'Metacritic', url: oldUrl },
+            { provider: legacyProvider, label: 'Rate Your Music', url: rymUrl },
+          ],
+        },
+      }).normalized,
+    })
+    const original = (await getFixtureMatches(id)).find(
+      ({ identifier }) => identifier === oldUrl,
+    )?.rejectionTarget
+    if (!original) throw new Error('Missing fixture evidence')
+    const correction = AlbumMetacriticCorrectionInputSchema.parse({
+      rejected: original,
+      replacement: { url, title: 'Verified Record', artist: 'Fixture Artist' },
+      evidence: [
+        {
+          source: 'wikidata',
+          sourceUrl: 'https://www.wikidata.org/wiki/Q42',
+          observedUrl: url,
+          observedAt: '2025-02-03T04:05:06Z',
+        },
+      ],
+    })
+    await expect(
+      correctAlbumMetacriticMatch(id, correction, null),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    expect((await getAlbumDetail(id))?.links.map((link) => link.url)).toContain(
+      oldUrl,
+    )
+    const rated = AlbumQuerySchema.parse({
+      q: id,
+      ranges: [{ field: 'ratingMetacriticValue', min: 90 }],
+    })
+    expect((await listAlbums(rated)).items.map((item) => item.id)).toEqual([id])
+    await rejectAlbumMatch(id, original, null)
+    expect((await listAlbums(rated)).items).toEqual([])
+    expect(await getAlbumDetail(id)).toMatchObject({
+      links: [{ url: rymUrl }],
+      metadata: {
+        browse: {
+          ratingMetacriticValue: null,
+          ratingMetacriticVotes: null,
+          ratingRymValue: 3,
+        },
+      },
+    })
+    const page = await listAlbums(AlbumQuerySchema.parse({ q: id }))
+    expect(page.items.find((item) => item.id === id)).toMatchObject({
+      links: [{ url: rymUrl }],
+      metadata: {
+        browse: {
+          ratingMetacriticValue: null,
+          ratingMetacriticVotes: null,
+          ratingRymValue: 3,
+        },
+      },
+    })
+    await expect(
+      correctAlbumMetacriticMatch(
+        id,
+        {
+          ...correction,
+          rejected: {
+            ...correction.rejected,
+            sourceProvider: 'legacy-browser',
+          },
+        },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    await expect(
+      correctAlbumMetacriticMatch(
+        id,
+        {
+          ...correction,
+          rejected: { ...correction.rejected, snapshotId: 'unrelated-fixture' },
+        },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    const replacementUrl = `${oldUrl}/user-reviews`
+    await expect(
+      correctAlbumMetacriticMatch(
+        id,
+        {
+          ...correction,
+          replacement: { ...correction.replacement, url: replacementUrl },
+          evidence: correction.evidence.map((evidence) => ({
+            ...evidence,
+            observedUrl: replacementUrl,
+          })),
+        },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+
+    const [saved, replay] = await Promise.all([
+      correctAlbumMetacriticMatch(id, correction, null),
+      correctAlbumMetacriticMatch(id, correction, null),
+    ])
+    expect(replay).toEqual(saved)
+    expect(
+      (await getMediaHistory(id)).events.filter(
+        ({ title }) => title === 'Metacritic album match corrected',
+      ),
+    ).toHaveLength(1)
+    expect(await getAlbumDetail(id)).toMatchObject({
+      links: expect.arrayContaining([
+        { provider: 'metacritic', label: 'Metacritic', url },
+        expect.objectContaining({ url: rymUrl }),
+      ]),
+      metadata: {
+        browse: {
+          ratingMetacriticValue: null,
+          ratingMetacriticVotes: null,
+          ratingRymValue: 3,
+        },
+      },
+    })
+    expect(
+      (await getAlbumDetail(id))?.links.map((link) => link.url),
+    ).not.toContain(oldUrl)
+    expect(await getFixtureMatches(id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: legacyProvider,
+          identifier: oldUrl,
+          rejectedAt: expect.any(String),
+        }),
+        expect.objectContaining({
+          provider: 'metacritic',
+          identifier: url,
+          name: 'Verified Record',
+          creator: 'Fixture Artist',
+        }),
+      ]),
+    )
+    expect((await getMediaSources(id)).providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: legacyProvider,
+          latestSnapshot: expect.objectContaining({ id: original.snapshotId }),
+        }),
+        expect.objectContaining({
+          id: 'metacritic',
+          latestSnapshot: expect.objectContaining({ id: saved.snapshotId }),
+        }),
+      ]),
+    )
+    expect(
+      await getMediaSourceSnapshot(
+        id,
+        original.sourceProvider,
+        original.snapshotId,
+      ),
+    ).toMatchObject({ data: oldPayload })
+    expect(
+      await getMediaSourceSnapshot(id, 'metacritic', saved.snapshotId),
+    ).toMatchObject({ data: correction })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('finds cleaned Metacritic matches under either key while keeping the selected URL and source', async () => {
     const id = 'cleaned-metacritic-fixture'
     const rawUrl = 'https://metacritic.com/music/raw-record/fixture/'

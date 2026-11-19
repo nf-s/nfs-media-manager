@@ -114,6 +114,20 @@ const builtinProviders = [
     }),
   ),
   {
+    id: 'metacritic',
+    displayName: 'Metacritic',
+    description: 'Verified album match corrections',
+    surface: 'import',
+    mediaTypes: ['album'],
+    rateLimit: { maxConcurrent: 1, minTimeMs: 0 },
+    secrets: [],
+    subscriptions: false,
+    mixes: false,
+    supportsScrape: false,
+    supportsLegacyImport: false,
+    pluginPath: null,
+  },
+  {
     id: 'google-custom-search',
     displayName: 'Google Custom Search (legacy)',
     description:

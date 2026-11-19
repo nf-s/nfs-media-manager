@@ -1,0 +1,133 @@
+import { and, eq } from 'drizzle-orm'
+import { nanoid } from 'nanoid'
+import { PluginNormalizedResultSchema } from '@repo/media-plugin-sdk'
+import {
+  AlbumMetacriticCorrectionInputSchema,
+  AlbumMetacriticCorrectionSchema,
+  type AlbumMetacriticCorrectionInput,
+} from '@repo/schemas/match-diagnostics'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import { db } from '@/lib/db'
+import { ServerError } from '@/lib/error'
+import { checksumJson } from '@/lib/media-utils'
+import {
+  mediaOverride,
+  providerCurrentState,
+  providerSnapshot,
+} from '@/schemas/db'
+import {
+  hasCurrentAlbumMatch,
+  isSameAlbumMatch,
+  lockAlbumMatch,
+  readAlbumMatchRejections,
+} from './album-match-rejections'
+import { applyProviderResultInTransaction } from './provider-state'
+
+export const albumMetacriticCorrectionField = 'albumMetacriticCorrection'
+const provider = 'metacritic'
+
+function conflict(message: string) {
+  return new ServerError({ statusCode: 409, message })
+}
+
+/** Records an authorized identity correction and preserves its source observations. */
+export async function correctAlbumMetacriticMatch(
+  mediaItemId: string,
+  input: AlbumMetacriticCorrectionInput,
+  userId: string | null,
+) {
+  const correction = AlbumMetacriticCorrectionInputSchema.parse(input)
+  const { rejected, replacement } = correction
+  const reference = {
+    referenceType: 'metacritic-url',
+    externalId: replacement.url,
+  }
+  const whereCurrent = and(
+    eq(providerCurrentState.mediaItemId, mediaItemId),
+    eq(providerCurrentState.provider, provider),
+  )
+  return db.transaction(async (tx) => {
+    await lockAlbumMatch(tx, mediaItemId)
+    const rejections = await readAlbumMatchRejections(tx, mediaItemId)
+    const isRejected = createAlbumMatchRejectionPredicate(provider, rejections)
+    if (isRejected(reference))
+      throw conflict('This Metacritic release was previously rejected.')
+
+    const current = await tx.query.providerCurrentState.findFirst({
+      where: whereCurrent,
+    })
+    if (current) {
+      const saved = AlbumMetacriticCorrectionInputSchema.safeParse(
+        current.payload,
+      )
+      if (
+        saved.success &&
+        current.latestSnapshotId &&
+        checksumJson(saved.data) === checksumJson(correction)
+      )
+        return AlbumMetacriticCorrectionSchema.parse({
+          snapshotId: current.latestSnapshotId,
+          url: replacement.url,
+        })
+      throw conflict('A Metacritic correction already exists for this album.')
+    }
+
+    if (
+      !rejections.some((previous) => isSameAlbumMatch(previous, rejected)) ||
+      !(await hasCurrentAlbumMatch(tx, mediaItemId, rejected))
+    )
+      throw conflict(
+        'The rejected Metacritic match changed. Refresh Matches and try again.',
+      )
+    const archived = await tx.query.providerSnapshot.findFirst({
+      columns: { id: true },
+      where: and(
+        eq(providerSnapshot.id, rejected.snapshotId),
+        eq(providerSnapshot.mediaItemId, mediaItemId),
+        eq(providerSnapshot.provider, rejected.sourceProvider),
+      ),
+    })
+    if (!archived)
+      throw conflict('The rejected Metacritic source is unavailable.')
+
+    await applyProviderResultInTransaction(
+      {
+        mediaItemId,
+        mediaType: 'album',
+        provider,
+        source: 'album-match-correction',
+        payload: correction,
+        normalized: PluginNormalizedResultSchema.parse({
+          mediaPatch: {
+            metadata: {
+              browse: {
+                ratingMetacriticValue: null,
+                ratingMetacriticVotes: null,
+              },
+            },
+          },
+          references: [{ ...reference, isPrimary: true }],
+          links: [{ provider, label: 'Metacritic', url: replacement.url }],
+        }),
+      },
+      tx,
+    )
+    const corrected = await tx.query.providerCurrentState.findFirst({
+      columns: { latestSnapshotId: true },
+      where: whereCurrent,
+    })
+    if (!corrected?.latestSnapshotId)
+      throw new Error('Could not save the Metacritic correction.')
+    await tx.insert(mediaOverride).values({
+      id: nanoid(),
+      mediaItemId,
+      field: albumMetacriticCorrectionField,
+      value: { snapshotId: corrected.latestSnapshotId, url: replacement.url },
+      createdByUserId: userId,
+    })
+    return AlbumMetacriticCorrectionSchema.parse({
+      snapshotId: corrected.latestSnapshotId,
+      url: replacement.url,
+    })
+  })
+}

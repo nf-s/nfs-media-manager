@@ -30,8 +30,16 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { checksumJson } from '@/lib/media-utils'
-import { mediaItem, album, film, libraryTrack, mediaCredit } from '@/schemas/db'
+import {
+  mediaItem,
+  album,
+  film,
+  libraryTrack,
+  mediaCredit,
+  mediaOverride,
+} from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
+import { albumMatchRejectionField } from './album-match-rejections'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import {
   tagAncestorKeys,
@@ -241,6 +249,16 @@ function valueExpression(key: string, mediaType: MediaType): SQL {
       return sql`(select jsonb_agg(p.name order by p.name) from playlist_item pi join playlist p on p.id = pi.playlist_id where pi.media_item_id = ${mediaItem.id} and p.kind = ${key})`
     case 'provider':
       return sql`(select jsonb_agg(distinct r.provider) from provider_reference r where r.media_item_id = ${mediaItem.id})`
+    case 'ratingMetacriticValue':
+    case 'ratingMetacriticVotes':
+      if (mediaType === 'album')
+        return sql`(case when not exists (
+          select 1 from ${mediaOverride} where ${mediaOverride.mediaItemId} = ${mediaItem.id}
+            and ${mediaOverride.field} = ${albumMatchRejectionField}
+            and ${mediaOverride.value}->>'provider' = 'google-custom-search'
+            and ${mediaOverride.value}->>'referenceType' = 'metacritic-url'
+        ) then ${mediaItem.metadata}->'browse'->${key}::text end)`
+      return sql`(${mediaItem.metadata}->'browse'->${key}::text)`
     default:
       return sql`(${mediaItem.metadata}->'browse'->${key}::text)`
   }

@@ -5,6 +5,7 @@ const listAlbumFilterOptions = vi.fn()
 const listMediaMatchDiagnostics = vi.fn()
 const rejectAlbumMatch = vi.fn()
 const listAlbumMatchRejections = vi.fn()
+const correctAlbumMetacriticMatch = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/env', () => ({
@@ -58,6 +59,9 @@ function mockAppSession(authenticated: boolean) {
     rejectAlbumMatch,
     listAlbumMatchRejections,
   }))
+  vi.doMock('@/services/album-metacritic-corrections', () => ({
+    correctAlbumMetacriticMatch,
+  }))
 }
 
 describe('albums api', () => {
@@ -69,6 +73,7 @@ describe('albums api', () => {
     listMediaMatchDiagnostics.mockReset()
     rejectAlbumMatch.mockReset()
     listAlbumMatchRejections.mockReset()
+    correctAlbumMetacriticMatch.mockReset()
   })
 
   const rejectionEndpoint = '/api/v1/albums/album-fixture/match-rejections'
@@ -87,6 +92,80 @@ describe('albums api', () => {
       body: JSON.stringify(body),
     }
   }
+
+  it('requires authorization and an observed Metacritic release URL for a correction', async () => {
+    const endpoint = '/api/v1/albums/album-fixture/metacritic-correction'
+    const url = 'https://www.metacritic.com/music/fixture-record'
+    const correction = {
+      rejected: {
+        ...rejectionTarget,
+        referenceType: 'metacritic-url',
+        identifier: 'https://www.metacritic.com/music/rejected-record',
+      },
+      replacement: { url, title: 'Fixture Record', artist: 'Fixture Artist' },
+      evidence: [
+        {
+          source: 'wikidata',
+          sourceUrl: 'https://www.wikidata.org/wiki/Q42',
+          observedUrl: url,
+          observedAt: '2025-01-01T00:00:00Z',
+        },
+      ],
+    }
+    mockAppSession(false)
+    const { default: unauthenticated } = await import('@/app')
+    expect(
+      (await unauthenticated.request(endpoint, rejectRequest(correction)))
+        .status,
+    ).toBe(401)
+    vi.resetModules()
+    mockAppSession(true)
+    const { default: app } = await import('@/app')
+    expect(
+      (
+        await app.request(
+          endpoint,
+          rejectRequest({
+            ...correction,
+            replacement: {
+              ...correction.replacement,
+              url: 'https://metacritic.com.example.test/music/fixture-record',
+            },
+          }),
+        )
+      ).status,
+    ).toBe(422)
+    expect(
+      (
+        await app.request(
+          endpoint,
+          rejectRequest({
+            ...correction,
+            evidence: [
+              {
+                ...correction.evidence[0],
+                observedUrl:
+                  'https://www.metacritic.com/music/different-record',
+              },
+            ],
+          }),
+        )
+      ).status,
+    ).toBe(422)
+    expect(correctAlbumMetacriticMatch).not.toHaveBeenCalled()
+    correctAlbumMetacriticMatch.mockResolvedValue({
+      snapshotId: 'fixture-corrected',
+      url,
+    })
+    expect(
+      (await app.request(endpoint, rejectRequest(correction))).status,
+    ).toBe(200)
+    expect(correctAlbumMetacriticMatch).toHaveBeenCalledExactlyOnceWith(
+      'album-fixture',
+      correction,
+      'user-1',
+    )
+  })
 
   it('requires authentication to record or review album match rejections', async () => {
     mockAppSession(false)

@@ -19,6 +19,7 @@ import {
   scrapeJobItem,
 } from '@/schemas/db'
 import { albumMatchRejectionField } from './album-match-rejections'
+import { albumMetacriticCorrectionField } from './album-metacritic-corrections'
 
 type MediaHistoryEvent = MediaHistory['events'][number]
 
@@ -39,6 +40,17 @@ function formatSnapshotSummary(
 function formatFieldOverride(
   override: typeof mediaOverride.$inferSelect,
 ): MediaHistoryEvent {
+  if (override.field === albumMetacriticCorrectionField) {
+    return {
+      id: override.id,
+      type: 'override',
+      provider: 'metacritic',
+      title: 'Metacritic album match corrected',
+      description: null,
+      createdAt: override.createdAt.toISOString(),
+      data: override.value,
+    }
+  }
   if (override.field === 'albumListeningLinkRejection') {
     return {
       id: override.id,

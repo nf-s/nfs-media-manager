@@ -30,6 +30,18 @@ export const AlbumRymUrlSchema = AlbumHttpUrlSchema.refine((value) => {
   }
 }, 'Expected a RYM release or album review URL')
 
+const metacriticSlug = String.raw`(?!(?:\.|%2e){1,2}(?:/|$))[^/?#\s\\]+`
+const metacriticReleaseUrl = new RegExp(
+  `^https?://(?:www[.])?metacritic[.]com/music/${metacriticSlug}(?:/${metacriticSlug})?(?:/(?:critic-reviews|user-reviews))?/?$`,
+  'i',
+)
+export const AlbumMetacriticUrlSchema = AlbumHttpUrlSchema.pipe(
+  z
+    .string()
+    .max(500)
+    .regex(metacriticReleaseUrl, 'Expected a Metacritic album URL'),
+)
+
 type LookupProvider = {
   id: string
   identifierTypes?: string[]

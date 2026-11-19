@@ -28,7 +28,9 @@ In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music tit
 
 For an incorrect album match, open the provider cell, choose **Mark incorrect**, and confirm the identifier. The decision is specific to that album and identity. **Match history** keeps the provider, identifier and date after a replacement arrives. The original snapshot stays available in Sources.
 
-Use **Refresh** in Sources to run a supported provider again. The lookup skips rejected identities. A different successful match becomes current. If the provider has no acceptable replacement, the earlier evidence remains marked incorrect. Google Custom Search is retired. Rate Your Music can be looked up with the indexed search provider, while a legacy Metacritic decision remains in history.
+Use **Refresh** in Sources to run a supported provider again. The lookup skips rejected identities. A different successful match becomes current. If the provider has no acceptable replacement, the earlier evidence remains marked incorrect. Google Custom Search is retired. Rate Your Music can be looked up with the indexed search provider.
+
+Rejected legacy Metacritic links and ratings stay in source history. They leave the album's current links, Ratings, and rating filters. An owner can record an independently verified album URL through `POST /api/v1/albums/{id}/metacritic-correction`. The correction requires the exact archived rejection and preserves the observed URL and source evidence in Sources. The corrected link carries no rating or vote count.
 
 For incorrect Last.fm listening associations, use **Unlink** on the scrobbled name. The album history records the previous link. Last.fm retains the listens and keeps the group unlinked across syncs until you choose another album or restore automatic linking.
 

@@ -12,6 +12,10 @@ import {
 } from './tracks'
 import { selectionQueryFields } from './film-selection'
 import { SpotifyTrackSearchFreshnessSchema } from './spotify-track-search'
+import {
+  AlbumHttpUrlSchema,
+  AlbumMetacriticUrlSchema,
+} from './provider-identification'
 
 export const MatchDiagnosticsQuerySchema = PaginationQuerySchema.extend({
   q: z.string().trim().max(200).optional(),
@@ -107,6 +111,73 @@ export type AlbumMatchRejection = z.infer<typeof AlbumMatchRejectionSchema>
 export const AlbumMatchRejectionPageSchema = PaginatedDataSchema(
   AlbumMatchRejectionSchema,
 )
+
+const metacriticEvidenceSource = z.enum([
+  'metacritic-index',
+  'musicbrainz',
+  'wikidata',
+])
+const metacriticEvidenceUrl = {
+  musicbrainz:
+    /^https?:\/\/(?:www[.])?musicbrainz[.]org\/release-group\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?:\/details)?\/?$/i,
+  wikidata: /^https?:\/\/(?:www[.])?wikidata[.]org\/wiki\/Q[1-9][0-9]*\/?$/,
+}
+
+const AlbumMetacriticEvidenceSchema = z
+  .strictObject({
+    source: metacriticEvidenceSource,
+    sourceUrl: AlbumHttpUrlSchema.pipe(z.string().max(500)),
+    observedUrl: AlbumMetacriticUrlSchema,
+    observedAt: z.iso.datetime(),
+    note: z.string().trim().min(1).max(500).optional(),
+  })
+  .refine(
+    ({ source, sourceUrl, observedUrl }) =>
+      source === 'metacritic-index'
+        ? sourceUrl === observedUrl
+        : metacriticEvidenceUrl[source].test(sourceUrl),
+    {
+      path: ['sourceUrl'],
+      message:
+        'Use the observed Metacritic page or its release-group or Wikidata source.',
+    },
+  )
+
+export const AlbumMetacriticCorrectionInputSchema = z
+  .strictObject({
+    rejected: AlbumMatchRejectionInputSchema.extend({
+      provider: z.literal('google-custom-search'),
+      sourceProvider: z.enum([
+        'google-custom-search',
+        'legacy-record',
+        'legacy-browser',
+      ]),
+      referenceType: z.literal('metacritic-url'),
+    }),
+    replacement: z.strictObject({
+      url: AlbumMetacriticUrlSchema,
+      title: z.string().trim().min(1).max(1000),
+      artist: z.string().trim().min(1).max(1000),
+      releaseDate: z.iso.date().optional(),
+    }),
+    evidence: z.array(AlbumMetacriticEvidenceSchema).min(1).max(6),
+  })
+  .refine(
+    ({ evidence, replacement }) =>
+      evidence.every(({ observedUrl }) => observedUrl === replacement.url),
+    {
+      path: ['evidence'],
+      message: 'Each source must identify the selected Metacritic URL.',
+    },
+  )
+export type AlbumMetacriticCorrectionInput = z.infer<
+  typeof AlbumMetacriticCorrectionInputSchema
+>
+export const AlbumMetacriticCorrectionSchema = z.object({
+  snapshotId: z.string().min(1),
+  url: AlbumMetacriticUrlSchema,
+})
+
 export type AlbumMatchRejectionPage = z.infer<
   typeof AlbumMatchRejectionPageSchema
 >

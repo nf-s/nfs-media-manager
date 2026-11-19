@@ -33,6 +33,7 @@ const nativeRecord = sql`case source.provider
   when 'lastfm' then coalesce(${objectValue(sql`${payload}->'album'`)}, ${payload})
   when 'musicbrainz' then coalesce(${musicBrainzReleaseGroup}, ${payload})
   when 'discogs' then coalesce(${discogsMaster}, ${discogsRelease}, ${discogsMainRelease}, ${payload})
+  when 'metacritic' then ${payload}->'replacement'
   else ${payload} end`
 
 // An indexed search records its selected result URL. Join only that hit, never the
@@ -53,6 +54,7 @@ const recordedTitle = sql`case source.provider
   when 'lastfm' then ${stringValue(sql`${record}->'name'`)}
   when 'musicbrainz' then ${stringValue(sql`${record}->'title'`)}
   when 'discogs' then ${stringValue(sql`${record}->'title'`)}
+  when 'metacritic' then ${stringValue(sql`${record}->'title'`)}
   when 'mdblist' then ${stringValue(sql`${record}->'title'`)}
   when 'omdb' then coalesce(${stringValue(sql`${record}->'Title'`)}, ${stringValue(sql`${record}->'title'`)})
   when 'tmdb' then ${stringValue(sql`${record}->'title'`)}
@@ -70,6 +72,7 @@ const recordedCreator = sql`case source.provider
     sql`coalesce(${stringValue(sql`value->'name'`)}, ${stringValue(sql`value->'artist'->'name'`)})`,
   )}
   when 'lastfm' then coalesce(${stringValue(sql`${record}->'artist'->'name'`)}, ${stringValue(sql`${record}->'artist'`)})
+  when 'metacritic' then ${stringValue(sql`${record}->'artist'`)}
   when 'omdb' then coalesce(${stringValue(sql`${record}->'Director'`)}, ${stringValue(sql`${record}->'director'`)})
   when 'tmdb' then ${arrayNames(sql`${record}->'credits'->'crew'`, stringValue(sql`value->'name'`), sql`value->>'job' = 'Director'`)}
   when 'serply' then coalesce(
