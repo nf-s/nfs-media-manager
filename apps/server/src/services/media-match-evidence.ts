@@ -121,13 +121,25 @@ const recordedIdentifier = sql`coalesce(reference.identifier, ${nativeIdentifier
 
 /** Projects display fields from the stored response, without returning payload or lookup inputs. */
 export function mediaMatchEvidence(role: 'artist' | 'director') {
+  const catalogAlbum =
+    role === 'artist'
+      ? sql`case when reference.reference_type not in ('upc', 'ean')
+          and jsonb_typeof(${payload}->'id') in ('string', 'number')
+          and ${payload}->>'id' = reference.identifier
+          and jsonb_typeof(${payload}->'artists') = 'array'
+          then ${payload} end`
+      : sql`null::jsonb`
   return sql`
     select scope.id, source.provider,
-      left(coalesce(${recordedTitle}, ${stringValue(sql`${normalized}->'mediaPatch'->'title'`)}), 1000) as name,
+      left(coalesce(${recordedTitle}, ${stringValue(sql`${normalized}->'mediaPatch'->'title'`)},
+        ${stringValue(sql`catalog.album->'title'`)}), 1000) as name,
       left(coalesce(${recordedCreator}, ${arrayNames(
         sql`${normalized}->'credits'`,
         stringValue(sql`value->'name'`),
         sql`value->>'role' = ${role}`,
+      )}, ${arrayNames(
+        sql`catalog.album->'artists'`,
+        sql`coalesce(${stringValue(sql`value->'name'`)}, ${stringValue(sql`value`)})`,
       )}), 1000) as creator,
       case when identity.value ~ '^[[:alnum:]_.:-]{1,200}$' then identity.value
         when length(identity.value) <= 500 and identity.value ~ '^https?://[[:alnum:]_.:-]+/[^?#[:space:]]+$' then identity.value
@@ -146,6 +158,7 @@ export function mediaMatchEvidence(role: 'artist' | 'director') {
     cross join lateral (select ${nativeRecord} as record) native
     cross join lateral (select case when source.provider = 'serply' then ${indexedTitle} end as title) indexed
     left join lateral (${normalizedReference}) reference on true
+    cross join lateral (select ${catalogAlbum} as album) catalog
     cross join lateral (select split_part(split_part(${recordedIdentifier}, '?', 1), '#', 1) as value) identity
     where source.provider not in ('legacy-record', 'legacy-browser', 'legacy-library', 'legacy-smart-playlists')`
 }

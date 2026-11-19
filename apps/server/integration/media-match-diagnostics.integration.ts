@@ -750,6 +750,51 @@ describe('album and film match diagnostics', () => {
       ),
     ).rejects.toMatchObject({ response: { statusCode: 422 } })
   })
+
+  it('displays catalog album credits only for the selected record', async () => {
+    const id = 'catalog-diagnostics-fixture'
+    const provider = 'sample-extension'
+    const reference = {
+      referenceType: 'catalog-release',
+      externalId: '42',
+      isPrimary: true,
+    }
+    const payload = {
+      id: '42',
+      title: 'Recorded Catalog Edition',
+      artists: ['First Credit', { name: 'Second Credit' }],
+    }
+    await createAlbumFixture(id)
+    await storeMatchFixture(id, provider, 'catalog-selected', payload, {
+      references: [reference],
+    })
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        provider,
+        identifier: '42',
+        name: 'Recorded Catalog Edition',
+        creator: 'First Credit, Second Credit',
+      }),
+    )
+
+    const search = await listMediaMatchDiagnostics(
+      'album',
+      MatchDiagnosticsQuerySchema.parse({ q: 'Second Credit' }),
+    )
+    expect(search.items.map((row) => row.id)).toEqual([id])
+
+    await storeMatchFixture(id, provider, 'catalog-different-record', payload, {
+      references: [{ ...reference, externalId: '43' }],
+    })
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        provider,
+        identifier: '43',
+        name: null,
+        creator: null,
+      }),
+    )
+  })
 })
 
 async function createAlbumFixture(id: string) {

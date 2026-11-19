@@ -24,6 +24,8 @@ Use **Merge** when a separate Last.fm record and an imported Spotify track shoul
 
 Open a provider cell to inspect its Sources row. Use **Find match** where provider search is available, or edit the provider identifier. A corrected identifier takes effect on the next successful lookup. Until then the table can still show the previous response. Albums also have a Last.fm listening column for the artist and release names on linked scrobbles. Use the album's Last.fm linking tools to correct a group.
 
+For an album catalog that returns a title and artist list on the record itself, Matches can display those fields when the returned ID agrees with the snapshot’s selected catalog reference.
+
 In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
 
 An authenticated candidate preview at `POST /api/v1/find-match/preview` reads the tracks for one explicit Discogs or Last.fm album identifier. It returns the provider title, artists, track count and up to 500 ordered tracks. The provider's request limits apply. Previewing preserves the album's current match.
