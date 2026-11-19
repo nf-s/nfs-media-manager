@@ -222,22 +222,24 @@ function durationSeconds(value: string | undefined) {
     : minutes * 60 + seconds
 }
 
+function comparableTrackRows(record: z.infer<typeof DiscogsRecordSchema>) {
+  const rows = record.tracklist?.filter((track) => track.type_ !== 'heading')
+  if (
+    rows?.every(
+      (row) =>
+        row.type_ === 'track' &&
+        !(Array.isArray(row.sub_tracks) && row.sub_tracks.length > 0),
+    )
+  )
+    return rows
+}
+
 function conflictingTrackList(
   library: NonNullable<AlbumReleaseTrackEvidence['tracks']>,
   record: z.infer<typeof DiscogsRecordSchema>,
 ) {
-  const rows = record.tracklist?.filter((track) => track.type_ !== 'heading')
-  if (
-    !rows ||
-    rows.length < 5 ||
-    library.length < 5 ||
-    rows.some(
-      (row) =>
-        row.type_ !== 'track' ||
-        (Array.isArray(row.sub_tracks) && row.sub_tracks.length > 0),
-    )
-  )
-    return false
+  const rows = comparableTrackRows(record)
+  if (!rows || rows.length < 5 || library.length < 5) return false
   const titles = new Set(library.map((track) => albumNameKey(track.title)))
   if (rows.some((row) => titles.has(albumNameKey(row.title)))) return false
   const names = new Set(library.map((track) => albumTrackTitleKey(track.title)))
@@ -273,6 +275,36 @@ function conflictingTrackList(
     }
   }
   return matches * 2 < Math.min(durations.length, library.length)
+}
+
+const extendedMixSuffix =
+  /(?:\(extended mix\)|\[extended mix\]|\s[-–—]\s+extended mix)\s*$/i
+
+function conflictingExtendedMixProgram(
+  library: NonNullable<AlbumReleaseTrackEvidence['tracks']>,
+  record: z.infer<typeof DiscogsRecordSchema>,
+) {
+  const rows = comparableTrackRows(record)
+  if (!rows || rows.length < 4 || rows.length !== library.length) return false
+
+  const durations = new Map<string, number>()
+  for (const track of library) {
+    const title = albumTrackTitleKey(track.title)
+    if (!title || durations.has(title) || /\bextended\b/i.test(track.title))
+      return false
+    durations.set(title, track.durationSec)
+  }
+
+  return rows.every((row) => {
+    if (!extendedMixSuffix.test(row.title)) return false
+    const title = albumTrackTitleKey(row.title)
+    const original = durations.get(title)
+    const extended = durationSeconds(row.duration)
+    if (!original || !extended || !Number.isFinite(extended)) return false
+    durations.delete(title)
+    // A whole program of extended mixes is different from a timing variant.
+    return extended - original >= 90 && extended >= original * 1.4
+  })
 }
 
 export const discogsPlugin: MediaProviderPlugin = {
@@ -410,15 +442,23 @@ export const discogsPlugin: MediaProviderPlugin = {
         hint.trackEvidence?.exactSequence &&
         hint.trackEvidence.tracks?.length === hint.trackEvidence.libraryTracks,
     )?.trackEvidence?.tracks
-    if (
-      reference.fromSearch &&
-      tracks &&
-      conflictingTrackList(tracks, record) &&
-      (reference.type === 'release' || conflictingTrackList(tracks, release))
-    )
-      throw new ProviderItemAmbiguousError(
-        'The Discogs track titles and durations conflict with the verified library album. Review this match.',
+    if (reference.fromSearch && tracks) {
+      if (
+        conflictingTrackList(tracks, record) &&
+        (reference.type === 'release' || conflictingTrackList(tracks, release))
       )
+        throw new ProviderItemAmbiguousError(
+          'The Discogs track titles and durations conflict with the verified library album. Review this match.',
+        )
+      if (
+        conflictingExtendedMixProgram(tracks, record) &&
+        (reference.type === 'release' ||
+          conflictingExtendedMixProgram(tracks, release))
+      )
+        throw new ProviderItemAmbiguousError(
+          'The Discogs release contains substantially longer extended mixes for every verified track. Review this match.',
+        )
+    }
     const rating = release.community?.rating
     const have = release.community?.have
     const want = release.community?.want

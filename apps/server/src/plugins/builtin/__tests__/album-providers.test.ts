@@ -736,6 +736,129 @@ describe('Discogs album adapter', () => {
     },
   )
 
+  it.each([
+    { scenario: 'all four extended mixes', ambiguous: true },
+    { scenario: 'an explicitly reviewed release', ambiguous: false },
+    { scenario: 'one extended mix', ambiguous: false },
+    { scenario: 'small version differences', ambiguous: false },
+    {
+      scenario: 'the library already identifies the extended versions',
+      ambiguous: false,
+    },
+    { scenario: 'an unmeasured source track', ambiguous: false },
+    { scenario: 'an ambiguous recording name', ambiguous: false },
+    { scenario: 'a three-track EP', ambiguous: false },
+    { scenario: 'a matching main release', ambiguous: false },
+    {
+      scenario: 'a master and main release with the same extended program',
+      ambiguous: true,
+    },
+  ])(
+    'checks automatic Discogs mix scope for $scenario',
+    async ({ scenario, ambiguous }) => {
+      const selected = scenario === 'an explicitly reviewed release'
+      const byMaster =
+        scenario === 'a matching main release' ||
+        scenario === 'a master and main release with the same extended program'
+      const libraryExtended =
+        scenario === 'the library already identifies the extended versions'
+      const names = [
+        'First Recording',
+        'Second Recording',
+        'Third Recording',
+        'Fourth Recording',
+      ].slice(0, scenario === 'a three-track EP' ? 3 : 4)
+      if (scenario === 'an ambiguous recording name')
+        names[1] = 'First Recording'
+      const tracks = names.map((title, index) => ({
+        title: libraryExtended ? `${title} (Extended Version)` : title,
+        durationSec: 160 + index * 15,
+      }))
+      const tracklist = tracks.map((track, index) => {
+        const isExtended = scenario !== 'one extended mix' || index === 0
+        const difference =
+          scenario === 'small version differences' ? 35 : 100 + index * 5
+        const seconds = track.durationSec + (isExtended ? difference : 0)
+        return {
+          type_: 'track',
+          position: String(index + 1),
+          title: isExtended ? `${names[index]} (Extended Mix)` : names[index],
+          duration:
+            scenario === 'an unmeasured source track' && index === 1
+              ? ''
+              : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`,
+        }
+      })
+      const nativeRelease = {
+        ...release,
+        ...(byMaster ? { master_id: master.id } : {}),
+        formats: [{ name: 'Digital', descriptions: ['EP'] }],
+        tracklist:
+          scenario === 'a matching main release'
+            ? tracks.map((track, index) => ({
+                type_: 'track',
+                position: String(index + 1),
+                title: track.title,
+                duration: `${Math.floor(track.durationSec / 60)}:${String(track.durationSec % 60).padStart(2, '0')}`,
+              }))
+            : tracklist,
+      }
+      const result = {
+        results: [
+          {
+            id: byMaster ? master.id : release.id,
+            type: byMaster ? 'master' : 'release',
+            title: 'Example Artist - Example Album',
+          },
+        ],
+      }
+      const request = selected
+        ? replies(nativeRelease)
+        : byMaster
+          ? replies(result, { ...master, tracklist }, nativeRelease)
+          : replies({ results: [] }, { results: [] }, result, nativeRelease)
+      const attempt = scrape(
+        discogsPlugin,
+        context({
+          request,
+          media: {
+            title: 'Example Album',
+            artists: ['Example Artist'],
+            releaseHints: [
+              {
+                source: 'spotify',
+                title: 'Example Album',
+                releaseType: 'single',
+                trackEvidence: {
+                  libraryTracks: tracks.length,
+                  matchedTracks: tracks.length,
+                  exactSequence: true,
+                  tracks,
+                },
+              },
+            ],
+          },
+          existingReferences: selected
+            ? [ref('discogs', 'release', String(release.id))]
+            : byMaster
+              ? []
+              : [ref('spotify', 'upc', '123456789012')],
+        }),
+      )
+      if (ambiguous) {
+        await expect(attempt).rejects.toBeInstanceOf(ProviderItemAmbiguousError)
+      } else {
+        expect((await attempt).normalized.references).toContainEqual(
+          expect.objectContaining({
+            referenceType: byMaster ? 'master' : 'release',
+            externalId: String(byMaster ? master.id : release.id),
+          }),
+        )
+      }
+      expect(request).toHaveBeenCalledTimes(selected ? 1 : byMaster ? 3 : 4)
+    },
+  )
+
   it('skips barcode hits in a rejected master while accepting a different edition family', async () => {
     const request = replies(
       {
