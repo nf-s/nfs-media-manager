@@ -46,7 +46,7 @@ const unavailableReasons = {
 >
 
 function requestLabel(row: ProviderResponseSummary) {
-  return `Attempt ${formatCount(row.attempt)} · Request ${formatCount(row.ordinal)} · ${row.phase === 'artist' ? 'Artist' : 'Media'}`
+  return `Attempt ${formatCount(row.attempt)} · Request ${formatCount(row.ordinal)} · ${row.phase === 'artist' ? 'Artist' : row.phase === 'task' ? 'Task' : 'Media'}`
 }
 
 export function JobProviderResponseBody({
@@ -80,9 +80,17 @@ export function JobProviderResponseBody({
             Copy failed. Select and copy the response below.
           </span>
         )}
-        {body.redacted && (
+        {body.retainedRepresentation === 'station-discovery' ? (
+          <span className="ds-help">
+            Saved public discovery references from the page or script.
+          </span>
+        ) : body.retainedRepresentation === 'station-episode-data' ? (
+          <span className="ds-help">
+            Saved episode data rows from the archive response.
+          </span>
+        ) : body.redacted ? (
           <span className="ds-help">Private fields removed.</span>
-        )}
+        ) : null}
       </div>
       <pre className="ops-pre">{body.text}</pre>
     </>

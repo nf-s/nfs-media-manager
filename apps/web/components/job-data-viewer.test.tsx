@@ -202,6 +202,24 @@ test('renders saved text literally, diagnoses unavailable bodies, and identifies
   })
   assert.match(html, /extra.*&lt;script&gt;/)
   assert.match(html, /Private fields removed/)
+  assert.match(
+    renderBody({
+      state: 'captured',
+      text: 'fixture',
+      redacted: true,
+      retainedRepresentation: 'station-discovery',
+    }),
+    /Saved public discovery references/,
+  )
+  assert.match(
+    renderBody({
+      state: 'captured',
+      text: 'fixture',
+      redacted: true,
+      retainedRepresentation: 'station-episode-data',
+    }),
+    /Saved episode data rows/,
+  )
   assert.doesNotMatch(html, /<script>/)
   assert.match(
     renderBody({ state: 'unavailable', reason: 'byte-limit' }),
