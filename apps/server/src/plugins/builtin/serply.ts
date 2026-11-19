@@ -125,7 +125,7 @@ function displayIdentityMatches(actual: string, expected: string) {
 function baseTitle(value: string) {
   // Only recognized trailing edition labels, never arbitrary parentheticals.
   const label =
-    /^(?:(?:\d{1,3}(?:st|nd|rd|th)\s+)?anniversary(?:\s+(?:edition|deluxe\s+edition))?|\d{1,3}\s+year\s+anniversary(?:\s+remastered)?|\d{1,3}(?:st|nd|rd|th)\s+anniversary\s+(?:analogue\s+remaster\s+edition|edition\s+\/\s+remastered\s+\d{4})|deluxe\s+version|(?:super\s+)?deluxe(?:\s+edition)?|expanded(?:\s+edition)?|(?:special|collector'?s)\s+edition|(?:\d{4}\s+)?(?:digitally\s+)?remaster(?:ed)?(?:\s+(?:edition|version|\d{4}))?)$/i
+    /^(?:(?:\d{1,3}(?:st|nd|rd|th)\s+)?anniversary(?:\s+(?:edition|deluxe\s+edition))?|\d{1,3}\s+year\s+anniversary(?:\s+remastered)?|\d{1,3}(?:st|nd|rd|th)\s+anniversary\s+(?:analogue\s+remaster\s+edition|edition\s+\/\s+remastered\s+\d{4}|edition;\s+\d{4}\s+remaster)|deluxe\s+version|(?:super\s+)?deluxe(?:\s+edition)?|expanded(?:\s+edition)?|(?:special|collector'?s)\s+edition|(?:\d{4}\s+)?(?:digitally\s+)?remaster(?:ed)?(?:\s+(?:edition|version|\d{4}))?)$/i
   let title = value.trim()
   for (;;) {
     const suffix =

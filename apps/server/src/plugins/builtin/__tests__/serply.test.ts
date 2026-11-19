@@ -545,8 +545,40 @@ describe('Serply indexed RYM provider', () => {
       expect(request.mock.calls.length).toBeLessThanOrEqual(5)
     },
   )
+  it('matches an album with an ordinal anniversary label and dated remaster', async () => {
+    const title = 'Frost Lanterns (25th Anniversary Edition; 2022 Remaster)'
+    const artist = 'Fixture Ensemble'
+    const link =
+      'https://rateyourmusic.com/release/album/fixture-ensemble/frost-lanterns/'
+    const request = replies({
+      results: [
+        {
+          link,
+          title: 'Frost Lanterns by Fixture Ensemble (Album, Ambient)',
+          description:
+            'Frost Lanterns, an Album by Fixture Ensemble. Released 14 October 2022.',
+        },
+      ],
+    })
+    const result = await scrape(
+      context(undefined, {
+        media: { title, artists: [artist], releaseDate: '2022-10-14' },
+        request,
+      }),
+    )
+    expect(result.normalized.references).toContainEqual({
+      referenceType: 'rym-url',
+      externalId: link,
+      isPrimary: true,
+    })
+    expect(
+      new URL(request.mock.calls[0]?.[0] ?? '').searchParams.get('q'),
+    ).toBe(`site:rateyourmusic.com ${artist} ${title}`)
+    expect(request.mock.calls.length).toBeLessThanOrEqual(5)
+  })
   it.each([
     'Anniversary Edition / Live',
+    '25th Anniversary Edition; 2022 Remaster; Live',
     'Deluxe Version / Karaoke Version',
     '50th Anniversary Edition / Remastered 2019 / Live',
     'Deluxe Live Version',
