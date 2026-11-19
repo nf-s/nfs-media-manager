@@ -42,10 +42,25 @@ const EvidenceRowsSchema = z.array(
 type EvidenceRow = z.infer<typeof EvidenceRowsSchema>[number]
 type AcceptedEvidence = EvidenceRow & { normalizedId: string; exact: boolean }
 
-const spotifyTrackCreditPaths = [
-  '$.tracks.items[*] ? (@.id == $track_id).artists[*]',
-  '$.data.tracks.items[*] ? (@.id == $track_id).artists[*]',
+const spotifyAlbumTrackPaths = [
+  '$.tracks.items[*] ? (@.id == $track_id)',
+  '$.data.tracks.items[*] ? (@.id == $track_id)',
 ]
+
+const spotifyTrackCreditPaths = spotifyAlbumTrackPaths.map(
+  (path) => path + '.artists[*]',
+)
+
+function hasSpotifyAlbumTrack(payload: SQL, trackId: SQL) {
+  return sql`(${sql.join(
+    spotifyAlbumTrackPaths.map(
+      (path) => sql`jsonb_path_exists(
+      ${payload}, ${path}::jsonpath, jsonb_build_object('track_id', ${trackId})
+    )`,
+    ),
+    sql` or `,
+  )})`
+}
 
 // Select a credit-bearing payload before matching the library artist name so a
 // newer changed credit cannot silently resurrect an older artist identity.
@@ -285,7 +300,28 @@ const SpotifyArtistRecordingRowsSchema = z.array(
 )
 
 /** Only visible library recordings with native Spotify track IDs can verify an artist credit. */
-export async function listSpotifyArtistRecordings(artistId: string) {
+export async function listSpotifyArtistRecordings(
+  artistId: string,
+  { independentOnly = false }: { independentOnly?: boolean } = {},
+) {
+  // A previous name search cannot independently prove its own artist match.
+  const origin = independentOnly
+    ? sql`and (m.source_label = 'spotify' or exists (
+        select 1 from track membership
+        join media_item release on release.id = membership.album_media_item_id
+          and release.metadata->>'legacyHidden' is distinct from 'true'
+        where membership.track_media_item_id = m.id
+          and membership.external_id = track.spotify_track_id
+          and (
+            exists (select 1 from provider_current_state state
+              where state.media_item_id = release.id and state.provider = 'spotify' and state.status = 'ready'
+                and ${hasSpotifyAlbumTrack(sql`state.payload`, sql`track.spotify_track_id`)})
+            or exists (select 1 from provider_snapshot saved
+              where saved.media_item_id = release.id and saved.provider = 'spotify'
+                and ${hasSpotifyAlbumTrack(sql`saved.payload`, sql`track.spotify_track_id`)})
+          )
+      ))`
+    : sql``
   const { rows } = await db.execute(sql`
     select track.spotify_track_id as "spotifyTrackId", m.title
     from media_credit c
@@ -296,6 +332,7 @@ export async function listSpotifyArtistRecordings(artistId: string) {
       and m.metadata->>'legacyHidden' is distinct from 'true'
       and m.title ~ '[^[:space:]]'
       and track.spotify_track_id collate "C" ~ ${spotifyIdPattern.source}
+      ${origin}
     order by track.spotify_track_id
     limit ${spotifyArtistRecordingLimit}
   `)

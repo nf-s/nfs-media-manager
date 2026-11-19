@@ -397,6 +397,11 @@ export async function runProviderReplayCommand(args: string[]) {
     throw new ReplayCommandError(
       'The selected job does not own that item or artist.',
     )
+  const verification = typeof job.options.verifySnapshotId === 'string'
+  if (verification && command.action === 'replay')
+    throw new ReplayCommandError(
+      'Saved match verification evidence is stored in the job diagnostics.',
+    )
 
   const rows = selectProviderReplayCaptures(
     scope,
@@ -525,8 +530,9 @@ export async function runProviderReplayCommand(args: string[]) {
       }),
     }
   }
-  const context =
-    command.action === 'export'
+  const context = verification
+    ? null
+    : command.action === 'export'
       ? await readContext().catch(() => null)
       : await readContext()
 

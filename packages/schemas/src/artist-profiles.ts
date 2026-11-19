@@ -86,12 +86,44 @@ export type ArtistProviderSnapshot = z.infer<
   typeof ArtistProviderSnapshotSchema
 >
 
+export const ArtistVerificationProviderSchema = z.enum(['spotify', 'lastfm'])
+export type ArtistVerificationProvider = z.infer<
+  typeof ArtistVerificationProviderSchema
+>
+const ArtistVerificationSnapshotIdSchema = z.string().trim().min(1).max(500)
+
+export const ArtistVerificationResultSchema = z.object({
+  snapshotId: ArtistVerificationSnapshotIdSchema,
+  verdict: z.enum(['verified', 'conflict', 'insufficient', 'stale']),
+  reason: z.string().min(1).max(100),
+  evidenceCount: z.number().int().min(0).max(50),
+})
+export type ArtistVerificationResult = z.infer<
+  typeof ArtistVerificationResultSchema
+>
+
 export const ArtistEnrichmentInputSchema = z
   .object({
     provider: ArtistProviderIdSchema,
     providerArtistId: z.string().trim().min(1).max(1000).optional(),
+    verifySnapshotId: ArtistVerificationSnapshotIdSchema.optional(),
   })
   .strict()
+  .superRefine(({ provider, providerArtistId, verifySnapshotId }, context) => {
+    if (verifySnapshotId === undefined) return
+    if (providerArtistId !== undefined)
+      context.addIssue({
+        code: 'custom',
+        path: ['providerArtistId'],
+        message: 'Choose a snapshot to verify or enter a provider identifier.',
+      })
+    if (!ArtistVerificationProviderSchema.safeParse(provider).success)
+      context.addIssue({
+        code: 'custom',
+        path: ['provider'],
+        message: 'Saved match verification supports Spotify and Last.fm.',
+      })
+  })
 export type ArtistEnrichmentInput = z.infer<typeof ArtistEnrichmentInputSchema>
 
 export const ArtistFreshnessFiltersSchema =

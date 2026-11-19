@@ -319,6 +319,7 @@ export async function listUnresolvedMatches(
             and(
               sql`${scrapeJob.options}->>'task' = ${ARTIST_ENRICHMENT_TASK}`,
               sql`${scrapeJob.options}->>'artistId' = ${id}`,
+              sql`${scrapeJob.options}->>'verifySnapshotId' is null`,
             ),
           )
           .orderBy(

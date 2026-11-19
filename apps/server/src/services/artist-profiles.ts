@@ -30,14 +30,25 @@ type ArtistProfileTransaction = Parameters<
   Parameters<typeof db.transaction>[0]
 >[0]
 
+function lockArtist(database: ArtistProfileTransaction, id: string) {
+  return database
+    .select({ id: artist.id })
+    .from(artist)
+    .where(eq(artist.id, id))
+    .for('update')
+}
+
 /** Look up the library identity and use only a confirmed artist profile ID. */
 export async function loadArtistProviderTarget(
   artistId: string,
   provider: ArtistProviderId,
+  transaction?: ArtistProfileTransaction,
 ) {
-  const [target] = await db
+  if (transaction) await lockArtist(transaction, artistId)
+  const [target] = await (transaction ?? db)
     .select({
       name: artist.name,
+      snapshotId: artistProviderSnapshot.id,
       profile: artistProviderSnapshot.normalizedData,
     })
     .from(artist)
@@ -50,9 +61,13 @@ export async function loadArtistProviderTarget(
     )
     .leftJoin(
       artistProviderSnapshot,
-      eq(
-        artistProviderSnapshot.id,
-        artistProviderCurrentState.latestSnapshotId,
+      and(
+        eq(
+          artistProviderSnapshot.id,
+          artistProviderCurrentState.latestSnapshotId,
+        ),
+        eq(artistProviderSnapshot.artistId, artist.id),
+        eq(artistProviderSnapshot.provider, provider),
       ),
     )
     .where(and(eq(artist.id, artistId), visibleArtist))
@@ -60,6 +75,8 @@ export async function loadArtistProviderTarget(
     ? {
         name: target.name,
         providerArtistId: target.profile?.externalId ?? null,
+        snapshotId: target.snapshotId,
+        profile: target.profile,
       }
     : null
 }
@@ -143,11 +160,7 @@ export async function saveArtistProviderResult(
   const payload = JsonValueSchema.parse(result.payload)
   const save = async (database: ArtistProfileTransaction) => {
     // Serialize the first album's write with explicit artist refreshes.
-    await database
-      .select({ id: artist.id })
-      .from(artist)
-      .where(eq(artist.id, artistId))
-      .for('update')
+    await lockArtist(database, artistId)
     if (options?.onlyIfMissing) {
       const existing =
         await database.query.artistProviderCurrentState.findFirst({
