@@ -12,6 +12,8 @@ const fixture = ApiKeySchema.parse({
   expiresAt,
   lastRequest: null,
   enabled: true,
+  rateLimit: { enabled: false },
+  requestsUsed: null,
 })
 
 test('API key status observes the expiry boundary and prioritizes revocation', () => {

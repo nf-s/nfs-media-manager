@@ -4,7 +4,10 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { z } from 'zod'
 import {
+  ApiKeySchema,
   ApiKeysSchema,
+  type ApiKey,
+  type ApiKeyRateLimit,
   CreatedApiKeySchema,
   CreateApiKeySchema,
   RevokedApiKeySchema,
@@ -16,10 +19,14 @@ import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead, Select } from '@repo/ui/components/ds/toolbar'
-import { formatDateTime } from '@repo/ui/lib/format'
+import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { useConfig } from '../providers'
 import ExternalLink from '../external-link'
 import { SecondaryCell, SecondaryDataTable } from '../secondary-table'
+import {
+  ApiKeyRateLimitFields,
+  readRateLimit,
+} from '../api-key-rate-limit-fields'
 import { ConfirmAction } from '../confirm-action'
 import { fetchApiData } from '@/utils/api'
 import { apiKeyStatus, createAgentInstructions } from '@/utils/agent-access'
@@ -111,6 +118,11 @@ export default function UserPageClient() {
   const [created, setCreated] = useState<CreatedKey | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [notice, setNotice] = useState('')
+  const [editing, setEditing] = useState<ApiKey | null>(null)
+  const editor = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    if (editing) editor.current?.querySelector('select')?.focus()
+  }, [editing])
   const nameId = useId()
   const expiryId = useId()
   const keys = useQuery({
@@ -142,7 +154,10 @@ export default function UserPageClient() {
   }, [created, now])
   const create = useMutation({
     gcTime: 0,
-    mutationFn: async (kind: 'manual' | 'agent') => {
+    mutationFn: async (
+      input: { kind: 'manual'; rateLimit: ApiKeyRateLimit } | { kind: 'agent' },
+    ) => {
+      const { kind } = input
       const result = await fetchApiData(
         apiBaseUrl,
         kind === 'agent'
@@ -157,6 +172,7 @@ export default function UserPageClient() {
               : JSON.stringify(
                   CreateApiKeySchema.parse({
                     name,
+                    rateLimit: input.rateLimit,
                     expiresIn: expiry === 'never' ? null : Number(expiry),
                   }),
                 ),
@@ -180,6 +196,29 @@ export default function UserPageClient() {
     },
     onSuccess: () => client.invalidateQueries({ queryKey: ['user-api-keys'] }),
   })
+  const updateLimit = useMutation({
+    mutationFn: ({
+      id,
+      rateLimit,
+    }: {
+      id: string
+      rateLimit: ApiKeyRateLimit
+    }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/user/api-keys/${encodeURIComponent(id)}`,
+        ApiKeySchema,
+        { method: 'PATCH', body: JSON.stringify({ rateLimit }) },
+      ),
+    onSuccess: async (updated) => {
+      client.setQueryData<ApiKey[]>(['user-api-keys'], (previous) =>
+        previous?.map((key) => (key.id === updated.id ? updated : key)),
+      )
+      setEditing(null)
+      setNotice(`Rate limit saved for ${updated.name}.`)
+      await client.invalidateQueries({ queryKey: ['user-api-keys'] })
+    },
+  })
   const revoke = useMutation({
     mutationFn: (id: string) =>
       fetchApiData(
@@ -189,6 +228,7 @@ export default function UserPageClient() {
         { method: 'DELETE' },
       ),
     onSuccess: async ({ id }) => {
+      if (editing?.id === id) setEditing(null)
       if (created?.apiKey.id === id) setCreated(null)
       setNotice('API key revoked.')
       await client.invalidateQueries({ queryKey: ['user-api-keys'] })
@@ -218,9 +258,9 @@ export default function UserPageClient() {
               variant={created ? 'default' : 'primary'}
               type="button"
               disabled={creating}
-              onClick={() => create.mutate('agent')}
+              onClick={() => create.mutate({ kind: 'agent' })}
             >
-              {create.isPending && create.variables === 'agent'
+              {create.isPending && create.variables?.kind === 'agent'
                 ? 'Granting access...'
                 : 'Grant Agent Access'}
             </Button>
@@ -249,7 +289,10 @@ export default function UserPageClient() {
             className="sec-form-row"
             onSubmit={(event) => {
               event.preventDefault()
-              create.mutate('manual')
+              create.mutate({
+                kind: 'manual',
+                rateLimit: readRateLimit(event.currentTarget),
+              })
             }}
           >
             <div className="ds-field">
@@ -284,13 +327,57 @@ export default function UserPageClient() {
                 <option value="never">Never</option>
               </Select>
             </div>
+            <ApiKeyRateLimitFields disabled={creating} />
             <Button size="md" type="submit" disabled={creating || !name.trim()}>
-              {create.isPending && create.variables === 'manual'
+              {create.isPending && create.variables?.kind === 'manual'
                 ? 'Creating...'
                 : 'Create key'}
             </Button>
           </form>
         </Section>
+        {editing && (
+          <Section title={`Rate limit for ${editing.name}`}>
+            <form
+              key={editing.id}
+              ref={editor}
+              aria-label={`Rate limit for ${editing.name}`}
+              className="sec-form-row"
+              onSubmit={(event) => {
+                event.preventDefault()
+                updateLimit.mutate({
+                  id: editing.id,
+                  rateLimit: readRateLimit(event.currentTarget),
+                })
+              }}
+            >
+              <ApiKeyRateLimitFields
+                initial={editing.rateLimit}
+                disabled={updateLimit.isPending}
+              />
+              <Button
+                size="md"
+                variant="primary"
+                type="submit"
+                disabled={updateLimit.isPending}
+              >
+                {updateLimit.isPending ? 'Saving...' : 'Save limit'}
+              </Button>
+              <Button
+                size="md"
+                type="button"
+                disabled={updateLimit.isPending}
+                onClick={() => setEditing(null)}
+              >
+                Cancel
+              </Button>
+            </form>
+            {updateLimit.isError && (
+              <Notice tone="danger">
+                Could not save the rate limit. Try again.
+              </Notice>
+            )}
+          </Section>
+        )}
       </div>
       <div className="ds-section-head sec-pad">
         <h3>API keys</h3>
@@ -376,6 +463,22 @@ export default function UserPageClient() {
             },
           },
           {
+            key: 'rateLimit',
+            label: 'Rate limit',
+            width: 200,
+            value: (key) =>
+              key.rateLimit.enabled
+                ? `${formatCount(key.rateLimit.maxRequests)} per ${formatCount(key.rateLimit.windowSeconds)}s`
+                : 'Unlimited',
+            render: (key) => (
+              <SecondaryCell>
+                {key.rateLimit.enabled
+                  ? `${formatCount(key.requestsUsed ?? 0)} / ${formatCount(key.rateLimit.maxRequests)} in ${formatCount(key.rateLimit.windowSeconds)}s`
+                  : 'Unlimited'}
+              </SecondaryCell>
+            ),
+          },
+          {
             key: 'createdAt',
             label: 'Created',
             width: 150,
@@ -406,27 +509,44 @@ export default function UserPageClient() {
           {
             key: 'actions',
             label: 'Actions',
-            width: 100,
+            width: 160,
             resizable: false,
             sortable: false,
             required: true,
             align: 'end',
             value: () => null,
             render: (key) => (
-              <ConfirmAction
-                size="xs"
-                confirmVariant="danger"
-                ariaLabel={`Revoke ${key.name}`}
-                question={`Revoke ${key.name}?`}
-                details="Requests that use this key stop working at once."
-                confirmLabel="Revoke"
-                disabled={!key.enabled || revoke.isPending}
-                onConfirm={() => revoke.mutate(key.id)}
-              >
-                {revoke.isPending && revoke.variables === key.id
-                  ? 'Revoking...'
-                  : 'Revoke'}
-              </ConfirmAction>
+              <span className="ds-actions">
+                <Button
+                  size="xs"
+                  type="button"
+                  aria-label={`Edit rate limit for ${key.name}`}
+                  disabled={
+                    apiKeyStatus(key, now) !== 'Active' || updateLimit.isPending
+                  }
+                  onClick={() => {
+                    updateLimit.reset()
+                    setNotice('')
+                    setEditing(key)
+                  }}
+                >
+                  Edit limit
+                </Button>
+                <ConfirmAction
+                  size="xs"
+                  confirmVariant="danger"
+                  ariaLabel={`Revoke ${key.name}`}
+                  question={`Revoke ${key.name}?`}
+                  details="Requests that use this key stop working at once."
+                  confirmLabel="Revoke"
+                  disabled={!key.enabled || revoke.isPending}
+                  onConfirm={() => revoke.mutate(key.id)}
+                >
+                  {revoke.isPending && revoke.variables === key.id
+                    ? 'Revoking...'
+                    : 'Revoke'}
+                </ConfirmAction>
+              </span>
             ),
           },
         ]}

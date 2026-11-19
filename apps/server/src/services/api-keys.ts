@@ -6,7 +6,10 @@ import {
   ApiKeysSchema,
   CreatedApiKeySchema,
   CreateApiKeySchema,
+  DEFAULT_API_KEY_RATE_LIMIT,
+  type ApiKeyRateLimit,
   type CreateApiKey,
+  type UpdateApiKeyRateLimit,
 } from '@repo/schemas/api-key'
 import { env } from '@/env'
 import { db } from '@/lib/db'
@@ -15,8 +18,13 @@ import { isOwnerUser } from '@/lib/owner'
 import { apikey, user } from '@/schemas/db'
 
 const configId = 'media-manager'
-const rateLimitMax = 10000
-const rateLimitTimeWindow = 60 * 60 * 1000
+const rateLimitColumns = {
+  rateLimitEnabled: apikey.rateLimitEnabled,
+  rateLimitMax: apikey.rateLimitMax,
+  rateLimitTimeWindow: apikey.rateLimitTimeWindow,
+  requestCount: apikey.requestCount,
+  lastRefillAt: apikey.lastRefillAt,
+}
 const metadataColumns = {
   id: apikey.id,
   name: apikey.name,
@@ -25,8 +33,13 @@ const metadataColumns = {
   expiresAt: apikey.expiresAt,
   lastRequest: apikey.lastRequest,
   enabled: apikey.enabled,
+  ...rateLimitColumns,
 }
 
+type KeyRateLimitState = Pick<
+  typeof apikey.$inferSelect,
+  keyof typeof rateLimitColumns
+>
 type KeyMetadata = Pick<
   typeof apikey.$inferSelect,
   keyof typeof metadataColumns
@@ -39,7 +52,46 @@ type ApiKeyAuthentication =
     }
   | { status: 'limited'; retryAfter: number }
 
-function metadata(row: KeyMetadata) {
+function windowMilliseconds(row: KeyRateLimitState) {
+  return row.rateLimitTimeWindow !== null && row.rateLimitTimeWindow > 0
+    ? row.rateLimitTimeWindow
+    : DEFAULT_API_KEY_RATE_LIMIT.windowSeconds * 1000
+}
+
+function rateLimit(row: KeyRateLimitState): ApiKeyRateLimit {
+  if (row.rateLimitEnabled === false) return { enabled: false }
+  return {
+    enabled: true,
+    maxRequests:
+      row.rateLimitMax !== null && row.rateLimitMax > 0
+        ? row.rateLimitMax
+        : DEFAULT_API_KEY_RATE_LIMIT.maxRequests,
+    windowSeconds: windowMilliseconds(row) / 1000,
+  }
+}
+
+function currentWindow(row: KeyRateLimitState, now: Date) {
+  const resetAt = (row.lastRefillAt?.getTime() ?? 0) + windowMilliseconds(row)
+  const elapsed = row.lastRefillAt === null || now.getTime() >= resetAt
+  return {
+    resetAt,
+    elapsed,
+    requestsUsed: elapsed ? 0 : Math.max(0, row.requestCount ?? 0),
+  }
+}
+
+function rateLimitValues(limit: ApiKeyRateLimit) {
+  return limit.enabled
+    ? {
+        rateLimitEnabled: true,
+        rateLimitMax: limit.maxRequests,
+        rateLimitTimeWindow: limit.windowSeconds * 1000,
+      }
+    : { rateLimitEnabled: false }
+}
+
+function metadata(row: KeyMetadata, now: Date) {
+  const limit = rateLimit(row)
   return ApiKeySchema.parse({
     id: row.id,
     name: row.name ?? '',
@@ -48,6 +100,8 @@ function metadata(row: KeyMetadata) {
     expiresAt: row.expiresAt?.toISOString() ?? null,
     lastRequest: row.lastRequest?.toISOString() ?? null,
     enabled: row.enabled === true,
+    rateLimit: limit,
+    requestsUsed: limit.enabled ? currentWindow(row, now).requestsUsed : null,
   })
 }
 
@@ -57,7 +111,8 @@ export async function listApiKeys(userId: string) {
     .from(apikey)
     .where(and(eq(apikey.configId, configId), eq(apikey.referenceId, userId)))
     .orderBy(desc(apikey.createdAt), desc(apikey.id))
-  return ApiKeysSchema.parse(rows.map(metadata))
+  const now = new Date()
+  return ApiKeysSchema.parse(rows.map((row) => metadata(row, now)))
 }
 
 export async function createApiKey(userId: string, input: CreateApiKey) {
@@ -75,9 +130,7 @@ export async function createApiKey(userId: string, input: CreateApiKey) {
       prefix: 'mm_',
       key: createHash('sha256').update(key).digest('hex'),
       enabled: true,
-      rateLimitEnabled: true,
-      rateLimitMax,
-      rateLimitTimeWindow,
+      ...rateLimitValues(options.rateLimit ?? DEFAULT_API_KEY_RATE_LIMIT),
       requestCount: 0,
       expiresAt:
         options.expiresIn === null
@@ -88,11 +141,48 @@ export async function createApiKey(userId: string, input: CreateApiKey) {
     })
     .returning(metadataColumns)
   if (!row) throw new ServerError({ message: 'API key creation failed' })
-  return CreatedApiKeySchema.parse({ apiKey: metadata(row), key })
+  return CreatedApiKeySchema.parse({ apiKey: metadata(row, now), key })
 }
 
 export function createAgentAccess(userId: string) {
   return createApiKey(userId, { name: 'Agent access', expiresIn: 60 * 60 })
+}
+
+export async function updateApiKeyRateLimit(
+  userId: string,
+  id: string,
+  input: UpdateApiKeyRateLimit,
+) {
+  const condition = and(
+    eq(apikey.id, id),
+    eq(apikey.configId, configId),
+    eq(apikey.referenceId, userId),
+  )
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select(rateLimitColumns)
+      .from(apikey)
+      .where(condition)
+      .for('update')
+    if (!row)
+      throw new ServerError({ statusCode: 404, message: 'API key not found' })
+    const now = new Date()
+    // Lengthening a window must not bring back requests from an elapsed window.
+    const clearElapsed =
+      row.lastRefillAt !== null && currentWindow(row, now).elapsed
+    const [updated] = await tx
+      .update(apikey)
+      .set({
+        ...rateLimitValues(input.rateLimit),
+        ...(clearElapsed ? { requestCount: 0, lastRefillAt: null } : {}),
+        updatedAt: now,
+      })
+      .where(condition)
+      .returning(metadataColumns)
+    if (!updated)
+      throw new ServerError({ statusCode: 404, message: 'API key not found' })
+    return metadata(updated, now)
+  })
 }
 
 export async function revokeApiKey(userId: string, id: string) {
@@ -130,8 +220,7 @@ export async function authenticateApiKey(
           banned: user.banned,
         },
         id: apikey.id,
-        lastRefillAt: apikey.lastRefillAt,
-        requestCount: apikey.requestCount,
+        ...rateLimitColumns,
         expiresAt: apikey.expiresAt,
       })
       .from(apikey)
@@ -154,10 +243,9 @@ export async function authenticateApiKey(
     )
       return null
 
-    const resetAt = (row.lastRefillAt?.getTime() ?? 0) + rateLimitTimeWindow
-    const reset = now.getTime() >= resetAt
-    const requestCount = reset ? 0 : (row.requestCount ?? 0)
-    if (requestCount >= rateLimitMax)
+    const limit = rateLimit(row)
+    const { resetAt, elapsed, requestsUsed } = currentWindow(row, now)
+    if (limit.enabled && requestsUsed >= limit.maxRequests)
       return {
         status: 'limited',
         retryAfter: Math.ceil((resetAt - now.getTime()) / 1000),
@@ -165,8 +253,12 @@ export async function authenticateApiKey(
     await tx
       .update(apikey)
       .set({
-        requestCount: requestCount + 1,
-        lastRefillAt: reset ? now : row.lastRefillAt,
+        ...(limit.enabled
+          ? {
+              requestCount: requestsUsed + 1,
+              lastRefillAt: elapsed ? now : row.lastRefillAt,
+            }
+          : {}),
         lastRequest: now,
         updatedAt: now,
       })

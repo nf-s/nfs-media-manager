@@ -1,9 +1,11 @@
 import { createRoute, z } from '@hono/zod-openapi'
 import {
+  ApiKeySchema,
   ApiKeysSchema,
   CreateApiKeySchema,
   CreatedApiKeySchema,
   RevokedApiKeySchema,
+  UpdateApiKeyRateLimitSchema,
 } from '@repo/schemas/api-key'
 import {
   createOpenAPIApp,
@@ -19,6 +21,7 @@ import {
   createApiKey,
   listApiKeys,
   revokeApiKey,
+  updateApiKeyRateLimit,
 } from '@/services/api-keys'
 
 const browserSession = authMiddleware({ sessionOnly: true })
@@ -97,6 +100,44 @@ const app = createOpenAPIApp()
         c,
         await createAgentAccess(requireOwnerUser(c).id),
         201,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'patch',
+      path: '/api-keys/{id}',
+      security: ownerSessionSecurity,
+      middleware: [browserSession],
+      request: {
+        params: z.object({ id: z.string().min(1) }),
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: UpdateApiKeyRateLimitSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'API key rate limit updated',
+          content: {
+            'application/json': { schema: createResponseSchema(ApiKeySchema) },
+          },
+        },
+        ...authErrors,
+        404: jsonErrorResponse('API key not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await updateApiKeyRateLimit(
+          requireOwnerUser(c).id,
+          c.req.valid('param').id,
+          c.req.valid('json'),
+        ),
+        200,
       ),
   )
   .openapi(
