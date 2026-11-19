@@ -1,4 +1,10 @@
 import { sql, type SQL } from 'drizzle-orm'
+import {
+  albumMatchIdentifierMaxLength,
+  albumTrackingQueryKeyPattern,
+  legacyRymAlbumUrlMaxLength,
+  legacyRymAlbumUrlPattern,
+} from '@repo/schemas/provider-identification'
 
 const payload = sql`source.payload`
 const normalized = sql`source.normalized_data`
@@ -171,6 +177,16 @@ const legacyGooglePriority = sql`case source.provider
 const legacyRymUrl =
   '(?i)^https?://(?:www[.])?rateyourmusic[.]com/(?:release/[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+(?:/(?:reviews|lists)(?:/[0-9]+)?)?|music-review/[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+/[0-9]+)/?$'
 const legacyMetacriticUrl = `(?i)^https?://(?:www[.])?metacritic[.]com/music/${publicPathSegment}(?:/${publicPathSegment})*/?$`
+const asciiCharacters = String.raw`[\u0001-\u007f]`
+const rymTrackingQuery = `(?:${albumTrackingQueryKeyPattern})(?:=[^&#]*)?`
+const rymNoIdentityQuery = String.raw`(?i)^[^?]+(?:\?(?:${rymTrackingQuery}(?:&${rymTrackingQuery})*)?)?$`
+
+function encodedUrlLength(value: SQL) {
+  // A non-ASCII UTF-8 byte becomes three characters in a percent-encoded URL.
+  return sql`case when length(${value}) = octet_length(${value}) then length(${value})
+    else (octet_length(${value}) + 2 * octet_length(regexp_replace(${value}, ${asciiCharacters}, '', 'g'))) end`
+}
+
 const legacyTypedTitle =
   '(?i)^(?:Reviews of |Lists with )?(.+) by (.+) \\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix)[,);]'
 const legacyUntypedTitle = '(?i)^(.+) by (.+) - (?:RYM|Rate Your Music)$'
@@ -197,25 +213,37 @@ export function legacyAlbumGoogleMatchEvidence() {
     cross join lateral (
       select provider, latest_snapshot_id, title, url
       from (
-        select source.provider, source.latest_snapshot_id, fields.title, fields.url,
+        select source.provider, source.latest_snapshot_id, fields.title, selected.url,
           ${legacyGooglePriority} as priority, fields.key_priority,
-          first_value(fields.url) over (order by ${legacyGooglePriority}, fields.key_priority) as selected_url
+          first_value(selected.url) over (order by ${legacyGooglePriority}, fields.key_priority) as selected_url
         from provider_current_state source
         cross join lateral (
           select case when source.provider = 'legacy-browser'
             then ${stringValue(sql`${cleanedMatch}->'title'`)}
             else ${stringValue(sql`${rawMatch}->'rawResponse'->'title'`)} end as title,
-          split_part(split_part(case when source.provider = 'legacy-browser'
+          case when source.provider = 'legacy-browser'
             then ${stringValue(sql`${cleanedMatch}->'href'`)}
-            else ${stringValue(sql`${rawMatch}->'link'`)} end, '?', 1), '#', 1) as url,
+            else ${stringValue(sql`${rawMatch}->'link'`)} end as raw_url,
             browse.position as key_priority
           from unnest(array[site.browse_key, site.fallback_key]) with ordinality as browse(key, position)
           where browse.key is not null
             and (source.provider = 'legacy-browser' or browse.position = 1)
         ) fields
+        cross join lateral (
+          select split_part(split_part(fields.raw_url, '#', 1), '?', 1) as url
+        ) selected
         where source.media_item_id = scope.id and source.status = 'ready'
           and source.provider in (${legacyGoogleProvider}, 'legacy-record', 'legacy-browser')
-          and length(fields.url) <= 500 and fields.url ~ site.url_pattern
+          and selected.url ~ site.url_pattern
+          and (
+            case when site.reference_type = 'rym-url' then
+              ${encodedUrlLength(sql`selected.url`)} <= ${albumMatchIdentifierMaxLength} or (
+                ${encodedUrlLength(sql`selected.url`)} <= ${legacyRymAlbumUrlMaxLength}
+                and selected.url ~ ${`(?i)${legacyRymAlbumUrlPattern}`}
+                and split_part(fields.raw_url, '#', 1) ~ ${rymNoIdentityQuery}
+              )
+            else length(selected.url) <= ${albumMatchIdentifierMaxLength} end
+          )
       ) candidates
       where url = selected_url
       order by (title is not null) desc, priority, key_priority

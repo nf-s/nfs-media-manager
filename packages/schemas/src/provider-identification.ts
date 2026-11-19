@@ -46,6 +46,29 @@ export const AlbumRymUrlSchema = AlbumHttpUrlSchema.refine((value) => {
   }
 }, 'Expected a RYM release or album review URL')
 
+export const albumMatchIdentifierMaxLength = 500
+export const legacyRymAlbumUrlMaxLength = 2_048
+
+// Match path segments before URL parsing so escaped separators and dot segments
+// cannot be mistaken for different release scopes.
+const legacyRymSlug = String.raw`(?!(?:[.]|%2e){1,2}(?:/|$))(?:[^/%?#\\<>"{}\x01-\x20\x60\x7f]|%[0-9a-f]{2})+`
+export const legacyRymAlbumUrlPattern = `^https?://(?:www[.])?rateyourmusic[.]com/release/[a-z-]+/${legacyRymSlug}/${legacyRymSlug}(?:/(?:reviews|lists)(?:/[0-9]+)?)?/?$`
+export const albumTrackingQueryKeyPattern =
+  'utm_[^=&?#]+|fbclid|gclid|mc_cid|mc_eid'
+
+export const LegacyRymAlbumUrlSchema = AlbumHttpUrlSchema.pipe(
+  z
+    .string()
+    .max(legacyRymAlbumUrlMaxLength)
+    .regex(
+      new RegExp(legacyRymAlbumUrlPattern, 'i'),
+      'Expected a RYM release URL',
+    ),
+).refine(
+  (value) => new URL(value).href.length <= legacyRymAlbumUrlMaxLength,
+  'Expected a RYM release URL of at most 2,048 encoded characters',
+)
+
 const metacriticSlug = String.raw`(?!(?:\.|%2e){1,2}(?:/|$))[^/?#\s\\]+`
 const metacriticReleaseUrl = new RegExp(
   `^https?://(?:www[.])?metacritic[.]com/music/${metacriticSlug}(?:/${metacriticSlug})?(?:/(?:critic-reviews|user-reviews))?/?$`,

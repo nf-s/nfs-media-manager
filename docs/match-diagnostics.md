@@ -32,6 +32,8 @@ An authenticated candidate preview at `POST /api/v1/find-match/preview` reads th
 
 For an incorrect album match, open the provider cell, choose **Mark incorrect**, and confirm the identifier. The decision is specific to that album and identity. **Match history** keeps the provider, identifier and date after a replacement arrives. The original snapshot stays available in Sources.
 
+Long legacy RYM release URLs are shown as saved. The current web client requests exact rejection targets and history entries longer than 500 characters with `longRym=1` on the album diagnostics and rejection history endpoints. Validated RYM release URLs can be up to 2,048 characters after percent encoding.
+
 Use **Refresh** in Sources to run a supported provider again. The lookup skips rejected identities. A different successful match becomes current. If the provider has no acceptable replacement, the earlier evidence remains marked incorrect. Google Custom Search is retired. Rate Your Music can be looked up with the indexed search provider.
 
 Automatic Discogs searches skip editions that Discogs identifies as belonging to a rejected master. You can preview a specific edition and select it after verifying its track list. Rejecting a single edition leaves its sibling editions available. When a later compilation has more than twice the tracks on a verified Spotify album of the same name, automatic discovery leaves it for review.

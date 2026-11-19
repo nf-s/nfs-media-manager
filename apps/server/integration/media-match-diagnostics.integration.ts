@@ -1,19 +1,29 @@
+import '@hono/zod-openapi'
 import { randomUUID } from 'node:crypto'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
+import { createMiddleware } from 'hono/factory'
+import { z } from 'zod'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { PluginResultSchema, type JsonValue } from '@repo/media-plugin-sdk'
 import {
+  AlbumMatchRejectionInputSchema,
+  AlbumMatchRejectionPageSchema,
+  AlbumMatchRejectionSchema,
   AlbumMetacriticCandidatesInputSchema,
   AlbumMetacriticCorrectionInputSchema,
+  MatchDiagnosticsPageSchema,
   MatchDiagnosticsQuerySchema,
 } from '@repo/schemas/match-diagnostics'
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import { env } from '@/env'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
+import albumsApi from '@/routes/albums'
 import { getBuiltinProviderCatalog } from '@/lib/provider-catalog'
 import * as schema from '@/schemas/db'
 import {
+  albumMatchRejectionField,
   listAlbumMatchRejections,
   readAlbumMatchRejections,
   rejectAlbumMatch,
@@ -47,6 +57,9 @@ vi.mock('@/lib/db', () => ({
   get db() {
     return databaseClient
   },
+}))
+vi.mock('@/middlewares/auth', () => ({
+  authMiddleware: () => createMiddleware(async (_context, next) => next()),
 }))
 vi.mock('@/plugins/registry', async (load) => ({
   ...(await load<typeof import('@/plugins/registry')>()),
@@ -1246,6 +1259,202 @@ describe('album match rejection history', () => {
       await getMediaSourceSnapshot(id, 'discogs', 'native-master'),
     ).toMatchObject({ data: discogs })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps a long multibyte legacy RYM release visible with exact rejection history', async () => {
+    const id = 'long-rym-release-fixture'
+    const prefix = 'https://rateyourmusic.com/release/album/fixture/'
+    const slug = `${'音楽'.repeat(65)}%2Ffixture`
+    const raw = `${prefix}${encodeURIComponent('音楽'.repeat(65))}%2Ffixture/`
+    const title = 'Long Release by Fixture Artist - RYM'
+    const endpoint = `/${id}/match-rejections`
+    const source = {
+      rymGoogle: {
+        link: `${raw}?utm_source=fixture#overview`,
+        rawResponse: { title },
+      },
+      metacriticGoogle: {
+        link: 'https://www.metacritic.com/music/fixture/',
+        rawResponse: { title: 'Other Release by Fixture Artist - Metacritic' },
+      },
+    }
+    await createAlbumFixture(id)
+    await storeMatchFixture(
+      id,
+      'google-custom-search',
+      'long-rym-original',
+      source,
+    )
+    const oldView = await albumsApi.request(`/match-diagnostics?q=${id}`)
+    expect(oldView.status).toBe(200)
+    const diagnosticsResponse = z.object({ data: MatchDiagnosticsPageSchema })
+    const historyResponse = z.object({ data: AlbumMatchRejectionPageSchema })
+    const oldMatches = diagnosticsResponse.parse(await oldView.json()).data
+      .items[0]?.matches
+    const oldCell = oldMatches?.find(({ identifier }) => identifier === raw)
+    expect(oldCell).toMatchObject({
+      name: 'Long Release',
+      creator: 'Fixture Artist',
+    })
+    expect(oldCell?.rejectionTarget).toBeUndefined()
+
+    const view = await albumsApi.request(`/match-diagnostics?q=${id}&longRym=1`)
+    expect(view.status).toBe(200)
+    const matches = diagnosticsResponse.parse(await view.json()).data.items[0]
+      ?.matches
+    const match = matches?.find(({ identifier }) => identifier === raw)
+    const target = AlbumMatchRejectionInputSchema.parse(match?.rejectionTarget)
+    expect(target).toEqual({
+      provider: 'google-custom-search',
+      sourceProvider: 'google-custom-search',
+      snapshotId: 'long-rym-original',
+      referenceType: 'rym-url',
+      identifier: raw,
+    })
+
+    await expect(
+      rejectAlbumMatch(
+        id,
+        { ...target, identifier: `${prefix}${slug}/` },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    const ordinary = (await getFixtureMatches(id)).find(
+      ({ rejectionTarget }) =>
+        rejectionTarget?.referenceType === 'metacritic-url',
+    )?.rejectionTarget
+    if (!ordinary) throw new Error('Missing ordinary fixture match.')
+    const ordinaryDecision = await rejectAlbumMatch(id, ordinary, null)
+    const saved = await albumsApi.request(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(target),
+    })
+    expect(saved.status).toBe(200)
+    const decision = z
+      .object({ data: AlbumMatchRejectionSchema })
+      .parse(await saved.json()).data
+    expect(decision).toMatchObject(target)
+    const updatedHistory = await albumsApi.request(
+      `${endpoint}?size=1&longRym=1`,
+    )
+    expect(updatedHistory.status).toBe(200)
+    expect(
+      historyResponse.parse(await updatedHistory.json()).data,
+    ).toMatchObject({
+      items: [decision],
+      totalCount: 2,
+      pageCount: 2,
+    })
+    const oldHistory = await albumsApi.request(`${endpoint}?size=1`)
+    expect(oldHistory.status).toBe(200)
+    expect(historyResponse.parse(await oldHistory.json()).data).toMatchObject({
+      items: [ordinaryDecision],
+      totalCount: 1,
+      pageCount: 1,
+    })
+    expect((await getMediaHistory(id)).events).toContainEqual(
+      expect.objectContaining({ title: 'Album match rejected', data: target }),
+    )
+    expect(
+      await getMediaSourceSnapshot(
+        id,
+        'google-custom-search',
+        'long-rym-original',
+      ),
+    ).toMatchObject({ data: source })
+
+    const rejects = createAlbumMatchRejectionPredicate('serply', [
+      { ...target, aliases: [] },
+    ])
+    const identity = (externalId: string) => ({
+      referenceType: 'rym-url',
+      externalId,
+    })
+    const unicode = `${prefix}${slug}/`.replace('%2F', '%2f')
+    expect(
+      rejects(identity(`${unicode}reviews/2/?utm_campaign=fixture#start`)),
+    ).toBe(true)
+    expect(rejects(identity(`${unicode}?edition=separate`))).toBe(false)
+    expect(rejects(identity(unicode.replace('%2f', '%252f')))).toBe(false)
+    expect(rejects(identity(unicode.replace('%2f', '-')))).toBe(false)
+
+    await storeMatchFixture(id, 'google-custom-search', 'long-rym-unicode', {
+      rymGoogle: { link: unicode, rawResponse: { title } },
+    })
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        identifier: unicode,
+        rejectedAt: decision.rejectedAt,
+      }),
+    )
+    await databaseClient.insert(schema.mediaOverride).values({
+      id: 'invalid-long-rym-rejection-source',
+      mediaItemId: id,
+      field: albumMatchRejectionField,
+      value: { ...target, sourceProvider: 'serply' },
+    })
+    expect(await readAlbumMatchRejections(databaseClient, id)).toEqual([
+      { ...decision, aliases: [] },
+      { ...ordinaryDecision, aliases: [] },
+    ])
+    expect(
+      (await listAlbumMatchRejections(id, { page: 1, size: 5, longRym: '1' }))
+        .items,
+    ).toEqual([decision, ordinaryDecision])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps long URL allowances within validated legacy RYM release scope', async () => {
+    const prefix = 'https://rateyourmusic.com/release/album/fixture/'
+    const slug = encodeURIComponent('音楽'.repeat(65))
+    const identifier = `${prefix}${slug}/`
+    const target = {
+      provider: 'google-custom-search',
+      sourceProvider: 'legacy-record',
+      snapshotId: 'scoped-rejection-fixture',
+      referenceType: 'rym-url',
+      identifier,
+    }
+    for (const field of [
+      { provider: 'lastfm' },
+      { sourceProvider: 'serply' },
+      { referenceType: 'metacritic-url' },
+      { identifier: 'x'.repeat(501) },
+      { identifier: `${prefix}${encodeURIComponent('音楽'.repeat(120))}/` },
+      { identifier: identifier.replace('rateyourmusic.com', 'fixture.test') },
+      { identifier: identifier.replace('fixture/', 'fixture/%2e%2e/') },
+      { identifier: `${identifier}?edition=separate` },
+      { identifier: `${identifier}unknown-tab/` },
+    ]) {
+      expect(
+        AlbumMatchRejectionInputSchema.safeParse({ ...target, ...field })
+          .success,
+      ).toBe(false)
+    }
+    const fixtures = [
+      `${identifier}?edition=separate`,
+      `${prefix}${'音楽'.repeat(120)}/`,
+      `https://fixture.test/release/album/fixture/${slug}/`,
+      identifier.replace('fixture/', 'fixture/%2e%2e/'),
+      `${identifier}unknown-tab/`,
+    ]
+    for (const [index, link] of fixtures.entries()) {
+      const id = `long-rym-invalid-fixture-${index}`
+      await createAlbumFixture(id)
+      await storeMatchFixture(
+        id,
+        'legacy-record',
+        `long-rym-invalid-source-${index}`,
+        {
+          rymGoogle: {
+            link,
+            rawResponse: { title: 'Other Release by Fixture Artist - RYM' },
+          },
+        },
+      )
+      expect(await getFixtureMatches(id)).toEqual([])
+    }
   })
 
   it('rejects one legacy identity once, preserves its shared snapshot, and marks equivalent URLs only on that album', async () => {

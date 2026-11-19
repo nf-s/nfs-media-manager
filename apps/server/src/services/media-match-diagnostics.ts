@@ -5,6 +5,7 @@ import {
   type MatchDiagnosticsPage,
   type MatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
+import { albumMatchIdentifierMaxLength } from '@repo/schemas/provider-identification'
 import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -56,7 +57,7 @@ const ResultSchema = z.object({
 /** Lists canonical items alongside what each source actually recorded for them. */
 export async function listMediaMatchDiagnostics(
   kind: 'album' | 'film',
-  query: MatchDiagnosticsQuery,
+  query: MatchDiagnosticsQuery & { longRym?: '1' },
 ): Promise<MatchDiagnosticsPage> {
   const [catalog, lastfmAccount] = await Promise.all([
     listProviderCatalog(),
@@ -160,11 +161,15 @@ export async function listMediaMatchDiagnostics(
     )
     for (const item of items) {
       const albumRejections = rejections.get(item.id)
-      if (!albumRejections) continue
       for (const match of item.matches) {
         const target = match.rejectionTarget
         if (!target) continue
-        const rejection = albumRejections.find((row) =>
+        if (
+          !query.longRym &&
+          target.identifier.length > albumMatchIdentifierMaxLength
+        )
+          delete match.rejectionTarget
+        const rejection = albumRejections?.find((row) =>
           createAlbumMatchRejectionPredicate(target.provider, [row])({
             referenceType: target.referenceType,
             externalId: target.identifier,

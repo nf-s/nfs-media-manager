@@ -1,5 +1,9 @@
 import type { PluginReference } from '@repo/media-plugin-sdk'
-import { AlbumHttpUrlSchema } from '@repo/schemas/provider-identification'
+import {
+  albumMatchIdentifierMaxLength,
+  AlbumHttpUrlSchema,
+  LegacyRymAlbumUrlSchema,
+} from '@repo/schemas/provider-identification'
 import { spotifyAlbumId } from '@/lib/spotify-api'
 
 type AlbumMatchIdentity = Pick<PluginReference, 'referenceType' | 'externalId'>
@@ -91,8 +95,21 @@ function albumMatchUrl(value: string): string | null {
       /^(\/release\/[^/]+\/[^/]+\/[^/]+)\/(?:reviews|lists)(?:\/\d+)?$/,
       '$1',
     )
-    path = path.replace(/^(\/release\/[^/]+\/[^/]+\/[^/]+)\.p$/, '$1')
-    return host + path
+    const long =
+      (url.origin + url.pathname).length > albumMatchIdentifierMaxLength
+    if (long) {
+      const pathUrl = value.split(/[?#]/, 1)[0]
+      if (
+        !LegacyRymAlbumUrlSchema.safeParse(pathUrl).success ||
+        albumMatchUrlHasIdentityQuery(url)
+      )
+        return null
+    } else {
+      path = path.replace(/^(\/release\/[^/]+\/[^/]+\/[^/]+)\.p$/, '$1')
+    }
+    return (
+      host + path.replace(/%[0-9a-f]{2}/gi, (escape) => escape.toUpperCase())
+    )
   }
   if (url.port === '' && host === 'last.fm') {
     path = path.replace(/^\/music\/\+noredirect\//, '/music/')

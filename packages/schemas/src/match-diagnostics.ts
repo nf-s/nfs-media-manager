@@ -13,8 +13,11 @@ import {
 import { selectionQueryFields } from './film-selection'
 import { SpotifyTrackSearchFreshnessSchema } from './spotify-track-search'
 import {
+  albumMatchIdentifierMaxLength,
   AlbumHttpUrlSchema,
   AlbumMetacriticUrlSchema,
+  LegacyRymAlbumUrlSchema,
+  legacyRymAlbumUrlMaxLength,
 } from './provider-identification'
 
 export const MatchDiagnosticsQuerySchema = PaginationQuerySchema.extend({
@@ -22,6 +25,16 @@ export const MatchDiagnosticsQuerySchema = PaginationQuerySchema.extend({
   sortBy: z.string().min(1).max(100).default('name'),
   direction: DirectionSchema.default('asc'),
 })
+
+const longRymQuery = z.literal('1').optional()
+export const AlbumMatchDiagnosticsQuerySchema =
+  MatchDiagnosticsQuerySchema.extend({
+    longRym: longRymQuery,
+  })
+export const AlbumMatchRejectionHistoryQuerySchema =
+  PaginationQuerySchema.extend({
+    longRym: longRymQuery,
+  })
 
 export const TrackPlayabilitySchema = z.enum([
   'all',
@@ -92,20 +105,36 @@ export const trackMatchDiagnosticFields: BrowseField[] = [
   diagnosticText('discogsArtist', 'Discogs track artist'),
 ]
 
-export const AlbumMatchRejectionInputSchema = z.object({
-  provider: z.string().min(1).max(200),
-  sourceProvider: z.string().min(1).max(200),
-  snapshotId: z.string().min(1).max(500),
-  referenceType: z.string().min(1).max(200),
-  identifier: z.string().min(1).max(500),
-})
+export const AlbumMatchRejectionInputSchema = z
+  .object({
+    provider: z.string().min(1).max(200),
+    sourceProvider: z.string().min(1).max(200),
+    snapshotId: z.string().min(1).max(500),
+    referenceType: z.string().min(1).max(200),
+    identifier: z.string().min(1).max(legacyRymAlbumUrlMaxLength),
+  })
+  .refine(
+    ({ provider, sourceProvider, referenceType, identifier }) =>
+      identifier.length <= albumMatchIdentifierMaxLength ||
+      (provider === 'google-custom-search' &&
+        ['google-custom-search', 'legacy-record', 'legacy-browser'].includes(
+          sourceProvider,
+        ) &&
+        referenceType === 'rym-url' &&
+        LegacyRymAlbumUrlSchema.safeParse(identifier).success),
+    {
+      path: ['identifier'],
+      message: 'Expected a provider identifier or a legacy RYM release URL.',
+    },
+  )
 export type AlbumMatchRejectionInput = z.infer<
   typeof AlbumMatchRejectionInputSchema
 >
 
-export const AlbumMatchRejectionSchema = AlbumMatchRejectionInputSchema.extend({
-  rejectedAt: z.string().datetime(),
-})
+export const AlbumMatchRejectionSchema =
+  AlbumMatchRejectionInputSchema.safeExtend({
+    rejectedAt: z.string().datetime(),
+  })
 export type AlbumMatchRejection = z.infer<typeof AlbumMatchRejectionSchema>
 
 export const AlbumMatchRejectionPageSchema = PaginatedDataSchema(
@@ -144,7 +173,7 @@ const AlbumMetacriticEvidenceSchema = z
   )
 
 const AlbumMetacriticRejectionTargetSchema =
-  AlbumMatchRejectionInputSchema.extend({
+  AlbumMatchRejectionInputSchema.safeExtend({
     provider: z.literal('google-custom-search'),
     sourceProvider: z.enum([
       'google-custom-search',
@@ -152,6 +181,7 @@ const AlbumMetacriticRejectionTargetSchema =
       'legacy-browser',
     ]),
     referenceType: z.literal('metacritic-url'),
+    identifier: z.string().min(1).max(albumMatchIdentifierMaxLength),
   })
 
 export const AlbumMetacriticCandidatesInputSchema = z.strictObject({

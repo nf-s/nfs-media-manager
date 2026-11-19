@@ -2,15 +2,18 @@ import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { PluginLinkSchema, PluginReferenceSchema } from '@repo/media-plugin-sdk'
-import type { PaginationQuerySchema } from '@repo/schemas/common'
 import {
+  type AlbumMatchRejectionHistoryQuerySchema,
   AlbumMatchRejectionInputSchema,
   AlbumMatchRejectionSchema,
   type AlbumMatchRejection,
   type AlbumMatchRejectionInput,
   type AlbumMatchRejectionPage,
 } from '@repo/schemas/match-diagnostics'
-import { AlbumHttpUrlSchema } from '@repo/schemas/provider-identification'
+import {
+  albumMatchIdentifierMaxLength,
+  AlbumHttpUrlSchema,
+} from '@repo/schemas/provider-identification'
 import {
   albumMatchUrlHasIdentityQuery,
   createAlbumMatchRejectionPredicate,
@@ -34,9 +37,9 @@ export const albumMatchRejectionField = 'albumMatchRejection'
 
 const IdentityAliasSchema = z.object({
   referenceType: AlbumMatchRejectionInputSchema.shape.referenceType,
-  externalId: AlbumMatchRejectionInputSchema.shape.identifier,
+  externalId: z.string().min(1).max(albumMatchIdentifierMaxLength),
 })
-const StoredMatchRejectionSchema = AlbumMatchRejectionInputSchema.extend({
+const StoredMatchRejectionSchema = AlbumMatchRejectionInputSchema.safeExtend({
   aliases: z.array(IdentityAliasSchema).default([]),
 })
 type IdentityAlias = z.infer<typeof IdentityAliasSchema>
@@ -103,7 +106,11 @@ function currentMatchChanged() {
 
 export async function listAlbumMatchRejections(
   mediaItemId: string,
-  { page, size }: z.infer<typeof PaginationQuerySchema>,
+  {
+    page,
+    size,
+    longRym,
+  }: z.infer<typeof AlbumMatchRejectionHistoryQuerySchema>,
 ): Promise<AlbumMatchRejectionPage> {
   const albumRow = await db.query.album.findFirst({
     columns: { mediaItemId: true },
@@ -111,9 +118,15 @@ export async function listAlbumMatchRejections(
   })
   if (!albumRow) throw albumNotFound()
 
+  const identifier = sql`${mediaOverride.value}->>'identifier'`
+  const nonSurrogatePairs = String.raw`[^\U00010000-\U0010FFFF]`
   const where = and(
     eq(mediaOverride.mediaItemId, mediaItemId),
     eq(mediaOverride.field, albumMatchRejectionField),
+    longRym
+      ? undefined
+      : sql`length(${identifier}) +
+      length(regexp_replace(${identifier}, ${nonSurrogatePairs}, '', 'g')) <= ${albumMatchIdentifierMaxLength}`,
   )
   const [rows, totals] = await Promise.all([
     db

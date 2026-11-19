@@ -20,10 +20,7 @@ import {
   AlbumPatchSchema,
   AlbumQuerySchema,
 } from '@repo/schemas/media'
-import {
-  PaginatedDataSchema,
-  PaginationQuerySchema,
-} from '@repo/schemas/common'
+import { PaginatedDataSchema } from '@repo/schemas/common'
 import { authMiddleware } from '@/middlewares/auth'
 import {
   createOpenAPIApp,
@@ -56,6 +53,8 @@ import { getAlbumListeningSeries } from '@/services/listening-series'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { getAlbumPlaylists } from '@/services/album-playlists'
 import {
+  AlbumMatchDiagnosticsQuerySchema,
+  AlbumMatchRejectionHistoryQuerySchema,
   AlbumMatchRejectionInputSchema,
   AlbumMatchRejectionPageSchema,
   AlbumMatchRejectionSchema,
@@ -64,7 +63,6 @@ import {
   AlbumMetacriticCorrectionInputSchema,
   AlbumMetacriticCorrectionSchema,
   MatchDiagnosticsPageSchema,
-  MatchDiagnosticsQuerySchema,
 } from '@repo/schemas/match-diagnostics'
 import {
   listAlbumMatchRejections,
@@ -84,7 +82,7 @@ app.openapi(
     method: 'get',
     path: '/match-diagnostics',
     middleware: [authMiddleware()],
-    request: { query: MatchDiagnosticsQuerySchema },
+    request: { query: AlbumMatchDiagnosticsQuerySchema },
     responses: {
       200: {
         description: 'Library albums and their stored provider matches',
@@ -113,7 +111,7 @@ app.openapi(
     middleware: [authMiddleware()],
     request: {
       params: AlbumMatchRejectionParams,
-      query: PaginationQuerySchema,
+      query: AlbumMatchRejectionHistoryQuerySchema,
     },
     responses: {
       200: {

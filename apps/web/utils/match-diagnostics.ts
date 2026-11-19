@@ -45,7 +45,11 @@ export function loadAlbumMatchHistory(
   size: number,
   signal?: AbortSignal,
 ) {
-  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  const params = new URLSearchParams({
+    page: String(page),
+    size: String(size),
+    longRym: '1',
+  })
   return fetchApiData(
     apiBaseUrl,
     `${albumMatchRejectionsPath(id)}?${params}`,
@@ -98,6 +102,7 @@ export function loadMatchDiagnosticsPage(
     direction,
   })
   if (q) params.set('q', q)
+  if (library === 'album') params.set('longRym', '1')
   return fetchApiData(
     apiBaseUrl,
     `/api/v1/${library}s/match-diagnostics?${params}`,
