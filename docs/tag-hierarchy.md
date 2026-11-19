@@ -1,6 +1,6 @@
 # Tag hierarchy
 
-A tag can have parent tags. A filter on a tag also matches every visible tag beneath it, so a filter on `Rock` finds albums tagged only `shoegaze` when `shoegaze` sits under `indie rock` and `indie rock` under `Rock`. Albums and films each have their own hierarchy; a link never crosses libraries. The Tags filter in [Mixes](mixes.md#tags) reads the album hierarchy without changing it.
+A tag can have parent tags. A filter on a tag also matches every visible tag beneath it, so a filter on `Rock` finds albums tagged only `shoegaze` when `shoegaze` sits under `indie rock` and `indie rock` under `Rock`. Albums and films each have their own hierarchy; a link never crosses libraries. The Tags filters in [Artists](artists-and-people.md) and [Mixes](mixes.md#tags) read the album hierarchy without changing it.
 
 ## Using it
 

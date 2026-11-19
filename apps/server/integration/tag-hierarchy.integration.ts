@@ -3,6 +3,7 @@ import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { ArtistQuerySchema } from '@repo/schemas/creators'
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { TagListQuerySchema } from '@repo/schemas/tags'
@@ -217,6 +218,95 @@ describe('tag hierarchy', () => {
       't-rock',
       't-shoegaze',
     ])
+  })
+
+  it('matches and counts artists on a parent over every tag beneath it', async () => {
+    const profiles = {
+      'rock-artist': 'Rock',
+      'blackgaze-artist': 'Blackgaze',
+      'jazz-artist': 'Jazz',
+    }
+    for (const [artistId, tag] of Object.entries(profiles)) {
+      const trackId = `t-${artistId}`
+      await databaseClient
+        .insert(schema.mediaItem)
+        .values({
+          id: trackId,
+          slug: trackId,
+          title: trackId,
+          mediaType: 'track',
+        })
+      await databaseClient
+        .insert(schema.libraryTrack)
+        .values({ mediaItemId: trackId })
+      await databaseClient
+        .insert(schema.artist)
+        .values({ id: artistId, name: artistId })
+      await databaseClient.insert(schema.artistProviderSnapshot).values({
+        id: `${artistId}-profile`,
+        artistId,
+        provider: 'lastfm',
+        payload: {},
+        normalizedData: { tags: [tag] },
+      })
+      await databaseClient.insert(schema.artistProviderCurrentState).values({
+        artistId,
+        provider: 'lastfm',
+        latestSnapshotId: `${artistId}-profile`,
+      })
+      await databaseClient
+        .insert(schema.mediaCredit)
+        .values({ mediaItemId: trackId, artistId, role: 'artist' })
+    }
+    const { listArtistBrowsePage, countArtistBrowse, listArtistBrowseFacets } =
+      await import('@/services/artist-browse')
+    const query = (value: string, mode = 'required') =>
+      ArtistQuerySchema.parse({ filters: [{ field: 'genre', value, mode }] })
+    const artistIds = async (value: string, mode?: string) =>
+      (await listArtistBrowsePage(query(value, mode))).items
+        .map((item) => item.id)
+        .sort()
+
+    expect(await artistIds('Rock')).toEqual([
+      'blackgaze-artist',
+      'gaze-artist',
+      'rock-artist',
+    ])
+    expect(await countArtistBrowse(query('Rock'))).toEqual({ totalCount: 3 })
+    expect(await artistIds('Shoegaze')).toEqual([
+      'blackgaze-artist',
+      'gaze-artist',
+    ])
+    expect(await artistIds('Blackgaze')).toEqual(['blackgaze-artist'])
+    expect(await artistIds('Rock', 'exclude')).toEqual(['jazz-artist'])
+
+    const facets = await listArtistBrowseFacets({ limitPerField: 50 })
+    const facet = (value: string) =>
+      facets.find((row) => row.field === 'genre' && row.value === value)
+    expect(facet('rock')).toMatchObject({ count: 3, subtags: 3 })
+    expect(facet('shoegaze')).toMatchObject({ count: 2, subtags: 1 })
+    expect(facet('blackgaze')?.count).toBe(1)
+    expect(facet('jazz')?.count).toBe(1)
+    expect(facet('jazz')?.subtags).toBeUndefined()
+
+    const { setTagVisibility } = await import('@/services/tags')
+    await setTagVisibility({
+      mediaType: 'album',
+      tagIds: ['blackgaze'],
+      hidden: true,
+    })
+    expect(await artistIds('Rock')).toEqual(['gaze-artist', 'rock-artist'])
+    // Naming the hidden tag itself still finds its artists.
+    expect(await artistIds('Blackgaze')).toEqual(['blackgaze-artist'])
+    const hiddenFacets = await listArtistBrowseFacets({ limitPerField: 50 })
+    expect(
+      hiddenFacets.find((row) => row.field === 'genre' && row.value === 'rock'),
+    ).toMatchObject({ count: 2, subtags: 2 })
+    await setTagVisibility({
+      mediaType: 'album',
+      tagIds: ['blackgaze'],
+      hidden: false,
+    })
   })
 
   it('lists placed tags with parents, own counts and rolled-up counts', async () => {

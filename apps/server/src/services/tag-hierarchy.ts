@@ -59,11 +59,18 @@ export function tagAncestorRows(mediaType: TagMediaType): SQL {
       and not ${hiddenTagKey(sql`a.media_type`, sql`a.ancestor_key`)}`
 }
 
-/** Visible ancestors of normalized names that are not tag rows (artist tags). */
-export function tagAncestorKeys(mediaType: TagMediaType): SQL {
+/**
+ * Visible ancestors of normalized names that are not tag rows (artist tags).
+ * `visibleNames` leaves out hidden names, for names read without tag visibility.
+ */
+export function tagAncestorKeys(
+  mediaType: TagMediaType,
+  visibleNames = false,
+): SQL {
   return sql`select a.descendant_key, a.ancestor_key from tag_ancestor a
     where a.media_type = ${mediaType}
-      and not ${hiddenTagKey(sql`a.media_type`, sql`a.ancestor_key`)}`
+      and not ${hiddenTagKey(sql`a.media_type`, sql`a.ancestor_key`)}
+      ${visibleNames ? sql`and not ${hiddenTagKey(sql`a.media_type`, sql`a.descendant_key`)}` : sql``}`
 }
 
 const SubtagCountRowsSchema = z.array(

@@ -39,6 +39,8 @@ import {
 } from './artist-browse-listening'
 import { listeningPeriodBounds } from './browse-listening'
 import { listeningHistoryStart } from './listening-series'
+import { matchingTagNames } from './music-tags'
+import { tagAncestorKeys, visibleSubtagCounts } from './tag-hierarchy'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 
 type Query = ArtistQuery | ArtistMetadataQuery
@@ -60,7 +62,8 @@ const FacetSchema = z.object({
   value: z.string(),
   count: z.coerce.number().int().positive(),
 })
-const facetCache = createDatabaseReadCache<z.infer<typeof FacetSchema>[]>({
+type Facet = z.infer<typeof FacetSchema> & { subtags?: number }
+const facetCache = createDatabaseReadCache<Facet[]>({
   maxEntries: 4,
   maxValueBytes: 512 * 1024,
 })
@@ -128,7 +131,8 @@ function textMatch(field: string, value: string, substring = false): SQL {
   const condition = substring
     ? sql`${expression} ilike ${pattern(value)}`
     : field === 'genre'
-      ? sql`${expression} = ${normalizeTagName(value)}`
+      ? // A tag also matches the visible tags beneath it in the album hierarchy.
+        sql`${expression} in (${matchingTagNames(normalizeTagName(value), 'album')})`
       : sql`${expression} ilike ${value.replace(/[\\%_]/g, '\\$&')}`
   return sql`${id} in (select id from (${source}) matching_values where ${condition})`
 }
@@ -570,14 +574,22 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
           (word) => sql`values_for_field.value ilike ${pattern(word)}`,
         ),
       )
-      const group =
-        field.key === 'genre'
-          ? normalizedTagSql(sql`values_for_field.value`)
-          : sql`lower(values_for_field.value)`
+      // Tags are grouped by normalized name; a tag is also counted under
+      // each visible album tag above it, as its filter matches them.
+      const tags = field.key === 'genre'
+      const group = tags
+        ? sql`values_for_field.value`
+        : sql`lower(values_for_field.value)`
+      const source = tags
+        ? sql`select id, value from artist_tag_keys
+          union all
+          select artist_tag_keys.id, ancestor.ancestor_key as value from artist_tag_keys
+          join (${tagAncestorKeys('album', true)}) ancestor on ancestor.descendant_key = artist_tag_keys.value`
+        : textRows(field.key)
       return sql`(select ${field.key}::text as field, min(artist_values.value) as value, count(*)::int as count
         from (
           select ${group} as value_key, min(values_for_field.value) as value
-          from (${textRows(field.key)}) values_for_field join visible_artists a on a.id = values_for_field.id
+          from (${source}) values_for_field join visible_artists a on a.id = values_for_field.id
           where values_for_field.value is not null and values_for_field.value <> '' ${matches ? sql`and ${matches}` : sql``}
           group by value_key, a.id
         ) artist_values
@@ -586,8 +598,20 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
     })
     const result = await db.execute(sql`with visible_artists as materialized (
       select a.id from artist a where ${visibleArtist}
+    ), artist_tag_keys as materialized (
+      select id, ${normalizedTagSql(sql`value`)} as value from (${textRows('genre')}) artist_tags
     ) ${sql.join(queries, sql` union all `)}`)
-    return z.array(FacetSchema).parse(result.rows)
+    const facets: Facet[] = z.array(FacetSchema).parse(result.rows)
+    // A tag with subtags is counted over all of them; say how many there are.
+    const subtags = await visibleSubtagCounts('album', [
+      ...new Set(
+        facets.filter((row) => row.field === 'genre').map((row) => row.value),
+      ),
+    ])
+    return facets.map((row) => {
+      const count = row.field === 'genre' ? subtags.get(row.value) : undefined
+      return count === undefined ? row : { ...row, subtags: count }
+    })
   })
   return rows
     .map((row) => ({
