@@ -242,6 +242,16 @@ test('the gap filter travels in the URL and builds its request', () => {
     coverageEntriesKey(ID, query, { gap: 'missing' }).slice(0, 3),
     coverageKey('playlist', ID),
   )
+  const albumQuery: typeof query = { ...query, groupBy: 'album' }
+  const albumUrl = new URL(
+    coverageEntriesPath(ID, 1, 100, albumQuery, { gap: 'missing' }),
+    'http://localhost',
+  )
+  assert.equal(albumUrl.searchParams.get('groupBy'), 'album')
+  assert.notDeepEqual(
+    coverageEntriesKey(ID, albumQuery, { gap: 'missing' }),
+    coverageEntriesKey(ID, query, { gap: 'missing' }),
+  )
 })
 
 test('the gap options follow the Coverage lines and keep the current one', () => {
@@ -249,11 +259,11 @@ test('the gap options follow the Coverage lines and keep the current one', () =>
   assert.deepEqual(
     options.map((option) => option.label),
     [
-      'Missing: any provider',
-      'Stale: any provider',
-      'Missing: Discogs',
-      'Missing: Rate Your Music',
-      'Stale: Discogs',
+      'No successful scrape · any provider',
+      'Stale metadata · any provider',
+      'No successful scrape · Discogs',
+      'No successful scrape · Rate Your Music',
+      'Stale metadata · Discogs',
     ],
   )
   const kept = gapFilterOptions(coverage.providers, {
@@ -295,15 +305,15 @@ test('a selection offers each provider by the albums it would fill', () => {
   assert.deepEqual(selectionGaps([{}]), [])
 })
 
-test('Show switches between all entries and Missing data with its gap', () => {
+test('Show switches between all entries and a specified metadata gap', () => {
   const all = wrap(
     <GapFilterControls playlistId={ID} filter={null} onChange={() => {}} />,
     client(),
   )
   assert.match(all, /role="group" aria-label="Show"/)
   assert.match(all, /aria-pressed="true"[^>]*>All</)
-  assert.match(all, /aria-pressed="false"[^>]*>Missing data</)
-  assert.doesNotMatch(all, /aria-label="Gap"/)
+  assert.match(all, /aria-pressed="false"[^>]*>Metadata gaps</)
+  assert.doesNotMatch(all, /aria-label="Metadata gap"/)
   const gaps = wrap(
     <GapFilterControls
       playlistId={ID}
@@ -312,11 +322,11 @@ test('Show switches between all entries and Missing data with its gap', () => {
     />,
     client(),
   )
-  assert.match(gaps, /aria-pressed="true"[^>]*>Missing data</)
-  assert.match(gaps, /<select class="ds-select" aria-label="Gap"/)
+  assert.match(gaps, /aria-pressed="true"[^>]*>Metadata gaps</)
+  assert.match(gaps, /<select class="ds-select" aria-label="Metadata gap"/)
   assert.match(
     gaps,
-    /<option value="missing:discogs" selected="">Missing: Discogs</,
+    /<option value="missing:discogs" selected="">No successful scrape · Discogs</,
   )
 })
 
@@ -332,7 +342,7 @@ test('the selection bar names the gap and lists the providers that fill it', () 
   )
   assert.match(html, /class="ds-selectbar sec-selectbar"/)
   assert.match(html, /<b>2 selected<\/b>/)
-  assert.doesNotMatch(html, /class="ds-muted">missing/)
+  assert.doesNotMatch(html, /class="ds-muted">No successful/)
   // Rate Your Music fills more albums but needs credentials, so the
   // provider list opens on Discogs.
   assert.match(html, /<select class="ds-select" aria-label="Provider"/)
@@ -358,7 +368,7 @@ test('the selection bar names the gap and lists the providers that fill it', () 
     client(),
   )
   assert.match(one, /<b>1 selected<\/b>/)
-  assert.match(one, /class="ds-muted">stale Discogs</)
+  assert.match(one, /class="ds-muted">Stale Discogs metadata</)
   assert.match(one, /data-variant="primary">Refresh from Discogs</)
   const none = wrap(
     <GapSelection
@@ -401,15 +411,18 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
     },
   ])
   const html = wrap(<AppDetailInspector />, queries, search.toString())
-  assert.match(html, /<h3>Tracks<\/h3>/)
-  assert.match(html, /aria-pressed="true"[^>]*>Missing data</)
-  assert.match(html, /2 entries · 2 albums missing/)
+  assert.match(html, /<h3>Contents<\/h3>/)
+  assert.match(html, /aria-pressed="true"[^>]*>Metadata gaps</)
+  assert.match(
+    html,
+    /2 entries · 2 library albums without a successful scrape from at least one provider/,
+  )
   const table = html.match(
     /<table class="ds-table" aria-label="Playlist tracks"[\s\S]*?<\/table>/,
   )?.[0]
   assert.ok(table, 'gap table')
   assert.match(table, /<th[^>]*><span class="sr-only">Select<\/span>/)
-  assert.match(table, /<th[^>]*>Missing<\/th>/)
+  assert.match(table, /<th[^>]*>No successful scrape<\/th>/)
   assert.match(table, /aria-label="Select Opening track"/)
   assert.match(
     table,
@@ -417,7 +430,10 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
   )
   // Coverage is its own tab; Overview keeps only the track list's filter.
   assert.doesNotMatch(html, /<h3>Coverage<\/h3>/)
-  assert.doesNotMatch(html, /aria-label="Show the entries missing Discogs"/)
+  assert.doesNotMatch(
+    html,
+    /aria-label="Show entries for 1 library album with no successful Discogs scrape"/,
+  )
 })
 
 test('the playlist drawer lists Coverage as a tab between Listening and Sources', async () => {
@@ -449,12 +465,15 @@ test('Coverage counts open the Overview tracks filtered to the gap', () => {
   )
   assert.match(
     html,
-    /data-variant="link"[^>]*aria-label="Show the entries missing Discogs"[^>]*>1 missing</,
+    /data-variant="link"[^>]*aria-label="Show entries for 1 library album with no successful Discogs scrape"[^>]*>1 without a successful scrape</,
   )
-  assert.match(html, /aria-label="Queue 1 missing for Discogs"[^>]*>Queue</)
   assert.match(
     html,
-    /aria-label="Show the entries with stale Discogs"[^>]*>1 stale</,
+    /aria-label="Queue Discogs scrapes for 1 library album"[^>]*>Queue</,
+  )
+  assert.match(
+    html,
+    /aria-label="Show entries for 1 library album with stale Discogs metadata"[^>]*>1 stale</,
   )
   const params = gapFilterParams(
     new URLSearchParams({ playlist: ID, tab: 'coverage', coverage: 'albums' }),
@@ -503,7 +522,7 @@ test('a gap review is tied to the rows it was opened with', () => {
   assert.notEqual(gapSelectionKey([first]), gapSelectionKey([]))
 })
 
-test('Missing data shows the table, where rows can be selected, whatever the chosen view', async () => {
+test('Metadata gaps show the table, where rows can be selected, whatever the chosen view', async () => {
   const { AppDetailInspector } = await import('./detail-inspector')
   const queries = client()
   queries.setQueryData(['playlist', ID], playlist)

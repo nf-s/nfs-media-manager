@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   PlaylistBrowsePageSchema,
   PlaylistBrowseQuerySchema,
+  PlaylistPresentationSchema,
   PlaylistSummarySchema,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   type PlaylistBrowseQuery,
@@ -42,6 +43,7 @@ const PlaylistRowsSchema = z.array(
     track_count: z.number().int(),
     linked_track_count: z.number().int(),
     album_count: z.number().int(),
+    presentation: PlaylistPresentationSchema,
     duration_sec: z.coerce.number().int(),
   }),
 )
@@ -49,15 +51,15 @@ const PlaylistRowsSchema = z.array(
 const optionalDate = (value: string | null) => (value ? new Date(value) : null)
 
 export const playlistAlbumMembers = sql`
-  select pi.media_item_id as album_id from playlist_item pi
+  select pi.media_item_id as album_id, pi.position, pi.added_at from playlist_item pi
   join album a on a.media_item_id = pi.media_item_id
   where pi.playlist_id = p.id
   union all
-  select lt.album_media_item_id from playlist_item pi
+  select lt.album_media_item_id, pi.position, pi.added_at from playlist_item pi
   join library_track lt on lt.media_item_id = pi.media_item_id
   where pi.playlist_id = p.id and lt.album_media_item_id is not null
   union all
-  select t.album_media_item_id from playlist_item pi
+  select t.album_media_item_id, pi.position, pi.added_at from playlist_item pi
   join track t on t.track_media_item_id = pi.media_item_id
   where pi.playlist_id = p.id
 `
@@ -72,6 +74,73 @@ const playlistTrackStats = sql`
   join library_track lt on lt.media_item_id = pi.media_item_id
   where pi.playlist_id = p.id
 `
+
+// Require at least two recordings, even if every track from a single is present.
+const nearCompleteAlbum = (matches: SQL, length: SQL) =>
+  sql`(${matches} >= 2 and (${matches} >= ${length} - 1 or ${matches} * 5 >= ${length} * 4))`
+
+// Stored positions and exact Spotify release links both support completeness.
+// An exact release with no known length must form a cluster in playlist order.
+// A direct album membership contributes its tracks or one album entry.
+const playlistPresentation = sql`case when p.source = 'spotify-liked' then 'tracks' else (
+  with playlist_tracks as (
+    select lt.media_item_id as track_id, lt.album_media_item_id as album_id,
+      case when lt.album_link_strategy = 'spotify-album' then lt.spotify_album_id end as release_id,
+      row_number() over (order by pi.position, pi.media_item_id) as playlist_order
+    from playlist_item pi join library_track lt on lt.media_item_id = pi.media_item_id
+    where pi.playlist_id = p.id
+  ), direct_albums as (
+    select a.media_item_id as album_id
+    from playlist_item pi join album a on a.media_item_id = pi.media_item_id
+    where pi.playlist_id = p.id
+  ), stored_members as (
+    select t.album_media_item_id as album_id, t.track_media_item_id as track_id
+    from playlist_tracks pt join track t on t.track_media_item_id = pt.track_id
+  ), album_lengths as (
+    select a.media_item_id as album_id,
+      greatest(a.track_count, count(t.id)) as expected
+    from album a left join track t on t.album_media_item_id = a.media_item_id
+    where a.media_item_id in (
+      select album_id from stored_members
+      union
+      select album_id from playlist_tracks where release_id is not null
+    )
+    group by a.media_item_id
+  ), qualifying_lists as (
+    select m.album_id
+    from stored_members m join album_lengths l using (album_id)
+    group by m.album_id, l.expected
+    having ${nearCompleteAlbum(sql`count(distinct m.track_id)`, sql`l.expected`)}
+  ), qualifying_releases as (
+    select pt.album_id, pt.release_id
+    from playlist_tracks pt join album_lengths l using (album_id)
+    where pt.release_id is not null
+    group by pt.album_id, pt.release_id, l.expected
+    having case when l.expected > 0 then ${nearCompleteAlbum(sql`count(*)`, sql`l.expected`)}
+      else count(*) >= 5 and count(*) * 5 >= (max(pt.playlist_order) - min(pt.playlist_order) + 1) * 4
+      end
+  ), covered_tracks as (
+    select track_id from playlist_tracks where album_id in (select album_id from direct_albums)
+    union
+    select track_id from stored_members where album_id in (
+      select album_id from direct_albums union select album_id from qualifying_lists
+    )
+    union
+    select pt.track_id from playlist_tracks pt join qualifying_releases r using (album_id, release_id)
+  ), direct_album_stats as (
+    select count(*) as unrepresented
+    from direct_albums a
+    where not exists (select 1 from playlist_tracks pt where pt.album_id = a.album_id)
+      and not exists (select 1 from stored_members m where m.album_id = a.album_id)
+  )
+  select case
+    when stats.track_count + direct.unrepresented > 0
+      and ((select count(*) from covered_tracks) + direct.unrepresented) * 5
+        >= (stats.track_count + direct.unrepresented) * 4 then 'albums'
+    else 'tracks'
+  end
+  from direct_album_stats direct
+) end`
 
 const visiblePlaylists = sql`p.kind = 'playlist' and (p.source is not null or exists (${playlistAlbumMembers}))`
 const playlistCanAcceptAdditions = sql`(p.source = 'spotify' and p.spotify_id is not null and p.spotify_editable)`
@@ -166,7 +235,8 @@ export async function loadPlaylistSummaries(
           ${isoTimestamp(sql`p.checked_at`)} as checked_at,
           p.sync_schedule, p.spotify_editable,
           stats.track_count, stats.linked_track_count, stats.duration_sec,
-          ${playlistAlbumCount} as album_count
+          ${playlistAlbumCount} as album_count,
+          ${playlistPresentation} as presentation
         from playlist p
         cross join lateral (${playlistTrackStats}) stats
         where p.id in (${sql.join(
@@ -201,6 +271,7 @@ export async function loadPlaylistSummaries(
       trackCount: row.track_count,
       linkedTrackCount: row.linked_track_count,
       albumCount: row.album_count,
+      presentation: row.presentation,
       durationSec: row.duration_sec,
       acceptsAdditions:
         row.source === 'spotify' &&

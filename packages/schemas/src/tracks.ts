@@ -424,6 +424,9 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
 export const PlaylistSourceSchema = z.enum(['spotify', 'spotify-liked'])
 export type PlaylistSource = z.infer<typeof PlaylistSourceSchema>
 
+export const PlaylistPresentationSchema = z.enum(['albums', 'tracks'])
+export type PlaylistPresentation = z.infer<typeof PlaylistPresentationSchema>
+
 export const PlaylistSummarySchema = z.object({
   /** When this playlist was first added to this library, not saved on Spotify. */
   createdAt: z.string().datetime().nullable().default(null),
@@ -442,6 +445,8 @@ export const PlaylistSummarySchema = z.object({
   linkedTrackCount: z.number().int().nonnegative(),
   /** Library albums in the playlist, directly or through a linked track. */
   albumCount: z.number().int().nonnegative(),
+  /** Default view based on the stored playlist membership. */
+  presentation: PlaylistPresentationSchema.default('tracks'),
   durationSec: z.number().int().nonnegative(),
   /** An imported Spotify playlist the account owns or collaborates on; albums can be added to it. */
   acceptsAdditions: z.boolean().default(false),
@@ -537,6 +542,8 @@ const PlaylistKindsParamSchema = z.preprocess(
 )
 
 export const PlaylistDetailQuerySchema = PaginationQuerySchema.extend({
+  /** Collapse library album memberships to one entry per album. */
+  groupBy: z.literal('album').optional(),
   q: z.string().trim().max(200).optional(),
   kind: z.enum(['track', 'album']).optional(),
   kinds: PlaylistKindsParamSchema,
@@ -546,7 +553,7 @@ export const PlaylistDetailQuerySchema = PaginationQuerySchema.extend({
 })
 export type PlaylistDetailQuery = z.infer<typeof PlaylistDetailQuerySchema>
 
-/** An album member of a playlist from the legacy album import. */
+/** A library album represented in a playlist. */
 export const PlaylistAlbumSchema = z.object({
   id: z.string(),
   title: z.string(),

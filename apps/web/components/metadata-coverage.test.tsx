@@ -123,7 +123,12 @@ test('Coverage shows each provider with its gap actions and unavailable reason',
   for (const kind of ['playlist', 'artist'] satisfies MetadataCoverageKind[]) {
     const html = render(kind, coverage)
     assert.match(html, /<h3>Coverage<\/h3>/)
-    assert.match(html, /42 albums · stale after 180 days/)
+    assert.match(
+      html,
+      kind === 'playlist'
+        ? /42 library albums · last successful scrape · stale after 180 days/
+        : /42 albums · stale after 180 days/,
+    )
     assert.match(html, /class="ds-mark" title="Discogs">DI</)
     assert.match(html, /36 of 40/)
     assert.match(html, />Queue 2 missing</)
@@ -132,7 +137,7 @@ test('Coverage shows each provider with its gap actions and unavailable reason',
     assert.match(html, /Complete/)
     assert.match(html, /data-status="attention">Credentials required</)
     assert.doesNotMatch(html, /Queue 32 missing/)
-    assert.match(html, /2 albums need an identifier first/)
+    assert.match(html, /2 (?:library )?albums need an identifier first/)
   }
 })
 
@@ -140,18 +145,57 @@ test('with a track list, the gap counts link to it beside Queue and Refresh', ()
   const html = render('playlist', coverage, false, () => {})
   assert.match(
     html,
-    /data-variant="link"[^>]*aria-label="Show the entries missing Discogs"[^>]*>2 missing</,
+    /data-variant="link"[^>]*aria-label="Show entries for 2 library albums with no successful Discogs scrape"[^>]*>2 without a successful scrape</,
   )
-  assert.match(html, /aria-label="Queue 2 missing for Discogs"[^>]*>Queue</)
   assert.match(
     html,
-    /aria-label="Show the entries with stale Discogs"[^>]*>2 stale</,
+    /aria-label="Queue Discogs scrapes for 2 library albums"[^>]*>Queue</,
   )
-  assert.match(html, /aria-label="Refresh 2 stale for Discogs"[^>]*>Refresh</)
+  assert.match(
+    html,
+    /aria-label="Show entries for 2 library albums with stale Discogs metadata"[^>]*>2 stale</,
+  )
+  assert.match(
+    html,
+    /aria-label="Refresh Discogs metadata for 2 library albums"[^>]*>Refresh</,
+  )
   // An unavailable provider's gap can still be shown, not queued.
-  assert.match(html, /aria-label="Show the entries missing Rate Your Music"/)
-  assert.doesNotMatch(html, /Queue 32 missing for Rate Your Music/)
+  assert.match(
+    html,
+    /aria-label="Show entries for 32 library albums with no successful Rate Your Music scrape"/,
+  )
+  assert.doesNotMatch(
+    html,
+    /Queue Rate Your Music scrapes for 32 library albums/,
+  )
   assert.doesNotMatch(render('artist', coverage), /data-variant="link"/)
+})
+
+test('Spotify scrape coverage distinguishes albums in the library from albums with no scrape', () => {
+  const data = CoverageSchema.parse({
+    total: 2,
+    olderThanDays: 180,
+    providers: [
+      {
+        provider: 'spotify',
+        displayName: 'Spotify',
+        eligible: 2,
+        covered: 0,
+        stale: 0,
+        missing: 2,
+        unavailableReason: null,
+        missingItemIds: ['album-1', 'album-2'],
+        staleItemIds: [],
+      },
+    ],
+  })
+  const html = render('playlist', data, false, () => {})
+  assert.match(html, /2 library albums · last successful scrape/)
+  assert.match(html, /0 of 2/)
+  assert.match(
+    html,
+    /aria-label="Show entries for 2 library albums with no successful Spotify scrape"[^>]*>2 without a successful scrape</,
+  )
 })
 
 test('a review of selected rows states the first 100 of the selected albums', () => {
@@ -167,7 +211,10 @@ test('a review of selected rows states the first 100 of the selected albums', ()
     />,
   )
   assert.match(html, /Queue 100 metadata jobs for Discogs/)
-  assert.match(html, /100 albums never fetched \(the first 100 of 120\)/)
+  assert.match(
+    html,
+    /100 albums without a successful scrape \(the first 100 of 120\)/,
+  )
 })
 
 test('Coverage shows a skeleton, empty states and a retryable error', () => {
@@ -195,7 +242,7 @@ test('the review states the provider and the number of jobs and flags a broad ru
   )
   assert.match(small, /aria-label="Review metadata jobs"/)
   assert.match(small, /Queue 2 metadata jobs for Discogs/)
-  assert.match(small, /2 albums never fetched/)
+  assert.match(small, /2 albums without a successful scrape/)
   assert.match(small, />Confirm 2 metadata jobs</)
   assert.match(small, />Cancel</)
   assert.doesNotMatch(small, /data-tone="attention"/)
@@ -339,8 +386,14 @@ test('a playlist Coverage switches between its albums and its artists', () => {
   assert.match(albums, /role="group" aria-label="Coverage of"/)
   assert.match(albums, /aria-pressed="true"[^>]*>Albums</)
   assert.match(albums, /aria-pressed="false"[^>]*>Artists</)
-  assert.match(albums, /42 albums · stale after 180 days/)
-  assert.match(albums, /aria-label="Show the entries missing Discogs"/)
+  assert.match(
+    albums,
+    /42 library albums · last successful scrape · stale after 180 days/,
+  )
+  assert.match(
+    albums,
+    /aria-label="Show entries for 2 library albums with no successful Discogs scrape"/,
+  )
 
   const artists = renderPlaylistCoverage('artists', [
     [artistCoverageKey('set-1'), artistCoverage],

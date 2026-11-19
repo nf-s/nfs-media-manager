@@ -824,6 +824,218 @@ describe('Spotify playlist imports', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('detects album playlists from stored positions, release groups and direct members', async () => {
+    const ep = ['ep-one', 'ep-two', 'ep-three']
+    const album = [
+      'side-one',
+      'side-two',
+      'side-three',
+      'side-four',
+      'side-five',
+    ]
+    const unfetched = [
+      'unknown-one',
+      'unknown-two',
+      'unknown-three',
+      'unknown-four',
+      'unknown-five',
+    ]
+    const secondUnfetched = unfetched.map((id) => `second-${id}`)
+    const loose = ['loose-one', 'loose-two', 'loose-three', 'loose-four']
+    const releases = [
+      { id: 'short-ep', recordings: ep, stored: true },
+      { id: 'complete-album', recordings: album, stored: true },
+      { id: 'single', recordings: ['single-track'], stored: true },
+      { id: 'unfetched-album', recordings: unfetched, stored: false },
+      {
+        id: 'second-unfetched-album',
+        recordings: secondUnfetched,
+        stored: false,
+      },
+    ]
+    await databaseClient.insert(schema.mediaItem).values([
+      ...releases.map(({ id }): typeof schema.mediaItem.$inferInsert => ({
+        id,
+        slug: id,
+        title: id,
+        mediaType: 'album',
+      })),
+      ...[...releases.flatMap(({ recordings }) => recordings), ...loose].map(
+        (id): typeof schema.mediaItem.$inferInsert => ({
+          id,
+          slug: id,
+          title: id,
+          mediaType: 'track',
+        }),
+      ),
+    ])
+    await databaseClient.insert(schema.album).values(
+      releases.map(({ id, recordings, stored }) => ({
+        mediaItemId: id,
+        trackCount: stored ? recordings.length : 0,
+      })),
+    )
+    await databaseClient.insert(schema.libraryTrack).values([
+      ...releases.flatMap(({ id, recordings, stored }) =>
+        recordings.map((mediaItemId) => ({
+          mediaItemId,
+          albumMediaItemId: mediaItemId === 'ep-one' ? null : id,
+          spotifyAlbumId: stored ? null : spotifyId(id.replaceAll('-', '')),
+          albumLinkStrategy:
+            mediaItemId === 'ep-one'
+              ? null
+              : stored
+                ? 'album-track-list'
+                : 'spotify-album',
+        })),
+      ),
+      ...loose.map((mediaItemId) => ({ mediaItemId })),
+    ])
+    await databaseClient.insert(schema.track).values(
+      releases
+        .filter(({ stored }) => stored)
+        .flatMap(({ id, recordings }) =>
+          recordings.map((trackId, position) => ({
+            id: `${id}-${position}`,
+            albumMediaItemId: id,
+            trackMediaItemId: trackId,
+            title: trackId,
+            position,
+          })),
+        ),
+    )
+    const examples = [
+      { id: 'EP missing one', members: ep.slice(0, 2), expected: 'albums' },
+      {
+        id: 'Near-complete album with one extra',
+        members: [...album.slice(0, 4), ...loose.slice(0, 1)],
+        expected: 'albums',
+      },
+      {
+        id: 'Album inside a mix',
+        members: [...album, ...loose],
+        expected: 'tracks',
+      },
+      {
+        id: 'Singles and partial albums',
+        members: ['single-track', ...album.slice(0, 3)],
+        expected: 'tracks',
+      },
+      {
+        id: 'Legacy album members',
+        members: ['complete-album', 'single'],
+        source: null,
+        expected: 'albums',
+      },
+      {
+        id: 'Legacy album collection with one extra track',
+        members: [...releases.map(({ id }) => id), ...loose.slice(0, 1)],
+        expected: 'albums',
+      },
+      {
+        id: 'Legacy albums already counted through tracks',
+        members: [
+          'short-ep',
+          'unfetched-album',
+          'single',
+          ...ep.slice(0, 1),
+          ...unfetched.slice(0, 1),
+          ...loose.slice(0, 1),
+        ],
+        expected: 'tracks',
+      },
+      {
+        id: 'Clusters from unfetched releases',
+        members: [...unfetched, ...secondUnfetched],
+        expected: 'albums',
+      },
+      {
+        id: 'Few tracks from an unfetched release',
+        members: unfetched.slice(0, 4),
+        expected: 'tracks',
+      },
+      {
+        id: 'Interleaved unfetched releases',
+        members: unfetched.flatMap((id, position) => [
+          id,
+          ...secondUnfetched.slice(position, position + 1),
+        ]),
+        expected: 'tracks',
+      },
+      {
+        id: 'Liked Songs with full album',
+        members: album,
+        source: 'spotify-liked',
+        expected: 'tracks',
+      },
+      { id: 'Empty', members: [], expected: 'tracks' },
+    ]
+    await databaseClient.insert(schema.playlist).values(
+      examples.map(({ id, source }) => ({
+        id,
+        name: id,
+        kind: 'playlist',
+        source: source === undefined ? 'spotify' : source,
+      })),
+    )
+    await databaseClient.insert(schema.playlistItem).values(
+      examples.flatMap(({ id, members }) =>
+        members.map((mediaItemId, position) => ({
+          playlistId: id,
+          mediaItemId,
+          position,
+        })),
+      ),
+    )
+
+    const summaries = new Map(
+      (await listPlaylists()).map(({ id, presentation }) => [id, presentation]),
+    )
+    for (const { id, expected } of examples)
+      expect(summaries.get(id), id).toBe(expected)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('uses a known Spotify release length when only a separate album position is stored', async () => {
+    const releaseId = spotifyId('partialrelease')
+    await addAlbum('partial-track-list', 'Partial Track List', {
+      spotifyAlbumId: releaseId,
+      tracks: ['Separate Legacy Position'],
+    })
+    await databaseClient
+      .update(schema.album)
+      .set({ trackCount: 5 })
+      .where(eq(schema.album.mediaItemId, 'partial-track-list'))
+
+    const releaseTracks = Array.from({ length: 4 }, (_, index) =>
+      track(`partial${index}`, {
+        album: 'Partial Track List',
+        albumId: releaseId,
+      }),
+    )
+    entries[OWNED] = releaseTracks
+    entries[SHARED] = releaseTracks.slice(0, 3)
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning'), chosen(SHARED, 'Shared')],
+      likedSongs: false,
+    })
+
+    expect(await listPlaylists()).toMatchObject([
+      {
+        name: 'Morning',
+        trackCount: 4,
+        linkedTrackCount: 4,
+        presentation: 'albums',
+      },
+      {
+        name: 'Shared',
+        trackCount: 3,
+        linkedTrackCount: 3,
+        presentation: 'tracks',
+      },
+    ])
+  })
+
   it('lists the account playlists in a job and marks the ones Spotify lets it read', async () => {
     const listed = await listAll()
     expect(listed.total).toBe(3)
@@ -1866,6 +2078,108 @@ describe('Spotify playlist imports', () => {
     await expect(
       getPlaylistDetail('missing', detailQuery()),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  })
+
+  it('groups playlist entries by library album before searching, sorting and paging', async () => {
+    await addAlbum('zebra-album', 'Zebra Album')
+    await addAlbum('alpha-album', 'Alpha Album')
+    await addAlbum('legacy-release', 'Library % Album')
+    await databaseClient.insert(schema.artist).values({
+      id: 'alpha-artist',
+      name: 'Quiet Hours',
+    })
+    await databaseClient.insert(schema.mediaCredit).values({
+      mediaItemId: 'alpha-album',
+      artistId: 'alpha-artist',
+      role: 'artist',
+    })
+    const trackIds = ['first-track', 'second-track', 'unlinked-track']
+    await databaseClient
+      .insert(schema.mediaItem)
+      .values(
+        trackIds.map((id) => ({ id, slug: id, title: id, mediaType: 'track' })),
+      )
+    await databaseClient.insert(schema.libraryTrack).values([
+      { mediaItemId: 'first-track', albumMediaItemId: 'zebra-album' },
+      { mediaItemId: 'second-track', albumMediaItemId: 'zebra-album' },
+      {
+        mediaItemId: 'unlinked-track',
+        albumName: 'Outside Release',
+        spotifyAlbumId: spotifyId('outside'),
+      },
+    ])
+    await databaseClient.insert(schema.track).values({
+      id: 'alpha-track-1',
+      albumMediaItemId: 'alpha-album',
+      trackMediaItemId: 'second-track',
+      title: 'second-track',
+      position: 1,
+    })
+    const playlistId = 'fixture-album-entries'
+    await databaseClient.insert(schema.playlist).values({
+      id: playlistId,
+      name: 'Album Entries',
+      kind: 'playlist',
+    })
+    const firstAdded = new Date('2024-03-01T10:00:00Z')
+    await databaseClient.insert(schema.playlistItem).values([
+      {
+        playlistId,
+        mediaItemId: 'first-track',
+        position: 2,
+        addedAt: firstAdded,
+      },
+      {
+        playlistId,
+        mediaItemId: 'second-track',
+        position: 4,
+        addedAt: new Date('2023-01-01T00:00:00Z'),
+      },
+      { playlistId, mediaItemId: 'unlinked-track', position: 5 },
+      { playlistId, mediaItemId: 'zebra-album', position: 7 },
+      { playlistId, mediaItemId: 'legacy-release', position: 10 },
+    ])
+
+    const raw = await getPlaylistDetail(playlistId, detailQuery())
+    expect(
+      raw.items.items.map((entry) => [entry.kind, entry.position]),
+    ).toEqual([
+      ['track', 2],
+      ['track', 4],
+      ['track', 5],
+      ['album', 7],
+      ['album', 10],
+    ])
+    const grouped = (input: Record<string, unknown> = {}) =>
+      getPlaylistDetail(playlistId, detailQuery({ groupBy: 'album', ...input }))
+    const first = await grouped({ size: 1 })
+    expect(first.items).toMatchObject({
+      totalCount: 3,
+      pageCount: 3,
+      items: [
+        {
+          kind: 'album',
+          position: 2,
+          addedAt: firstAdded.toISOString(),
+          album: { id: 'zebra-album' },
+        },
+      ],
+    })
+    expect((await grouped({ page: 2, size: 1 })).items.items).toMatchObject([
+      { kind: 'album', position: 4, album: { id: 'alpha-album' } },
+    ])
+    expect(
+      (await grouped({ sortBy: 'title', size: 1 })).items.items,
+    ).toMatchObject([{ kind: 'album', album: { id: 'alpha-album' } }])
+    expect((await grouped({ q: 'quiet hours' })).items.items).toMatchObject([
+      { kind: 'album', album: { id: 'alpha-album' } },
+    ])
+    expect((await grouped({ q: '%' })).items.items).toMatchObject([
+      { kind: 'album', album: { id: 'legacy-release' } },
+    ])
+    expect((await grouped({ q: 'outside release' })).items.totalCount).toBe(0)
+    expect((await grouped({ kinds: ['track'] })).items.totalCount).toBe(0)
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('adds an imported track once, stores job status and refreshes playlist membership', async () => {

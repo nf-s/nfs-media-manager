@@ -138,6 +138,26 @@
   }
 }
 
+/* A desktop inspector can be narrower than the playlist controls. */
+.dtl-playlist-contents .ds-section-head,
+.dtl-playlist-contents .ds-section-aside {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.dtl-playlist-contents .ds-section-aside {
+  max-width: 100%;
+  justify-content: flex-end;
+}
+.dtl-playlist-contents .ds-section-aside select {
+  max-width: 100%;
+}
+.dtl-playlist-contents .ds-toolbar-count {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* Bounded scroll areas for long tables inside an overview */
 .dtl-entries {
   max-height: min(calc(var(--ds-row) * 16), 70dvh);

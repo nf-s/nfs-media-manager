@@ -54,6 +54,7 @@ const nouns: Record<CoverageSubject, { one: string; other: string }> = {
   albums: { one: 'album', other: 'albums' },
   artists: { one: 'artist', other: 'artists' },
 }
+const libraryAlbumNoun = { one: 'library album', other: 'library albums' }
 const skipRules: Record<CoverageSubject, string> = {
   albums:
     'Albums fetched since, with an active job or that the provider cannot look up are skipped.',
@@ -141,7 +142,9 @@ export function CoverageReview({
         </strong>{' '}
         ·{' '}
         {gap === 'missing'
-          ? `${items} never fetched`
+          ? subject === 'albums'
+            ? `${items} without a successful scrape`
+            : `${items} never fetched`
           : `${items} last fetched over ${formatCount(olderThanDays)} days ago`}
         {count > ids.length &&
           ` (the first ${formatCount(ids.length)} of ${formatCount(count)})`}
@@ -350,6 +353,7 @@ function CoverageSection({
   state,
   showGap,
   aside,
+  playlistAlbums = false,
 }: {
   coverage: UseQueryResult<CoverageData>
   subject: CoverageSubject
@@ -360,16 +364,17 @@ function CoverageSection({
     count: number,
   ) => ReactNode
   aside?: ReactNode
+  playlistAlbums?: boolean
 }) {
   const data = coverage.data
-  const noun = nouns[subject]
+  const noun = playlistAlbums ? libraryAlbumNoun : nouns[subject]
   const { queue } = state
   return (
     <Section
       title="Coverage"
       note={
         data &&
-        `${formatItemCount(data.total, noun)} · stale after ${formatCount(data.olderThanDays)} days`
+        `${formatItemCount(data.total, noun)}${playlistAlbums ? ' · last successful scrape' : ''} · stale after ${formatCount(data.olderThanDays)} days`
       }
       aside={aside}
     >
@@ -461,7 +466,11 @@ function CoverageSection({
                               <Button
                                 size="xs"
                                 disabled={queue.isPending}
-                                aria-label={`Queue ${formatCount(provider.missing)} missing for ${provider.displayName}`}
+                                aria-label={
+                                  playlistAlbums
+                                    ? `Queue ${provider.displayName} scrapes for ${formatItemCount(provider.missing, noun)}`
+                                    : `Queue ${formatCount(provider.missing)} missing for ${provider.displayName}`
+                                }
                                 onClick={() =>
                                   state.open(
                                     coverageRequest(provider, 'missing'),
@@ -481,7 +490,11 @@ function CoverageSection({
                                 size="xs"
                                 variant="ghost"
                                 disabled={queue.isPending}
-                                aria-label={`Refresh ${formatCount(provider.stale)} stale for ${provider.displayName}`}
+                                aria-label={
+                                  playlistAlbums
+                                    ? `Refresh ${provider.displayName} metadata for ${formatItemCount(provider.stale, noun)}`
+                                    : `Refresh ${formatCount(provider.stale)} stale for ${provider.displayName}`
+                                }
                                 onClick={() =>
                                   state.open(coverageRequest(provider, 'stale'))
                                 }
@@ -526,6 +539,7 @@ export function MetadataCoverage({
     <CoverageSection
       coverage={coverage}
       subject="albums"
+      playlistAlbums={kind === 'playlist'}
       state={state}
       aside={aside}
       showGap={
@@ -534,10 +548,15 @@ export function MetadataCoverage({
           <Button
             size="xs"
             variant="link"
-            aria-label={`Show the entries ${gap === 'missing' ? 'missing' : 'with stale'} ${provider.displayName}`}
+            aria-label={
+              gap === 'missing'
+                ? `Show entries for ${formatItemCount(count, libraryAlbumNoun)} with no successful ${provider.displayName} scrape`
+                : `Show entries for ${formatItemCount(count, libraryAlbumNoun)} with stale ${provider.displayName} metadata`
+            }
             onClick={() => onShowGap(provider, gap)}
           >
-            {formatCount(count)} {gap}
+            {formatCount(count)}{' '}
+            {gap === 'missing' ? 'without a successful scrape' : 'stale'}
           </Button>
         ))
       }

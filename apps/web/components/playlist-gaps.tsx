@@ -10,7 +10,6 @@ import {
   gapActionLabel,
   gapFilterOptions,
   gapFilterValue,
-  gapLabels,
   gapVerbs,
   parseGapFilterValue,
   selectionGaps,
@@ -28,7 +27,7 @@ import type { IndexedTrackEntry } from './track-entries-table'
 
 type Show = 'all' | 'gaps'
 
-/** All entries or Missing data, and which gap Missing data shows. */
+/** All entries or a specific metadata gap. */
 export function GapFilterControls({
   playlistId,
   filter,
@@ -43,7 +42,7 @@ export function GapFilterControls({
     <>
       {filter && (
         <Select
-          aria-label="Gap"
+          aria-label="Metadata gap"
           value={gapFilterValue(filter)}
           onChange={(event) => {
             const next = parseGapFilterValue(event.target.value)
@@ -64,7 +63,7 @@ export function GapFilterControls({
         value={filter ? 'gaps' : 'all'}
         options={[
           { value: 'all', label: 'All' },
-          { value: 'gaps', label: 'Missing data' },
+          { value: 'gaps', label: 'Metadata gaps' },
         ]}
         onChange={(show) =>
           onChange(show === 'all' ? null : (filter ?? { gap: 'missing' }))
@@ -131,7 +130,9 @@ export function GapSelection({
         <SecondaryTableSelectionBar selectedCount={rows.length}>
           {active && gaps.length === 1 && (
             <span className="ds-muted">
-              {gapLabels[filter.gap].toLowerCase()} {active.displayName}
+              {filter.gap === 'missing'
+                ? `No successful ${active.displayName} scrape`
+                : `Stale ${active.displayName} metadata`}
             </span>
           )}
           <span className="ds-actions ds-toolbar-end">

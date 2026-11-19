@@ -47,7 +47,7 @@ import {
   removeOrphanTracks,
 } from './album-library-tracks'
 import { artistTagsExpression } from './music-tags'
-import { getPlaylistSummary } from './playlist-directory'
+import { getPlaylistSummary, playlistAlbumMembers } from './playlist-directory'
 import { setPlaylistSyncSchedule } from './spotify-playlist-sync'
 
 const isoTimestamp = (column: SQL) =>
@@ -418,6 +418,16 @@ async function loadPlaylistAlbums(ids: string[]) {
   )
 }
 
+const playlistEntryArtistsSort = sql`(select lower(string_agg(artist.name, ', ' order by c.billing_order, artist.name))
+  from media_credit c join artist on artist.id = c.artist_id
+  where c.media_item_id = mi.id and c.role = 'artist')`
+
+function playlistEntrySearch(pattern: string) {
+  return sql`mi.title ilike ${pattern}
+    or exists (select 1 from media_credit c join artist on artist.id = c.artist_id
+      where c.media_item_id = mi.id and c.role = 'artist' and artist.name ilike ${pattern})`
+}
+
 function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
   switch (key) {
     case 'position':
@@ -425,9 +435,7 @@ function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
     case 'title':
       return sql`lower(mi.title)`
     case 'artists':
-      return sql`(select lower(string_agg(artist.name, ', ' order by c.billing_order, artist.name))
-      from media_credit c join artist on artist.id = c.artist_id
-      where c.media_item_id = mi.id and c.role = 'artist')`
+      return playlistEntryArtistsSort
     case 'album':
       return sql`lower(coalesce(lt.album_name, am.title))`
     case 'duration':
@@ -449,18 +457,20 @@ function playlistEntrySortExpression(key: PlaylistEntrySort): SQL {
   }
 }
 
-/**
- * One playlist with its sync state and a page of its entries: tracks in
- * playlist order, then album members from the legacy import. `restrict` is
- * an extra condition on the entries, over `pi`, `lt` and `a`.
- */
-export async function getPlaylistDetail(
+function playlistEntriesQuery(
   id: string,
   query: PlaylistDetailQuery,
-  restrict: SQL = sql``,
-): Promise<PlaylistDetail> {
-  const summary = await getPlaylistSummary(id)
-  const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  pattern: string,
+  direction: SQL,
+  albumIds: SQL | null,
+) {
+  const restrict = albumIds
+    ? sql`and (a.media_item_id = any(${albumIds})
+        or lt.album_media_item_id = any(${albumIds})
+        or exists (select 1 from track t
+          where t.track_media_item_id = lt.media_item_id
+            and t.album_media_item_id = any(${albumIds})))`
+    : sql``
   const kinds = query.kinds ?? (query.kind ? [query.kind] : [])
   const kindFilter =
     kinds.length === 1 && kinds.includes('track')
@@ -469,10 +479,7 @@ export async function getPlaylistDetail(
         ? sql`and lt.media_item_id is null and a.media_item_id is not null`
         : sql``
   const searchFilter = query.q
-    ? sql`and (mi.title ilike ${pattern}
-        or coalesce(lt.album_name, am.title) ilike ${pattern}
-        or exists (select 1 from media_credit c join artist on artist.id = c.artist_id
-          where c.media_item_id = mi.id and c.role = 'artist' and artist.name ilike ${pattern}))`
+    ? sql`and (${playlistEntrySearch(pattern)} or coalesce(lt.album_name, am.title) ilike ${pattern})`
     : sql``
   const members = sql`from playlist_item pi
     join media_item mi on mi.id = pi.media_item_id
@@ -482,24 +489,96 @@ export async function getPlaylistDetail(
     where pi.playlist_id = ${id}
       and (lt.media_item_id is not null or a.media_item_id is not null)
       ${kindFilter} ${searchFilter} ${restrict}`
-  const [count] = CountRowsSchema.parse(
-    (await db.execute(sql`select count(*) as count ${members}`)).rows,
-  )
-  const totalCount = count?.count ?? 0
-  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
   const sort = playlistEntrySortExpression(query.sortBy)
   const entryOrder =
     query.sortBy === 'position'
       ? sql`lt.media_item_id is null, ${sort} ${direction}`
       : sql`${sort} ${direction} nulls last`
+  return {
+    members,
+    columns: sql`pi.media_item_id as id, pi.position,
+      case when lt.media_item_id is null then 'album' else 'track' end as kind,
+      ${isoTimestamp(sql`pi.added_at`)} as added_at`,
+    order: sql`${entryOrder}, lt.media_item_id is null, pi.position, pi.media_item_id`,
+  }
+}
+
+function groupedPlaylistAlbumSort(key: PlaylistEntrySort): SQL {
+  switch (key) {
+    case 'album':
+    case 'title':
+      return sql`lower(mi.title)`
+    case 'artists':
+      return playlistEntryArtistsSort
+    case 'added':
+      return sql`pi.added_at`
+    case 'releaseDate':
+      return sql`mi.release_date`
+    default:
+      return sql`pi.position`
+  }
+}
+
+function groupedPlaylistAlbumsQuery(
+  id: string,
+  query: PlaylistDetailQuery,
+  pattern: string,
+  direction: SQL,
+  albumIds: SQL | null,
+) {
+  const searchFilter = query.q
+    ? sql`and (${playlistEntrySearch(pattern)})`
+    : sql``
+  const sort = groupedPlaylistAlbumSort(query.sortBy)
+  const kinds = query.kinds ?? (query.kind ? [query.kind] : [])
+  const includeAlbums = kinds.length === 0 || kinds.includes('album')
+  const restrict = albumIds ? sql`and mi.id = any(${albumIds})` : sql``
+  return {
+    members: sql`from (
+      select distinct on (album_id) album_id, position, added_at
+      from playlist p
+      cross join lateral (${playlistAlbumMembers}) members
+      where p.id = ${id}
+      order by album_id, position, added_at nulls last
+    ) pi
+    join media_item mi on mi.id = pi.album_id
+    where ${includeAlbums} ${searchFilter} ${restrict}`,
+    columns: sql`mi.id, pi.position, 'album' as kind,
+      ${isoTimestamp(sql`pi.added_at`)} as added_at`,
+    order: sql`${sort} ${direction} nulls last, pi.position, mi.id`,
+  }
+}
+
+/**
+ * One playlist with sync state and a page of entries. The default order is
+ * tracks in playlist order, then legacy album entries. Album grouping lists
+ * each library album once at its first playlist position. Coverage can limit
+ * either view to entries associated with a specific set of library albums.
+ */
+export async function getPlaylistDetail(
+  id: string,
+  query: PlaylistDetailQuery,
+  restrictToAlbumIds?: string[],
+): Promise<PlaylistDetail> {
+  const summary = await getPlaylistSummary(id)
+  const pattern = `%${(query.q ?? '').replace(/[\\%_]/g, '\\$&')}%`
+  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const albumIds = restrictToAlbumIds
+    ? sql`${sql.param(restrictToAlbumIds)}::text[]`
+    : null
+  const { members, columns, order } =
+    query.groupBy === 'album'
+      ? groupedPlaylistAlbumsQuery(id, query, pattern, direction, albumIds)
+      : playlistEntriesQuery(id, query, pattern, direction, albumIds)
+  const [count] = CountRowsSchema.parse(
+    (await db.execute(sql`select count(*) as count ${members}`)).rows,
+  )
+  const totalCount = count?.count ?? 0
   const entries = EntryRowsSchema.parse(
     (
       await db.execute(sql`
-        select pi.media_item_id as id, pi.position,
-          case when lt.media_item_id is null then 'album' else 'track' end as kind,
-          ${isoTimestamp(sql`pi.added_at`)} as added_at
-        ${members}
-        order by ${entryOrder}, lt.media_item_id is null, pi.position, pi.media_item_id
+        select ${columns} ${members}
+        order by ${order}
         limit ${query.size} offset ${(query.page - 1) * query.size}`)
     ).rows,
   )

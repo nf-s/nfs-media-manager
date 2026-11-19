@@ -107,7 +107,7 @@ export function artistGapHref(
 /** Artist jobs, where queued artist enrichment shows its progress. */
 export const ARTIST_JOBS_HREF = scopedHref('/jobs', 'artist')
 
-/** The URL parameter of a playlist track list's Missing data filter. */
+/** The URL parameter of a playlist's metadata gap filter. */
 export const GAP_FILTER_PARAM = 'playlistGaps'
 
 /** Without `provider`, a gap for any provider. */
@@ -152,7 +152,7 @@ export function gapFilterParams(
 
 type EntryQuery = Pick<
   PlaylistDetailQuery,
-  'sortBy' | 'direction' | 'q' | 'kinds'
+  'sortBy' | 'direction' | 'q' | 'kinds' | 'groupBy'
 >
 
 export function coverageEntriesPath(
@@ -172,6 +172,7 @@ export function coverageEntriesPath(
       ...(filter.provider ? { provider: filter.provider } : {}),
       ...(query.q ? { q: query.q } : {}),
       ...(query.kinds?.length ? { kinds: JSON.stringify(query.kinds) } : {}),
+      ...(query.groupBy ? { groupBy: query.groupBy } : {}),
     },
   )}`
 }
@@ -191,13 +192,14 @@ export function coverageEntriesKey(
     query.direction,
     query.q ?? '',
     query.kinds ?? [],
+    ...(query.groupBy ? [query.groupBy] : []),
   ]
 }
 
-/** The heading of the gap column and the word in the selection bar. */
+/** The heading of the gap column and labels in the filter. */
 export const gapLabels: Record<CoverageGap, string> = {
-  missing: 'Missing',
-  stale: 'Stale',
+  missing: 'No successful scrape',
+  stale: 'Stale metadata',
 }
 
 /** What queueing a gap does. */
@@ -216,8 +218,8 @@ export function gapFilterOptions(
   current: GapFilter,
 ) {
   const options = [
-    { value: 'missing', label: 'Missing: any provider' },
-    { value: 'stale', label: 'Stale: any provider' },
+    { value: 'missing', label: `${gapLabels.missing} · any provider` },
+    { value: 'stale', label: `${gapLabels.stale} · any provider` },
   ]
   for (const gap of CoverageGapSchema.options)
     for (const provider of providers)
@@ -227,7 +229,7 @@ export function gapFilterOptions(
       )
         options.push({
           value: gapFilterValue({ gap, provider: provider.provider }),
-          label: `${gapLabels[gap]}: ${provider.displayName}`,
+          label: `${gapLabels[gap]} · ${provider.displayName}`,
         })
   if (
     current.provider &&
@@ -235,7 +237,7 @@ export function gapFilterOptions(
   )
     options.push({
       value: gapFilterValue(current),
-      label: `${gapLabels[current.gap]}: ${current.provider}`,
+      label: `${gapLabels[current.gap]} · ${current.provider}`,
     })
   return options
 }

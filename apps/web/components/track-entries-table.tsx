@@ -21,6 +21,7 @@ import {
 } from '@repo/ui/components/ui/table'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { formatTrackDuration } from '@/utils/track-browse'
+import { playlistAlbumSorts } from '@/utils/playlist-links'
 import type { BrowseView } from '@/utils/media-grid'
 import { useNestedGridDensity } from '@/hooks/useGridDensity'
 import type { PlaybackSource } from '@/utils/playback'
@@ -31,6 +32,7 @@ import BrowseToolbar, {
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
+import { AlbumReferencePlayButton } from './play-controls'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -115,6 +117,29 @@ const entryColumns: (TableColumn & { key: TrackEntryColumn })[] = [
     defaultVisible: false,
   },
 ]
+
+const entryTables = {
+  playlist: {
+    table: 'Playlist tracks',
+    search: 'Search playlist entries',
+    key: 'playlist-entries',
+    columns: entryColumns.filter(({ key }) => key !== 'externalId'),
+  },
+  album: {
+    table: 'Album tracks',
+    search: 'Search album tracks',
+    key: 'album-tracks',
+    columns: entryColumns.filter(({ key }) => key !== 'kind'),
+  },
+  'playlist-albums': {
+    table: 'Playlist albums',
+    search: 'Search playlist albums',
+    key: 'playlist-albums',
+    columns: entryColumns.filter(
+      ({ key }) => key !== 'externalId' && playlistAlbumSorts.includes(key),
+    ),
+  },
+}
 /** Width of the row selection column in a list of entries with gaps. */
 const selectionWidth = 36
 /** Room for two gap pills and the count of the rest. */
@@ -182,11 +207,13 @@ function TrackEntryCard({
   view,
   source,
   fallbackArtworkUrl,
+  groupedAlbums,
 }: {
   entry: PlaylistEntry
   view: 'grid' | 'list'
   source?: () => PlaybackSource
   fallbackArtworkUrl?: string | null
+  groupedAlbums: boolean
 }) {
   const item = entry.kind === 'track' ? entry.track : entry.album
   return (
@@ -213,8 +240,15 @@ function TrackEntryCard({
         </>
       }
       actions={
-        entry.kind === 'track' && (
+        entry.kind === 'track' ? (
           <TrackRowPlay track={entry.track} source={source} />
+        ) : (
+          groupedAlbums && (
+            <AlbumReferencePlayButton
+              id={entry.album.id}
+              title={entry.album.title}
+            />
+          )
         )
       }
     />
@@ -225,10 +259,12 @@ function TrackEntryCell({
   column,
   entry,
   source,
+  groupedAlbums,
 }: {
   column: TrackEntryColumn
   entry: PlaylistEntry
   source?: () => PlaybackSource
+  groupedAlbums: boolean
 }) {
   const track = entry.kind === 'track' ? entry.track : null
   const album = entry.kind === 'album' ? entry.album : null
@@ -249,6 +285,9 @@ function TrackEntryCell({
           <DetailLink kind="album" id={album.id} className="ds-cell-title">
             {album.title}
           </DetailLink>
+          {groupedAlbums && (
+            <AlbumReferencePlayButton id={album.id} title={album.title} />
+          )}
         </span>
       ) : null
     case 'artists': {
@@ -369,7 +408,7 @@ export function TrackEntriesTable({
   kindFilter,
   gaps,
 }: {
-  scope: 'album' | 'playlist'
+  scope: keyof typeof entryTables
   window: NestedMediaWindow<IndexedTrackEntry> & { padBottom: number }
   view: BrowseView
   /** Absent while the list is fixed to one view; the switch is not shown. */
@@ -392,17 +431,10 @@ export function TrackEntriesTable({
    */
   gaps?: TrackEntryGaps
 }) {
-  const playlist = scope === 'playlist'
-  const labels = playlist
-    ? { table: 'Playlist tracks', search: 'Search playlist entries' }
-    : { table: 'Album tracks', search: 'Search album tracks' }
-  const available = entryColumns.filter(({ key }) =>
-    playlist ? key !== 'externalId' : key !== 'kind',
-  )
-  const columns = useTableColumns(
-    playlist ? 'playlist-entries' : 'album-tracks',
-    available,
-  )
+  const groupedAlbums = scope === 'playlist-albums'
+  const config = entryTables[scope]
+  const available = config.columns
+  const columns = useTableColumns(config.key, available)
   const visible = available.filter(({ key }) => columns.visible(key))
   const numeric = ['position', 'duration', 'scrobbles']
   const scrollClassName = 'dtl-entries'
@@ -429,8 +461,12 @@ export function TrackEntriesTable({
         search={
           <Input
             type="search"
-            aria-label={labels.search}
-            placeholder="Search titles, artists or albums"
+            aria-label={config.search}
+            placeholder={
+              groupedAlbums
+                ? 'Search album titles or artists'
+                : 'Search titles, artists or albums'
+            }
             value={search}
             maxLength={200}
             onChange={(event) => onSearch(event.target.value)}
@@ -463,7 +499,7 @@ export function TrackEntriesTable({
           window={window}
           view={view}
           mediaType="album"
-          label={labels.table}
+          label={config.table}
           className={scrollClassName}
           busy={pending}
           empty={!error ? empty : undefined}
@@ -473,6 +509,7 @@ export function TrackEntriesTable({
               view={view}
               source={source ? () => source(row) : undefined}
               fallbackArtworkUrl={fallbackArtworkUrl}
+              groupedAlbums={groupedAlbums}
             />
           )}
         />
@@ -482,13 +519,13 @@ export function TrackEntriesTable({
           onScroll={window.onScroll}
           className={scrollClassName}
           role="region"
-          aria-label={labels.table}
+          aria-label={config.table}
           aria-busy={pending}
           data-inspector-scroll=""
         >
           <table
             className="ds-table"
-            aria-label={labels.table}
+            aria-label={config.table}
             aria-rowcount={pending ? undefined : window.total + 1}
             {...layout.table}
           >
@@ -563,6 +600,7 @@ export function TrackEntriesTable({
                           <TrackEntryCell
                             column={key}
                             entry={row.entry}
+                            groupedAlbums={groupedAlbums}
                             source={source ? () => source(row) : undefined}
                           />
                         </TableCell>

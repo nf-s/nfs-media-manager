@@ -70,8 +70,9 @@ type ProviderGaps = {
 /**
  * Per-provider freshness for a set of albums. Uses the Metadata table's rule:
  * only a successful scrape sets `last_scraped_at`, and an album is stale when
- * that is older than `olderThanDays`. Albums a provider cannot look up are
- * neither missing nor stale. Reads stored state only.
+ * that is older than `olderThanDays`. Library membership, provider links and
+ * imported snapshots do not record a successful scrape. Albums a provider
+ * cannot look up are neither missing nor stale. Reads stored state only.
  */
 async function albumGaps(
   albumIds: SQL,
@@ -294,6 +295,7 @@ export async function getPlaylistArtistCoverage(
  * rules as the playlist's coverage, so the albums of all returned entries
  * are the albums Coverage counts. An entry's albums are an album entry
  * itself, a track's library album and the albums whose track list has it.
+ * Grouped results show each library album with the gap once.
  */
 export async function getPlaylistCoverageEntries(
   id: string,
@@ -311,16 +313,9 @@ export async function getPlaylistCoverageEntries(
         ...(providersByAlbum.get(albumId) ?? []),
         row.provider,
       ])
-  const gapAlbums = sql`${sql.param([...providersByAlbum.keys()])}::text[]`
-  const detail = await getPlaylistDetail(
-    id,
-    entryQuery,
-    sql`and (a.media_item_id = any(${gapAlbums})
-      or lt.album_media_item_id = any(${gapAlbums})
-      or exists (select 1 from track t
-        where t.track_media_item_id = lt.media_item_id
-          and t.album_media_item_id = any(${gapAlbums})))`,
-  )
+  const detail = await getPlaylistDetail(id, entryQuery, [
+    ...providersByAlbum.keys(),
+  ])
   const trackIds = detail.items.items.flatMap((entry) =>
     entry.kind === 'track' ? [entry.track.id] : [],
   )

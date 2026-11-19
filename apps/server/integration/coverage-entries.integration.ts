@@ -55,6 +55,7 @@ const plugin = (
 const plugins = [
   plugin('fixture-a', { supportsNameLookup: true }),
   plugin('fixture-b'),
+  plugin('spotify', { displayName: 'Spotify' }),
 ]
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -266,6 +267,28 @@ describe('playlist coverage entries', () => {
       { id: 'track-1', gaps: ['fixture-b album-missing'] },
       { id: 'track-2', gaps: ['fixture-b album-missing'] },
     ])
+    const grouped = await query({
+      groupBy: 'album',
+      provider: 'fixture-a',
+      size: 1,
+    })
+    expect(grouped).toMatchObject({
+      albumCount: 2,
+      totalCount: 2,
+      pageCount: 2,
+    })
+    expect(rows(grouped)).toEqual([
+      { id: 'album-missing', gaps: ['fixture-a album-missing'] },
+    ])
+    const groupedSecondPage = await query({
+      groupBy: 'album',
+      provider: 'fixture-a',
+      size: 1,
+      page: 2,
+    })
+    expect(rows(groupedSecondPage)).toEqual([
+      { id: 'album-entry', gaps: ['fixture-a album-entry'] },
+    ])
 
     const stale = await query({ gap: 'stale', provider: 'fixture-a' })
     expect(stale.albumCount).toBe(a?.stale)
@@ -308,5 +331,70 @@ describe('playlist coverage entries', () => {
       CoverageEntriesQuerySchema.parse({}),
     )
     expect(page).toMatchObject({ totalCount: 0, albumCount: 0, items: [] })
+  })
+
+  it('keeps all library albums in the Spotify scrape gap when imports and links predate any scrape', async () => {
+    const { getPlaylistCoverage, getPlaylistCoverageEntries } =
+      await import('@/services/metadata-coverage')
+    const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const listed = await seed()
+    const importedAlbums = [
+      { id: 'album-entry', source: 'legacy-import', spotifyId: '1'.repeat(22) },
+      { id: 'album-fresh', source: 'file-import', spotifyId: '2'.repeat(22) },
+    ]
+    for (const { id, source, spotifyId } of importedAlbums) {
+      const result = normalizeSpotifyAlbum({
+        id: spotifyId,
+        name: `Title ${id}`,
+        artists: [{ name: 'Fixture Artist' }],
+        release_date: '2025-01-01',
+      })
+      await applyProviderResult({
+        mediaItemId: id,
+        mediaType: 'album',
+        provider: 'spotify',
+        source,
+        payload: result.payload,
+        normalized: result.normalized,
+      })
+    }
+    await databaseClient.insert(schema.providerReference).values(
+      ['album-missing', 'album-stale'].map((id, index) => ({
+        id: `${id}-spotify`,
+        mediaItemId: id,
+        provider: 'spotify',
+        referenceType: 'album',
+        externalId: String(index + 3).repeat(22),
+      })),
+    )
+    await libraryTrack('track-unlinked', null)
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyAlbumId: '5'.repeat(22) })
+      .where(eq(schema.libraryTrack.mediaItemId, 'track-unlinked'))
+    await databaseClient.insert(schema.playlistItem).values({
+      playlistId: PLAYLIST,
+      mediaItemId: 'track-unlinked',
+      position: 7,
+    })
+
+    const coverage = await getPlaylistCoverage(PLAYLIST, { olderThanDays: 180 })
+    expect(coverage.total).toBe(4)
+    expect(
+      coverage.providers.find(({ provider }) => provider === 'spotify'),
+    ).toMatchObject({ eligible: 4, covered: 0, stale: 0, missing: 4 })
+    const page = await getPlaylistCoverageEntries(
+      PLAYLIST,
+      CoverageEntriesQuerySchema.parse({ provider: 'spotify' }),
+    )
+    expect(page.albumCount).toBe(4)
+    expect(rows(page)).toEqual([
+      { id: 'track-1', gaps: ['spotify album-missing'] },
+      { id: 'track-2', gaps: ['spotify album-missing'] },
+      { id: listed, gaps: ['spotify album-stale'] },
+      { id: 'track-4', gaps: ['spotify album-fresh'] },
+      { id: 'album-entry', gaps: ['spotify album-entry'] },
+    ])
   })
 })

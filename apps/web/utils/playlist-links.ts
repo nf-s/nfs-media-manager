@@ -2,14 +2,36 @@ import { z } from 'zod'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
   PlaylistDetailQuerySchema,
+  PlaylistPresentationSchema,
   type PlaylistDetailQuery,
+  type PlaylistEntrySort,
+  type PlaylistPresentation,
 } from '@repo/schemas/tracks'
 import type { MediaScope } from './media-scope'
 
-const PlaylistEntryViewSchema = PlaylistDetailQuerySchema.extend({
-  id: z.string(),
+const PlaylistEntrySettingsSchema = PlaylistDetailQuerySchema.omit({
+  groupBy: true,
+}).extend({
+  contents: PlaylistPresentationSchema.optional(),
   q: z.string().max(200).optional(),
 })
+const PlaylistEntryViewSchema = PlaylistEntrySettingsSchema.extend({
+  id: z.string(),
+})
+
+export const playlistAlbumSorts: readonly PlaylistEntrySort[] = [
+  'position',
+  'title',
+  'artists',
+  'added',
+  'releaseDate',
+]
+
+export const playlistPresentationLabels: Record<PlaylistPresentation, string> =
+  {
+    albums: 'Album playlist',
+    tracks: 'Track playlist',
+  }
 
 /** Playlist table settings travel with its drawer URL, including a playback return link. */
 export function playlistEntryView(value: string | null, id: string) {
@@ -19,16 +41,20 @@ export function playlistEntryView(value: string | null, id: string) {
   } catch {
     // Malformed URL state falls back to the playlist's original order.
   }
-  return PlaylistDetailQuerySchema.parse({})
+  return PlaylistEntrySettingsSchema.parse({})
 }
 
-export function playlistEntryViewParam(id: string, view: PlaylistDetailQuery) {
+export function playlistEntryViewParam(
+  id: string,
+  view: PlaylistDetailQuery & { contents?: PlaylistPresentation },
+) {
   return JSON.stringify({
     id,
     sortBy: view.sortBy,
     direction: view.direction,
     q: view.q,
     kinds: view.kinds,
+    contents: view.contents,
   })
 }
 

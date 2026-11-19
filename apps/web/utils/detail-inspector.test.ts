@@ -78,6 +78,21 @@ test('existing inspector links normalize without losing tabs or filters', () => 
   )
 })
 
+test('legacy playlist coverage links keep their metadata gap inside the inspector', () => {
+  const gap = JSON.stringify({ id: 'mix', gap: 'missing', provider: 'spotify' })
+  const params = new URLSearchParams({
+    playlist: 'mix',
+    playlistGaps: gap,
+    mediaType: 'album',
+  })
+  const [entry] = detailEntries('/playlists', params)
+  assert.equal(new URLSearchParams(entry?.view).get('playlistGaps'), gap)
+  assert.deepEqual(
+    withoutDetailEntries('/playlists', params),
+    new URLSearchParams({ mediaType: 'album' }),
+  )
+})
+
 test('invalid inspector state falls back to the legacy detail or original workspace', () => {
   assert.deepEqual(
     detailEntries(

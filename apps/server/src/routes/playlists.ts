@@ -190,7 +190,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'One playlist with its sync state and a page of its entries in playlist order',
+            'One playlist with its default presentation and a page of entries. Use groupBy=album for one row per library album.',
           content: {
             'application/json': {
               schema: createResponseSchema(PlaylistDetailSchema),
@@ -246,7 +246,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'Per metadata provider, how many of the playlist albums are scraped, stale or missing',
+            'Library albums by provider and age of their last successful scrape, including albums without a successful scrape',
           content: {
             'application/json': {
               schema: createResponseSchema(CoverageSchema),
@@ -311,7 +311,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'A page of the playlist entries whose albums are missing or stale for a metadata provider, with the gaps of each entry',
+            'Playlist entries whose library albums have stale metadata or no successful provider scrape. Use groupBy=album to list the affected albums.',
           content: {
             'application/json': {
               schema: createResponseSchema(CoverageEntriesSchema),

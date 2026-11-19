@@ -60,7 +60,11 @@ import ServiceIconLinks from './service-icon-links'
 import { fetchApiData } from '@/utils/api'
 import { useLibraryView } from './media-scope'
 import { scopedHref } from '@/utils/media-scope'
-import { playlistAlbumsHref, playlistTracksHref } from '@/utils/playlist-links'
+import {
+  playlistAlbumsHref,
+  playlistTracksHref,
+  playlistPresentationLabels,
+} from '@/utils/playlist-links'
 import {
   formatPlaylistDuration,
   invalidatePlaylists,
@@ -366,6 +370,9 @@ export default function PlaylistsWorkspace() {
                             {playlist.name}
                           </DetailLink>
                         </SecondaryCell>
+                        <span className="ds-cell-sub">
+                          {playlistPresentationLabels[playlist.presentation]}
+                        </span>
                         <PlaylistPlayButton playlist={playlist} />
                         {playlist.spotifyUrl && (
                           <ServiceIconLinks

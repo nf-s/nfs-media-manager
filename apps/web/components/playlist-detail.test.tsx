@@ -176,6 +176,31 @@ async function render(
       })),
     },
   )
+  const albumRows = playlist.items.items.filter(
+    (entry) => entry.kind === 'album',
+  )
+  client.setQueryData(
+    [
+      'playlist',
+      playlist.id,
+      'albums',
+      view.sortBy,
+      view.direction,
+      view.q ?? '',
+      [],
+      1,
+    ],
+    {
+      ...playlist.items,
+      name: playlist.name,
+      totalCount: albumRows.length,
+      items: albumRows.map((entry, index) => ({
+        entry,
+        key: trackEntryKey(entry),
+        index,
+      })),
+    },
+  )
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -316,6 +341,35 @@ test('track rows have play and queue buttons while playback is on', async () => 
   assert.match(html, /aria-label="Add Closing track to queue"/)
   // Albums inside a playlist open first; only their own detail plays them.
   assert.doesNotMatch(html, /aria-label="Play Member album"/)
+})
+
+test('album playlists open grouped library albums and can link back to their original tracks', async () => {
+  const playlist = detail({ ...summary, presentation: 'albums' })
+  const albums = drawerOf(await render('playlist=playlist-1', playlist))
+  assert.match(albums, /Album playlist/)
+  assert.match(albums, /aria-label="Playlist albums"/)
+  assert.match(albums, /aria-pressed="true"[^>]*>Albums</)
+  assert.match(albums, /aria-label="Play Member album/)
+  assert.match(albums, /aria-label="Add Member album to queue/)
+  assert.doesNotMatch(
+    albums,
+    /Opening track|Search playlist entries|Filter Type/,
+  )
+  const settings = playlistEntryViewParam(playlist.id, {
+    ...playlistEntryView(null, playlist.id),
+    contents: 'tracks',
+  })
+  const params = detailEntryParams('/playlists', new URLSearchParams(), [
+    {
+      kind: 'playlist',
+      id: playlist.id,
+      view: new URLSearchParams({ playlistView: settings }).toString(),
+    },
+  ])
+  const tracks = drawerOf(await render(params.toString(), playlist))
+  assert.match(tracks, /aria-pressed="true"[^>]*>Tracks</)
+  assert.match(tracks, /aria-label="Playlist tracks"/)
+  assert.match(tracks, /Opening track/)
 })
 
 test('the sync tab shows the schedule, progress and the latest job', async () => {

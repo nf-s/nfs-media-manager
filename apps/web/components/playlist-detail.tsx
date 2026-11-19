@@ -12,7 +12,7 @@ import {
   PlaylistSyncScheduleSchema,
   type PlaylistDetail,
   type PlaylistDetailQuery,
-  type PlaylistEntrySort,
+  type PlaylistPresentation,
   type PlaylistSummary,
   type PlaylistSyncSchedule,
   type SpotifyPlaylistImportInput,
@@ -24,6 +24,7 @@ import {
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Progress } from '@repo/ui/components/ds/meter'
+import { Segmented } from '@repo/ui/components/ds/segmented'
 import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
 import { Status } from '@repo/ui/components/ds/status'
 import { Select } from '@repo/ui/components/ds/toolbar'
@@ -52,10 +53,13 @@ import {
   type GapFilter,
 } from '@/utils/coverage-entries'
 import { parseBrowseView, type BrowseView } from '@/utils/media-grid'
+import { providerLabel } from '@/utils/field-provenance'
 import {
   PlaylistTabSchema,
   playlistTracksHref,
   playlistAlbumsHref,
+  playlistAlbumSorts,
+  playlistPresentationLabels,
   playlistHref,
   playlistEntryView,
   playlistEntryViewParam,
@@ -103,10 +107,13 @@ function playlistPath(
   id: string,
   page: number,
   size: number,
-  sortBy: PlaylistEntrySort = 'position',
-  direction: 'asc' | 'desc' = 'asc',
-  q = '',
-  kinds: NonNullable<PlaylistDetailQuery['kinds']> = [],
+  {
+    sortBy = 'position',
+    direction = 'asc',
+    q,
+    kinds,
+    groupBy,
+  }: Partial<PlaylistDetailQuery> = {},
 ) {
   return `/api/v1/playlists/${encodeURIComponent(id)}?${new URLSearchParams({
     page: String(page),
@@ -114,7 +121,8 @@ function playlistPath(
     sortBy,
     direction,
     ...(q ? { q } : {}),
-    ...(kinds.length ? { kinds: JSON.stringify(kinds) } : {}),
+    ...(kinds?.length ? { kinds: JSON.stringify(kinds) } : {}),
+    ...(groupBy ? { groupBy } : {}),
   })}`
 }
 
@@ -251,23 +259,34 @@ export function playlistWindowSlots(
 }
 
 function PlaylistEntries({
-  id,
+  playlist,
   presentation,
   onPresentationChange,
 }: {
-  id: string
+  playlist: PlaylistSummary
   presentation: BrowseView
   onPresentationChange: (view: BrowseView) => void
 }) {
   const { apiBaseUrl } = useConfig()
   const detail = useDetailView()
+  const { id } = playlist
   const view = playlistEntryView(detail.params.get('playlistView'), id)
-  const { sortBy, direction } = view
+  const canSwitch = playlist.albumCount > 0 && playlist.trackCount > 0
+  const preferredContents =
+    view.contents ?? (view.kinds?.length ? 'tracks' : playlist.presentation)
+  const contents = canSwitch ? preferredContents : playlist.presentation
+  const albums = contents === 'albums'
+  const groupBy: PlaylistDetailQuery['groupBy'] = albums ? 'album' : undefined
+  const sortBy =
+    albums && !playlistAlbumSorts.includes(view.sortBy)
+      ? 'position'
+      : view.sortBy
+  const direction = sortBy === view.sortBy ? view.direction : 'asc'
   const search = view.q ?? ''
   const q = useDeferredValue(search.trim())
-  const kinds = view.kinds ?? []
+  const kinds = albums ? [] : (view.kinds ?? [])
   function viewParams(
-    patch: Partial<PlaylistDetailQuery>,
+    patch: Partial<PlaylistDetailQuery> & { contents?: PlaylistPresentation },
     nextPresentation = presentation,
   ) {
     const params = new URLSearchParams(detail.params)
@@ -296,10 +315,10 @@ function PlaylistEntries({
     else params.delete(GAP_FILTER_PARAM)
     detail.replace(params)
   }
-  // Only the table can select rows, so Missing data shows it without the
+  // Only the table can select rows, so Metadata gaps shows it without the
   // view switch; the owner's view returns when the filter is turned off.
   const shownView: BrowseView = filter ? 'table' : presentation
-  const selectionKey = JSON.stringify([filter, q, kinds])
+  const selectionKey = JSON.stringify([id, contents, filter, q, kinds])
   const [selection, setSelection] = useState({
     key: '',
     rows: new Map<string, IndexedTrackEntry>(),
@@ -308,11 +327,19 @@ function PlaylistEntries({
     selection.key === selectionKey
       ? selection.rows
       : new Map<string, IndexedTrackEntry>()
-  const query = { sortBy, direction, q, kinds }
+  const query = { sortBy, direction, q, kinds, groupBy }
   const entries = useVirtualTable({
     queryKey: filter
       ? coverageEntriesKey(id, query, filter)
-      : ['playlist', id, 'entries', sortBy, direction, q, kinds],
+      : [
+          'playlist',
+          id,
+          albums ? 'albums' : 'entries',
+          sortBy,
+          direction,
+          q,
+          kinds,
+        ],
     pageSize: ENTRY_PAGE_SIZE,
     presentation: { view: shownView, mediaType: 'album' },
     loadPage: async (page, size, signal) => {
@@ -335,7 +362,7 @@ function PlaylistEntries({
       }
       const result = await fetchApiData(
         apiBaseUrl,
-        playlistPath(id, page, size, sortBy, direction, q, kinds),
+        playlistPath(id, page, size, query),
         PlaylistDetailSchema,
         { signal },
       )
@@ -354,19 +381,56 @@ function PlaylistEntries({
   const total = entries.total
   const albumCount = entries.firstPage?.albumCount
   const matching = q || kinds.length
+  const gapProvider = filter?.provider
+    ? `${providerLabel(filter.provider)} `
+    : ''
+  const anyProvider = filter?.provider ? '' : ' from at least one provider'
+  const gapDescription =
+    filter?.gap === 'missing'
+      ? `without a successful ${gapProvider}scrape${anyProvider}`
+      : `with stale ${gapProvider}metadata${anyProvider}`
+  const noun = albums
+    ? { one: 'album', other: 'albums' }
+    : { one: 'entry', other: 'entries' }
+  const count = formatItemCount(
+    total,
+    matching
+      ? { one: `matching ${noun.one}`, other: `matching ${noun.other}` }
+      : noun,
+  )
+  const gapCount =
+    filter && typeof albumCount === 'number'
+      ? `${formatItemCount(albumCount, { one: 'library album', other: 'library albums' })} ${gapDescription}`
+      : null
   return (
     <Section
-      title="Tracks"
+      title={canSwitch ? 'Contents' : albums ? 'Albums' : 'Tracks'}
+      className="dtl-playlist-contents"
       aside={
-        <GapFilterControls
-          playlistId={id}
-          filter={filter}
-          onChange={setFilter}
-        />
+        <>
+          {canSwitch && (
+            <Segmented<PlaylistPresentation>
+              label="Playlist contents"
+              value={contents}
+              options={[
+                { value: 'albums', label: 'Albums' },
+                { value: 'tracks', label: 'Tracks' },
+              ]}
+              onChange={(next) =>
+                detail.replace(viewParams({ contents: next }))
+              }
+            />
+          )}
+          <GapFilterControls
+            playlistId={id}
+            filter={filter}
+            onChange={setFilter}
+          />
+        </>
       }
     >
       <TrackEntriesTable
-        scope="playlist"
+        scope={albums ? 'playlist-albums' : 'playlist'}
         window={{
           slots: playlistWindowSlots(entries.slots),
           total,
@@ -396,35 +460,39 @@ function PlaylistEntries({
         onSort={onSort}
         count={
           entries.hasTotal
-            ? `${formatCount(total)} ${matching ? 'matching ' : ''}entries${
-                filter && typeof albumCount === 'number'
-                  ? ` · ${formatItemCount(albumCount, { one: 'album', other: 'albums' })} ${filter.gap}`
-                  : ''
-              }`
+            ? gapCount && albums && !matching
+              ? gapCount
+              : [count, gapCount].filter(Boolean).join(' · ')
             : undefined
         }
         pending={!entries.hasTotal}
         empty={
           matching
-            ? 'No matching entries.'
+            ? `No matching ${noun.other}.`
             : filter
-              ? `No entries with ${filter.gap} data.`
-              : 'No tracks.'
+              ? 'No entries match this metadata gap.'
+              : albums
+                ? 'No library albums.'
+                : 'No tracks.'
         }
         error={
           entries.isError ? (
             <>
-              Could not load tracks.{' '}
+              {albums ? 'Could not load albums.' : 'Could not load tracks.'}{' '}
               <Button size="xs" onClick={entries.retry}>
                 Retry
               </Button>
             </>
           ) : undefined
         }
-        kindFilter={{
-          value: kinds,
-          onChange: (kinds) => detail.replace(viewParams({ kinds })),
-        }}
+        kindFilter={
+          albums
+            ? undefined
+            : {
+                value: kinds,
+                onChange: (kinds) => detail.replace(viewParams({ kinds })),
+              }
+        }
         gaps={
           filter
             ? {
@@ -440,7 +508,7 @@ function PlaylistEntries({
             : undefined
         }
         source={
-          filter
+          filter || albums
             ? undefined
             : ({ entry, index }) =>
                 createPlaylistPlaybackSource({
@@ -665,7 +733,7 @@ export default function PlaylistDetailView({
             fallback={<ListMusic className="ds-i" aria-hidden="true" />}
           />
         }
-        kind="Playlist"
+        kind={playlistPresentationLabels[playlist.presentation]}
         title={playlist.name}
         by={
           [
@@ -676,8 +744,23 @@ export default function PlaylistDetailView({
             .join(' · ') || undefined
         }
         facts={[
-          `${formatCount(playlist.trackCount)} ${playlist.trackCount === 1 ? 'track' : 'tracks'}`,
-          formatPlaylistDuration(playlist.durationSec),
+          ...(playlist.presentation === 'albums'
+            ? [
+                formatItemCount(playlist.albumCount, {
+                  one: 'album',
+                  other: 'albums',
+                }),
+              ]
+            : []),
+          playlist.presentation === 'tracks' || playlist.trackCount > 0
+            ? formatItemCount(playlist.trackCount, {
+                one: 'track',
+                other: 'tracks',
+              })
+            : null,
+          playlist.durationSec > 0
+            ? formatPlaylistDuration(playlist.durationSec)
+            : null,
           playlist.importedAt
             ? `Updated ${formatDate(playlist.importedAt)}`
             : null,
@@ -756,7 +839,7 @@ export default function PlaylistDetailView({
             </Section>
           )}
           <PlaylistEntries
-            id={id}
+            playlist={playlist}
             presentation={presentation}
             onPresentationChange={setPresentation}
           />
