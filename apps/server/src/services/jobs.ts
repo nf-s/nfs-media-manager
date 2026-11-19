@@ -166,7 +166,10 @@ import {
   prepareArtistEnrichment,
   runArtistEnrichment,
 } from '@/services/artist-enrichment'
-import { saveArtistProviderResult } from '@/services/artist-profiles'
+import {
+  loadArtistProviderTarget,
+  saveArtistProviderResult,
+} from '@/services/artist-profiles'
 
 let workerRunning = false
 
@@ -190,7 +193,7 @@ async function withRunningJob(
   })
 }
 
-async function logJob(
+export async function logJob(
   jobId: string,
   level: 'info' | 'warn' | 'error',
   message: string,
@@ -1084,6 +1087,8 @@ export type TaskJobResult = LastfmSyncJobResult & {
   failureClassification?: 'not-found' | 'ambiguous'
   metadata?: Record<string, JsonValue>
   options?: Record<string, JsonValue>
+  /** A completed check with no upstream calls must preserve provider failure tracking. */
+  noProviderRequests?: boolean
   persist?(tx: JobTransaction): Promise<void>
 }
 
@@ -1435,8 +1440,10 @@ export async function createTaskJob(
     if (active) {
       if (
         task === ARTIST_ENRICHMENT_TASK &&
-        typeof prepared.providerArtistId === 'string' &&
-        prepared.providerArtistId !== active.options.providerArtistId
+        ((prepared.verifySnapshotId ?? null) !==
+          (active.options.verifySnapshotId ?? null) ||
+          (typeof prepared.providerArtistId === 'string' &&
+            prepared.providerArtistId !== active.options.providerArtistId))
       )
         throw new ServerError({
           statusCode: 409,
@@ -1464,6 +1471,14 @@ export async function createTaskJob(
         )
       }
       return active.id
+    }
+    if (artistId !== null && typeof prepared.verifySnapshotId === 'string') {
+      const target = await loadArtistProviderTarget(artistId, provider, tx)
+      if (target?.snapshotId !== prepared.verifySnapshotId)
+        throw new ServerError({
+          statusCode: 409,
+          message: 'The artist snapshot is no longer current.',
+        })
     }
     const id = await insertTaskJob(
       tx,
@@ -1696,8 +1711,10 @@ async function processTaskJob(
     return false
   })
   if (!saved) return
-  if (!execution.stopped) execution.failures = 0
-  await control?.recordOutcome('success')
+  if (!result.noProviderRequests) {
+    if (!execution.stopped) execution.failures = 0
+    await control?.recordOutcome('success')
+  }
   if (continued) await wakeJobProvider(nextJob.provider)
 }
 

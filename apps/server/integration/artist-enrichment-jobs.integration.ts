@@ -127,12 +127,14 @@ async function seedArtistRecording(
   id: string,
   spotifyTrackId: string,
   title: string,
+  sourceLabel?: 'spotify' | 'spotify-search',
 ) {
   await databaseClient.insert(schema.mediaItem).values({
     id,
     slug: id,
     title,
     mediaType: 'track',
+    sourceLabel,
   })
   await databaseClient
     .insert(schema.libraryTrack)
@@ -140,6 +142,30 @@ async function seedArtistRecording(
   await databaseClient
     .insert(schema.mediaCredit)
     .values({ mediaItemId: id, artistId, role: 'artist' })
+}
+
+async function seedSavedSpotifySnapshot(id: string, targetArtist = artistId) {
+  await databaseClient.insert(schema.artistProviderSnapshot).values({
+    id,
+    artistId: targetArtist,
+    provider: 'spotify',
+    normalizedData: { name: artistName, externalId: spotifyArtistId, tags: [] },
+    payload: { artist: { id: spotifyArtistId, name: artistName } },
+  })
+  await databaseClient
+    .insert(schema.artistProviderCurrentState)
+    .values({
+      artistId: targetArtist,
+      provider: 'spotify',
+      latestSnapshotId: id,
+    })
+    .onConflictDoUpdate({
+      target: [
+        schema.artistProviderCurrentState.artistId,
+        schema.artistProviderCurrentState.provider,
+      ],
+      set: { latestSnapshotId: id },
+    })
 }
 
 async function providerEvidence(
@@ -1382,6 +1408,373 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
     expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
       [],
     )
+  })
+
+  it.each([
+    {
+      credit: spotifyArtistId,
+      verdict: 'verified',
+      reason: 'verified-recording-credit',
+    },
+    {
+      credit: duplicateSpotifyArtistId,
+      verdict: 'conflict',
+      reason: 'conflicting-recording-credit',
+    },
+  ])(
+    'records a $verdict verdict from independent credits without writing library identity or freshness',
+    async ({ credit, verdict, reason }) => {
+      const { enqueueArtistEnrichment } =
+        await import('@/services/artist-enrichment')
+      const { getJob, processQueuedJobs } = await import('@/services/jobs')
+      const { getJobData } = await import('@/services/job-data')
+      const { loadArtistMetadata } = await import('@/services/artist-metadata')
+      const [imported, albumTrack] = spotifyRecordings
+      if (!imported || !albumTrack) throw new Error('Missing fixture recording')
+      await seedArtistRecording(
+        imported.spotifyTrackId,
+        imported.spotifyTrackId,
+        imported.title,
+        'spotify',
+      )
+      await seedArtistRecording(
+        albumTrack.spotifyTrackId,
+        albumTrack.spotifyTrackId,
+        albumTrack.title,
+      )
+      await databaseClient.insert(schema.track).values({
+        id: 'native-album-track-position',
+        albumMediaItemId: 'album-fixture',
+        trackMediaItemId: albumTrack.spotifyTrackId,
+        externalId: albumTrack.spotifyTrackId,
+        title: albumTrack.title,
+        position: 1,
+      })
+      await providerEvidence('album-fixture', 'spotify', {
+        data: {
+          tracks: {
+            items: [{ id: albumTrack.spotifyTrackId, name: albumTrack.title }],
+          },
+        },
+      })
+      const snapshotId = 'spotify-original-snapshot'
+      await seedSavedSpotifySnapshot(snapshotId)
+      const snapshots = await databaseClient
+        .select()
+        .from(schema.artistProviderSnapshot)
+      const pointers = await databaseClient
+        .select()
+        .from(schema.artistProviderCurrentState)
+      const tracks = await databaseClient.select().from(schema.libraryTrack)
+      const metadata = await loadArtistMetadata([artistId])
+      request.mockImplementation(async (url) => {
+        const path = new URL(String(url)).pathname
+        if (path === '/api/token')
+          return Response.json({
+            access_token: 'fixture-token',
+            token_type: 'Bearer',
+            expires_in: 3600,
+          })
+        const track = spotifyRecordings.find(
+          ({ spotifyTrackId }) => path === '/v1/tracks/' + spotifyTrackId,
+        )
+        if (!track)
+          throw new Error(
+            'Unexpected artist profile request during verification',
+          )
+        return Response.json({
+          id: track.spotifyTrackId,
+          name: track.title,
+          artists: [{ id: credit, name: artistName }],
+        })
+      })
+      const input = {
+        artistId,
+        provider: 'spotify',
+        verifySnapshotId: snapshotId,
+      }
+      const job = await enqueueArtistEnrichment(input, null)
+      expect((await enqueueArtistEnrichment(input, null)).id).toBe(job.id)
+      await expect(
+        enqueueArtistEnrichment({ artistId, provider: 'spotify' }, null),
+      ).rejects.toMatchObject({ response: { statusCode: 409 } })
+      await processQueuedJobs()
+      const verification = {
+        snapshotId,
+        verdict,
+        reason,
+        evidenceCount: 2,
+      }
+      expect(await getJob(job.id)).toMatchObject({
+        status: 'succeeded',
+        options: { verifySnapshotId: snapshotId, verification },
+      })
+      expect(await getJobData(job.id)).toMatchObject({
+        snapshots: [],
+        diagnostics: [
+          expect.objectContaining({
+            data: [
+              {
+                stage: 'artist.verification',
+                evidence: {
+                  ...verification,
+                  proof: expect.objectContaining({
+                    method: 'spotify-native-tracks',
+                    expectedId: spotifyArtistId,
+                  }),
+                },
+              },
+            ],
+          }),
+        ],
+      })
+      expect(request).toHaveBeenCalledTimes(3)
+      const receipts = await databaseClient
+        .select()
+        .from(schema.providerResponse)
+        .where(eq(schema.providerResponse.jobId, job.id))
+      expect(receipts).toHaveLength(2)
+      expect(
+        receipts.every(
+          (receipt) =>
+            receipt.phase === 'artist' && receipt.artistId === artistId,
+        ),
+      ).toBe(true)
+      expect(JSON.stringify(receipts).includes('fixture-token')).toBe(false)
+      const { runProviderReplayCommand } =
+        await import('../scripts/replay-provider-response')
+      await expect(
+        runProviderReplayCommand([
+          'replay',
+          '--job',
+          job.id,
+          '--artist',
+          artistId,
+          '--attempt',
+          '1',
+          '--output',
+          'unused-fixture-report.json',
+        ]),
+      ).rejects.toThrow(
+        'Saved match verification evidence is stored in the job diagnostics.',
+      )
+      expect(
+        await databaseClient.select().from(schema.artistProviderSnapshot),
+      ).toEqual(snapshots)
+      expect(
+        await databaseClient.select().from(schema.artistProviderCurrentState),
+      ).toEqual(pointers)
+      expect(await databaseClient.select().from(schema.libraryTrack)).toEqual(
+        tracks,
+      )
+      expect(await loadArtistMetadata([artistId])).toEqual(metadata)
+    },
+  )
+
+  it('leaves verification insufficient when the only Spotify ID came from a name search', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const [searchMatch] = spotifyRecordings
+    if (!searchMatch) throw new Error('Missing fixture recording')
+    await seedArtistRecording(
+      searchMatch.spotifyTrackId,
+      searchMatch.spotifyTrackId,
+      searchMatch.title,
+      'spotify-search',
+    )
+    const snapshotId = 'spotify-original-snapshot'
+    await seedSavedSpotifySnapshot(snapshotId)
+    const queued = await enqueueArtistEnrichment(
+      { artistId, provider: 'spotify', verifySnapshotId: snapshotId },
+      null,
+    )
+    await processQueuedJobs()
+    expect(request).not.toHaveBeenCalled()
+    expect(await getJob(queued.id)).toMatchObject({
+      status: 'succeeded',
+      options: {
+        verification: {
+          snapshotId,
+          verdict: 'insufficient',
+          reason: 'insufficient-recording-evidence',
+          evidenceCount: 0,
+        },
+      },
+    })
+  })
+
+  it('records a verification rate-limit failure without changing the saved profile', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const { getProviderSafety } = await import('@/services/provider-requests')
+    const snapshotId = 'spotify-original-snapshot'
+    await seedSavedSpotifySnapshot(snapshotId)
+    const [imported] = spotifyRecordings
+    if (!imported) throw new Error('Missing fixture recording')
+    await seedArtistRecording(
+      imported.spotifyTrackId,
+      imported.spotifyTrackId,
+      imported.title,
+      'spotify',
+    )
+    const queued = await enqueueArtistEnrichment(
+      { artistId, provider: 'spotify', verifySnapshotId: snapshotId },
+      null,
+    )
+    request.mockResolvedValueOnce(
+      Response.json({
+        access_token: 'fixture-token',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }),
+    )
+    request.mockResolvedValueOnce(
+      new Response(null, { status: 429, headers: { 'Retry-After': '60' } }),
+    )
+    await processQueuedJobs()
+    const failed = await getJob(queued.id)
+    expect(failed).toMatchObject({
+      status: 'failed',
+      options: { verifySnapshotId: snapshotId },
+    })
+    expect(failed?.options).not.toHaveProperty('verification')
+    expect((await getProviderSafety('spotify')).cooldownUntil).not.toBeNull()
+    expect(
+      await databaseClient.select().from(schema.artistProviderCurrentState),
+    ).toMatchObject([{ latestSnapshotId: snapshotId }])
+  })
+
+  it('refuses a different or superseded snapshot and finishes a queued stale verification without provider requests', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const { getJobData } = await import('@/services/job-data')
+    const snapshotId = 'spotify-original-snapshot'
+    await databaseClient
+      .insert(schema.artist)
+      .values({ id: 'other-artist', name: 'Other fixture' })
+    await seedSavedSpotifySnapshot('another-artist-snapshot', 'other-artist')
+    await seedSavedSpotifySnapshot(snapshotId)
+    for (const verifySnapshotId of [
+      'another-artist-snapshot',
+      'missing-snapshot',
+    ])
+      await expect(
+        enqueueArtistEnrichment(
+          { artistId, provider: 'spotify', verifySnapshotId },
+          null,
+        ),
+      ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    const job = await enqueueArtistEnrichment(
+      { artistId, provider: 'spotify', verifySnapshotId: snapshotId },
+      null,
+    )
+    await seedSavedSpotifySnapshot('spotify-renewed-snapshot')
+    await processQueuedJobs()
+    expect(request).not.toHaveBeenCalled()
+    const verification = {
+      snapshotId,
+      verdict: 'stale',
+      reason: 'snapshot-no-longer-current',
+      evidenceCount: 0,
+    }
+    expect(await getJob(job.id)).toMatchObject({
+      status: 'succeeded',
+      options: { verification },
+    })
+    expect(await getJobData(job.id)).toMatchObject({
+      diagnostics: [
+        expect.objectContaining({
+          data: [{ stage: 'artist.verification', evidence: verification }],
+        }),
+      ],
+    })
+  })
+
+  it('discards successful provider proof if the artist snapshot changes during verification', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const { getJobData } = await import('@/services/job-data')
+    const [recording] = spotifyRecordings
+    if (!recording) throw new Error('Missing fixture recording')
+    await seedArtistRecording(
+      recording.spotifyTrackId,
+      recording.spotifyTrackId,
+      recording.title,
+      'spotify',
+    )
+    const snapshotId = 'spotify-original-snapshot'
+    await seedSavedSpotifySnapshot(snapshotId)
+    request.mockResolvedValueOnce(
+      Response.json({
+        access_token: 'fixture-token',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }),
+    )
+    request.mockImplementationOnce(async () => {
+      await seedSavedSpotifySnapshot('spotify-concurrent-snapshot')
+      return Response.json({
+        id: recording.spotifyTrackId,
+        name: recording.title,
+        artists: [{ id: spotifyArtistId, name: artistName }],
+      })
+    })
+    const job = await enqueueArtistEnrichment(
+      { artistId, provider: 'spotify', verifySnapshotId: snapshotId },
+      null,
+    )
+    await processQueuedJobs()
+    const verification = {
+      snapshotId,
+      verdict: 'stale',
+      reason: 'snapshot-no-longer-current',
+      evidenceCount: 0,
+    }
+    expect(await getJob(job.id)).toMatchObject({
+      status: 'succeeded',
+      options: { verification },
+    })
+    expect(
+      (await getJobData(job.id)).diagnostics.flatMap(({ data }) => data),
+    ).toEqual([{ stage: 'artist.verification', evidence: verification }])
+    expect(
+      await databaseClient.select().from(schema.artistProviderCurrentState),
+    ).toMatchObject([{ latestSnapshotId: 'spotify-concurrent-snapshot' }])
+  })
+
+  it('retries a failed verification idempotently against the same snapshot', async () => {
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs, retryJob } =
+      await import('@/services/jobs')
+    const snapshotId = 'spotify-original-snapshot'
+    await seedSavedSpotifySnapshot(snapshotId)
+    const queued = await enqueueArtistEnrichment(
+      { artistId, provider: 'spotify', verifySnapshotId: snapshotId },
+      null,
+    )
+    await databaseClient
+      .update(schema.scrapeJob)
+      .set({ status: 'failed', finishedAt: new Date() })
+      .where(eq(schema.scrapeJob.id, queued.id))
+    const retry = await retryJob(queued.id, null, false)
+    expect(retry.options).toMatchObject({
+      verifySnapshotId: snapshotId,
+      retryOf: queued.id,
+    })
+    expect((await retryJob(queued.id, null, false)).id).toBe(retry.id)
+    await processQueuedJobs()
+    expect(request).not.toHaveBeenCalled()
+    expect(await getJob(retry.id)).toMatchObject({
+      status: 'succeeded',
+      options: {
+        verification: { snapshotId, verdict: 'insufficient', evidenceCount: 0 },
+      },
+    })
   })
 
   it('identifies an otherwise ambiguous Spotify artist from two distinct recordings', async () => {
