@@ -99,6 +99,44 @@ describe('creator API', () => {
     })
   })
 
+  it('queues an owner request to verify the current provider snapshot', async () => {
+    expect(
+      (
+        await enqueue({
+          provider: 'spotify',
+          verifySnapshotId: 'snapshot-fixture',
+        })
+      ).status,
+    ).toBe(200)
+    expect(mocks.enqueue).toHaveBeenCalledExactlyOnceWith(
+      {
+        artistId: 'fixture',
+        provider: 'spotify',
+        verifySnapshotId: 'snapshot-fixture',
+      },
+      'user-1',
+    )
+  })
+
+  it('rejects unauthenticated and invalid verification requests before queueing', async () => {
+    for (const body of [
+      {
+        provider: 'spotify',
+        verifySnapshotId: 'snapshot',
+        providerArtistId: 'artist',
+      },
+      { provider: 'discogs', verifySnapshotId: 'snapshot' },
+      { provider: 'spotify', verifySnapshotId: '  ' },
+    ])
+      expect((await enqueue(body)).status).toBe(422)
+    mocks.session.mockResolvedValue(null)
+    expect(
+      (await enqueue({ provider: 'lastfm', verifySnapshotId: 'snapshot' }))
+        .status,
+    ).toBe(401)
+    expect(mocks.enqueue).not.toHaveBeenCalled()
+  })
+
   it('authenticates both directories, related pages, and enrichment', async () => {
     mocks.session.mockResolvedValue(null)
     for (const path of [

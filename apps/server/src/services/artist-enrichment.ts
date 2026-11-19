@@ -2,8 +2,13 @@ import {
   ARTIST_ENRICHMENT_TASK,
   ArtistEnrichmentInputSchema,
   ArtistProfileProviderSchema,
+  ArtistVerificationProviderSchema,
+  ArtistVerificationResultSchema,
   type ArtistEnrichmentInput,
+  type ArtistProfile,
   type ArtistProviderId,
+  type ArtistVerificationProvider,
+  type ArtistVerificationResult,
 } from '@repo/schemas/artist-profiles'
 import {
   isProviderArtistSearchAmbiguousError,
@@ -13,6 +18,7 @@ import {
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
+import { eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
@@ -28,8 +34,10 @@ import {
   ArtistSearchAmbiguousError,
   lookupArtistProvider,
   normalizeArtistProviderId,
+  verifySavedArtistRecordings,
 } from '@/plugins/builtin/artist-providers'
 import { getScrapePlugin } from '@/plugins/registry'
+import { scrapeJob } from '@/schemas/db'
 import {
   loadCurrentArtistPayloads,
   loadArtistProviderTarget,
@@ -41,7 +49,12 @@ import {
   listStoredArtistProviderCandidates,
 } from './artist-provider-evidence'
 import { listArtistScrobbledRecordings } from './artist-listening'
-import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
+import {
+  createTaskJob,
+  logJob,
+  type TaskJobContext,
+  type TaskJobResult,
+} from './jobs'
 import {
   createProviderRequest,
   recordProviderFailure,
@@ -49,9 +62,45 @@ import {
 } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
 
-const ArtistEnrichmentOptionsSchema = ArtistEnrichmentInputSchema.extend({
+const ArtistEnrichmentOptionsSchema = ArtistEnrichmentInputSchema.safeExtend({
   artistId: z.string().min(1),
 }).strip()
+
+type ArtistProviderTarget = Awaited<ReturnType<typeof loadArtistProviderTarget>>
+
+function verificationProfile(
+  target: ArtistProviderTarget,
+  provider: ArtistVerificationProvider,
+  snapshotId: string,
+): ArtistProfile | null {
+  if (target?.snapshotId !== snapshotId || !target.profile?.externalId)
+    return null
+  return normalizeArtistProviderId(provider, target.profile.externalId)
+    ? target.profile
+    : null
+}
+
+function staleVerification(snapshotId: string): ArtistVerificationResult {
+  return {
+    snapshotId,
+    verdict: 'stale',
+    reason: 'snapshot-no-longer-current',
+    evidenceCount: 0,
+  }
+}
+
+function staleVerificationJob(snapshotId: string): TaskJobResult {
+  const verification = staleVerification(snapshotId)
+  return {
+    outcome: 'complete',
+    message: 'The artist snapshot is no longer current.',
+    noProviderRequests: true,
+    options: { verification },
+    metadata: {
+      diagnostics: [{ stage: 'artist.verification', evidence: verification }],
+    },
+  }
+}
 
 async function artistProvider(provider: ArtistProviderId) {
   const plugin = await getScrapePlugin(provider)
@@ -99,6 +148,27 @@ function artistLookupAmbiguous(error: unknown) {
   return (
     error instanceof ArtistSearchAmbiguousError ||
     isProviderArtistSearchAmbiguousError(error)
+  )
+}
+
+function recordArtistResponses(
+  jobId: string,
+  artistId: string,
+  plugin: MediaProviderPlugin,
+  secrets: MediaPluginArtistContext['secrets'],
+) {
+  return createProviderResponseRecorder(
+    (capture) =>
+      saveProviderResponseCapture({
+        jobId,
+        artistId,
+        provider: plugin.manifest.id,
+        attempt: 1,
+        capture,
+      }),
+    providerResponseSecretValues(secrets),
+    plugin.sanitizeResponseCapture,
+    plugin.sanitizeNativeJsonResponseCapture,
   )
 }
 
@@ -166,11 +236,24 @@ export async function prepareArtistEnrichment(
   _userId: string | null,
   input: Record<string, unknown>,
 ) {
-  const { artistId, provider, providerArtistId } =
+  const { artistId, provider, providerArtistId, verifySnapshotId } =
     ArtistEnrichmentOptionsSchema.parse(input)
   const target = await loadArtistProviderTarget(artistId, provider)
   if (!target)
     throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
+  if (
+    verifySnapshotId &&
+    !verificationProfile(
+      target,
+      ArtistVerificationProviderSchema.parse(provider),
+      verifySnapshotId,
+    )
+  )
+    throw new ServerError({
+      statusCode: 409,
+      message:
+        'The artist snapshot is no longer current or has no usable provider identifier.',
+    })
   const builtin = ArtistProfileProviderSchema.safeParse(provider)
   const requested =
     providerArtistId && builtin.success
@@ -188,6 +271,117 @@ export async function prepareArtistEnrichment(
     provider,
     groupKey: artistId,
     ...(requested ? { providerArtistId: requested } : {}),
+    ...(verifySnapshotId ? { verifySnapshotId } : {}),
+  }
+}
+
+async function runSavedVerification(
+  context: TaskJobContext,
+  {
+    artistId,
+    provider,
+    snapshotId,
+    name,
+    profile,
+  }: {
+    artistId: string
+    provider: ArtistVerificationProvider
+    snapshotId: string
+    name: string
+    profile: ArtistProfile
+  },
+  plugin: MediaProviderPlugin,
+  secrets: MediaPluginArtistContext['secrets'],
+  diagnostics: ReturnType<typeof createJobDiagnostics>,
+  capture: ReturnType<typeof recordArtistResponses>,
+): Promise<TaskJobResult> {
+  const request = createProviderRequest(plugin, context.assertActive, {
+    beginResponseCapture: capture('artist', artistId),
+  })
+  let providerAnswered = false
+  const result = await verifySavedArtistRecordings(provider, name, profile, {
+    secrets,
+    request: async (...parameters) => {
+      const response = await request(...parameters)
+      providerAnswered = true
+      return response
+    },
+    recordDiagnostic: diagnostics.recordDiagnostic,
+    ...(provider === 'spotify'
+      ? {
+          spotifyRecordings: await listSpotifyArtistRecordings(artistId, {
+            independentOnly: true,
+          }),
+          loadSpotifyCatalogRecordings: () =>
+            listArtistScrobbledRecordings(db, artistId, name, {
+              requireRelease: true,
+            }),
+        }
+      : {
+          loadLastfmRecordings: () =>
+            listArtistScrobbledRecordings(db, artistId, name),
+        }),
+  }).catch(async (error: unknown) => {
+    if (
+      !(
+        capture.storageError() || error instanceof ProviderResponseStorageError
+      ) &&
+      (await context.isActive())
+    ) {
+      if (artistLookupMiss(error)) {
+        if (providerAnswered) await recordProviderSuccess(provider)
+      } else await recordProviderFailure(plugin, error)
+    }
+    throw error
+  })
+  capture.assertStored()
+  await context.assertActive()
+  if (providerAnswered) await recordProviderSuccess(provider)
+  const verification = ArtistVerificationResultSchema.parse({
+    snapshotId,
+    verdict: result.verdict,
+    reason: result.reason,
+    evidenceCount: result.evidenceCount,
+  })
+  return {
+    outcome: 'complete',
+    message: 'Artist match verification finished.',
+    noProviderRequests: !providerAnswered,
+    persist: async (tx) => {
+      const target = await loadArtistProviderTarget(artistId, provider, tx)
+      const current = verificationProfile(target, provider, snapshotId)
+      const unchanged =
+        target?.name === name &&
+        current !== null &&
+        current.externalId === profile.externalId &&
+        current.url === profile.url
+      const saved = unchanged ? verification : staleVerification(snapshotId)
+      const proof = createJobDiagnostics(jobLogSecrets(secrets), {
+        protectProviderResponses: true,
+      })
+      proof.recordDiagnostic({
+        stage: 'artist.verification',
+        evidence: {
+          ...saved,
+          ...(unchanged ? { proof: result.evidence } : {}),
+        },
+      })
+      await tx
+        .update(scrapeJob)
+        .set({
+          options: sql`${scrapeJob.options} || ${JSON.stringify({ verification: saved })}::jsonb`,
+        })
+        .where(eq(scrapeJob.id, context.jobId))
+      await logJob(
+        context.jobId,
+        'info',
+        'Saved artist match verification.',
+        {
+          diagnostics: proof.snapshot(),
+        },
+        tx,
+      )
+    },
   }
 }
 
@@ -198,10 +392,44 @@ export async function runArtistEnrichment(
   let diagnostics: ReturnType<typeof createJobDiagnostics> | undefined
   let storageError: (() => ProviderResponseStorageError | undefined) | undefined
   try {
-    const { artistId, provider, providerArtistId } =
+    const { artistId, provider, providerArtistId, verifySnapshotId } =
       ArtistEnrichmentOptionsSchema.parse(input)
     await context.assertActive()
     const target = await loadArtistProviderTarget(artistId, provider)
+    if (verifySnapshotId) {
+      const supportedProvider = ArtistVerificationProviderSchema.parse(provider)
+      const profile = verificationProfile(
+        target,
+        supportedProvider,
+        verifySnapshotId,
+      )
+      if (!target || !profile) return staleVerificationJob(verifySnapshotId)
+      const { plugin, secrets } = await artistProvider(supportedProvider)
+      diagnostics = createJobDiagnostics(jobLogSecrets(secrets), {
+        protectProviderResponses: true,
+      })
+      const capture = recordArtistResponses(
+        context.jobId,
+        artistId,
+        plugin,
+        secrets,
+      )
+      storageError = capture.storageError
+      return await runSavedVerification(
+        context,
+        {
+          artistId,
+          provider: supportedProvider,
+          snapshotId: verifySnapshotId,
+          name: target.name,
+          profile,
+        },
+        plugin,
+        secrets,
+        diagnostics,
+        capture,
+      )
+    }
     if (!target)
       throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
     const { plugin, secrets, builtin } = await artistProvider(provider)
@@ -237,18 +465,11 @@ export async function runArtistEnrichment(
       Boolean(id && normalizeArtistProviderId('musicbrainz', id))
     let totalPages = !builtin || id ? 1 : 2
     await context.progress({ pagesRead: 0, totalPages })
-    const capture = createProviderResponseRecorder(
-      (capture) =>
-        saveProviderResponseCapture({
-          jobId: context.jobId,
-          artistId,
-          provider,
-          attempt: 1,
-          capture,
-        }),
-      providerResponseSecretValues(secrets),
-      plugin.sanitizeResponseCapture,
-      plugin.sanitizeNativeJsonResponseCapture,
+    const capture = recordArtistResponses(
+      context.jobId,
+      artistId,
+      plugin,
+      secrets,
     )
     storageError = capture.storageError
     const requestContext = {

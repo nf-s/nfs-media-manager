@@ -29,6 +29,7 @@ import {
 import { musicBrainzRequest, musicBrainzText } from './musicbrainz'
 import { spotifyClientToken, spotifyMarket } from './spotify'
 import {
+  selectSpotifyCatalogRecordings,
   verifySpotifyArtistCatalogRecordings,
   type SpotifyArtistCatalogRecording,
 } from './spotify-artist-catalog'
@@ -212,6 +213,22 @@ type ArtistRequestContext = MediaPluginTestContext & {
   >
 }
 
+export type SavedArtistRecordingContext = Omit<
+  ArtistRequestContext,
+  'recordDiagnostic' | 'searched'
+> & { recordDiagnostic?: (diagnostic: unknown) => void }
+
+export type SavedArtistRecordingVerification = {
+  verdict: 'verified' | 'conflict' | 'insufficient'
+  reason:
+    | 'verified-recording-credit'
+    | 'conflicting-recording-credit'
+    | 'insufficient-recording-evidence'
+    | 'saved-artist-id-invalid'
+  evidenceCount: number
+  evidence: JsonValue
+}
+
 type ArtistSearchContext = MediaPluginTestContext & {
   recordDiagnostic?: (diagnostic: unknown) => void
 }
@@ -367,13 +384,12 @@ export async function searchArtistCandidates(
   return result.candidates
 }
 
-async function verifySpotifyArtistRecordings(
-  context: ArtistRequestContext,
+async function readSpotifyArtistRecordings(
+  context: MediaPluginTestContext,
   name: string,
   token: string,
+  recordings: readonly SpotifyArtistRecording[],
 ) {
-  const recordings =
-    context.spotifyRecordings?.slice(0, spotifyArtistRecordingLimit) ?? []
   const params = spotifyMarket(context.secrets)
   const verified: (SpotifyArtistRecording & { artistId: string })[] = []
   for (const recording of recordings) {
@@ -408,19 +424,190 @@ async function verifySpotifyArtistRecordings(
     if (!artistId) continue
     const previous = verified[0]
     if (artistIds.length > 1 || (previous && previous.artistId !== artistId)) {
-      context.recordDiagnostic({
-        stage: 'artist.recording-conflict',
-        evidence: {
-          verified,
+      return {
+        verified,
+        conflict: {
           spotifyTrackId,
+          title,
           artistIds: artistIds.slice(0, searchLimit),
         },
-      })
-      throw new ArtistSearchAmbiguousError()
+      }
     }
     verified.push({ spotifyTrackId, title, artistId })
   }
+  return { verified, conflict: null }
+}
+
+async function verifySpotifyArtistRecordings(
+  context: ArtistRequestContext,
+  name: string,
+  token: string,
+) {
+  const recordings =
+    context.spotifyRecordings?.slice(0, spotifyArtistRecordingLimit) ?? []
+  const { verified, conflict } = await readSpotifyArtistRecordings(
+    context,
+    name,
+    token,
+    recordings,
+  )
+  if (conflict) {
+    context.recordDiagnostic({
+      stage: 'artist.recording-conflict',
+      evidence: { verified, ...conflict },
+    })
+    throw new ArtistSearchAmbiguousError()
+  }
   return verified.length === recordings.length ? verified : []
+}
+
+export async function verifySavedArtistRecordings(
+  provider: 'spotify' | 'lastfm',
+  name: string,
+  profile: { externalId?: string | null; url?: string | null },
+  context: SavedArtistRecordingContext,
+): Promise<SavedArtistRecordingVerification> {
+  const saved =
+    profile.externalId ?? (provider === 'lastfm' ? profile.url : null)
+  const expectedId = saved ? normalizeArtistProviderId(provider, saved) : null
+  const secrets = jobLogSecrets(context.secrets)
+  const insufficient: SavedArtistRecordingVerification = {
+    verdict: 'insufficient',
+    reason: 'insufficient-recording-evidence',
+    evidenceCount: 0,
+    evidence: null,
+  }
+  if (!expectedId) return { ...insufficient, reason: 'saved-artist-id-invalid' }
+  if (!artistNameKey(name)) return insufficient
+
+  function result(
+    verdict: 'verified' | 'conflict',
+    evidenceCount: number,
+    method: string,
+    proof: Record<string, JsonValue>,
+  ): SavedArtistRecordingVerification {
+    return {
+      verdict,
+      reason:
+        verdict === 'verified'
+          ? 'verified-recording-credit'
+          : 'conflicting-recording-credit',
+      evidenceCount,
+      evidence: sanitizeProviderPayload(
+        { method, expectedId, ...proof },
+        secrets,
+      ),
+    }
+  }
+
+  if (provider === 'lastfm') {
+    if (!context.loadLastfmRecordings) return insufficient
+    let conflict: SavedArtistRecordingVerification | undefined
+    const candidate = {
+      id: expectedId,
+      name,
+      ...(profile.url ? { url: profile.url } : {}),
+    }
+    const verified = await corroborateLastFmArtist(
+      name,
+      [candidate],
+      context.loadLastfmRecordings,
+      context,
+      (recordings) => {
+        conflict = result(
+          'conflict',
+          new Set(recordings.map(({ title }) => title)).size,
+          'lastfm-recordings',
+          { recordings },
+        )
+      },
+    )
+    if (conflict) return conflict
+    const expectedMbid = AlbumMbidSchema.safeParse(expectedId).data
+    if (!verified || (expectedMbid && verified.artistMbid !== expectedMbid))
+      return insufficient
+    const recordings = verified.recordingCredits.slice(0, 2)
+    return result(
+      'verified',
+      recordings.length,
+      verified.releaseEvidence
+        ? 'lastfm-recorded-release'
+        : 'lastfm-top-tracks',
+      {
+        recordings,
+        artistMbid: verified.artistMbid ?? null,
+        artistUrl: verified.artistUrl ?? null,
+        releaseEvidence: verified.releaseEvidence ?? null,
+      },
+    )
+  }
+
+  const native: SpotifyArtistRecording[] = []
+  for (const recording of context.spotifyRecordings ?? []) {
+    if (
+      !SpotifyIdSchema.safeParse(recording.spotifyTrackId).success ||
+      !recording.title.trim() ||
+      native.some(
+        ({ spotifyTrackId }) => spotifyTrackId === recording.spotifyTrackId,
+      )
+    )
+      continue
+    native.push(recording)
+    if (native.length === spotifyArtistRecordingLimit) break
+  }
+  const loadCatalog = context.loadSpotifyCatalogRecordings
+  const preloaded = native.length ? undefined : await loadCatalog?.()
+  if (
+    !native.length &&
+    (!preloaded || selectSpotifyCatalogRecordings(preloaded).length < 2)
+  )
+    return insufficient
+  const token = await spotifyClientToken(context.secrets, context.request)
+  secrets.push(token)
+  if (native.length) {
+    const { verified, conflict } = await readSpotifyArtistRecordings(
+      context,
+      name,
+      token,
+      native,
+    )
+    if (conflict || verified.some(({ artistId }) => artistId !== expectedId))
+      return result(
+        'conflict',
+        verified.length + Number(Boolean(conflict)),
+        'spotify-native-tracks',
+        { recordings: verified, conflict },
+      )
+    if (verified.length === native.length)
+      return result('verified', verified.length, 'spotify-native-tracks', {
+        recordings: verified,
+      })
+  }
+  const catalog = preloaded ?? (await loadCatalog?.())
+  if (!catalog) return insufficient
+  let conflict: SavedArtistRecordingVerification | undefined
+  const verified = await verifySpotifyArtistCatalogRecordings(
+    context,
+    name,
+    token,
+    catalog,
+    (recordings) => {
+      conflict = result(
+        'conflict',
+        new Set(recordings.map(({ title }) => title)).size,
+        'spotify-catalog-recordings',
+        { recordings },
+      )
+    },
+  )
+  if (conflict) return conflict
+  if (!verified) return insufficient
+  return result(
+    verified.artistId === expectedId ? 'verified' : 'conflict',
+    verified.recordings.length,
+    'spotify-catalog-recordings',
+    { recordings: verified.recordings },
+  )
 }
 
 /** A name search may also check bounded recording evidence before fetching the artist profile. */

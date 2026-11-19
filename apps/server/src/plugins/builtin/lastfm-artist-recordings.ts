@@ -61,6 +61,16 @@ export type LastFmRecording = {
   trackMbid?: string | null
 }
 
+type LastFmCredit = {
+  title: string
+  artistMbid: string | null
+  artistUrl: string | null
+  release?: string
+  trackMbid?: string | null
+}
+
+type LastFmCreditConflict = (credits: LastFmCredit[]) => void
+
 const TrackInfoSchema = z.object({
   track: z.object({
     name: z.string().trim().min(1),
@@ -144,6 +154,7 @@ async function corroborateRecordedRelease(
   candidateLink: ReturnType<typeof lastFmArtistUrl>,
   recordings: readonly LastFmRecording[],
   context: Parameters<typeof requestLastFm>[0],
+  conflictingCredits?: LastFmCreditConflict,
 ) {
   const recorded = singleRecordedRelease(recordings)
   const nameKey = exactNameKey(candidate.name)
@@ -175,11 +186,7 @@ async function corroborateRecordedRelease(
   )
     return null
   const artistMbid = AlbumMbidSchema.safeParse(artist.mbid).data?.toLowerCase()
-  if (
-    (artist.mbid && !artistMbid) ||
-    (candidateMbid && candidateMbid !== artistMbid)
-  )
-    return null
+  if (artist.mbid && !artistMbid) return null
 
   const artistLink = artist.url ? lastFmArtistUrl(artist.url) : null
   const trackLink = track.url
@@ -200,6 +207,24 @@ async function corroborateRecordedRelease(
   if (links.some((link) => exactNameKey(link.name) !== nameKey)) return null
   const [artistUrl] = links.map((link) => link.url)
   if (links.some((link) => link.url !== artistUrl)) return null
+  const credit = {
+    title: track.name,
+    release: album.title,
+    trackMbid: trackMbid ?? null,
+    artistMbid: artistMbid ?? null,
+    artistUrl: artistUrl ?? null,
+  }
+  if (
+    (candidateMbid && artistMbid && candidateMbid !== artistMbid) ||
+    (candidateLink &&
+      artistUrl &&
+      artistUrl !== candidateLink.url &&
+      (artistLink || trackLink))
+  ) {
+    conflictingCredits?.([credit])
+    return null
+  }
+  if (candidateMbid && candidateMbid !== artistMbid) return null
   if (
     candidateLink &&
     (artistUrl !== candidateLink.url || !(artistLink || trackLink))
@@ -213,6 +238,7 @@ async function corroborateRecordedRelease(
     matchedTitles: [track.name],
     artistMbid,
     artistUrl,
+    recordingCredits: [credit],
     releaseEvidence: {
       albumTitle: album.title,
       albumArtist: album.artist,
@@ -227,6 +253,7 @@ export async function corroborateLastFmArtist(
   candidates: readonly Candidate[],
   loadRecordings: () => Promise<readonly LastFmRecording[]>,
   context: Parameters<typeof requestLastFm>[0],
+  conflictingCredits?: LastFmCreditConflict,
 ) {
   const nameKey = exactNameKey(name)
   const matches = candidates.filter(
@@ -266,6 +293,7 @@ export async function corroborateLastFmArtist(
       candidateLink,
       recordings,
       context,
+      conflictingCredits,
     )
   if (distinctRecordings < minimumRecordings) return null
 
@@ -289,6 +317,7 @@ export async function corroborateLastFmArtist(
   const creditedMbids = new Set<string>()
   const creditedUrls = new Set<string>()
   const supportedRecordings = new Map<string, string>()
+  const observedCredits = new Map<string, LastFmCredit>()
   for (const track of toptracks.track) {
     const recording = recordingKeys.get(exactNameKey(track.name))
     if (!recording) continue
@@ -306,15 +335,24 @@ export async function corroborateLastFmArtist(
     if (track.artist?.mbid && !mbid) return null
     if (track.artist?.url && !artistLink) return null
     if (track.url && !trackLink) return null
-    if (mbid && candidateMbid && mbid !== candidateMbid) return null
+    if (
+      [artistLink, trackLink].some(
+        (link) => link && exactNameKey(link.name) !== nameKey,
+      )
+    )
+      return null
+    if (artistLink && trackLink && artistLink.url !== trackLink.url) return null
+    const url = (artistLink ?? trackLink)?.url
     if (mbid) creditedMbids.add(mbid)
-    for (const link of [artistLink, trackLink]) {
-      if (!link) continue
-      if (exactNameKey(link.name) !== nameKey) return null
-      if (candidateLink && link.url !== candidateLink.url) return null
-      creditedUrls.add(link.url)
+    if (url) creditedUrls.add(url)
+    if (mbid || url) {
+      const credit = {
+        title: track.name,
+        artistMbid: mbid ?? null,
+        artistUrl: url ?? null,
+      }
+      observedCredits.set(JSON.stringify([recording, mbid, url]), credit)
     }
-    if (creditedMbids.size > 1 || creditedUrls.size > 1) return null
 
     const supportsCandidate =
       (candidateMbid && mbid === candidateMbid) ||
@@ -322,9 +360,51 @@ export async function corroborateLastFmArtist(
     if (supportsCandidate && !supportedRecordings.has(recording))
       supportedRecordings.set(recording, track.name)
   }
+  const observations = [...observedCredits.values()]
+  const contrary = observations.find(
+    ({ artistMbid, artistUrl }) =>
+      (candidateMbid && artistMbid && artistMbid !== candidateMbid) ||
+      (candidateLink && artistUrl && artistUrl !== candidateLink.url),
+  )
+  if (creditedMbids.size > 1 || creditedUrls.size > 1 || contrary) {
+    const first =
+      contrary ??
+      observations.find(
+        (credit) =>
+          (creditedMbids.size > 1 && credit.artistMbid) ||
+          (creditedUrls.size > 1 && credit.artistUrl),
+      )
+    if (first && conflictingCredits) {
+      const other = observations.find(
+        (credit) =>
+          (first.artistMbid &&
+            credit.artistMbid &&
+            first.artistMbid !== credit.artistMbid) ||
+          (first.artistUrl &&
+            credit.artistUrl &&
+            first.artistUrl !== credit.artistUrl),
+      )
+      conflictingCredits(other ? [first, other] : [first])
+    }
+    return null
+  }
   if (supportedRecordings.size < minimumRecordings) return null
   const [artistMbid] = creditedMbids
   const [artistUrl] = creditedUrls
+  const sortedCredits = observations.filter((credit) =>
+    supportedRecordings.has(trackVersionKey(credit.title)),
+  )
+  if (candidateMbid)
+    sortedCredits.sort(
+      (left, right) =>
+        Number(right.artistMbid === candidateMbid) -
+        Number(left.artistMbid === candidateMbid),
+    )
+  const recordingCredits = new Map<string, LastFmCredit>()
+  for (const credit of sortedCredits) {
+    const title = trackVersionKey(credit.title)
+    if (!recordingCredits.has(title)) recordingCredits.set(title, credit)
+  }
   return {
     candidate,
     response,
@@ -332,6 +412,7 @@ export async function corroborateLastFmArtist(
     matchedTitles: [...supportedRecordings.values()],
     artistMbid,
     artistUrl,
+    recordingCredits: [...recordingCredits.values()],
     releaseEvidence: undefined,
   }
 }

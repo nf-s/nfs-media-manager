@@ -7,7 +7,8 @@ import { db } from '@/lib/db'
 import { listArtistEnrichmentProviderIds } from '@/plugins/registry'
 
 // The literal matches the predicate on the artist job indexes.
-const artistJob = sql`job.options->>'task' = ${sql.raw(`'${ARTIST_ENRICHMENT_TASK}'`)}`
+const artistJob = sql`job.options->>'task' = ${sql.raw(`'${ARTIST_ENRICHMENT_TASK}'`)}
+  and job.options->>'verifySnapshotId' is null`
 const attempted = sql`job.started_at is not null and job.status <> 'queued'`
 const jobArtist = sql`job.options->>'artistId'`
 const latestAttemptOrder = sql`order by job.started_at desc nulls last, job.created_at desc nulls last, job.id desc nulls last`
