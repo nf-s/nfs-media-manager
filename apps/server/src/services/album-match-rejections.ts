@@ -22,11 +22,16 @@ import {
   albumMatchUrlHasIdentityQuery,
   createAlbumMatchRejectionPredicate,
 } from '@/lib/album-match-identities'
-import { LastFmUrlSchema } from '@/lib/album-provider-details'
+import {
+  DiscogsRecordSchema,
+  LastFmUrlSchema,
+} from '@/lib/album-provider-details'
 import { db } from '@/lib/db'
-import { StoredDiscogsIdSchema } from '@/lib/discogs-release-formats'
 import { ServerError } from '@/lib/error'
-import { AlbumMbidSchema } from '@/plugins/builtin/album-provider-helpers'
+import {
+  AlbumMbidSchema,
+  DiscogsReferenceIdSchema,
+} from '@/plugins/builtin/album-provider-helpers'
 import {
   album,
   externalLink,
@@ -199,14 +204,19 @@ const PrimaryLinkEvidenceSchema = z.object({
   links: z.array(PluginLinkSchema),
 })
 
+const DiscogsMatchIdSchema = z.union([
+  DiscogsRecordSchema.shape.id.transform(String),
+  DiscogsReferenceIdSchema,
+])
+
 const DiscogsMasterEvidenceSchema = z.object({
   master: z.object({
-    id: StoredDiscogsIdSchema,
-    main_release: StoredDiscogsIdSchema,
+    id: DiscogsMatchIdSchema,
+    main_release: DiscogsMatchIdSchema,
   }),
   mainRelease: z.object({
-    id: StoredDiscogsIdSchema,
-    master_id: StoredDiscogsIdSchema.optional(),
+    id: DiscogsMatchIdSchema,
+    master_id: DiscogsMatchIdSchema.optional(),
   }),
 })
 
