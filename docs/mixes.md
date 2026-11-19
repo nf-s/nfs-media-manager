@@ -59,7 +59,7 @@ A later sync makes a handful of requests.
 
 Each station's page sets how often a sync is queued: off, every 1, 3 or 6 hours, daily (the default) or weekly, measured from the last completed sync. Both runtimes check every five minutes when scraping is enabled. The schedule follows a completed sync and resumes a paused one. It does not start the first sync and does not resume a failed or cancelled run.
 
-In the hosted deployment the station jobs have a queue of their own, so a long first sync does not hold back metadata jobs.
+The stations sync at the same time. In the hosted deployment each station has a queue of its own, so one station's sync never waits for another's or holds back metadata jobs.
 
 ## Artists
 
@@ -132,7 +132,7 @@ Artwork is loaded from the station by the browser and is not stored. Recordings 
 
 Migration `0038_mix_stations.sql` adds the page URL to sources, the artists, page URL and recording URL to items, and two checkpoint columns, and allows the station types. It rewrites no stored rows.
 
-The hosted deployment binds a queue named `nfs-media-scrape-mixes` (`apps/server/wrangler.jsonc`). Create it before the deploy that binds it: `wrangler queues create nfs-media-scrape-mixes`.
+The hosted deployment binds one queue per station (`apps/server/wrangler.jsonc`): `nfs-media-scrape-rinse`, `nfs-media-scrape-nts` and `nfs-media-scrape-lotradio`. Create each before the deploy that binds it, for example `wrangler queues create nfs-media-scrape-rinse`. `nfs-media-scrape-mixes`, which the stations shared at first, receives nothing and keeps a consumer only for messages sent before the change.
 
 ## Verification
 

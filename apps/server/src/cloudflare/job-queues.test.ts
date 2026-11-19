@@ -4,23 +4,18 @@ import { providerJobQueue } from './job-queues'
 const queues = {
   SCRAPE_QUEUE: 'default',
   SCRAPE_QUEUE_LASTFM: 'lastfm',
-  SCRAPE_QUEUE_MIXES: 'mixes',
+  SCRAPE_QUEUE_LOTRADIO: 'lotradio',
+  SCRAPE_QUEUE_NTS: 'nts',
+  SCRAPE_QUEUE_RINSE: 'rinse',
   SCRAPE_QUEUE_SPOTIFY: 'spotify',
   SCRAPE_QUEUE_YOUTUBE: 'youtube',
 }
 
 describe('providerJobQueue', () => {
-  it.each(['lastfm', 'spotify', 'youtube'])(
+  it.each(['lastfm', 'spotify', 'youtube', 'rinse', 'nts', 'lotradio'])(
     'gives %s, which runs long syncs, its own queue',
     (provider) => {
       expect(providerJobQueue(queues, provider)).toBe(provider)
-    },
-  )
-
-  it.each(['rinse', 'nts', 'lotradio'])(
-    'puts %s, a radio station, on the queue the stations share',
-    (provider) => {
-      expect(providerJobQueue(queues, provider)).toBe('mixes')
     },
   )
 
