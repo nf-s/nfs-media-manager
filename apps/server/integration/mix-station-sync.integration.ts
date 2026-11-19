@@ -223,7 +223,10 @@ const api: {
   skipStored: boolean
   /** The stored mixes a listing was told of. */
   held: string[]
-  /** Answers this numbered request with `failStatus`; a 429 carries Retry-After. */
+  /**
+   * Answers this numbered request with `failStatus`; a 429 carries
+   * Retry-After, and with 0 the request gets no answer.
+   */
   failAt: number
   failStatus: number
   requests: number
@@ -412,6 +415,8 @@ async function fakeStation(input: Parameters<typeof fetch>[0]) {
   if (!url.host.endsWith('.fixture.test')) throw new Error('Unexpected request')
   api.requests += 1
   await api.before(api.requests)
+  if (api.requests === api.failAt && api.failStatus === 0)
+    throw new TypeError('fetch failed')
   if (api.requests === api.failAt)
     return api.failStatus === 429
       ? Response.json(
@@ -1132,7 +1137,7 @@ describe('mix station sync jobs with offline HTTP and a temporary database', () 
       job: { status: 'failed' },
     })
     await clearProviderState()
-    // The schedule never resumes a failed run.
+    // The schedule never resumes a run that failed on the station's answer.
     expect(await queueDueMixStationSync(Date.now() + 365 * 86400000)).toBe(
       false,
     )
@@ -1143,6 +1148,74 @@ describe('mix station sync jobs with offline HTTP and a temporary database', () 
       storedItems: 6,
     })
     expect(calls()).toEqual(firstRunCalls.slice(3))
+  })
+
+  it('lets the schedule resume a run the station did not answer, waiting longer after each failed job', async () => {
+    const { queueDueMixStationSync } =
+      await import('@/services/mix-station-sync-jobs')
+    const minute = 60 * 1000
+    api.failAt = 4
+    api.failStatus = 0
+    expect(await syncToEnd()).toMatchObject({
+      state: 'failed',
+      storedItems: 2,
+      errorMessage: expect.stringContaining(
+        'Provider request failed or timed out',
+      ),
+      nextScheduledAt: null,
+      job: { status: 'failed' },
+    })
+    // Each resumed job gets no answer to its first request.
+    for (const wait of [0, 15 * minute, 60 * minute]) {
+      await clearProviderState()
+      const failed = (await syncJobs()).at(-1)
+      const ended = failed?.finishedAt?.getTime() ?? Number.NaN
+      if (wait > 0)
+        expect(await queueDueMixStationSync(ended + wait - 1000)).toBe(false)
+      api.failAt = api.requests + 1
+      expect(await queueDueMixStationSync(ended + wait)).toBe(true)
+      expect(await drain()).toMatchObject({ state: 'failed', storedItems: 2 })
+      // The job that failed before is linked to the one that resumed its run.
+      const jobs = await syncJobs()
+      expect(jobs.at(-2)?.id).toBe(failed?.id)
+      expect(jobs.at(-2)?.options['retryJobId']).toBe(jobs.at(-1)?.id)
+    }
+    // Four jobs in a row have failed, so the run waits for the owner.
+    await clearProviderState()
+    expect(await queueDueMixStationSync(Date.now() + 365 * 86400000)).toBe(
+      false,
+    )
+    api.failAt = 0
+    request.mockClear()
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      storedItems: 6,
+    })
+    expect(calls()).toEqual(firstRunCalls.slice(3))
+  })
+
+  it('lets the schedule resume a run whose job was interrupted', async () => {
+    const { queueDueMixStationSync } =
+      await import('@/services/mix-station-sync-jobs')
+    const { recoverCloudJobById } = await import('@/services/cloud-job-store')
+    // The hosted runtime fails a job whose worker stopped; nothing ends the run.
+    api.before = async (count) => {
+      if (count !== 3) return
+      const running = (await syncJobs()).find((job) => job.status === 'running')
+      await recoverCloudJobById(running?.id ?? '', 'rinse')
+    }
+    expect(await syncToEnd()).toMatchObject({
+      state: 'failed',
+      phase: 'items',
+      storedItems: 0,
+      job: { status: 'failed' },
+    })
+
+    api.before = idle
+    request.mockClear()
+    expect(await queueDueMixStationSync(Date.now() + 1000)).toBe(true)
+    expect(await drain()).toMatchObject({ state: 'complete', storedItems: 6 })
+    expect(calls()).toEqual(firstRunCalls.slice(2))
   })
 
   it('fails without storing a mix of another station', async () => {
@@ -1173,6 +1246,12 @@ describe('mix station sync jobs with offline HTTP and a temporary database', () 
       storedItems: 0,
       job: { status: 'cancelled' },
     })
+    // The schedule never resumes a run the owner stopped.
+    const { queueDueMixStationSync } =
+      await import('@/services/mix-station-sync-jobs')
+    expect(await queueDueMixStationSync(Date.now() + 365 * 86400000)).toBe(
+      false,
+    )
 
     api.before = idle
     request.mockClear()

@@ -43,6 +43,13 @@ export const subscriptionSyncRun = (
     eq(subscriptionSync.provider, provider),
   )
 
+/** A provider's sync jobs. */
+const syncJobs = (provider: SubscriptionType) =>
+  and(
+    eq(scrapeJob.provider, provider),
+    sql`${scrapeJob.options}->>'task' = ${subscriptionSyncTasks[provider]}`,
+  )
+
 async function latestSyncJob(provider: SubscriptionType) {
   const [job] = await db
     .select({
@@ -51,15 +58,31 @@ async function latestSyncJob(provider: SubscriptionType) {
       errorMessage: scrapeJob.errorMessage,
     })
     .from(scrapeJob)
-    .where(
-      and(
-        eq(scrapeJob.provider, provider),
-        sql`${scrapeJob.options}->>'task' = ${subscriptionSyncTasks[provider]}`,
-      ),
-    )
+    .where(syncJobs(provider))
     .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
     .limit(1)
   return job ?? null
+}
+
+/**
+ * How many of a provider's newest sync jobs failed one after another, counted
+ * up to `limit`, and when the newest of them ended.
+ */
+export async function failedSyncJobStreak(
+  provider: SubscriptionType,
+  limit: number,
+) {
+  const jobs = await db
+    .select({ status: scrapeJob.status, finishedAt: scrapeJob.finishedAt })
+    .from(scrapeJob)
+    .where(syncJobs(provider))
+    .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
+    .limit(limit)
+  const other = jobs.findIndex((job) => job.status !== 'failed')
+  return {
+    failures: other < 0 ? jobs.length : other,
+    finishedAt: jobs[0]?.finishedAt ?? null,
+  }
 }
 
 type SyncJob = Awaited<ReturnType<typeof latestSyncJob>>

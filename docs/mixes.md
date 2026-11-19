@@ -37,7 +37,7 @@ The sync is a task job for the station's provider, with no media item, a progres
 - A show the station no longer lists keeps its mixes. Archives are kept; nothing is removed by a sync.
 - One job runs at most 300 steps or eight minutes, then succeeds and queues a follow-on job. A long sync is a chain of jobs.
 - A page and its checkpoint are saved together. A paused, failed or cancelled run resumes at the next unread page.
-- A rate limit or cooldown **pauses** the sync; the schedule resumes it after the time shown, or choose **Resume sync**. Any other error fails the job. A failed job is not retried automatically.
+- A rate limit or cooldown **pauses** the sync; the schedule resumes it after the time shown, or choose **Resume sync**. Any other error fails the job. When the job was interrupted, or the station gave no answer (no response, or HTTP 502, 503 or 504), the schedule resumes the run from its checkpoint: at its next check, then fifteen minutes after a second failed job in a row, then an hour after a third. After a fourth it waits for **Resume sync**, as does a run that failed on what the station answered.
 - Cancelling the job stops the sync before the next request and discards a page still in flight.
 - The owner's **Listened** date is never changed by a sync.
 
@@ -57,7 +57,7 @@ A later sync makes a handful of requests.
 
 ### Schedule
 
-Each station's page sets how often a sync is queued: off, every 1, 3 or 6 hours, daily (the default) or weekly, measured from the last completed sync. Both runtimes check every five minutes when scraping is enabled. The schedule follows a completed sync and resumes a paused one. It does not start the first sync and does not resume a failed or cancelled run.
+Each station's page sets how often a sync is queued: off, every 1, 3 or 6 hours, daily (the default) or weekly, measured from the last completed sync. Both runtimes check every five minutes when scraping is enabled. The schedule follows a completed sync and resumes a paused one, or one that was interrupted or got no answer (see [Sync](#sync)). It does not start the first sync and does not resume a cancelled run or one that failed on what the station answered.
 
 The stations sync at the same time. In the hosted deployment each station has a queue of its own, so one station's sync never waits for another's or holds back metadata jobs.
 
@@ -137,7 +137,7 @@ The hosted deployment binds one queue per station (`apps/server/wrangler.jsonc`)
 ## Verification
 
 - `src/lib/rinse-api.test.ts`, `src/lib/nts-api.test.ts` and `src/lib/lotradio-api.test.ts` read each station's responses from synthetic fixtures: paging, a long show's older episodes from the sitemap, skipped episodes, billed artists, dates and time zones, recording links, the reach of each recent list and a changed action identifier.
-- `integration/mix-station-sync.integration.ts` runs the sync through the job dispatcher against fake stations and a temporary database: a first sync in chained jobs, a catalogue that names its shows without details, later syncs from the recent list, a list that does not reach the last sync, a feed-only station, renamed shows, a rate-limit pause and resume, failure, cancellation and the schedule.
+- `integration/mix-station-sync.integration.ts` runs the sync through the job dispatcher against fake stations and a temporary database: a first sync in chained jobs, a catalogue that names its shows without details, later syncs from the recent list, a list that does not reach the last sync, a feed-only station, renamed shows, a rate-limit pause and resume, an unanswered request and an interrupted job resumed by the schedule, failure, cancellation and the schedule.
 - `integration/mixes-library.integration.ts` browses synthetic rows: both libraries kept apart, every filter, range and sort, the tag hierarchy, artist links and the artist's mixes.
 - Web tests (`utils/subscriptions.test.ts`, `components/subscription-browser.test.tsx`, `components/subscription-sync.test.tsx`, `components/creator-details.test.tsx`, `utils/media-scope.test.ts`) cover the Mixes pages, station sync panels, show and mix details and navigation.
 

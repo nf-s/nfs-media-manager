@@ -49,6 +49,7 @@ import { validateMixStationStep } from './mix-station-replay'
 import { subscriptionSearchVector } from './subscription-library'
 import {
   dueSubscriptionSyncUsers,
+  failedSyncJobStreak,
   readSubscriptionSyncStatus,
   saveSubscriptionSyncSchedule,
   subscriptionSyncRun,
@@ -62,6 +63,14 @@ const LOG_EVERY_SHOWS = 25
 const LOG_EVERY_PAGES = 25
 // When a rate limit carries no retry time.
 const DEFAULT_PAUSE_MS = 60 * 60 * 1000
+/**
+ * How long the schedule waits before it resumes a run whose job was
+ * interrupted or got no answer from the station: one wait for each of its
+ * failed jobs in a row. After a further failure the run waits for the owner.
+ */
+const INTERRUPTED_RUN_WAITS_MS = [0, 15 * 60 * 1000, 60 * 60 * 1000]
+/** The statuses a station's gateway answers with while the station is briefly away. */
+const UNANSWERED_STATUSES = [502, 503, 504]
 
 type SyncRow = typeof subscriptionSync.$inferSelect
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -900,6 +909,11 @@ export async function runMixStationSyncJob(
         message: `Paused: ${error.message.replace(/\.$/, '')}. Stored mixes are kept; the schedule resumes the sync after ${resumeAfter.toISOString()}.`,
       }
     }
+    if (unanswered(error)) {
+      // The run stays open at its checkpoint for the schedule to resume.
+      await db.update(subscriptionSync).set({ leaseToken: null }).where(owned)
+      return { outcome: 'failed', error }
+    }
     if (
       !(error instanceof ServerError) &&
       !(error instanceof ProviderResponseStorageError)
@@ -922,12 +936,50 @@ export async function runMixStationSyncJob(
   }
 }
 
-/** Accounts whose schedule is due, or whose rate-limit pause has passed. */
-export function dueMixStationSyncUsers(
+/** A request the station did not answer: no response, or its gateway's error. */
+function unanswered(error: unknown) {
+  if (!(error instanceof ProviderRequestError)) return false
+  const status = error.diagnostics?.httpStatus
+  return (
+    error.code === 'request-failed' &&
+    (status === undefined || UNANSWERED_STATUSES.includes(status))
+  )
+}
+
+/**
+ * Accounts whose schedule is due, whose rate-limit pause has passed, or whose
+ * open run lost its job: the job was interrupted or the station did not
+ * answer. Such a run is resumed after the wait its failed jobs in a row have
+ * reached. A run that failed on the station's answer, or that the owner
+ * stopped, is not resumed here.
+ */
+export async function dueMixStationSyncUsers(
   station: MixStation,
   now: number,
 ): Promise<string[]> {
-  return dueSubscriptionSyncUsers(station, now, (userId) =>
-    getMixStationSyncStatus(station, userId),
+  const status = (userId: string) => getMixStationSyncStatus(station, userId)
+  const due = await dueSubscriptionSyncUsers(station, now, status)
+  const streak = await failedSyncJobStreak(
+    station,
+    INTERRUPTED_RUN_WAITS_MS.length + 1,
   )
+  const wait = INTERRUPTED_RUN_WAITS_MS[streak.failures - 1]
+  if (
+    wait === undefined ||
+    !streak.finishedAt ||
+    streak.finishedAt.getTime() + wait > now
+  )
+    return due
+  const open = await db
+    .select({ userId: subscriptionSync.userId })
+    .from(subscriptionSync)
+    .where(
+      and(
+        eq(subscriptionSync.provider, station),
+        eq(subscriptionSync.status, 'running'),
+      ),
+    )
+  for (const run of open)
+    if ((await status(run.userId)).state === 'failed') due.push(run.userId)
+  return due
 }
