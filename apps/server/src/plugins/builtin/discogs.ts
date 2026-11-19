@@ -277,6 +277,46 @@ function conflictingTrackList(
   return matches * 2 < Math.min(durations.length, library.length)
 }
 
+const physicalFormats = new Set(['vinyl', 'cd', 'cassette'])
+const fullReleaseDate = z.iso.date()
+
+function conflictingPhysicalEdition(
+  library: NonNullable<AlbumReleaseTrackEvidence['tracks']>,
+  spotifyDay: string | undefined,
+  release: z.infer<typeof DiscogsRecordSchema>,
+) {
+  const nativeDay = fullReleaseDate.safeParse(release.released).data
+  if (
+    !nativeDay ||
+    !fullReleaseDate.safeParse(spotifyDay).success ||
+    nativeDay === spotifyDay
+  )
+    return false
+  if (
+    !release.formats?.some((format) =>
+      physicalFormats.has(albumNameKey(format.name)),
+    )
+  )
+    return false
+  const rows = comparableTrackRows(release)
+  if (!rows || rows.length < 5 || rows.length !== library.length) return false
+  const names = library.map((track) => albumNameKey(track.title))
+  if (names.includes('') || new Set(names).size !== names.length) return false
+
+  return rows.every((row, index) => {
+    const expected = library[index]
+    const seconds = durationSeconds(row.duration)
+    return (
+      !!expected &&
+      !!seconds &&
+      Number.isFinite(seconds) &&
+      albumNameKey(row.title) === names[index] &&
+      seconds - expected.durationSec >= 60 &&
+      seconds >= expected.durationSec * 1.3
+    )
+  })
+}
+
 const extendedMixSuffix =
   /(?:\(extended mix\)|\[extended mix\]|\s[-–—]\s+extended mix)\s*$/i
 
@@ -436,13 +476,21 @@ export const discogsPlugin: MediaProviderPlugin = {
       throw new ProviderItemAmbiguousError(
         'This later Discogs compilation has more than twice the tracks on the library album. Review its contents before selecting it.',
       )
-    const tracks = context.media?.releaseHints?.find(
+    const spotifyHint = context.media?.releaseHints?.find(
       (hint) =>
         hint.source === 'spotify' &&
         hint.trackEvidence?.exactSequence &&
         hint.trackEvidence.tracks?.length === hint.trackEvidence.libraryTracks,
-    )?.trackEvidence?.tracks
+    )
+    const tracks = spotifyHint?.trackEvidence?.tracks
     if (reference.fromSearch && tracks) {
+      if (
+        reference.type === 'release' &&
+        conflictingPhysicalEdition(tracks, spotifyHint?.releaseDate, release)
+      )
+        throw new ProviderItemAmbiguousError(
+          'Every track on this separately dated physical release runs substantially longer than the matching library recording. Review the edition.',
+        )
       if (
         conflictingTrackList(tracks, record) &&
         (reference.type === 'release' || conflictingTrackList(tracks, release))

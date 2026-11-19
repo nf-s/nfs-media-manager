@@ -737,6 +737,109 @@ describe('Discogs album adapter', () => {
   )
 
   it.each([
+    {
+      scenario: 'a separately dated vinyl edition with longer recordings',
+      hold: true,
+    },
+    { scenario: 'an explicitly selected edition', hold: false },
+    { scenario: 'a digital release', hold: false },
+    { scenario: 'a release group', hold: false },
+    { scenario: 'one matching recording duration', hold: false },
+    { scenario: 'an unknown track duration', hold: false },
+    { scenario: 'a matching release date', hold: false },
+    { scenario: 'an imprecise release date', hold: false },
+    { scenario: 'a shorter program', hold: false },
+  ])(
+    'checks physical edition timing for $scenario',
+    async ({ scenario, hold }) => {
+      const spotifyDay = '2005-02-08'
+      const titles = [
+        'First Track',
+        'Second Track',
+        'Third Track',
+        'Fourth Track',
+        'Fifth Track',
+      ]
+      const tracks = titles
+        .slice(0, scenario === 'a shorter program' ? 4 : 5)
+        .map((title) => ({ title, durationSec: 240 }))
+      const native = {
+        ...release,
+        released:
+          scenario === 'a matching release date' ? spotifyDay : '2005-05-10',
+        formats: [
+          { name: scenario === 'a digital release' ? 'File' : 'Vinyl' },
+        ],
+        tracklist: tracks.map(({ title }, i) => ({
+          title,
+          type_: 'track',
+          position: String(i + 1),
+          duration:
+            i === 0 && scenario === 'one matching recording duration'
+              ? '4:00'
+              : i === 0 && scenario === 'an unknown track duration'
+                ? ''
+                : '5:20',
+        })),
+      }
+      const selected = scenario === 'an explicitly selected edition'
+      const byMaster = scenario === 'a release group'
+      const search = {
+        results: [
+          {
+            id: byMaster ? master.id : release.id,
+            type: byMaster ? 'master' : 'release',
+            title: 'Example Artist - Example Album',
+          },
+        ],
+      }
+      const request = selected
+        ? replies(native)
+        : byMaster
+          ? replies(
+              search,
+              { ...master, tracklist: native.tracklist },
+              { ...native, master_id: master.id },
+            )
+          : replies({ results: [] }, { results: [] }, search, native)
+      const attempt = scrape(
+        discogsPlugin,
+        context({
+          request,
+          media: {
+            title: release.title,
+            artists: ['Example Artist'],
+            releaseHints: [
+              {
+                source: 'spotify',
+                title: release.title,
+                releaseDate:
+                  scenario === 'an imprecise release date'
+                    ? '2005'
+                    : spotifyDay,
+                trackEvidence: {
+                  libraryTracks: tracks.length,
+                  matchedTracks: tracks.length,
+                  exactSequence: true,
+                  tracks,
+                },
+              },
+            ],
+          },
+          existingReferences: selected
+            ? [ref('discogs', 'release', String(release.id))]
+            : byMaster
+              ? []
+              : [ref('spotify', 'upc', '123456789012')],
+        }),
+      )
+      if (hold) await expect(attempt).rejects.toThrow(/physical release/i)
+      else
+        await expect(attempt).resolves.toHaveProperty('normalized.references')
+    },
+  )
+
+  it.each([
     { scenario: 'all four extended mixes', ambiguous: true },
     { scenario: 'an explicitly reviewed release', ambiguous: false },
     { scenario: 'one extended mix', ambiguous: false },
