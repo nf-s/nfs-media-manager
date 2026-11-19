@@ -549,6 +549,107 @@ describe('Discogs album adapter', () => {
     expect(request).toHaveBeenCalledTimes(4)
   })
 
+  it.each([
+    {
+      source: 'Compilation',
+      libraryType: 'album',
+      exact: true,
+      selected: false,
+      ambiguous: true,
+    },
+    {
+      source: 'Album',
+      libraryType: 'album',
+      exact: true,
+      selected: false,
+      ambiguous: false,
+    },
+    {
+      source: 'Compilation',
+      libraryType: 'compilation',
+      exact: true,
+      selected: false,
+      ambiguous: false,
+    },
+    {
+      source: 'Compilation',
+      libraryType: 'album',
+      exact: false,
+      selected: false,
+      ambiguous: false,
+    },
+    {
+      source: 'Compilation',
+      libraryType: 'album',
+      exact: true,
+      selected: true,
+      ambiguous: false,
+    },
+  ])(
+    'checks the scope of a later expanded $source for $libraryType (exact $exact, selected $selected)',
+    async ({ source, libraryType, exact, selected, ambiguous }) => {
+      const tracklist = Array.from({ length: 11 }, (_, i) => ({
+        type_: 'track',
+        title: `Track ${i + 1}`,
+        position: String(i + 1),
+      }))
+      const candidate = { ...master, year: 2011, tracklist }
+      const edition = {
+        ...release,
+        master_id: master.id,
+        formats: [{ name: 'CD', descriptions: [source] }],
+        tracklist,
+      }
+      const queryResult = {
+        results: [
+          {
+            id: master.id,
+            type: 'master',
+            title: 'Example Artist - Example Album',
+          },
+        ],
+      }
+      const request = selected
+        ? replies(candidate, edition)
+        : replies(queryResult, candidate, edition)
+      const attempt = scrape(
+        discogsPlugin,
+        context({
+          request,
+          media: {
+            title: 'Example Album',
+            artists: ['Example Artist'],
+            releaseHints: [
+              {
+                source: 'spotify',
+                title: 'Example Album',
+                year: 2001,
+                releaseType: libraryType,
+                trackEvidence: {
+                  libraryTracks: 5,
+                  matchedTracks: 5,
+                  exactSequence: exact,
+                },
+              },
+            ],
+          },
+          existingReferences: selected
+            ? [ref('discogs', 'master', String(master.id))]
+            : [],
+        }),
+      )
+      if (ambiguous)
+        await expect(attempt).rejects.toBeInstanceOf(ProviderItemAmbiguousError)
+      else
+        expect((await attempt).normalized.references).toContainEqual(
+          expect.objectContaining({
+            referenceType: 'master',
+            externalId: String(master.id),
+          }),
+        )
+    },
+  )
+
   it('skips barcode hits in a rejected master while accepting a different edition family', async () => {
     const request = replies(
       {

@@ -173,6 +173,38 @@ async function resolveDiscogsReference(
   throw new ProviderItemNotFoundError('Discogs found no matching album.')
 }
 
+function isLargerLaterCompilation(
+  context: MediaPluginScrapeContext,
+  record: z.infer<typeof DiscogsRecordSchema>,
+  release: z.infer<typeof DiscogsRecordSchema>,
+) {
+  const year = record.year
+  if (
+    !year ||
+    !release.formats?.some((format) =>
+      format.descriptions?.some((label) =>
+        albumNameMatches(label, 'Compilation'),
+      ),
+    )
+  )
+    return false
+  const trackCount = record.tracklist?.filter(
+    (track) => track.type_ === 'track',
+  ).length
+  if (!trackCount) return false
+  return context.media?.releaseHints?.some(
+    (hint) =>
+      hint.source === 'spotify' &&
+      hint.releaseType === 'album' &&
+      albumNameMatches(hint.title, record.title) &&
+      hint.year !== undefined &&
+      hint.year < year &&
+      hint.trackEvidence?.exactSequence &&
+      hint.trackEvidence.libraryTracks > 0 &&
+      trackCount > 2 * hint.trackEvidence.libraryTracks,
+  )
+}
+
 function durationSeconds(value: string | undefined) {
   if (!value || !/^\d+:[0-5]\d$/.test(value)) return undefined
   const [minutes, seconds] = value.split(':').map(Number)
@@ -191,6 +223,7 @@ export const discogsPlugin: MediaProviderPlugin = {
     mediaTypes: ['album'],
     identifierTypes: ['master', 'release', 'upc'],
     supportsNameLookup: true,
+    albumReleaseHints: true,
     localWorkerDefaultMode: 'local',
     localWorker: {
       origin: DISCOGS_API_ORIGIN,
@@ -302,6 +335,13 @@ export const discogsPlugin: MediaProviderPlugin = {
         (release.master_id !== undefined && release.master_id !== record.id))
     )
       throw new Error('Discogs returned an unrelated main release.')
+    if (
+      reference.fromSearch &&
+      isLargerLaterCompilation(context, record, release)
+    )
+      throw new ProviderItemAmbiguousError(
+        'This later Discogs compilation has more than twice the tracks on the library album. Review its contents before selecting it.',
+      )
     const rating = release.community?.rating
     const have = release.community?.have
     const want = release.community?.want

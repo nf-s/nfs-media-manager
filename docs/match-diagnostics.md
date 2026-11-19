@@ -32,7 +32,7 @@ For an incorrect album match, open the provider cell, choose **Mark incorrect**,
 
 Use **Refresh** in Sources to run a supported provider again. The lookup skips rejected identities. A different successful match becomes current. If the provider has no acceptable replacement, the earlier evidence remains marked incorrect. Google Custom Search is retired. Rate Your Music can be looked up with the indexed search provider.
 
-Automatic Discogs searches skip editions that Discogs identifies as belonging to a rejected master. You can preview a specific edition and select it after verifying its track list. Rejecting a single edition leaves its sibling editions available.
+Automatic Discogs searches skip editions that Discogs identifies as belonging to a rejected master. You can preview a specific edition and select it after verifying its track list. Rejecting a single edition leaves its sibling editions available. When a later compilation has more than twice the tracks on a verified Spotify album of the same name, automatic discovery leaves it for review.
 
 Rejected legacy Metacritic links and ratings stay in source history. They leave the album's current links, Ratings, and rating filters. An owner can record an independently verified album URL through `POST /api/v1/albums/{id}/metacritic-correction`. The correction requires the exact archived rejection and preserves the observed URL and source evidence in Sources. The corrected link carries no rating or vote count.
 

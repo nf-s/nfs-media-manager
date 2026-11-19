@@ -121,7 +121,6 @@ describe('find match', () => {
     const search = vi.fn().mockResolvedValue([])
     mocks.plugin.mockResolvedValue({
       ...discogsPlugin,
-      manifest: { ...discogsPlugin.manifest, albumReleaseHints: true },
       searchMatchCandidates: search,
     })
     await searchMatchCandidates({
@@ -160,7 +159,11 @@ describe('find match', () => {
     ])
   })
 
-  it('searches an album provider through its request policy and marks the stored record', async () => {
+  it('searches an album provider without release hints through its request policy and marks the stored record', async () => {
+    mocks.plugin.mockResolvedValueOnce({
+      ...discogsPlugin,
+      manifest: { ...discogsPlugin.manifest, albumReleaseHints: false },
+    })
     mocks.request
       .mockResolvedValueOnce(Response.json(discogsResults(11, 'master')))
       .mockResolvedValueOnce(Response.json(discogsResults(22, 'release')))
