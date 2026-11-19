@@ -962,6 +962,145 @@ describe('Discogs album adapter', () => {
     },
   )
 
+  it.each(['search', 'selected'])(
+    'holds a %s master before retrieving its rejected main release',
+    async (mode) => {
+      const searched = mode === 'search'
+      const request = searched
+        ? replies(
+            {
+              results: [
+                {
+                  id: master.id,
+                  type: 'master',
+                  title: 'Example Artist - Example Album',
+                },
+              ],
+            },
+            master,
+            release,
+          )
+        : replies(master, release)
+      await expect(
+        scrape(
+          discogsPlugin,
+          context({
+            request,
+            existingReferences: searched
+              ? []
+              : [ref('discogs', 'master', String(master.id))],
+            isRejectedMatch: ({ referenceType, externalId }) =>
+              referenceType === 'release' && externalId === String(release.id),
+          }),
+        ),
+      ).rejects.toThrow(/main release.*rejected/i)
+      expect(request).toHaveBeenCalledTimes(searched ? 2 : 1)
+    },
+  )
+
+  it.each([
+    { variant: 'the single appears on a full album', hold: true },
+    { variant: 'the owner chose this album', hold: false },
+    { variant: 'a single with bonus tracks', hold: false },
+    { variant: 'the source contains a longer composition', hold: false },
+    { variant: 'a continuous single with indexed movements', hold: false },
+    {
+      variant: 'the master has a different program from its main issue',
+      hold: false,
+    },
+  ])('checks a one-track single when $variant', async ({ variant, hold }) => {
+    const tracklist = [
+      'Opening Track',
+      'Second Track',
+      'Example Song',
+      'Later Track',
+      'Final Track',
+    ].map((title, index) => ({
+      title,
+      type_: 'track',
+      position: String(index + 1),
+      duration:
+        variant === 'the source contains a longer composition'
+          ? '12:00'
+          : '3:00',
+    }))
+    const singleTitle =
+      variant === 'a continuous single with indexed movements'
+        ? 'Continuous Suite'
+        : 'Example Song'
+    const native = {
+      ...release,
+      master_id: master.id,
+      tracklist,
+      formats: [
+        {
+          name: 'Vinyl',
+          descriptions: [
+            variant === 'a single with bonus tracks' ? 'Single' : 'Album',
+          ],
+        },
+      ],
+    }
+    const group = {
+      ...master,
+      tracklist:
+        variant === 'the master has a different program from its main issue'
+          ? [
+              {
+                type_: 'track',
+                position: '1',
+                title: singleTitle,
+                duration: '3:00',
+              },
+            ]
+          : tracklist,
+    }
+    const selected = variant === 'the owner chose this album'
+    const request = selected
+      ? replies(group, native)
+      : replies(
+          {
+            results: [
+              {
+                id: master.id,
+                type: 'master',
+                title: 'Example Artist - Example Album',
+              },
+            ],
+          },
+          group,
+          native,
+        )
+    const attempt = scrape(
+      discogsPlugin,
+      context({
+        request,
+        existingReferences: selected
+          ? [ref('discogs', 'master', String(master.id))]
+          : [],
+        media: {
+          title: release.title,
+          artists: ['Example Artist'],
+          releaseHints: [
+            {
+              source: 'spotify',
+              title: release.title,
+              releaseType: 'single',
+              trackEvidence: {
+                libraryTracks: 1,
+                matchedTracks: 1,
+                exactSequence: true,
+                tracks: [{ title: singleTitle, durationSec: 180 }],
+              },
+            },
+          ],
+        },
+      }),
+    )
+    if (hold) await expect(attempt).rejects.toThrow(/one-track single/i)
+    else await expect(attempt).resolves.toHaveProperty('normalized.references')
+  })
+
   it('skips barcode hits in a rejected master while accepting a different edition family', async () => {
     const request = replies(
       {

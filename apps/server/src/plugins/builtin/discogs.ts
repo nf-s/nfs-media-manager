@@ -234,6 +234,30 @@ function comparableTrackRows(record: z.infer<typeof DiscogsRecordSchema>) {
     return rows
 }
 
+function albumIncludesSingle(
+  record: z.infer<typeof DiscogsRecordSchema>,
+  track: NonNullable<AlbumReleaseTrackEvidence['tracks']>[number],
+) {
+  const rows = comparableTrackRows(record)
+  if (!rows) return false
+  const name = albumNameKey(track.title)
+  const titles = new Set(
+    rows.map((row) => albumNameKey(row.title)).filter(Boolean),
+  )
+  return (
+    name.length > 0 &&
+    titles.size >= 5 &&
+    rows.some((row) => {
+      const seconds = durationSeconds(row.duration)
+      return (
+        seconds !== undefined &&
+        albumNameKey(row.title) === name &&
+        Math.abs(seconds - track.durationSec) <= 10
+      )
+    })
+  )
+}
+
 function conflictingTrackList(
   library: NonNullable<AlbumReleaseTrackEvidence['tracks']>,
   record: z.infer<typeof DiscogsRecordSchema>,
@@ -457,6 +481,15 @@ export const discogsPlugin: MediaProviderPlugin = {
     if (reference.type === 'master') {
       if (!record.main_release)
         throw new Error('Discogs master is missing its main release.')
+      if (
+        context.isRejectedMatch?.({
+          referenceType: 'release',
+          externalId: String(record.main_release),
+        })
+      )
+        throw new ProviderItemAmbiguousError(
+          'This Discogs master uses a main release already rejected for this album. Select a different edition.',
+        )
       releasePayload = await discogsRequest(
         context,
         `releases/${record.main_release}`,
@@ -484,6 +517,23 @@ export const discogsPlugin: MediaProviderPlugin = {
     )
     const tracks = spotifyHint?.trackEvidence?.tracks
     if (reference.fromSearch && tracks) {
+      const single =
+        spotifyHint?.releaseType === 'single' && tracks.length === 1
+          ? tracks[0]
+          : undefined
+      if (
+        single &&
+        release.formats?.some((format) =>
+          format.descriptions?.some((label) =>
+            albumNameMatches(label, 'Album'),
+          ),
+        ) &&
+        albumIncludesSingle(record, single) &&
+        (reference.type === 'release' || albumIncludesSingle(release, single))
+      )
+        throw new ProviderItemAmbiguousError(
+          'This Discogs album includes the library’s one-track single alongside other recordings. Review the release scope.',
+        )
       if (
         reference.type === 'release' &&
         conflictingPhysicalEdition(tracks, spotifyHint?.releaseDate, release)
