@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
 import { db } from '@/lib/db'
 import { normalizedTagSql } from '@/lib/tag-sql'
+import { descendantTagNames } from './tag-hierarchy'
 
 function canonicalTagRows(
   mediaType: 'album' | 'film',
@@ -21,13 +22,20 @@ function canonicalTagRows(
     ${normalizedName ? sql`and ${originalName} = ${normalizedName}` : sql``}`
 }
 
-/** Explicit filters still resolve stored aliases, including hidden groups. */
+/**
+ * Explicit filters still resolve stored aliases, including hidden groups, and
+ * a tag also matches the visible tags beneath it in the hierarchy.
+ */
 export function matchingTagNames(
   name: string,
   mediaType: 'album' | 'film',
 ): SQL {
-  return sql`select ${name}::text union
-    select ${normalizedTagSql(sql`canonical.name`)} from (${canonicalTagRows(mediaType, sql`${name}`)}) canonical`
+  return sql`with named(name) as (
+      select ${name}::text union
+      select ${normalizedTagSql(sql`canonical.name`)} from (${canonicalTagRows(mediaType, sql`${name}`)}) canonical
+    )
+    select name from named
+    union ${descendantTagNames(mediaType, sql`select name from named`)}`
 }
 
 const currentArtistProfiles = sql`select state.artist_id, state.latest_snapshot_id

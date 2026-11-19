@@ -66,11 +66,15 @@ export const FilmBrowseFiltersParamSchema = createSerializedArrayQuerySchema(
 export const AlbumFilterOptionSchema = AlbumBrowseFilterSchema.extend({
   label: z.string(),
   count: z.number().int().positive(),
+  // Visible tags beneath a tag value; the count covers them too.
+  subtags: z.number().int().positive().optional(),
 })
 
 export const FilmFilterOptionSchema = FilmBrowseFilterSchema.extend({
   label: z.string(),
   count: z.number().int().positive(),
+  // Visible tags beneath a tag value; the count covers them too.
+  subtags: z.number().int().positive().optional(),
 })
 
 export const AlbumQuerySchema = PaginationQuerySchema.extend({

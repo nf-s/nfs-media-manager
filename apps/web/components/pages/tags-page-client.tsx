@@ -1,6 +1,6 @@
 'use client'
 
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { Fragment, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { TagPageSchema, type TagSortKey } from '@repo/schemas/tags'
@@ -14,6 +14,7 @@ import {
 import { Skeleton } from '@repo/ui/components/ds/feedback'
 import {
   PageHead,
+  Select,
   Toolbar,
   ToolbarCount,
   ToolbarEnd,
@@ -30,6 +31,7 @@ import {
 } from '@/components/detail-inspector-context'
 import { tagDetailId } from '@/utils/detail-inspector'
 import TagActions from '@/components/tag-actions'
+import TagParentActions from '@/components/tag-parent-actions'
 import { useMediaScope } from '@/components/media-scope'
 import {
   SecondaryCell,
@@ -55,6 +57,8 @@ export default function TagsPageClient({
     { key: 'name', label: 'Tag' },
     { key: 'mediaCount', label: 'Items' },
     { key: 'sourceCount', label: 'Sources' },
+    { key: 'parents', label: 'Parents' },
+    { key: 'childCount', label: 'Subtags', defaultVisible: false },
     { key: 'mergedNames', label: 'Merged names', defaultVisible: false },
   ])
   const [sortBy, setSortBy] = useState<TagSortKey>('name')
@@ -69,10 +73,13 @@ export default function TagsPageClient({
   const inspector = useDetailInspector()
   const search = params.get('q') ?? ''
   const query = useDeferredValue(search.trim())
+  const placement =
+    !hidden && params.get('placement') === 'unplaced' ? 'unplaced' : 'any'
   const selectedTagId = params.get('tag')
   const [selected, setSelected] = useState<string[]>([])
   const [anchor, setAnchor] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [parentsOpen, setParentsOpen] = useState(false)
   const [outcome, setOutcome] = useState<{
     message: string
     interrupted: boolean
@@ -80,11 +87,20 @@ export default function TagsPageClient({
   const selectAll = useRef<HTMLInputElement>(null)
   const shift = useRef(false)
   const tags = useVirtualTable({
-    queryKey: ['tags', 'virtual', mediaType, hidden, query, sortBy, direction],
+    queryKey: [
+      'tags',
+      'virtual',
+      mediaType,
+      hidden,
+      placement,
+      query,
+      sortBy,
+      direction,
+    ],
     loadPage: (page, size, signal) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags?${new URLSearchParams({ mediaType, q: query, sortBy, direction, visibility: hidden ? 'hidden' : 'visible', page: String(page), size: String(size) })}`,
+        `/api/v1/tags?${new URLSearchParams({ mediaType, q: query, sortBy, direction, visibility: hidden ? 'hidden' : 'visible', placement, page: String(page), size: String(size) })}`,
         TagPageSchema,
         { signal },
       ),
@@ -98,7 +114,7 @@ export default function TagsPageClient({
     setSelected([])
     setAnchor(null)
     setOutcome(null)
-  }, [mediaType, hidden, query, sortBy, direction])
+  }, [mediaType, hidden, placement, query, sortBy, direction])
   useEffect(() => {
     if (selectAll.current)
       selectAll.current.indeterminate = selectedTags.length > 0 && !allSelected
@@ -114,6 +130,14 @@ export default function TagsPageClient({
     )
   }
   const tagScope = mediaType === 'film' ? 'film' : 'album'
+  function completeSelection(
+    ids: string[],
+    message: string,
+    interrupted: boolean,
+  ) {
+    setSelected((current) => current.filter((id) => !ids.includes(id)))
+    setOutcome({ message, interrupted })
+  }
   function openTag(id: string) {
     inspector?.open({ kind: 'tag', id: tagDetailId(tagScope, id) })
   }
@@ -145,6 +169,25 @@ export default function TagsPageClient({
             updateParams('q', value)
           }}
         />
+        {!hidden && (
+          <Select
+            aria-label="Hierarchy placement"
+            value={placement}
+            disabled={pending}
+            onChange={(event) => {
+              setSelected([])
+              setAnchor(null)
+              setOutcome(null)
+              updateParams(
+                'placement',
+                event.target.value === 'unplaced' ? 'unplaced' : '',
+              )
+            }}
+          >
+            <option value="any">All tags</option>
+            <option value="unplaced">Outside the hierarchy</option>
+          </Select>
+        )}
         <ToolbarCount>
           {tags.hasTotal ? (
             formatItemCount(tags.total, TAGS)
@@ -154,6 +197,16 @@ export default function TagsPageClient({
         </ToolbarCount>
         {columns.controls && <ToolbarEnd>{columns.controls}</ToolbarEnd>}
       </Toolbar>
+      {parentsOpen && selectedTags.length > 0 && (
+        <div className="ds-panelpad sec-form">
+          <TagParentActions
+            key={selectedTags.map((tag) => tag.id).join(',')}
+            tags={selectedTags}
+            onPendingChange={setPending}
+            onComplete={completeSelection}
+          />
+        </div>
+      )}
       <SecondaryTableFrame>
         <SecondaryTableScroll
           ref={tags.scroller}
@@ -214,6 +267,10 @@ export default function TagsPageClient({
                     disabled={pending}
                   />
                 )}
+                {columns.visible('parents') && <TableHead>Parents</TableHead>}
+                {columns.visible('childCount') && (
+                  <TableHead align="end">Subtags</TableHead>
+                )}
                 {columns.visible('mergedNames') && (
                   <SecondaryTableHead
                     sortKey="mergedNames"
@@ -237,7 +294,7 @@ export default function TagsPageClient({
               )}
               {tags.hasTotal && tags.total === 0 && (
                 <TableState colSpan={1 + columns.count}>
-                  {query
+                  {query || placement === 'unplaced'
                     ? hidden
                       ? 'No hidden tags match this search.'
                       : 'No tags match.'
@@ -312,6 +369,38 @@ export default function TagsPageClient({
                         </span>
                       </TableCell>
                     )}
+                    {columns.visible('parents') && (
+                      <TableCell>
+                        <SecondaryCell
+                          text={
+                            tag.parents.length
+                              ? tag.parents
+                                  .map((parent) => parent.name)
+                                  .join(', ')
+                              : undefined
+                          }
+                        >
+                          {tag.parents.length
+                            ? tag.parents.map((parent, index) => (
+                                <Fragment key={parent.id}>
+                                  {index > 0 && ', '}
+                                  <DetailLink
+                                    kind="tag"
+                                    id={tagDetailId(tagScope, parent.id)}
+                                  >
+                                    {parent.name}
+                                  </DetailLink>
+                                </Fragment>
+                              ))
+                            : EMPTY_VALUE}
+                        </SecondaryCell>
+                      </TableCell>
+                    )}
+                    {columns.visible('childCount') && (
+                      <TableCell align="end">
+                        {formatCount(tag.childCount)}
+                      </TableCell>
+                    )}
                     {columns.visible('mergedNames') && (
                       <TableCell>
                         <SecondaryCell
@@ -342,13 +431,10 @@ export default function TagsPageClient({
               <TagActions
                 key={selectedTags.map((tag) => tag.id).join(',')}
                 tags={selectedTags}
+                parentsOpen={parentsOpen}
+                onParentsToggle={() => setParentsOpen(!parentsOpen)}
                 onPendingChange={setPending}
-                onComplete={(ids, message, interrupted) => {
-                  setSelected((current) =>
-                    current.filter((id) => !ids.includes(id)),
-                  )
-                  setOutcome({ message, interrupted })
-                }}
+                onComplete={completeSelection}
               />
             )}
             {outcome && (

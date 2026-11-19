@@ -128,7 +128,14 @@
 .sec-check-cell {
   width: calc(var(--ds-gutter) * 3);
 }
+/* Tag hierarchy: a leaf keeps the show/hide button's width so titles line up */
+.sec-tree-spacer {
+  flex: none;
+  width: var(--ds-h-xs);
+}
+/* The bar keeps the height of its actions; the table above takes the rest */
 .sec-selectbar {
+  flex: none;
   flex-wrap: wrap;
 }
 .sec-selectbar-actions {

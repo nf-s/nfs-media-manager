@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   browseSuggestions,
+  filterSuggestionNote,
   matchingTitleFilters,
   matchTier,
   matchTiers,
@@ -283,4 +284,14 @@ test('ranking is deterministic and keeps the 100-suggestion cap', () => {
     ),
     ranked,
   )
+})
+
+test('a tag suggestion with subtags notes the count and the subtag count', () => {
+  assert.equal(
+    filterSuggestionNote({ count: 1204, subtags: 38 }),
+    '1,204 · 38 subtags',
+  )
+  assert.equal(filterSuggestionNote({ count: 5, subtags: 1 }), '5 · 1 subtag')
+  assert.equal(filterSuggestionNote({ count: 1204 }), '1,204')
+  assert.equal(filterSuggestionNote({ count: 7, subtags: 0 }), '7')
 })

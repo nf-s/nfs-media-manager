@@ -32,6 +32,11 @@ import { checksumJson } from '@/lib/media-utils'
 import { mediaItem, album, film, libraryTrack, mediaCredit } from '@/schemas/db'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
+import {
+  tagAncestorKeys,
+  tagAncestorRows,
+  visibleSubtagCounts,
+} from './tag-hierarchy'
 import { albumAddedDateExpression } from './album-added-dates'
 import { createBrowseListening, type BrowseListening } from './browse-listening'
 import {
@@ -74,7 +79,7 @@ const recordingPageCache = createDatabaseReadCache<RecordingGroupRow[]>({
   maxEntries: 32,
   maxValueBytes: 32 * 1024,
 })
-const facetCache = createDatabaseReadCache<z.infer<typeof FacetRowSchema>[]>({
+const facetCache = createDatabaseReadCache<FacetRow[]>({
   maxEntries: 4,
   maxValueBytes: 512 * 1024,
 })
@@ -1183,6 +1188,8 @@ function textRows(
     includeArchived?: boolean
     normalizeTags?: boolean
     sharedArtistTags?: boolean
+    // Facets also list each tag's parents, counted over all their subtags.
+    rollUpTags?: boolean
   } = {},
 ): SQL {
   const visible = options.includeArchived
@@ -1236,21 +1243,42 @@ function textRows(
     const membership = options.sharedArtistTags
       ? sql`select media_item_id, name, name_key from browse_artist_tags`
       : artistTagMemberships(mediaType)
-    const artistSource = sql`select media_item.id, ${value} as value
+    const artistRows = (
+      rollUp: boolean,
+    ) => sql`select media_item.id, ${rollUp ? sql`ancestor.ancestor_key` : value} as value
       from (${membership}) artist_tag
+      ${rollUp ? sql`join (${tagAncestorKeys('album')}) ancestor on ancestor.descendant_key = artist_tag.name_key` : sql``}
       join media_item on media_item.id = artist_tag.media_item_id ${trackJoin}
       where ${visible}`
+    // Release tags stand alone on an album that has enough of them.
+    const sparse =
+      key === 'artistTag'
+        ? sql``
+        : sql` and (${albumId} is null or ${albumId} not in (${albumsWithEnoughTags()}))`
+    const artistSource = options.rollUpTags
+      ? sql`${artistRows(false)}${sparse} union all ${artistRows(true)}${sparse}`
+      : sql`${artistRows(false)}${sparse}`
     if (key === 'artistTag') return artistSource
     return sql`${textRows('albumTag', mediaType, options)}
-      union all ${artistSource} and (${albumId} is null or ${albumId} not in (${albumsWithEnoughTags()}))`
+      union all ${artistSource}`
   }
-  if (mediaType === 'track' && key === 'albumTag')
-    return sql`select media_item.id, ${tagName} as value from media_item join library_track lt on lt.media_item_id = media_item.id join media_item_tag mt on mt.media_item_id = lt.album_media_item_id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = 'album' and not t.hidden`
+  if (key === 'genre' || key === 'keyword' || key === 'albumTag') {
+    const tagType = mediaType === 'track' ? 'album' : mediaType
+    // A track is listed under the tags of its library album.
+    const membership =
+      mediaType === 'track'
+        ? sql`join library_track lt on lt.media_item_id = media_item.id join media_item_tag mt on mt.media_item_id = lt.album_media_item_id`
+        : sql`join media_item_tag mt on mt.media_item_id = media_item.id`
+    const direct = sql`select media_item.id, ${tagName} as value from media_item ${membership} join tag t on t.id = mt.tag_id where ${visible} and t.media_type = ${tagType} and not t.hidden`
+    if (!options.rollUpTags) return direct
+    return sql`${direct}
+      union all select media_item.id, ancestor.ancestor_key as value from media_item ${membership}
+        join (${tagAncestorRows(tagType)}) ancestor on ancestor.tag_id = mt.tag_id
+        where ${visible}`
+  }
   if (mediaType === 'album' && key === 'playlist')
     return sql`select media_item.id, member.value from media_item
       join (${albumPlaylistRows()}) member on member.id = media_item.id where ${visible}`
-  if (key === 'genre' || key === 'keyword' || key === 'albumTag')
-    return sql`select media_item.id, ${tagName} as value from media_item join media_item_tag mt on mt.media_item_id = media_item.id join tag t on t.id = mt.tag_id where ${visible} and t.media_type = media_item.media_type and not t.hidden`
   if (key === 'playlist' || key === 'collection')
     return sql`select media_item.id, p.name as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.kind = ${key}`
   if (key === 'provider')
@@ -1272,6 +1300,8 @@ const FacetRowSchema = z.object({
   value: z.string(),
   count: z.coerce.number().int().positive(),
 })
+type FacetRow = z.infer<typeof FacetRowSchema> & { subtags?: number }
+const tagFacetFields = ['genre', 'keyword', 'albumTag', 'artistTag']
 
 export async function listBrowseFacets(
   mediaType: MediaType,
@@ -1325,7 +1355,7 @@ async function queryBrowseFacets(
   fields: BrowseField[],
   query: BrowseFacetQuery,
   options: { includeLastfmSourceRows?: boolean },
-) {
+): Promise<FacetRow[]> {
   if (!fields.length) return []
   const limit = Math.min(
     query.limitPerField,
@@ -1343,6 +1373,7 @@ async function queryBrowseFacets(
     const source = textRows(field.key, mediaType, {
       normalizeTags: true,
       sharedArtistTags,
+      rollUpTags: true,
     })
     // Choosing the Last.fm source explicitly includes its retained source rows.
     const visibility =
@@ -1364,5 +1395,22 @@ async function queryBrowseFacets(
   const result = await db.execute(
     sql`${sources}${redundant} ${sql.join(queries, sql` union all `)}`,
   )
-  return z.array(FacetRowSchema).parse(result.rows)
+  const rows: FacetRow[] = z.array(FacetRowSchema).parse(result.rows)
+  // A tag with subtags is counted over all of them; say how many there are.
+  const subtags = await visibleSubtagCounts(
+    mediaType === 'track' ? 'album' : mediaType,
+    [
+      ...new Set(
+        rows
+          .filter((row) => tagFacetFields.includes(row.field))
+          .map((row) => row.value),
+      ),
+    ],
+  )
+  return rows.map((row) => {
+    const count = tagFacetFields.includes(row.field)
+      ? subtags.get(row.value)
+      : undefined
+    return count === undefined ? row : { ...row, subtags: count }
+  })
 }

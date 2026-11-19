@@ -887,8 +887,9 @@ button.ds-pill:hover {
   font-size: var(--ds-text-xs);
   font-weight: 500;
 }
+/* Child rows nest to any depth: one step per level (--ds-depth, default 1) */
 .ds-table tr[data-child] td:first-child {
-  padding-left: calc(var(--ds-gutter) + var(--ds-7));
+  padding-left: calc(var(--ds-gutter) + var(--ds-7) * var(--ds-depth, 1));
 }
 /* Selection bar: the one inverse surface in the app */
 .ds-selectbar {

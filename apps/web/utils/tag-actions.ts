@@ -1,4 +1,8 @@
-import type { Tag, TagProvenancePage } from '@repo/schemas/tags'
+import type {
+  SetTagParentsInput,
+  Tag,
+  TagProvenancePage,
+} from '@repo/schemas/tags'
 import type { QueryClient } from '@tanstack/react-query'
 
 export function tagSelectionMediaType(tags: Pick<Tag, 'mediaType'>[]) {
@@ -25,19 +29,26 @@ export async function invalidateTags(client: QueryClient) {
     'tag-provenance',
     'films',
     'albums',
+    'tracks',
+    'artists',
     'film',
     'album',
     'film-facets',
     'film-selection',
     'album-selection',
+    'artist-selection',
   ])
     await client.invalidateQueries({ queryKey: [key] })
 }
 
-export async function dispatchTagVisibility(
+/**
+ * Sends a tag selection in batches of 100, in order. The first failure stops
+ * the run: later batches are not sent and the failure is returned.
+ */
+export async function dispatchTagBatches(
   ids: string[],
   send: (ids: string[]) => Promise<unknown>,
-) {
+): Promise<{ completed: string[]; interrupted: boolean; error?: unknown }> {
   const unique = [...new Set(ids)]
   const completed: string[] = []
   for (let offset = 0; offset < unique.length; offset += 100) {
@@ -45,9 +56,19 @@ export async function dispatchTagVisibility(
     try {
       await send(batch)
       completed.push(...batch)
-    } catch {
-      return { completed, interrupted: true }
+    } catch (error) {
+      return { completed, interrupted: true, error }
     }
   }
   return { completed, interrupted: false }
+}
+
+/** Sets the parents of tags: one request per 100 tags, same parents and mode. */
+export function dispatchTagParents(
+  input: SetTagParentsInput,
+  send: (body: SetTagParentsInput) => Promise<unknown>,
+) {
+  return dispatchTagBatches(input.tagIds, (tagIds) =>
+    send({ ...input, tagIds }),
+  )
 }

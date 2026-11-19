@@ -2,11 +2,11 @@
 
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Search, Sparkles } from 'lucide-react'
-import { formatCount } from '@repo/ui/lib/format'
 import { FilterIndicator } from './filter-affordance'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import {
   browseSuggestions,
+  filterSuggestionNote,
   suggestionKey,
   type BrowseSuggestion,
   type FilterSuggestion,
@@ -257,7 +257,7 @@ export default function BrowseFilterAutocomplete({
                     <span className="ds-muted">
                       {option.suggestion.kind === 'item'
                         ? 'Open'
-                        : formatCount(option.suggestion.filter.count)}
+                        : filterSuggestionNote(option.suggestion.filter)}
                     </span>
                   </>
                 ) : option.kind === 'text' ? (

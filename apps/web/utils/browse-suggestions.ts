@@ -1,7 +1,13 @@
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
 import type { BrowseFilter } from '@repo/schemas/browse'
+import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 
-export type FilterSuggestion = BrowseFilter & { label: string; count: number }
+export type FilterSuggestion = BrowseFilter & {
+  label: string
+  count: number
+  /** Visible tags beneath a tag value; `count` covers them too. */
+  subtags?: number
+}
 export type TitleSuggestion = { id: string; title: string; label: string }
 export type BrowseSuggestion =
   | { kind: 'item'; item: TitleSuggestion }
@@ -177,6 +183,15 @@ export function browseSuggestions(
     ranked.push(pick.suggestion)
   }
   return ranked
+}
+
+/** The muted text after a filter suggestion: `1,204 · 38 subtags`. */
+export function filterSuggestionNote(
+  filter: Pick<FilterSuggestion, 'count' | 'subtags'>,
+) {
+  return filter.subtags
+    ? `${formatCount(filter.count)} · ${formatItemCount(filter.subtags, { one: 'subtag', other: 'subtags' })}`
+    : formatCount(filter.count)
 }
 
 export function suggestionKey(option: BrowseSuggestion) {

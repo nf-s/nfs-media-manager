@@ -13,17 +13,22 @@ import { Button } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import {
-  dispatchTagVisibility,
+  dispatchTagBatches,
   invalidateTags,
   tagSelectionMediaType,
 } from '@/utils/tag-actions'
 
 export default function TagActions({
   tags,
+  parentsOpen = false,
+  onParentsToggle,
   onComplete,
   onPendingChange,
 }: {
   tags: Tag[]
+  /** Offers parent tag changes for the selection; the caller shows the form. */
+  parentsOpen?: boolean
+  onParentsToggle?: () => void
   onComplete: (ids: string[], message: string, interrupted: boolean) => void
   onPendingChange?: (pending: boolean) => void
 }) {
@@ -67,7 +72,7 @@ export default function TagActions({
   const visibility = useMutation({
     mutationFn: (hidden: boolean) => {
       if (!mediaType) throw new Error('Select tags from one library')
-      return dispatchTagVisibility(
+      return dispatchTagBatches(
         tags.filter((tag) => tag.hidden !== hidden).map((tag) => tag.id),
         (tagIds) =>
           fetchApiData(
@@ -134,6 +139,15 @@ export default function TagActions({
               Review merge
             </Button>
           </>
+        )}
+        {onParentsToggle && (
+          <Button
+            aria-expanded={parentsOpen}
+            disabled={pending}
+            onClick={onParentsToggle}
+          >
+            Parent tags
+          </Button>
         )}
       </div>
       {tags.length > 101 && (

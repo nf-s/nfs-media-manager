@@ -77,23 +77,34 @@ export const TableBody = React.forwardRef<
 ))
 TableBody.displayName = 'TableBody'
 
+/**
+ * A table row. `group` is a heading row over child rows. `depth` nests a
+ * child row: its first cell is indented by one step per level. `child` is
+ * depth 1.
+ */
 export const TableRow = React.forwardRef<
   HTMLTableRowElement,
   React.HTMLAttributes<HTMLTableRowElement> & {
     selected?: boolean
     group?: boolean
     child?: boolean
+    depth?: number
   }
->(({ className, selected, group, child, ...props }, ref) => (
-  <tr
-    ref={ref}
-    className={className}
-    aria-selected={selected ? true : undefined}
-    data-group={group ? '' : undefined}
-    data-child={child ? '' : undefined}
-    {...props}
-  />
-))
+>(({ className, selected, group, child, depth, style, ...props }, ref) => {
+  const nested = depth !== undefined && depth > 0
+  const nesting: Record<string, number> = nested ? { '--ds-depth': depth } : {}
+  return (
+    <tr
+      ref={ref}
+      className={className}
+      aria-selected={selected ? true : undefined}
+      data-group={group ? '' : undefined}
+      data-child={(depth === undefined ? child : nested) ? '' : undefined}
+      style={nested ? { ...style, ...nesting } : style}
+      {...props}
+    />
+  )
+})
 TableRow.displayName = 'TableRow'
 
 export const TableHead = React.forwardRef<

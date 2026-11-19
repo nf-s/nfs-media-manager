@@ -385,6 +385,8 @@ export const TrackPositionsSchema = z.object({
 export const TrackFilterOptionSchema = BrowseFilterSchema.extend({
   label: z.string(),
   count: z.number().int().positive(),
+  // Visible tags beneath a tag value; the count covers them too.
+  subtags: z.number().int().positive().optional(),
 })
 
 export const trackAlbumLinkLabels = {

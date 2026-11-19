@@ -1,9 +1,14 @@
 'use client'
 
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { TagDetailSchema, TagPageSchema, type Tag } from '@repo/schemas/tags'
+import {
+  TagDetailSchema,
+  type SetTagParentsInput,
+  type Tag,
+  type TagDetail as TagDetailData,
+} from '@repo/schemas/tags'
 import {
   DetailActionsSpacer,
   DetailHeader,
@@ -13,10 +18,8 @@ import { Notice } from '@repo/ui/components/ds/feedback'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
-import { Input } from '@repo/ui/components/ui/input'
-import { TableBody, TableCell, TableRow } from '@repo/ui/components/ui/table'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
-import { formatCount } from '@repo/ui/lib/format'
+import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { tagDetailId } from '@/utils/detail-inspector'
@@ -24,37 +27,24 @@ import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
 import { useDetailInspector } from './detail-inspector-context'
 import { DetailTabs, useDetailTab } from './detail-frame'
+import { BrowseFilterPill } from './browse-controls'
+import { errorMessage } from './lastfm-sync'
 import { MediaInspector } from './media-inspector'
 import { VirtualTagSources } from './metadata-source-list'
-import { SecondaryTableScroll, SecondaryVirtualRows } from './secondary-table'
 import TagActions from './tag-actions'
+import { useSetTagParents } from './tag-parent-actions'
+import { TagPicker } from './tag-picker'
 
 type TagTab = 'overview' | 'sources'
 const tagTabs: readonly [TagTab, ...TagTab[]] = ['overview', 'sources']
 
 function TagManagement({ tag }: { tag: Tag }) {
-  const { apiBaseUrl } = useConfig()
-  const [search, setSearch] = useState('')
-  const query = useDeferredValue(search.trim())
   const [candidate, setCandidate] = useState<Tag | null>(null)
   const [pending, setPending] = useState(false)
   const [outcome, setOutcome] = useState<{
     message: string
     interrupted: boolean
   } | null>(null)
-  const matches = useVirtualTable({
-    queryKey: ['tags', 'merge-search', tag.mediaType, query],
-    enabled: query.length > 0 && !candidate && !pending,
-    pageSize: 25,
-    headerHeight: 0,
-    loadPage: (page, size, signal) =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/tags?${new URLSearchParams({ mediaType: tag.mediaType, q: query, visibility: 'all', page: String(page), size: String(size) })}`,
-        TagPageSchema,
-        { signal },
-      ),
-  })
   return (
     <Section title="Manage tag">
       <p className="ds-help">
@@ -62,80 +52,15 @@ function TagManagement({ tag }: { tag: Tag }) {
           ? 'Hidden from normal browsing. Unhide to restore it.'
           : 'Hiding removes this tag from normal browsing, not its source data.'}
       </p>
-      <label className="ds-field">
-        <span className="ds-label">Find another tag to merge</span>
-        <Input
-          aria-label="Find tag to merge"
-          placeholder="Search tags..."
-          value={search}
-          maxLength={200}
-          disabled={pending}
-          onChange={(event) => {
-            setSearch(event.target.value)
-            setCandidate(null)
-          }}
-        />
-      </label>
-      {query && !candidate && !pending && (
-        <>
-          {matches.isError && (
-            <Notice
-              tone="danger"
-              action={
-                <Button size="xs" onClick={matches.retry}>
-                  Retry
-                </Button>
-              }
-            >
-              Could not find tags.
-            </Notice>
-          )}
-          <SecondaryTableScroll
-            ref={matches.scroller}
-            onScroll={matches.onScroll}
-            className="dtl-matches"
-            role="region"
-            aria-label="Tags to merge"
-            aria-busy={matches.isFetching}
-          >
-            <table
-              className="ds-table"
-              aria-label="Tags to merge"
-              aria-rowcount={matches.hasTotal ? matches.total : undefined}
-            >
-              <TableBody>
-                {matches.hasTotal && !matches.total && (
-                  <TableRow>
-                    <TableCell className="ds-muted">
-                      No matching tags.
-                    </TableCell>
-                  </TableRow>
-                )}
-                <SecondaryVirtualRows
-                  window={matches}
-                  colSpan={1}
-                  renderRow={(item, index) => (
-                    <TableRow key={item.id} aria-rowindex={index + 1}>
-                      <TableCell>
-                        <Button
-                          variant="link"
-                          size="xs"
-                          disabled={pending || item.id === tag.id}
-                          onClick={() => setCandidate(item)}
-                        >
-                          {item.name}
-                          {item.hidden ? ' (hidden)' : ''}
-                          {item.id === tag.id ? ' (current tag)' : ''}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                />
-              </TableBody>
-            </table>
-          </SecondaryTableScroll>
-        </>
-      )}
+      <TagPicker
+        mediaType={tag.mediaType}
+        label="Find another tag to merge"
+        inputLabel="Find tag to merge"
+        listLabel="Tags to merge"
+        disabled={pending}
+        unavailable={(item) => (item.id === tag.id ? 'current tag' : null)}
+        onPick={setCandidate}
+      />
       {candidate && (
         <p className="ds-actions">
           <span>
@@ -157,7 +82,6 @@ function TagManagement({ tag }: { tag: Tag }) {
         onPendingChange={setPending}
         onComplete={(_ids, message, interrupted) => {
           setCandidate(null)
-          setSearch('')
           setOutcome({ message, interrupted })
         }}
       />
@@ -170,6 +94,121 @@ function TagManagement({ tag }: { tag: Tag }) {
           </p>
         ))}
     </Section>
+  )
+}
+
+/** Parent tags and subtags of one tag, each removable, with a picker to add one. */
+function TagHierarchySections({ detail }: { detail: TagDetailData }) {
+  const { tag, children } = detail
+  const inspector = useDetailInspector()
+  const parents = useSetTagParents()
+  const pending = parents.isPending
+  const parentIds = tag.parents.map((parent) => parent.id)
+  const childIds = children.map((child) => child.id)
+  function change(input: Omit<SetTagParentsInput, 'mediaType'>) {
+    parents.mutate({ mediaType: tag.mediaType, ...input })
+  }
+  function openTag(id: string) {
+    inspector?.open({ kind: 'tag', id: tagDetailId(tag.mediaType, id) })
+  }
+  const failure = parents.isError
+    ? errorMessage(parents.error, 'Could not update parent tags.')
+    : parents.data?.message
+  return (
+    <>
+      <Section title="Parent tags" flush>
+        {tag.parents.length ? (
+          <Pills wrap label="Parent tags">
+            {tag.parents.map((parent) => (
+              <BrowseFilterPill
+                key={parent.id}
+                label={`Open ${parent.name}`}
+                onActivate={inspector ? () => openTag(parent.id) : undefined}
+                removeLabel={`Remove parent ${parent.name}`}
+                onRemove={() => {
+                  if (pending) return
+                  change({
+                    tagIds: [tag.id],
+                    parentIds: [parent.id],
+                    mode: 'remove',
+                  })
+                }}
+              >
+                {parent.name}
+              </BrowseFilterPill>
+            ))}
+          </Pills>
+        ) : (
+          <p className="ds-help">No parent tags.</p>
+        )}
+        <TagPicker
+          mediaType={tag.mediaType}
+          label="Add parent tag"
+          inputLabel="Find parent tag"
+          listLabel="Tags to add as parent"
+          disabled={pending}
+          unavailable={(item) =>
+            item.id === tag.id
+              ? 'current tag'
+              : parentIds.includes(item.id)
+                ? 'parent'
+                : null
+          }
+          onPick={(item) =>
+            change({ tagIds: [tag.id], parentIds: [item.id], mode: 'add' })
+          }
+        />
+      </Section>
+      <Section title="Subtags" flush>
+        {children.length ? (
+          <Pills wrap label="Subtags">
+            {children.map((child) => (
+              <BrowseFilterPill
+                key={child.id}
+                label={`Open ${child.name}`}
+                onActivate={inspector ? () => openTag(child.id) : undefined}
+                removeLabel={`Remove subtag ${child.name}`}
+                onRemove={() => {
+                  if (pending) return
+                  change({
+                    tagIds: [child.id],
+                    parentIds: [tag.id],
+                    mode: 'remove',
+                  })
+                }}
+              >
+                {child.name}
+              </BrowseFilterPill>
+            ))}
+          </Pills>
+        ) : (
+          <p className="ds-help">No subtags.</p>
+        )}
+        <TagPicker
+          mediaType={tag.mediaType}
+          label="Add subtag"
+          inputLabel="Find subtag"
+          listLabel="Tags to add as subtag"
+          disabled={pending}
+          unavailable={(item) =>
+            item.id === tag.id
+              ? 'current tag'
+              : childIds.includes(item.id)
+                ? 'subtag'
+                : null
+          }
+          onPick={(item) =>
+            change({ tagIds: [item.id], parentIds: [tag.id], mode: 'add' })
+          }
+        />
+        {pending && (
+          <p role="status" className="ds-help">
+            Updating tags...
+          </p>
+        )}
+        {failure && <Notice tone="danger">{failure}</Notice>}
+      </Section>
+    </>
   )
 }
 
@@ -216,6 +255,12 @@ export function TagDetail({
         facts={[
           `${formatCount(data.tag.mediaCount)} items`,
           `${formatCount(data.tag.sourceCount)} sources`,
+          data.children.length
+            ? formatItemCount(data.children.length, {
+                one: 'subtag',
+                other: 'subtags',
+              })
+            : null,
           data.tag.hidden ? <Status state="paused">Hidden</Status> : null,
         ]}
         actions={
@@ -256,6 +301,10 @@ export function TagDetail({
               <p className="ds-help">No merged aliases.</p>
             )}
           </Section>
+          <TagHierarchySections
+            key={`hierarchy:${data.tag.id}`}
+            detail={data}
+          />
           <TagManagement key={data.tag.id} tag={data.tag} />
         </TabsContent>
         <TabsContent value="sources">

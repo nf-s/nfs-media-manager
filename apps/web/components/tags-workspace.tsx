@@ -27,6 +27,11 @@ export default function TagsWorkspace({
                 label: 'All',
               },
               {
+                id: '/tags/hierarchy',
+                href: scopedHref('/tags/hierarchy', mediaType),
+                label: 'Hierarchy',
+              },
+              {
                 id: '/tags/hidden',
                 href: scopedHref('/tags/hidden', mediaType),
                 label: 'Hidden',

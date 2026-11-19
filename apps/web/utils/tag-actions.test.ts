@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { QueryClient } from '@tanstack/react-query'
-import type { TagProvenancePage } from '@repo/schemas/tags'
+import type { SetTagParentsInput, TagProvenancePage } from '@repo/schemas/tags'
 import {
-  dispatchTagVisibility,
+  dispatchTagBatches,
+  dispatchTagParents,
   invalidateTags,
   relevantTagSources,
   tagSelectionMediaType,
@@ -17,6 +18,11 @@ test('tag changes invalidate both library selections and retain unrelated cached
     ['film-selection', 'tag filter'],
     ['albums', 'facets', 'tag'],
     ['films', 'facets', 'tag'],
+    ['tracks', 'facets', 'tag'],
+    ['tracks', 'browse', 'tag filter'],
+    ['artists', 'facets', 'tag'],
+    ['artists', 'browse-count', 'tag filter'],
+    ['tags', 'hierarchy', 'album'],
     ['tag-detail', 'album', 'tag-1'],
   ]
   try {
@@ -85,15 +91,12 @@ test('compact links deduplicate exact URLs and omit other-film and unresolved or
   )
 })
 
-test('visibility dispatch deduplicates and bounds requests without limiting selection', async () => {
+test('tag batches deduplicate and bound requests without limiting selection', async () => {
   const ids = Array.from({ length: 251 }, (_, index) => `tag-${index}`)
   const batches: string[][] = []
-  const result = await dispatchTagVisibility(
-    [...ids, 'tag-0'],
-    async (batch) => {
-      batches.push(batch)
-    },
-  )
+  const result = await dispatchTagBatches([...ids, 'tag-0'], async (batch) => {
+    batches.push(batch)
+  })
   assert.deepEqual(
     batches.map((batch) => batch.length),
     [100, 100, 51],
@@ -101,19 +104,24 @@ test('visibility dispatch deduplicates and bounds requests without limiting sele
   assert.deepEqual(result, { completed: ids, interrupted: false })
 })
 
-test('visibility failure retains only confirmed batches and never retries or dispatches later batches', async () => {
+test('a failed tag batch keeps only confirmed batches, returns the failure and sends no later batches', async () => {
   const ids = Array.from({ length: 251 }, (_, index) => `tag-${index}`)
   const batches: string[][] = []
-  const result = await dispatchTagVisibility(ids, async (batch) => {
+  const failure = { statusCode: 409, message: 'Unconfirmed' }
+  const result = await dispatchTagBatches(ids, async (batch) => {
     batches.push(batch)
-    if (batches.length === 2) throw new Error('unconfirmed')
+    if (batches.length === 2) throw failure
   })
   assert.equal(batches.length, 2)
-  assert.deepEqual(result, { completed: ids.slice(0, 100), interrupted: true })
+  assert.deepEqual(result, {
+    completed: ids.slice(0, 100),
+    interrupted: true,
+    error: failure,
+  })
 })
 
-test('empty visibility selection sends no requests', async () => {
-  const result = await dispatchTagVisibility([], async () =>
+test('an empty tag selection sends no requests', async () => {
+  const result = await dispatchTagBatches([], async () =>
     assert.fail('Unexpected request'),
   )
   assert.deepEqual(result, { completed: [], interrupted: false })
@@ -139,4 +147,55 @@ test('tag ranges use displayed order, reverse selection, deselection, and missin
     updateJobSelection([], ids, 'tag-b', 'filtered-out', true, true),
     ['tag-b'],
   )
+})
+
+test('parent changes send each batch of 100 tags with the same parents and mode', async () => {
+  const tagIds = Array.from({ length: 205 }, (_, index) => `tag-${index}`)
+  const bodies: SetTagParentsInput[] = []
+  const result = await dispatchTagParents(
+    { mediaType: 'film', tagIds, parentIds: ['parent-1'], mode: 'add' },
+    async (body) => {
+      bodies.push(body)
+    },
+  )
+  assert.deepEqual(
+    bodies.map((body) => body.tagIds.length),
+    [100, 100, 5],
+  )
+  assert.deepEqual(
+    bodies.flatMap((body) => body.tagIds),
+    tagIds,
+  )
+  assert.ok(
+    bodies.every(
+      (body) =>
+        body.mediaType === 'film' &&
+        body.mode === 'add' &&
+        body.parentIds.join() === 'parent-1',
+    ),
+  )
+  assert.deepEqual(result, { completed: tagIds, interrupted: false })
+})
+
+test('removing all parents sends replace with no parents and stops at a conflict', async () => {
+  const tagIds = Array.from({ length: 150 }, (_, index) => `tag-${index}`)
+  const conflict = {
+    statusCode: 409,
+    message: 'A tag cannot sit beneath one of its own subtags',
+  }
+  const bodies: SetTagParentsInput[] = []
+  const result = await dispatchTagParents(
+    { mediaType: 'album', tagIds, parentIds: [], mode: 'replace' },
+    async (body) => {
+      bodies.push(body)
+      if (bodies.length === 2) throw conflict
+    },
+  )
+  assert.equal(bodies.length, 2)
+  assert.ok(bodies.every((body) => body.parentIds.length === 0))
+  assert.deepEqual(result, {
+    completed: tagIds.slice(0, 100),
+    interrupted: true,
+    error: conflict,
+  })
 })

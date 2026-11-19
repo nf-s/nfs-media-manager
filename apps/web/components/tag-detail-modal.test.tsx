@@ -35,11 +35,30 @@ const detail = TagDetailSchema.parse({
   },
 })
 
+const nested = TagDetailSchema.parse({
+  ...detail,
+  tag: {
+    ...detail.tag,
+    id: 'tag-2',
+    name: 'Synthetic parent',
+    hidden: false,
+    parents: [{ id: 'tag-0', name: 'Synthetic root' }],
+  },
+  children: [
+    { id: 'tag-3', name: 'Synthetic child' },
+    { id: 'tag-4', name: 'Synthetic sibling' },
+  ],
+})
+
 function render(node: React.ReactNode, search = '') {
   const client = new QueryClient()
   client.setQueryData(['tag-detail', 'album', 'tag-1', 1], {
     ...detail.provenance,
     summary: detail,
+  })
+  client.setQueryData(['tag-detail', 'album', 'tag-2', 1], {
+    ...nested.provenance,
+    summary: nested,
   })
   try {
     return renderToStaticMarkup(
@@ -82,6 +101,25 @@ test('a tag has the shared header and Overview and Sources tabs', () => {
   )
   assert.match(sources, /<h3>Detailed provenance<\/h3>/)
   assert.match(sources, /aria-label="Find tag to merge"/)
+})
+
+test('the overview lists parent tags and subtags, each removable, with pickers to add one', () => {
+  const html = render(<TagDetail id="tag-2" mediaType="album" />)
+  assert.match(html, /2 subtags/)
+  assert.match(html, /<h3>Parent tags<\/h3>/)
+  assert.match(html, /role="group" aria-label="Parent tags"/)
+  assert.match(html, /Synthetic root/)
+  assert.match(html, /aria-label="Remove parent Synthetic root"/)
+  assert.match(html, /aria-label="Find parent tag"/)
+  assert.match(html, /<h3>Subtags<\/h3>/)
+  assert.match(html, /role="group" aria-label="Subtags"/)
+  assert.match(html, /aria-label="Remove subtag Synthetic child"/)
+  assert.match(html, /aria-label="Remove subtag Synthetic sibling"/)
+  assert.match(html, /aria-label="Find subtag"/)
+  const plain = render(<TagDetail id="tag-1" mediaType="album" />)
+  assert.match(plain, /No parent tags\./)
+  assert.match(plain, /No subtags\./)
+  assert.doesNotMatch(plain, /\d subtags?</)
 })
 
 test('outside the app drawer a tag opens in a drawer frame of its own', () => {

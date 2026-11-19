@@ -261,6 +261,11 @@ export const tag = pgTable(
       table.name,
       table.kind,
     ),
+    // Hierarchy keys and filters look tags up by their normalized name.
+    index('tag_media_type_name_key_idx').on(
+      table.mediaType,
+      sql`(${normalizedTagSql(sql`${table.name}`).inlineParams()})`,
+    ),
   ],
 )
 
@@ -367,6 +372,42 @@ export const tagMerge = pgTable('tag_merge', {
   }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
+
+// A tag group is every tag row of one library sharing a normalized name, so
+// hierarchy edges are keyed by that name, not by one row's id.
+export const tagParent = pgTable(
+  'tag_parent',
+  {
+    mediaType: mediaTypeEnum('media_type').notNull(),
+    childKey: text('child_key').notNull(),
+    parentKey: text('parent_key').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.mediaType, table.childKey, table.parentKey],
+    }),
+    index('tag_parent_parent_idx').on(table.mediaType, table.parentKey),
+    check('tag_parent_not_self', sql`${table.childKey} <> ${table.parentKey}`),
+  ],
+)
+
+// Every ancestor of every tag group, rebuilt from tag_parent on each change so
+// filters and facet counts read parents with one join.
+export const tagAncestor = pgTable(
+  'tag_ancestor',
+  {
+    mediaType: mediaTypeEnum('media_type').notNull(),
+    descendantKey: text('descendant_key').notNull(),
+    ancestorKey: text('ancestor_key').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.mediaType, table.descendantKey, table.ancestorKey],
+    }),
+    index('tag_ancestor_ancestor_idx').on(table.mediaType, table.ancestorKey),
+  ],
+)
 
 export const playlist = pgTable(
   'playlist',

@@ -11,6 +11,12 @@ import {
   TagDetailSchema,
   SetTagVisibilitySchema,
   SetTagVisibilityResultSchema,
+  TagHierarchyQuerySchema,
+  TagHierarchySchema,
+  SetTagParentsSchema,
+  SetTagParentsResultSchema,
+  CreateTagSchema,
+  CreateTagResultSchema,
 } from '@repo/schemas/tags'
 import { authMiddleware } from '@/middlewares/auth'
 import {
@@ -28,6 +34,11 @@ import {
   mergeTags,
   setTagVisibility,
 } from '@/services/tags'
+import {
+  createTag,
+  getTagHierarchy,
+  setTagParents,
+} from '@/services/tag-hierarchy'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
   .openapi(
@@ -142,6 +153,88 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
     }),
     async (c) =>
       generateJsonResponse(c, await setTagVisibility(c.req.valid('json')), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/hierarchy',
+      middleware: [authMiddleware()],
+      request: { query: TagHierarchyQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Every tag of one media library that has a parent or subtags, with its parents and item counts',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TagHierarchySchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await getTagHierarchy(c.req.valid('query')), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/parents',
+      middleware: [authMiddleware()],
+      request: {
+        body: {
+          required: true,
+          content: { 'application/json': { schema: SetTagParentsSchema } },
+        },
+      },
+      responses: {
+        200: {
+          description:
+            'Parent tags replaced, added or removed within one media library',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(SetTagParentsResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Tag not found'),
+        409: jsonErrorResponse('Tag already merged or beneath its own subtag'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await setTagParents(c.req.valid('json')), 200),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/',
+      middleware: [authMiddleware()],
+      request: {
+        body: {
+          required: true,
+          content: { 'application/json': { schema: CreateTagSchema } },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Tag created with no items, for grouping other tags',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(CreateTagResultSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Parent tag not found'),
+        409: jsonErrorResponse('Tag name already exists'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(c, await createTag(c.req.valid('json')), 200),
   )
   .openapi(
     createRoute({

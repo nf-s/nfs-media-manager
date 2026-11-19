@@ -5,6 +5,9 @@ const mergeTags = vi.fn()
 const getTagProvenance = vi.fn()
 const getTagDetail = vi.fn()
 const setTagVisibility = vi.fn()
+const getTagHierarchy = vi.fn()
+const setTagParents = vi.fn()
+const createTag = vi.fn()
 
 async function loadApp() {
   const { default: tags } = await import('@/routes/tags')
@@ -50,6 +53,19 @@ function mockAppSession(authenticated: boolean) {
     getTagDetail,
     setTagVisibility,
   }))
+  vi.doMock('@/services/tag-hierarchy', () => ({
+    getTagHierarchy,
+    setTagParents,
+    createTag,
+  }))
+}
+
+function post(body: unknown) {
+  return {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }
 }
 
 describe('tag administration API', () => {
@@ -100,6 +116,126 @@ describe('tag administration API', () => {
     expect(setTagVisibility).not.toHaveBeenCalled()
   })
 
+  it('requires authentication for the hierarchy and its changes', async () => {
+    mockAppSession(false)
+    const app = await loadApp()
+    expect(
+      (await app.request('/api/v1/tags/hierarchy?mediaType=album')).status,
+    ).toBe(401)
+    expect(
+      (
+        await app.request(
+          '/api/v1/tags/parents',
+          post({
+            mediaType: 'album',
+            tagIds: ['a'],
+            parentIds: ['b'],
+            mode: 'add',
+          }),
+        )
+      ).status,
+    ).toBe(401)
+    expect(
+      (
+        await app.request(
+          '/api/v1/tags',
+          post({ mediaType: 'album', name: 'Genres' }),
+        )
+      ).status,
+    ).toBe(401)
+    expect(getTagHierarchy).not.toHaveBeenCalled()
+    expect(setTagParents).not.toHaveBeenCalled()
+    expect(createTag).not.toHaveBeenCalled()
+  })
+
+  it('serves the hierarchy and validates parent changes and new tags', async () => {
+    mockAppSession(true)
+    const app = await loadApp()
+    const tree = {
+      mediaType: 'album',
+      nodes: [
+        {
+          id: 'rock',
+          name: 'Rock',
+          hidden: false,
+          mediaCount: 2,
+          totalCount: 5,
+          parentIds: [],
+        },
+      ],
+      unplacedCount: 3,
+    }
+    getTagHierarchy.mockResolvedValue(tree)
+    const response = await app.request('/api/v1/tags/hierarchy?mediaType=album')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: tree })
+    expect(getTagHierarchy).toHaveBeenCalledExactlyOnceWith({
+      mediaType: 'album',
+    })
+    expect(
+      (await app.request('/api/v1/tags/hierarchy?mediaType=music')).status,
+    ).toBe(422)
+
+    setTagParents.mockResolvedValue({ updated: 2 })
+    const change = {
+      mediaType: 'album',
+      tagIds: ['a', 'b'],
+      parentIds: ['rock'],
+      mode: 'replace',
+    }
+    expect(
+      (await app.request('/api/v1/tags/parents', post(change))).status,
+    ).toBe(200)
+    expect(setTagParents).toHaveBeenCalledExactlyOnceWith(change)
+    // No parents with replace makes the tags top-level.
+    expect(
+      (
+        await app.request(
+          '/api/v1/tags/parents',
+          post({ ...change, parentIds: [] }),
+        )
+      ).status,
+    ).toBe(200)
+    setTagParents.mockClear()
+    for (const invalid of [
+      { ...change, mode: 'add', parentIds: [] },
+      { ...change, parentIds: ['a'] },
+      { ...change, tagIds: [] },
+      { ...change, tagIds: ['a', 'a'] },
+      { ...change, mode: 'move' },
+      { ...change, mediaType: 'track' },
+    ])
+      expect(
+        (await app.request('/api/v1/tags/parents', post(invalid))).status,
+      ).toBe(422)
+    expect(setTagParents).not.toHaveBeenCalled()
+
+    createTag.mockResolvedValue({ id: 'genres', name: 'Genres' })
+    expect(
+      (
+        await app.request(
+          '/api/v1/tags',
+          post({ mediaType: 'album', name: 'Genres' }),
+        )
+      ).status,
+    ).toBe(200)
+    expect(createTag).toHaveBeenCalledExactlyOnceWith({
+      mediaType: 'album',
+      name: 'Genres',
+      parentIds: [],
+    })
+    createTag.mockClear()
+    for (const invalid of [
+      { mediaType: 'album', name: '   ' },
+      { mediaType: 'album', name: 'x'.repeat(201) },
+      { mediaType: 'album' },
+    ])
+      expect((await app.request('/api/v1/tags', post(invalid))).status).toBe(
+        422,
+      )
+    expect(createTag).not.toHaveBeenCalled()
+  })
+
   it('validates and forwards pagination/search and returns bounded provenance', async () => {
     mockAppSession(true)
     const app = await loadApp()
@@ -136,6 +272,7 @@ describe('tag administration API', () => {
       mediaType: 'film',
       q: 'imdb.history-of-spain',
       visibility: 'visible',
+      placement: 'any',
       page: 1,
       size: 25,
       sortBy: 'name',
@@ -172,6 +309,7 @@ describe('tag administration API', () => {
       page: 2,
       size: 10,
       visibility: 'visible',
+      placement: 'any',
       sortBy: 'mediaCount',
       direction: 'desc',
     })
@@ -195,6 +333,7 @@ describe('tag administration API', () => {
       page: 1,
       size: 25,
       visibility: 'hidden',
+      placement: 'any',
       sortBy: 'name',
       direction: 'asc',
     })

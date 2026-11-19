@@ -51,6 +51,11 @@ export const TagSourceSchema = z.object({
   kind: z.string(),
 })
 
+export const TagReferenceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+})
+
 export const TagSchema = z.object({
   mediaType: MediaTypeSchema,
   id: z.string(),
@@ -61,6 +66,8 @@ export const TagSchema = z.object({
   mergedNames: z.array(z.string()).default([]),
   sources: z.array(TagSourceSchema),
   sourceCount: z.number().int().nonnegative(),
+  parents: z.array(TagReferenceSchema).default([]),
+  childCount: z.number().int().nonnegative().default(0),
 })
 
 export const TagSortKeySchema = z.enum([
@@ -77,6 +84,8 @@ export const TagListQuerySchema = z.object({
   mediaType: MediaTypeSchema.default('film'),
   q: z.string().max(200).optional(),
   visibility: z.enum(['visible', 'hidden', 'all']).default('visible'),
+  // `unplaced` lists the tags outside the hierarchy: no parent and no subtags.
+  placement: z.enum(['any', 'unplaced']).default('any'),
   page: z.coerce.number().int().positive().default(1),
   size: z.coerce.number().int().positive().max(100).default(25),
 })
@@ -106,6 +115,8 @@ export const TagDetailSchema = z.object({
   aliases: z.array(
     z.object({ id: z.string(), name: z.string(), kind: z.string() }),
   ),
+  // Direct subtags, hidden ones included.
+  children: z.array(TagReferenceSchema).default([]),
   provenance: TagProvenancePageSchema,
 })
 export const SetTagVisibilitySchema = z.object({
@@ -124,6 +135,77 @@ export const SetTagVisibilityResultSchema = z.object({
   updated: z.number().int().nonnegative(),
   hidden: z.boolean(),
 })
+const TagIdListSchema = z.array(z.string().min(1).max(200))
+
+export const TagHierarchyQuerySchema = z.object({ mediaType: MediaTypeSchema })
+export const TagHierarchyNodeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  hidden: z.boolean(),
+  // Items carrying the tag itself.
+  mediaCount: z.number().int().nonnegative(),
+  // Items carrying the tag or any visible tag beneath it, each counted once.
+  totalCount: z.number().int().nonnegative(),
+  parentIds: z.array(z.string()),
+})
+export const TagHierarchySchema = z.object({
+  mediaType: MediaTypeSchema,
+  nodes: z.array(TagHierarchyNodeSchema),
+  // Visible tags with no parent and no subtags.
+  unplacedCount: z.number().int().nonnegative(),
+})
+export const SetTagParentsSchema = z
+  .object({
+    mediaType: MediaTypeSchema,
+    tagIds: TagIdListSchema.min(1)
+      .max(100)
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        'Select each tag only once',
+      ),
+    parentIds: TagIdListSchema.max(20).refine(
+      (ids) => new Set(ids).size === ids.length,
+      'Select each parent only once',
+    ),
+    // replace: the listed parents become the only parents (none makes a top-level tag).
+    mode: z.enum(['replace', 'add', 'remove']),
+  })
+  .superRefine((value, context) => {
+    if (value.mode !== 'replace' && !value.parentIds.length)
+      context.addIssue({
+        code: 'custom',
+        path: ['parentIds'],
+        message: 'Choose a parent tag',
+      })
+    if (value.parentIds.some((id) => value.tagIds.includes(id)))
+      context.addIssue({
+        code: 'custom',
+        path: ['parentIds'],
+        message: 'A tag cannot be its own parent',
+      })
+  })
+export const SetTagParentsResultSchema = z.object({
+  updated: z.number().int().nonnegative(),
+})
+export const CreateTagSchema = z.object({
+  mediaType: MediaTypeSchema,
+  name: z
+    .string()
+    .max(200)
+    .refine((name) => normalizeTagName(name) !== '', 'Enter a tag name'),
+  parentIds: TagIdListSchema.max(20).default([]),
+})
+export const CreateTagResultSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+})
+export type TagHierarchyQuery = z.infer<typeof TagHierarchyQuerySchema>
+export type TagHierarchyNode = z.infer<typeof TagHierarchyNodeSchema>
+export type TagHierarchy = z.infer<typeof TagHierarchySchema>
+export type SetTagParentsInput = z.infer<typeof SetTagParentsSchema>
+export type SetTagParentsResult = z.infer<typeof SetTagParentsResultSchema>
+export type CreateTagInput = z.input<typeof CreateTagSchema>
+export type CreateTagResult = z.infer<typeof CreateTagResultSchema>
 export type TagDetailQuery = z.infer<typeof TagDetailQuerySchema>
 export type TagDetail = z.infer<typeof TagDetailSchema>
 export type SetTagVisibilityInput = z.infer<typeof SetTagVisibilitySchema>

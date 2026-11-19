@@ -52,12 +52,15 @@ beforeEach(() => {
   mocks.count.mockResolvedValue([{ value: 250 }])
   mocks.rows.mockResolvedValue([{ id: 'film-1' }])
   mocks.execute.mockImplementation(async (query: SQL) => {
-    if (dialect.sqlToQuery(query).sql.includes('pg_current_snapshot'))
+    const text = dialect.sqlToQuery(query).sql
+    if (text.includes('pg_current_snapshot'))
       return {
         rows: [
           { version, database: 'test', role: 'test', schemas: '{public}' },
         ],
       }
+    // Subtag counts follow each facet read; this library has no hierarchy.
+    if (text.includes('a.ancestor_key as key')) return { rows: [] }
     facetReads += 1
     return { rows: [{ field: 'genre', value: 'drama', count: 2 }] }
   })

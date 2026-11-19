@@ -39,12 +39,14 @@ import {
   tagIdentity,
   tagMerge,
   tagOccurrence,
+  tagParent,
   externalLink,
   providerReference,
   providerCurrentState,
   providerSnapshot,
 } from '@/schemas/db'
 import { lockTagWrites, normalizedTagSql, normalizeTagName } from './tag-state'
+import { mergeTagParents } from './tag-hierarchy'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { getStoredDiscogsTagPayloads } from './source-navigation'
 import {
@@ -382,6 +384,8 @@ async function readTagPage(
     .select({
       id: sql<string>`min(${tag.id})`.as('id'),
       name: sql<string>`min(${tag.name})`.as('name'),
+      // An aggregate, since each use of the expression binds its own pattern.
+      key: sql<string>`min(${normalizedTagSql(sql`${tag.name}`)})`.as('key'),
       ids: sql<string[]>`array_agg(${tag.id})`.as('ids'),
       hidden: sql<boolean>`bool_or(${tag.hidden})`.as('hidden'),
     })
@@ -418,6 +422,10 @@ async function readTagPage(
       ? undefined
       : eq(groups.hidden, query.visibility === 'hidden'),
     tagId ? sql`${tagId} = any(${groups.ids})` : undefined,
+    query.placement === 'unplaced'
+      ? sql`not exists (select 1 from tag_parent p where p.media_type = ${query.mediaType}
+          and (p.child_key = ${groups.key} or p.parent_key = ${groups.key}))`
+      : undefined,
   )
   const sortFields = {
     name: sql`lower(${groups.name})`,
@@ -435,6 +443,7 @@ async function readTagPage(
       sortValue: sortValue.as('sort_value'),
       id: groups.id,
       name: groups.name,
+      key: groups.key,
       hidden: groups.hidden,
       ids: groups.ids,
     })
@@ -469,6 +478,16 @@ async function readTagPage(
           kind: string
         }>
       >`coalesce((select jsonb_agg(s) from (select distinct o.provider, o.source, o.raw_name as "rawName", o.source_id as "sourceId", o.kind from tag_occurrence o where o.tag_id = any(${pageGroups.ids}) and ${visibleTagOccurrenceSql(sql`o`)} order by o.provider, o.source, o.raw_name, o.source_id, o.kind limit 20) s), '[]'::jsonb)`,
+      parents: sql<
+        Array<{ id: string; name: string }>
+      >`coalesce((select jsonb_agg(jsonb_build_object('id', parent.id, 'name', parent.name) order by lower(parent.name), parent.id) from (
+        select min(parent_tag.id) as id, min(parent_tag.name) as name
+        from tag_parent p join tag parent_tag on parent_tag.media_type = p.media_type
+          and ${normalizedTagSql(sql`parent_tag.name`)} = p.parent_key
+        where p.media_type = ${query.mediaType} and p.child_key = ${pageGroups.key}
+          and not exists (select 1 from tag_alias merged where merged.source_tag_id = parent_tag.id)
+        group by p.parent_key) parent), '[]'::jsonb)`,
+      childCount: sql<number>`(select count(*)::integer from tag_parent p where p.media_type = ${query.mediaType} and p.parent_key = ${pageGroups.key})`,
     })
     .from(pageGroups)
     .orderBy(
@@ -493,6 +512,8 @@ async function readTagPage(
       mediaCount: row.mediaCount,
       sourceCount: row.sourceCount,
       mediaType: query.mediaType,
+      parents: row.parents,
+      childCount: row.childCount,
       sources: row.sources.map(({ sourceId, ...source }) => ({
         ...source,
         ...(sourceId === null ? {} : { sourceId }),
@@ -540,9 +561,34 @@ export async function getTagDetail(
     .innerJoin(tag, eq(tag.id, tagAlias.sourceTagId))
     .where(inArray(tagAlias.targetTagId, members))
     .orderBy(asc(tag.name), asc(tag.id))
+  const children = await db
+    .select({
+      id: sql<string>`min(${tag.id})`,
+      name: sql<string>`min(${tag.name})`,
+    })
+    .from(tagParent)
+    .innerJoin(
+      tag,
+      and(
+        eq(tag.mediaType, tagParent.mediaType),
+        sql`${normalizedTagSql(sql`${tag.name}`)} = ${tagParent.childKey}`,
+      ),
+    )
+    .where(
+      and(
+        eq(tagParent.mediaType, query.mediaType),
+        eq(tagParent.parentKey, normalizeTagName(summary.name)),
+        notExists(
+          db.select().from(tagAlias).where(eq(tagAlias.sourceTagId, tag.id)),
+        ),
+      ),
+    )
+    .groupBy(tagParent.childKey)
+    .orderBy(sql`lower(min(${tag.name}))`, sql`min(${tag.id})`)
   return {
     tag: summary,
     aliases,
+    children,
     provenance: await getTagProvenance({ ...query, name: summary.name }),
   }
 }
@@ -625,7 +671,7 @@ export async function mergeTags(
       })
 
     const groupedRows = await database
-      .select({ id: tag.id, hidden: tag.hidden })
+      .select({ id: tag.id, name: tag.name, hidden: tag.hidden })
       .from(tag)
       .where(
         and(
@@ -694,6 +740,12 @@ export async function mergeTags(
         targetTagId: targetId,
         requestedByUserId: userId,
       })),
+    )
+    await mergeTagParents(
+      database,
+      mediaType,
+      groupedRows.map((row) => normalizeTagName(row.name)),
+      normalizeTagName(target.name),
     )
     return { merged: sourceIds.length, targetId }
   })

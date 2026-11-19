@@ -11,6 +11,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Tracks and Spotify playlists](tracks-and-playlists.md): importing playlists, Liked Songs and stored Last.fm tracks, source filters, album links and playback matching.
 - [Match diagnostics](match-diagnostics.md) for comparing provider identities and correcting matches in each library.
 - [Album and film collections](film-collections.md) covers the collection sidebar, ordered memberships and source links.
+- [Tag hierarchy](tag-hierarchy.md): parent tags, filtering by a parent, and editing the tree.
 - [Artists, people and channels](artists-and-people.md): creator details, artist enrichment jobs and music tag fallback.
 - [Spotify playback](spotify-playback.md): optional in-app player, queue, devices and what the browser sends to Spotify.
 - [Sonos](sonos.md): connecting a Sonos account, for playing Spotify on Sonos rooms and controlling them.

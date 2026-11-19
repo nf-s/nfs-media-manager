@@ -383,12 +383,96 @@
                 )}</div><div class="ds-selectbar"><span><b>2 selected</b> <span class="ds-muted">of 128</span></span><span class="ds-actions ds-toolbar-end">${btn('Add to playlist')}${btn('Refresh metadata', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div>`,
                 { flush: true },
               ) +
+              g.spec(
+                `<div class="ds-table-wrap">${table(
+                  [
+                    {
+                      h: 'Tag',
+                      sort: 'ascending',
+                      c: (r) =>
+                        `<span class="ds-cell-id">${
+                          r.open === undefined
+                            ? '<span style="flex:none;width:var(--ds-h-xs)"></span>'
+                            : btn('', {
+                                icon: r.open ? 'chevD' : 'chevR',
+                                variant: 'ghost',
+                                size: 'xs',
+                                aria: `${r.open ? 'Hide' : 'Show'} subtags of ${r.name}`,
+                              })
+                        }<a class="ds-cell-title" href="#">${r.name}</a></span>`,
+                    },
+                    { h: 'Items', end: true, sort: null, c: (r) => r.items },
+                    {
+                      h: 'With subtags',
+                      end: true,
+                      sort: null,
+                      c: (r) => r.total,
+                    },
+                    { h: 'Subtags', end: true, c: (r) => r.subtags },
+                  ],
+                  [
+                    {
+                      name: 'Electronic',
+                      depth: 0,
+                      open: true,
+                      items: 12,
+                      total: 148,
+                      subtags: 3,
+                    },
+                    {
+                      name: 'House',
+                      depth: 1,
+                      open: true,
+                      items: 40,
+                      total: 61,
+                      subtags: 1,
+                    },
+                    {
+                      name: 'Deep house',
+                      depth: 2,
+                      items: 21,
+                      total: 21,
+                      subtags: 0,
+                    },
+                    {
+                      name: 'Ambient',
+                      depth: 1,
+                      items: 30,
+                      total: 30,
+                      subtags: 0,
+                    },
+                    {
+                      name: 'Techno',
+                      depth: 1,
+                      items: 55,
+                      total: 55,
+                      subtags: 0,
+                    },
+                    {
+                      name: 'Jazz',
+                      depth: 0,
+                      open: false,
+                      items: 18,
+                      total: 74,
+                      subtags: 2,
+                    },
+                  ],
+                  {
+                    row: (r) =>
+                      r.depth
+                        ? { 'data-child': '', style: `--ds-depth:${r.depth}` }
+                        : {},
+                  },
+                )}</div>`,
+                { flush: true },
+              ) +
               g.rules([
                 '<b>Measurements.</b> Header 28px with 11px labels, rows 32px, cell padding 10px, and the panel gutter (12px) at both edges.',
                 '<b>Column order</b> is the same for every resource: identity, creator, parent, properties, dates, counts, ratings, then pill columns. See Browse screens for each resource.',
                 '<b>Identity cell.</b> Thumbnail, title, and the play pair at its end. The thumbnail is 24px; posters keep their shape.',
                 '<b>Numbers align right</b> in tabular figures. Dates are ISO (<code>2026-10-02</code>) so they sort and align as text.',
                 '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge.',
+                '<b>Child rows nest to any depth.</b> Each level indents the first cell by one more step (<code>TableRow depth</code>; <code>child</code> is depth 1). A row that has child rows carries a ghost icon button with a chevron before its title that shows or hides them; a row without children keeps an empty space of the same width so titles line up.',
                 '<b>Grouped tracks</b> place the release versions button immediately after the title link in the pinned identity cell.',
                 "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
                 '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
