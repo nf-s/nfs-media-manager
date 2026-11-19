@@ -17,6 +17,10 @@ vi.mock('@/lib/db', () => ({
     select: () => ({ from: () => ({ where: mocks.tagOccurrences }) }),
   },
 }))
+vi.mock('@/services/album-match-rejections', () => ({
+  readAlbumMatchRejections: vi.fn(async () => []),
+  readAlbumMatchRejectionsForItems: vi.fn(async () => new Map()),
+}))
 vi.mock('@/services/browse', () => ({
   queryBrowseIds: mocks.queryBrowseIds,
   listBrowseFacets: vi.fn(),
