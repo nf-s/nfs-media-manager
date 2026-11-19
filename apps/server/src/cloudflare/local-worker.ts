@@ -187,17 +187,45 @@ export async function localProviderTransport(
           const result = await worker.readResult(task.id)
           if (result) {
             await worker.consumeResult(task.id)
-            if (result.kind === 'error')
-              throw new ProviderRequestError(
+            if (result.kind === 'error') {
+              const error = new ProviderRequestError(
                 `Local worker request ${result.error}; review before retrying`,
                 'request-failed',
                 null,
                 true,
               )
-            return new Response(
+              if (result.capture)
+                throw Object.assign(error, {
+                  providerResponseCapture: result.capture,
+                })
+              throw error
+            }
+            const response = new Response(
               [204, 205, 304].includes(result.status) ? null : result.body,
               { status: result.status, headers: result.headers },
             )
+            if (result.nativeBody)
+              return {
+                response,
+                providerResponseCapture: {
+                  status: result.status,
+                  contentType:
+                    response.headers
+                      .get('content-type')
+                      ?.split(';')[0]
+                      ?.trim()
+                      .toLowerCase() || null,
+                  body: {
+                    state: 'captured',
+                    text: result.body,
+                    redacted: result.nativeBody.redacted,
+                  },
+                  representation: 'adapter',
+                },
+              }
+            return result.capture
+              ? { response, providerResponseCapture: result.capture }
+              : response
           }
           if (Date.now() >= timing.expiresAt) {
             throw new ProviderRequestError(

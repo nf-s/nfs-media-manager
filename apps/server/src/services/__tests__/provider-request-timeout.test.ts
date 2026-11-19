@@ -4,6 +4,11 @@ import {
   ProviderRequestError,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
+import {
+  createProviderResponseRecorder,
+  replayProviderResponses,
+  type ProviderResponseCapture,
+} from '@/lib/provider-response-history'
 import { providerRequestEvent, providerRequestState } from '@/schemas/db'
 import {
   PROVIDER_ERROR_BODY_BYTES,
@@ -134,6 +139,195 @@ function delayedResponse(milliseconds: number) {
     })
   })
 }
+
+describe('scrape-provider request evidence', () => {
+  function setup() {
+    const archive: ProviderResponseCapture[] = []
+    const recorder = createProviderResponseRecorder(async (capture) => {
+      archive.push(capture)
+    }, [])
+    return {
+      archive,
+      request: createProviderRequest(plugin(), undefined, {
+        beginResponseCapture: recorder('media'),
+      }),
+    }
+  }
+
+  it('persists full direct response before the adapter can parse it', async () => {
+    const { request, archive } = setup()
+    const raw = JSON.stringify({ unknown: 'x'.repeat(80_000) })
+    mocks.fetch.mockResolvedValue(
+      new Response(raw, {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const response = await request('https://fixture.invalid/metadata?fixture=1')
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      text: raw,
+      redacted: false,
+    })
+    await expect(response.text()).resolves.toBe(raw)
+  })
+
+  it('records successful absence without creating a provider failure', async () => {
+    const { request, archive } = setup()
+    mocks.fetch.mockResolvedValue(
+      Response.json(
+        { unknownErrorField: 'Fixture not found' },
+        {
+          status: 404,
+        },
+      ),
+    )
+    await expect(
+      request('https://fixture.invalid/metadata', undefined, {
+        notFoundOn404: true,
+      }),
+    ).rejects.toMatchObject({ name: 'ProviderItemNotFoundError' })
+    expect(archive[0]?.response).toMatchObject({
+      status: 404,
+      notFound: true,
+      body: {
+        state: 'captured',
+        text: '{"unknownErrorField":"Fixture not found"}',
+      },
+    })
+    expect(state.failureCount).toBe(0)
+  })
+
+  it('retains the recoverable HTTP error body independently of diagnostics', async () => {
+    const { request, archive } = setup()
+    const text = JSON.stringify({ unknown: 'x'.repeat(90_000) })
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(text, {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    const error: unknown = await request(
+      'https://fixture.invalid/metadata',
+      undefined,
+      { notFoundOn404: true },
+    ).catch((error: unknown) => error)
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      text,
+      redacted: false,
+    })
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: {
+          responseBody: { state: 'unavailable', reason: 'byte-limit' },
+        },
+      },
+    ])
+  })
+
+  it('does not keep a bare legacy local error response as original evidence', async () => {
+    const { request, archive } = setup()
+    const error: unknown = await withProviderTransport(
+      async () => ({
+        execute: async () =>
+          Response.json({ unknown: 'legacy projected value' }, { status: 404 }),
+      }),
+      () =>
+        request('https://fixture.invalid/metadata', undefined, {
+          notFoundOn404: true,
+        }),
+    ).catch((error: unknown) => error)
+    expect(archive[0]?.response.body).toEqual({
+      state: 'unavailable',
+      reason: 'local-response',
+    })
+    expect(providerResponseEvidence(error, [])).toMatchObject([
+      {
+        evidence: {
+          responseBody: { state: 'unavailable', reason: 'local-response' },
+        },
+      },
+    ])
+  })
+
+  it('fails visibly after a storage error without starting a retry or a provider failure', async () => {
+    const recorder = createProviderResponseRecorder(async () => {
+      throw new Error('Fixture storage unavailable')
+    }, [])
+    const onRetry = vi.fn(async () => undefined)
+    const request = createProviderRequest(plugin(), undefined, {
+      beginResponseCapture: recorder('media'),
+      onRetry,
+    })
+    mocks.fetch.mockResolvedValueOnce(Response.json({ fixture: true }))
+    await expect(
+      request('https://fixture.invalid/metadata'),
+    ).rejects.toMatchObject({
+      name: 'ProviderResponseStorageError',
+      message: 'Provider response evidence could not be saved.',
+    })
+    await expect(
+      request('https://fixture.invalid/other'),
+    ).rejects.toMatchObject({
+      name: 'ProviderResponseStorageError',
+    })
+    expect(mocks.fetch).toHaveBeenCalledTimes(1)
+    expect(onRetry).not.toHaveBeenCalled()
+    expect(state.failureCount).toBe(0)
+    expect(state.halted).toBe(false)
+    expect(state.leaseId).toBeNull()
+  })
+
+  it('archives and replays an adapter-ready response from a paired generic worker', async () => {
+    const { request, archive } = setup()
+    const url = 'https://fixture.invalid/metadata'
+    await withProviderTransport(
+      async () => ({
+        execute: async () => ({
+          response: Response.json({ original: 22 }),
+          providerResponseCapture: {
+            body: { state: 'captured', text: '{"original":22}' },
+            contentType: 'application/json',
+            representation: 'adapter',
+          },
+        }),
+      }),
+      () => request(url),
+    )
+    const replayed = await replayProviderResponses(archive, (replay) =>
+      replay(url),
+    )
+    await expect(replayed.json()).resolves.toEqual({ original: 22 })
+    expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+
+  it('stores paired native evidence and still returns the projected adapter response', async () => {
+    const { request, archive } = setup()
+    const response = await withProviderTransport(
+      async () => ({
+        execute: async () => ({
+          response: Response.json({ projected: true }),
+          providerResponseCapture: {
+            status: 200,
+            contentType: 'application/json',
+            body: {
+              state: 'captured',
+              text: '{"native":{"unknown":42},"username":"fixture-uploader"}',
+            },
+          },
+        }),
+      }),
+      () => request('https://fixture.invalid/metadata'),
+    )
+    await expect(response.json()).resolves.toEqual({ projected: true })
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      redacted: true,
+      text: '{"native":{"unknown":42}}',
+    })
+    expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+})
 
 describe('provider-specific request timeout', () => {
   it('reproduces the default 15-second abort without retrying', async () => {

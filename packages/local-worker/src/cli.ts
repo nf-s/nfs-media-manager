@@ -2,6 +2,12 @@
 import 'dotenv/config'
 import { resolve } from 'node:path'
 import { loadConfig, WorkerError } from './config.js'
+import { httpsTransport } from './http.js'
+import {
+  createFilteredTransport,
+  defaultResponseFilter,
+  loadResponseFilter,
+} from './response-filter.js'
 import { JournalStore, readStatus } from './state.js'
 import { LocalWorker } from './worker.js'
 
@@ -16,13 +22,40 @@ async function main() {
     return
   }
   const config = loadConfig()
+  const filter = await loadResponseFilter(
+    process.env.LOCAL_WORKER_RESPONSE_FILTER,
+  )
   const store = JournalStore.open(config.stateDir, config.binding)
+  let transport
+  try {
+    for (const id of store.pending()) {
+      const result = store.readResult(id)
+      if (
+        result.kind === 'response' &&
+        result.body &&
+        !('capture' in result) &&
+        !('nativeBody' in result)
+      )
+        throw new WorkerError(
+          'An older pending response requires review before enabling response filtering',
+        )
+    }
+    transport = createFilteredTransport(
+      config,
+      filter ?? defaultResponseFilter,
+      httpsTransport,
+    )
+  } catch (error) {
+    store.close()
+    throw error
+  }
   const controller = new AbortController()
   const stop = () => controller.abort()
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
   process.on('SIGHUP', stop)
   const worker = new LocalWorker(config, store, {
+    transport,
     report: (event) => process.stdout.write(`${event}\n`),
   })
   try {

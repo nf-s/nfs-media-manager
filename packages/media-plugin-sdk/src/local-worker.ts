@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  ProviderResponseBodySchema,
+  ProviderResponseContentTypeSchema,
+} from '@repo/schemas/provider-response-body'
 
 export const LOCAL_RESPONSE_BYTES = 2 * 1024 * 1024
 const LiteralPathPattern = /^\/[a-zA-Z0-9/_-]+(?:\.[a-zA-Z0-9]+)?$/
@@ -97,50 +101,77 @@ export const LocalWorkerPollSchema = z
   })
   .strict()
 
-export const LocalWorkerResultSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('response'),
-      id: z.string().uuid(),
-      status: z.number().int().min(200).max(599),
-      headers: z
-        .record(z.string().max(80), z.string().max(4096))
-        .refine((headers) =>
-          Object.keys(headers).every((key) =>
-            [
-              'content-type',
-              'retry-after',
-              'x-ratelimit-limit',
-              'x-ratelimit-remaining',
-              'x-ratelimit-reset',
-              'x-discogs-ratelimit',
-              'x-discogs-ratelimit-used',
-              'x-discogs-ratelimit-remaining',
-            ].includes(key),
+/** Evidence supplied by a paired worker that transforms the upstream response. */
+export const LocalWorkerCaptureSchema = z
+  .object({
+    contentType: ProviderResponseContentTypeSchema,
+    body: ProviderResponseBodySchema,
+    status: z.number().int().min(100).max(599).optional(),
+  })
+  .strict()
+
+export type LocalWorkerCapture = z.infer<typeof LocalWorkerCaptureSchema>
+
+export const LocalWorkerResultSchema = z
+  .discriminatedUnion('kind', [
+    z
+      .object({
+        kind: z.literal('response'),
+        id: z.string().uuid(),
+        status: z.number().int().min(200).max(599),
+        capture: LocalWorkerCaptureSchema.optional(),
+        nativeBody: z.object({ redacted: z.boolean() }).strict().optional(),
+        headers: z
+          .record(z.string().max(80), z.string().max(4096))
+          .refine((headers) =>
+            Object.keys(headers).every((key) =>
+              [
+                'content-type',
+                'retry-after',
+                'x-ratelimit-limit',
+                'x-ratelimit-remaining',
+                'x-ratelimit-reset',
+                'x-discogs-ratelimit',
+                'x-discogs-ratelimit-used',
+                'x-discogs-ratelimit-remaining',
+              ].includes(key),
+            ),
           ),
-        ),
-      body: z
-        .string()
-        .max(LOCAL_RESPONSE_BYTES)
-        .refine(
-          (body) =>
-            new TextEncoder().encode(body).byteLength <= LOCAL_RESPONSE_BYTES,
-        ),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('error'),
-      id: z.string().uuid(),
-      error: z.enum([
-        'network',
-        'timeout',
-        'interrupted',
-        'policy',
-        'expired',
-        'response-too-large',
-      ]),
-    })
-    .strict(),
-])
+        body: z
+          .string()
+          .max(LOCAL_RESPONSE_BYTES)
+          .refine(
+            (body) =>
+              new TextEncoder().encode(body).byteLength <= LOCAL_RESPONSE_BYTES,
+          ),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('error'),
+        id: z.string().uuid(),
+        capture: LocalWorkerCaptureSchema.optional(),
+        error: z.enum([
+          'network',
+          'timeout',
+          'interrupted',
+          'policy',
+          'expired',
+          'response-too-large',
+        ]),
+      })
+      .strict(),
+  ])
+  .refine((result) => {
+    const capture = result.capture?.body
+    if (result.kind === 'response' && result.nativeBody && capture) return false
+    if (capture?.state !== 'captured') return true
+    const encoder = new TextEncoder()
+    const projectedBytes =
+      result.kind === 'response' ? encoder.encode(result.body).byteLength : 0
+    return (
+      projectedBytes + encoder.encode(capture.text).byteLength <=
+      LOCAL_RESPONSE_BYTES
+    )
+  }, 'The response and inline capture exceed the relay limit')
 export type LocalWorkerResult = z.infer<typeof LocalWorkerResultSchema>

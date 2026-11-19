@@ -5,15 +5,23 @@ import {
   ProviderRequestError,
   ProviderItemNotFoundError,
   isProviderItemNotFoundError,
+  sanitizeProviderResponseBody,
   type MediaProviderPlugin,
   type MediaPluginTestContext,
 } from '@repo/media-plugin-sdk'
+import { MAX_PROVIDER_RESPONSE_BYTES } from '@repo/schemas/provider-response-body'
 import { db } from '@/lib/db'
 import {
   PROVIDER_ERROR_BODY_BYTES,
   captureProviderResponseEvidence,
   type CapturedProviderBody,
 } from '@/lib/job-diagnostics'
+import {
+  pairedProviderResponseCapture,
+  ProviderResponseStorageError,
+  type BeginProviderResponseCapture,
+  type ProviderResponseCapture,
+} from '@/lib/provider-response-history'
 import {
   getProviderTransport,
   LOCAL_WORKER_DISPATCH_WINDOW_MS,
@@ -231,12 +239,13 @@ function responseContentType(response: Response): string | null {
 function capturedErrorText(
   text: string,
   relayed: boolean,
+  maxBytes = PROVIDER_ERROR_BODY_BYTES,
 ): CapturedProviderBody {
   if (!text)
     return relayed
       ? { state: 'unavailable', reason: 'local-response' }
       : { state: 'empty' }
-  if (Buffer.byteLength(text) > PROVIDER_ERROR_BODY_BYTES)
+  if (Buffer.byteLength(text) > maxBytes)
     return { state: 'unavailable', reason: 'byte-limit' }
   return { state: 'captured', text, relayed }
 }
@@ -246,13 +255,12 @@ async function readErrorBody(
   signal: AbortSignal,
   relayed: boolean,
   contentType: string | null,
+  maxBytes = PROVIDER_ERROR_BODY_BYTES,
 ): Promise<CapturedProviderBody> {
   if (!response.body) return capturedErrorText('', relayed)
   if (response.body.locked)
     return { state: 'unavailable', reason: 'read-failed' }
-  if (
-    Number(response.headers.get('content-length')) > PROVIDER_ERROR_BODY_BYTES
-  ) {
+  if (Number(response.headers.get('content-length')) > maxBytes) {
     void response.body.cancel().catch(() => undefined)
     return { state: 'unavailable', reason: 'byte-limit' }
   }
@@ -282,7 +290,7 @@ async function readErrorBody(
         break
       }
       bytes += chunk.value.byteLength
-      if (bytes > PROVIDER_ERROR_BODY_BYTES)
+      if (bytes > maxBytes)
         return { state: 'unavailable', reason: 'byte-limit' }
       chunks.push(chunk.value)
     }
@@ -291,6 +299,7 @@ async function readErrorBody(
         Buffer.concat(chunks),
       ),
       relayed,
+      maxBytes,
     )
   } catch {
     return { state: 'unavailable', reason: 'read-failed' }
@@ -936,6 +945,7 @@ export function createProviderRequest(
     timeoutMs?: number
     onRetry?: (retry: ProviderRequestRetry) => Promise<void>
     dispatchFetch?: ProviderFetch
+    beginResponseCapture?: BeginProviderResponseCapture
   } = {},
 ): MediaPluginTestContext['request'] {
   const dispatchFetch = configuration.dispatchFetch ?? fetchProvider
@@ -965,6 +975,7 @@ export function createProviderRequest(
     ...[url, init, options]: Parameters<MediaPluginTestContext['request']>
   ) => {
     await assertActive?.()
+    configuration.beginResponseCapture?.assertStored()
     init?.signal?.throwIfAborted()
     const transport = await getProviderTransport(plugin)
     if (options?.requireLocalTransport && !transport)
@@ -1021,8 +1032,52 @@ export function createProviderRequest(
     let remoteAccountingComplete = false
     let transient: TransientFailure | undefined
     let retainResponseEvidence: (() => Promise<void>) | undefined
+    let captureStarted = false
+    let finishCapture: ReturnType<BeginProviderResponseCapture>
+    let captureFailure: ProviderResponseStorageError | undefined
+    const beginCapture = () => {
+      captureStarted = true
+      finishCapture = configuration.beginResponseCapture?.(url, init, options)
+    }
+    let archiveResponse: {
+      status: number | null
+      receivedAt: string | null
+      contentType: string | null
+    } = { status: null, receivedAt: null, contentType: null }
+    const capture = async (
+      body: ProviderResponseCapture['response']['body'],
+      notFound = false,
+      paired?: ReturnType<typeof pairedProviderResponseCapture>,
+    ) => {
+      const save = finishCapture
+      finishCapture = undefined
+      if (!save) return
+      try {
+        await save(
+          {
+            ...archiveResponse,
+            ...(paired
+              ? {
+                  contentType: paired.contentType,
+                  status: paired.status ?? archiveResponse.status,
+                }
+              : {}),
+            body: paired?.body ?? body,
+            ...(notFound ? { notFound } : {}),
+            ...(retryPolicy ? { retry: retryPolicy.attempt } : {}),
+          },
+          paired?.representation === 'native',
+        )
+      } catch (error) {
+        captureFailure =
+          error instanceof ProviderResponseStorageError
+            ? error
+            : new ProviderResponseStorageError()
+      }
+    }
     try {
       await checkDispatch(plugin.manifest.id, reservation)
+      configuration.beginResponseCapture?.assertStored()
       init?.signal?.throwIfAborted()
       // The local transport owns its execution deadline. Its response is
       // already buffered when it reaches the separate evidence capture timer.
@@ -1049,6 +1104,7 @@ export function createProviderRequest(
             })
           : dispatchFetch(url, { ...init, redirect: 'manual', signal })
       ).then((response) => ({ response, receivedAt: Date.now() }))
+      beginCapture()
       const activeReservation = reservation
       const recordRemoteReceipt = async () => {
         requestStartedAt = Date.now()
@@ -1065,7 +1121,12 @@ export function createProviderRequest(
         dispatchPromise,
       ])
       if (responseResult.status === 'rejected') throw responseResult.reason
-      const { response, receivedAt: responseReceivedAt } = responseResult.value
+      const { response: result, receivedAt: responseReceivedAt } =
+        responseResult.value
+      const response = result instanceof Response ? result : result.response
+      const paired = transport
+        ? pairedProviderResponseCapture(result)
+        : undefined
       const quota = plugin.manifest.rateLimit.respectRateLimitHeaders
         ? responseQuota(response.headers, Date.now())
         : null
@@ -1073,10 +1134,17 @@ export function createProviderRequest(
       if (response.ok && quota?.exhausted && quota.resetAt !== null)
         await recordResponseQuota(plugin.manifest.id, quota.resetAt)
       const contentType = responseContentType(response)
+      archiveResponse = {
+        status: response.status,
+        receivedAt: new Date(responseReceivedAt).toISOString(),
+        contentType,
+      }
       const jsonResponse =
         response.headers.get('content-type')?.toLowerCase().includes('json') ??
         false
       let body = ''
+      const captureConfigured = configuration.beginResponseCapture !== undefined
+      const recordingResponse = finishCapture !== undefined
       let errorBody: CapturedProviderBody | undefined
       const inspectDenial = response.status === 403 && jsonResponse
       const captureErrorBody = () => {
@@ -1088,15 +1156,39 @@ export function createProviderRequest(
           signal ? AbortSignal.any([signal, captureTimeout]) : captureTimeout,
           transport !== null,
           contentType,
+          recordingResponse && !transport
+            ? MAX_PROVIDER_RESPONSE_BYTES
+            : undefined,
         )
       }
       if (response.ok) {
-        body = await readBoundedBody(response)
+        try {
+          body = await readBoundedBody(response)
+        } catch (error) {
+          await capture(
+            {
+              state: 'unavailable',
+              reason:
+                error instanceof Error &&
+                error.message === 'Response exceeds size limit'
+                  ? 'byte-limit'
+                  : 'read-failed',
+            },
+            false,
+            paired,
+          )
+          throw error
+        }
       } else if (inspectDenial) {
         // A structured quota denial is the only failed response that needs its
         // body classified before persisting provider safety.
         errorBody = await captureErrorBody()
-        if (errorBody.state === 'captured') body = errorBody.text
+        if (
+          errorBody.state === 'captured' &&
+          Buffer.byteLength(errorBody.text) <= PROVIDER_ERROR_BODY_BYTES
+        ) {
+          body = errorBody.text
+        }
       }
       let apiLimit = false
       if (jsonResponse && (response.ok || response.status === 403)) {
@@ -1122,12 +1214,57 @@ export function createProviderRequest(
               errorBody ??
               (response.ok
                 ? capturedErrorText(body, transport !== null)
-                : await captureErrorBody())
+                : transport && recordingResponse
+                  ? ({
+                      state: 'unavailable',
+                      reason: 'local-response',
+                    } satisfies CapturedProviderBody)
+                  : await captureErrorBody())
+            await capture(
+              transport
+                ? { state: 'unavailable', reason: 'local-response' }
+                : response.ok
+                  ? { state: 'captured', text: body }
+                  : evidenceBody.state === 'empty'
+                    ? { state: 'unavailable', reason: 'empty' }
+                    : evidenceBody,
+              isProviderItemNotFoundError(error),
+              paired,
+            )
+            const diagnosticBody = (() => {
+              if (recordingResponse && transport)
+                return {
+                  state: 'unavailable',
+                  reason: 'local-response',
+                } satisfies CapturedProviderBody
+              if (evidenceBody.state !== 'captured') return evidenceBody
+              if (captureConfigured && !recordingResponse) {
+                return {
+                  state: 'unavailable',
+                  reason: 'unsupported-format',
+                } satisfies CapturedProviderBody
+              }
+              if (!recordingResponse) return evidenceBody
+              const capped = capturedErrorText(evidenceBody.text, false)
+              if (capped.state !== 'captured') return capped
+              if (plugin.sanitizeResponseCapture && contentType === 'text/html')
+                return {
+                  state: 'unavailable',
+                  reason: 'unsupported-format',
+                } satisfies CapturedProviderBody
+              const safe = sanitizeProviderResponseBody(capped, contentType, [])
+              return safe.state === 'captured'
+                ? capturedErrorText(safe.text, false)
+                : ({
+                    state: 'unavailable',
+                    reason: 'unsupported-format',
+                  } satisfies CapturedProviderBody)
+            })()
             captureProviderResponseEvidence(
               error,
               diagnostics,
               contentType,
-              evidenceBody,
+              diagnosticBody,
               url,
               init?.headers,
             )
@@ -1202,6 +1339,13 @@ export function createProviderRequest(
         attachEvidence(error)
         throw error
       }
+      await capture(
+        transport
+          ? { state: 'unavailable', reason: 'local-response' }
+          : { state: 'captured', text: body },
+        false,
+        paired,
+      )
       // HTTP safety signals take precedence over dispatch bookkeeping errors.
       if (dispatchResult.status === 'rejected') throw dispatchResult.reason
       return new Response(
@@ -1214,11 +1358,23 @@ export function createProviderRequest(
       )
     } catch (error) {
       if (requestStartedAt === undefined) throw error
+      if (!captureStarted) beginCapture()
+      const pairedError = transport
+        ? pairedProviderResponseCapture(error)
+        : undefined
+      if (pairedError) archiveResponse.receivedAt = new Date().toISOString()
       if (isProviderItemNotFoundError(error)) {
         await retainResponseEvidence?.()
         throw error
       }
-      if (error instanceof ProviderRequestError && error.recorded) throw error
+      if (error instanceof ProviderRequestError && error.recorded) {
+        await capture(
+          { state: 'unavailable', reason: 'transport-error' },
+          false,
+          pairedError,
+        )
+        throw error
+      }
       const safe =
         error instanceof ProviderRequestError
           ? error
@@ -1231,6 +1387,11 @@ export function createProviderRequest(
             )
       await recordProviderFailure(plugin, safe, transient?.disposition)
       await retainResponseEvidence?.()
+      await capture(
+        { state: 'unavailable', reason: 'transport-error' },
+        false,
+        pairedError,
+      )
       const recorded = new ProviderRequestError(
         safe.message,
         safe.code,
@@ -1295,6 +1456,7 @@ export function createProviderRequest(
             .where(eq(providerRequestState.provider, plugin.manifest.id))
         }
       })
+      if (captureFailure) throw captureFailure
     }
   }
   const onRetry = configuration.onRetry

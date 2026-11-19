@@ -217,3 +217,62 @@ ownership, stop/drain ordering, connection-loss fatal handling, row-lock races,
 late-write fencing, and recovery rollback. Connection-loss testing terminates only
 the advisory-lock session in that temporary database. It neither starts the server
 nor recovers or changes jobs in the configured application database.
+
+### Provider response history and offline replay
+
+Open a job's **Request and response** tab and select a row under **Provider
+responses** to inspect the saved body. If the worker kept a large response
+locally, select **Open worker archive on this device** and choose the JSON file
+named for the displayed archive reference. The browser verifies the file and
+displays its contents on the device.
+
+For new metadata and artist jobs, the owner can read the provider response
+sequence separately from the adapter's stored snapshot. Job response summaries
+are paginated at `GET /api/v1/scrape/jobs/:id/data/responses`. Opening
+`/api/v1/scrape/jobs/:id/data/responses/:responseId` reads one response body and
+its request fingerprint. The summary contains neither. Requests that preceded
+a failed adapter match can appear here even when the job has no snapshot.
+Earlier jobs can still have adapter snapshots or error diagnostics. Those
+records are not reconstructed as original HTTP responses.
+
+Use the job and item or artist identifiers to scope an offline command. The
+command uses the configured database for reads. The following IDs are examples.
+
+```sh
+pnpm --filter @repo/server exec tsx scripts/replay-provider-response.ts export \
+  --job fixture-job --item fixture-item --attempt 1 --output /private/response-export.json
+pnpm --filter @repo/server exec tsx scripts/replay-provider-response.ts replay \
+  --job fixture-job --item fixture-item --attempt 1 --output /private/replay-report.json
+```
+
+For an artist enrichment task supply `--artist` instead of `--item`. For an album
+job that bootstrapped an artist, use both to select just that artist's responses.
+Export writes a new owner-only file and preserves the recorded ordering and body
+availability. Keep it private. A local archive reference identifies a body on the
+paired worker and does not grant the server access to the local file.
+
+Replay uses the current built-in adapter, a reconstructed lookup context and
+saved responses only. The resulting normalized values go into the private
+report. It does not queue work, modify snapshots, or write library metadata.
+Changed lookup inputs, an incomplete sequence or a missing body can prevent
+exact replay. Supply the export's `context` object in an owner-only JSON file with
+`--context` to review or correct lookup inputs. For a Spotify request that used a
+market, this object accepts a non-secret two-letter `spotifyMarket`. The request
+fingerprint still has to match. Do not put API credentials in the context.
+
+For artist name lookups that used recording credits, replay checks the saved
+Spotify track requests against the same ordered recording identifiers. If the
+current recording set has changed, the private context may supply the original
+`spotifyRecordings` entries with `spotifyTrackId` and `title`. Last.fm
+corroboration reads currently credited recording titles in memory. The context
+export omits the listening history. If the available evidence no longer
+reproduces the saved lookup sequence, replay reports the mismatch.
+
+Use `--native` to supply an explicitly prepared offline projection of retained
+worker evidence. The owner-only JSON file has the export's `scope` and
+`entries` with the saved `ordinal`, `requestKey` and `status`, followed by the
+projected `contentType` and `text`. When the stored body uses a local archive,
+include the exact opaque `reference` in the entry. A projection is an input for re-normalizing
+the result and does not change what the job recorded. For an installed adapter,
+export the responses and run its replay or mapping code in a process where
+outbound network access is disabled.

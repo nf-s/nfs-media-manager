@@ -3,10 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const listJobs = vi.fn()
 const dismissJob = vi.fn()
 const getJobData = vi.fn()
+const listJobProviderResponses = vi.fn()
+const getJobProviderResponse = vi.fn()
 const listJobEntries = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/services/job-data', () => ({ getJobData }))
+  vi.doMock('@/services/provider-response-history', () => ({
+    listJobProviderResponses,
+    getJobProviderResponse,
+  }))
   vi.doMock('@/services/job-entries', () => ({ listJobEntries }))
   vi.doMock('@/env', () => ({
     env: { TRUSTED_ORIGINS: ['http://localhost:3000'], NODE_ENV: 'test' },
@@ -82,6 +88,81 @@ describe('media job history api', () => {
     const { default: app } = await import('@/app')
     const response = await app.request('/api/v1/scrape/jobs/missing/data')
     expect(response.status).toBe(404)
+  })
+
+  it('requires authentication for stored response summaries and bodies', async () => {
+    mockAppSession(false)
+    const { default: app } = await import('@/app')
+    const list = await app.request('/api/v1/scrape/jobs/job-1/data/responses')
+    const detail = await app.request(
+      '/api/v1/scrape/jobs/job-1/data/responses/response-1',
+    )
+    expect(list.status).toBe(401)
+    expect(detail.status).toBe(401)
+    expect(listJobProviderResponses).not.toHaveBeenCalled()
+    expect(getJobProviderResponse).not.toHaveBeenCalled()
+  })
+
+  it('reads response summaries and only the requested scoped body', async () => {
+    mockAppSession(true)
+    const summary = {
+      id: 'response-1',
+      jobId: 'job-1',
+      jobItemId: 'item-1',
+      artistId: null,
+      provider: 'fixture-provider',
+      phase: 'media',
+      ordinal: 1,
+      attempt: 1,
+      method: 'GET',
+      requestUrl: 'https://example.invalid/release',
+      status: 200,
+      receivedAt: '2020-01-01T00:00:00.000Z',
+      contentType: 'application/json',
+      retry: null,
+      notFound: false,
+      bodyState: 'captured',
+      retainedBytes: 2,
+    }
+    listJobProviderResponses.mockResolvedValue({
+      items: [summary],
+      page: 2,
+      size: 1,
+      totalCount: 2,
+      pageCount: 2,
+    })
+    const body = { state: 'captured', text: '{}' }
+    getJobProviderResponse.mockResolvedValue({
+      ...summary,
+      body,
+      requestKey: 'a'.repeat(64),
+    })
+    const { default: app } = await import('@/app')
+    const list = await app.request(
+      '/api/v1/scrape/jobs/job-1/data/responses?page=2&size=1',
+    )
+    expect(list.status).toBe(200)
+    expect(list.headers.get('cache-control')).toContain('no-store')
+    expect(listJobProviderResponses).toHaveBeenCalledExactlyOnceWith('job-1', {
+      page: 2,
+      size: 1,
+    })
+    expect(getJobProviderResponse).not.toHaveBeenCalled()
+    expect((await list.json()).data.items).toEqual([summary])
+    const detail = await app.request(
+      '/api/v1/scrape/jobs/job-1/data/responses/response-1',
+    )
+    expect(detail.status).toBe(200)
+    expect(detail.headers.get('cache-control')).toContain('no-store')
+    expect(getJobProviderResponse).toHaveBeenCalledExactlyOnceWith(
+      'job-1',
+      'response-1',
+    )
+    expect((await detail.json()).data).toMatchObject({
+      body,
+      requestKey: 'a'.repeat(64),
+    })
+    expect(getJobData).not.toHaveBeenCalled()
   })
 
   it('requires authentication for media-specific jobs', async () => {

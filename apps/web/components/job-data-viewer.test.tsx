@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { JobDataSchema, type Job } from '@repo/schemas/job'
 import { jobDataOptions } from '@/utils/job-data'
 import { StoredJobData } from './job-data-viewer'
+import { JobProviderResponseBody } from './job-provider-responses'
 
 const network = mock.method(globalThis, 'fetch', async () => {
   throw new Error('Network forbidden in rendering tests')
@@ -21,13 +22,23 @@ function render({
   status = 'failed',
   data,
   error = false,
+  responses,
 }: {
   status?: Job['status']
   data?: unknown
   error?: boolean
+  responses?: unknown[]
 } = {}) {
   const client = new QueryClient()
   const job = { id: 'job-1', status }
+  if (responses !== undefined)
+    client.setQueryData(['jobs', 'provider-responses', job.id, job.status, 1], {
+      page: 1,
+      size: 24,
+      totalCount: responses.length,
+      pageCount: responses.length ? 1 : 0,
+      items: responses,
+    })
   const options = jobDataOptions('', job)
   if (data !== undefined)
     client.setQueryData(options.queryKey, JobDataSchema.parse(data))
@@ -58,9 +69,9 @@ test('loading is distinct from missing retained data and does not offer scraping
 })
 
 test('historical failure without saved responses is not presented as empty search results', () => {
-  const html = render({ data: empty })
-  assert.match(html, /No response JSON was saved for this job/)
-  assert.match(html, /Older failed responses cannot be recovered/)
+  const html = render({ data: empty, responses: [] })
+  assert.match(html, /No original provider response was archived for this job/)
+  assert.match(html, /No snapshots or diagnostics saved/)
   assert.doesNotMatch(html, /empty search results|No results/)
   assert.doesNotMatch(html, /Raw JSON|<pre|href=|<button/)
 })
@@ -68,13 +79,13 @@ test('historical failure without saved responses is not presented as empty searc
 test('active jobs show a pending-response message without historical failure claims', () => {
   const statuses: Job['status'][] = ['queued', 'running']
   for (const status of statuses) {
-    const html = render({ data: empty, status })
-    assert.match(html, /No response saved yet/)
+    const html = render({ data: empty, status, responses: [] })
+    assert.match(html, /No provider response captured yet/)
     assert.doesNotMatch(html, /Older failed|cannot be recovered/)
   }
   assert.doesNotMatch(
     render({ data: empty, status: 'failed' }),
-    /No response saved yet/,
+    /No provider response captured yet/,
   )
 })
 
@@ -148,4 +159,60 @@ test('read errors offer an explicit stored-data reload, not a scrape retry', () 
   assert.match(html, /role="alert">[\s\S]*Could not load stored JSON/)
   assert.match(html, /Reload stored data/)
   assert.doesNotMatch(html, /No response JSON|Retry job|href=/)
+})
+
+test('lists a native response independently of snapshots and loads its body only after selection', () => {
+  const html = render({
+    data: empty,
+    responses: [
+      {
+        id: 'response-1',
+        jobId: 'job-1',
+        jobItemId: 'item-1',
+        artistId: null,
+        provider: 'fixture',
+        attempt: 1,
+        ordinal: 2,
+        phase: 'media',
+        method: 'GET',
+        requestUrl: null,
+        status: 200,
+        retry: null,
+        receivedAt: null,
+        notFound: false,
+        contentType: 'application/json',
+        bodyState: 'captured',
+        retainedBytes: 11,
+      },
+    ],
+  })
+  assert.match(html, /Attempt 1 · Request 2 · Media/)
+  assert.match(html, /HTTP 200/)
+  assert.doesNotMatch(html, /No original provider response|Copy response|<pre/)
+})
+
+test('renders saved text literally, diagnoses unavailable bodies, and identifies worker archives', () => {
+  const renderBody = (
+    body: Parameters<typeof JobProviderResponseBody>[0]['body'],
+  ) => renderToStaticMarkup(<JobProviderResponseBody body={body} />)
+  const html = renderBody({
+    state: 'captured',
+    text: '{"extra":"<script>"}',
+    redacted: true,
+  })
+  assert.match(html, /extra.*&lt;script&gt;/)
+  assert.match(html, /Private fields removed/)
+  assert.doesNotMatch(html, /<script>/)
+  assert.match(
+    renderBody({ state: 'unavailable', reason: 'byte-limit' }),
+    /exceeded the capture limit/,
+  )
+  assert.match(
+    renderBody({
+      state: 'local',
+      reference: 'archive-fixture',
+      retainedBytes: 42,
+    }),
+    /Paired local worker.*archive-fixture/,
+  )
 })

@@ -737,3 +737,40 @@ test('offline notification ignores the stopped run signal and never retries erro
   await worker.offline()
   assert.equal(calls, 1)
 })
+
+for (const failedProjection of [false, true]) {
+  test(`forwards a worker's native capture when projection ${failedProjection ? 'fails' : 'succeeds'}`, async (t) => {
+    const h = fixture(t)
+    h.provider = () => ({
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      body: failedProjection
+        ? new ReadableStream({
+            start(controller) {
+              controller.error(new Error('Invalid projected data'))
+            },
+          })
+        : json({ projected: 1 }).body,
+      capture: {
+        contentType: 'application/json',
+        body: {
+          state: 'captured',
+          text: '{"unknownField":2,"message":"provider-private-key"}',
+        },
+      },
+    })
+    await h.run()
+    const [result] = h.uploads
+    assert.equal(result.kind, failedProjection ? 'error' : 'response')
+    assert.deepEqual(result.capture, {
+      contentType: 'application/json',
+      status: 200,
+      body: {
+        state: 'captured',
+        text: '{"unknownField":2,"message":"[redacted]"}',
+        redacted: true,
+      },
+    })
+    assert.equal(h.calls.filter((call) => call.url === task.url).length, 1)
+  })
+}

@@ -908,9 +908,36 @@ describe('local worker transport RPC boundary', () => {
     await vi.advanceTimersByTimeAsync(999)
     expect(mocks.readResult).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(1)
-    expect(await (await completed).text()).toBe('{}')
+    const response = await completed
+    if (!(response instanceof Response))
+      throw new Error('Expected a native response')
+    expect(await response.text()).toBe('{}')
     expect(mocks.readResult).toHaveBeenCalledTimes(2)
     expect(mocks.consumeResult).toHaveBeenCalledOnce()
     expect(mocks.expire).not.toHaveBeenCalled()
+  })
+
+  it('retains native evidence independently of the projected local response', async () => {
+    const selected = await transport()
+    if (!selected) throw new Error('Missing configured transport')
+    const capture = {
+      contentType: 'application/json',
+      body: { state: 'captured', text: '{"unknown":8}' },
+    }
+    mocks.readResult.mockResolvedValue({
+      ...result,
+      status: 200,
+      body: '{}',
+      capture,
+    })
+    const returned = await selected.execute(task.url, {
+      dispatchBefore: Date.now() + 4000,
+      expiresAt: Date.now() + 19000,
+    })
+    if (returned instanceof Response)
+      throw new Error('Missing provider capture')
+    expect(await returned.response.text()).toBe('{}')
+    expect(returned.providerResponseCapture).toEqual(capture)
+    expect(mocks.consumeResult).toHaveBeenCalledOnce()
   })
 })

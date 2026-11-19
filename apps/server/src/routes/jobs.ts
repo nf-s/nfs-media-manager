@@ -52,6 +52,15 @@ import {
 } from '@/services/film-enrichment'
 import { ServerError } from '@/lib/error'
 import { getJobData } from '@/services/job-data'
+import {
+  getJobProviderResponse,
+  listJobProviderResponses,
+} from '@/services/provider-response-history'
+import { PaginationQuerySchema } from '@repo/schemas/common'
+import {
+  ProviderResponsePageSchema,
+  ProviderResponseSchema,
+} from '@repo/schemas/provider-response'
 import { listJobEntries } from '@/services/job-entries'
 import { QueueFilmSelectionSchema } from '@repo/schemas/film-selection'
 import { queueFilmSelection } from '@/services/film-selection'
@@ -81,6 +90,75 @@ app.openapi(
   }),
   async (c) =>
     generateJsonResponse(c, await getJobData(c.req.valid('param').id), 200),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/data/responses',
+    middleware: [authMiddleware()],
+    request: {
+      params: z.object({ id: z.string().min(1).max(200) }),
+      query: PaginationQuerySchema,
+    },
+    responses: {
+      200: {
+        description: 'Saved provider response summaries for this job',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ProviderResponsePageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Job not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listJobProviderResponses(
+        c.req.valid('param').id,
+        c.req.valid('query'),
+      ),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/data/responses/:responseId',
+    middleware: [authMiddleware()],
+    request: {
+      params: z.object({
+        id: z.string().min(1).max(200),
+        responseId: z.string().min(1).max(200),
+      }),
+    },
+    responses: {
+      200: {
+        description: 'One saved response associated with this exact job',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(ProviderResponseSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Provider response not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) => {
+    const { id, responseId } = c.req.valid('param')
+    return generateJsonResponse(
+      c,
+      await getJobProviderResponse(id, responseId),
+      200,
+    )
+  },
 )
 
 app.openapi(
