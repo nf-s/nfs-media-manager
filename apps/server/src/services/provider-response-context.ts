@@ -7,11 +7,13 @@ import {
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import { JsonValueSchema } from '@repo/schemas/common'
 import { getJobTask } from '@repo/schemas/job'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { db } from '@/lib/db'
 import { getBuiltinScrapePlugin } from '@/plugins/builtin'
 import { spotifyArtistRecordingLimit } from '@/plugins/builtin/artist-providers'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { scrapeJob, scrapeJobItem } from '@/schemas/db'
+import { readAlbumMatchRejections } from './album-match-rejections'
 import { getAlbumReleaseHints } from './album-release-hints'
 import {
   loadArtistProviderTarget,
@@ -81,6 +83,7 @@ const ReplayMediaInputSchema = z.object({
 const ReplayArtistInputSchema = z.object({
   phase: z.literal('artist'),
   bootstrap: z.boolean(),
+  inferredLastfmMbid: z.literal(true).optional(),
   spotifyRecordings: z
     .array(
       z.object({
@@ -157,7 +160,12 @@ export async function readProviderReplayJobScope(
 
 type Phase =
   | { phase: 'media'; artistId: null }
-  | { phase: 'artist'; artistId: string; lookupByName?: boolean }
+  | {
+      phase: 'artist'
+      artistId: string
+      lookupByName?: boolean
+      inferredLastfmMbid?: string
+    }
 
 /** Resolve the same inputs as a live scrape, with no credential or network access. */
 export async function reconstructProviderReplayContext(
@@ -179,15 +187,19 @@ export async function reconstructProviderReplayContext(
       inputs.push({
         phase: 'artist',
         bootstrap,
+        ...(!bootstrap &&
+        typeof explicitId !== 'string' &&
+        phase.inferredLastfmMbid
+          ? { inferredLastfmMbid: true }
+          : {}),
         context: {
           artist: { id: phase.artistId, name: target.name },
           providerArtistId: bootstrap
             ? null
             : typeof explicitId === 'string'
               ? explicitId
-              : phase.lookupByName
-                ? null
-                : target.providerArtistId,
+              : (phase.inferredLastfmMbid ??
+                (phase.lookupByName ? null : target.providerArtistId)),
         },
       })
       continue
@@ -217,9 +229,19 @@ export async function reconstructProviderReplayContext(
       }),
     ])
     if (!record || record.mediaType === 'track') return null
+    const rejections =
+      record.mediaType === 'album'
+        ? await readAlbumMatchRejections(db, mediaItemId)
+        : []
+    const rejected = createAlbumMatchRejectionPredicate(
+      job.provider,
+      rejections,
+    )
     const existingReferences: PluginReference[] = []
     const effective = new Map(
-      overrides.map((row) => [row.referenceType, row.externalId]),
+      [...new Map(overrides.map((row) => [row.referenceType, row])).values()]
+        .filter((row) => !rejected(row))
+        .map((row) => [row.referenceType, row.externalId]),
     )
     for (const [referenceType, externalId] of effective)
       existingReferences.push({
@@ -233,7 +255,7 @@ export async function reconstructProviderReplayContext(
         Number(right.provider === job.provider) -
         Number(left.provider === job.provider),
     )) {
-      if (effective.has(row.referenceType)) continue
+      if (effective.has(row.referenceType) || rejected(row)) continue
       const metadata = { ...row.metadata }
       delete metadata['manualOverride']
       existingReferences.push({
@@ -254,7 +276,7 @@ export async function reconstructProviderReplayContext(
         existingReferences,
       }),
       record.mediaType === 'album' && plugin?.manifest.albumReleaseHints
-        ? getAlbumReleaseHints(mediaItemId)
+        ? getAlbumReleaseHints(mediaItemId, rejections)
         : undefined,
       record.mediaType === 'album' && plugin?.manifest.bootstrapAlbumArtists
         ? loadCurrentArtistPayloads(
@@ -276,7 +298,10 @@ export async function reconstructProviderReplayContext(
           releaseHints: releaseHints?.map((value) => hint.parse(value)),
         },
         artistProfiles,
-        existingReferences: [...existingReferences, ...referenceHints],
+        existingReferences: [
+          ...existingReferences,
+          ...referenceHints.filter((reference) => !rejected(reference)),
+        ],
       },
     })
   }

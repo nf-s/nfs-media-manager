@@ -268,6 +268,9 @@ corroboration reads currently credited recording titles in memory. The context
 export omits the listening history. If the available evidence no longer
 reproduces the saved lookup sequence, replay reports the mismatch.
 
+Replay applies the album's saved match rejections. A complete replay with no
+match or an ambiguous artist search records that outcome in the report.
+
 Use `--native` to supply an explicitly prepared offline projection of retained
 worker evidence. The owner-only JSON file has the export's `scope` and
 `entries` with the saved `ordinal`, `requestKey` and `status`, followed by the

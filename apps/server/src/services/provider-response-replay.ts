@@ -19,7 +19,10 @@ import { getScrapePlugin } from '@/plugins/registry'
 
 type ArtistRecordingContext = Pick<
   Parameters<typeof lookupArtistProvider>[3],
-  'spotifyRecordings' | 'loadLastfmRecordings'
+  | 'spotifyRecordings'
+  | 'loadLastfmRecordings'
+  | 'inferredLastfmMbid'
+  | 'loadSpotifyCatalogRecordings'
 >
 
 type ReplayInput =
