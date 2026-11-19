@@ -14,6 +14,18 @@ const artist = { name: artistName, mbid: artistMbid, url: artistUrl }
 const candidate = { id: artistMbid, name: artistName, url: artistUrl }
 const firstTitle = 'Fixture Track One'
 const secondTitle = 'Fixture Track Two'
+const albumTitle = 'Fixture Release'
+const trackMbid = '33333333-3333-4333-8333-333333333333'
+const trackInfo = {
+  name: firstTitle,
+  mbid: trackMbid,
+  artist,
+  url: artistUrl + '/_/Fixture+Track+One',
+  album: { title: albumTitle, artist: artistName },
+}
+
+const knownRecordings = (...titles: string[]) =>
+  titles.map((title) => ({ title, albumName: null }))
 
 function lastFmContext(response: Response) {
   return {
@@ -33,6 +45,133 @@ function catalog(...tracks: unknown[]) {
 }
 
 describe('Last.fm artist recording evidence', () => {
+  it('verifies one linked recording through its exactly credited release', async () => {
+    const context = lastFmContext(Response.json({ track: trackInfo }))
+    await expect(
+      corroborateLastFmArtist(
+        artistName,
+        [candidate],
+        async () => [{ title: firstTitle, albumName: albumTitle, trackMbid }],
+        context,
+      ),
+    ).resolves.toMatchObject({
+      artistMbid,
+      artistUrl,
+      matchedTitles: [firstTitle],
+      releaseEvidence: { albumTitle, albumArtist: artistName, trackMbid },
+    })
+    expect(context.request).toHaveBeenCalledTimes(1)
+    const url = new URL(String(context.request.mock.calls[0]?.[0]))
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      method: 'track.getInfo',
+      mbid: trackMbid,
+      autocorrect: '0',
+    })
+    expect(url.searchParams.has('track')).toBe(false)
+  })
+
+  it('verifies a release with a URL-only candidate and a stored track title', async () => {
+    const context = lastFmContext(
+      Response.json({
+        track: {
+          ...trackInfo,
+          mbid: '',
+          artist: { ...artist, mbid: '' },
+          album: { ...trackInfo.album, url: artistUrl + '/Fixture+Release' },
+        },
+      }),
+    )
+    await expect(
+      corroborateLastFmArtist(
+        artistName,
+        [{ ...candidate, id: artistUrl }],
+        async () => [{ title: firstTitle, albumName: albumTitle }],
+        context,
+      ),
+    ).resolves.toMatchObject({
+      artistUrl,
+      matchedTitles: [firstTitle],
+      releaseEvidence: { albumTitle, trackMbid: null },
+    })
+    const url = new URL(String(context.request.mock.calls[0]?.[0]))
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      method: 'track.getInfo',
+      artist: artistName,
+      track: firstTitle,
+      autocorrect: '0',
+    })
+    expect(context.request).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { album: undefined },
+    { album: { title: albumTitle } },
+    { album: { title: albumTitle, artist: 'Various Artists' } },
+    { album: { title: albumTitle + ' (Deluxe Edition)', artist: artistName } },
+    {
+      album: {
+        ...trackInfo.album,
+        url: 'https://www.last.fm/music/Other+Fixture/Fixture+Release',
+      },
+    },
+    { artist: { ...artist, name: artistName + ' & Other Fixture' } },
+    { artist: { ...artist, mbid: otherMbid } },
+    { artist: { ...artist, url: 'https://www.last.fm/music/Other+Fixture' } },
+    { name: secondTitle },
+    { mbid: otherMbid },
+  ])(
+    'leaves single-track corroboration unresolved when the track or release disagrees',
+    async (override) => {
+      const context = lastFmContext(
+        Response.json({ track: { ...trackInfo, ...override } }),
+      )
+      await expect(
+        corroborateLastFmArtist(
+          artistName,
+          [candidate],
+          async () => [{ title: firstTitle, albumName: albumTitle, trackMbid }],
+          context,
+        ),
+      ).resolves.toBeNull()
+      expect(context.request).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each([
+    { recordings: [{ title: firstTitle, albumName: null }] },
+    {
+      recordings: [
+        { title: firstTitle, albumName: albumTitle, trackMbid: 'invalid-mbid' },
+      ],
+    },
+    {
+      recordings: [
+        { title: firstTitle, albumName: albumTitle },
+        { title: firstTitle, albumName: 'Other Fixture Release' },
+      ],
+    },
+    {
+      recordings: [
+        { title: firstTitle, albumName: albumTitle, trackMbid },
+        { title: firstTitle, albumName: albumTitle, trackMbid: otherMbid },
+      ],
+    },
+  ])(
+    'skips track requests when stored release evidence is missing or ambiguous',
+    async ({ recordings }) => {
+      const context = lastFmContext(Response.json({ track: trackInfo }))
+      await expect(
+        corroborateLastFmArtist(
+          artistName,
+          [candidate],
+          async () => recordings,
+          context,
+        ),
+      ).resolves.toBeNull()
+      expect(context.request).not.toHaveBeenCalled()
+    },
+  )
+
   it('stops an incomplete name search with one exact candidate and no library recording evidence', async () => {
     const context = lastFmContext(
       Response.json({
@@ -73,7 +212,7 @@ describe('Last.fm artist recording evidence', () => {
       corroborateLastFmArtist(
         artistName,
         [candidate, { ...candidate, name: 'Other Fixture' }],
-        async () => [firstTitle, secondTitle],
+        async () => knownRecordings(firstTitle, secondTitle),
         context,
       ),
     ).resolves.toMatchObject({
@@ -104,7 +243,7 @@ describe('Last.fm artist recording evidence', () => {
       corroborateLastFmArtist(
         artistName,
         [{ ...candidate, id: artistUrl }],
-        async () => [firstTitle, secondTitle],
+        async () => knownRecordings(firstTitle, secondTitle),
         context,
       ),
     ).resolves.toMatchObject({ artistUrl, matchedTitleCount: 2 })
@@ -116,7 +255,9 @@ describe('Last.fm artist recording evidence', () => {
 
   it('rejects duplicate exact-name candidates before reading the library or provider', async () => {
     const context = catalog()
-    const loadTitles = vi.fn(async () => [firstTitle, secondTitle])
+    const loadTitles = vi.fn(async () =>
+      knownRecordings(firstTitle, secondTitle),
+    )
     await expect(
       corroborateLastFmArtist(
         artistName,
@@ -135,11 +276,12 @@ describe('Last.fm artist recording evidence', () => {
       corroborateLastFmArtist(
         artistName,
         [candidate],
-        async () => [
-          firstTitle,
-          firstTitle.toUpperCase(),
-          firstTitle + ' - Remastered',
-        ],
+        async () =>
+          knownRecordings(
+            firstTitle,
+            firstTitle.toUpperCase(),
+            firstTitle + ' - Remastered',
+          ),
         context,
       ),
     ).resolves.toBeNull()
@@ -169,7 +311,7 @@ describe('Last.fm artist recording evidence', () => {
         corroborateLastFmArtist(
           artistName,
           [candidate],
-          async () => [firstTitle, secondTitle],
+          async () => knownRecordings(firstTitle, secondTitle),
           context,
         ),
       ).resolves.toBeNull()
@@ -186,7 +328,7 @@ describe('Last.fm artist recording evidence', () => {
       corroborateLastFmArtist(
         artistName,
         [{ ...candidate, id: artistUrl }],
-        async () => [firstTitle, secondTitle],
+        async () => knownRecordings(firstTitle, secondTitle),
         context,
       ),
     ).resolves.toBeNull()
@@ -201,10 +343,64 @@ describe('Last.fm artist recording evidence', () => {
       corroborateLastFmArtist(
         artistName,
         [candidate],
-        async () => [firstTitle, secondTitle],
+        async () => knownRecordings(firstTitle, secondTitle),
         context,
       ),
     ).rejects.toMatchObject({ code })
     expect(context.request).toHaveBeenCalledTimes(1)
   })
+
+  it.each([
+    {
+      message: 'Artist not found',
+      recordings: knownRecordings(firstTitle, secondTitle),
+    },
+    {
+      message: 'The artist you supplied could not be found.',
+      recordings: knownRecordings(firstTitle, secondTitle),
+    },
+    {
+      message: 'Track not found',
+      recordings: [{ title: firstTitle, albumName: albumTitle }],
+    },
+    {
+      message: 'The track you supplied could not be found.',
+      recordings: [{ title: firstTitle, albumName: albumTitle }],
+    },
+  ])(
+    'treats an exact Last.fm entity miss as absent recording evidence',
+    async ({ message, recordings }) => {
+      const context = lastFmContext(Response.json({ error: 6, message }))
+      await expect(
+        corroborateLastFmArtist(
+          artistName,
+          [candidate],
+          async () => recordings,
+          context,
+        ),
+      ).resolves.toBeNull()
+      expect(context.request).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each([
+    { error: 6, message: 'Track not found in this request' },
+    { error: 6, message: 'Artist not found' },
+    { error: 7, message: 'Track not found' },
+  ])(
+    'preserves other track lookup service errors',
+    async ({ error, message }) => {
+      const context = lastFmContext(Response.json({ error, message }))
+      const recordings = [{ title: firstTitle, albumName: albumTitle }]
+      await expect(
+        corroborateLastFmArtist(
+          artistName,
+          [candidate],
+          async () => recordings,
+          context,
+        ),
+      ).rejects.toThrow(`Last.fm returned a service error (code ${error}).`)
+      expect(context.request).toHaveBeenCalledTimes(1)
+    },
+  )
 })

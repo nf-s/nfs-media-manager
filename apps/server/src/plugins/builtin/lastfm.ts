@@ -66,7 +66,8 @@ export async function requestLastFm(
     | 'album.getTopTags'
     | 'artist.search'
     | 'artist.getInfo'
-    | 'artist.getTopTracks',
+    | 'artist.getTopTracks'
+    | 'track.getInfo',
   params: Record<string, string>,
 ) {
   const url = new URL('https://ws.audioscrobbler.com/2.0/')
@@ -95,14 +96,22 @@ export async function requestLastFm(
     )
       throw new ProviderItemNotFoundError('Last.fm album not found.')
     if (
-      method === 'artist.getInfo' &&
+      (method === 'artist.getInfo' || method === 'artist.getTopTracks') &&
       error.error === 6 &&
       /^(?:artist not found|the artist you supplied could not be found)\.?$/i.test(
         error.message.trim(),
       )
     )
       throw new ProviderItemNotFoundError('Last.fm artist not found.')
-    if (method.startsWith('artist.'))
+    if (
+      method === 'track.getInfo' &&
+      error.error === 6 &&
+      /^(?:track not found|the track you supplied could not be found)\.?$/i.test(
+        error.message.trim(),
+      )
+    )
+      throw new ProviderItemNotFoundError('Last.fm track not found.')
+    if (method.startsWith('artist.') || method === 'track.getInfo')
       throw new Error(
         'Last.fm returned a service error (code ' + error.error + ').',
       )

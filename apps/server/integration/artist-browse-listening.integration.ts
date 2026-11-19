@@ -33,6 +33,8 @@ vi.mock('@/plugins/registry', () => ({
 }))
 let created = false
 const ownerId = 'listening-owner'
+const recordingMbid = '11111111-1111-4111-8111-111111111111'
+const competingRecordingMbid = '22222222-2222-4222-8222-222222222222'
 const twoYears = { kind: 'rolling', amount: 2, unit: 'years' } as const
 
 /**
@@ -108,6 +110,23 @@ beforeAll(async () => {
         artistKey: `fixture artist ${artist}`,
         trackKey: track,
         albumMediaItemId: albumId,
+        ...(track === 'fixture other a' && index > 0
+          ? {
+              albumName: 'Fixture alternate release',
+              albumKey: 'fixture alternate release',
+            }
+          : artist === 'a' && (track !== 'fixture track a' || index > 0)
+            ? { albumName: 'Fixture release', albumKey: 'fixture release' }
+            : {}),
+        ...(artist === 'c' ? { trackMbid: 'fixture-malformed-mbid' } : {}),
+        ...((track === 'fixture track a' && index === 0) || artist === 'b'
+          ? {
+              trackMbid:
+                artist === 'b' && index % 2
+                  ? competingRecordingMbid
+                  : recordingMbid,
+            }
+          : {}),
       })),
     )
   }
@@ -137,17 +156,76 @@ async function ids(input: z.input<typeof ArtistQuerySchema>) {
 }
 
 describe('artist listening rules', () => {
-  it('reads distinct recording titles from the artist’s own linked listens', async () => {
-    const { listArtistScrobbledTitles } =
+  it('reads distinct recordings from the artist’s own linked listens', async () => {
+    const { listArtistScrobbledRecordings } =
       await import('@/services/artist-listening')
     expect(
-      await listArtistScrobbledTitles(database, 'artist-a', 'Fixture artist A'),
-    ).toEqual(['fixture track a', 'fixture other a'])
+      await listArtistScrobbledRecordings(
+        database,
+        'artist-a',
+        'Fixture artist A',
+        { requireRelease: true },
+      ),
+    ).toEqual([
+      {
+        title: 'fixture track a',
+        albumName: 'Fixture release',
+        trackMbid: recordingMbid,
+      },
+      {
+        title: 'fixture other a',
+        albumName: 'Fixture release',
+        trackMbid: null,
+      },
+    ])
     expect(
-      await listArtistScrobbledTitles(database, 'artist-c', 'Fixture artist C'),
-    ).toEqual(['fixture track c'])
+      await listArtistScrobbledRecordings(
+        database,
+        'artist-a',
+        'Fixture artist A',
+      ),
+    ).toEqual([
+      {
+        title: 'fixture track a',
+        albumName: 'Fixture release',
+        trackMbid: recordingMbid,
+      },
+      { title: 'fixture other a', albumName: null, trackMbid: null },
+    ])
     expect(
-      await listArtistScrobbledTitles(database, 'artist-b', 'Fixture artist A'),
+      await listArtistScrobbledRecordings(
+        database,
+        'artist-c',
+        'Fixture artist C',
+      ),
+    ).toEqual([
+      {
+        title: 'fixture track c',
+        albumName: null,
+        trackMbid: 'fixture-malformed-mbid',
+      },
+    ])
+    expect(
+      await listArtistScrobbledRecordings(
+        database,
+        'artist-c',
+        'Fixture artist C',
+        { requireRelease: true },
+      ),
+    ).toEqual([])
+    expect(
+      await listArtistScrobbledRecordings(
+        database,
+        'artist-b',
+        'Fixture artist B',
+      ),
+    ).toEqual([])
+    expect(
+      await listArtistScrobbledRecordings(
+        database,
+        'artist-b',
+        'Fixture artist A',
+      ),
     ).toEqual([])
   })
 

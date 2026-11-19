@@ -35,7 +35,7 @@ import {
   listSpotifyArtistRecordings,
   listStoredArtistProviderCandidates,
 } from './artist-provider-evidence'
-import { listArtistScrobbledTitles } from './artist-listening'
+import { listArtistScrobbledRecordings } from './artist-listening'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import {
   createProviderRequest,
@@ -198,7 +198,8 @@ export async function runArtistEnrichment(
       throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
     const { plugin, secrets, builtin } = await artistProvider(provider)
     diagnostics = createJobDiagnostics(jobLogSecrets(secrets))
-    let id = providerArtistId ?? target.providerArtistId
+    const savedOrExplicitId = providerArtistId ?? target.providerArtistId
+    let id = savedOrExplicitId
     if (!id && builtin) {
       const candidates = await listStoredArtistProviderCandidates(
         artistId,
@@ -218,21 +219,35 @@ export async function runArtistEnrichment(
       const [candidate] = candidates
       if (candidate?.exact) id = candidate.id
     }
-    const totalPages = !builtin || id ? 1 : 2
+    const inferredLastfmMbid =
+      builtin === 'lastfm' &&
+      !savedOrExplicitId &&
+      Boolean(id && normalizeArtistProviderId('musicbrainz', id))
+    let totalPages = !builtin || id ? 1 : 2
     await context.progress({ pagesRead: 0, totalPages })
     const requestContext = {
       secrets,
       request: createProviderRequest(plugin, context.assertActive),
       recordDiagnostic: diagnostics.recordDiagnostic,
-      searched: () => context.progress({ pagesRead: 1, totalPages }),
-      ...(builtin === 'lastfm' && !id
+      searched: () => {
+        totalPages = 2
+        return context.progress({ pagesRead: 1, totalPages })
+      },
+      ...(builtin === 'lastfm' && !savedOrExplicitId
         ? {
+            inferredLastfmMbid,
             loadLastfmRecordings: () =>
-              listArtistScrobbledTitles(db, artistId, target.name),
+              listArtistScrobbledRecordings(db, artistId, target.name),
           }
         : {}),
       ...(builtin === 'spotify' && !id
-        ? { spotifyRecordings: await listSpotifyArtistRecordings(artistId) }
+        ? {
+            spotifyRecordings: await listSpotifyArtistRecordings(artistId),
+            loadSpotifyCatalogRecordings: () =>
+              listArtistScrobbledRecordings(db, artistId, target.name, {
+                requireRelease: true,
+              }),
+          }
         : {}),
     }
     const lookup = builtin
