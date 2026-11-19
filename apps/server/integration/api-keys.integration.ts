@@ -14,7 +14,14 @@ import {
   vi,
 } from 'vitest'
 import { z } from 'zod'
-import { ApiKeysSchema, CreatedApiKeySchema } from '@repo/schemas/api-key'
+import {
+  API_KEY_MAX_REQUESTS,
+  API_KEY_MAX_WINDOW_SECONDS,
+  ApiKeySchema,
+  ApiKeysSchema,
+  CreatedApiKeySchema,
+  DEFAULT_API_KEY_RATE_LIMIT,
+} from '@repo/schemas/api-key'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import { createApiKey } from '@/services/api-keys'
@@ -67,6 +74,7 @@ const network = vi.fn(() => {
   throw new Error('Outbound requests are blocked in API key tests')
 })
 const createdKeyResponse = z.object({ data: CreatedApiKeySchema })
+const updatedKeyResponse = z.object({ data: ApiKeySchema })
 let created = false
 let cookie = ''
 
@@ -90,6 +98,14 @@ async function createKey(input: object) {
   expect(response.status).toBe(201)
   expect(response.headers.get('cache-control')).toContain('no-store')
   return createdKeyResponse.parse(await response.json()).data
+}
+
+function patchKey(id: string, body: object, headers = ownerHeaders()) {
+  return request(`/api/v1/user/api-keys/${id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 beforeAll(async () => {
@@ -138,6 +154,8 @@ describe('production API key access', () => {
     const { apiKey, key } = await createKey({ name: ' Default expiry ' })
     expect(apiKey.name).toBe('Default expiry')
     expect(apiKey.enabled).toBe(true)
+    expect(apiKey.rateLimit).toEqual(DEFAULT_API_KEY_RATE_LIMIT)
+    expect(apiKey.requestsUsed).toBe(0)
     expect(
       Date.parse(apiKey.expiresAt ?? '') - Date.parse(apiKey.createdAt),
     ).toBe(30 * 24 * 60 * 60 * 1000)
@@ -166,6 +184,7 @@ describe('production API key access', () => {
     expect(grant.status).toBe(201)
     expect(grant.headers.get('cache-control')).toContain('no-store')
     const agent = createdKeyResponse.parse(await grant.json()).data
+    expect(agent.apiKey.rateLimit).toEqual(DEFAULT_API_KEY_RATE_LIMIT)
     expect(
       Date.parse(agent.apiKey.expiresAt ?? '') -
         Date.parse(agent.apiKey.createdAt),
@@ -290,6 +309,7 @@ describe('production API key access', () => {
       { method: 'GET', path: '/api/v1/user/api-keys' },
       { method: 'POST', path: '/api/v1/user/api-keys' },
       { method: 'POST', path: '/api/v1/user/agent-access' },
+      { method: 'PATCH', path: `/api/v1/user/api-keys/${apiKey.id}` },
       { method: 'DELETE', path: `/api/v1/user/api-keys/${apiKey.id}` },
       { method: 'GET', path: '/api/v1/providers/spotify/secrets' },
       { method: 'PATCH', path: '/api/v1/providers/spotify/secrets' },
@@ -331,6 +351,193 @@ describe('production API key access', () => {
       })
       expect(response.status).toBe(422)
     }
+  })
+
+  it('changes a single key allowance while preserving an active window across edits', async () => {
+    const initialLimit = { enabled: true, maxRequests: 2, windowSeconds: 120 }
+    const { key, apiKey } = await createKey({
+      name: 'Custom limit',
+      rateLimit: initialLimit,
+    })
+    expect(apiKey.rateLimit).toEqual(initialLimit)
+    expect(apiKey.requestsUsed).toBe(0)
+    const useKey = () =>
+      request('/api/v1/spotify/status', { headers: bearer(key) })
+    const condition = eq(schema.apikey.id, apiKey.id)
+    expect((await useKey()).status).toBe(200)
+
+    const lowerLimit = { enabled: true, maxRequests: 1, windowSeconds: 60 }
+    const lowered = await patchKey(apiKey.id, { rateLimit: lowerLimit })
+    expect(lowered.status).toBe(200)
+    expect(lowered.headers.get('cache-control')).toContain('no-store')
+    const raw: unknown = await lowered.json()
+    expect(JSON.stringify(raw).includes(key)).toBe(false)
+    expect(updatedKeyResponse.parse(raw).data).toMatchObject({
+      rateLimit: lowerLimit,
+      requestsUsed: 1,
+      enabled: true,
+      expiresAt: apiKey.expiresAt,
+    })
+    const blocked = await useKey()
+    expect(blocked.status).toBe(429)
+    const retryAfter = Number(blocked.headers.get('retry-after'))
+    expect(retryAfter).toBeGreaterThan(0)
+    expect(retryAfter).toBeLessThanOrEqual(60)
+
+    const unlimited = await patchKey(apiKey.id, {
+      rateLimit: { enabled: false },
+    })
+    expect(unlimited.status).toBe(200)
+    expect(updatedKeyResponse.parse(await unlimited.json()).data).toMatchObject(
+      {
+        rateLimit: { enabled: false },
+        requestsUsed: null,
+      },
+    )
+    expect((await useKey()).status).toBe(200)
+    expect((await useKey()).status).toBe(200)
+    const row = await databaseClient.query.apikey.findFirst({
+      where: condition,
+    })
+    expect(row?.requestCount).toBe(1)
+    expect(row?.lastRequest).toBeInstanceOf(Date)
+
+    expect((await patchKey(apiKey.id, { rateLimit: lowerLimit })).status).toBe(
+      200,
+    )
+    expect((await useKey()).status).toBe(429)
+    await databaseClient
+      .update(schema.apikey)
+      .set({ lastRefillAt: new Date(Date.now() - 90_000) })
+      .where(condition)
+    const extended = await patchKey(apiKey.id, { rateLimit: initialLimit })
+    expect(extended.status).toBe(200)
+    expect(
+      updatedKeyResponse.parse(await extended.json()).data.requestsUsed,
+    ).toBe(0)
+    expect((await useKey()).status).toBe(200)
+    const keys = await request('/api/v1/user/api-keys', { headers: { cookie } })
+    expect(keys.status).toBe(200)
+    const data = z.object({ data: ApiKeysSchema }).parse(await keys.json()).data
+    expect(data.find(({ id }) => id === apiKey.id)?.requestsUsed).toBe(1)
+  })
+
+  it('requires an owner browser mutation and rejects invalid rate limit settings', async () => {
+    const { key, apiKey } = await createKey({ name: 'Managed key' })
+    const unowned = await createApiKey(otherId, {
+      name: 'Other key',
+      expiresIn: null,
+    })
+    const body = { rateLimit: { enabled: false } }
+    const requestWithoutOwner = (headers: Record<string, string>) =>
+      request(`/api/v1/user/api-keys/${apiKey.id}`, {
+        method: 'PATCH',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    expect((await requestWithoutOwner({ origin })).status).toBe(401)
+    expect((await requestWithoutOwner({ cookie })).status).toBe(403)
+    expect(
+      (
+        await requestWithoutOwner({
+          cookie,
+          origin: 'https://other.example.test',
+        })
+      ).status,
+    ).toBe(403)
+    expect((await requestWithoutOwner(bearer(key))).status).toBe(403)
+    expect(
+      (await requestWithoutOwner({ ...bearer(key), ...ownerHeaders() })).status,
+    ).toBe(403)
+    expect((await patchKey(unowned.apiKey.id, body)).status).toBe(404)
+    expect((await patchKey('missing-key', body)).status).toBe(404)
+    for (const invalid of [
+      {},
+      { rateLimit: { enabled: true, maxRequests: 0, windowSeconds: 60 } },
+      {
+        rateLimit: {
+          enabled: true,
+          maxRequests: API_KEY_MAX_REQUESTS + 1,
+          windowSeconds: 60,
+        },
+      },
+      { rateLimit: { enabled: true, maxRequests: 1, windowSeconds: 0 } },
+      {
+        rateLimit: {
+          enabled: true,
+          maxRequests: 1,
+          windowSeconds: API_KEY_MAX_WINDOW_SECONDS + 1,
+        },
+      },
+      { rateLimit: { enabled: true, maxRequests: 1, windowSeconds: 1.5 } },
+      { rateLimit: { enabled: true, maxRequests: 1 } },
+      { rateLimit: { enabled: false, maxRequests: 1 } },
+      { rateLimit: { enabled: false }, expiresIn: null },
+    ]) {
+      expect((await patchKey(apiKey.id, invalid)).status).toBe(422)
+    }
+  })
+
+  it('preserves revoked and expired status and uses defaults for missing legacy limits', async () => {
+    const { key, apiKey } = await createKey({
+      name: 'No rate limit',
+      rateLimit: { enabled: false },
+    })
+    expect(apiKey.rateLimit).toEqual({ enabled: false })
+    expect(apiKey.requestsUsed).toBeNull()
+    const condition = eq(schema.apikey.id, apiKey.id)
+    await databaseClient
+      .update(schema.apikey)
+      .set({
+        rateLimitEnabled: null,
+        rateLimitMax: null,
+        rateLimitTimeWindow: null,
+      })
+      .where(condition)
+    expect(
+      (await request('/api/v1/spotify/status', { headers: bearer(key) }))
+        .status,
+    ).toBe(200)
+    const list = await request('/api/v1/user/api-keys', { headers: { cookie } })
+    const keys = z.object({ data: ApiKeysSchema }).parse(await list.json()).data
+    expect(keys.find(({ id }) => id === apiKey.id)).toMatchObject({
+      rateLimit: DEFAULT_API_KEY_RATE_LIMIT,
+      requestsUsed: 1,
+    })
+    const revoked = await request(`/api/v1/user/api-keys/${apiKey.id}`, {
+      method: 'DELETE',
+      headers: ownerHeaders(),
+    })
+    expect(revoked.status).toBe(200)
+    const updated = await patchKey(apiKey.id, { rateLimit: { enabled: false } })
+    expect(updated.status).toBe(200)
+    expect(updatedKeyResponse.parse(await updated.json()).data.enabled).toBe(
+      false,
+    )
+    expect(
+      (await request('/api/v1/spotify/status', { headers: bearer(key) }))
+        .status,
+    ).toBe(401)
+
+    const expired = await createKey({ name: 'Expired limit' })
+    await databaseClient
+      .update(schema.apikey)
+      .set({ expiresAt: new Date(0) })
+      .where(eq(schema.apikey.id, expired.apiKey.id))
+    const changed = await patchKey(expired.apiKey.id, {
+      rateLimit: { enabled: false },
+    })
+    expect(changed.status).toBe(200)
+    expect(updatedKeyResponse.parse(await changed.json()).data.expiresAt).toBe(
+      new Date(0).toISOString(),
+    )
+    expect(
+      (
+        await request('/api/v1/spotify/status', {
+          headers: bearer(expired.key),
+        })
+      ).status,
+    ).toBe(401)
   })
 
   it('rejects expired keys and rechecks the account attached to each credential', async () => {
