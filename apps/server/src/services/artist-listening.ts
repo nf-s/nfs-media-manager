@@ -5,13 +5,17 @@ import type { db } from '@/lib/db'
 
 type Executor = Pick<typeof db, 'execute'>
 
-/** Recorded titles credited to this artist, excluding other performers on shared releases. */
-export async function listArtistScrobbledTitles(
+/** One row per title. When a release is required, use the most-played named release. */
+export async function listArtistScrobbledRecordings(
   database: Executor,
   artistId: string,
   name: string,
+  { requireRelease = false }: { requireRelease?: boolean } = {},
 ) {
   const artistKey = albumNameKey(name)
+  const albumName = requireRelease
+    ? sql`release.album_name`
+    : sql`case when recording.album_count <= 1 then release.album_name end`
   const { rows } = await database.execute(sql`
     with credited as materialized (
       select c.media_item_id, m.media_type
@@ -19,26 +23,49 @@ export async function listArtistScrobbledTitles(
       where c.artist_id = ${artistId} and c.role = 'artist'
         and m.metadata->>'legacyHidden' is distinct from 'true'
     ), plays as (
-      select s.id, s.track_name, s.track_key from credited c
+      select s.id, s.track_name, s.track_key, s.album_name, s.album_key, s.track_mbid from credited c
       join lastfm_scrobble s on s.album_media_item_id = c.media_item_id
       where c.media_type = 'album' and s.artist_key = ${artistKey}
       union
-      select s.id, s.track_name, s.track_key from credited c
+      select s.id, s.track_name, s.track_key, s.album_name, s.album_key, s.track_mbid from credited c
       join lastfm_track_link l on l.track_media_item_id = c.media_item_id
       join lastfm_scrobble s using (username, artist_key, track_key)
       where c.media_type = 'track' and l.artist_key = ${artistKey}
       union
-      select s.id, s.track_name, s.track_key from credited c
+      select s.id, s.track_name, s.track_key, s.album_name, s.album_key, s.track_mbid from credited c
       join lastfm_track_source l on l.track_media_item_id = c.media_item_id
       join lastfm_scrobble s using (username, artist_key, track_key)
       where c.media_type = 'track' and l.artist_key = ${artistKey}
+    ), recordings as (
+      select track_key, count(*) as plays,
+        count(distinct nullif(btrim(album_key), '')) filter (where nullif(btrim(album_name), '') is not null) as album_count,
+        min(nullif(lower(btrim(track_mbid)), '')) as track_mbid
+      from plays
+      where track_key <> ''
+      group by track_key
+      having count(distinct nullif(lower(btrim(track_mbid)), '')) <= 1
+    ), releases as (
+      select track_key, min(track_name) as title, min(nullif(btrim(album_name), '')) as album_name,
+        row_number() over (partition by track_key order by
+          (min(nullif(btrim(album_name), '')) is null), count(*) desc, album_key nulls last) as rank
+      from plays
+      group by track_key, album_key
     )
-    select min(track_name) as title from plays group by track_key
-    order by count(*) desc, track_key limit 50`)
+    select release.title, ${albumName} as "albumName", recording.track_mbid as "trackMbid"
+    from recordings recording join releases release using (track_key)
+    where release.rank = 1 ${requireRelease ? sql`and release.album_name is not null` : sql``}
+    order by recording.plays desc, recording.track_key limit 50
+  `)
+  // Keep nonempty malformed IDs so the provider can reject them as evidence.
   return z
-    .array(z.object({ title: z.string() }))
+    .array(
+      z.object({
+        title: z.string(),
+        albumName: z.string().nullable(),
+        trackMbid: z.string().nullable(),
+      }),
+    )
     .parse(rows)
-    .map(({ title }) => title)
 }
 
 /**

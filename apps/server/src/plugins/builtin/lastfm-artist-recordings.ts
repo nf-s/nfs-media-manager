@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isProviderItemNotFoundError } from '@repo/media-plugin-sdk'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { trackVersionKey } from '@/lib/track-matching'
 import { AlbumHttpUrlSchema, AlbumMbidSchema } from './album-provider-helpers'
@@ -6,6 +7,11 @@ import { requestLastFm } from './lastfm'
 
 const topTrackLimit = 50
 const minimumRecordings = 2
+const ArtistCreditSchema = z.object({
+  name: z.string().trim().min(1),
+  mbid: z.string().nullish(),
+  url: z.string().nullish(),
+})
 
 function exactNameKey(name: string) {
   return albumNameKey(name.normalize('NFKC'))
@@ -41,13 +47,7 @@ const TopTracksSchema = z.object({
         z.object({
           name: z.string().trim().min(1),
           url: z.string().nullish(),
-          artist: z
-            .object({
-              name: z.string().trim().min(1),
-              mbid: z.string().nullish(),
-              url: z.string().nullish(),
-            })
-            .nullish(),
+          artist: ArtistCreditSchema.nullish(),
         }),
       )
       .max(topTrackLimit),
@@ -55,13 +55,39 @@ const TopTracksSchema = z.object({
 })
 
 type Candidate = { id: string; name: string; url?: string }
+export type LastFmRecording = {
+  title: string
+  albumName: string | null
+  trackMbid?: string | null
+}
 
-function lastFmTrackArtistUrl(value: string, title: string) {
+const TrackInfoSchema = z.object({
+  track: z.object({
+    name: z.string().trim().min(1),
+    mbid: z.string().nullish(),
+    url: z.string().nullish(),
+    artist: ArtistCreditSchema,
+    album: z.object({
+      title: z.string().trim().min(1),
+      artist: z.string().trim().min(1),
+      url: z.string().nullish(),
+    }),
+  }),
+})
+
+function lastFmItemArtistUrl(
+  value: string,
+  title: string,
+  kind: 'track' | 'album',
+) {
   const parsed = AlbumHttpUrlSchema.safeParse(value)
   if (!parsed.success) return null
   const url = new URL(parsed.data)
-  const [, artistPath, trackSlug] =
-    /^(\/music\/[^/]+)\/_\/([^/]+)\/?$/.exec(url.pathname) ?? []
+  const pattern =
+    kind === 'track'
+      ? /^(\/music\/[^/]+)\/_\/([^/]+)\/?$/
+      : /^(\/music\/[^/]+)\/([^/]+)\/?$/
+  const [, artistPath, trackSlug] = pattern.exec(url.pathname) ?? []
   if (!artistPath || !trackSlug) return null
   try {
     const linkedTitle = decodeURIComponent(trackSlug.replaceAll('+', ' '))
@@ -73,11 +99,133 @@ function lastFmTrackArtistUrl(value: string, title: string) {
   }
 }
 
+function singleRecordedRelease(recordings: readonly LastFmRecording[]) {
+  const titles = new Map<string, string>()
+  const albums = new Set<string>()
+  const mbids = new Set<string>()
+  for (const { title, albumName, trackMbid } of recordings) {
+    const titleKey = exactNameKey(title)
+    if (!titleKey) continue
+    titles.set(titleKey, title)
+    if (albumName?.trim()) albums.add(exactNameKey(albumName))
+    if (!trackMbid) continue
+    const mbid = AlbumMbidSchema.safeParse(trackMbid).data
+    if (!mbid) return null
+    mbids.add(mbid.toLowerCase())
+  }
+  const [title] = titles.values()
+  const [albumKey] = albums
+  const [trackMbid] = mbids
+  return title &&
+    albumKey &&
+    titles.size === 1 &&
+    albums.size === 1 &&
+    mbids.size <= 1
+    ? { title, albumKey, trackMbid }
+    : null
+}
+
+async function requestRecordingEvidence(
+  context: Parameters<typeof requestLastFm>[0],
+  method: 'artist.getTopTracks' | 'track.getInfo',
+  params: Record<string, string>,
+) {
+  try {
+    return await requestLastFm(context, method, params)
+  } catch (error) {
+    if (!isProviderItemNotFoundError(error)) throw error
+    return null
+  }
+}
+
+async function corroborateRecordedRelease(
+  candidate: Candidate,
+  candidateMbid: string | undefined,
+  candidateLink: ReturnType<typeof lastFmArtistUrl>,
+  recordings: readonly LastFmRecording[],
+  context: Parameters<typeof requestLastFm>[0],
+) {
+  const recorded = singleRecordedRelease(recordings)
+  const nameKey = exactNameKey(candidate.name)
+  if (!recorded || nameKey === 'various artists') return null
+
+  const response = await requestRecordingEvidence(context, 'track.getInfo', {
+    ...(recorded.trackMbid
+      ? { mbid: recorded.trackMbid }
+      : { track: recorded.title, artist: candidate.name }),
+    autocorrect: '0',
+  })
+  if (response === null) return null
+  const result = TrackInfoSchema.safeParse(response)
+  if (!result.success) return null
+  const { track } = result.data
+  const { artist, album } = track
+  if (
+    exactNameKey(track.name) !== exactNameKey(recorded.title) ||
+    exactNameKey(artist.name) !== nameKey ||
+    exactNameKey(album.title) !== recorded.albumKey ||
+    exactNameKey(album.artist) !== nameKey
+  )
+    return null
+
+  const trackMbid = AlbumMbidSchema.safeParse(track.mbid).data?.toLowerCase()
+  if (
+    (track.mbid && !trackMbid) ||
+    (recorded.trackMbid && recorded.trackMbid !== trackMbid)
+  )
+    return null
+  const artistMbid = AlbumMbidSchema.safeParse(artist.mbid).data?.toLowerCase()
+  if (
+    (artist.mbid && !artistMbid) ||
+    (candidateMbid && candidateMbid !== artistMbid)
+  )
+    return null
+
+  const artistLink = artist.url ? lastFmArtistUrl(artist.url) : null
+  const trackLink = track.url
+    ? lastFmItemArtistUrl(track.url, track.name, 'track')
+    : null
+  const albumLink = album.url
+    ? lastFmItemArtistUrl(album.url, album.title, 'album')
+    : null
+  if (
+    (artist.url && !artistLink) ||
+    (track.url && !trackLink) ||
+    (album.url && !albumLink)
+  )
+    return null
+  const links = [artistLink, trackLink, albumLink].filter(
+    (link) => link !== null,
+  )
+  if (links.some((link) => exactNameKey(link.name) !== nameKey)) return null
+  const [artistUrl] = links.map((link) => link.url)
+  if (links.some((link) => link.url !== artistUrl)) return null
+  if (
+    candidateLink &&
+    (artistUrl !== candidateLink.url || !(artistLink || trackLink))
+  )
+    return null
+
+  return {
+    candidate,
+    response,
+    matchedTitleCount: 1,
+    matchedTitles: [track.name],
+    artistMbid,
+    artistUrl,
+    releaseEvidence: {
+      albumTitle: album.title,
+      albumArtist: album.artist,
+      trackMbid: trackMbid ?? null,
+    },
+  }
+}
+
 /** Check one exact-name candidate against distinct recordings credited in the library. */
 export async function corroborateLastFmArtist(
   name: string,
   candidates: readonly Candidate[],
-  loadRecordingTitles: () => Promise<readonly string[]>,
+  loadRecordings: () => Promise<readonly LastFmRecording[]>,
   context: Parameters<typeof requestLastFm>[0],
 ) {
   const nameKey = exactNameKey(name)
@@ -102,21 +250,36 @@ export async function corroborateLastFmArtist(
   )
     return null
 
+  const recordings = await loadRecordings()
   const recordingKeys = new Map(
-    (await loadRecordingTitles()).flatMap((title) => {
+    recordings.flatMap(({ title }) => {
       const exactTitle = exactNameKey(title)
       const recordingKey = trackVersionKey(title)
       return exactTitle && recordingKey ? [[exactTitle, recordingKey]] : []
     }),
   )
-  if (new Set(recordingKeys.values()).size < minimumRecordings) return null
+  const distinctRecordings = new Set(recordingKeys.values()).size
+  if (distinctRecordings === 1)
+    return corroborateRecordedRelease(
+      candidate,
+      candidateMbid,
+      candidateLink,
+      recordings,
+      context,
+    )
+  if (distinctRecordings < minimumRecordings) return null
 
-  const response = await requestLastFm(context, 'artist.getTopTracks', {
-    ...(candidateMbid ? { mbid: candidateMbid } : { artist: candidate.name }),
-    autocorrect: '0',
-    page: '1',
-    limit: String(topTrackLimit),
-  })
+  const response = await requestRecordingEvidence(
+    context,
+    'artist.getTopTracks',
+    {
+      ...(candidateMbid ? { mbid: candidateMbid } : { artist: candidate.name }),
+      autocorrect: '0',
+      page: '1',
+      limit: String(topTrackLimit),
+    },
+  )
+  if (response === null) return null
   const parsed = TopTracksSchema.safeParse(response)
   if (!parsed.success) return null
   const { toptracks } = parsed.data
@@ -138,7 +301,7 @@ export async function corroborateLastFmArtist(
       ? lastFmArtistUrl(track.artist.url)
       : null
     const trackLink = track.url
-      ? lastFmTrackArtistUrl(track.url, track.name)
+      ? lastFmItemArtistUrl(track.url, track.name, 'track')
       : null
     if (track.artist?.mbid && !mbid) return null
     if (track.artist?.url && !artistLink) return null
@@ -169,5 +332,6 @@ export async function corroborateLastFmArtist(
     matchedTitles: [...supportedRecordings.values()],
     artistMbid,
     artistUrl,
+    releaseEvidence: undefined,
   }
 }

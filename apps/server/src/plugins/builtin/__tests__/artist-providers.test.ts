@@ -180,6 +180,71 @@ describe('artist provider lookups', () => {
     },
   )
 
+  it('uses two release credits to resolve an ambiguous Spotify artist search', async () => {
+    const recorded = [spotifyTrack, secondSpotifyTrack].map((track) => ({
+      ...track,
+      albumName: 'Fixture album',
+    }))
+    const pages = recorded.map(({ title, albumName, spotifyTrackId }) => ({
+      tracks: {
+        offset: 0,
+        next: null,
+        total: 1,
+        items: [
+          {
+            id: spotifyTrackId,
+            name: title,
+            artists: [spotifyArtist],
+            album: {
+              name: albumName,
+              album_type: 'album',
+              artists: [spotifyArtist],
+            },
+          },
+        ],
+      },
+    }))
+    const context = {
+      ...responses(
+        spotifyToken,
+        {
+          artists: {
+            total: 20,
+            items: [spotifyArtist, competingSpotifyArtist],
+          },
+        },
+        ...pages,
+        spotifyArtist,
+      ),
+      loadSpotifyCatalogRecordings: vi.fn(async () => recorded),
+    }
+    const result = await lookupArtistProvider(
+      'spotify',
+      artistName,
+      null,
+      context,
+    )
+    expect(result.profile.externalId).toBe(spotifyId)
+    expect(result.payload).toMatchObject({
+      catalogRecordingVerification: recorded.map(
+        ({ title, albumName, spotifyTrackId }) => ({
+          title,
+          release: albumName,
+          spotifyTrackId,
+          artistId: spotifyId,
+        }),
+      ),
+    })
+    expect(context.loadSpotifyCatalogRecordings).toHaveBeenCalledOnce()
+    expect(mockPaths(context)).toEqual([
+      '/api/token',
+      '/v1/search',
+      '/v1/search',
+      '/v1/search',
+      '/v1/artists/' + spotifyId,
+    ])
+  })
+
   it('keeps an explicit Spotify artist ID authoritative and checks the profile ID', async () => {
     const context = {
       ...responses(spotifyToken, spotifyArtist),
@@ -256,7 +321,9 @@ describe('artist provider lookups', () => {
             },
           },
         ),
-        loadLastfmRecordings: vi.fn(async () => titles),
+        loadLastfmRecordings: vi.fn(async () =>
+          titles.map((title) => ({ title, albumName: null })),
+        ),
       }
       const result = lookupArtistProvider('lastfm', artistName, null, context)
       if (changedId)
@@ -274,6 +341,45 @@ describe('artist provider lookups', () => {
         })
       expect(context.loadLastfmRecordings).toHaveBeenCalledOnce()
       expect(context.request).toHaveBeenCalledTimes(3)
+    },
+  )
+
+  it.each([true, false])(
+    'rechecks a stale Last.fm MBID only when inferred (inferred: %s)',
+    async (inferred) => {
+      const stale = '22222222-2222-4222-8222-222222222222'
+      const artist = { name: artistName, mbid, url: lastFmUrl }
+      const titles = ['Fixture Recording', 'Another Recording']
+      const context = {
+        ...responses(
+          { error: 6, message: 'The artist you supplied could not be found' },
+          {
+            results: {
+              'opensearch:totalResults': '1',
+              artistmatches: { artist: [artist] },
+            },
+          },
+          { toptracks: { track: titles.map((name) => ({ name, artist })) } },
+          { artist },
+        ),
+        inferredLastfmMbid: inferred,
+        loadLastfmRecordings: async () =>
+          titles.map((title) => ({ title, albumName: null })),
+      }
+      const result = lookupArtistProvider('lastfm', artistName, stale, context)
+      if (inferred) {
+        await expect(result).resolves.toMatchObject({
+          profile: { externalId: mbid },
+          payload: {
+            rejectedInferredId: stale,
+            recordingVerification: { matchedTitles: titles },
+          },
+        })
+        expect(context.request).toHaveBeenCalledTimes(4)
+      } else {
+        await expect(result).rejects.toBeInstanceOf(ProviderItemNotFoundError)
+        expect(context.request).toHaveBeenCalledOnce()
+      }
     },
   )
 
