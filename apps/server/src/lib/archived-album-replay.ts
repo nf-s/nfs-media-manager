@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { JsonValueSchema, PluginReferenceSchema } from '@repo/media-plugin-sdk'
 import {
@@ -128,8 +129,77 @@ const originalPlan = z
   })
   .strict()
 
+const reviewedGroupPlan = originalPlan.omit({ artistLookups: true }).extend({
+  version: z.literal(3),
+  detail: originalPlan.shape.detail.extend({
+    ordinal: z.number().int().positive(),
+  }),
+  review: z.object({ decisionSha256: digest, evidenceFile: pin }).strict(),
+})
+
+export const ArchivedGroupReviewEvidenceSchema = z
+  .object({
+    version: z.literal(1),
+    jobId: id,
+    jobItemId: id,
+    attempt: z.number().int().positive(),
+    provider: id,
+    albumId: id,
+    groupId: id,
+    decisionSha256: digest,
+    anchors: reviewedGroupPlan.shape.anchors,
+    reviewedResultSha256: digest,
+    detail: z
+      .object({
+        responseId: id,
+        ordinal: z.number().int().positive(),
+        requestKey: digest,
+        bodySha256: digest,
+      })
+      .strict(),
+  })
+  .strict()
+
+export function verifyArchivedGroupReview(
+  plan: z.infer<typeof reviewedGroupPlan>,
+  bytes: Buffer | undefined,
+) {
+  if (bytes && archiveSha256(bytes) === plan.review.evidenceFile.sha256) {
+    const evidence = ArchivedGroupReviewEvidenceSchema.parse(
+      JSON.parse(bytes.toString('utf8')),
+    )
+    const { jobId, jobItemId, attempt, provider, albumId, groupId, detail } =
+      plan
+    const original = plan.originals[detail.ordinal - 1]
+    if (
+      evidence.jobId === jobId &&
+      evidence.jobItemId === jobItemId &&
+      evidence.attempt === attempt &&
+      evidence.provider === provider &&
+      evidence.albumId === albumId &&
+      evidence.groupId === groupId &&
+      evidence.decisionSha256 === plan.review.decisionSha256 &&
+      evidence.reviewedResultSha256 === plan.reviewedResultSha256 &&
+      isDeepStrictEqual(evidence.anchors, plan.anchors) &&
+      evidence.detail.responseId === detail.responseId &&
+      evidence.detail.ordinal === detail.ordinal &&
+      evidence.detail.requestKey === detail.archiveRequestKey &&
+      original?.responseId === detail.responseId &&
+      evidence.detail.bodySha256 === original.sha256
+    )
+      return
+  }
+  throw new ArchivedAlbumReplayError(
+    'The reviewed group evidence does not match the plan.',
+  )
+}
+
 export const ArchivedAlbumReplayPlanSchema = z
-  .discriminatedUnion('version', [independentPlan, originalPlan])
+  .discriminatedUnion('version', [
+    independentPlan,
+    originalPlan,
+    reviewedGroupPlan,
+  ])
   .refine((plan) => {
     const { anchors, originals } = plan
     return (
@@ -150,8 +220,14 @@ export const ArchivedAlbumReplayPlanSchema = z
             ({ evidence }) =>
               evidence.completeTracks === plan.library.tracks.length,
           ) &&
-          new Set(plan.artistLookups.map(({ artistId }) => artistId)).size ===
-            plan.artistLookups.length)
+          (plan.version === 2
+            ? new Set(plan.artistLookups.map(({ artistId }) => artistId))
+                .size === plan.artistLookups.length
+            : plan.anchors.some(
+                ({ provider, evidence }) =>
+                  provider === 'spotify' &&
+                  evidence.completeTracks === plan.library.tracks.length,
+              )))
     )
   }, 'The reviewed originals and active source records must be unambiguous')
 
@@ -248,9 +324,11 @@ export const ArchivedAlbumReplayInputSchema = z.object({
     )
     .max(8)
     .default([]),
+  reviewedGroup: z.literal(true).optional(),
   boundDetail: z.object({
     ordinal: z.number().int().positive(),
     requestKey: digest,
+    bodySha256: digest.optional(),
   }),
 })
 

@@ -48,28 +48,60 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
   )
     throw new Error('This adapter cannot replay the reviewed album')
 
+  const isRejectedMatch = createAlbumMatchRejectionPredicate(
+    input.provider,
+    input.rejections,
+  )
+  const reviewedReference = {
+    referenceType: 'group',
+    externalId: input.groupId,
+    isPrimary: true,
+    metadata: { sourceProvider: input.provider },
+  }
+  if (
+    input.reviewedGroup &&
+    (input.artistLookups.length ||
+      input.captures.length !== 1 ||
+      input.captures[0]?.phase !== 'media' ||
+      input.captures[0].ordinal !== input.boundDetail.ordinal ||
+      input.existingReferences.some(
+        ({ metadata }) => metadata?.sourceProvider === input.provider,
+      ) ||
+      isRejectedMatch(reviewedReference))
+  )
+    throw new Error(
+      'Reviewed group replay inputs contradict the selected detail',
+    )
   let projectedResponses = 0
   const localBodies = new Map(
     input.localBodies.map(({ ordinal, archive }) => [ordinal, archive]),
   )
   if (localBodies.size !== input.localBodies.length)
     throw new Error('Archived response has duplicate local bodies')
-  const replay = createProviderResponseReplay(input.captures, {
+  // The replay cursor starts at one. The verified original ordinal remains
+  // bound to the archive receipt and is not rewritten in stored provenance.
+  const replayCaptures = input.reviewedGroup
+    ? input.captures.map((capture) => ({ ...capture, ordinal: 1 }))
+    : input.captures
+  const replay = createProviderResponseReplay(replayCaptures, {
     async projectNativeResponse(capture, request) {
       const body = capture.response.body
       if (capture.response.status !== 200 || body.state === 'unavailable')
         throw new Error('Archived native response is unavailable')
       const url = new URL(request)
       const requestKey = archiveSha256(url.href)
+      const ordinal = input.reviewedGroup
+        ? input.boundDetail.ordinal
+        : capture.ordinal
       if (
-        capture.ordinal === input.boundDetail.ordinal &&
+        ordinal === input.boundDetail.ordinal &&
         requestKey !== input.boundDetail.requestKey
       )
         throw new Error('Archive request differs from the reviewed detail')
       let text
       if (body.state === 'captured') text = body.text
       else {
-        const retained = localBodies.get(capture.ordinal)
+        const retained = localBodies.get(ordinal)
         if (
           !retained ||
           retained.id !== body.reference ||
@@ -80,8 +112,13 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
             'Archived local response differs from the original request',
           )
         text = retained.text
-        localBodies.delete(capture.ordinal)
+        localBodies.delete(ordinal)
       }
+      if (
+        input.reviewedGroup &&
+        archiveSha256(text) !== input.boundDetail.bodySha256
+      )
+        throw new Error('Archive body differs from the reviewed detail')
       const source: unknown = JSON.parse(text)
       const projected: unknown = await projector(source, url)
       projectedResponses += 1
@@ -118,12 +155,11 @@ export async function mapArchivedAlbum(input: ArchivedAlbumReplayInput) {
       mediaItemId: input.albumId,
       media: input.media,
       options: input.options,
-      existingReferences: input.existingReferences,
+      existingReferences: input.reviewedGroup
+        ? [...input.existingReferences, reviewedReference]
+        : input.existingReferences,
       artistProfiles: artistProfiles.length ? artistProfiles : undefined,
-      isRejectedMatch: createAlbumMatchRejectionPredicate(
-        input.provider,
-        input.rejections,
-      ),
+      isRejectedMatch,
       request: replay.requestFor('media'),
       secrets: {},
       log: async () => undefined,

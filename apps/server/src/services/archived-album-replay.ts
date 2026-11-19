@@ -20,6 +20,7 @@ import {
   type ArchivedAlbumReplayDetail,
   type ArchivedAlbumReplayLocalBody,
   type ArchivedAlbumReplayPlan,
+  verifyArchivedGroupReview,
 } from '@/lib/archived-album-replay'
 import { runIsolatedArchivedReplay } from '@/lib/archived-album-replay-process'
 import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
@@ -178,7 +179,7 @@ function bindArchivedResponses(
     destination.href,
     detail.notFoundOn404,
   )
-  if (plan.version === 2) {
+  if (plan.version !== 1) {
     const rowIndex = originals.findIndex(
       ({ id }) => id === plan.detail.responseId,
     )
@@ -196,6 +197,7 @@ function bindArchivedResponses(
         row.receivedAt &&
         row.receivedAt <= finishedAt &&
         rowIndex === detailRows.at(-1) &&
+        (plan.version !== 3 || row.ordinal === plan.detail.ordinal) &&
         detailRows.every(
           (index) => plan.originals[index]?.sha256 === pin.sha256,
         ),
@@ -286,7 +288,9 @@ export async function commitArchivedAlbumReplay(
   planSha256: string,
   archive: ArchivedAlbumReplayDetail | undefined,
   localOriginals: ReadonlyMap<string, ArchivedAlbumReplayLocalBody>,
+  reviewEvidence?: Buffer,
 ) {
+  if (plan.version === 3) verifyArchivedGroupReview(plan, reviewEvidence)
   return db.transaction(async (tx) => {
     // Use the ordinary queue/retry lock and acquire provider writer locks
     // before locking the album, just as normal persistence does.
@@ -411,6 +415,17 @@ export async function commitArchivedAlbumReplay(
         !current.some(({ provider }) => provider === plan.provider),
       'The target provider reference or snapshot changed after review.',
     )
+    if (plan.version === 3)
+      requireReview(
+        !(await tx.query.providerSnapshot.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(providerSnapshot.mediaItemId, plan.albumId),
+            eq(providerSnapshot.provider, plan.provider),
+          ),
+        })),
+        'The target provider already has a snapshot for this album.',
+      )
     const rejections = await readAlbumMatchRejections(tx, plan.albumId)
     const libraryTracks = albumEvidenceTrackNames(
       tracks.map(({ title }) => title),
@@ -512,12 +527,13 @@ export async function commitArchivedAlbumReplay(
       )
     const artistRows = originals.filter(({ phase }) => phase === 'artist')
     requireReview(
-      plan.version === 1
-        ? artistRows.length <= 1
-        : isDeepStrictEqual(
-            artistRows.map(({ artistId }) => artistId),
-            plan.artistLookups.map(({ artistId }) => artistId),
-          ),
+      plan.version === 3 ||
+        (plan.version === 1
+          ? artistRows.length <= 1
+          : isDeepStrictEqual(
+              artistRows.map(({ artistId }) => artistId),
+              plan.artistLookups.map(({ artistId }) => artistId),
+            )),
       'The archived artist lookups changed after review.',
     )
     const artistLookups = artistRows.map(({ artistId }, index) => {
@@ -544,7 +560,7 @@ export async function commitArchivedAlbumReplay(
       }),
       'The reviewed release group was rejected.',
     )
-    if (plan.version === 1) {
+    if (plan.version !== 2) {
       const spotify = releaseHints.find(({ source }) => source === 'spotify')
       requireReview(
         spotify?.title === plan.library.title &&
@@ -571,7 +587,7 @@ export async function commitArchivedAlbumReplay(
       provider: plan.provider,
       albumId: plan.albumId,
       groupId: plan.groupId,
-      artistLookups,
+      artistLookups: plan.version === 3 ? [] : artistLookups,
       media: {
         title: plan.library.title,
         artists: plan.library.artists,
@@ -581,9 +597,24 @@ export async function commitArchivedAlbumReplay(
       existingReferences,
       rejections,
       options: typeof limit === 'number' ? { matchEvidenceLimit: limit } : {},
-      captures,
-      localBodies,
-      boundDetail,
+      ...(plan.version === 3
+        ? {
+            reviewedGroup: true,
+            captures: captures.filter(
+              ({ ordinal }) => ordinal === boundDetail.ordinal,
+            ),
+            localBodies: localBodies.filter(
+              ({ ordinal }) => ordinal === boundDetail.ordinal,
+            ),
+          }
+        : { captures, localBodies }),
+      boundDetail:
+        plan.version === 3
+          ? {
+              ...boundDetail,
+              bodySha256: plan.originals[boundDetail.ordinal - 1]?.sha256,
+            }
+          : boundDetail,
     })
     const output = PluginResultSchema.parse(
       await runIsolatedArchivedReplay(input),
@@ -596,7 +627,7 @@ export async function commitArchivedAlbumReplay(
         reference.isPrimary,
       'The archived adapter did not reproduce the reviewed release group.',
     )
-    if (plan.version === 2)
+    if (plan.version !== 1)
       requireReview(
         checksumJson(output) === plan.reviewedResultSha256,
         'The archived adapter output differs from the reviewed release metadata.',
@@ -617,8 +648,19 @@ export async function commitArchivedAlbumReplay(
             ? { localOriginals: localProvenance }
             : {}),
           ...provenance,
-          ...(plan.version === 2
+          ...(plan.version !== 1
             ? { reviewedResultSha256: plan.reviewedResultSha256 }
+            : {}),
+          ...(plan.version === 3
+            ? {
+                selectionStrategy: 'reviewed-group',
+                decisionSha256: plan.review.decisionSha256,
+                evidenceSha256: plan.review.evidenceFile.sha256,
+                unusedOriginalResponseIds: originals.flatMap(
+                  ({ id, ordinal }) =>
+                    ordinal === boundDetail.ordinal ? [] : [id],
+                ),
+              }
             : {}),
           anchors: plan.anchors,
           adapterSha256: plan.adapter.sha256,

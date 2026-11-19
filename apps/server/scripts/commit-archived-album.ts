@@ -10,6 +10,7 @@ import {
   ArchivedAlbumReplayLocalBodySchema,
   ArchivedAlbumReplayPlanSchema,
   type ArchivedAlbumReplayLocalBody,
+  verifyArchivedGroupReview,
 } from '@/lib/archived-album-replay'
 
 async function readPrivateFile(path: string, maxBytes: number) {
@@ -59,6 +60,7 @@ async function main(args: string[]) {
       plan: { type: 'string' },
       sha256: { type: 'string' },
       output: { type: 'string' },
+      'evidence-sha256': { type: 'string' },
     },
   })
   if (!values.plan || !values.sha256 || !values.output)
@@ -74,6 +76,20 @@ async function main(args: string[]) {
   const plan = ArchivedAlbumReplayPlanSchema.parse(
     JSON.parse(bytes.toString('utf8')),
   )
+  const reviewEvidence = values['evidence-sha256']
+  let reviewBytes
+  if (plan.version === 3) {
+    const evidence = plan.review.evidenceFile
+    if (reviewEvidence !== evidence.sha256 || !isAbsolute(evidence.path))
+      throw new ArchivedAlbumReplayError(
+        'Specify --evidence-sha256 with the separately approved group evidence digest.',
+      )
+    reviewBytes = await readPrivateFile(evidence.path, 128 * 1024)
+    verifyArchivedGroupReview(plan, reviewBytes)
+  } else if (reviewEvidence !== undefined)
+    throw new ArchivedAlbumReplayError(
+      'Group evidence requires a version 3 plan.',
+    )
   const archiveFile =
     plan.version === 1 ? plan.supplement.archiveFile : undefined
   if (
@@ -110,6 +126,7 @@ async function main(args: string[]) {
       sha256,
       detail,
       localOriginals,
+      reviewBytes,
     )
     await output.writeFile(
       JSON.stringify({ version: 1, sha256, ...result }) + '\n',

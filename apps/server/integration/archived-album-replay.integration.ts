@@ -193,13 +193,14 @@ afterEach(async () => {
 })
 
 it.skipIf(!adminUrl || process.platform !== 'darwin').each([
-  { originalOnly: false, local: false },
-  { originalOnly: true, local: false },
-  { originalOnly: false, local: true },
-  { originalOnly: true, local: true },
+  { originalOnly: false, local: false, reviewed: false },
+  { originalOnly: true, local: false, reviewed: false },
+  { originalOnly: false, local: true, reviewed: false },
+  { originalOnly: true, local: true, reviewed: false },
+  { originalOnly: true, local: true, reviewed: true },
 ])(
-  'commits the reviewed native replay once (original-only: $originalOnly, local: $local)',
-  async ({ originalOnly, local }) => {
+  'commits the reviewed native replay once (original-only: $originalOnly, local: $local, reviewed: $reviewed)',
+  async ({ originalOnly, local, reviewed }) => {
     const pin = async (name: string, contents: string) => {
       const path = join(directory, name)
       await writeFile(path, contents, { flag: 'wx', mode: 0o600 })
@@ -230,7 +231,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
         if (record.miss) throw new ProviderItemNotFoundError('No exact artist match')
         throw Error('The test archive should contain an artist miss')
       },
-      async scrapeMediaItem({ request, secrets, artistProfiles }) {
+      async scrapeMediaItem({ request, secrets, artistProfiles, existingReferences }) {
         if (artistProfiles?.length) throw Error('The artist miss should not add a profile')
         if (Object.keys(secrets).length || process.env.DATABASE_URL) throw Error('Unexpected credentials')
         if (process.platform === 'darwin') await new Promise((resolve, reject) => {
@@ -238,8 +239,11 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
           server.on('error', (error) => ['EPERM', 'EACCES'].includes(error.code) ? resolve() : reject(error))
           server.listen(0, '127.0.0.1', () => server.close(() => reject(Error('Child network is enabled'))))
         })
-        if (${originalOnly}) await (await request('${detailUrl}', { method: 'GET' }, { requireLocalTransport: true, notFoundOn404: true })).json()
-        const { id } = await (await request('${browseUrl}', { method: 'GET' }, { requireLocalTransport: true })).json()
+        if (${originalOnly} && !${reviewed}) await (await request('${detailUrl}', { method: 'GET' }, { requireLocalTransport: true, notFoundOn404: true })).json()
+        const { id } = ${reviewed}
+          ? { id: existingReferences.find(ref => ref.metadata?.sourceProvider === 'fixture-provider')?.externalId }
+          : await (await request('${browseUrl}', { method: 'GET' }, { requireLocalTransport: true })).json()
+        if (!id) throw Error('The group reference was not supplied')
         const detail = await (await request('https://example.test/detail?id=' + id, { method: 'GET' }, { requireLocalTransport: true, notFoundOn404: true })).json()
         return { payload: detail, normalized: {
           references: [{ referenceType: 'group', externalId: detail.id, isPrimary: true }],
@@ -399,22 +403,24 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
           tracklist: [{ title: 'Opening Track', type_: 'track' }],
         },
       }
-      await database
-        .update(schema.providerReference)
-        .set({
-          provider: 'discogs',
-          referenceType: 'master',
-          externalId: '123',
-        })
-        .where(eq(schema.providerReference.mediaItemId, albumId))
-      await database
-        .update(schema.providerSnapshot)
-        .set({ provider: 'discogs', payload })
-        .where(eq(schema.providerSnapshot.id, 'fixture-spotify-snapshot'))
-      await database
-        .update(schema.providerCurrentState)
-        .set({ provider: 'discogs', payload })
-        .where(eq(schema.providerCurrentState.id, 'fixture-spotify-state'))
+      if (!reviewed) {
+        await database
+          .update(schema.providerReference)
+          .set({
+            provider: 'discogs',
+            referenceType: 'master',
+            externalId: '123',
+          })
+          .where(eq(schema.providerReference.mediaItemId, albumId))
+        await database
+          .update(schema.providerSnapshot)
+          .set({ provider: 'discogs', payload })
+          .where(eq(schema.providerSnapshot.id, 'fixture-spotify-snapshot'))
+        await database
+          .update(schema.providerCurrentState)
+          .set({ provider: 'discogs', payload })
+          .where(eq(schema.providerCurrentState.id, 'fixture-spotify-state'))
+      }
       await database
         .update(schema.providerResponse)
         .set({ ordinal: 2 + artistOffset })
@@ -461,7 +467,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
           playlists: [{ name: 'Fixture Collection', kind: 'collection' }],
         },
       })
-      return {
+      const originalVersion = {
         ...planScope,
         version: 2,
         artistLookups: local
@@ -490,6 +496,53 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
         ],
         detail: { ...detailRequest, responseId: 'fixture-detail' },
         reviewedResultSha256: checksumJson(expected),
+      }
+      if (!reviewed) return originalVersion
+      const { artistLookups, ...common } = originalVersion
+      expect(artistLookups).toHaveLength(1)
+      const anchors = [
+        {
+          provider: 'spotify',
+          referenceType: 'album',
+          recordId: spotifyId,
+          snapshotId: 'fixture-spotify-snapshot',
+          snapshotProvider: 'spotify',
+          evidence: {
+            title: 'Fixture Album',
+            artists: ['Fixture Artist'],
+            completeTracks: 1,
+          },
+        },
+      ]
+      const decisionSha256 = archiveSha256('fixture reviewed decision')
+      const ordinal = 3 + artistOffset
+      const evidenceFile = await pin(
+        'fixture-evidence.json',
+        JSON.stringify({
+          version: 1,
+          jobId: common.jobId,
+          jobItemId: common.jobItemId,
+          attempt: common.attempt,
+          provider: common.provider,
+          albumId: common.albumId,
+          groupId: common.groupId,
+          decisionSha256,
+          anchors,
+          reviewedResultSha256: common.reviewedResultSha256,
+          detail: {
+            responseId: 'fixture-detail',
+            ordinal,
+            requestKey,
+            bodySha256: sha256,
+          },
+        }),
+      )
+      return {
+        ...common,
+        version: 3,
+        anchors,
+        detail: { ...common.detail, ordinal },
+        review: { decisionSha256, evidenceFile },
       }
     }
     const plan = ArchivedAlbumReplayPlanSchema.parse(
@@ -526,6 +579,9 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
       label: string,
       digest = planFile.sha256,
       path = planFile.path,
+      evidenceDigest = plan.version === 3
+        ? plan.review.evidenceFile.sha256
+        : undefined,
     ) => {
       const output = join(directory, label + '.json')
       await run(
@@ -538,6 +594,7 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
           path,
           '--sha256',
           digest,
+          ...(evidenceDigest ? ['--evidence-sha256', evidenceDigest] : []),
           '--output',
           output,
         ],
@@ -561,6 +618,15 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
     await expect(
       command('wrong-digest', archiveSha256('wrong')),
     ).rejects.toThrow('differs from the digest')
+    if (plan.version === 3)
+      await expect(
+        command(
+          'wrong-evidence',
+          planFile.sha256,
+          planFile.path,
+          archiveSha256('wrong evidence'),
+        ),
+      ).rejects.toThrow('separately approved group evidence digest')
     if (plan.version === 2) {
       const changedResult = await pin(
         'different-result.json',
@@ -644,6 +710,17 @@ it.skipIf(!adminUrl || process.platform !== 'darwin').each([
           : { supplement: { origin: 'independent-reviewed-detail' } },
       },
     })
+    if (plan.version === 3)
+      expect(replacement?.options.archivedReplay).toMatchObject({
+        selectionStrategy: 'reviewed-group',
+        evidenceSha256: plan.review.evidenceFile.sha256,
+        decisionSha256: plan.review.decisionSha256,
+        unusedOriginalResponseIds: [
+          'fixture-artist-response',
+          'fixture-catalogue-detail',
+          'fixture-response',
+        ],
+      })
     if (originalOnly)
       expect(replacement?.options.archivedReplay).not.toHaveProperty(
         'supplement',
