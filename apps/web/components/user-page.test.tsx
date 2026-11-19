@@ -21,6 +21,8 @@ const apiKeys = ApiKeysSchema.parse([
     expiresAt: null,
     lastRequest: null,
     enabled: true,
+    rateLimit: { enabled: true, maxRequests: 80, windowSeconds: 60 },
+    requestsUsed: 12,
   },
   {
     id: 'fixture-expired',
@@ -30,6 +32,8 @@ const apiKeys = ApiKeysSchema.parse([
     expiresAt: '2025-01-01T01:00:00.000Z',
     lastRequest: null,
     enabled: true,
+    rateLimit: { enabled: true, maxRequests: 80, windowSeconds: 60 },
+    requestsUsed: 12,
   },
   {
     id: 'fixture-revoked',
@@ -39,6 +43,8 @@ const apiKeys = ApiKeysSchema.parse([
     expiresAt: null,
     lastRequest: null,
     enabled: false,
+    rateLimit: { enabled: false },
+    requestsUsed: null,
   },
 ])
 
@@ -71,6 +77,15 @@ test('User renders key actions, table metadata and documentation without making 
     assert.match(html, /<th[^>]*>Actions<\/th>/)
     assert.match(html, /<label><input[^>]*\/>Actions<\/label>/)
     assert.doesNotMatch(html, /title="Sort by Actions"/)
+    assert.match(html, /aria-label="Edit rate limit for Fixture active"/)
+    assert.match(html, /12 \/ 80 in 60s/)
+    assert.match(html, />Unlimited</)
+    assert.match(
+      html,
+      /<button(?=[^>]*disabled="")(?=[^>]*aria-label="Edit rate limit for Fixture expired")/,
+    )
+    assert.match(html, />Maximum requests</)
+    assert.match(html, />Window \(seconds\)</)
     assert.match(html, />mm_active…<\/code>/)
     for (const status of ['Active', 'Expired', 'Revoked']) {
       assert.match(
