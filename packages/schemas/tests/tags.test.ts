@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CreateTagSchema,
   MergeTagsSchema,
+  SetTagParentsSchema,
   TagListQuerySchema,
   TagSchema,
   SetTagVisibilitySchema,
@@ -15,6 +17,7 @@ describe('tag contracts', () => {
       page: 1,
       size: 25,
       visibility: 'visible',
+      placement: 'any',
       sortBy: 'name',
       direction: 'asc',
     })
@@ -23,6 +26,7 @@ describe('tag contracts', () => {
       { page: 0 },
       { sortBy: 'unknown' },
       { direction: 'sideways' },
+      { placement: 'nowhere' },
       { size: 101 },
       { size: 1.5 },
       { q: 'x'.repeat(201) },
@@ -127,5 +131,32 @@ describe('tag contracts', () => {
       TagProvenanceQuerySchema.safeParse({ name: 'Shared', mediaType: 'album' })
         .success,
     ).toBe(true)
+  })
+
+  it('validates parent changes and new tags', () => {
+    const base = { mediaType: 'album', tagIds: ['a'] }
+    for (const input of [
+      { ...base, parentIds: ['p'], mode: 'add' },
+      { ...base, parentIds: ['p'], mode: 'remove' },
+      { ...base, parentIds: [], mode: 'replace' },
+    ])
+      expect(SetTagParentsSchema.safeParse(input).success).toBe(true)
+    for (const input of [
+      { ...base, parentIds: [], mode: 'add' },
+      { ...base, parentIds: [], mode: 'remove' },
+      { ...base, parentIds: ['a'], mode: 'add' },
+      { ...base, parentIds: ['p', 'p'], mode: 'replace' },
+      { ...base, tagIds: ['a', 'a'], parentIds: ['p'], mode: 'add' },
+      { ...base, tagIds: [], parentIds: ['p'], mode: 'add' },
+      { ...base, parentIds: ['p'], mode: 'move' },
+    ])
+      expect(SetTagParentsSchema.safeParse(input).success).toBe(false)
+    expect(
+      CreateTagSchema.parse({ mediaType: 'film', name: 'Setting' }),
+    ).toEqual({ mediaType: 'film', name: 'Setting', parentIds: [] })
+    for (const name of ['', '  \u00a0 ', 'x'.repeat(201)])
+      expect(
+        CreateTagSchema.safeParse({ mediaType: 'film', name }).success,
+      ).toBe(false)
   })
 })
