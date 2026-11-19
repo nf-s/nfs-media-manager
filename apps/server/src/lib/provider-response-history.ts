@@ -369,6 +369,20 @@ type ReplayOptions = {
 const nativeKey = (key: string) =>
   createHash('sha256').update('native:').update(key).digest('hex')
 
+/** Fingerprint a separately retained worker GET for the SDK replay gate. */
+export function nativeProviderReplayRequestKey(
+  url: string,
+  notFoundOn404: boolean,
+) {
+  const descriptor = requestDescriptor(
+    [url, { method: 'GET' }, { requireLocalTransport: true, notFoundOn404 }],
+    [],
+  )
+  if (!descriptor?.identity.key)
+    throw new Error('Archived worker request is not replayable')
+  return nativeKey(descriptor.identity.key)
+}
+
 export function createProviderResponseReplay(
   captures: readonly ProviderResponseCapture[],
   options: ReplayOptions = {},

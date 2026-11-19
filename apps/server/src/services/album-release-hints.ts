@@ -88,7 +88,7 @@ const EnvelopesSchema = DiscogsReleaseEnvelopeSchema.extend({
     .catch(undefined),
 })
 
-function matchingReference(
+export function matchesAlbumReleaseReference(
   source: ReleaseSource,
   { provider, referenceType }: { provider: string; referenceType: string },
 ) {
@@ -149,7 +149,7 @@ function releaseHint(
   }
 }
 
-function readSnapshot(
+export function readAlbumReleaseHint(
   source: ReleaseSource,
   externalId: string,
   provider: string,
@@ -288,12 +288,13 @@ export async function getAlbumReleaseHints(
     )
     const matching = references.filter(
       (reference) =>
-        matchingReference(source, reference) && !isRejectedMatch(reference),
+        matchesAlbumReleaseReference(source, reference) &&
+        !isRejectedMatch(reference),
     )
     const primary = matching.filter(({ isPrimary }) => isPrimary)
     const active = primary.length ? primary : matching
     const latestOverride = overrides.find((reference) =>
-      matchingReference(source, reference),
+      matchesAlbumReleaseReference(source, reference),
     )
     const override =
       latestOverride && !isRejectedMatch(latestOverride)
@@ -326,7 +327,7 @@ export async function getAlbumReleaseHints(
       limit: 8,
     })
     for (const snapshot of snapshots) {
-      const hint = readSnapshot(
+      const hint = readAlbumReleaseHint(
         source,
         id,
         snapshot.provider,

@@ -285,9 +285,10 @@ export async function applyProviderResultInTransaction(
   await database.execute(
     sql`select id from media_item where id = ${input.mediaItemId} for update`,
   )
-  // An album match can be rejected while the provider request is in flight.
+  // An album match can be rejected after its evidence was collected.
   const isRejectedMatch =
-    input.mediaType === 'album' && input.source === 'scrape-job'
+    input.mediaType === 'album' &&
+    (input.source === 'scrape-job' || input.source === 'archived-replay')
       ? createAlbumMatchRejectionPredicate(
           input.provider,
           await readAlbumMatchRejections(database, input.mediaItemId),

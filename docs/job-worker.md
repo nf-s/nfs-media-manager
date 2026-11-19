@@ -303,3 +303,32 @@ include the exact opaque `reference` in the entry. A projection is an input for 
 the result and does not change what the job recorded. For an installed adapter,
 export the responses and run its replay or mapping code in a process where
 outbound network access is disabled.
+
+### Commit a reviewed archived album replay
+
+On macOS, a trusted operator can recover one failed local-worker album job
+using its retained native responses and a separately reviewed, already fetched
+group detail. Prepare an owner-only plan scoped to the original job, album, item
+and attempt. Pin the original response IDs and body hashes, the independent
+archive file and its scoped receipt digest, the adapter and projector, the
+expected group, and the reviewed album and active source snapshots. Review the
+plan and the scope of the independent receipt before recording the plan's digest.
+
+```sh
+pnpm --filter @repo/server exec tsx scripts/commit-archived-album.ts \
+  --plan /private/reviewed-plan.json --sha256 REVIEWED_PLAN_SHA256 \
+  --output /private/archived-replay-receipt.json
+```
+
+The configured database supplies the failed attempt and the album's current
+state. The commit requires an unchanged active Spotify edition with the complete
+ordered track sequence. The sandboxed adapter must consume every pinned response
+in request order and reproduce the reviewed group. The command accepts native
+archive evidence and maps it inside a read-only process with networking disabled.
+
+A successful transaction writes the normal provider snapshot and metadata and
+links a completed archived replacement to the original failed job. The original
+status, error and response bodies remain available on that job. The replacement
+records the independently reviewed detail's provenance and leaves live scrape
+freshness unchanged. Repeat the same plan with a new receipt path to recover the
+existing result without applying it again.
