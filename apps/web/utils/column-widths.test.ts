@@ -37,14 +37,21 @@ test('every column keeps its width and the last keyed column takes the rest', ()
   const widthFor = (key: string) => ({ title: 300, status: 120 })[key] ?? 140
   assert.deepEqual(
     tableColumnLayout([36, 'title', 'status', 'result', 84], widthFor),
-    { widths: [36, 300, 120, undefined, 84], minWidth: 680 },
+    {
+      widths: [36, 300, 120, undefined, 84],
+      sizes: [36, 300, 120, 140, 84],
+      minWidth: 680,
+    },
   )
+  // `sizes` keeps the filling column's own width, for the table's least width.
   assert.deepEqual(tableColumnLayout(['title'], widthFor), {
     widths: [undefined],
+    sizes: [300],
     minWidth: 300,
   })
   assert.deepEqual(tableColumnLayout([36, 84], widthFor), {
     widths: [36, 84],
+    sizes: [36, 84],
     minWidth: 120,
   })
 })
@@ -53,12 +60,16 @@ test('a table can name the column that takes the rest', () => {
   const widthFor = (key: string) => ({ title: 300, status: 120 })[key] ?? 140
   assert.deepEqual(
     tableColumnLayout([36, 'title', 'status', 'count'], widthFor, 'title'),
-    { widths: [36, undefined, 120, 140], minWidth: 596 },
+    {
+      widths: [36, undefined, 120, 140],
+      sizes: [36, 300, 120, 140],
+      minWidth: 596,
+    },
   )
   // Hidden, it leaves the room to the last keyed column.
   assert.deepEqual(
     tableColumnLayout([36, 'status', 'count'], widthFor, 'title'),
-    { widths: [36, 120, undefined], minWidth: 296 },
+    { widths: [36, 120, undefined], sizes: [36, 120, 140], minWidth: 296 },
   )
 })
 

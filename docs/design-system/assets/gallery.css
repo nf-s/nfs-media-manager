@@ -267,6 +267,19 @@ body.g {
   --ds-card-min: 150px;
   gap: 16px 12px;
 }
+/* The phone toolbar, drawn at desktop width: the rules of the 700px media
+   query in components.css, scoped to the frame */
+.g-phone .ds-toolbar {
+  flex-wrap: wrap;
+}
+.g-phone .ds-toolbar > .ds-search {
+  flex-basis: 100%;
+}
+.g-phone .ds-toolbar > .ds-sort {
+  flex: 1;
+  width: auto;
+  min-width: calc(var(--ds-9) * 2.5);
+}
 .g-phone-tabs {
   display: grid;
   grid-auto-columns: 1fr;

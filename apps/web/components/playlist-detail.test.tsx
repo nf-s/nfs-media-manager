@@ -488,7 +488,7 @@ test('playlist entries expose sorting for every data column', async () => {
     assert.ok(html.includes(`aria-label="${view} view"`))
   for (const label of ['Title', 'Artists', 'Album', 'Duration', 'Added'])
     assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
-  assert.match(html, />Filters(?: · \d+)?<\/button>/)
+  assert.match(html, /<span>Filters(?: · \d+)?<\/span>/)
   assert.match(html, /class="ds-toolbar"/)
   assert.match(
     html,
@@ -554,7 +554,7 @@ test('playlist grid and list keep artwork, playback, navigation, and the visible
       /aria-label="Search playlist entries"[^>]*value="Fixture"/,
     )
     assert.match(cards, /aria-label="Sort by"/)
-    assert.match(cards, />Filters(?: · \d+)?<\/button>/)
+    assert.match(cards, /<span>Filters(?: · \d+)?<\/span>/)
     assert.match(cards, /aria-posinset="3" aria-setsize="684"/)
     assert.match(cards, /class="ds-(?:card|row)" aria-hidden="true"/)
     assert.doesNotMatch(cards, /<table|Visible columns/)
@@ -643,7 +643,7 @@ test('a playlist inspector link restores Details independently of the workspace 
   )
   const html = drawerOf(await render(params.toString()))
   assert.match(html, /aria-pressed="true" aria-label="List view"/)
-  assert.match(html, /<option value="title" selected="">Title<\/option>/)
+  assert.match(html, /aria-label="Sort by: Title"/)
   assert.deepEqual(linkTargets(html, 'Opening track'), [
     entry,
     { kind: 'track', id: 'track-1' },

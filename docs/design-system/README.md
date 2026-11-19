@@ -60,7 +60,8 @@ Import from `@repo/ui/components/ds/<file>` or `@repo/ui/components/ui/<file>`.
 | A provider's record for an item             | `SourceRow`, `SourceBlock`, `Timeline`                                                                                             | `ds/source`                          |
 | Messages, empty, loading and error          | `Notice`, `State`, `Skeleton`                                                                                                      | `ds/feedback`                        |
 | The head of an item                         | `DetailHeader`                                                                                                                     | `ds/detail-header`                   |
-| The head of a page and its controls         | `PageHead`, `Toolbar`, `ToolbarCount`, `ToolbarEnd`                                                                                | `ds/toolbar`                         |
+| The head of a page and its controls         | `PageHead`, `Toolbar`, `ToolbarCount`, `ToolbarEnd`, `FilterLine`                                                                  | `ds/toolbar`                         |
+| The field a list is sorted by               | `SortPicker`                                                                                                                       | `ds/sort-picker`                     |
 | Counts over time                            | `TrendChart`, `Sparkline`                                                                                                          | `ds/trend-chart`                     |
 | A range of counts, set by its bars          | `Histogram`                                                                                                                        | `ds/histogram`                       |
 | A filter rule written as a sentence         | `Condition`, `ConditionLine`                                                                                                       | `ds/condition`                       |
@@ -72,7 +73,8 @@ The components page states the rules for each one. The ones that matter most:
 - **Card.** Clean artwork, then title, creator, a line for the year and rating or the sorted value, and a line of tags.
 - **Pills** are never clipped or scrolled: show what fits and count the rest (`+N`).
 - **Status** uses one vocabulary: Queued, Running, Waiting, Done, Failed, Cancelled, Paused, Never.
-- **Tabs** are for sections of one item; the segmented control is only for views and ranges.
+- **Tabs** are for sections of one item; the segmented control is only for views, ranges and grid size.
+- **One toolbar order:** actions, search, sort picker, direction, view switch, Filters button, count. Grid size and columns are in the Filters drawer.
 - **One chart.** `TrendChart` picks days, weeks, months, quarters or years so each point has enough in it to read as a line.
 - **A filter on a count** is one filter with two views: `Histogram` sets a range by its bars, `Condition` cards state it exactly. It applies on change and is written out as a sentence.
 - **No green** in any role.

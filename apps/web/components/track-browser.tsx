@@ -20,7 +20,6 @@ import {
   type ReactNode,
 } from 'react'
 import Link from 'next/link'
-import { Settings2 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
@@ -28,6 +27,7 @@ import {
   TableHeader,
   TableRow,
   TableScroll,
+  columnWidth,
 } from '@repo/ui/components/ui/table'
 import { Card, CardTitle } from '@repo/ui/components/ds/card'
 import {
@@ -100,7 +100,6 @@ import {
   useTrackBrowseFields,
 } from './track-browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
-import { FilterPanelSection } from './browse-filter-panel'
 import {
   RecordingVersionsPager,
   RecordingVersionsStatus,
@@ -121,6 +120,7 @@ import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { DetailLink } from './detail-link'
 import {
   ActiveFiltersSection,
+  ClearableFilters,
   BrowseItemsCount,
   BrowseItemsHead,
   BrowseItemsStates,
@@ -241,7 +241,7 @@ function TrackBrowse({
     groupRecordings ? { title: 180 } : undefined,
   )
   const tableWidths = columns.map((field) => {
-    const width = `${widths.widthFor(field)}px`
+    const width = columnWidth(widths.widthFor(field))
     // Keep part of the horizontally scrolling columns visible beside the pinned title.
     return groupRecordings && field.key === 'title'
       ? `min(${width}, max(0px, ${viewport.width}px - 2 * var(--ds-8)))`
@@ -763,8 +763,41 @@ function TrackBrowse({
             onDirectionChange: (direction) => setParams({ direction }),
           }}
           filterCount={activeFilterCount}
+          viewOptions={
+            <label className="ds-checkrow">
+              <input
+                type="checkbox"
+                className="ds-check"
+                checked={groupRecordings}
+                onChange={(event) =>
+                  setParams({
+                    groupRecordings: String(event.currentTarget.checked),
+                  })
+                }
+              />
+              Group recordings
+            </label>
+          }
           filters={
             <>
+              {view === 'table' && (
+                <BrowseColumnsSection>
+                  <ColumnChoices
+                    fields={orderedFields}
+                    selected={columnKeys}
+                    required="title"
+                    onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({ columnOrder: columnOrderParam(keys, fields) })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, fields, 'title')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
+                  />
+                </BrowseColumnsSection>
+              )}
               {filterPills && (
                 <ActiveFiltersSection
                   count={activeFilterCount}
@@ -773,25 +806,6 @@ function TrackBrowse({
                   {filterPills}
                 </ActiveFiltersSection>
               )}
-              <FilterPanelSection
-                title="Views"
-                icon={<Settings2 className="ds-i" data-size="sm" aria-hidden />}
-                defaultOpen
-              >
-                <label className="ds-checkrow">
-                  <input
-                    type="checkbox"
-                    className="ds-check"
-                    checked={groupRecordings}
-                    onChange={(event) =>
-                      setParams({
-                        groupRecordings: String(event.currentTarget.checked),
-                      })
-                    }
-                  />
-                  Group recordings
-                </label>
-              </FilterPanelSection>
               <RangeEditor
                 presentation="panel"
                 fields={fields.filter((field) => field.filterable)}
@@ -823,24 +837,6 @@ function TrackBrowse({
                   setParams({ listeningSort: JSON.stringify(period) })
                 }
               />
-              {view === 'table' && (
-                <BrowseColumnsSection>
-                  <ColumnChoices
-                    fields={orderedFields}
-                    selected={columnKeys}
-                    required="title"
-                    onChange={(keys) => setParams({ columns: keys.join(',') })}
-                    onOrderChange={(keys) =>
-                      setParams({ columnOrder: columnOrderParam(keys, fields) })
-                    }
-                    onResetOrder={
-                      hasCustomColumnOrder(orderedFields, fields, 'title')
-                        ? () => setParams({ columnOrder: null })
-                        : undefined
-                    }
-                  />
-                </BrowseColumnsSection>
-              )}
             </>
           }
           view={view}
@@ -864,8 +860,16 @@ function TrackBrowse({
               </Button>
             )
           }
+          compact={embedded}
+          activeFilters={
+            filterPills && (
+              <ClearableFilters onClear={clearFilters}>
+                {filterPills}
+              </ClearableFilters>
+            )
+          }
         />
-        {filterPills && (
+        {filterPills && !embedded && (
           <PlacedFilters railSlot={railSlot} onClear={clearFilters}>
             {filterPills}
           </PlacedFilters>

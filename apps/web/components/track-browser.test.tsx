@@ -123,23 +123,20 @@ async function render(
   }
 }
 
-test('Tracks start in the Table view; Grid shows the density control', async () => {
+test('Tracks start in the Table view; grid size is not on the toolbar', async () => {
   const html = await render()
   assert.match(html, /data-view="table"/)
   assert.match(html, /aria-pressed="true" aria-label="Table view"/)
-  assert.doesNotMatch(html, /aria-label="Grid density"/)
   const grid = await render('view=grid')
+  // The view switch is followed by the Filters button, then the count.
   assert.match(
     grid,
-    /aria-label="Browse views">.*?<\/div><div class="ds-seg" role="group" aria-label="Grid density"><button type="button" aria-pressed="false">Compact<\/button><button type="button" aria-pressed="true">Standard<\/button><button type="button" aria-pressed="false">Roomy<\/button><\/div><span class="ds-toolbar-count"/,
+    /aria-label="Browse views">.*?<\/div><button class="ds-btn" type="button" data-filters="full"[^>]*>.*?<\/button><span class="ds-toolbar-count"/,
   )
+  assert.doesNotMatch(grid, /aria-label="Grid size"/)
   // The 1000px first measure: five standard columns, eight compact, four roomy.
   assert.match(grid, /grid-template-columns:repeat\(5, minmax\(0, 1fr\)\)/)
   const compact = await render('view=grid&density=compact')
-  assert.match(
-    compact,
-    /<button type="button" aria-pressed="true">Compact<\/button>/,
-  )
   assert.match(compact, /grid-template-columns:repeat\(8, minmax\(0, 1fr\)\)/)
   const roomy = await render('view=grid&density=roomy')
   assert.match(roomy, /grid-template-columns:repeat\(4, minmax\(0, 1fr\)\)/)
@@ -422,9 +419,11 @@ test('Tracks inside a detail are held to their creator, which is not a filter', 
   assert.doesNotMatch(html, /Remove artist filter|Clear all/)
 
   const searched = await renderEmbedded('tab=tracks&q=Example')
-  assert.match(searched, /class="ds-rail-chips bi-filter-row"/)
-  assert.match(searched, /Search: Example/)
-  assert.match(searched, />Clear all</)
+  // The search is a pill on the line under the toolbar, before the count and the link.
+  assert.match(
+    searched,
+    /<div class="ds-filterline">.*?Search: Example.*?>Clear all<\/button><span class="ds-toolbar-count" role="status">[^<]*<\/span><a [^>]*>Show in Tracks<\/a><\/div>/,
+  )
   assert.doesNotMatch(searched, /Remove artist filter/)
 
   // On the Tracks page the same creator is a filter that can be removed.

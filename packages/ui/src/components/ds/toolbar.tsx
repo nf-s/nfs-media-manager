@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode, SelectHTMLAttributes } from 'react'
 import { cn } from '../../lib/utils'
 
 /**
- * Toolbar above a list. Browse order: search, sort, direction, filters, view,
+ * Toolbar above a list. Browse order: search, sort, direction, view, filters,
  * count. Table-only order: search, count, then Columns at the far end
  * (`ToolbarEnd`).
  */
@@ -20,6 +20,15 @@ export function ToolbarCount({ children }: { children: ReactNode }) {
 
 export function ToolbarEnd({ children }: { children: ReactNode }) {
   return <span className="ds-toolbar-end ds-actions">{children}</span>
+}
+
+/**
+ * The line under the toolbar of a list inside a detail: the active filters
+ * and Clear all, then the count (`ToolbarCount`) and the link to the same
+ * result in Browse.
+ */
+export function FilterLine({ children }: { children: ReactNode }) {
+  return <div className="ds-filterline">{children}</div>
 }
 
 /** Title row of an admin page: title, optional note, actions at the end. */

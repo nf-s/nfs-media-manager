@@ -66,6 +66,20 @@ export const Table = React.forwardRef<
 Table.displayName = 'Table'
 
 /**
+ * A column's width as CSS: its own width in pixels, and never more than
+ * `--ds-col-max` where the table sets one. On a phone that keeps one column,
+ * above all the pinned first one, from taking the screen.
+ */
+export function columnWidth(width: number) {
+  return `min(${width}px, var(--ds-col-max, ${width}px))`
+}
+
+/** The width of a table whose columns are `widths` wide, as CSS. */
+export function columnsWidth(widths: readonly number[]) {
+  return widths.length ? `calc(${widths.map(columnWidth).join(' + ')})` : '0px'
+}
+
+/**
  * The widths of a `layout="fixed"` table's columns, in pixels and in column
  * order. A column without a width takes the room that is left.
  */
@@ -77,7 +91,12 @@ export function TableColumns({
   return (
     <colgroup>
       {widths.map((width, index) => (
-        <col key={index} style={{ width }} />
+        <col
+          key={index}
+          style={{
+            width: width === undefined ? undefined : columnWidth(width),
+          }}
+        />
       ))}
     </colgroup>
   )

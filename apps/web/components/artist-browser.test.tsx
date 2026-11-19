@@ -108,8 +108,9 @@ test('Artists Browse has the shared full search, voice, filters, sorts and view 
   assert.match(html, /Filters/)
   for (const view of ['Grid', 'List', 'Table'])
     assert.match(html, new RegExp(`aria-label="${view} view"`))
+  // The sort picker lists every field.
   for (const field of artistBrowseFields)
-    assert.ok(html.includes(`<option value="${field.key}"`))
+    assert.ok(html.includes(`-${field.key}" type="button" role="option"`))
   assert.match(html, /250 artists/)
   assert.match(html, /data-view="list"/)
 })
@@ -141,11 +142,8 @@ test('Artists list uses 48px rows: round thumbnail, title, country, tag pills an
 test('Artists grid uses clean round artwork cards with a meta line and tags', async () => {
   const grid = await render('view=grid')
   assert.match(grid, /data-view="grid"/)
-  assert.match(
-    grid,
-    /aria-label="Grid density"><button type="button" aria-pressed="false">Compact<\/button><button type="button" aria-pressed="true">Standard/,
-  )
-  assert.doesNotMatch(await render(), /aria-label="Grid density"/)
+  // Grid size is in the Filters drawer, not on the toolbar.
+  assert.doesNotMatch(grid, /aria-label="Grid size"/)
   assert.match(grid, /<article class="ds-card" data-item-index="0">/)
   assert.match(grid, /<span class="ds-art" data-ratio="round">/)
   assert.match(grid, /aria-label="Open details for Example Artist"/)

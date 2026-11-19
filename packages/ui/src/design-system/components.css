@@ -670,7 +670,7 @@ button.ds-pill:hover {
 }
 
 /* 8 Toolbar ---------------------------------------------------------------
-   Order: actions, search, sort, direction, filters, view, count.
+   Order: actions, search, sort, direction, view, filters, count.
    Table-only views use: search, count, then columns at the far end. */
 
 .ds-toolbar {
@@ -690,6 +690,41 @@ button.ds-pill:hover {
 .ds-toolbar-end {
   margin-left: auto;
 }
+/* Sort picker: the select's box at a fixed width, a long field name cut
+   short. It opens a searchable list of every field. */
+.ds-sort {
+  flex: none;
+  width: calc(var(--ds-9) * 3.5);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* The Filters button where the row is short: the icon, then the number of
+   filters that are on */
+.ds-toolbar [data-filters='short'] > span:not(.ds-count) {
+  display: none;
+}
+.ds-toolbar [data-filters='short']:not(:has(.ds-count)) {
+  width: var(--ds-h-sm);
+  padding: 0;
+}
+.ds-toolbar [data-filters='full'] > .ds-count {
+  display: none;
+}
+/* Under the toolbar of a list inside a detail: the active filters, then the
+   count, Clear all and the link to the same result in Browse */
+.ds-filterline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-3);
+  padding: 0 var(--ds-gutter) var(--ds-4);
+}
+.ds-filterline .ds-toolbar-count {
+  margin-left: auto;
+}
 /* Phone: the search takes its own line and the controls wrap below it */
 @media (max-width: 700px) {
   .ds-toolbar {
@@ -697,6 +732,23 @@ button.ds-pill:hover {
   }
   .ds-toolbar > .ds-search {
     flex-basis: 100%;
+  }
+  /* The sort picker takes what the other controls leave on the second line */
+  .ds-toolbar > .ds-sort {
+    flex: 1;
+    width: auto;
+    min-width: calc(var(--ds-9) * 2.5);
+  }
+  /* The Filters button is short on every phone toolbar */
+  .ds-toolbar [data-filters] > span:not(.ds-count) {
+    display: none;
+  }
+  .ds-toolbar [data-filters] > .ds-count {
+    display: inline-grid;
+  }
+  .ds-toolbar [data-filters]:not(:has(.ds-count)) {
+    width: var(--ds-h-sm);
+    padding: 0;
   }
 }
 .ds-pagehead {
@@ -812,6 +864,19 @@ button.ds-pill:hover {
 }
 .ds-table[data-scrolled] [data-sticky='edge'] {
   box-shadow: var(--ds-shadow-edge);
+}
+/* Phone: no column is wider than a little over half the screen, so the
+   pinned first column leaves the others in view. Column widths read this
+   through `columnWidth` in the table component. */
+@media (max-width: 700px) {
+  .ds-table {
+    --ds-col-max: 55vw;
+  }
+  /* A pinned selection column (36px) before the pinned one counts toward
+     that share */
+  .ds-table:has(thead th[data-sticky] + th[data-sticky]) {
+    --ds-col-max: calc(55vw - 36px);
+  }
 }
 .ds-th-sort {
   display: inline-flex;
@@ -1658,6 +1723,64 @@ button.ds-pill:hover {
 .ds-menu-item .ds-muted {
   margin-left: auto;
   font-size: var(--ds-text-sm);
+}
+/* The sort picker's list: a search field over every field a list sorts by */
+.ds-sortpop {
+  position: fixed;
+  inset: auto;
+  width: calc(var(--ds-9) * 7);
+  margin: 0;
+  border: 0;
+}
+.ds-sortpop:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+.ds-sortpop .ds-search {
+  flex: none;
+  margin-bottom: var(--ds-2);
+}
+.ds-sortpop-list {
+  min-height: 0;
+  max-height: calc(var(--ds-h-sm) * 9.5);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ds-sortpop .ds-menu-item .ds-i {
+  flex: none;
+  color: var(--ds-ink-3);
+}
+.ds-sortpop .ds-menu-item[data-active] {
+  background: var(--ds-hover);
+}
+/* Holds the place of the check mark on fields that are not chosen */
+.ds-sortpop-slot {
+  flex: none;
+  width: 14px;
+}
+.ds-sortpop-none {
+  padding: var(--ds-3) var(--ds-4);
+  color: var(--ds-ink-3);
+  font-size: var(--ds-text-sm);
+}
+/* Phone: the field list is a sheet from the bottom edge */
+@media (max-width: 700px) {
+  .ds-sortpop {
+    inset: auto 0 0;
+    width: auto;
+    max-height: 70dvh;
+    padding: var(--ds-5);
+    border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
+  }
+  .ds-sortpop::backdrop {
+    background: var(--ds-scrim);
+  }
+  .ds-sortpop-list {
+    max-height: none;
+  }
+  .ds-sortpop .ds-menu-item {
+    height: var(--ds-h-md);
+  }
 }
 .ds-notice {
   display: flex;

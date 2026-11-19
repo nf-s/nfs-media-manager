@@ -328,10 +328,10 @@ export function CollectionEntries({
         filters={
           !album || presentation === 'table' ? (
             <>
-              {!album && <BrowseColumnFilterSection {...watchedFilter} />}
               {presentation === 'table' && (
                 <BrowseColumnsSection>{table.options}</BrowseColumnsSection>
               )}
+              {!album && <BrowseColumnFilterSection {...watchedFilter} />}
             </>
           ) : undefined
         }
@@ -363,6 +363,7 @@ export function CollectionEntries({
             </Button>
           )
         }
+        compact
       />
       {query.isError && (
         <Notice

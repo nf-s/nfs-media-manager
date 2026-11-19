@@ -3,6 +3,7 @@ import { mock, test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MediaProvenanceSchema } from '@repo/schemas/provenance'
+import { columnWidth, columnsWidth } from '@repo/ui/components/ui/table'
 import { FieldProvenance } from './field-provenance'
 import { ConfigContext } from './providers'
 import { formatFieldValue } from '@/utils/field-provenance'
@@ -123,9 +124,10 @@ function render(data?: unknown, failed = false) {
 
 test('All fields lists each value with the providers that supply it and marks edits', () => {
   const html = render(provenance)
-  assert.match(
-    html,
-    /<table class="ds-table" data-layout="fixed" aria-label="All fields" style="min-width:560px"><colgroup><col style="width:130px"\/><col\/><col style="width:170px"\/><col style="width:100px"\/><\/colgroup>/,
+  assert.ok(
+    html.includes(
+      `<table class="ds-table" data-layout="fixed" aria-label="All fields" style="min-width:${columnsWidth([130, 160, 170, 100])}"><colgroup><col style="width:${columnWidth(130)}"/><col/><col style="width:${columnWidth(170)}"/><col style="width:${columnWidth(100)}"/></colgroup>`,
+    ),
   )
   for (const header of ['Field', 'Value', 'Source', 'Updated'])
     assert.match(

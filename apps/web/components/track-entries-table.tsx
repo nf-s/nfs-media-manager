@@ -486,12 +486,13 @@ export function TrackEntriesTable({
         filters={
           (typeFilter || columnOptions) && (
             <>
-              {typeFilter && <BrowseColumnFilterSection {...typeFilter} />}
               <BrowseColumnsSection>{columnOptions}</BrowseColumnsSection>
+              {typeFilter && <BrowseColumnFilterSection {...typeFilter} />}
             </>
           )
         }
         count={count}
+        compact
       />
       {error && <Notice tone="danger">{error}</Notice>}
       {view !== 'table' ? (

@@ -122,6 +122,27 @@ export function ColumnChoices({
   )
 }
 
+/**
+ * Active filter pills followed by Clear all, with no box of their own: for
+ * the line under the toolbar of a list inside a detail.
+ */
+export function ClearableFilters({
+  children,
+  onClear,
+}: {
+  children: ReactNode
+  onClear: () => void
+}) {
+  return (
+    <>
+      {children}
+      <Button variant="link" size="xs" onClick={onClear}>
+        Clear all
+      </Button>
+    </>
+  )
+}
+
 /** Active filter pills followed by Clear all. */
 export function ActiveFilters({
   children,
@@ -134,10 +155,7 @@ export function ActiveFilters({
 }) {
   return (
     <div className={`ds-rail-chips ${className ?? ''}`}>
-      {children}
-      <Button variant="link" size="xs" onClick={onClear}>
-        Clear all
-      </Button>
+      <ClearableFilters onClear={onClear}>{children}</ClearableFilters>
     </div>
   )
 }

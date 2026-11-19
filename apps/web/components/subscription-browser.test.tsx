@@ -343,7 +343,8 @@ test('the grid view shows clean video cards with a duration badge, meta line and
   const html = render(<SubscriptionBrowser />, browseData('', 120))
   assert.match(html, /data-view="grid"/)
   assert.doesNotMatch(html, /<table/)
-  assert.match(html, /aria-label="Grid density"/)
+  // Grid size is in the Filters drawer, not on the toolbar.
+  assert.doesNotMatch(html, /aria-label="Grid size"/)
   assert.match(html, /<span class="ds-art" data-ratio="video">/)
   assert.match(html, /<span class="ds-art-badge">12:34<\/span>/)
   assert.equal((html.match(/ds-art-badge/g) ?? []).length, 1)
@@ -896,9 +897,11 @@ test('Subscriptions inside a detail are held to their source, which is not a fil
   assert.doesNotMatch(html, /Remove channel filter|Channel: |Clear all/)
 
   const searched = await renderEmbedded({ search: 'q=bread' })
-  assert.match(searched, /class="ds-rail-chips bi-filter-row"/)
-  assert.match(searched, /Search: bread/)
-  assert.match(searched, />Clear all</)
+  // The search is a pill on the line under the toolbar, before the count and the link.
+  assert.match(
+    searched,
+    /<div class="ds-filterline">.*?Search: bread.*?>Clear all<\/button><span class="ds-toolbar-count" role="status">[^<]*<\/span><a [^>]*>Show in Subscriptions<\/a><\/div>/,
+  )
   assert.doesNotMatch(searched, /Remove channel filter/)
 
   // An empty source is empty, not a filter without matches.
@@ -939,7 +942,10 @@ test('Show in Subscriptions and Show in Mixes carry the source and the list sett
 test('a list inside a detail leaves the page drawer and its selected row to the page', async () => {
   const embedded = await renderEmbedded({ inspect: video.id })
   assert.match(embedded, />Bread basics</)
-  assert.doesNotMatch(embedded, /aria-selected="true"|inspector-backdrop/)
+  assert.doesNotMatch(
+    embedded,
+    /<tr[^>]*aria-selected="true"|inspector-backdrop/,
+  )
 
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')

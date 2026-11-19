@@ -224,12 +224,13 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           filters={
             (columnOptions || filterPanel) && (
               <>
-                {filterPanel?.controls}
                 <BrowseColumnsSection>{columnOptions}</BrowseColumnsSection>
+                {filterPanel?.controls}
               </>
             )
           }
           count={count}
+          compact={!workspace}
         />
       ) : (
         <SecondaryTableToolbar

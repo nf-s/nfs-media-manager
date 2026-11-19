@@ -506,6 +506,112 @@
           `<div class="ds-main-scroll"><div class="ds-grid">${A.map((a, i) => card(a, { meta: [`<span>${a.year}</span>`, rating('RYM', a.rym)], selected: i === 0 })).join('')}</div></div>`,
       })
 
+      /* Lists inside a detail: the toolbar spans the drawer's width */
+      const embedded = (html) =>
+        `<div style="margin-inline:calc(var(--ds-gutter) * -1)">${html}</div>`
+      const artistTabs = [
+        'Overview',
+        ['Albums', 3],
+        ['Tracks', 31],
+        'Listening',
+        'Coverage',
+        'Sources',
+      ]
+      const artistAlbums = D.inspector({
+        crumbs: ['Artists', 'Mira Kestrel'],
+        head: artistHead,
+        tabs: artistTabs,
+        tab: 1,
+        body: embedded(
+          D.toolbar({
+            placeholder: 'Search albums',
+            sort: ['Released'],
+            view: 0,
+            filterCount: 1,
+            short: true,
+          }) +
+            D.filterLine({
+              filters: ['Dream Pop'],
+              count: '2 of 3 albums',
+              link: 'Show in Albums',
+            }) +
+            `<div class="ds-grid" style="--ds-card-min:112px">${[
+              A[0],
+              {
+                ...A[10],
+                title: 'Weathervane',
+                year: '2023',
+                tags: ['Dream Pop', 'Bedroom Pop'],
+              },
+            ]
+              .map((a) =>
+                card(
+                  { ...a, by: undefined },
+                  { meta: [`<span>${a.year}</span>`, rating('RYM', a.rym)] },
+                ),
+              )
+              .join('')}</div>`,
+        ),
+      })
+      const artistTracks = D.inspector({
+        crumbs: ['Artists', 'Mira Kestrel'],
+        head: artistHead,
+        tabs: artistTabs,
+        tab: 2,
+        body: embedded(
+          D.toolbar({
+            placeholder: 'Search tracks',
+            sort: ['Scrobbles'],
+            view: 2,
+            short: true,
+          }) +
+            D.filterLine({ count: '31 tracks', link: 'Show in Tracks' }) +
+            `<div class="ds-table-wrap">${table(
+              [
+                { h: 'Title', sort: '', c: (r) => D.idCell(r) },
+                { h: 'Album', sort: '', c: (r) => D.link(r.album) },
+                {
+                  h: 'Scrobbles',
+                  sort: 'descending',
+                  end: true,
+                  w: 88,
+                  c: (r) => r.plays,
+                },
+              ],
+              [...AT].sort((a, b) => b.plays - a.plays).slice(0, 8),
+            )}</div>`,
+        ),
+      })
+      const playlistTracks = D.inspector({
+        crumbs: ['Playlists', PL[0].title],
+        head: playlistHead,
+        tabs: ['Overview', 'Listening', 'Coverage', 'Sources'],
+        body: embedded(
+          D.toolbar({
+            placeholder: 'Search tracks',
+            sort: ['Position'],
+            dir: 'up',
+            view: 2,
+            short: true,
+            count: '42 tracks',
+          }) +
+            `<div class="ds-table-wrap">${table(
+              [
+                {
+                  h: '#',
+                  w: 40,
+                  end: true,
+                  c: (r, i) => `<span class="ds-muted">${i + 1}</span>`,
+                },
+                { h: 'Title', c: (r) => D.idCell(r) },
+                { h: 'Artists', c: (r) => D.link(r.by) },
+                { h: 'Duration', end: true, w: 80, c: (r) => r.duration },
+              ],
+              D.data.TRACKS.slice(0, 8),
+            )}</div>`,
+        ),
+      })
+
       D.page({
         title: 'Detail screens',
         lede: 'The drawer and the standalone page for each resource. Every one uses the same header, the same tab order and the same section components.',
@@ -684,8 +790,21 @@
               )}</div>` +
               g.rules([
                 '<b>Track.</b> The overview today is five loose values. It now carries the listening chart, where the track appears, tags and four facts.',
-                '<b>Artist.</b> Filter albums and Filter tracks become Show in Albums and Show in Tracks on the sections they belong to.',
+                '<b>Artist.</b> Filter albums and Filter tracks become Show in Albums and Show in Tracks on the sections they belong to, and on the filter line of the Albums and Tracks tabs.',
                 '<b>Film.</b> Ratings lead. Twenty-eight tags, each with a source button beside it, become genres plus the first six keywords and a count; the source is now an icon inside the pill. Vote counts move to the rating tooltip and to Sources. Identifying a film happens in Sources, beside the identifiers.',
+              ]),
+          },
+          {
+            id: 'lists',
+            title: 'Lists inside a detail',
+            body:
+              `<p>An artist's Albums and Tracks tabs, a person's Films and a channel's or show's items are the Browse list for that item, with the Browse toolbar and the filter line under it. A playlist's tracks have the same toolbar with the count at its end.</p>` +
+              `<div class="g-inspectors">${inspectorFrame(artistAlbums, 640)}${inspectorFrame(artistTracks, 640)}${inspectorFrame(playlistTracks, 640)}</div>` +
+              g.rules([
+                '<b>The same toolbar as Browse:</b> search, sort picker, direction, view switch and the Filters button, in that order. The Filters button is short: the icon and the number of filters that are on.',
+                '<b>The filter line</b> holds the active filters and Clear all, then the count and Show in Albums, Show in Tracks or the like, which opens the same result on the Browse page. The count and the link are on this line, not in the toolbar, and the line is there with no filter on.',
+                '<b>Lists with only a count,</b> such as a playlist’s tracks, keep the count at the end of the toolbar and have no filter line.',
+                '<b>Grid size and columns</b> are in the Filters drawer, as on Browse pages.',
               ]),
           },
         ],

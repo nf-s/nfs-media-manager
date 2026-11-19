@@ -93,7 +93,7 @@ function FilterDialog({
       <div className="ds-inspector">
         <div className="ds-inspector-bar">
           <h2 id={titleId} className="browse-drawer-title">
-            Filters
+            Filters and view
           </h2>
           <Button
             type="button"
@@ -112,31 +112,46 @@ function FilterDialog({
   )
 }
 
+/**
+ * The one button for everything a list keeps off its toolbar: filters,
+ * columns and grid size. It is named Filters on a Browse page. With `short`,
+ * as inside a detail, and on every phone it is the icon with the number of
+ * filters that are on.
+ */
 export default function BrowseFilterPanel({
   count,
+  short = false,
   children,
 }: {
   count: number
+  short?: boolean
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const id = useId()
+  const name =
+    count > 0
+      ? `Filters, columns and grid size, ${count} ${count === 1 ? 'filter' : 'filters'} on`
+      : 'Filters, columns and grid size'
   return (
     <>
       <Button
         type="button"
+        data-filters={short ? 'short' : 'full'}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
-        aria-label={count > 0 ? `Filters, ${count} active` : undefined}
+        aria-label={name}
+        title={name}
         onClick={() => {
           setMounted(true)
           setOpen(true)
         }}
       >
         <SlidersHorizontal className="ds-i" data-size="sm" aria-hidden />
-        {count > 0 ? `Filters · ${count}` : 'Filters'}
+        <span>{count > 0 ? `Filters · ${count}` : 'Filters'}</span>
+        {count > 0 && <Count>{count}</Count>}
       </Button>
       {mounted && (
         <FilterDialog id={id} open={open} onClose={() => setOpen(false)}>

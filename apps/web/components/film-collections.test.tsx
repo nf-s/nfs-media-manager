@@ -234,16 +234,15 @@ test('Films navigation exposes Collections and its shared sortable table control
   assert.match(html, /title="Filter films by Synthetic collection"/)
 })
 
-test('a collection deep link opens its films in the Grid view with the density control', async () => {
+test('a collection deep link opens its films in the Grid view with grid size in the Filters drawer', async () => {
   const html = await render('collection=collection')
   const drawer = html.slice(
     html.indexOf('aria-label="Film collection details"'),
   )
   assert.match(drawer, /aria-pressed="true" aria-label="Grid view"/)
-  assert.match(
-    drawer,
-    /role="group" aria-label="Grid density"><button type="button" aria-pressed="false">Compact<\/button><button type="button" aria-pressed="true">Standard<\/button>/,
-  )
+  // The Filters button is there for grid size alone; the control is not on the toolbar.
+  assert.match(drawer, /data-filters="short"/)
+  assert.doesNotMatch(drawer, /aria-label="Grid size"/)
   assert.match(
     drawer,
     /<article class="ds-card"><span class="ds-art" data-ratio="poster">/,
@@ -347,7 +346,7 @@ test('collection card views retain filtering, nested links, and bounded renderin
       new RegExp(`aria-pressed="true" aria-label="${label} view"`),
     )
     assert.match(drawer, /aria-label="Sort by"/)
-    assert.match(drawer, />Filters(?: · \d+)?<\/button>/)
+    assert.match(drawer, /<span>Filters(?: · \d+)?<\/span>/)
     assert.match(drawer, /Position 2/)
     assert.match(drawer, /1h 30m · Unwatched/)
     assert.doesNotMatch(drawer, /Fixture film 100|Visible columns/)

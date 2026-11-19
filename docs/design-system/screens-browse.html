@@ -89,13 +89,6 @@
 
       const oldRow = `<div class="g-old g-old-row">${D.thumb(A[0])}<div><div style="display:flex;align-items:center;gap:8px">${icon('play', { size: 'sm' })}${icon('queue', { size: 'sm' })}<b>Harbour Lights</b><span class="g-old-pill" style="background:#edf0f4">Added 02/10/2026</span></div><div class="g-old-by">Mira Kestrel · 2019</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><u style="background:#d51007"></u>3.71<u style="background:#2a6fdb"></u>4.4<span class="g-old-pill" style="background:#edf0f4">dream pop</span><span class="g-old-pill" style="background:#edf0f4">shoegaze</span><span class="g-old-pill" style="background:#edf0f4">ethereal</span></div></div></div>`
 
-      /* Grid density sits after the view switch while Grid is shown. */
-      const withDensity = (toolbar, selected = 1) =>
-        toolbar.replace(
-          '<span class="ds-toolbar-count">',
-          `${D.seg(['Compact', 'Standard', 'Roomy'], selected, { label: 'Grid density' })}<span class="ds-toolbar-count">`,
-        )
-
       const gridScreen = D.shell({
         library: 'Albums',
         nav: D.libraryNav('Browse'),
@@ -105,19 +98,39 @@
           ['2012–2025', 'required'],
         ],
         main:
-          withDensity(
-            D.toolbar({
-              placeholder: 'Search albums',
-              sort: albumSort,
-              filterCount: 2,
-              view: 0,
-              count: '12 of 128 albums',
-            }),
-          ) +
+          D.toolbar({
+            placeholder: 'Search albums',
+            sort: albumSort,
+            filterCount: 2,
+            view: 0,
+            count: '12 of 128 albums',
+          }) +
           `<div class="ds-main-scroll"><div class="ds-grid">${A.map((a, i) => albumCard(a, { state: i === 1 ? 'hover' : i === 0 ? 'playing' : undefined, selected: i === 4 })).join('')}</div></div>`,
       })
 
-      const phoneBar = `<div class="ds-toolbar">${D.search('Search albums', { ai: true })}${btn('', { icon: 'filter', aria: 'Filters' })}${btn('', { icon: 'grid', aria: 'View' })}</div>`
+      const phoneBar = (view) =>
+        D.toolbar({
+          placeholder: 'Search albums',
+          sort: albumSort,
+          filterCount: 2,
+          view,
+          short: true,
+          count: '12 of 128 albums',
+        })
+      const filtersDrawer = D.filtersDrawer([
+        [
+          'View',
+          `<div class="g-stack" style="justify-items:start">${D.seg(['Compact', 'Standard', 'Roomy'], 1, { label: 'Grid size' })}<span class="ds-label">On cards</span>${D.checkRow('Rating', true)}${D.checkRow('Sorted value', true)}${D.checkRow('Tags', true)}${D.checkRow('Include archived imports', false)}</div>`,
+        ],
+        [
+          'Ranges',
+          `<div class="g-stack">${D.select(['Released'], { label: 'Field' })}<input class="ds-input" value="2012" aria-label="From" /><input class="ds-input" value="2025" aria-label="To" /></div>`,
+        ],
+        [
+          'Listening',
+          D.select(['Played in the last year'], { label: 'Listening' }),
+        ],
+      ])
       const phoneNow = `<div class="g-phone-now">${D.artBox(A[0])}<div class="ds-row-main"><span class="ds-row-title">Sodium Glow</span><span class="ds-row-by">Mira Kestrel · Kitchen</span></div><span class="ds-actions ds-toolbar-end">${btn('', { icon: 'pause', variant: 'ghost', aria: 'Pause' })}${btn('', { icon: 'next', variant: 'ghost', aria: 'Next' })}</span></div>`
       const phoneTabs = `<div class="g-phone-tabs">${[
         ['disc', 'Albums', true],
@@ -173,7 +186,7 @@
                     ),
                     g.item(
                       fixed(albumCard(A[0], { tags: false }), 164),
-                      'tags off (View options)',
+                      'tags off (Filters → View)',
                     ),
                   ],
                   { top: true },
@@ -192,7 +205,7 @@
                     ],
                     [
                       'Tag pills over the artwork',
-                      'One line under the year and rating, on by default: the pills that fit and a count. View options can turn it off. All tags are in List, Table and the overview.',
+                      'One line under the year and rating, on by default: the pills that fit and a count. Filters → View → On cards can turn it off. All tags are in List, Table and the overview.',
                     ],
                     [
                       'Provider icons and scores',
@@ -213,12 +226,14 @@
             body:
               `<p>Wider gaps between rows than between columns, so each title reads with its own artwork. The first card is playing, the second is under the pointer and the fifth is selected.</p>` +
               `<div class="g-scroll"><div class="g-screen" style="--g-h:720px">${gridScreen}</div></div>` +
+              g.sub('Filters and view') +
+              g.spec(fixed(filtersDrawer, 360)) +
               g.rules([
                 '<b>Grid spacing:</b> 16px between columns, 20px between rows, 12px panel gutter on both sides. Columns fill the width; the last column is never tight against the edge.',
                 '<b>The last row is never covered.</b> Playback messages live in the dock, and the scroll area ends above it.',
                 '<b>Active filters</b> stay in the rail as removable pills, coloured by mode: any, required, excluded.',
                 '<b>Count</b> reads <code>12 of 128 albums</code> when filtered.',
-                '<b>Density</b> (Compact, Standard, Roomy) follows the view switch while Grid is shown, on every Browse page and in every grid inside a detail. It is saved per library and kept in the URL. Phones start compact; wider screens start standard.',
+                '<b>Grid size</b> (Compact, Standard, Roomy) is the first control of the View section in the Filters drawer while Grid is shown, on every Browse page and in every grid inside a detail; it is not in the toolbar. It is saved per library and kept in the URL. Phones start compact; wider screens start standard.',
                 '<b>Default views:</b> Albums, Films and Subscriptions start in Grid, Tracks in Table and Artists in List. Inside details, album and film lists start in Grid and track lists in Table.',
               ]),
           },
@@ -346,7 +361,7 @@
                 '<b>The 96px Artwork and playback column is gone.</b> Artwork is the 24px thumbnail in the title cell and the play pair follows the title.',
                 '<b>Album and playlist names are plain links.</b> The extra play icons inside those cells are removed.',
                 '<b>No provider badge on every row.</b> A track without a Last.fm match shows in the Metadata page and in its Sources tab.',
-                '<b>Filters → Views → Group recordings</b> groups release versions. In Grid, List and Table, the versions button sits immediately after the title text.',
+                '<b>Filters → View → Group recordings</b> groups release versions. In Grid, List and Table, the versions button sits immediately after the title text.',
               ]),
           },
           {
@@ -470,7 +485,7 @@
                 [
                   g.item(
                     phone(
-                      `${phoneBar}<div class="g-phone-scroll" data-touch><div class="ds-grid" style="--ds-card-min:96px">${A.slice(
+                      `${phoneBar(0)}<div class="g-phone-scroll" data-touch><div class="ds-grid" style="--ds-card-min:96px">${A.slice(
                         0,
                         9,
                       )
@@ -481,7 +496,7 @@
                   ),
                   g.item(
                     phone(
-                      `${phoneBar}<div class="g-phone-scroll" data-touch><div class="ds-list" data-compact>${A.slice(
+                      `${phoneBar(1)}<div class="g-phone-scroll" data-touch><div class="ds-list" data-compact>${A.slice(
                         0,
                         11,
                       )
@@ -517,7 +532,8 @@
               ) +
               g.rules([
                 '<b>Controls are 40px tall</b> on touch; type sizes do not change.',
-                '<b>Tables keep the title column in place</b> and scroll the rest sideways, as on desktop.',
+                '<b>The toolbar takes two lines:</b> the search on the first; the sort picker, direction, view switch and the short Filters button on the second, the sort picker taking the room the others leave. The count follows them, on that line when it fits and on its own when it does not. Grid size is in the Filters drawer.',
+                '<b>Tables keep the title column in place</b> and scroll the rest sideways, as on desktop. No column is wider than 55% of the screen, so the pinned column leaves the others in view; a pinned selection column counts toward that share.',
               ]),
           },
         ],

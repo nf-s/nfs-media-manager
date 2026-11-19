@@ -78,7 +78,7 @@ const densities = gridDensities.map((value) => ({
   label: densityLabels[value],
 }))
 
-/** Card size in the Grid view. */
+/** Card size in the Grid view, the first control under View in the Filters drawer. */
 export function BrowseDensitySwitch({
   density,
   onChange,
@@ -88,7 +88,7 @@ export function BrowseDensitySwitch({
 }) {
   return (
     <Segmented
-      label="Grid density"
+      label="Grid size"
       value={density}
       options={densities}
       onChange={onChange}

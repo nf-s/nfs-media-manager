@@ -126,7 +126,7 @@ test('artist metadata renders artist selection, playlist and freshness filters w
     assert.match(html, /Search artists/)
     assert.match(html, /role="combobox"/)
     assert.match(html, /Record search/)
-    assert.match(html, /<\/svg>Filters<\/button>/)
+    assert.match(html, /<\/svg><span>Filters<\/span><\/button>/)
     assert.match(html, /Filter Playlists/)
     assert.match(html, /Filter MusicBrainz freshness/)
     assert.match(html, /Filter Fixture provider freshness/)

@@ -12,6 +12,8 @@ import {
   TableHeader,
   TableRow,
   TableScroll,
+  TableColumns,
+  columnsWidth,
 } from '@repo/ui/components/ui/table'
 import { Card, CardTitle } from '@repo/ui/components/ds/card'
 import {
@@ -115,6 +117,7 @@ import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { FilterPanelSection } from './browse-filter-panel'
 import {
   ActiveFiltersSection,
+  ClearableFilters,
   BrowseItemsCount,
   BrowseItemsHead,
   BrowseItemsStates,
@@ -741,6 +744,26 @@ function SubscriptionBrowse({
           filterCount={activeFilterCount}
           filters={
             <>
+              {view === 'table' && (
+                <BrowseColumnsSection>
+                  <ColumnChoices
+                    fields={orderedFields}
+                    selected={columnKeys}
+                    required="title"
+                    onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({
+                        columnOrder: columnOrderParam(keys, columnFields),
+                      })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, columnFields, 'title')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
+                  />
+                </BrowseColumnsSection>
+              )}
               {filterPills && (
                 <ActiveFiltersSection
                   count={activeFilterCount}
@@ -782,26 +805,6 @@ function SubscriptionBrowse({
                   })
                 }
               />
-              {view === 'table' && (
-                <BrowseColumnsSection>
-                  <ColumnChoices
-                    fields={orderedFields}
-                    selected={columnKeys}
-                    required="title"
-                    onChange={(keys) => setParams({ columns: keys.join(',') })}
-                    onOrderChange={(keys) =>
-                      setParams({
-                        columnOrder: columnOrderParam(keys, columnFields),
-                      })
-                    }
-                    onResetOrder={
-                      hasCustomColumnOrder(orderedFields, columnFields, 'title')
-                        ? () => setParams({ columnOrder: null })
-                        : undefined
-                    }
-                  />
-                </BrowseColumnsSection>
-              )}
             </>
           }
           view={view}
@@ -825,8 +828,16 @@ function SubscriptionBrowse({
               </Button>
             )
           }
+          compact={embedded}
+          activeFilters={
+            filterPills && (
+              <ClearableFilters onClear={clearFilters}>
+                {filterPills}
+              </ClearableFilters>
+            )
+          }
         />
-        {filterPills && (
+        {filterPills && !embedded && (
           <PlacedFilters railSlot={railSlot} onClear={clearFilters}>
             {filterPills}
           </PlacedFilters>
@@ -971,20 +982,14 @@ function SubscriptionBrowse({
               aria-label={page.name}
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
-                width: columns.reduce(
-                  (sum, field) => sum + widths.widthFor(field),
-                  0,
+                width: columnsWidth(
+                  columns.map((field) => widths.widthFor(field)),
                 ),
               }}
             >
-              <colgroup>
-                {columns.map((field) => (
-                  <col
-                    key={field.key}
-                    style={{ width: widths.widthFor(field) }}
-                  />
-                ))}
-              </colgroup>
+              <TableColumns
+                widths={columns.map((field) => widths.widthFor(field))}
+              />
               <TableHeader>
                 <TableRow>
                   {columns.map((field) => (

@@ -1,10 +1,11 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { ArrowDown, ArrowUp, Columns3, Filter } from 'lucide-react'
+import { ArrowDown, ArrowUp, Columns3, Filter, Settings2 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
+import { SortPicker } from '@repo/ui/components/ds/sort-picker'
 import {
-  Select,
+  FilterLine,
   Toolbar,
   ToolbarCount,
   ToolbarEnd,
@@ -47,9 +48,53 @@ export function BrowseColumnFilterSection<Value extends string>(
   )
 }
 
+type BrowseDensity = {
+  value: GridDensity
+  onChange: (density: GridDensity) => void
+}
+
 /**
- * The browse toolbar. Order: actions, search, sort, direction, filters,
- * view, density (Grid only), count, end.
+ * The View section, first in the Filters drawer: grid size while the Grid
+ * view is on, then the list's own options. Nothing when it has neither.
+ */
+export function BrowseViewSection({
+  view,
+  density,
+  children,
+}: {
+  view: BrowseView
+  density?: BrowseDensity
+  children?: ReactNode
+}) {
+  const gridSize = density && view === 'grid'
+  if (!gridSize && !children) return null
+  return (
+    <FilterPanelSection
+      title="View"
+      icon={<Settings2 className="ds-i" data-size="sm" aria-hidden />}
+      defaultOpen
+    >
+      <div className="browse-form browse-view-options">
+        {gridSize && (
+          <BrowseDensitySwitch
+            density={density.value}
+            onChange={density.onChange}
+          />
+        )}
+        {children}
+      </div>
+    </FilterPanelSection>
+  )
+}
+
+/**
+ * The browse toolbar. Order: actions, search, sort, direction, view, the
+ * Filters button, count, end. Grid size is the first control of the View
+ * section in the Filters drawer, followed by `viewOptions`.
+ *
+ * With `compact`, for a list inside a detail, the Filters button is the icon
+ * with its count. A compact list with `end` or `activeFilters` has a line
+ * under the toolbar that holds the active filters, the count and `end`.
  */
 export default function BrowseToolbar<Key extends string>({
   actions,
@@ -60,78 +105,85 @@ export default function BrowseToolbar<Key extends string>({
   view,
   onViewChange,
   density,
+  viewOptions,
   count,
   end,
+  compact = false,
+  activeFilters,
 }: {
   actions?: ReactNode
   search: ReactNode
   sort: BrowseSort<Key>
+  /** The sections of the Filters drawer after View. */
   filters?: ReactNode
   filterCount?: number
   view: BrowseView
   /** Absent on a list fixed to one view, which shows no view switch. */
   onViewChange?: (view: BrowseView) => void
-  /** Card size, shown while the Grid view is active. */
-  density?: {
-    value: GridDensity
-    onChange: (density: GridDensity) => void
-  }
+  /** Card size, offered in the Filters drawer while the Grid view is active. */
+  density?: BrowseDensity
+  /** The list's own controls of the View section, after grid size. */
+  viewOptions?: ReactNode
   count?: ReactNode
   /** Links that leave the list, such as Show in Tracks inside a detail. */
   end?: ReactNode
+  /** Inside a detail. */
+  compact?: boolean
+  /** With `compact`: the active filter pills and Clear all. */
+  activeFilters?: ReactNode
 }) {
   const nextDirection = sort.direction === 'asc' ? 'desc' : 'asc'
   const directionLabel =
     nextDirection === 'asc' ? 'Sort ascending' : 'Sort descending'
+  const hasView = Boolean((density && view === 'grid') || viewOptions)
+  const line = compact && Boolean(end || activeFilters)
 
   return (
-    <Toolbar>
-      {actions}
-      <div className="browse-find">{search}</div>
-      <Select
-        aria-label="Sort by"
-        className="browse-order"
-        value={sort.key}
-        onChange={(event) => {
-          const option = sort.options.find(
-            ({ key }) => key === event.target.value,
-          )
-          if (option) sort.onChange(option.key)
-        }}
-      >
-        {sort.options.map(({ key, label }) => (
-          <option key={key} value={key}>
-            {label}
-          </option>
-        ))}
-      </Select>
-      {sort.direction && (
-        <Button
-          type="button"
-          icon
-          aria-label={directionLabel}
-          title={directionLabel}
-          onClick={() => sort.onDirectionChange(nextDirection)}
-        >
-          {sort.direction === 'asc' ? (
-            <ArrowUp className="ds-i" data-size="sm" aria-hidden />
-          ) : (
-            <ArrowDown className="ds-i" data-size="sm" aria-hidden />
-          )}
-        </Button>
-      )}
-      {filters && (
-        <BrowseFilterPanel count={filterCount}>{filters}</BrowseFilterPanel>
-      )}
-      {onViewChange && <BrowseViewSwitch view={view} onChange={onViewChange} />}
-      {density && view === 'grid' && (
-        <BrowseDensitySwitch
-          density={density.value}
-          onChange={density.onChange}
+    <>
+      <Toolbar>
+        {actions}
+        <div className="browse-find">{search}</div>
+        <SortPicker
+          value={sort.key}
+          options={sort.options}
+          onChange={sort.onChange}
         />
+        {sort.direction && (
+          <Button
+            type="button"
+            icon
+            aria-label={directionLabel}
+            title={directionLabel}
+            onClick={() => sort.onDirectionChange(nextDirection)}
+          >
+            {sort.direction === 'asc' ? (
+              <ArrowUp className="ds-i" data-size="sm" aria-hidden />
+            ) : (
+              <ArrowDown className="ds-i" data-size="sm" aria-hidden />
+            )}
+          </Button>
+        )}
+        {onViewChange && (
+          <BrowseViewSwitch view={view} onChange={onViewChange} />
+        )}
+        {(hasView || Boolean(filters)) && (
+          <BrowseFilterPanel count={filterCount} short={compact}>
+            <BrowseViewSection view={view} density={density}>
+              {viewOptions}
+            </BrowseViewSection>
+            {filters}
+          </BrowseFilterPanel>
+        )}
+        {!line && count != null && <ToolbarCount>{count}</ToolbarCount>}
+        {!line && end && <ToolbarEnd>{end}</ToolbarEnd>}
+      </Toolbar>
+      {line && (
+        <FilterLine>
+          {activeFilters}
+          {count != null && <ToolbarCount>{count}</ToolbarCount>}
+          {end}
+        </FilterLine>
       )}
-      {count != null && <ToolbarCount>{count}</ToolbarCount>}
-      {end && <ToolbarEnd>{end}</ToolbarEnd>}
-    </Toolbar>
+    </>
   )
 }

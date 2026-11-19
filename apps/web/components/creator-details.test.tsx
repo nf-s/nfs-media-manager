@@ -374,8 +374,16 @@ test('the artist Albums tab is the Albums browser held to the artist', async () 
   assert.match(html, /aria-label="Search albums"|placeholder="Search albums"/)
   assert.match(html, /role="status">1 album<\/span>/)
   // The artist holds the list; it is not a filter to remove.
-  assert.match(html, />Filters<\/button>/)
+  assert.match(
+    html,
+    /data-filters="short"[^>]*>.*?<span>Filters<\/span><\/button>/,
+  )
   assert.doesNotMatch(html, /Remove artist filter|Clear all/)
+  // The count and the link to Browse share the line under the toolbar.
+  assert.match(
+    html,
+    /<div class="ds-filterline"><span class="ds-toolbar-count" role="status">1 album<\/span><a [^>]*>Show in Albums<\/a><\/div>/,
+  )
   // No page rail, drawer or page actions inside the detail.
   assert.doesNotMatch(html, /class="browse-page"|ds-rail-label|>Add album</)
   assert.ok(html.includes(embeddedScrollClass))
@@ -412,8 +420,15 @@ test('artist album settings cannot remove or change the artist', async () => {
   }
   assertNestedViewControls(html, 'Table')
   // Only the search counts as a filter, and clearing filters leaves the artist.
-  assert.match(html, />Filters · 1<\/button>/)
-  assert.match(html, /Search: Synthetic/)
+  assert.match(
+    html,
+    /<span>Filters · 1<\/span><span class="ds-count">1<\/span><\/button>/,
+  )
+  // The search is a pill on the line under the toolbar, before the count.
+  assert.match(
+    html,
+    /<div class="ds-filterline">.*?Search: Synthetic.*?>Clear all<\/button><span class="ds-toolbar-count"/,
+  )
   assert.doesNotMatch(html, /Remove artist filter/)
   assert.match(html, /<strong>No albums match<\/strong>/)
   const browse = destination(html, 'Show in Albums')
@@ -445,8 +460,8 @@ test('artist albums start in Grid and tracks in Table, each held to the artist',
         artist.id,
       )
     assertNestedViewControls(html, active)
-    // Card size sits with the view switch while the Grid view is shown.
-    assert.equal(html.includes('aria-label="Grid density"'), active === 'Grid')
+    // Grid size is in the Filters drawer, not on the toolbar.
+    assert.doesNotMatch(html, /aria-label="Grid size"/)
     const browse = destination(html, `Show in ${collection}`)
     assert.equal(browse.pathname, `/${tab}`)
     assert.equal(browse.searchParams.get('creatorId'), artist.id)
@@ -774,7 +789,7 @@ test('person films are the Films browser held to the person and the chosen role'
     /<article class="ds-card" data-item-index="0"[^>]*><span class="ds-art" data-ratio="poster">/,
   )
   // The role control counts; the person is not a removable filter.
-  assert.match(html, />Filters · 1<\/button>/)
+  assert.match(html, /<span>Filters · 1<\/span>/)
   assert.doesNotMatch(html, /Remove director filter/)
   const browse = destination(html, 'Show in Films')
   assert.equal(browse.pathname, '/films')
@@ -796,7 +811,7 @@ test('person films without a chosen role include every credit', async () => {
     assert.equal(params.get('creatorId'), person.id)
     assert.equal(params.has('creatorRole'), false)
   }
-  assert.match(html, />Filters<\/button>/)
+  assert.match(html, /<span>Filters<\/span><\/button>/)
   assert.match(html, /<strong>No films yet<\/strong>/)
   assert.doesNotMatch(html, />Add film</)
   assert.equal(
@@ -821,8 +836,8 @@ test('copied person film List keeps its sort and role', async () => {
   assert.equal(page.get('creatorRole'), 'director')
   assertNestedViewControls(html, 'List')
   assert.match(html, /class="ds-thumb" data-ratio="poster"/)
-  assert.match(html, /aria-label="Sort by"/)
-  assert.match(html, />Filters · 1<\/button>/)
+  assert.match(html, /aria-label="Sort by: Runtime"/)
+  assert.match(html, /<span>Filters · 1<\/span>/)
   assert.equal(destination(html, film.title).pathname, `/films/${film.id}`)
 })
 

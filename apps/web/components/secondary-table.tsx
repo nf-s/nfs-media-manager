@@ -30,6 +30,7 @@ import {
   TableSelectionBar,
   TableSortButton,
   TableState,
+  columnsWidth,
 } from '@repo/ui/components/ui/table'
 import {
   Toolbar,
@@ -879,10 +880,10 @@ export function fixedTableLayout(
   widthFor: (key: string) => number,
   fill?: string,
 ) {
-  const { widths, minWidth } = tableColumnLayout(entries, widthFor, fill)
-  const table: { 'data-layout': 'fixed'; style: { minWidth: number } } = {
+  const { widths, sizes } = tableColumnLayout(entries, widthFor, fill)
+  const table: { 'data-layout': 'fixed'; style: { minWidth: string } } = {
     'data-layout': 'fixed',
-    style: { minWidth },
+    style: { minWidth: columnsWidth(sizes) },
   }
   return { table, colgroup: <TableColumns widths={widths} /> }
 }

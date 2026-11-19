@@ -180,7 +180,8 @@ for (const item of [film, album]) {
         ],
         children: <MediaBrowser mediaType={mediaType} />,
       })
-      assert.equal(html.includes('aria-label="Grid density"'), view === 'grid')
+      // Grid size is in the Filters drawer, not on the toolbar.
+      assert.doesNotMatch(html, /aria-label="Grid size"/)
       const target = collectionDestination(html)
       assert.equal(target.pathname, path)
       assert.equal(target.searchParams.get('view'), view)

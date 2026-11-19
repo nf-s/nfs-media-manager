@@ -41,8 +41,8 @@
 .browse-order {
   max-width: calc(var(--ds-rail) - var(--ds-6));
 }
-/* Controls that do not fit, as in the detail drawer or with the Grid
-   density shown, wrap onto a second row instead of squeezing the search */
+/* Controls that do not fit, as in a narrow detail drawer, wrap onto a second
+   row instead of squeezing the search */
 .ds-toolbar:has(> .browse-find) {
   flex-wrap: wrap;
 }
@@ -113,6 +113,10 @@
   display: grid;
   gap: var(--ds-5);
   min-width: 0;
+}
+/* The View section: grid size and the list's own options, at their own width */
+.browse-view-options {
+  justify-items: start;
 }
 .browse-form-split {
   padding-top: var(--ds-5);

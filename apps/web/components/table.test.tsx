@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  columnsWidth,
   Table,
   TableBody,
   TableCell,
@@ -59,10 +60,17 @@ test('a fixed table states its column widths and a header can carry a width hand
     </Table>,
   )
   assert.match(html, /<table class="ds-table" data-layout="fixed"/)
-  assert.match(
-    html,
-    /<colgroup><col style="width:36px"\/><col style="width:280px"\/><col[^>]*\/><\/colgroup>/,
+  // Each width gives way to the phone's column limit, when one is set.
+  assert.ok(
+    html.includes(
+      '<colgroup><col style="width:min(36px, var(--ds-col-max, 36px))"/><col style="width:min(280px, var(--ds-col-max, 280px))"/><col/></colgroup>',
+    ),
   )
+  assert.equal(
+    columnsWidth([36, 280]),
+    'calc(min(36px, var(--ds-col-max, 36px)) + min(280px, var(--ds-col-max, 280px)))',
+  )
+  assert.equal(columnsWidth([]), '0px')
   assert.match(
     html,
     /<th scope="col">Title<span class="ds-th-resizer" role="separator" aria-label="Resize Title"><\/span><\/th>/,

@@ -266,16 +266,66 @@
       .map((x) => `<option>${esc(x)}</option>`)
       .join('')}</select>`
 
-  /* Browse toolbar. Order: search, sort, direction, filters, view, count. */
-  function toolbar(o) {
-    return `<div class="ds-toolbar">${search(o.placeholder, { ai: o.ai !== false, value: o.query })}${
-      o.sort
-        ? `${select(o.sort, { label: 'Sort' })}${btn('', { icon: o.dir || 'down', aria: 'Descending' })}`
-        : ''
-    }${o.filters !== false ? btn(o.filterCount ? `Filters · ${o.filterCount}` : 'Filters', { icon: 'filter' }) : ''}${o.extra || ''}${
-      o.view !== undefined ? seg(VIEWS, o.view, { label: 'View' }) : ''
-    }${o.columns ? btn('Columns', { icon: 'columns' }) : ''}<span class="ds-toolbar-count">${esc(o.count)}</span></div>`
+  /* Sort picker: the select's box at a fixed width; a long name is cut short
+     and shown in full on hover. It opens the field list. */
+  const sortPick = (label) =>
+    `<button type="button" class="ds-select ds-sort" aria-haspopup="listbox" aria-expanded="false" aria-label="Sort by: ${esc(label)}" title="${esc(label)}">${esc(label)}</button>`
+
+  /* The open field list. fields: [label, chosen]; o.query is the typed text,
+     o.active the row the keyboard is on. The app shows it as a top-layer
+     popover; these pages draw it in the flow. */
+  function sortList(fields, o = {}) {
+    const items = fields
+      .map(
+        ([label, on], i) =>
+          `<button type="button" role="option" aria-selected="${Boolean(on)}" class="ds-menu-item"${attrs({ 'data-active': i === o.active })}>${on ? icon('check', { size: 'sm' }) : '<span class="ds-sortpop-slot"></span>'}${esc(label)}</button>`,
+      )
+      .join('')
+    return `<div class="ds-pop ds-sortpop" style="position:static"><label class="ds-search">${icon('search', { size: 'sm' })}<input type="search" placeholder="Find a field" aria-label="Find a field"${attrs({ value: o.query })} /></label><div class="ds-sortpop-list" role="listbox" aria-label="Sort by">${items || '<p class="ds-sortpop-none">No field matches</p>'}</div></div>`
   }
+
+  /* The one button for filters, columns and grid size. o.short: the icon and
+     the number of filters that are on, for lists inside a detail. */
+  function filtersBtn(o = {}) {
+    const n = o.count || 0
+    const name = n
+      ? `Filters, columns and grid size, ${n} ${n === 1 ? 'filter' : 'filters'} on`
+      : 'Filters, columns and grid size'
+    return `<button type="button" class="ds-btn" data-filters="${o.short ? 'short' : 'full'}" aria-haspopup="dialog" aria-expanded="false" aria-label="${name}" title="${name}">${icon('filter', { size: 'sm' })}<span>${n ? `Filters · ${n}` : 'Filters'}</span>${n ? count(n) : ''}</button>`
+  }
+
+  /* Under the toolbar of a Browse list inside a detail: the active filters
+     and Clear all, then the count and the link to the same result in Browse. */
+  function filterLine(o = {}) {
+    const active = o.filters && o.filters.length
+    return `<div class="ds-filterline">${active ? `${o.filters.map((label) => pill(label, { remove: true })).join('')}${btn('Clear all', { variant: 'link', size: 'xs' })}` : ''}${o.count ? `<span class="ds-toolbar-count">${esc(o.count)}</span>` : ''}${o.link ? btn(o.link, { variant: 'link' }) : ''}</div>`
+  }
+
+  /* Browse toolbar. Order: actions, search, sort, direction, view, Filters,
+     count. On a list with a view switch, grid size and columns are in the
+     Filters drawer, so the button shows whenever there are filters, a Grid
+     view or columns. A table without a view switch keeps its Columns button.
+     o.short draws the short Filters button; leave out o.count when the count
+     is on the filter line. */
+  function toolbar(o) {
+    const views = o.view !== undefined
+    const filters = o.filters !== false || o.view === 0 || (o.columns && views)
+    return `<div class="ds-toolbar">${o.actions || ''}${search(o.placeholder, { ai: o.ai !== false, value: o.query })}${
+      o.sort
+        ? `${sortPick(o.sort[0])}${btn('', { icon: o.dir || 'down', aria: o.dir === 'up' ? 'Sort descending' : 'Sort ascending' })}`
+        : ''
+    }${o.extra || ''}${views ? seg(VIEWS, o.view, { label: 'View' }) : ''}${
+      filters ? filtersBtn({ count: o.filterCount, short: o.short }) : ''
+    }${o.columns && !views ? btn('Columns', { icon: 'columns' }) : ''}${o.count != null ? `<span class="ds-toolbar-count">${esc(o.count)}</span>` : ''}</div>`
+  }
+
+  /* The Filters drawer. sections: [title, body], in the order View, Columns
+     (Table view only), then the filters. */
+  const filtersDrawer = (sections) =>
+    `<aside class="ds-inspector"><div class="ds-inspector-bar"><div class="ds-crumbs"><b>Filters and view</b></div>${btn('', { icon: 'x', variant: 'ghost', aria: 'Close filters' })}</div><div class="ds-inspector-body">${sections.map(([title, body], i) => section(title, body, { flush: i === 0 })).join('')}</div></aside>`
+
+  const checkRow = (label, on) =>
+    `<label class="ds-checkrow"><input type="checkbox" class="ds-check"${on ? ' checked' : ''} /> ${esc(label)}</label>`
 
   /* Table. cols: { h, c(row, i), end, w, sort, raw, sticky, edge }
      sticky is the column's left offset in px; edge marks the last sticky column. */
@@ -1439,7 +1489,13 @@
     VIEWS,
     search,
     select,
+    sortPick,
+    sortList,
+    filtersBtn,
+    filterLine,
     toolbar,
+    filtersDrawer,
+    checkRow,
     table,
     checkCol,
     idCell,

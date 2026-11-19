@@ -61,6 +61,8 @@ export function tableColumnLayout(
   const filled = chosen === -1 ? lastKeyed : chosen
   return {
     widths: sizes.map((size, index) => (index === filled ? undefined : size)),
+    /** Every column's own width, the filling one included. */
+    sizes,
     minWidth: sizes.reduce((sum, size) => sum + size, 0),
   }
 }

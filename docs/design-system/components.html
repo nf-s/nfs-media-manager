@@ -53,6 +53,18 @@
       ]
       const fixed = (html, width) =>
         `<div style="width:${width}px">${html}</div>`
+      const sortFields = [
+        ['Added', true],
+        ['Released'],
+        ['Title'],
+        ['Artists'],
+        ['Tracks'],
+        ['Scrobbles'],
+        ['Scrobbles, last year'],
+        ['Last listened'],
+        ['RYM rating'],
+      ]
+      const viewSection = `<div class="g-stack" style="justify-items:start">${seg(['Compact', 'Standard', 'Roomy'], 1, { label: 'Grid size' })}<span class="ds-label">On cards</span>${D.checkRow('Rating', true)}${D.checkRow('Sorted value', true)}${D.checkRow('Tags', true)}${D.checkRow('Include archived imports', false)}</div>`
 
       D.page({
         title: 'Components',
@@ -314,7 +326,7 @@
               ) +
               g.rules([
                 '<b>Tabs</b> move between panels of one item or page. They are underlined, in details and on provider pages alike.',
-                '<b>Segmented controls</b> change how the current panel is shown: view, range, density. They never navigate.',
+                '<b>Segmented controls</b> change how the current panel is shown: view, range, grid size. They never navigate.',
               ]) +
               g.note(
                 'Replaces',
@@ -350,23 +362,142 @@
               g.spec(
                 D.toolbar({
                   placeholder: 'Search albums',
-                  sort: ['Added', 'Released', 'Scrobbles'],
+                  sort: ['Added'],
                   filterCount: 2,
                   view: 0,
-                  count: '128 albums',
+                  count: '14 of 128 albums',
                 }),
                 { flush: true },
               ) +
+              g.spec(
+                fixed(
+                  D.toolbar({
+                    placeholder: 'Search albums',
+                    sort: ['Released'],
+                    filterCount: 2,
+                    view: 0,
+                    short: true,
+                  }) +
+                    D.filterLine({
+                      filters: ['Dream Pop', '2012–2025'],
+                      count: '6 of 14 albums',
+                      link: 'Show in Albums',
+                    }),
+                  600,
+                ),
+                { flush: true },
+              ) +
               g.rules([
-                '<b>One toolbar order</b> on every browse page: search, sort, direction, filters, view, count. Table-only pages drop sort and view and add Columns.',
-                '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons.',
-                '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered.',
-                '<b>On a phone</b> the toolbar wraps: the search takes the first line and the other controls the second.',
+                '<b>One toolbar order</b> on every Browse page and every Browse list inside a detail: actions, search, sort picker, direction, view switch, Filters button, count. Grid size and columns are in the Filters drawer, not in the row. Tables without a view switch drop the sort picker and view switch and keep their Columns button.',
+                '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons; the sort picker uses the select’s box.',
+                '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered. A Browse list inside a detail puts it on the filter line instead.',
+                '<b>On a phone</b> the toolbar wraps: the search takes the first line; the sort picker, direction, view switch and Filters button share the second, the sort picker taking the room the others leave, and the count follows where it fits. The Filters button is short on every phone toolbar.',
               ]) +
               g.note(
                 'Replaces',
                 'six search boxes, selects restyled nine times and count wording that changes by page.',
               ),
+          },
+          {
+            id: 'sort',
+            title: 'Sort picker',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(D.sortPick('Added'), 'closed'),
+                    g.item(
+                      D.sortPick('Scrobbles, last year'),
+                      'a long name is cut short',
+                    ),
+                    g.item(D.sortList(sortFields, { active: 0 }), 'open'),
+                    g.item(
+                      D.sortList(
+                        [['Scrobbles'], ['Scrobbles, last year', true]],
+                        { query: 'scr', active: 0 },
+                      ),
+                      'after typing',
+                    ),
+                    g.item(D.sortList([], { query: 'bpm' }), 'nothing matches'),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>A button with the select’s box</b> at a fixed width of 112px (<code>SortPicker</code>). A longer field name ends in an ellipsis and shows in full on hover. On a phone it takes the room the other controls leave on its line.',
+                '<b>It opens every sortable field</b> under the button, with a search field above the list that has focus on opening. The chosen field carries the check mark.',
+                '<b>Typing narrows the list:</b> names that start with the text come first, then names with a word that starts with it, then the rest. Enter picks the first match, the Up and Down keys move through the list, and Escape closes the list and nothing else.',
+                '<b>On a phone</b> the list is a sheet from the bottom edge over a scrim, and the search field waits for a tap so the keyboard does not cover the list.',
+              ]) +
+              g.note(
+                'Replaces',
+                'the native sort select, which could not be searched and was as wide as its longest field name.',
+              ),
+          },
+          {
+            id: 'filters',
+            title: 'Filters button, drawer and filter line',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      `<div class="ds-toolbar" style="padding:0">${D.filtersBtn({ count: 2 })}${D.filtersBtn()}</div>`,
+                      'full: Browse pages',
+                    ),
+                    g.item(
+                      `<div class="ds-toolbar" style="padding:0">${D.filtersBtn({ count: 2, short: true })}${D.filtersBtn({ short: true })}</div>`,
+                      'short: lists inside a detail, and every phone',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(
+                        D.filtersDrawer([
+                          ['View', viewSection],
+                          [
+                            'Ranges',
+                            `<div class="g-stack">${D.select(['Released'], { label: 'Field' })}<input class="ds-input" value="2012" aria-label="From" /><input class="ds-input" value="2025" aria-label="To" /></div>`,
+                          ],
+                          [
+                            'Listening',
+                            D.select(['Played in the last year'], {
+                              label: 'Listening',
+                            }),
+                          ],
+                        ]),
+                        360,
+                      ),
+                      'the drawer in the Grid view: View first, Grid size at its head',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.spec(
+                `<div class="g-stack">${fixed(
+                  D.filterLine({
+                    filters: ['Dream Pop', '2012–2025'],
+                    count: '6 of 14 albums',
+                    link: 'Show in Albums',
+                  }),
+                  600,
+                )}${fixed(D.filterLine({ count: '34 tracks', link: 'Show in Tracks' }), 600)}</div>`,
+                { flush: true },
+              ) +
+              g.rules([
+                '<b>One button</b> holds everything a list keeps off its toolbar: filters, columns and grid size. It carries the number of filters that are on, and its accessible name says what it holds.',
+                '<b>Full or short.</b> A Browse page shows the name, <code>Filters · 2</code>. A list inside a detail shows the icon and the count, and so does every toolbar on a phone. With no filter on, the short button is the icon alone.',
+                '<b>The drawer</b> is titled Filters and view. Its sections are, in order: View, Columns (Table view only), then the active filters, Ranges, Listening and the rest.',
+                '<b>View</b> starts with Grid size (Compact, Standard, Roomy) while the Grid view is on, then the list’s own view options: what cards show, Include archived imports, Group recordings. Grid size is saved per library and kept in the URL. Phones start compact; wider screens start standard.',
+                '<b>The filter line</b> sits under the toolbar of a Browse list inside a detail: an artist’s Albums and Tracks, a person’s Films, a channel’s or show’s items. It holds the active filters as removable pills and Clear all, then, at the right, the count and the link to the same result in Browse (Show in Albums, Show in Tracks). It is there even when no filter is on.',
+                '<b>Other lists inside a detail</b> that have only a count, such as a playlist’s tracks, keep the count in the toolbar, use the short button and have no filter line.',
+              ]),
           },
           {
             id: 'table',
@@ -486,6 +617,7 @@
                 '<b>Identity cell.</b> Thumbnail, title, and the play pair at its end. The thumbnail is 24px; posters keep their shape.',
                 '<b>Numbers align right</b> in tabular figures. Dates are ISO (<code>2026-10-02</code>) so they sort and align as text.',
                 "<b>Column widths are set, not measured.</b> Every column has a default width, so rows that are still loading never move the columns. A handle on the right edge of each data column's header changes its width (<code>TableHead resizer</code>): drag it, or focus it and use the Left and Right keys; double-click returns the default. It shows only on hover and focus. Widths are saved per table. Selection and small action columns keep a fixed width. One column takes the room that is left: the identity column where the last column is a number, a date or a status, otherwise the last data column.",
+                '<b>On a phone no column is wider than 55% of the screen</b> (<code>--ds-col-max: 55vw</code> up to 700px; <code>columnWidth</code> writes each width as <code>min(width, var(--ds-col-max))</code>), so the pinned first column leaves the other columns in view. A pinned selection column before it counts toward that share.',
                 '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge.',
                 '<b>Child rows nest to any depth.</b> Each level indents the first cell by one more step (<code>TableRow depth</code>; <code>child</code> is depth 1). A row that has child rows carries a ghost icon button with a chevron before its title that shows or hides them; a row without children keeps an empty space of the same width so titles line up.',
                 '<b>Grouped tracks</b> place the release versions button immediately after the title link in the pinned identity cell.',
@@ -567,7 +699,7 @@
               g.rules([
                 '<b>Artwork is left clean.</b> Nothing sits on it at rest. The play pair appears on hover; a duration badge is allowed on video.',
                 '<b>Text under the artwork:</b> title, creator, then one meta line with the year on the left and one value on the right. That value is the headline rating by default, or whatever the grid is sorted by.',
-                '<b>Tags take one more line,</b> on by default: the pills that fit and a count of the rest. View options can turn the line off. An item without tags has no empty line.',
+                '<b>Tags take one more line,</b> on by default: the pills that fit and a count of the rest. Filters → View → On cards can turn the line off. An item without tags has no empty line.',
                 '<b>Same anatomy for every resource.</b> Only the artwork shape changes: square, poster, round, 16:9.',
               ]),
           },
@@ -914,7 +1046,7 @@
                 '<b>Notice.</b> One line, an optional single action. Neutral, attention or danger. It sits in the flow of the panel it concerns and never floats over content.',
                 '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
                 '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
-                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. Filters, columns, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button.',
+                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button.',
               ]) +
               g.note(
                 'Replaces',
@@ -939,7 +1071,7 @@
                 '<b>Same order for every resource:</b> artwork, kind, title, creator, one line of facts, actions.',
                 '<b>Title is 18px</b> in the drawer and 22px on the standalone page.',
                 '<b>Actions:</b> Play and Queue first where the item can be played, then item-specific actions, then Open at provider and More at the far end.',
-                '<b>Side panels.</b> Filters, Add and Scrobble link use the same modal side panel as details: a panel on the right, or a sheet from the top edge on a phone, closed by its Close button, Escape or the backdrop.',
+                '<b>Side panels.</b> Filters and view, Add and Scrobble link use the same modal side panel as details: a panel on the right, or a sheet from the top edge on a phone, closed by its Close button, Escape or the backdrop.',
               ]) +
               g.note(
                 'Replaces',

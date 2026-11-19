@@ -16,6 +16,8 @@ import {
   TableHeader,
   TableRow,
   TableScroll,
+  TableColumns,
+  columnsWidth,
 } from '@repo/ui/components/ui/table'
 import { Card, CardTitle } from '@repo/ui/components/ds/card'
 import {
@@ -641,6 +643,24 @@ export default function ArtistBrowser() {
           filterCount={activeFilterCount}
           filters={
             <>
+              {view === 'table' && (
+                <BrowseColumnsSection>
+                  <ColumnChoices
+                    fields={orderedFields}
+                    selected={columnKeys}
+                    required="name"
+                    onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({ columnOrder: columnOrderParam(keys, fields) })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, fields, 'name')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
+                  />
+                </BrowseColumnsSection>
+              )}
               {filterPills && (
                 <ActiveFiltersSection
                   count={activeFilterCount}
@@ -683,24 +703,6 @@ export default function ArtistBrowser() {
                   setParams({ listeningSort: JSON.stringify(period) })
                 }
               />
-              {view === 'table' && (
-                <BrowseColumnsSection>
-                  <ColumnChoices
-                    fields={orderedFields}
-                    selected={columnKeys}
-                    required="name"
-                    onChange={(keys) => setParams({ columns: keys.join(',') })}
-                    onOrderChange={(keys) =>
-                      setParams({ columnOrder: columnOrderParam(keys, fields) })
-                    }
-                    onResetOrder={
-                      hasCustomColumnOrder(orderedFields, fields, 'name')
-                        ? () => setParams({ columnOrder: null })
-                        : undefined
-                    }
-                  />
-                </BrowseColumnsSection>
-              )}
             </>
           }
           view={view}
@@ -846,20 +848,14 @@ export default function ArtistBrowser() {
               aria-label="Artists"
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
-                width: columns.reduce(
-                  (sum, field) => sum + widths.widthFor(field),
-                  0,
+                width: columnsWidth(
+                  columns.map((field) => widths.widthFor(field)),
                 ),
               }}
             >
-              <colgroup>
-                {columns.map((field) => (
-                  <col
-                    key={field.key}
-                    style={{ width: widths.widthFor(field) }}
-                  />
-                ))}
-              </colgroup>
+              <TableColumns
+                widths={columns.map((field) => widths.widthFor(field))}
+              />
               <TableHeader>
                 <TableRow>
                   {columns.map((field) => (

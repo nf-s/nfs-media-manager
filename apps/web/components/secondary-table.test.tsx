@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { columnWidth, columnsWidth } from '@repo/ui/components/ui/table'
 import {
   formatTableValue,
   SecondaryCell,
@@ -82,13 +83,14 @@ test('secondary tables have set column widths and a width handle on each data co
   )
   // Fixed layout: loading rows cannot move the columns.
   assert.match(html, /<table class="ds-table"[^>]*data-layout="fixed"/)
-  assert.match(html, /<table class="ds-table"[^>]*style="min-width:530px"/)
+  // The table is at least as wide as its columns, each within the phone's limit.
+  assert.ok(html.includes(`style="min-width:${columnsWidth([300, 90, 140])}"`))
   // Every column keeps its width; the last one takes the room that is left.
-  assert.match(
-    html,
-    /<colgroup><col style="width:300px"\/><col style="width:90px"\/><col[^>]*\/><\/colgroup>/,
+  assert.ok(
+    html.includes(
+      `<colgroup><col style="width:${columnWidth(300)}"/><col style="width:${columnWidth(90)}"/><col/></colgroup>`,
+    ),
   )
-  assert.doesNotMatch(html, /<colgroup>.*width:140px.*<\/colgroup>/)
   assert.equal((html.match(/class="ds-th-resizer"/g) ?? []).length, 3)
   for (const label of ['Title', 'Count', 'Note'])
     assert.match(
@@ -126,11 +128,12 @@ test('a column of row actions keeps its width and has no handle', () => {
     />,
   )
   // The last data column takes the room that is left, not the actions.
-  assert.match(
-    html,
-    /<colgroup><col style="width:300px"\/><col\/><col style="width:84px"\/><\/colgroup>/,
+  assert.ok(
+    html.includes(
+      `<colgroup><col style="width:${columnWidth(300)}"/><col/><col style="width:${columnWidth(84)}"/></colgroup>`,
+    ),
   )
-  assert.match(html, /style="min-width:584px"/)
+  assert.ok(html.includes(`style="min-width:${columnsWidth([300, 200, 84])}"`))
   assert.match(html, /<th[^>]*>Actions<\/th>/)
   assert.equal((html.match(/class="ds-th-resizer"/g) ?? []).length, 2)
 })

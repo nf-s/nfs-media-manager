@@ -127,7 +127,7 @@ The subsequent import reuses the stored library track when its Spotify ID is alr
 
 Tracks Browse hides a standalone Last.fm entry with no album, playlist or Spotify ID when its exact scrobbled artist and title already count toward a visible album track or playable recording. An EP and an album can each keep their own row and show the same listens. If the last matching recording leaves the library, the standalone entry appears again. To inspect the original names or choose a recording manually, filter by **Source → Last.fm** or open **Tracks → Imports → Last.fm scrobbles**.
 
-Find **Group recordings** under **Filters → Views**. It is on when sorting by **Scrobbles** or **Last listened**. Other sorts, including **Artist** and **Album**, start with each release version visible. Toggle grouping for the current sort. Its setting survives a reload and changing the sort field applies the new sort’s default.
+Find **Group recordings** under **Filters → View**. It is on when sorting by **Scrobbles** or **Last listened**. Other sorts, including **Artist** and **Album**, start with each release version visible. Toggle grouping for the current sort. Its setting survives a reload and changing the sort field applies the new sort’s default.
 
 Use the arrow immediately after a grouped track’s title in Grid, List or Table to see the matching library tracks and open or play a specific release version. Groups use the full track title, billed artists and recording evidence from a shared ISRC or an exact Last.fm match. Version qualifiers such as “Radio Edit” and “Remix” distinguish recordings. Conflicting ISRCs or substantially different known durations keep ambiguous versions apart.
 

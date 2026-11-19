@@ -23,13 +23,15 @@ import {
 import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ListMusic, Settings2 } from 'lucide-react'
+import { ListMusic } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
   TableHeader,
   TableRow,
+  TableColumns,
+  columnsWidth,
 } from '@repo/ui/components/ui/table'
 import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
 import {
@@ -1226,8 +1228,71 @@ function MediaBrowse({
             onDirectionChange: (direction) => setParams({ direction }),
           }}
           filterCount={activeFilterCount + (filterPanel?.count ?? 0)}
+          viewOptions={
+            <>
+              {view === 'grid' && (
+                <fieldset className="browse-fieldset">
+                  <legend className="ds-label">On cards</legend>
+                  {cardDetails.map((detail) => (
+                    <label className="ds-checkrow" key={detail}>
+                      <input
+                        type="checkbox"
+                        className="ds-check"
+                        checked={details.includes(detail)}
+                        onChange={(event) =>
+                          setParams({
+                            overlays: formatCardDetails(
+                              cardDetails.filter((key) =>
+                                key === detail
+                                  ? event.target.checked
+                                  : details.includes(key),
+                              ),
+                            ),
+                          })
+                        }
+                      />
+                      {cardDetailLabels[detail]}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+              <label className="ds-checkrow">
+                <input
+                  type="checkbox"
+                  className="ds-check"
+                  checked={includeArchived}
+                  onChange={(event) =>
+                    setParams({
+                      includeArchived: event.target.checked ? 'true' : null,
+                    })
+                  }
+                />
+                Include archived imports
+              </label>
+            </>
+          }
           filters={
             <>
+              {view === 'table' && (
+                <BrowseColumnsSection>
+                  <ColumnChoices
+                    fields={orderedFields}
+                    selected={columnKeys}
+                    required="title"
+                    onChange={(keys) => setParams({ columns: keys.join(',') })}
+                    onOrderChange={(keys) =>
+                      setParams({
+                        columnOrder: columnOrderParam(keys, columnFields),
+                      })
+                    }
+                    onResetOrder={
+                      hasCustomColumnOrder(orderedFields, columnFields, 'title')
+                        ? () => setParams({ columnOrder: null })
+                        : undefined
+                    }
+                  />
+                </BrowseColumnsSection>
+              )}
               {filterPanel?.controls}
               {hasActiveFilters && (
                 <section
@@ -1238,53 +1303,6 @@ function MediaBrowse({
                   <div className="browse-filter-group">{activeFilters}</div>
                 </section>
               )}
-              <FilterPanelSection
-                title="Views"
-                icon={<Settings2 className="ds-i" data-size="sm" aria-hidden />}
-                defaultOpen
-              >
-                <div className="browse-form">
-                  {view === 'grid' && (
-                    <fieldset className="browse-fieldset">
-                      <legend className="ds-label">On cards</legend>
-                      {cardDetails.map((detail) => (
-                        <label className="ds-checkrow" key={detail}>
-                          <input
-                            type="checkbox"
-                            className="ds-check"
-                            checked={details.includes(detail)}
-                            onChange={(event) =>
-                              setParams({
-                                overlays: formatCardDetails(
-                                  cardDetails.filter((key) =>
-                                    key === detail
-                                      ? event.target.checked
-                                      : details.includes(key),
-                                  ),
-                                ),
-                              })
-                            }
-                          />
-                          {cardDetailLabels[detail]}
-                        </label>
-                      ))}
-                    </fieldset>
-                  )}
-                  <label className="ds-checkrow">
-                    <input
-                      type="checkbox"
-                      className="ds-check"
-                      checked={includeArchived}
-                      onChange={(event) =>
-                        setParams({
-                          includeArchived: event.target.checked ? 'true' : null,
-                        })
-                      }
-                    />
-                    Include archived imports
-                  </label>
-                </div>
-              </FilterPanelSection>
               {mediaType === 'album' && (
                 <FilterPanelSection
                   title="Smart playlists"
@@ -1386,26 +1404,6 @@ function MediaBrowse({
                   }
                 />
               )}
-              {view === 'table' && (
-                <BrowseColumnsSection>
-                  <ColumnChoices
-                    fields={orderedFields}
-                    selected={columnKeys}
-                    required="title"
-                    onChange={(keys) => setParams({ columns: keys.join(',') })}
-                    onOrderChange={(keys) =>
-                      setParams({
-                        columnOrder: columnOrderParam(keys, columnFields),
-                      })
-                    }
-                    onResetOrder={
-                      hasCustomColumnOrder(orderedFields, columnFields, 'title')
-                        ? () => setParams({ columnOrder: null })
-                        : undefined
-                    }
-                  />
-                </BrowseColumnsSection>
-              )}
             </>
           }
           view={view}
@@ -1445,6 +1443,8 @@ function MediaBrowse({
               </Button>
             )
           }
+          compact={embedded}
+          activeFilters={activeFilters}
         />
         {railSlot && activeFilters
           ? createPortal(
@@ -1454,7 +1454,8 @@ function MediaBrowse({
               </>,
               railSlot,
             )
-          : activeFilters && (
+          : activeFilters &&
+            !embedded && (
               <div
                 className="ds-strip"
                 role="group"
@@ -1696,27 +1697,18 @@ function MediaBrowse({
               data-scrolled={scrolledSideways ? '' : undefined}
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
               style={{
-                minWidth: columns.reduce(
-                  (sum, field) => sum + widthFor(field),
-                  0,
-                ),
+                minWidth: columnsWidth(columns.map((field) => widthFor(field))),
               }}
             >
-              <colgroup>
-                {columns.map((field, column) => (
-                  <col
-                    key={field.key}
-                    style={{
-                      width:
-                        column === columns.length - 1 &&
-                        pillColumns.has(field.key) &&
-                        widths[field.key] === undefined
-                          ? undefined
-                          : widthFor(field),
-                    }}
-                  />
-                ))}
-              </colgroup>
+              <TableColumns
+                widths={columns.map((field, column) =>
+                  column === columns.length - 1 &&
+                  pillColumns.has(field.key) &&
+                  widths[field.key] === undefined
+                    ? undefined
+                    : widthFor(field),
+                )}
+              />
               <TableHeader>
                 <TableRow>
                   {columns.map((field, column) => (
