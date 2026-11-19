@@ -6,6 +6,8 @@ import {
   AlbumListeningSchema,
   LASTFM_SCROBBLE_SYNC_TASK,
   LastfmLinkQuerySchema,
+  LastfmGroupTracksSchema,
+  type LastfmSpotifySearchGroupSchema,
   LastfmLinkReasonSchema,
   LastfmLinkReportSchema,
   LastfmLinkStrategySchema,
@@ -836,6 +838,26 @@ function classifiedGroups(account: string) {
       left join lastfm_album_link l on l.username = ${account}
         and l.artist_key = g.artist_key and l.album_key = g.album_key
     )`
+}
+
+/** Stored recording evidence for one normalized scrobbled album name, including excluded groups. */
+export async function getLastfmGroupTracks(
+  group: z.infer<typeof LastfmSpotifySearchGroupSchema>,
+) {
+  const account = await getLastfmAccount()
+  if (!account) return { items: [] }
+  const result = await db.execute(sql`
+    select min(track_name) as name, count(*)::int as plays,
+      coalesce(array_agg(distinct track_mbid order by track_mbid)
+        filter (where nullif(track_mbid, '') is not null), '{}'::text[]) as "trackMbids",
+      coalesce(array_agg(distinct album_mbid order by album_mbid)
+        filter (where nullif(album_mbid, '') is not null), '{}'::text[]) as "albumMbids"
+    from lastfm_scrobble
+    where username = ${account}
+      and artist_key = ${albumNameKey(group.artistName)}
+      and album_key = ${albumNameKey(group.albumName)}
+    group by track_key order by count(*) desc, track_key asc`)
+  return LastfmGroupTracksSchema.parse({ items: result.rows })
 }
 
 export async function getLastfmLinkReport(
