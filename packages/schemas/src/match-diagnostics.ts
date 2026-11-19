@@ -96,6 +96,7 @@ export const MatchDiagnosticsRowSchema = z.object({
   matches: z.array(
     z.object({
       provider: z.string(),
+      sourceProvider: z.string().optional(),
       name: z.string().nullable(),
       creator: z.string().nullable(),
       identifier: z.string().nullable(),

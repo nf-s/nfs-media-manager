@@ -56,6 +56,18 @@ beforeAll(async () => {
       mediaType: 'album',
     },
     {
+      id: 'album-three',
+      slug: 'album-three',
+      title: 'Gamma Album',
+      mediaType: 'album',
+    },
+    {
+      id: 'album-four',
+      slug: 'album-four',
+      title: 'Delta Album',
+      mediaType: 'album',
+    },
+    {
       id: 'film-one',
       slug: 'film-one',
       title: 'The Library Film',
@@ -77,7 +89,12 @@ beforeAll(async () => {
   ])
   await databaseClient
     .insert(schema.album)
-    .values([{ mediaItemId: 'album-one' }, { mediaItemId: 'album-two' }])
+    .values([
+      { mediaItemId: 'album-one' },
+      { mediaItemId: 'album-two' },
+      { mediaItemId: 'album-three' },
+      { mediaItemId: 'album-four' },
+    ])
   await databaseClient
     .insert(schema.film)
     .values([
@@ -211,6 +228,175 @@ beforeAll(async () => {
       },
     },
     {
+      id: 'album-one-google',
+      mediaItemId: 'album-one',
+      provider: 'google-custom-search',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        rymGoogle: {
+          link: 'https://rateyourmusic.com/release/album/fixture/record/',
+          rawResponse: {
+            title:
+              'Winter Record by Source Artist (Album, Ambient): Reviews, Ratings, Credits - Rate Your Music',
+          },
+        },
+        metacriticGoogle: {
+          link: 'https://www.metacritic.com/music/autumn-review/fixture/?ignored=value',
+          rawResponse: {
+            title:
+              'Autumn Review by Recorded Artist Reviews and Tracks - Metacritic',
+          },
+        },
+      },
+      normalizedData: {
+        mediaPatch: { title: 'Older Normalized Name' },
+        references: [
+          {
+            referenceType: 'rym-url',
+            externalId:
+              'https://rateyourmusic.com/release/album/fixture/record/',
+          },
+        ],
+      },
+    },
+    {
+      id: 'album-one-legacy-browser',
+      mediaItemId: 'album-one',
+      provider: 'legacy-browser',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        links: {
+          rym: {
+            href: 'https://rateyourmusic.com/release/album/fixture/previous/',
+            title: 'Older Browser Match by Source Artist - RYM',
+          },
+          metacritic: {
+            href: 'https://www.metacritic.com/music/previous-review/fixture/',
+            title:
+              'Older Browser Metacritic Match by Source Artist - Metacritic',
+          },
+        },
+      },
+    },
+    {
+      id: 'album-two-google',
+      mediaItemId: 'album-two',
+      provider: 'google-custom-search',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: { metacriticGoogle: { rating: { value: 80 } } },
+      normalizedData: {
+        mediaPatch: { title: 'A Standalone Metacritic Match' },
+        references: [
+          {
+            referenceType: 'metacritic-url',
+            externalId: 'https://www.metacritic.com/music/fixture/',
+          },
+        ],
+      },
+    },
+    {
+      id: 'album-two-legacy-record',
+      mediaItemId: 'album-two',
+      provider: 'legacy-record',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        rymGoogle: {
+          link: 'https://rateyourmusic.com.example.test/release/album/fixture/record/',
+          rawResponse: { title: 'Unrelated Website Title' },
+        },
+        metacriticGoogle: {
+          link: 'https://www.metacritic.com/music/%2e%2e/movie/unrelated/',
+          rawResponse: { title: 'Unrelated Movie Match' },
+        },
+      },
+    },
+    {
+      id: 'album-two-legacy-browser',
+      mediaItemId: 'album-two',
+      provider: 'legacy-browser',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        title: 'Beta Album',
+        links: {
+          rym: {
+            href: 'https://rateyourmusic.com/release/album/fixture/edition/?ignored=value',
+            title: 'Dawn Edition by Other Source Artist - RYM',
+          },
+          metacritic: {
+            href: 'https://metacritic.com.example.test/music/unrelated',
+            title: 'Unrelated Metacritic Title',
+          },
+        },
+      },
+      normalizedData: { mediaPatch: { title: 'Beta Album' } },
+    },
+    {
+      id: 'album-three-legacy-browser',
+      mediaItemId: 'album-three',
+      provider: 'legacy-browser',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        links: {
+          rym: {
+            href: 'https://rateyourmusic.com/release/album/fixture/another-record/',
+            title: 'Unrelated Browser Match by Source Artist - RYM',
+          },
+          metacritic: {
+            href: 'https://metacritic.com/music/archive-review/fixture/critic-reviews/#ignored',
+            title:
+              'Critic Reviews for Archive Review by Source Duo - Metacritic',
+          },
+        },
+      },
+    },
+    {
+      id: 'album-three-google',
+      mediaItemId: 'album-three',
+      provider: 'google-custom-search',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        rymGoogle: {
+          link: 'https://rateyourmusic.com/release/album/fixture/link-only.p/reviews/1/#ignored',
+          rawResponse: { title: 12 },
+        },
+        metacriticGoogle: {
+          link: 'https://metacritic.com/music/archive-review/fixture/critic-reviews/',
+          rawResponse: { title: null },
+        },
+      },
+    },
+    {
+      id: 'album-four-google',
+      mediaItemId: 'album-four',
+      provider: 'google-custom-search',
+      status: 'ready',
+      checksum: 'fixture',
+      payload: {
+        metacriticGoogle: {
+          link: 'https://www.metacritic.com/music/morning-chronicle/fixture/user-reviews/',
+          rawResponse: {
+            title: 'Morning Chronicle by Paper Trio Reviews and Tracks ...',
+          },
+        },
+      },
+      normalizedData: {
+        references: [
+          {
+            referenceType: 'metacritic-url',
+            externalId:
+              'https://www.metacritic.com/music/morning-chronicle/fixture/user-reviews/',
+          },
+        ],
+      },
+    },
+    {
       id: 'film-one-tmdb',
       mediaItemId: 'film-one',
       provider: 'tmdb',
@@ -305,8 +491,8 @@ describe('album and film match diagnostics', () => {
       MatchDiagnosticsQuerySchema.parse({ size: 1 }),
     )
     expect(result).toMatchObject({
-      totalCount: 2,
-      pageCount: 2,
+      totalCount: 4,
+      pageCount: 4,
       items: [
         { id: 'album-one', name: 'Alpha Album', creator: 'Library Artist' },
       ],
@@ -389,6 +575,114 @@ describe('album and film match diagnostics', () => {
       }),
     )
     expect(empty).toMatchObject({ items: [], totalCount: 1, pageCount: 1 })
+  })
+
+  it('shows matched RYM and Metacritic identities from the raw and cleaned legacy imports', async () => {
+    const result = await listMediaMatchDiagnostics(
+      'album',
+      MatchDiagnosticsQuerySchema.parse({ sortBy: 'google-custom-search' }),
+    )
+    expect(
+      result.items.map(({ id, matches }) => ({
+        id,
+        matches: matches.filter(
+          ({ provider }) => provider === 'google-custom-search',
+        ),
+      })),
+    ).toEqual([
+      {
+        id: 'album-two',
+        matches: [
+          {
+            provider: 'google-custom-search',
+            sourceProvider: 'legacy-browser',
+            name: 'Dawn Edition',
+            creator: 'Other Source Artist',
+            identifier:
+              'https://rateyourmusic.com/release/album/fixture/edition/',
+          },
+          {
+            provider: 'google-custom-search',
+            name: 'A Standalone Metacritic Match',
+            creator: null,
+            identifier: 'https://www.metacritic.com/music/fixture/',
+          },
+        ],
+      },
+      {
+        id: 'album-three',
+        matches: [
+          {
+            provider: 'google-custom-search',
+            name: null,
+            creator: null,
+            identifier:
+              'https://rateyourmusic.com/release/album/fixture/link-only.p/reviews/1/',
+          },
+          {
+            provider: 'google-custom-search',
+            sourceProvider: 'legacy-browser',
+            name: 'Archive Review',
+            creator: 'Source Duo',
+            identifier:
+              'https://metacritic.com/music/archive-review/fixture/critic-reviews/',
+          },
+        ],
+      },
+      {
+        id: 'album-four',
+        matches: [
+          {
+            provider: 'google-custom-search',
+            name: 'Morning Chronicle by Paper Trio Reviews and Tracks ...',
+            creator: null,
+            identifier:
+              'https://www.metacritic.com/music/morning-chronicle/fixture/user-reviews/',
+          },
+        ],
+      },
+      {
+        id: 'album-one',
+        matches: [
+          {
+            provider: 'google-custom-search',
+            name: 'Winter Record',
+            creator: 'Source Artist',
+            identifier:
+              'https://rateyourmusic.com/release/album/fixture/record/',
+          },
+          {
+            provider: 'google-custom-search',
+            name: 'Autumn Review',
+            creator: 'Recorded Artist',
+            identifier:
+              'https://www.metacritic.com/music/autumn-review/fixture/',
+          },
+        ],
+      },
+    ])
+    const filtered = await listMediaMatchDiagnostics(
+      'album',
+      MatchDiagnosticsQuerySchema.parse({ q: 'Dawn Edition' }),
+    )
+    expect(filtered.items.map(({ id }) => id)).toEqual(['album-two'])
+    const metacritic = await listMediaMatchDiagnostics(
+      'album',
+      MatchDiagnosticsQuerySchema.parse({ q: 'Autumn Review' }),
+    )
+    expect(metacritic.items.map(({ id }) => id)).toEqual(['album-one'])
+    for (const q of [
+      'Unrelated Metacritic Title',
+      'Unrelated Movie Match',
+      'Older Browser Metacritic Match',
+    ]) {
+      const unrelated = await listMediaMatchDiagnostics(
+        'album',
+        MatchDiagnosticsQuerySchema.parse({ q }),
+      )
+      expect(unrelated.items).toEqual([])
+    }
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('uses only directors for films and includes unmatched visible items', async () => {

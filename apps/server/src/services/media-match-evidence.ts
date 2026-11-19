@@ -92,11 +92,77 @@ export function mediaMatchEvidence(role: 'artist' | 'director') {
       case when identity.value ~ '^[[:alnum:]_.:-]{1,200}$' then identity.value
         when length(identity.value) <= 500 and identity.value ~ '^https?://[[:alnum:]_.:-]+/[^?#[:space:]]+$' then identity.value
         end as identifier,
-      null::text as artist_key, null::text as album_key
+      null::text as artist_key, null::text as album_key, null::text as source_provider,
+      null::integer as match_priority
     from evidence_scope scope
     join provider_current_state source on source.media_item_id = scope.id and source.status = 'ready'
     cross join lateral (select ${nativeRecord} as record) native
     cross join lateral (select case when source.provider = 'serply' then ${indexedTitle} end as title) indexed
     cross join lateral (select split_part(split_part(${recordedIdentifier}, '?', 1), '#', 1) as value) identity
     where source.provider not in ('legacy-record', 'legacy-browser', 'legacy-library', 'legacy-smart-playlists')`
+}
+
+export const legacyGoogleProvider = 'google-custom-search'
+const rawMatch = sql`${payload}->site.raw_key`
+const cleanedMatch = sql`${payload}->'links'->site.browse_key`
+const legacyGooglePriority = sql`case source.provider
+  when ${legacyGoogleProvider} then 0 when 'legacy-record' then 1 else 2 end`
+const legacyRymUrl =
+  '(?i)^https?://(?:www[.])?rateyourmusic[.]com/(?:release/[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+(?:/(?:reviews|lists)(?:/[0-9]+)?)?|music-review/[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+/[0-9]+)/?$'
+const metacriticPathSegment = '(?!(?:[.]|%2e){1,2}(?:/|$))[^/[:space:]\\\\]+'
+const legacyMetacriticUrl = `(?i)^https?://(?:www[.])?metacritic[.]com/music/${metacriticPathSegment}(?:/${metacriticPathSegment})*/?$`
+const legacyTypedTitle =
+  '(?i)^(?:Reviews of |Lists with )?(.+) by (.+) \\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix)[,);]'
+const legacyUntypedTitle = '(?i)^(.+) by (.+) - (?:RYM|Rate Your Music)$'
+const legacyMetacriticTitle =
+  '(?i)^(?:(?:Critic|User) Reviews for )?(.+) by (.+?)(?: Reviews and Tracks)? - Metacritic$'
+const ambiguousMetacriticTitle = '(?i) by .+ by |[.]{3}|…'
+
+/** Reads each selected Google result from the raw import or its cleaned browse row. */
+export function legacyAlbumGoogleMatchEvidence() {
+  return sql`
+    union all
+    select scope.id, ${legacyGoogleProvider}::text as provider,
+      left(coalesce(header.parts[1], saved.title), 1000) as name,
+      left(header.parts[2], 1000) as creator,
+      saved.url as identifier,
+      null::text as artist_key, null::text as album_key,
+      saved.provider as source_provider, site.match_priority
+    from evidence_scope scope
+    cross join (values
+      ('rymGoogle', 'rym', ${legacyRymUrl}::text, 0),
+      ('metacriticGoogle', 'metacritic', ${legacyMetacriticUrl}::text, 1)
+    ) site(raw_key, browse_key, url_pattern, match_priority)
+    cross join lateral (
+      select provider, title, url
+      from (
+        select source.provider, fields.title, fields.url, ${legacyGooglePriority} as priority,
+          first_value(fields.url) over (order by ${legacyGooglePriority}) as selected_url
+        from provider_current_state source
+        cross join lateral (
+          select case when source.provider = 'legacy-browser'
+            then ${stringValue(sql`${cleanedMatch}->'title'`)}
+            else ${stringValue(sql`${rawMatch}->'rawResponse'->'title'`)} end as title,
+          split_part(split_part(case when source.provider = 'legacy-browser'
+            then ${stringValue(sql`${cleanedMatch}->'href'`)}
+            else ${stringValue(sql`${rawMatch}->'link'`)} end, '?', 1), '#', 1) as url
+        ) fields
+        where source.media_item_id = scope.id and source.status = 'ready'
+          and source.provider in (${legacyGoogleProvider}, 'legacy-record', 'legacy-browser')
+          and length(fields.url) <= 500 and fields.url ~ site.url_pattern
+      ) candidates
+      where url = selected_url
+      order by (title is not null) desc, priority
+      limit 1
+    ) saved
+    cross join lateral (
+      select case
+        when site.browse_key = 'rym' then coalesce(
+          regexp_match(saved.title, ${legacyTypedTitle}),
+          regexp_match(saved.title, ${legacyUntypedTitle})
+        )
+        when saved.title !~ ${ambiguousMetacriticTitle}
+          then regexp_match(saved.title, ${legacyMetacriticTitle})
+      end as parts
+    ) header`
 }

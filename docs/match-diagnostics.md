@@ -24,6 +24,8 @@ Use **Merge** when a separate Last.fm record and an imported Spotify track shoul
 
 Open a provider cell to inspect its Sources row. Use **Find match** where provider search is available, or edit the provider identifier. A corrected identifier takes effect on the next successful lookup. Until then the table can still show the previous response. Albums also have a Last.fm listening column for the artist and release names on linked scrobbles. Use the album's Last.fm linking tools to correct a group.
 
+In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
+
 ## Subscriptions
 
 Videos and podcast episodes use their provider IDs. The table shows the recorded title, channel or show and the native YouTube or Spotify identity. Select the item or its source to inspect the corresponding record.

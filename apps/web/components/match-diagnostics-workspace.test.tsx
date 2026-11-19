@@ -467,3 +467,85 @@ test('album Last.fm identities open the existing scrobble link controls and subs
     /href="\/channels\/fixture-podcast">Fixture Podcast</,
   )
 })
+
+test('legacy Google identities open the source that supplied each recorded match', async () => {
+  const html = await render(
+    'album',
+    MatchDiagnosticsPageSchema.parse({
+      totalCount: 3,
+      pageCount: 1,
+      providers: [
+        { key: 'google-custom-search', label: 'Google Custom Search (legacy)' },
+      ],
+      items: [
+        {
+          id: 'legacy-browser-album',
+          name: 'Browser Album',
+          creator: null,
+          matches: [
+            {
+              provider: 'google-custom-search',
+              sourceProvider: 'legacy-browser',
+              name: 'Browser Match',
+              creator: null,
+              identifier: 'fixture-browser-release',
+            },
+            {
+              provider: 'google-custom-search',
+              name: 'Metacritic Match',
+              creator: null,
+              identifier: 'fixture-critic-release',
+            },
+          ],
+        },
+        {
+          id: 'legacy-record-album',
+          name: 'Record Album',
+          creator: null,
+          matches: [
+            {
+              provider: 'google-custom-search',
+              sourceProvider: 'legacy-record',
+              name: 'Record Match',
+              creator: null,
+              identifier: 'fixture-record-release',
+            },
+          ],
+        },
+        {
+          id: 'google-album',
+          name: 'Google Album',
+          creator: null,
+          matches: [
+            {
+              provider: 'google-custom-search',
+              name: 'Google Match',
+              creator: null,
+              identifier: 'fixture-google-release',
+            },
+          ],
+        },
+      ],
+    }),
+  )
+  assert.match(
+    html,
+    /href="\/albums\/legacy-browser-album\?tab=sources&amp;sourceProvider=legacy-browser">Browser Match \(\+1\)<\/a>/,
+  )
+  assert.match(
+    html,
+    /href="\/albums\/legacy-browser-album\?tab=sources&amp;sourceProvider=legacy-browser">Browser Match · fixture-browser-release<\/a>/,
+  )
+  assert.match(
+    html,
+    /href="\/albums\/legacy-browser-album\?tab=sources&amp;sourceProvider=google-custom-search">Metacritic Match · fixture-critic-release<\/a>/,
+  )
+  assert.match(
+    html,
+    /href="\/albums\/legacy-record-album\?tab=sources&amp;sourceProvider=legacy-record">Record Match<\/a>/,
+  )
+  assert.match(
+    html,
+    /href="\/albums\/google-album\?tab=sources&amp;sourceProvider=google-custom-search">Google Match<\/a>/,
+  )
+})

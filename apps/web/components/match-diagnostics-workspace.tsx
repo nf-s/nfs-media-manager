@@ -230,8 +230,9 @@ function ProviderMatchCell({
   if (!first || !identity) return <EmptyValue />
   const display =
     matches.length === 1 ? identity : `${identity} (+${matches.length - 1})`
-  const sourceProvider =
+  const defaultSourceProvider =
     provider.key === 'lastfm-listening' ? 'lastfm' : provider.key
+  const sourceProvider = first.sourceProvider ?? defaultSourceProvider
   const discogsPosition = library === 'track' && provider.key === 'discogs'
   const discogsAlbum = discogsPosition ? first.albumId : undefined
   const providerView =
@@ -254,6 +255,7 @@ function ProviderMatchCell({
     const text = providerIdentity(match)
     return {
       discogsAlbum: discogsPosition ? match.albumId : undefined,
+      sourceProvider: match.sourceProvider ?? defaultSourceProvider,
       text: [text, match.identifier === text ? null : match.identifier]
         .filter(Boolean)
         .join(' · '),
@@ -271,6 +273,9 @@ function ProviderMatchCell({
           : undefined,
     }
   })
+  const hasMixedSources =
+    providerView &&
+    details.some((detail) => detail.sourceProvider !== sourceProvider)
   const correctionButton = (correction: TrackScrobbleCorrection) => (
     <Button
       size="xs"
@@ -291,23 +296,26 @@ function ProviderMatchCell({
           details[0]?.text
         ) : (
           <ul>
-            {details.map(({ text, correction, discogsAlbum }, index) => (
-              <li key={index}>
-                {discogsAlbum ? (
-                  <DetailLink
-                    kind="album"
-                    id={discogsAlbum}
-                    tab="sources"
-                    view={{ sourceProvider }}
-                  >
-                    {text}
-                  </DetailLink>
-                ) : (
-                  text
-                )}
-                {correction && correctionButton(correction)}
-              </li>
-            ))}
+            {details.map(
+              ({ text, correction, discogsAlbum, sourceProvider }, index) => (
+                <li key={index}>
+                  {discogsAlbum || hasMixedSources ? (
+                    <DetailLink
+                      {...(discogsAlbum
+                        ? { kind: 'album', id: discogsAlbum }
+                        : review)}
+                      tab="sources"
+                      view={{ sourceProvider }}
+                    >
+                      {text}
+                    </DetailLink>
+                  ) : (
+                    text
+                  )}
+                  {correction && correctionButton(correction)}
+                </li>
+              ),
+            )}
           </ul>
         )
       }

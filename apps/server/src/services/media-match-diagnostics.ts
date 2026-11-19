@@ -9,7 +9,11 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { listProviderCatalog } from '@/plugins/registry'
 import { getLastfmAccount } from './lastfm-scrobbles'
-import { mediaMatchEvidence } from './media-match-evidence'
+import {
+  legacyAlbumGoogleMatchEvidence,
+  legacyGoogleProvider,
+  mediaMatchEvidence,
+} from './media-match-evidence'
 
 const lastfmListeningProvider = 'lastfm-listening'
 
@@ -18,7 +22,8 @@ function listeningMatches(account: string) {
     union all
     select distinct scope.id, ${lastfmListeningProvider}::text as provider,
       scrobble.album_name, scrobble.artist_name, null::text,
-      scrobble.artist_key, scrobble.album_key
+      scrobble.artist_key, scrobble.album_key, null::text as source_provider,
+      null::integer as match_priority
     from evidence_scope scope
     join lastfm_scrobble scrobble on scrobble.album_media_item_id = scope.id
     where scrobble.username = ${account}
@@ -75,6 +80,7 @@ export async function listMediaMatchDiagnostics(
       ? sql`lower(item.creator)`
       : sql`lower(item.name)`
   const order = sql`sort_value ${direction} nulls last, lower(name), id`
+  const providerSortValue = sql`lower(coalesce(name, creator, identifier))`
   const limit = sql`limit ${query.size} offset ${(query.page - 1) * query.size}`
   const result = await db.execute(sql`
     with library as not materialized (${libraryRows(kind, role)}),
@@ -86,13 +92,25 @@ export async function listMediaMatchDiagnostics(
       }
     ), evidence as (
       ${mediaMatchEvidence(role)}
+      ${kind === 'album' ? legacyAlbumGoogleMatchEvidence() : sql.empty()}
       ${lastfmAccount ? listeningMatches(lastfmAccount) : sql.empty()}
     ), matches as (
-      select * from evidence where name is not null or creator is not null or identifier is not null
+      select * from evidence match
+      where (name is not null or creator is not null or identifier is not null)
+      ${
+        kind === 'album'
+          ? sql`and not (match.provider = ${legacyGoogleProvider} and match.match_priority is null
+            and exists (select 1 from evidence saved where saved.id = match.id
+              and saved.provider = match.provider and saved.match_priority is not null
+              and (match.identifier = saved.identifier or (match.identifier is null
+                and (match.name is null or match.name = saved.name)
+                and (match.creator is null or match.creator = saved.creator)))))`
+          : sql.empty()
+      }
     )${
       sortByProvider
         ? sql`, provider_sort as (
-      select id, min(lower(coalesce(name, creator, identifier))) as value
+      select id, (array_agg(${providerSortValue} order by match_priority nulls last, ${providerSortValue}))[1] as value
       from matches where provider = ${query.sortBy} group by id
     )`
         : sql.empty()
@@ -113,7 +131,9 @@ export async function listMediaMatchDiagnostics(
         select jsonb_agg(jsonb_build_object('provider', provider, 'name', name, 'creator', creator,
           'identifier', identifier) || case when artist_key is null then '{}'::jsonb else
             jsonb_build_object('artistKey', artist_key, 'albumKey', album_key) end
-          order by provider, lower(name), name, lower(creator), creator, identifier, artist_key, album_key)
+          || case when source_provider is null or source_provider = provider then '{}'::jsonb else
+            jsonb_build_object('sourceProvider', source_provider) end
+          order by provider, match_priority nulls last, lower(name), name, lower(creator), creator, identifier, artist_key, album_key)
         from matches where matches.id = page.id
       ), '[]'::jsonb) as matches
       from page
