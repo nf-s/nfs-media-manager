@@ -22,6 +22,7 @@ import {
   PlaylistRemovalSchema,
   PlaylistSummarySchema,
   PlaylistSyncSettingsSchema,
+  UpdatePlaylistPresentationSchema,
 } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
@@ -38,6 +39,7 @@ import {
   countPlaylists,
   listPlaylistBrowsePage,
   listPlaylists,
+  updatePlaylistPresentation,
 } from '@/services/playlist-directory'
 import {
   getPlaylistDetail,
@@ -190,7 +192,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'One playlist with its default presentation and a page of entries. Use groupBy=album for one row per library album.',
+            'One playlist with its effective presentation, saved override and a page of entries. Use groupBy=album for one row per library album.',
           content: {
             'application/json': {
               schema: createResponseSchema(PlaylistDetailSchema),
@@ -246,7 +248,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'Library albums by provider and age of their last successful scrape, including albums without a successful scrape',
+            'Library albums with stored metadata from any source and per-provider missing data and scrape freshness',
           content: {
             'application/json': {
               schema: createResponseSchema(CoverageSchema),
@@ -311,7 +313,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'Playlist entries whose library albums have stale metadata or no successful provider scrape. Use groupBy=album to list the affected albums.',
+            'Playlist entries whose library albums have stale or missing provider metadata. Use groupBy=album to list the affected albums.',
           content: {
             'application/json': {
               schema: createResponseSchema(CoverageEntriesSchema),
@@ -329,6 +331,45 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
         await getPlaylistCoverageEntries(
           c.req.valid('param').id,
           c.req.valid('query'),
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'put',
+      path: '/:id/presentation',
+      middleware: [authMiddleware(), sameOrigin],
+      request: {
+        params: PlaylistParamsSchema,
+        body: {
+          required: true,
+          content: {
+            'application/json': { schema: UpdatePlaylistPresentationSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Saved playlist type and effective presentation',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(PlaylistSummarySchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Request origin is not allowed'),
+        404: jsonErrorResponse('Playlist not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await updatePlaylistPresentation(
+          c.req.valid('param').id,
+          c.req.valid('json').presentation,
         ),
         200,
       ),

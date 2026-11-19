@@ -423,6 +423,9 @@ export const playlist = pgTable(
     description: text('description'),
     artworkUrl: text('artwork_url'),
     spotifyUrl: text('spotify_url'),
+    presentationOverride: text('presentation_override', {
+      enum: ['albums', 'tracks'],
+    }),
     // Spotify's version of the playlist contents at the last import.
     snapshotId: text('snapshot_id'),
     // When the contents were last read and stored.
@@ -446,6 +449,10 @@ export const playlist = pgTable(
     index('playlist_name_search_idx').using(
       'gin',
       table.name.op('gin_trgm_ops'),
+    ),
+    check(
+      'playlist_presentation_override_check',
+      sql`${table.presentationOverride} in ('albums', 'tracks')`,
     ),
   ],
 )

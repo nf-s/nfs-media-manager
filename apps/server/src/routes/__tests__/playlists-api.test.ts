@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   page: vi.fn(),
   count: vi.fn(),
   detail: vi.fn(),
+  presentation: vi.fn(),
   schedule: vi.fn(),
   remove: vi.fn(),
   add: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('@/services/playlist-directory', () => ({
   listPlaylists: mocks.list,
   listPlaylistBrowsePage: mocks.page,
   countPlaylists: mocks.count,
+  updatePlaylistPresentation: mocks.presentation,
 }))
 vi.mock('@/services/tracks', () => ({
   getPlaylistDetail: mocks.detail,
@@ -87,6 +89,7 @@ describe('playlist API', () => {
       ['GET', '/browse-count', undefined],
       ['GET', '/playlist-1', undefined],
       ['GET', '/additions?albumId=album-1', undefined],
+      ['PUT', '/playlist-1/presentation', { presentation: null }],
       ['PUT', '/playlist-1/sync-schedule', { schedule: 'daily' }],
       ['POST', '/playlist-1/additions', { albumId: 'album-1' }],
       ['DELETE', '/playlist-1', undefined],
@@ -233,6 +236,48 @@ describe('playlist API', () => {
     expect((await send('GET', '/additions?albumId=a')).status).toBe(200)
     expect(mocks.additions).toHaveBeenCalledWith('a')
     expect(mocks.detail).toHaveBeenCalledTimes(2)
+  })
+
+  it('validates and saves the playlist presentation from a trusted origin', async () => {
+    const path = '/p/presentation'
+    for (const body of [
+      {},
+      { presentation: 'automatic' },
+      { presentation: 'albums', extra: true },
+    ])
+      expect((await send('PUT', path, body)).status).toBe(422)
+
+    expect(
+      (
+        await send(
+          'PUT',
+          path,
+          { presentation: 'albums' },
+          'https://evil.invalid',
+        )
+      ).status,
+    ).toBe(403)
+    expect(mocks.presentation).not.toHaveBeenCalled()
+
+    const summary = {
+      id: 'p',
+      presentation: 'albums',
+      presentationOverride: 'albums',
+    }
+    mocks.presentation.mockResolvedValue(summary)
+    const saved = await send('PUT', path, { presentation: 'albums' })
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({ data: summary })
+    expect(mocks.presentation).toHaveBeenCalledExactlyOnceWith('p', 'albums')
+
+    mocks.presentation.mockResolvedValue({
+      id: 'p',
+      presentation: 'tracks',
+      presentationOverride: null,
+    })
+    const automatic = await send('PUT', path, { presentation: null })
+    expect(automatic.status).toBe(200)
+    expect(mocks.presentation).toHaveBeenLastCalledWith('p', null)
   })
 
   it('forwards explicit playlist entry sorting alongside pagination', async () => {

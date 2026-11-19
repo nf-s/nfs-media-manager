@@ -56,6 +56,9 @@ const plugins = [
   plugin('fixture-a', { supportsNameLookup: true }),
   plugin('fixture-b'),
   plugin('spotify', { displayName: 'Spotify' }),
+  plugin('discogs'),
+  plugin('lastfm'),
+  plugin('serply'),
 ]
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -142,6 +145,7 @@ async function scraped(id: string, provider: string, at: Date) {
     provider,
     checksum: 'fixture',
     payload: {},
+    normalizedData: { mediaPatch: { summary: 'Fixture album description' } },
     status: 'ready',
     lastSuccessfulAt: at,
     lastScrapedAt: at,
@@ -233,7 +237,8 @@ describe('playlist coverage entries', () => {
       )
     const coverage = await getPlaylistCoverage(PLAYLIST, { olderThanDays: 180 })
     const [a, b] = coverage.providers
-    expect(a).toMatchObject({ covered: 1, stale: 1, missing: 2 })
+    expect(coverage.storedAlbums).toBe(2)
+    expect(a).toMatchObject({ stored: 2, covered: 1, stale: 1, missing: 2 })
     expect(b).toMatchObject({ eligible: 1, missing: 1 })
 
     const missing = await query()
@@ -333,7 +338,7 @@ describe('playlist coverage entries', () => {
     expect(page).toMatchObject({ totalCount: 0, albumCount: 0, items: [] })
   })
 
-  it('keeps all library albums in the Spotify scrape gap when imports and links predate any scrape', async () => {
+  it('counts Spotify album imports and keeps bare Spotify references eligible', async () => {
     const { getPlaylistCoverage, getPlaylistCoverageEntries } =
       await import('@/services/metadata-coverage')
     const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
@@ -381,20 +386,190 @@ describe('playlist coverage entries', () => {
 
     const coverage = await getPlaylistCoverage(PLAYLIST, { olderThanDays: 180 })
     expect(coverage.total).toBe(4)
+    expect(coverage.storedAlbums).toBe(3)
     expect(
       coverage.providers.find(({ provider }) => provider === 'spotify'),
-    ).toMatchObject({ eligible: 4, covered: 0, stale: 0, missing: 4 })
+    ).toMatchObject({
+      eligible: 4,
+      stored: 2,
+      covered: 0,
+      stale: 0,
+      missing: 2,
+      missingItemIds: ['album-missing', 'album-stale'],
+    })
     const page = await getPlaylistCoverageEntries(
       PLAYLIST,
       CoverageEntriesQuerySchema.parse({ provider: 'spotify' }),
     )
-    expect(page.albumCount).toBe(4)
+    expect(page.albumCount).toBe(2)
     expect(rows(page)).toEqual([
       { id: 'track-1', gaps: ['spotify album-missing'] },
       { id: 'track-2', gaps: ['spotify album-missing'] },
       { id: listed, gaps: ['spotify album-stale'] },
-      { id: 'track-4', gaps: ['spotify album-fresh'] },
-      { id: 'album-entry', gaps: ['spotify album-entry'] },
     ])
+  })
+
+  it('counts canonical and legacy metadata with source attribution and excludes empty lookups', async () => {
+    const { getPlaylistCoverage, getPlaylistCoverageEntries } =
+      await import('@/services/metadata-coverage')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const { normalizeLegacyBrowse } = await import('@/lib/legacy-browse')
+    await seed()
+    const legacy = normalizeLegacyBrowse(
+      {
+        title: 'Title album-missing',
+        popularityDiscogs: 0,
+        ratingRymValue: 3.5,
+      },
+      'album',
+    )
+    await applyProviderResult({
+      ...legacy,
+      mediaItemId: 'album-missing',
+      mediaType: 'album',
+      provider: 'legacy-browser',
+      source: 'legacy-clean-import',
+    })
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ artworkUrl: 'https://i.scdn.co/image/fixture' })
+      .where(eq(schema.mediaItem.id, 'album-entry'))
+    await databaseClient.insert(schema.providerReference).values(
+      ['album-missing', 'album-stale', 'album-fresh', 'album-entry'].flatMap(
+        (mediaItemId) =>
+          ['discogs', 'lastfm', 'serply'].map((provider) => ({
+            id: `${mediaItemId}-${provider}`,
+            mediaItemId,
+            provider,
+            referenceType: 'album',
+            externalId: 'fixture',
+          })),
+      ),
+    )
+    await databaseClient.insert(schema.providerCurrentState).values([
+      {
+        id: 'native-lastfm',
+        mediaItemId: 'album-stale',
+        provider: 'lastfm',
+        checksum: 'fixture',
+        payload: {
+          name: 'Fixture release',
+          artist: 'Fixture Artist',
+          url: 'https://www.last.fm/music/Fixture+Artist/Fixture+Release',
+          listeners: '0',
+        },
+        status: 'ready',
+        lastSuccessfulAt: new Date(Date.now() - 400 * DAY),
+      },
+      {
+        id: 'empty-lookup',
+        mediaItemId: 'album-entry',
+        provider: 'serply',
+        checksum: 'fixture',
+        payload: {},
+        normalizedData: {
+          mediaPatch: {
+            metadata: {
+              'plugin.serply.provenance': { matchStatus: 'identity-only' },
+            },
+          },
+          references: [{ referenceType: 'rym-url', externalId: 'fixture' }],
+        },
+        status: 'ready',
+        lastSuccessfulAt: new Date(),
+        lastScrapedAt: new Date(),
+      },
+      {
+        id: 'unsuccessful-fixture',
+        mediaItemId: 'album-entry',
+        provider: 'fixture-b',
+        checksum: 'fixture',
+        payload: { error: 'Fixture failure' },
+        normalizedData: { mediaPatch: { summary: 'Diagnostic message' } },
+        status: 'failed',
+      },
+    ])
+    const coverage = await getPlaylistCoverage(PLAYLIST, { olderThanDays: 180 })
+    expect(coverage.storedAlbums).toBe(coverage.total)
+    const byProvider = new Map(
+      coverage.providers.map((row) => [row.provider, row]),
+    )
+    expect(byProvider.get('spotify')).toMatchObject({ stored: 1, missing: 0 })
+    expect(byProvider.get('discogs')).toMatchObject({ stored: 1, missing: 3 })
+    expect(byProvider.get('lastfm')).toMatchObject({
+      stored: 1,
+      stale: 0,
+      missing: 3,
+    })
+    expect(byProvider.get('serply')).toMatchObject({
+      stored: 0,
+      covered: 0,
+      missing: 4,
+    })
+    expect(byProvider.get('fixture-b')).toMatchObject({ stored: 0, missing: 1 })
+    const gaps = await getPlaylistCoverageEntries(
+      PLAYLIST,
+      CoverageEntriesQuerySchema.parse({
+        provider: 'discogs',
+        groupBy: 'album',
+      }),
+    )
+    expect(gaps.albumCount).toBe(3)
+    expect(rows(gaps).map((row) => row.id)).not.toContain('album-missing')
+  })
+
+  it('rechecks stored gaps when queueing reviewed album IDs', async () => {
+    const { queueAlbumSelection } = await import('@/services/album-selection')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    await seed()
+    await applyProviderResult({
+      mediaItemId: 'album-missing',
+      mediaType: 'album',
+      provider: 'fixture-a',
+      source: 'file-import',
+      payload: {},
+      normalized: {
+        mediaPatch: { summary: 'A saved fixture description' },
+        references: [],
+        links: [],
+        tags: [],
+        tracks: [],
+        credits: [],
+        playlists: [],
+      },
+    })
+    const denied = await queueAlbumSelection(
+      {
+        providers: ['fixture-a'],
+        mediaItemIds: ['album-missing'],
+        coverageGap: { gap: 'missing', olderThanDays: 180 },
+        batchId: randomUUID(),
+        confirmBroadRun: false,
+      },
+      null,
+    )
+    expect(denied).toMatchObject({ queued: 0, skipped: 1 })
+
+    const stale = await queueAlbumSelection(
+      {
+        providers: ['fixture-a'],
+        mediaItemIds: [
+          'album-stale',
+          'album-fresh',
+          'album-entry',
+          'album-missing',
+        ],
+        coverageGap: { gap: 'stale', olderThanDays: 180 },
+        batchId: randomUUID(),
+        confirmBroadRun: false,
+      },
+      null,
+    )
+    expect(stale).toMatchObject({ queued: 1, skipped: 3 })
+    expect(
+      await databaseClient
+        .select({ id: schema.scrapeJobItem.mediaItemId })
+        .from(schema.scrapeJobItem),
+    ).toEqual([{ id: 'album-stale' }])
   })
 })

@@ -26,5 +26,6 @@ export async function queueAlbumSelection(
   input: z.infer<typeof QueueAlbumSelectionSchema>,
   userId: string | null,
 ) {
-  return queueMediaSelection(input, 'album', userId)
+  const options = QueueAlbumSelectionSchema.parse(input)
+  return queueMediaSelection(options, 'album', userId, options.coverageGap)
 }
