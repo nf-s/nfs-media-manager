@@ -26,7 +26,7 @@ Open a provider cell to inspect its Sources row. Use **Find match** where provid
 
 For an album catalog that returns a title and artist list on the record itself, Matches can display those fields when the returned ID agrees with the snapshot’s selected catalog reference.
 
-In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
+In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. When the search title is incomplete, a full title and artist can also come from the selected release page’s archived heading. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
 
 An authenticated candidate preview at `POST /api/v1/find-match/preview` reads the tracks for one explicit Discogs or Last.fm album identifier. It returns the provider title, artists, track count and up to 500 ordered tracks. The provider's request limits apply. Previewing preserves the album's current match.
 

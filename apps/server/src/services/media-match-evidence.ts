@@ -189,10 +189,15 @@ function encodedUrlLength(value: SQL) {
 
 const legacyTypedTitle =
   '(?i)^(?:Reviews of |Lists with )?(.+) by (.+) \\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix)[,);]'
-const legacyUntypedTitle = '(?i)^(.+) by (.+) - (?:RYM|Rate Your Music)$'
+const legacyUntypedTitle =
+  '(?i)^(.+) by (.+) - (?:RYM(?:/Sonemic)?|Rate Your Music)$'
 const legacyMetacriticTitle =
   '(?i)^(?:(?:Critic|User) Reviews for )?(.+) by (.+?)(?: Reviews and Tracks)? - Metacritic$'
-const ambiguousMetacriticTitle = '(?i) by .+ by |[.]{3}|…'
+const ambiguousPageTitle = '(?i) by .+ by |[.]{3}|…'
+
+function rymTitleParts(title: SQL) {
+  return sql`coalesce(regexp_match(${title}, ${legacyTypedTitle}), regexp_match(${title}, ${legacyUntypedTitle}))`
+}
 
 /** Reads each selected Google result from the raw import or its cleaned browse row. */
 export function legacyAlbumGoogleMatchEvidence() {
@@ -211,9 +216,9 @@ export function legacyAlbumGoogleMatchEvidence() {
       ('metacriticGoogle', 'metacritic', 'mc', ${legacyMetacriticUrl}::text, 1, 'metacritic-url')
     ) site(raw_key, browse_key, fallback_key, url_pattern, match_priority, reference_type)
     cross join lateral (
-      select provider, latest_snapshot_id, title, url
+      select provider, latest_snapshot_id, title, page_title, url
       from (
-        select source.provider, source.latest_snapshot_id, fields.title, selected.url,
+        select source.provider, source.latest_snapshot_id, fields.title, fields.page_title, selected.url,
           ${legacyGooglePriority} as priority, fields.key_priority,
           first_value(selected.url) over (order by ${legacyGooglePriority}, fields.key_priority) as selected_url
         from provider_current_state source
@@ -221,6 +226,11 @@ export function legacyAlbumGoogleMatchEvidence() {
           select case when source.provider = 'legacy-browser'
             then ${stringValue(sql`${cleanedMatch}->'title'`)}
             else ${stringValue(sql`${rawMatch}->'rawResponse'->'title'`)} end as title,
+          case when site.browse_key = 'rym'
+            and ${rawMatch}->'rawResponse'->>'link' = ${rawMatch}->>'link'
+            and jsonb_array_length(${jsonArray(sql`${rawMatch} #> '{rawResponse,pagemap,metatags}'`)}) = 1
+            then ${stringValue(sql`${rawMatch} #> '{rawResponse,pagemap,metatags,0,og:title}'`)}
+          end as page_title,
           case when source.provider = 'legacy-browser'
             then ${stringValue(sql`${cleanedMatch}->'href'`)}
             else ${stringValue(sql`${rawMatch}->'link'`)} end as raw_url,
@@ -246,16 +256,16 @@ export function legacyAlbumGoogleMatchEvidence() {
           )
       ) candidates
       where url = selected_url
-      order by (title is not null) desc, priority, key_priority
+      order by (title is not null) desc, (title is null and page_title is not null) desc, priority, key_priority
       limit 1
     ) saved
     cross join lateral (
       select case
         when site.browse_key = 'rym' then coalesce(
-          regexp_match(saved.title, ${legacyTypedTitle}),
-          regexp_match(saved.title, ${legacyUntypedTitle})
+          ${rymTitleParts(sql`saved.title`)},
+          case when saved.page_title !~ ${ambiguousPageTitle} then ${rymTitleParts(sql`saved.page_title`)} end
         )
-        when saved.title !~ ${ambiguousMetacriticTitle}
+        when saved.title !~ ${ambiguousPageTitle}
           then regexp_match(saved.title, ${legacyMetacriticTitle})
       end as parts
     ) header`

@@ -1405,6 +1405,79 @@ describe('album match rejection history', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('reads a full RYM page heading only from the selected archived result', async () => {
+    const id = 'archived-rym-page-title'
+    const link = 'https://rateyourmusic.com/release/album/fixture/full-record/'
+    const snippetTitle = 'Short result'
+    const fullHeading = 'The Complete Record by Source Artist - RYM/Sonemic'
+    await createAlbumFixture(id)
+    async function store(
+      snapshotId: string,
+      resultLink: string,
+      heading: string,
+      title = snippetTitle,
+    ) {
+      await storeMatchFixture(id, 'google-custom-search', snapshotId, {
+        rymGoogle: {
+          link,
+          rawResponse: {
+            title,
+            link: resultLink,
+            pagemap: { metatags: [{ 'og:title': heading }] },
+          },
+        },
+      })
+    }
+    await store('matching-header', link, fullHeading)
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        identifier: link,
+        name: 'The Complete Record',
+        creator: 'Source Artist',
+        rejectionTarget: expect.objectContaining({
+          snapshotId: 'matching-header',
+        }),
+      }),
+    )
+
+    await store(
+      'primary-heading',
+      link,
+      fullHeading,
+      'Selected Title by Selected Artist - RYM',
+    )
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        identifier: link,
+        name: 'Selected Title',
+        creator: 'Selected Artist',
+      }),
+    )
+
+    for (const [snapshotId, resultLink, heading] of [
+      ['different-page', link + 'other/', fullHeading],
+      [
+        'ambiguous-artist',
+        link,
+        'A Track by Track Album by Source Artist - RYM/Sonemic',
+      ],
+      [
+        'incomplete-header',
+        link,
+        'The Complete… by Source Artist - RYM/Sonemic',
+      ],
+    ]) {
+      await store(snapshotId, resultLink, heading)
+      expect(await getFixtureMatches(id)).toContainEqual(
+        expect.objectContaining({
+          identifier: link,
+          name: snippetTitle,
+          creator: null,
+        }),
+      )
+    }
+  })
+
   it('keeps long URL allowances within validated legacy RYM release scope', async () => {
     const prefix = 'https://rateyourmusic.com/release/album/fixture/'
     const slug = encodeURIComponent('音楽'.repeat(65))
