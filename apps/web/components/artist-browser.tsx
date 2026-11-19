@@ -1,6 +1,5 @@
 'use client'
 
-import { DetailInspector } from './detail-inspector'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
@@ -932,7 +931,6 @@ export default function ArtistBrowser() {
           )}
         </TableScroll>
       </div>
-      <DetailInspector />
     </section>
   )
 }
