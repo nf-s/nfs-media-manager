@@ -90,6 +90,45 @@ describe('legacy browse normalization', () => {
       ratingImdbValue: 0,
     })
   })
+
+  it('selects one exact Metacritic album link from the historical keys', () => {
+    const alternate = {
+      href: 'https://www.metacritic.com/music/fixture/fixture-artist/critic-reviews/',
+    }
+    const preferred = {
+      href: 'https://www.metacritic.com/music/fixture-record/user-reviews/?utm_source=fixture',
+    }
+    const lookalike = {
+      href: 'https://metacritic.com.example.test/music/fixture-record/',
+    }
+    const malformed = {
+      href: 'https://www.metacritic.com/music/fixture-record/%2e%2e/',
+    }
+    for (const { links, expected } of [
+      { links: { mc: alternate }, expected: alternate },
+      { links: { metacritic: preferred }, expected: preferred },
+      {
+        links: { mc: alternate, metacritic: preferred },
+        expected: preferred,
+      },
+      {
+        links: { mc: alternate, metacritic: lookalike },
+        expected: alternate,
+      },
+      {
+        links: { mc: alternate, metacritic: malformed },
+        expected: alternate,
+      },
+    ]) {
+      const result = normalizeLegacyBrowse(
+        LegacyBrowseRecordSchema.parse({ title: 'Fixture album', links }),
+        'album',
+      )
+      expect(result.normalized.links).toEqual([
+        { provider: 'mc', label: 'Metacritic', url: expected.href },
+      ])
+    }
+  })
 })
 
 describe('plugin boundaries', () => {

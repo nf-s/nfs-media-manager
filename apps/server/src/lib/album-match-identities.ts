@@ -41,14 +41,16 @@ function albumMatchUrl(value: string): string | null {
     path = path.replace(/^\/music\/\+noredirect\//, '/music/')
     return host + path.replaceAll('%20', '+')
   }
+  if (url.port === '' && host === 'metacritic.com') {
+    path = path.replace(
+      /^(\/music\/[^/]+(?:\/[^/]+)?)\/(?:critic-reviews|user-reviews)$/,
+      '$1',
+    )
+    return host + path
+  }
   if (
     url.port === '' &&
-    [
-      'metacritic.com',
-      'discogs.com',
-      'musicbrainz.org',
-      'open.spotify.com',
-    ].includes(host)
+    ['discogs.com', 'musicbrainz.org', 'open.spotify.com'].includes(host)
   )
     return host + path
   for (const name of [...url.searchParams.keys()])

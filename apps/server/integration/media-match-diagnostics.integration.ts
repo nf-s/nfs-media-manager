@@ -791,6 +791,114 @@ async function getFixtureMatches(id: string) {
 }
 
 describe('album match rejection history', () => {
+  it('finds cleaned Metacritic matches under either key while keeping the selected URL and source', async () => {
+    const id = 'cleaned-metacritic-fixture'
+    const rawUrl = 'https://metacritic.com/music/raw-record/fixture/'
+    const preferredUrl = 'https://metacritic.com/music/cleaned-record/fixture/'
+    const alternateUrl =
+      'https://metacritic.com/music/alternate-record/fixture/'
+    const alternateTitle = 'Alternate Record by Fixture Artist - Metacritic'
+    await createAlbumFixture(id)
+    await storeMatchFixture(id, 'legacy-browser', 'cleaned-metacritic', {
+      links: {
+        metacritic: {
+          href: 'https://metacritic.com.example.test/music/fixture/',
+          title: 'Wrong host',
+        },
+        mc: { href: alternateUrl, title: alternateTitle },
+      },
+    })
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        name: 'Alternate Record',
+        creator: 'Fixture Artist',
+        rejectionTarget: {
+          provider: 'google-custom-search',
+          sourceProvider: 'legacy-browser',
+          snapshotId: 'cleaned-metacritic',
+          referenceType: 'metacritic-url',
+          identifier: alternateUrl,
+        },
+      }),
+    )
+
+    await storeMatchFixture(
+      id,
+      'legacy-browser',
+      'preferred-cleaned-metacritic',
+      {
+        links: {
+          metacritic: { href: preferredUrl },
+          mc: { href: alternateUrl, title: alternateTitle },
+        },
+      },
+    )
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        identifier: preferredUrl,
+        name: null,
+        creator: null,
+      }),
+    )
+
+    await storeMatchFixture(id, 'google-custom-search', 'raw-metacritic', {
+      metacriticGoogle: { link: rawUrl },
+    })
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        identifier: rawUrl,
+        name: null,
+        creator: null,
+        rejectionTarget: expect.objectContaining({
+          sourceProvider: 'google-custom-search',
+          snapshotId: 'raw-metacritic',
+        }),
+      }),
+    )
+
+    await storeMatchFixture(id, 'legacy-browser', 'same-cleaned-metacritic', {
+      links: {
+        metacritic: { href: preferredUrl },
+        mc: {
+          href: rawUrl,
+          title: 'Raw Record by Fixture Artist - Metacritic',
+        },
+      },
+    })
+    const matches = await getFixtureMatches(id)
+    expect(matches).toContainEqual(
+      expect.objectContaining({
+        identifier: rawUrl,
+        name: 'Raw Record',
+        creator: 'Fixture Artist',
+        rejectionTarget: expect.objectContaining({
+          sourceProvider: 'legacy-browser',
+          snapshotId: 'same-cleaned-metacritic',
+        }),
+      }),
+    )
+    const target = matches.find(
+      (match) => match.identifier === rawUrl,
+    )?.rejectionTarget
+    if (!target) throw new Error('Missing fixture evidence')
+    const decision = await rejectAlbumMatch(id, target, null)
+
+    const reviewUrl = `${rawUrl}critic-reviews/`
+    await storeMatchFixture(id, 'google-custom-search', 'raw-critic-reviews', {
+      metacriticGoogle: { link: reviewUrl },
+    })
+    expect(await getFixtureMatches(id)).toContainEqual(
+      expect.objectContaining({
+        identifier: reviewUrl,
+        rejectedAt: decision.rejectedAt,
+      }),
+    )
+    expect(
+      await listAlbumMatchRejections(id, { page: 1, size: 5 }),
+    ).toMatchObject({ items: [decision] })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('rejects native Discogs, MusicBrainz and Last.fm records without normalized references', async () => {
     const id = 'native-rejection-fixture'
     const groupId = '33ce6ab1-9cbd-4974-ab55-200911ac233f'

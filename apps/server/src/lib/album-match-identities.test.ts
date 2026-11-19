@@ -76,4 +76,33 @@ describe('album match identity comparison', () => {
       }),
     ).toBe(false)
   })
+
+  it.each(['/music/fixture-record', '/music/fixture-record/fixture-artist'])(
+    'rejects Metacritic review tabs for %s without rejecting other releases',
+    (path) => {
+      const isRejected = createAlbumMatchRejectionPredicate(
+        'fixture-provider',
+        [
+          {
+            provider: 'google-custom-search',
+            sourceProvider: 'legacy-record',
+            referenceType: 'metacritic-url',
+            identifier: `http://www.metacritic.com${path}/critic-reviews/`,
+            aliases: [],
+          },
+        ],
+      )
+      const rejects = (candidate: string) =>
+        isRejected({
+          referenceType: 'url',
+          externalId: `https://metacritic.com${candidate}`,
+        })
+
+      expect(rejects(path)).toBe(true)
+      expect(rejects(`${path}/user-reviews/?utm_source=fixture`)).toBe(true)
+      expect(rejects(`${path}-other/critic-reviews`)).toBe(false)
+      expect(rejects(`${path}/other-tab`)).toBe(false)
+      expect(rejects(path.replace('/music/', '/movie/'))).toBe(false)
+    },
+  )
 })

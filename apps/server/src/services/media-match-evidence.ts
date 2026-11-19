@@ -149,7 +149,7 @@ export function mediaMatchEvidence(role: 'artist' | 'director') {
 
 export const legacyGoogleProvider = 'google-custom-search'
 const rawMatch = sql`${payload}->site.raw_key`
-const cleanedMatch = sql`${payload}->'links'->site.browse_key`
+const cleanedMatch = sql`${payload}->'links'->browse.key`
 const legacyGooglePriority = sql`case source.provider
   when ${legacyGoogleProvider} then 0 when 'legacy-record' then 1 else 2 end`
 const legacyRymUrl =
@@ -175,14 +175,15 @@ export function legacyAlbumGoogleMatchEvidence() {
       saved.latest_snapshot_id as snapshot_id, site.reference_type
     from evidence_scope scope
     cross join (values
-      ('rymGoogle', 'rym', ${legacyRymUrl}::text, 0, 'rym-url'),
-      ('metacriticGoogle', 'metacritic', ${legacyMetacriticUrl}::text, 1, 'metacritic-url')
-    ) site(raw_key, browse_key, url_pattern, match_priority, reference_type)
+      ('rymGoogle', 'rym', null, ${legacyRymUrl}::text, 0, 'rym-url'),
+      ('metacriticGoogle', 'metacritic', 'mc', ${legacyMetacriticUrl}::text, 1, 'metacritic-url')
+    ) site(raw_key, browse_key, fallback_key, url_pattern, match_priority, reference_type)
     cross join lateral (
       select provider, latest_snapshot_id, title, url
       from (
-        select source.provider, source.latest_snapshot_id, fields.title, fields.url, ${legacyGooglePriority} as priority,
-          first_value(fields.url) over (order by ${legacyGooglePriority}) as selected_url
+        select source.provider, source.latest_snapshot_id, fields.title, fields.url,
+          ${legacyGooglePriority} as priority, fields.key_priority,
+          first_value(fields.url) over (order by ${legacyGooglePriority}, fields.key_priority) as selected_url
         from provider_current_state source
         cross join lateral (
           select case when source.provider = 'legacy-browser'
@@ -190,14 +191,18 @@ export function legacyAlbumGoogleMatchEvidence() {
             else ${stringValue(sql`${rawMatch}->'rawResponse'->'title'`)} end as title,
           split_part(split_part(case when source.provider = 'legacy-browser'
             then ${stringValue(sql`${cleanedMatch}->'href'`)}
-            else ${stringValue(sql`${rawMatch}->'link'`)} end, '?', 1), '#', 1) as url
+            else ${stringValue(sql`${rawMatch}->'link'`)} end, '?', 1), '#', 1) as url,
+            browse.position as key_priority
+          from unnest(array[site.browse_key, site.fallback_key]) with ordinality as browse(key, position)
+          where browse.key is not null
+            and (source.provider = 'legacy-browser' or browse.position = 1)
         ) fields
         where source.media_item_id = scope.id and source.status = 'ready'
           and source.provider in (${legacyGoogleProvider}, 'legacy-record', 'legacy-browser')
           and length(fields.url) <= 500 and fields.url ~ site.url_pattern
       ) candidates
       where url = selected_url
-      order by (title is not null) desc, priority
+      order by (title is not null) desc, priority, key_priority
       limit 1
     ) saved
     cross join lateral (

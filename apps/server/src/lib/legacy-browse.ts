@@ -95,6 +95,12 @@ const safeUrl = (value: JsonValue | undefined): string | undefined => {
     : undefined
 }
 
+const metacriticPathSegment = '(?!(?:[.]|%2e){1,2}(?:[/#?]|$))[^/?#\\s\\\\]+'
+const metacriticAlbumLink = new RegExp(
+  `^https?://(?:www[.])?metacritic[.]com/music/${metacriticPathSegment}(?:/${metacriticPathSegment})*/?(?:[?#].*)?$`,
+  'i',
+)
+
 export function normalizeLegacyBrowse(
   row: LegacyBrowseRecord,
   mediaType: 'album' | 'film',
@@ -136,13 +142,22 @@ export function normalizeLegacyBrowse(
     discogs: 'Discogs',
     mc: 'Metacritic',
   }
-  const links = Object.entries(record(row.links)).flatMap(
-    ([provider, value]) => {
-      const label = linkLabels[provider]
-      const url = safeUrl(record(value).href)
-      return label && url ? [{ provider, label, url }] : []
+  const savedLinks = record(row.links)
+  const albumMetacriticLink = [savedLinks.metacritic, savedLinks.mc].find(
+    (link) => {
+      const url = safeUrl(record(link).href)
+      return url !== undefined && metacriticAlbumLink.test(url)
     },
   )
+  const browseLinks =
+    mediaType === 'album'
+      ? { ...savedLinks, mc: albumMetacriticLink }
+      : savedLinks
+  const links = Object.entries(browseLinks).flatMap(([provider, value]) => {
+    const label = linkLabels[provider]
+    const url = safeUrl(record(value).href)
+    return label && url ? [{ provider, label, url }] : []
+  })
   const credits = ['artist', 'director', 'actor', 'writer'].flatMap((role) =>
     strings(row[aliases[role] ?? role]).map((name, billingOrder) => ({
       name,
