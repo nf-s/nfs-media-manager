@@ -225,15 +225,40 @@ async function completeRun(
 
 /**
  * Stores shows with every detail the station gave. A renamed show's mixes get
- * new search text, since the show name is part of it.
+ * new search text, since the show name is part of it. Shows named without
+ * their details are stored only when new: a stored show keeps its own.
  */
 async function upsertShows(
   tx: Transaction,
   station: MixStation,
   run: SyncRow,
   shows: StationShow[],
+  partial = false,
 ) {
   if (!shows.length) return
+  const rows = shows.map((show) => ({
+    id: show.id,
+    type: station,
+    title: show.title,
+    handle: show.handle,
+    description: show.description,
+    thumbnailUrl: show.thumbnailUrl,
+    url: show.url,
+    itemTotal: show.itemTotal,
+    subscribed: true,
+    seenRunId: run.runId,
+  }))
+  if (partial) {
+    await tx
+      .insert(subscriptionSource)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: subscriptionSource.id,
+        set: { subscribed: true, seenRunId: run.runId },
+        setWhere: eq(subscriptionSource.type, station),
+      })
+    return
+  }
   const byId = new Map(shows.map((show) => [show.id, show]))
   const renamed = (
     await tx
@@ -251,20 +276,7 @@ async function upsertShows(
   })
   await tx
     .insert(subscriptionSource)
-    .values(
-      shows.map((show) => ({
-        id: show.id,
-        type: station,
-        title: show.title,
-        handle: show.handle,
-        description: show.description,
-        thumbnailUrl: show.thumbnailUrl,
-        url: show.url,
-        itemTotal: show.itemTotal,
-        subscribed: true,
-        seenRunId: run.runId,
-      })),
-    )
+    .values(rows)
     .onConflictDoUpdate({
       target: subscriptionSource.id,
       set: {
@@ -402,7 +414,7 @@ async function syncShowsPage(
   const shows = distinctShows(station, page.entries)
   return db.transaction(async (tx) => {
     if (!(await ownedRun(tx, station, token, run))) return 'lost'
-    await upsertShows(tx, station, run, [...shows.values()])
+    await upsertShows(tx, station, run, [...shows.values()], page.partial)
     if (page.next !== null) {
       const listed = await tx.$count(
         subscriptionSource,
@@ -468,8 +480,8 @@ async function nextShow(station: MixStation, run: SyncRow) {
 /**
  * Reads one page of the next show's mixes. A show whose history is not stored
  * is read to its last page; one whose history is stored stops at the first page
- * that holds a stored mix. After the last show the station's history is
- * complete and the run ends.
+ * that holds a stored mix. A page that carries the show's details stores them.
+ * After the last show the station's history is complete and the run ends.
  */
 async function syncShowEpisodesPage(
   station: MixStation,
@@ -492,13 +504,17 @@ async function syncShowEpisodesPage(
     run.pageToken,
   )
   if (!(await context.isActive())) return 'lost'
+  const details = page.show
+  if (details && details.id !== show.id)
+    throw new Error(`${stationName(station)} returned a different show.`)
   const episodes = distinctEpisodes(
     station,
-    page.entries.map((episode) => ({ show, episode })),
+    page.entries.map((episode) => ({ show: details ?? show, episode })),
   )
   return db.transaction(async (tx) => {
     const current = await ownedRun(tx, station, token, run)
     if (!current) return 'lost'
+    if (details) await upsertShows(tx, station, run, [details])
     const { added, known } = await upsertEpisodes(tx, station, episodes)
     const stop = show.historyComplete && known > 0
     if (page.next !== null && !stop) {

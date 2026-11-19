@@ -47,6 +47,22 @@ export type StationPage<T> = {
   total: number | null
 }
 
+/** One page of a station's show catalogue. */
+export type StationShowPage = StationPage<StationShow> & {
+  /**
+   * The listing names its shows without their details. The sync stores a new
+   * show as named and leaves a stored one as it is; the show's first page of
+   * mixes carries the details.
+   */
+  partial?: boolean
+}
+
+/** One page of a show's mixes. */
+export type StationEpisodePage = StationPage<StationEpisode> & {
+  /** The show's full details, when the page carries them. The sync stores them. */
+  show?: StationShow
+}
+
 /** An episode of the station-wide feed with the show it belongs to. */
 export type StationFeedEntry = {
   show: StationShow
@@ -81,13 +97,13 @@ export interface MixStationAdapter {
     listShows: (
       request: StationRequest,
       page: string | null,
-    ) => Promise<StationPage<StationShow>>
+    ) => Promise<StationShowPage>
     /** Newest first, so a later run can stop at the first stored episode. */
     listShowEpisodes: (
       request: StationRequest,
       show: Pick<StationShow, 'id' | 'handle'>,
       page: string | null,
-    ) => Promise<StationPage<StationEpisode>>
+    ) => Promise<StationEpisodePage>
   } | null
   /**
    * One page of the station-wide feed. `archive` reads everything the feed

@@ -18,11 +18,11 @@ No station publishes an API for its archive. Each is read through the JSON its o
 | Station       | Shows                                                        | Mixes                                                                          | Recording link                                       | Duration  |
 | ------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------ | ---------------------------------------------------- | --------- |
 | Rinse FM      | The site's show catalogue, 20 per request                    | Each show's episodes; later syncs read the daily schedule                      | The MP3 file the site plays, else its YouTube stream | Stored    |
-| NTS           | The show list, 12 per request                                | Each show's episodes, 12 per request; later syncs read the recently added list | The episode's SoundCloud or Mixcloud page            | Not given |
+| NTS           | The show pages in the site's sitemap                         | Each show's episodes, 12 per request; later syncs read the recently added list | The episode's SoundCloud or Mixcloud page            | Not given |
 | The Lot Radio | Taken from the sessions; there is no separate show catalogue | The site's index of archived sessions, 100 per request                         | The session's stream                                 | Stored    |
 
 - **Rinse FM.** A rebroadcast and an episode with no recording yet are not stored. The title follows the site's heading. Artists are the names the episode bills, with guests named after "with", "w/", "b2b" and similar in its title.
-- **NTS.** An episode's show name is the part of its name before " w/ ", and its artists the names after it. Episodes not yet broadcast are skipped. The recently added list serves about eleven days of episodes.
+- **NTS.** An episode's show name is the part of its name before " w/ ", and its artists the names after it. Episodes not yet broadcast are skipped. The recently added list serves about eleven days of episodes. NTS serves no listing past offset 996, so the shows come from the sitemap, which names each by its alias; a show's name, description and artwork arrive with its first page of episodes, and until then the show is listed under its alias. For the same reason a show's episodes stop at its newest 1,008: older episodes of a longer show are not read.
 - **The Lot Radio.** The index is read through the page's own server action, whose identifier changes each time the site is deployed. The sync finds it in the page's scripts, and finds it again when a page fails. A session's tracklist is stored as `Artist - Title` lines in its description, so a search finds a session by a track played in it. This station is read only by the server, not by a local worker transport.
 
 ## Sync
@@ -137,7 +137,7 @@ The hosted deployment binds one queue per station (`apps/server/wrangler.jsonc`)
 ## Verification
 
 - `src/lib/rinse-api.test.ts`, `src/lib/nts-api.test.ts` and `src/lib/lotradio-api.test.ts` read each station's responses from synthetic fixtures: paging, skipped episodes, billed artists, dates and time zones, recording links, the reach of each recent list and a changed action identifier.
-- `integration/mix-station-sync.integration.ts` runs the sync through the job dispatcher against fake stations and a temporary database: a first sync in chained jobs, later syncs from the recent list, a list that does not reach the last sync, a feed-only station, renamed shows, a rate-limit pause and resume, failure, cancellation and the schedule.
+- `integration/mix-station-sync.integration.ts` runs the sync through the job dispatcher against fake stations and a temporary database: a first sync in chained jobs, a catalogue that names its shows without details, later syncs from the recent list, a list that does not reach the last sync, a feed-only station, renamed shows, a rate-limit pause and resume, failure, cancellation and the schedule.
 - `integration/mixes-library.integration.ts` browses synthetic rows: both libraries kept apart, every filter, range and sort, the tag hierarchy, artist links and the artist's mixes.
 - Web tests (`utils/subscriptions.test.ts`, `components/subscription-browser.test.tsx`, `components/subscription-sync.test.tsx`, `components/creator-details.test.tsx`, `utils/media-scope.test.ts`) cover the Mixes pages, station sync panels, show and mix details and navigation.
 

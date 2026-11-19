@@ -207,6 +207,11 @@ const api: {
   truncate: boolean
   /** Returns a mix with another station's identifier. */
   foreignId: boolean
+  /**
+   * The catalogue names its shows by handle alone; a show's first page of
+   * mixes carries its details.
+   */
+  partialCatalogue: boolean
   /** Answers this numbered request with `failStatus`; a 429 carries Retry-After. */
   failAt: number
   failStatus: number
@@ -217,6 +222,7 @@ const api: {
 } = {
   truncate: false,
   foreignId: false,
+  partialCatalogue: false,
   failAt: 0,
   failStatus: 500,
   requests: 0,
@@ -292,21 +298,39 @@ function fakeAdapter(
       ? {
           listShows: async (stationRequest, page) => {
             await call(stationRequest, 'shows', page)
-            return paged(
+            const listed = paged(
               fixture()
                 .shows.filter((item) => item.listed)
                 .map((item) => stationShow(station, item)),
               page,
             )
+            return api.partialCatalogue
+              ? {
+                  ...listed,
+                  entries: listed.entries.map((entry) => ({
+                    ...entry,
+                    title: entry.handle,
+                    description: null,
+                    thumbnailUrl: null,
+                  })),
+                  partial: true,
+                }
+              : listed
           },
           listShowEpisodes: async (stationRequest, target, page) => {
             await call(stationRequest, `episodes/${target.handle}`, page)
-            return paged(
+            const listed = paged(
               newestFirst(
                 fixture().mixes.filter((item) => item.show === target.handle),
               ).map((item) => stationEpisode(station, item)),
               page,
             )
+            return api.partialCatalogue && page === null
+              ? {
+                  ...listed,
+                  show: stationShow(station, findShow(target.handle)),
+                }
+              : listed
           },
         }
       : null,
@@ -503,6 +527,7 @@ beforeEach(async () => {
   Object.assign(api, {
     truncate: false,
     foreignId: false,
+    partialCatalogue: false,
     failAt: 0,
     failStatus: 500,
     requests: 0,
@@ -610,6 +635,63 @@ describe('mix station sync jobs with offline HTTP and a temporary database', () 
     expect(await matching('sora')).toEqual(['rinse.d1'])
     expect(await matching('ambient')).toEqual(['rinse.d1'])
     expect(await matching('tidal')).toEqual(['rinse.t1', 'rinse.t2'])
+  })
+
+  it('stores shows a catalogue names by handle, then their details from the first page of mixes', async () => {
+    api.partialCatalogue = true
+    await databaseClient.insert(schema.subscriptionSource).values({
+      id: 'rinse.tidal',
+      type: 'rinse',
+      title: 'Tidal Rhythms, as stored',
+      handle: 'tidal',
+      description: 'Stored before',
+      url: 'https://rinse.fixture.test/shows/tidal',
+    })
+    // The catalogue fits; the first episode page does not.
+    api.failAt = 3
+    expect(await syncToEnd()).toMatchObject({
+      state: 'failed',
+      phase: 'items',
+      storedSources: 3,
+    })
+    // A new show is stored as named; a stored one keeps its details.
+    expect(await source('rinse.basement')).toMatchObject({
+      title: 'basement',
+      handle: 'basement',
+      description: null,
+      thumbnailUrl: null,
+      historyComplete: false,
+    })
+    expect(await source('rinse.tidal')).toMatchObject({
+      title: 'Tidal Rhythms, as stored',
+      description: 'Stored before',
+    })
+
+    await clearProviderState()
+    api.failAt = 0
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      sourcesDone: 3,
+      storedSources: 3,
+      storedItems: 6,
+    })
+    expect(await source('rinse.basement')).toMatchObject({
+      title: 'Basement Hours',
+      description: 'About Basement Hours',
+      thumbnailUrl: 'https://img.fixture.test/basement.jpg',
+      itemTotal: 3,
+      historyComplete: true,
+    })
+    expect(await source('rinse.tidal')).toMatchObject({
+      title: 'Tidal Rhythms',
+      description: 'About Tidal Rhythms',
+    })
+    // Every page of a show's mixes is found by the show's own name.
+    expect(await matching('hours')).toEqual([
+      'rinse.b1',
+      'rinse.b2',
+      'rinse.b3',
+    ])
   })
 
   it('reads only the feed since the last run, resolving new partial shows', async () => {
