@@ -2,11 +2,14 @@ import {
   PluginResultSchema,
   ProviderItemAmbiguousError,
   ProviderItemNotFoundError,
+  type AlbumReleaseTrackEvidence,
   type MediaProviderPlugin,
   type MediaPluginScrapeContext,
   type MediaPluginTestContext,
 } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
+import { albumNameKey } from '@/lib/album-import-candidates'
+import { albumTrackTitleKey } from '@/lib/lastfm-album-matching'
 import {
   DiscogsRecordSchema,
   albumProviderDetailBrowseFields,
@@ -213,6 +216,59 @@ function durationSeconds(value: string | undefined) {
     : minutes * 60 + seconds
 }
 
+function conflictingTrackList(
+  library: NonNullable<AlbumReleaseTrackEvidence['tracks']>,
+  record: z.infer<typeof DiscogsRecordSchema>,
+) {
+  const rows = record.tracklist?.filter((track) => track.type_ !== 'heading')
+  if (
+    !rows ||
+    rows.length < 5 ||
+    library.length < 5 ||
+    rows.some(
+      (row) =>
+        row.type_ !== 'track' ||
+        (Array.isArray(row.sub_tracks) && row.sub_tracks.length > 0),
+    )
+  )
+    return false
+  const titles = new Set(library.map((track) => albumNameKey(track.title)))
+  if (rows.some((row) => titles.has(albumNameKey(row.title)))) return false
+  const names = new Set(library.map((track) => albumTrackTitleKey(track.title)))
+  const sharedNames = new Set(
+    rows
+      .map((row) => albumTrackTitleKey(row.title))
+      .filter((name) => names.has(name)),
+  )
+  // Several mixes of one song count as one shared title.
+  if (sharedNames.size * 2 >= Math.min(rows.length, library.length))
+    return false
+
+  const durations: number[] = []
+  for (const row of rows) {
+    const seconds = durationSeconds(row.duration)
+    if (!seconds) return false
+    durations.push(seconds)
+  }
+  // Match durations without assuming the same language, order, or number of bonus tracks.
+  const libraryTimes = library
+    .map((track) => track.durationSec)
+    .sort((a, b) => a - b)
+  const sourceTimes = durations.sort((a, b) => a - b).values()
+  let source = sourceTimes.next()
+  let matches = 0
+  for (const seconds of libraryTimes) {
+    while (!source.done && source.value < seconds - 10)
+      source = sourceTimes.next()
+    if (source.done) break
+    if (source.value <= seconds + 10) {
+      matches += 1
+      source = sourceTimes.next()
+    }
+  }
+  return matches * 2 < Math.min(durations.length, library.length)
+}
+
 export const discogsPlugin: MediaProviderPlugin = {
   manifest: {
     id: 'discogs',
@@ -341,6 +397,21 @@ export const discogsPlugin: MediaProviderPlugin = {
     )
       throw new ProviderItemAmbiguousError(
         'This later Discogs compilation has more than twice the tracks on the library album. Review its contents before selecting it.',
+      )
+    const tracks = context.media?.releaseHints?.find(
+      (hint) =>
+        hint.source === 'spotify' &&
+        hint.trackEvidence?.exactSequence &&
+        hint.trackEvidence.tracks?.length === hint.trackEvidence.libraryTracks,
+    )?.trackEvidence?.tracks
+    if (
+      reference.fromSearch &&
+      tracks &&
+      conflictingTrackList(tracks, record) &&
+      (reference.type === 'release' || conflictingTrackList(tracks, release))
+    )
+      throw new ProviderItemAmbiguousError(
+        'The Discogs track titles and durations conflict with the verified library album. Review this match.',
       )
     const rating = release.community?.rating
     const have = release.community?.have

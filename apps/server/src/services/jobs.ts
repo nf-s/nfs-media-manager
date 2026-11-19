@@ -799,7 +799,11 @@ async function processJob(
         )
       const releaseHints =
         mediaRecord.mediaType === 'album' && plugin.manifest.albumReleaseHints
-          ? await getAlbumReleaseHints(mediaItemId, rejections)
+          ? await getAlbumReleaseHints(
+              mediaItemId,
+              rejections,
+              plugin.manifest.id === 'discogs',
+            )
           : undefined
       const artistProfiles =
         mediaRecord.mediaType === 'album' &&

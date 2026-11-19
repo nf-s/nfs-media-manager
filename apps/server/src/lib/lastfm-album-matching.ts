@@ -98,7 +98,7 @@ export function artistKeys(name: string) {
 const TRACK_QUALIFIER =
   /\s+[-–—]\s+[^-–—]*\b(remaster|remastered|version|edit|mix|live|feat|bonus|mono|stereo|demo|single)\b[^-–—]*$/i
 
-function trackKey(title: string) {
+export function albumTrackTitleKey(title: string) {
   let current = title.replace(TRACK_QUALIFIER, '')
   while (TRAILING_BRACKET.test(current)) {
     const next = current.replace(TRAILING_BRACKET, '').trim()
@@ -220,7 +220,7 @@ export function createAlbumMatcher(albums: MatchAlbum[]) {
       exactArtists: new Set(album.artists.map(albumNameKey)),
       plainArtists: new Set(album.artists.map(artistNameKey)),
       artistParts: new Set(album.artists.flatMap(artistKeys)),
-      tracks: new Set(album.tracks.map(trackKey)),
+      tracks: new Set(album.tracks.map(albumTrackTitleKey)),
     }
     for (const key of indexed.artistParts) add(byArtist, key, indexed)
     add(byBaseTitle, indexed.baseTitle, indexed)
@@ -234,7 +234,7 @@ export function createAlbumMatcher(albums: MatchAlbum[]) {
     const plainArtist = artistNameKey(group.artistName)
     const parts = artistKeys(group.artistName)
     const variant = variantKey(group.albumName)
-    const tracks = [...new Set(group.tracks.map(trackKey))]
+    const tracks = [...new Set(group.tracks.map(albumTrackTitleKey))]
     const considered = new Set<Indexed>([
       ...parts.flatMap((key) => byArtist.get(key) ?? []),
       ...(byBaseTitle.get(baseTitle) ?? []),

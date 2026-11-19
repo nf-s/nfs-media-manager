@@ -650,6 +650,92 @@ describe('Discogs album adapter', () => {
     },
   )
 
+  it.each([
+    { timings: 'different', selected: false, ambiguous: true },
+    { timings: 'reordered', selected: false, ambiguous: false },
+    { timings: 'live titles', selected: false, ambiguous: false },
+    { timings: 'one shared song', selected: false, ambiguous: true },
+    { timings: 'subtracks', selected: false, ambiguous: false },
+    { timings: 'incomplete', selected: false, ambiguous: false },
+    { timings: 'different', selected: true, ambiguous: false },
+  ])(
+    'checks disjoint track lists with $timings timings (selected $selected)',
+    async ({ timings, selected, ambiguous }) => {
+      const tracks = Array.from({ length: 8 }, (_, i) => ({
+        title: `Library track ${i}`,
+        durationSec: 60 * (i + 2),
+      }))
+      const tracklist = Array.from({ length: 6 }, (_, i) => ({
+        type_: 'track',
+        position: String(i + 1),
+        title:
+          timings === 'live titles'
+            ? `Library track ${i} - Live`
+            : timings === 'one shared song'
+              ? `Library track 0 - Mix ${i}`
+              : `Different title ${i}`,
+        ...(timings === 'subtracks' && i === 0
+          ? { sub_tracks: [{ title: 'First movement' }] }
+          : {}),
+        duration:
+          timings === 'incomplete' && i === 0
+            ? ''
+            : `${timings === 'reordered' ? 8 - i : 20 + i}:00`,
+      }))
+      const candidate = { ...master, tracklist }
+      const edition = { ...release, master_id: master.id, tracklist }
+      const request = selected
+        ? replies(candidate, edition)
+        : replies(
+            {
+              results: [
+                {
+                  id: master.id,
+                  type: 'master',
+                  title: 'Example Artist - Example Album',
+                },
+              ],
+            },
+            candidate,
+            edition,
+          )
+      const attempt = scrape(
+        discogsPlugin,
+        context({
+          media: {
+            title: 'Example Album',
+            artists: ['Example Artist'],
+            releaseHints: [
+              {
+                source: 'spotify',
+                title: 'Example Album',
+                trackEvidence: {
+                  libraryTracks: tracks.length,
+                  matchedTracks: tracks.length,
+                  exactSequence: true,
+                  tracks,
+                },
+              },
+            ],
+          },
+          existingReferences: selected
+            ? [ref('discogs', 'master', String(master.id))]
+            : [],
+          request,
+        }),
+      )
+      if (ambiguous)
+        await expect(attempt).rejects.toBeInstanceOf(ProviderItemAmbiguousError)
+      else
+        expect((await attempt).normalized.references).toContainEqual(
+          expect.objectContaining({
+            referenceType: 'master',
+            externalId: String(master.id),
+          }),
+        )
+    },
+  )
+
   it('skips barcode hits in a rejected master while accepting a different edition family', async () => {
     const request = replies(
       {

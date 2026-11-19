@@ -111,6 +111,7 @@ export const DiscogsRecordSchema = z.object({
         title: z.string().min(1),
         position: z.string(),
         duration: z.string().optional(),
+        sub_tracks: z.unknown().optional(),
         extraartists: z.array(DiscogsCreditSchema).optional(),
       }),
     )

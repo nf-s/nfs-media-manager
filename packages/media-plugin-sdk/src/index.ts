@@ -247,10 +247,21 @@ export interface MediaPluginTestContext {
   ) => Promise<Response>
 }
 
+export const AlbumReleaseTracksSchema = z
+  .array(
+    z.object({
+      title: z.string().trim().min(1).max(500),
+      durationSec: z.number().positive(),
+    }),
+  )
+  .min(1)
+  .max(500)
+
 export interface AlbumReleaseTrackEvidence {
   libraryTracks: number
   matchedTracks: number
   exactSequence: boolean
+  tracks?: z.infer<typeof AlbumReleaseTracksSchema>
   creditedArtists?: readonly { name: string; tracks: number }[]
 }
 

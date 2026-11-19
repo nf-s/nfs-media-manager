@@ -282,6 +282,32 @@ const spotifyTracks = {
   })),
 }
 
+it.each([true, false])(
+  'includes complete track titles and timings only when requested (%s)',
+  async (includeTrackDetails) => {
+    mocks.tracks.mockResolvedValue(trackNames.map((title) => ({ title })))
+    const items = spotifyTracks.items.map((track, i) => ({
+      ...track,
+      duration_ms: (i + 1) * 1000,
+    }))
+    mocks.snapshots.mockResolvedValueOnce([
+      {
+        provider: 'spotify',
+        payload: { ...spotifyRelease, tracks: { ...spotifyTracks, items } },
+      },
+    ])
+    const evidence = (
+      await getAlbumReleaseHints('fixture-album', [], includeTrackDetails)
+    )[0]?.trackEvidence
+    expect(evidence?.exactSequence).toBe(true)
+    expect(evidence?.tracks).toEqual(
+      includeTrackDetails
+        ? trackNames.map((title, i) => ({ title, durationSec: i + 1 }))
+        : undefined,
+    )
+  },
+)
+
 it('compares a complete Spotify sequence and reports each artist once per track', async () => {
   mocks.tracks.mockResolvedValue(trackNames.map((title) => ({ title })))
   mocks.snapshots.mockResolvedValueOnce([

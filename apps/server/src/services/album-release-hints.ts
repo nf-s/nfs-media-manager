@@ -155,6 +155,7 @@ export function readAlbumReleaseHint(
   provider: string,
   payload: unknown,
   libraryTracks: readonly string[] | undefined,
+  includeTrackDetails = false,
 ): AlbumReleaseHint | undefined {
   const envelope = EnvelopesSchema.safeParse(payload).data
   if (!envelope) return
@@ -199,6 +200,7 @@ export function readAlbumReleaseHint(
         libraryTracks,
         release.tracks,
         release.total_tracks,
+        includeTrackDetails,
       )
       return {
         ...releaseHint(
@@ -242,6 +244,7 @@ function snapshotMatches(source: ReleaseSource, payload: SQL, id: string) {
 export async function getAlbumReleaseHints(
   mediaItemId: string,
   rejections: readonly RejectedAlbumIdentity[] = [],
+  includeTrackDetails = false,
 ): Promise<AlbumReleaseHint[]> {
   const [references, overrides, libraryTrackRows] = await Promise.all([
     db.query.providerReference.findMany({
@@ -333,6 +336,7 @@ export async function getAlbumReleaseHints(
         snapshot.provider,
         snapshot.payload,
         libraryTracks,
+        includeTrackDetails,
       )
       if (!hint) continue
       hints.push(hint)

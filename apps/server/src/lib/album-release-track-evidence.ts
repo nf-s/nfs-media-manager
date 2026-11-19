@@ -1,4 +1,7 @@
-import type { AlbumReleaseTrackEvidence } from '@repo/media-plugin-sdk'
+import {
+  AlbumReleaseTracksSchema,
+  type AlbumReleaseTrackEvidence,
+} from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import { albumNameKey } from './album-import-candidates'
 import { SpotifyTrackSchema, SpotifyTracksPageSchema } from './spotify-api'
@@ -20,6 +23,7 @@ const SpotifyEvidencePageSchema = SpotifyTracksPageSchema.pick({
         {
           name: TrackTitleSchema,
           artists: z.unknown().optional(),
+          duration_ms: z.unknown().optional(),
         },
       ),
     )
@@ -72,6 +76,7 @@ export function spotifyAlbumTrackEvidence(
   library: readonly string[] | undefined,
   tracks: unknown,
   totalTracks: unknown,
+  includeTrackDetails = false,
 ): AlbumReleaseTrackEvidence | undefined {
   if (!library) return
   const page = SpotifyEvidencePageSchema.safeParse(tracks).data
@@ -98,6 +103,16 @@ export function spotifyAlbumTrackEvidence(
     library,
     ordered.map(({ name }) => nameKey(name)),
   )
+  if (includeTrackDetails && evidence.exactSequence) {
+    const tracks = AlbumReleaseTracksSchema.safeParse(
+      ordered.map(({ name, duration_ms }) => ({
+        title: name,
+        durationSec:
+          typeof duration_ms === 'number' ? duration_ms / 1000 : undefined,
+      })),
+    ).data
+    if (tracks) evidence.tracks = tracks
+  }
   // Repeated generic titles do not establish an artist's role on an album.
   if (
     !evidence.exactSequence ||

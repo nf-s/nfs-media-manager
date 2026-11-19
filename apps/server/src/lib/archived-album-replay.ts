@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { JsonValueSchema, PluginReferenceSchema } from '@repo/media-plugin-sdk'
+import {
+  AlbumReleaseTracksSchema,
+  JsonValueSchema,
+  PluginReferenceSchema,
+} from '@repo/media-plugin-sdk'
 import {
   MAX_LOCAL_PROVIDER_RESPONSE_BYTES,
   MAX_PROVIDER_RESPONSE_BYTES,
@@ -295,6 +299,7 @@ export const ArchivedAlbumReplayInputSchema = z.object({
             libraryTracks: z.number().int(),
             matchedTracks: z.number().int(),
             exactSequence: z.boolean(),
+            tracks: AlbumReleaseTracksSchema.optional(),
             creditedArtists: z
               .array(z.object({ name: z.string(), tracks: z.number().int() }))
               .optional(),

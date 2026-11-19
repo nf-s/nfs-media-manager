@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  AlbumReleaseTracksSchema,
   PluginReferenceSchema,
   type PluginReference,
 } from '@repo/media-plugin-sdk'
@@ -51,6 +52,7 @@ const hint = z.object({
       libraryTracks: z.number().int().nonnegative(),
       matchedTracks: z.number().int().nonnegative(),
       exactSequence: z.boolean(),
+      tracks: AlbumReleaseTracksSchema.optional(),
       creditedArtists: z
         .array(
           z.object({
@@ -288,7 +290,11 @@ export async function reconstructProviderReplayContext(
         existingReferences,
       }),
       record.mediaType === 'album' && plugin?.manifest.albumReleaseHints
-        ? getAlbumReleaseHints(mediaItemId, rejections)
+        ? getAlbumReleaseHints(
+            mediaItemId,
+            rejections,
+            job.provider === 'discogs',
+          )
         : undefined,
       record.mediaType === 'album' && plugin?.manifest.bootstrapAlbumArtists
         ? loadCurrentArtistPayloads(
