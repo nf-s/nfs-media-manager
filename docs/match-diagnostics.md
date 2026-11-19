@@ -34,6 +34,8 @@ Use **Refresh** in Sources to run a supported provider again. The lookup skips r
 
 Rejected legacy Metacritic links and ratings stay in source history. They leave the album's current links, Ratings, and rating filters. An owner can record an independently verified album URL through `POST /api/v1/albums/{id}/metacritic-correction`. The correction requires the exact archived rejection and preserves the observed URL and source evidence in Sources. The corrected link carries no rating or vote count.
 
+Use `POST /api/v1/albums/{id}/metacritic-candidates` with `{ rejected }` to inspect indexed alternatives for an unresolved Metacritic rejection. Use the same `rejected` selector as the correction request. Each lookup uses one Serply request for up to ten results and returns `items` with the observed `title`, `description` and `url`. `indexedDate`, when present, is a date from the indexed result. The provider request limits apply. Review each identity independently before recording a correction.
+
 For incorrect Last.fm listening associations, use **Unlink** on the scrobbled name. The album history records the previous link. Last.fm retains the listens and keeps the group unlinked across syncs until you choose another album or restore automatic linking.
 
 ## Subscriptions

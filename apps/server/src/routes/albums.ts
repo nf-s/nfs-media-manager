@@ -59,6 +59,8 @@ import {
   AlbumMatchRejectionInputSchema,
   AlbumMatchRejectionPageSchema,
   AlbumMatchRejectionSchema,
+  AlbumMetacriticCandidatesInputSchema,
+  AlbumMetacriticCandidatesSchema,
   AlbumMetacriticCorrectionInputSchema,
   AlbumMetacriticCorrectionSchema,
   MatchDiagnosticsPageSchema,
@@ -69,7 +71,10 @@ import {
   rejectAlbumMatch,
 } from '@/services/album-match-rejections'
 import { listMediaMatchDiagnostics } from '@/services/media-match-diagnostics'
-import { correctAlbumMetacriticMatch } from '@/services/album-metacritic-corrections'
+import {
+  correctAlbumMetacriticMatch,
+  searchAlbumMetacriticCandidates,
+} from '@/services/album-metacritic-corrections'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
 const AlbumMatchRejectionParams = z.object({ id: z.string().min(1).max(500) })
@@ -171,6 +176,46 @@ app.openapi(
         c.req.valid('param').id,
         c.req.valid('json'),
         c.get('user')?.id ?? null,
+      ),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/:id/metacritic-candidates',
+    middleware: [authMiddleware()],
+    request: {
+      params: AlbumMatchRejectionParams,
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: AlbumMetacriticCandidatesInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'One indexed page of observed Metacritic album candidates',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(AlbumMetacriticCandidatesSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Album not found'),
+      409: jsonErrorResponse('Metacritic match changed'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await searchAlbumMetacriticCandidates(
+        c.req.valid('param').id,
+        c.req.valid('json'),
       ),
       200,
     ),

@@ -5,6 +5,7 @@ import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { PluginResultSchema, type JsonValue } from '@repo/media-plugin-sdk'
 import {
+  AlbumMetacriticCandidatesInputSchema,
   AlbumMetacriticCorrectionInputSchema,
   MatchDiagnosticsQuerySchema,
 } from '@repo/schemas/match-diagnostics'
@@ -17,7 +18,10 @@ import {
   readAlbumMatchRejections,
   rejectAlbumMatch,
 } from '@/services/album-match-rejections'
-import { correctAlbumMetacriticMatch } from '@/services/album-metacritic-corrections'
+import {
+  correctAlbumMetacriticMatch,
+  searchAlbumMetacriticCandidates,
+} from '@/services/album-metacritic-corrections'
 import {
   getMediaHistory,
   getMediaSourceSnapshot,
@@ -1482,5 +1486,137 @@ describe('album match rejection history', () => {
       ),
     ).rejects.toMatchObject({ response: { statusCode: 409 } })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('reads one indexed Metacritic page only for the still-unresolved rejection', async () => {
+    const id = 'metacritic-search-fixture'
+    const oldUrl = 'https://www.metacritic.com/music/rejected-record/fixture/'
+    const url = 'https://metacritic.com/music/candidate-record/fixture/'
+    const key = 'offline-metacritic-fixture-key'
+    await createAlbumFixture(id)
+    await databaseClient.insert(schema.mediaCredit).values({
+      mediaItemId: id,
+      artistId: 'library-artist',
+      role: 'artist',
+    })
+    await storeMatchFixture(id, 'legacy-browser', 'archived-search-fixture', {
+      links: { mc: { href: oldUrl } },
+    })
+    const target = (await getFixtureMatches(id)).find(
+      ({ identifier }) => identifier === oldUrl,
+    )?.rejectionTarget
+    const input = AlbumMetacriticCandidatesInputSchema.parse({
+      rejected: target,
+    })
+    fetch.mockClear()
+    vi.stubEnv('SERPLY_API_KEY', key)
+    try {
+      await expect(
+        searchAlbumMetacriticCandidates(id, input),
+      ).rejects.toMatchObject({
+        response: { statusCode: 409 },
+      })
+      expect(fetch).not.toHaveBeenCalled()
+      await rejectAlbumMatch(id, input.rejected, null)
+      await expect(
+        searchAlbumMetacriticCandidates(id, {
+          rejected: { ...input.rejected, snapshotId: 'different-archive' },
+        }),
+      ).rejects.toMatchObject({ response: { statusCode: 409 } })
+      expect(fetch).not.toHaveBeenCalled()
+      const history = await getMediaHistory(id)
+      const sources = await getMediaSources(id)
+      const found = {
+        link: url,
+        title: 'Fixture Candidate - Metacritic',
+        description: 'Indexed album summary. ' + key,
+        metadata: { published_time: 'May 20, 2022' },
+      }
+      const visible = Array.from({ length: 8 }, (_, index) => ({
+        title: 'Indexed Fixture Candidate',
+        link: 'https://www.metacritic.com/music/fixture-choice-' + index,
+      }))
+      fetch.mockImplementationOnce(async (request, init) => {
+        const requested = new URL(
+          request instanceof Request ? request.url : request,
+        )
+        expect(requested.origin).toBe('https://api.serply.io')
+        expect(requested.pathname).toBe('/v1/search/')
+        expect(requested.searchParams.get('q')).toBe(
+          'site:metacritic.com/music/ "metacritic-search-fixture" "Library Artist"',
+        )
+        expect(requested.searchParams.get('num')).toBe('10')
+        expect(new Headers(init?.headers).get('X-Api-Key')).toBe(key)
+        return Response.json({
+          results: [
+            {
+              link: 'http://metacritic.com/music/rejected-record/fixture/user-reviews',
+              title: 'Rejected alias',
+            },
+            {
+              link: 'https://metacritic.com.fixture.test/music/candidate-record',
+              title: 'Unrelated domain',
+            },
+            {
+              link: 'https://www.metacritic.com/movie/fixture',
+              title: 'Unrelated media type',
+            },
+            found,
+            ...visible,
+          ],
+        })
+      })
+      expect(await searchAlbumMetacriticCandidates(id, input)).toEqual({
+        items: [
+          {
+            url,
+            title: found.title,
+            description: 'Indexed album summary. [REDACTED]',
+            indexedDate: '2022-05-20',
+          },
+          ...visible.slice(0, 6).map(({ title, link }) => ({
+            title,
+            url: link,
+            description: '',
+          })),
+        ],
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(await getMediaHistory(id)).toEqual(history)
+      expect(await getMediaSources(id)).toEqual(sources)
+      const correction = AlbumMetacriticCorrectionInputSchema.parse({
+        rejected: target,
+        replacement: {
+          url,
+          title: 'Fixture Candidate',
+          artist: 'Library Artist',
+        },
+        evidence: [
+          {
+            source: 'metacritic-index',
+            sourceUrl: url,
+            observedUrl: url,
+            observedAt: '2025-02-03T04:05:06Z',
+          },
+        ],
+      })
+      fetch.mockImplementationOnce(async () => {
+        await correctAlbumMetacriticMatch(id, correction, null)
+        return Response.json({ results: [found] })
+      })
+      await expect(
+        searchAlbumMetacriticCandidates(id, input),
+      ).rejects.toMatchObject({
+        response: { statusCode: 409 },
+      })
+      await expect(
+        searchAlbumMetacriticCandidates(id, input),
+      ).rejects.toMatchObject({
+        response: { statusCode: 409 },
+      })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })

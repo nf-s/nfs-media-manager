@@ -5,6 +5,7 @@ import {
   recordPluginDiagnostic,
   type JsonValue,
   type MediaPluginScrapeContext,
+  type MediaPluginTestContext,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
 import { sanitizeJobDiagnostic } from '@/lib/job-diagnostics'
@@ -1195,8 +1196,11 @@ function diagnosticMetadata(value: unknown): JsonValue {
     : null
 }
 
+type SerplySearchContext = MediaPluginTestContext &
+  Pick<MediaPluginScrapeContext, 'recordDiagnostic'>
+
 function recordSearchDiagnostic(
-  context: MediaPluginScrapeContext,
+  context: SerplySearchContext,
   evidence: unknown,
   stage = 'serply.search',
 ) {
@@ -1303,7 +1307,7 @@ export const serplyPlugin: MediaProviderPlugin = {
       const query = queries.find((value) => !searched.has(value))
       if (!query) break
       searched.add(query)
-      const payload = await search(context, query)
+      const payload = await searchSerplyPage(context, query)
       searches.push({ query, response: payload })
       const diagnostic = { candidates: [], reasons: {} }
       try {
@@ -1478,7 +1482,11 @@ export const serplyPlugin: MediaProviderPlugin = {
   },
 }
 
-async function search(context: MediaPluginScrapeContext, query: string) {
+/** Reads the first indexed page through the supplied provider request gate. */
+export async function searchSerplyPage(
+  context: SerplySearchContext,
+  query: string,
+) {
   const url = new URL('https://api.serply.io/v1/search/')
   for (const [key, value] of Object.entries({
     q: query,
@@ -1507,7 +1515,7 @@ async function search(context: MediaPluginScrapeContext, query: string) {
           throw error
         }
         status = response.status
-        if (response.ok) {
+        if (response.ok && context.recordDiagnostic) {
           try {
             // Capture before envelope validation or service-error handling,
             // without consuming the body used by the shared request helper.
@@ -1555,4 +1563,19 @@ async function search(context: MediaPluginScrapeContext, query: string) {
       'request-failed',
     )
   return payload
+}
+
+/** Parse and bound consumer results to the requested first page. */
+export function readSerplyPageResults(payload: unknown) {
+  return ResponseSchema.parse(payload)
+    .results.slice(0, 10)
+    .flatMap((item) => {
+      const result = ResultSchema.safeParse(item)
+      if (!result.success) return []
+      const { title, description, link } = result.data
+      const indexedDate = indexedReleaseDate(result.data)
+      return [
+        { title, description, link, ...(indexedDate ? { indexedDate } : {}) },
+      ]
+    })
 }
