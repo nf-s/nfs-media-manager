@@ -273,7 +273,10 @@
         kind: 'Track playlist',
         by: 'from <a href="#">Spotify</a>',
         facts: ['42 tracks', '2h 51m', 'Updated 2026-11-09'],
-        actions: D.headActions({ open: 'Spotify' }),
+        actions: D.headActions({
+          open: 'Spotify',
+          lead: `<label class="ds-actions">Playlist type${D.select(['Automatic', 'Album playlist', 'Track playlist'], { label: 'Playlist type' })}</label>`,
+        }),
       })
       const missing = [
         [],
@@ -294,7 +297,7 @@
           D.coverage('Rate Your Music', 11, 18, { action: 'Queue' }) +
           D.coverage('MusicBrainz', 6, 18, { tone: 'attention' }),
         {
-          note: '18 library albums · last successful scrape · stale after 180 days',
+          note: '18 of 18 library albums with metadata · stale after 180 days',
           aside: coverageOf(0),
         },
       )
@@ -325,7 +328,7 @@
               { h: 'Title', c: (r) => D.idCell(r) },
               { h: 'Artists', c: (r) => D.link(r.by) },
               {
-                h: 'No successful scrape',
+                h: 'Missing metadata',
                 c: (r, i) =>
                   missing[i].length
                     ? pills(missing[i], {
@@ -343,7 +346,7 @@
                   : undefined,
               }),
             },
-          )}</div><div class="ds-selectbar"><span><b>3 selected</b> <span class="ds-muted">No successful Rate Your Music scrape</span></span><span class="ds-actions ds-toolbar-end">${btn('Fetch from Rate Your Music', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div>`,
+          )}</div><div class="ds-selectbar"><span><b>3 selected</b> <span class="ds-muted">Missing Rate Your Music metadata</span></span><span class="ds-actions ds-toolbar-end">${btn('Fetch from Rate Your Music', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div>`,
           {
             note: '42',
             aside:
@@ -463,10 +466,10 @@
                   '<b>Coverage is a tab,</b> after Listening and before Sources, on playlists and artists. It is never in Overview.',
                   '<b>Albums and Artists</b> switch what a playlist counts: the albums behind its entries, or the artists credited on them. An artist counts its albums.',
                   '<b>Queue</b> creates the metadata jobs for the missing ones, after the same review step the Metadata page uses. Artists mode queues artists only.',
-                  '<b>An album count</b> opens Overview with the album or track list filtered to Metadata gaps. The rows name the providers with no successful scrape or with stale metadata. <b>An artist count</b> opens Artists Metadata filtered to the playlist and that gap.',
+                  '<b>An album count</b> opens Overview with the album or track list filtered to Metadata gaps. The rows name the providers with missing or stale metadata. <b>An artist count</b> opens Artists Metadata filtered to the playlist and that gap.',
                   '<b>Selecting rows</b> offers the provider that would fill the selected gap.',
                 ]),
-              )}<div class="g-flowline" style="margin-top:12px">${step('Playlist', 'Late shift')}${arrow}${step('Coverage', '7 albums without a successful scrape')}${arrow}${step('Queue', 'review, confirm')}${arrow}${step('Jobs', 'batch of 7')}${arrow}${step('Playlist', 'coverage updates')}</div></div><div>${inspectorFrame(
+              )}<div class="g-flowline" style="margin-top:12px">${step('Playlist', 'Late shift')}${arrow}${step('Coverage', '7 albums missing metadata')}${arrow}${step('Queue', 'review, confirm')}${arrow}${step('Jobs', 'batch of 7')}${arrow}${step('Playlist', 'coverage updates')}</div></div><div>${inspectorFrame(
                 D.inspector({
                   crumbs: ['Playlists', 'Late shift'],
                   head: playlistHead,

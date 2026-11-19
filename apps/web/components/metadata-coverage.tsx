@@ -103,12 +103,14 @@ export function CoverageReview({
   onConfirm,
   onCancel,
   subject = 'albums',
+  storedData = false,
 }: {
   review: CoverageRequest
   olderThanDays: number
   pending: boolean
   onConfirm: () => void
   onCancel: () => void
+  storedData?: boolean
   subject?: CoverageSubject
 }) {
   const { provider, gap, ids, count } = review
@@ -142,13 +144,20 @@ export function CoverageReview({
         </strong>{' '}
         ·{' '}
         {gap === 'missing'
-          ? subject === 'albums'
-            ? `${items} without a successful scrape`
-            : `${items} never fetched`
+          ? storedData
+            ? `${items} missing ${provider.displayName} metadata`
+            : subject === 'albums'
+              ? `${items} without a successful scrape`
+              : `${items} never fetched`
           : `${items} last fetched over ${formatCount(olderThanDays)} days ago`}
         {count > ids.length &&
           ` (the first ${formatCount(ids.length)} of ${formatCount(count)})`}
-        <p>{skipRules[subject]} Provider limits and cooldowns apply.</p>
+        <p>
+          {storedData
+            ? 'Albums whose metadata gap has been filled, with an active job or without a usable identifier are skipped.'
+            : skipRules[subject]}{' '}
+          Provider limits and cooldowns apply.
+        </p>
       </Notice>
     </div>
   )
@@ -245,6 +254,7 @@ export function useCoverageQueue(
               method: 'POST',
               body: JSON.stringify(
                 coverageQueueRequest({
+                  kind,
                   provider: provider.provider,
                   gap,
                   ids: mediaItemIds,
@@ -280,6 +290,7 @@ export function useCoverageQueue(
     queue,
     review,
     subject,
+    storedData: kind === 'playlist' && subject === 'albums',
     progressHref:
       subject === 'artists'
         ? ARTIST_JOBS_HREF
@@ -311,6 +322,7 @@ export function CoverageQueueStatus({
           review={review}
           olderThanDays={state.olderThanDays}
           subject={state.subject}
+          storedData={state.storedData}
           pending={queue.isPending}
           onConfirm={() => queue.mutate(review)}
           onCancel={state.cancel}
@@ -374,7 +386,7 @@ function CoverageSection({
       title="Coverage"
       note={
         data &&
-        `${formatItemCount(data.total, noun)}${playlistAlbums ? ' · last successful scrape' : ''} · stale after ${formatCount(data.olderThanDays)} days`
+        `${playlistAlbums && data.storedAlbums !== undefined ? `${formatCount(data.storedAlbums)} of ${formatItemCount(data.total, noun)} with metadata` : formatItemCount(data.total, noun)} · stale after ${formatCount(data.olderThanDays)} days`
       }
       aside={aside}
     >
@@ -435,7 +447,11 @@ function CoverageSection({
                         </span>
                       </span>
                     }
-                    have={provider.covered}
+                    have={
+                      playlistAlbums
+                        ? (provider.stored ?? provider.covered)
+                        : provider.covered
+                    }
                     total={provider.eligible}
                     tone={provider.unavailableReason ? 'attention' : undefined}
                     action={
@@ -550,13 +566,13 @@ export function MetadataCoverage({
             variant="link"
             aria-label={
               gap === 'missing'
-                ? `Show entries for ${formatItemCount(count, libraryAlbumNoun)} with no successful ${provider.displayName} scrape`
+                ? `Show entries for ${formatItemCount(count, libraryAlbumNoun)} missing ${provider.displayName} metadata`
                 : `Show entries for ${formatItemCount(count, libraryAlbumNoun)} with stale ${provider.displayName} metadata`
             }
             onClick={() => onShowGap(provider, gap)}
           >
             {formatCount(count)}{' '}
-            {gap === 'missing' ? 'without a successful scrape' : 'stale'}
+            {gap === 'missing' ? 'missing metadata' : 'stale'}
           </Button>
         ))
       }

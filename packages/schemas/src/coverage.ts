@@ -29,16 +29,18 @@ export const ProviderCoverageSchema = z.object({
   provider: z.string(),
   displayName: z.string(),
   /**
-   * Items the provider has scraped or can look up. An album needs a stored
+   * Items with provider data or that the provider can look up. An album needs a stored
    * identifier or a provider that looks albums up by name; the others need
    * an identifier before they can be queued. Every artist can be looked up.
    */
   eligible: z.number().int().nonnegative(),
+  /** Playlist albums with useful data from this provider, regardless of age. */
+  stored: z.number().int().nonnegative().optional(),
   /** Eligible items scraped within `olderThanDays`. */
   covered: z.number().int().nonnegative(),
   /** Eligible items last scraped before `olderThanDays`. */
   stale: z.number().int().nonnegative(),
-  /** Eligible items without a successful scrape. */
+  /** Eligible items without provider data on playlist Albums; unscraped elsewhere. */
   missing: z.number().int().nonnegative(),
   unavailableReason: CoverageUnavailableReasonSchema.nullable(),
   /** The first 100 missing items, by title or name. */
@@ -50,11 +52,13 @@ export const ProviderCoverageSchema = z.object({
 export const CoverageSchema = z.object({
   /** Albums, or artists, in the set. */
   total: z.number().int().nonnegative(),
+  /** Playlist albums with useful stored metadata from any source. */
+  storedAlbums: z.number().int().nonnegative().optional(),
   olderThanDays: z.number().int().positive(),
   providers: z.array(ProviderCoverageSchema),
 })
 
-/** `missing`: never scraped. `stale`: last scraped before `olderThanDays`. */
+/** Playlist albums with no provider data, or with data scraped before the cutoff. */
 export const CoverageGapSchema = z.enum(['missing', 'stale'])
 
 /**

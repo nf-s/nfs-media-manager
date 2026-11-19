@@ -101,6 +101,7 @@ import {
   countPlaylists,
   listPlaylistBrowsePage,
   listPlaylists,
+  updatePlaylistPresentation,
 } from '@/services/playlist-directory'
 import { getAlbumPlaylists } from '@/services/album-playlists'
 import {
@@ -841,6 +842,7 @@ describe('Spotify playlist imports', () => {
       'unknown-five',
     ]
     const secondUnfetched = unfetched.map((id) => `second-${id}`)
+    const alternateEdition = unfetched.map((id) => `alternate-${id}`)
     const loose = ['loose-one', 'loose-two', 'loose-three', 'loose-four']
     const releases = [
       { id: 'short-ep', recordings: ep, stored: true },
@@ -851,6 +853,14 @@ describe('Spotify playlist imports', () => {
         id: 'second-unfetched-album',
         recordings: secondUnfetched,
         stored: false,
+        strategy: 'album-title',
+      },
+      {
+        id: 'alternate-library-edition',
+        recordings: alternateEdition,
+        stored: true,
+        expected: 10,
+        releaseId: spotifyId('alternateedition'),
       },
     ]
     await databaseClient.insert(schema.mediaItem).values([
@@ -870,23 +880,24 @@ describe('Spotify playlist imports', () => {
       ),
     ])
     await databaseClient.insert(schema.album).values(
-      releases.map(({ id, recordings, stored }) => ({
+      releases.map(({ id, recordings, stored, expected }) => ({
         mediaItemId: id,
-        trackCount: stored ? recordings.length : 0,
+        trackCount: expected ?? (stored ? recordings.length : 0),
       })),
     )
     await databaseClient.insert(schema.libraryTrack).values([
-      ...releases.flatMap(({ id, recordings, stored }) =>
+      ...releases.flatMap(({ id, recordings, stored, strategy, releaseId }) =>
         recordings.map((mediaItemId) => ({
           mediaItemId,
           albumMediaItemId: mediaItemId === 'ep-one' ? null : id,
-          spotifyAlbumId: stored ? null : spotifyId(id.replaceAll('-', '')),
+          spotifyAlbumId:
+            releaseId ?? (stored ? null : spotifyId(id.replaceAll('-', ''))),
           albumLinkStrategy:
             mediaItemId === 'ep-one'
               ? null
               : stored
                 ? 'album-track-list'
-                : 'spotify-album',
+                : (strategy ?? 'spotify-album'),
         })),
       ),
       ...loose.map((mediaItemId) => ({ mediaItemId })),
@@ -950,6 +961,11 @@ describe('Spotify playlist imports', () => {
         expected: 'albums',
       },
       {
+        id: 'Cluster from a different edition than the library track list',
+        members: [...unfetched, ...alternateEdition],
+        expected: 'albums',
+      },
+      {
         id: 'Few tracks from an unfetched release',
         members: unfetched.slice(0, 4),
         expected: 'tracks',
@@ -993,7 +1009,55 @@ describe('Spotify playlist imports', () => {
     )
     for (const { id, expected } of examples)
       expect(summaries.get(id), id).toBe(expected)
+    expect(
+      await updatePlaylistPresentation('Legacy album members', 'tracks'),
+    ).toMatchObject({
+      presentation: 'tracks',
+      presentationOverride: 'tracks',
+    })
+    expect(
+      await updatePlaylistPresentation('Legacy album members', null),
+    ).toMatchObject({
+      presentation: 'albums',
+      presentationOverride: null,
+    })
     expect(request).not.toHaveBeenCalled()
+  })
+
+  it('recognizes imported Spotify release groups before their library albums are linked', async () => {
+    const firstRelease = spotifyId('firstrelease')
+    const secondRelease = spotifyId('secondrelease')
+    const first = Array.from({ length: 5 }, (_, index) =>
+      track(`firstrelease${index}`, {
+        album: 'First Release',
+        albumId: firstRelease,
+      }),
+    )
+    const second = Array.from({ length: 5 }, (_, index) =>
+      track(`secondrelease${index}`, {
+        album: 'Second Release',
+        albumId: secondRelease,
+      }),
+    )
+    entries[OWNED] = [...first, ...second, track('loosesingle')]
+    entries[SHARED] = first.flatMap((entry, index) => [
+      entry,
+      ...second.slice(index, index + 1),
+    ])
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning'), chosen(SHARED, 'Shared')],
+      likedSongs: false,
+    })
+
+    expect(await listPlaylists()).toMatchObject([
+      {
+        name: 'Morning',
+        linkedTrackCount: 0,
+        albumCount: 0,
+        presentation: 'albums',
+      },
+      { name: 'Shared', albumCount: 0, presentation: 'tracks' },
+    ])
   })
 
   it('uses a known Spotify release length when only a separate album position is stored', async () => {
@@ -1034,6 +1098,57 @@ describe('Spotify playlist imports', () => {
         presentation: 'tracks',
       },
     ])
+  })
+
+  it('preserves manual playlist types across a renamed Spotify import and can restore Automatic', async () => {
+    await importAll({
+      playlists: [chosen(OWNED, 'Morning')],
+      likedSongs: false,
+    })
+    const id = await playlistId('Morning')
+    expect(await getPlaylistDetail(id, detailQuery())).toMatchObject({
+      presentation: 'tracks',
+      presentationOverride: null,
+    })
+
+    request.mockClear()
+    expect(await updatePlaylistPresentation(id, 'albums')).toMatchObject({
+      presentation: 'albums',
+      presentationOverride: 'albums',
+    })
+    expect(await listPlaylists()).toMatchObject([
+      { id, presentation: 'albums', presentationOverride: 'albums' },
+    ])
+    expect(request).not.toHaveBeenCalled()
+
+    playlists[0] = {
+      ...playlists[0],
+      name: 'Afternoon',
+      snapshot_id: 'owned-2',
+    }
+    await importAll({
+      playlists: [chosen(OWNED, 'Afternoon')],
+      likedSongs: false,
+    })
+    expect(await getPlaylistDetail(id, detailQuery())).toMatchObject({
+      name: 'Afternoon',
+      presentation: 'albums',
+      presentationOverride: 'albums',
+    })
+    expect(await updatePlaylistPresentation(id, 'tracks')).toMatchObject({
+      presentation: 'tracks',
+      presentationOverride: 'tracks',
+    })
+    expect(await updatePlaylistPresentation(id, null)).toMatchObject({
+      presentation: 'tracks',
+      presentationOverride: null,
+    })
+
+    await expect(
+      updatePlaylistPresentation('missing', 'tracks'),
+    ).rejects.toMatchObject({
+      response: { statusCode: 404 },
+    })
   })
 
   it('lists the account playlists in a job and marks the ones Spotify lets it read', async () => {

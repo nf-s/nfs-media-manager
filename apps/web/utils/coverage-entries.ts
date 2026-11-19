@@ -198,7 +198,7 @@ export function coverageEntriesKey(
 
 /** The heading of the gap column and labels in the filter. */
 export const gapLabels: Record<CoverageGap, string> = {
-  missing: 'No successful scrape',
+  missing: 'Missing metadata',
   stale: 'Stale metadata',
 }
 

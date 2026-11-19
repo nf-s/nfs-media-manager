@@ -131,7 +131,7 @@ export function GapSelection({
           {active && gaps.length === 1 && (
             <span className="ds-muted">
               {filter.gap === 'missing'
-                ? `No successful ${active.displayName} scrape`
+                ? `Missing ${active.displayName} metadata`
                 : `Stale ${active.displayName} metadata`}
             </span>
           )}

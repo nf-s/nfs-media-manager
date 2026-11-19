@@ -7,6 +7,7 @@ import {
   PlaylistSummarySchema,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   type PlaylistBrowseQuery,
+  type PlaylistPresentation,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
@@ -44,6 +45,7 @@ const PlaylistRowsSchema = z.array(
     linked_track_count: z.number().int(),
     album_count: z.number().int(),
     presentation: PlaylistPresentationSchema,
+    presentation_override: PlaylistPresentationSchema.nullable(),
     duration_sec: z.coerce.number().int(),
   }),
 )
@@ -79,13 +81,14 @@ const playlistTrackStats = sql`
 const nearCompleteAlbum = (matches: SQL, length: SQL) =>
   sql`(${matches} >= 2 and (${matches} >= ${length} - 1 or ${matches} * 5 >= ${length} * 4))`
 
-// Stored positions and exact Spotify release links both support completeness.
-// An exact release with no known length must form a cluster in playlist order.
+// Stored positions and Spotify release IDs both support completeness.
+// Without a known release length, its tracks must form a cluster in order.
 // A direct album membership contributes its tracks or one album entry.
-const playlistPresentation = sql`case when p.source = 'spotify-liked' then 'tracks' else (
+const automaticPlaylistPresentation = sql`case when p.source = 'spotify-liked' then 'tracks' else (
   with playlist_tracks as (
     select lt.media_item_id as track_id, lt.album_media_item_id as album_id,
-      case when lt.album_link_strategy = 'spotify-album' then lt.spotify_album_id end as release_id,
+      nullif(lt.spotify_album_id, '') as release_id,
+      lt.album_link_strategy = 'spotify-album' as exact_release_link,
       row_number() over (order by pi.position, pi.media_item_id) as playlist_order
     from playlist_item pi join library_track lt on lt.media_item_id = pi.media_item_id
     where pi.playlist_id = p.id
@@ -103,7 +106,7 @@ const playlistPresentation = sql`case when p.source = 'spotify-liked' then 'trac
     where a.media_item_id in (
       select album_id from stored_members
       union
-      select album_id from playlist_tracks where release_id is not null
+      select album_id from playlist_tracks where release_id is not null and exact_release_link
     )
     group by a.media_item_id
   ), qualifying_lists as (
@@ -112,11 +115,12 @@ const playlistPresentation = sql`case when p.source = 'spotify-liked' then 'trac
     group by m.album_id, l.expected
     having ${nearCompleteAlbum(sql`count(distinct m.track_id)`, sql`l.expected`)}
   ), qualifying_releases as (
-    select pt.album_id, pt.release_id
-    from playlist_tracks pt join album_lengths l using (album_id)
+    select pt.release_id
+    from playlist_tracks pt
+    left join album_lengths l on l.album_id = pt.album_id and pt.exact_release_link
     where pt.release_id is not null
-    group by pt.album_id, pt.release_id, l.expected
-    having case when l.expected > 0 then ${nearCompleteAlbum(sql`count(*)`, sql`l.expected`)}
+    group by pt.release_id
+    having case when max(l.expected) > 0 then ${nearCompleteAlbum(sql`count(*)`, sql`max(l.expected)`)}
       else count(*) >= 5 and count(*) * 5 >= (max(pt.playlist_order) - min(pt.playlist_order) + 1) * 4
       end
   ), covered_tracks as (
@@ -126,7 +130,7 @@ const playlistPresentation = sql`case when p.source = 'spotify-liked' then 'trac
       select album_id from direct_albums union select album_id from qualifying_lists
     )
     union
-    select pt.track_id from playlist_tracks pt join qualifying_releases r using (album_id, release_id)
+    select pt.track_id from playlist_tracks pt join qualifying_releases r using (release_id)
   ), direct_album_stats as (
     select count(*) as unrepresented
     from direct_albums a
@@ -236,7 +240,8 @@ export async function loadPlaylistSummaries(
           p.sync_schedule, p.spotify_editable,
           stats.track_count, stats.linked_track_count, stats.duration_sec,
           ${playlistAlbumCount} as album_count,
-          ${playlistPresentation} as presentation
+          coalesce(p.presentation_override, ${automaticPlaylistPresentation}) as presentation,
+          p.presentation_override
         from playlist p
         cross join lateral (${playlistTrackStats}) stats
         where p.id in (${sql.join(
@@ -272,6 +277,7 @@ export async function loadPlaylistSummaries(
       linkedTrackCount: row.linked_track_count,
       albumCount: row.album_count,
       presentation: row.presentation,
+      presentationOverride: row.presentation_override,
       durationSec: row.duration_sec,
       acceptsAdditions:
         row.source === 'spotify' &&
@@ -344,4 +350,18 @@ export async function getPlaylistSummary(id: string) {
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Playlist not found' })
   return summary
+}
+
+export async function updatePlaylistPresentation(
+  id: string,
+  presentation: PlaylistPresentation | null,
+) {
+  const { rows } = await db.execute(sql`
+    update playlist p set presentation_override = ${presentation}, updated_at = now()
+    where p.id = ${id} and ${visiblePlaylists}
+    returning p.id
+  `)
+  if (!rows.length)
+    throw new ServerError({ statusCode: 404, message: 'Playlist not found' })
+  return getPlaylistSummary(id)
 }

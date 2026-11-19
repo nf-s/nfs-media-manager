@@ -259,10 +259,10 @@ test('the gap options follow the Coverage lines and keep the current one', () =>
   assert.deepEqual(
     options.map((option) => option.label),
     [
-      'No successful scrape · any provider',
+      'Missing metadata · any provider',
       'Stale metadata · any provider',
-      'No successful scrape · Discogs',
-      'No successful scrape · Rate Your Music',
+      'Missing metadata · Discogs',
+      'Missing metadata · Rate Your Music',
       'Stale metadata · Discogs',
     ],
   )
@@ -326,7 +326,7 @@ test('Show switches between all entries and a specified metadata gap', () => {
   assert.match(gaps, /<select class="ds-select" aria-label="Metadata gap"/)
   assert.match(
     gaps,
-    /<option value="missing:discogs" selected="">No successful scrape · Discogs</,
+    /<option value="missing:discogs" selected="">Missing metadata · Discogs</,
   )
 })
 
@@ -342,7 +342,7 @@ test('the selection bar names the gap and lists the providers that fill it', () 
   )
   assert.match(html, /class="ds-selectbar sec-selectbar"/)
   assert.match(html, /<b>2 selected<\/b>/)
-  assert.doesNotMatch(html, /class="ds-muted">No successful/)
+  assert.doesNotMatch(html, /class="ds-muted">Missing/)
   // Rate Your Music fills more albums but needs credentials, so the
   // provider list opens on Discogs.
   assert.match(html, /<select class="ds-select" aria-label="Provider"/)
@@ -415,14 +415,14 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
   assert.match(html, /aria-pressed="true"[^>]*>Metadata gaps</)
   assert.match(
     html,
-    /2 entries · 2 library albums without a successful scrape from at least one provider/,
+    /2 entries · 2 library albums missing metadata from at least one provider/,
   )
   const table = html.match(
     /<table class="ds-table" aria-label="Playlist tracks"[\s\S]*?<\/table>/,
   )?.[0]
   assert.ok(table, 'gap table')
   assert.match(table, /<th[^>]*><span class="sr-only">Select<\/span>/)
-  assert.match(table, /<th[^>]*>No successful scrape<\/th>/)
+  assert.match(table, /<th[^>]*>Missing metadata<\/th>/)
   assert.match(table, /aria-label="Select Opening track"/)
   assert.match(
     table,
@@ -432,7 +432,7 @@ test('the playlist drawer filters its tracks to the rows with gaps and names eac
   assert.doesNotMatch(html, /<h3>Coverage<\/h3>/)
   assert.doesNotMatch(
     html,
-    /aria-label="Show entries for 1 library album with no successful Discogs scrape"/,
+    /aria-label="Show entries for 1 library album missing Discogs metadata"/,
   )
 })
 
@@ -465,7 +465,7 @@ test('Coverage counts open the Overview tracks filtered to the gap', () => {
   )
   assert.match(
     html,
-    /data-variant="link"[^>]*aria-label="Show entries for 1 library album with no successful Discogs scrape"[^>]*>1 without a successful scrape</,
+    /data-variant="link"[^>]*aria-label="Show entries for 1 library album missing Discogs metadata"[^>]*>1 missing metadata</,
   )
   assert.match(
     html,

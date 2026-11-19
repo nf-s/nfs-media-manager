@@ -15,12 +15,9 @@ const RatedRymMetadataSchema = z.object({
   }),
 })
 
-export function withRymRatingSourceLink(
-  links: AlbumListItem['links'],
-  metadata: unknown,
-): AlbumListItem['links'] {
+export function rymRatingSourceUrl(metadata: unknown): string | undefined {
   const parsed = RatedRymMetadataSchema.safeParse(metadata)
-  if (!parsed.success) return links
+  if (!parsed.success) return undefined
   const url = parsed.data['plugin.serply.provenance'].ratingSourceUrl
   const base = new URL(url)
   // Validate child pages through their release parent, but link to the exact
@@ -29,7 +26,15 @@ export function withRymRatingSourceLink(
     /^(\/release\/[^/]+\/[^/]+\/[^/]+)\/(?:reviews|lists)(?:\/\d+)?\/?$/,
     '$1/',
   )
-  if (!AlbumRymUrlSchema.safeParse(base.href).success) return links
+  return AlbumRymUrlSchema.safeParse(base.href).success ? url : undefined
+}
+
+export function withRymRatingSourceLink(
+  links: AlbumListItem['links'],
+  metadata: unknown,
+): AlbumListItem['links'] {
+  const url = rymRatingSourceUrl(metadata)
+  if (!url) return links
   const source = links.find((link) => link.url === url) ?? {
     provider: 'serply',
     label: 'Rate Your Music',

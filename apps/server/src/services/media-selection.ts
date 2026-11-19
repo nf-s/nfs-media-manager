@@ -9,6 +9,7 @@ import {
   type ProviderFreshnessFilter,
 } from '@repo/schemas/film-selection'
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
+import type { CoverageGap, CoverageQuery } from '@repo/schemas/coverage'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import { db } from '@/lib/db'
@@ -21,6 +22,7 @@ import {
   requireEnrichmentConfirmation,
   validateMediaProviders,
 } from './film-enrichment'
+import { albumCoverageGapSelection } from './metadata-coverage'
 
 type SelectionFreshnessQuery = {
   provider?: string
@@ -293,6 +295,7 @@ export async function queueMediaSelection(
   input: z.infer<typeof QueueFilmSelectionSchema>,
   mediaType: 'album' | 'film',
   userId: string | null,
+  coverageGap?: CoverageQuery & { gap: CoverageGap },
 ) {
   const options = QueueFilmSelectionSchema.parse(input)
   const ids = [...new Set(options.mediaItemIds)]
@@ -301,7 +304,7 @@ export async function queueMediaSelection(
     ids.length * providers.length,
     options.confirmBroadRun,
   )
-  await validateMediaProviders(providers, mediaType)
+  const selectedProviders = await validateMediaProviders(providers, mediaType)
   const items = await db
     .select({ id: mediaItem.id })
     .from(mediaItem)
@@ -317,8 +320,14 @@ export async function queueMediaSelection(
       statusCode: 422,
       message: `Selection includes missing or archived ${mediaType}s. Reload and select again.`,
     })
-  let pairs =
-    options.olderThanDays === undefined
+  let pairs = coverageGap
+    ? await albumCoverageGapSelection(
+        ids,
+        selectedProviders,
+        coverageGap.gap,
+        coverageGap.olderThanDays,
+      )
+    : options.olderThanDays === undefined
       ? ids.flatMap((mediaItemId) =>
           providers.map((provider) => ({ mediaItemId, provider })),
         )

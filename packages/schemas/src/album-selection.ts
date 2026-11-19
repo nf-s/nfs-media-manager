@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { AlbumListItemSchema, AlbumQuerySchema } from './media'
 import { PaginatedDataSchema } from './common'
+import { CoverageGapSchema, CoverageQuerySchema } from './coverage'
 import {
   QueueFilmSelectionSchema,
   selectionItemFields,
@@ -21,5 +22,13 @@ export const AlbumSelectionItemSchema = AlbumListItemSchema.extend({
 export const AlbumSelectionPageSchema = PaginatedDataSchema(
   AlbumSelectionItemSchema,
 )
-export const QueueAlbumSelectionSchema = QueueFilmSelectionSchema
+export const QueueAlbumSelectionSchema = QueueFilmSelectionSchema.extend({
+  coverageGap: CoverageQuerySchema.extend({
+    gap: CoverageGapSchema,
+  }).optional(),
+}).refine(
+  ({ coverageGap, freshness, olderThanDays }) =>
+    !coverageGap || (freshness === undefined && olderThanDays === undefined),
+  'Coverage gaps and scrape freshness are separate filters',
+)
 export type AlbumSelectionItem = z.infer<typeof AlbumSelectionItemSchema>

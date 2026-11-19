@@ -7,6 +7,7 @@ import {
   type Coverage,
   type CoverageEntries,
   type CoverageEntriesQuery,
+  type CoverageGap,
   type CoverageQuery,
   type CoverageUnavailableReason,
   type EntryGap,
@@ -20,6 +21,7 @@ import {
   providerCurrentState,
   providerReference,
 } from '@/schemas/db'
+import { readAlbumMetadataInventory } from './album-metadata-inventory'
 import { artistPlaylistCredits, visiblePlaylist } from './artist-library'
 import {
   artistFreshnessConditions,
@@ -61,24 +63,23 @@ function unavailableReason(
 type ProviderGaps = {
   provider: ProviderSummary
   covered: number
-  /** Eligible albums never scraped, by title. */
+  stored?: number
+  /** Eligible albums without data for the selected coverage view, by title. */
   missing: string[]
   /** Eligible albums scraped before the cutoff, oldest scrape first. */
   stale: string[]
 }
 
-/**
- * Per-provider freshness for a set of albums. Uses the Metadata table's rule:
- * only a successful scrape sets `last_scraped_at`, and an album is stale when
- * that is older than `olderThanDays`. Library membership, provider links and
- * imported snapshots do not record a successful scrape. Albums a provider
- * cannot look up are neither missing nor stale. Reads stored state only.
- */
 async function albumGaps(
   albumIds: SQL,
   olderThanDays: number,
-  now = Date.now(),
-): Promise<{ total: number; providers: ProviderGaps[] }> {
+  options: { stored?: boolean; providers?: ProviderSummary[] } = {},
+): Promise<{
+  total: number
+  storedAlbums?: number
+  providers: ProviderGaps[]
+}> {
+  const cutoff = Date.now() - olderThanDays * 86400000
   const albums = AlbumRowsSchema.parse(
     (
       await db.execute(sql`
@@ -87,28 +88,32 @@ async function albumGaps(
         order by lower(m.title), m.id`)
     ).rows,
   )
-  const providers = (await listProviders()).filter(
-    (provider) =>
-      provider.supportsScrape && provider.mediaTypes.includes('album'),
-  )
-  const [states, references, credits] = albums.length
+  const providers =
+    options.providers ??
+    (await listProviders()).filter(
+      (provider) =>
+        provider.supportsScrape && provider.mediaTypes.includes('album'),
+    )
+  const [states, references, credits, inventory] = albums.length
     ? await Promise.all([
-        db
-          .select({
-            id: providerCurrentState.mediaItemId,
-            provider: providerCurrentState.provider,
-            scrapedAt: providerCurrentState.lastScrapedAt,
-          })
-          .from(providerCurrentState)
-          .where(
-            and(
-              sql`${providerCurrentState.mediaItemId} in (${albumIds})`,
-              inArray(
-                providerCurrentState.provider,
-                providers.map((provider) => provider.id),
+        options.stored
+          ? []
+          : db
+              .select({
+                id: providerCurrentState.mediaItemId,
+                provider: providerCurrentState.provider,
+                scrapedAt: providerCurrentState.lastScrapedAt,
+              })
+              .from(providerCurrentState)
+              .where(
+                and(
+                  sql`${providerCurrentState.mediaItemId} in (${albumIds})`,
+                  inArray(
+                    providerCurrentState.provider,
+                    providers.map((provider) => provider.id),
+                  ),
+                ),
               ),
-            ),
-          ),
         db
           .select({
             id: providerReference.mediaItemId,
@@ -128,8 +133,14 @@ async function albumGaps(
               eq(mediaCredit.role, 'artist'),
             ),
           ),
+        options.stored
+          ? readAlbumMetadataInventory(
+              albums.map(({ id }) => id),
+              providers,
+            )
+          : undefined,
       ])
-    : [[], [], []]
+    : [[], [], [], undefined]
   const scraped = new Map(
     states.map((state) => [
       JSON.stringify([state.id, state.provider]),
@@ -143,29 +154,38 @@ async function albumGaps(
   }
   const referencesById = group(references)
   const artistsById = group(credits)
-  const cutoff = now - olderThanDays * 86400000
-
   return {
     total: albums.length,
+    storedAlbums: options.stored
+      ? [...(inventory?.values() ?? [])].filter(({ hasData }) => hasData).length
+      : undefined,
     providers: providers.map((provider) => {
       const missing: string[] = []
       const stale: Array<{ id: string; scrapedAt: number }> = []
       let covered = 0
+      let stored = 0
       for (const album of albums) {
-        const scrapedAt = scraped.get(JSON.stringify([album.id, provider.id]))
-        if (scrapedAt) {
-          if (scrapedAt.getTime() < cutoff)
-            stale.push({ id: album.id, scrapedAt: scrapedAt.getTime() })
-          else covered++
-        } else if (
+        const evidence = inventory?.get(album.id)
+        const scrapedAt = options.stored
+          ? evidence?.scrapedAt.get(provider.id)
+          : scraped.get(JSON.stringify([album.id, provider.id]))
+        const hasData = options.stored
+          ? evidence?.providers.has(provider.id)
+          : Boolean(scrapedAt)
+        const canLookUp = () =>
           canIdentifyMedia(provider, {
             mediaType: 'album',
             title: album.title,
             artists: (artistsById.get(album.id) ?? []).map((row) => row.name),
             providerReferences: referencesById.get(album.id) ?? [],
           })
-        )
-          missing.push(album.id)
+        if (hasData) {
+          stored++
+          if (!scrapedAt) continue
+          if (scrapedAt.getTime() >= cutoff) covered++
+          else if (!options.stored || canLookUp())
+            stale.push({ id: album.id, scrapedAt: scrapedAt.getTime() })
+        } else if (canLookUp()) missing.push(album.id)
       }
       stale.sort(
         (left, right) =>
@@ -174,6 +194,7 @@ async function albumGaps(
       return {
         provider,
         covered,
+        stored: options.stored ? stored : undefined,
         missing,
         stale: stale.map((album) => album.id),
       }
@@ -184,22 +205,27 @@ async function albumGaps(
 async function albumCoverage(
   albumIds: SQL,
   query: CoverageQuery,
+  stored = false,
 ): Promise<Coverage> {
-  const gaps = await albumGaps(albumIds, query.olderThanDays)
+  const gaps = await albumGaps(albumIds, query.olderThanDays, { stored })
   return CoverageSchema.parse({
     total: gaps.total,
+    storedAlbums: gaps.storedAlbums,
     olderThanDays: query.olderThanDays,
-    providers: gaps.providers.map(({ provider, covered, missing, stale }) => ({
-      provider: provider.id,
-      displayName: provider.displayName,
-      eligible: covered + stale.length + missing.length,
-      covered,
-      stale: stale.length,
-      missing: missing.length,
-      unavailableReason: unavailableReason(provider),
-      missingItemIds: missing.slice(0, COVERAGE_ITEM_ID_LIMIT),
-      staleItemIds: stale.slice(0, COVERAGE_ITEM_ID_LIMIT),
-    })),
+    providers: gaps.providers.map(
+      ({ provider, covered, stored, missing, stale }) => ({
+        provider: provider.id,
+        displayName: provider.displayName,
+        eligible: (stored ?? covered + stale.length) + missing.length,
+        covered,
+        stored,
+        stale: stale.length,
+        missing: missing.length,
+        unavailableReason: unavailableReason(provider),
+        missingItemIds: missing.slice(0, COVERAGE_ITEM_ID_LIMIT),
+        staleItemIds: stale.slice(0, COVERAGE_ITEM_ID_LIMIT),
+      }),
+    ),
   })
 }
 
@@ -213,7 +239,24 @@ function playlistAlbums(id: string) {
 
 export async function getPlaylistCoverage(id: string, query: CoverageQuery) {
   await getPlaylistSummary(id)
-  return albumCoverage(playlistAlbums(id), query)
+  return albumCoverage(playlistAlbums(id), query, true)
+}
+
+/** Recheck the exact playlist gap on the explicitly selected albums before queueing. */
+export async function albumCoverageGapSelection(
+  ids: string[],
+  providers: ProviderSummary[],
+  gap: CoverageGap,
+  olderThanDays: number,
+) {
+  const coverage = await albumGaps(
+    sql`select unnest(${sql.param(ids)}::text[])`,
+    olderThanDays,
+    { providers, stored: true },
+  )
+  return coverage.providers.flatMap((row) =>
+    row[gap].map((mediaItemId) => ({ mediaItemId, provider: row.provider.id })),
+  )
 }
 
 /**
@@ -302,7 +345,9 @@ export async function getPlaylistCoverageEntries(
   query: CoverageEntriesQuery,
 ): Promise<CoverageEntries> {
   const { gap, provider, olderThanDays, ...entryQuery } = query
-  const gaps = await albumGaps(playlistAlbums(id), olderThanDays)
+  const gaps = await albumGaps(playlistAlbums(id), olderThanDays, {
+    stored: true,
+  })
   const providers = gaps.providers.filter(
     (row) => provider === undefined || row.provider.id === provider,
   )

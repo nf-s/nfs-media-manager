@@ -37,6 +37,7 @@ const batchId = '00000000-0000-4000-8000-000000000000'
 const many = Array.from({ length: 120 }, (_, index) => `album-${index}`)
 const coverage = CoverageSchema.parse({
   total: 42,
+  storedAlbums: 42,
   olderThanDays: 180,
   providers: [
     {
@@ -44,6 +45,7 @@ const coverage = CoverageSchema.parse({
       displayName: 'Discogs',
       eligible: 40,
       covered: 36,
+      stored: 38,
       stale: 2,
       missing: 2,
       unavailableReason: null,
@@ -126,11 +128,11 @@ test('Coverage shows each provider with its gap actions and unavailable reason',
     assert.match(
       html,
       kind === 'playlist'
-        ? /42 library albums · last successful scrape · stale after 180 days/
+        ? /42 of 42 library albums with metadata · stale after 180 days/
         : /42 albums · stale after 180 days/,
     )
     assert.match(html, /class="ds-mark" title="Discogs">DI</)
-    assert.match(html, /36 of 40/)
+    assert.match(html, kind === 'playlist' ? /38 of 40/ : /36 of 40/)
     assert.match(html, />Queue 2 missing</)
     assert.match(html, />Refresh 2 stale</)
     assert.match(html, /42 of 42/)
@@ -145,7 +147,7 @@ test('with a track list, the gap counts link to it beside Queue and Refresh', ()
   const html = render('playlist', coverage, false, () => {})
   assert.match(
     html,
-    /data-variant="link"[^>]*aria-label="Show entries for 2 library albums with no successful Discogs scrape"[^>]*>2 without a successful scrape</,
+    /data-variant="link"[^>]*aria-label="Show entries for 2 library albums missing Discogs metadata"[^>]*>2 missing metadata</,
   )
   assert.match(
     html,
@@ -162,7 +164,7 @@ test('with a track list, the gap counts link to it beside Queue and Refresh', ()
   // An unavailable provider's gap can still be shown, not queued.
   assert.match(
     html,
-    /aria-label="Show entries for 32 library albums with no successful Rate Your Music scrape"/,
+    /aria-label="Show entries for 32 library albums missing Rate Your Music metadata"/,
   )
   assert.doesNotMatch(
     html,
@@ -171,9 +173,10 @@ test('with a track list, the gap counts link to it beside Queue and Refresh', ()
   assert.doesNotMatch(render('artist', coverage), /data-variant="link"/)
 })
 
-test('Spotify scrape coverage distinguishes albums in the library from albums with no scrape', () => {
+test('imported Spotify metadata counts without any successful scrape', () => {
   const data = CoverageSchema.parse({
     total: 2,
+    storedAlbums: 2,
     olderThanDays: 180,
     providers: [
       {
@@ -181,21 +184,19 @@ test('Spotify scrape coverage distinguishes albums in the library from albums wi
         displayName: 'Spotify',
         eligible: 2,
         covered: 0,
+        stored: 2,
         stale: 0,
-        missing: 2,
+        missing: 0,
         unavailableReason: null,
-        missingItemIds: ['album-1', 'album-2'],
+        missingItemIds: [],
         staleItemIds: [],
       },
     ],
   })
   const html = render('playlist', data, false, () => {})
-  assert.match(html, /2 library albums · last successful scrape/)
-  assert.match(html, /0 of 2/)
-  assert.match(
-    html,
-    /aria-label="Show entries for 2 library albums with no successful Spotify scrape"[^>]*>2 without a successful scrape</,
-  )
+  assert.match(html, /2 of 2 library albums with metadata/)
+  assert.match(html, />2 of 2</)
+  assert.doesNotMatch(html, /Queue|missing metadata/)
 })
 
 test('a review of selected rows states the first 100 of the selected albums', () => {
@@ -266,6 +267,7 @@ test('the review states the provider and the number of jobs and flags a broad ru
 
 test('queue requests send at most 100 IDs and confirm a broad run only after review', () => {
   const missing = coverageQueueRequest({
+    kind: 'playlist',
     provider: 'discogs',
     gap: 'missing',
     ids: ['album-3', 'album-7'],
@@ -273,12 +275,12 @@ test('queue requests send at most 100 IDs and confirm a broad run only after rev
     confirmed: true,
     batchId,
   })
-  assert.deepEqual(missing.freshness, [
-    { provider: 'discogs', mode: 'unscraped' },
-  ])
+  assert.deepEqual(missing.coverageGap, { gap: 'missing', olderThanDays: 180 })
+  assert.equal(missing.freshness, undefined)
   assert.equal(missing.confirmBroadRun, false)
   assert.deepEqual(missing.providers, ['discogs'])
   const stale = coverageQueueRequest({
+    kind: 'artist',
     provider: 'discogs',
     gap: 'stale',
     ids: many,
@@ -293,6 +295,7 @@ test('queue requests send at most 100 IDs and confirm a broad run only after rev
   ])
   assert.equal(
     coverageQueueRequest({
+      kind: 'playlist',
       provider: 'discogs',
       gap: 'stale',
       ids: many.slice(0, 6),
@@ -388,11 +391,11 @@ test('a playlist Coverage switches between its albums and its artists', () => {
   assert.match(albums, /aria-pressed="false"[^>]*>Artists</)
   assert.match(
     albums,
-    /42 library albums · last successful scrape · stale after 180 days/,
+    /42 of 42 library albums with metadata · stale after 180 days/,
   )
   assert.match(
     albums,
-    /aria-label="Show entries for 2 library albums with no successful Discogs scrape"/,
+    /aria-label="Show entries for 2 library albums missing Discogs metadata"/,
   )
 
   const artists = renderPlaylistCoverage('artists', [

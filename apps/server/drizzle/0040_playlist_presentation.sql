@@ -1,0 +1,2 @@
+ALTER TABLE "playlist" ADD COLUMN "presentation_override" text;--> statement-breakpoint
+ALTER TABLE "playlist" ADD CONSTRAINT "playlist_presentation_override_check" CHECK ("playlist"."presentation_override" in ('albums', 'tracks'));

@@ -94,10 +94,13 @@
       })
       const playlistHead = D.detailHead({
         item: PL[0],
-        kind: 'Playlist',
+        kind: 'Track playlist',
         by: 'from <a href="#">Spotify</a>',
         facts: ['42 tracks', '2h 51m', 'Updated 2026-11-09'],
-        actions: D.headActions({ open: 'Spotify' }),
+        actions: D.headActions({
+          open: 'Spotify',
+          lead: `<label class="ds-actions">Playlist type${D.select(['Automatic', 'Album playlist', 'Track playlist'], { label: 'Playlist type' })}</label>`,
+        }),
       })
       const channelHead = D.detailHead({
         item: { kind: 'artist', seed: 9, title: 'Slow Workshop' },
