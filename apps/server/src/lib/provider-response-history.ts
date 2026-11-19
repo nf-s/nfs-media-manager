@@ -3,6 +3,9 @@ import {
   ProviderItemNotFoundError,
   ProviderRequestError,
   sanitizeProviderResponseBody,
+  isNativeJsonResponse,
+  isSafeNativeJsonResponse,
+  type MediaProviderPlugin,
   containsSecret,
   scrubText,
   sensitiveKey,
@@ -27,6 +30,9 @@ type ArchiveSanitizer = (input: {
   text: string
   sensitiveValues: readonly string[]
 }) => { contentType: string; text: string } | null
+
+type ArchiveRepresentation = 'adapter' | 'native' | 'legacy-native'
+const nativeJsonMime = /^application\/(?:[a-z0-9.+-]+\+)?json$/i
 
 const accountPath =
   /(?:^|\/)(?:oauth2?|auth|authorize|token|log(?:in|out)|accounts?|me|users|profile|sessions?|credentials|authentication)(?:\/|$)/i
@@ -169,10 +175,11 @@ export function pairedProviderResponseCapture(result: unknown) {
     nativeStatus <= 599
       ? nativeStatus
       : undefined
-  const representation =
-    'representation' in capture && capture.representation === 'adapter'
-      ? 'adapter'
-      : 'native'
+  const marker =
+    'representation' in capture ? capture.representation : undefined
+  if (marker !== undefined && marker !== 'native' && marker !== 'adapter')
+    return undefined
+  const representation: ArchiveRepresentation = marker ?? 'legacy-native'
   return { body: body.data, contentType, status, representation }
 }
 
@@ -188,6 +195,7 @@ export function createProviderResponseRecorder(
   save: (capture: ProviderResponseCapture, artistId?: string) => Promise<void>,
   secrets: readonly string[],
   sanitizeResponseCapture?: ArchiveSanitizer,
+  sanitizeNativeJsonResponseCapture?: MediaProviderPlugin['sanitizeNativeJsonResponseCapture'],
 ) {
   let ordinal = 0
   let retainedBytes = 0
@@ -204,8 +212,39 @@ export function createProviderResponseRecorder(
         const descriptor = requestDescriptor(request, secrets)
         if (!descriptor) return undefined
         const nextOrdinal = ++ordinal
-        return async (response: ResponseEvidence, nativeCapture = false) => {
+        return async (
+          response: ResponseEvidence,
+          representation: ArchiveRepresentation = 'adapter',
+        ) => {
           let { body, contentType } = response
+          const trustedNativeJson =
+            representation === 'native' &&
+            body.state === 'captured' &&
+            contentType !== null &&
+            nativeJsonMime.test(contentType) &&
+            sanitizeNativeJsonResponseCapture !== undefined
+          if (trustedNativeJson && body.state === 'captured') {
+            try {
+              const text = body.text
+              const approved = isNativeJsonResponse(text)
+                ? sanitizeNativeJsonResponseCapture({
+                    text,
+                    sensitiveValues: descriptor.secrets,
+                  })
+                : null
+              body =
+                typeof approved === 'string' &&
+                isSafeNativeJsonResponse(approved, descriptor.secrets)
+                  ? {
+                      state: 'captured',
+                      text: approved,
+                      redacted: body.redacted === true || approved !== text,
+                    }
+                  : { state: 'unavailable', reason: 'policy' }
+            } catch {
+              body = { state: 'unavailable', reason: 'redact-failed' }
+            }
+          }
           if (
             body.state === 'captured' &&
             contentType === 'text/html' &&
@@ -238,10 +277,11 @@ export function createProviderResponseRecorder(
             }
           }
           if (
-            body.state !== 'captured' ||
-            contentType !== 'text/html' ||
-            !sanitizeResponseCapture ||
-            !body.redacted
+            !trustedNativeJson &&
+            (body.state !== 'captured' ||
+              contentType !== 'text/html' ||
+              !sanitizeResponseCapture ||
+              !body.redacted)
           ) {
             body = sanitizeProviderResponseBody(
               body,
@@ -265,7 +305,7 @@ export function createProviderResponseRecorder(
                 ordinal: nextOrdinal,
                 phase,
                 request:
-                  nativeCapture && descriptor.identity.key
+                  representation !== 'adapter' && descriptor.identity.key
                     ? {
                         ...descriptor.identity,
                         key: nativeKey(descriptor.identity.key),

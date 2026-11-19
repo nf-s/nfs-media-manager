@@ -206,7 +206,9 @@ export async function runArtistEnrichment(
       throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
     const { plugin, secrets, builtin } = await artistProvider(provider)
     diagnostics = createJobDiagnostics(jobLogSecrets(secrets), {
-      protectProviderResponses: plugin.sanitizeResponseCapture !== undefined,
+      protectProviderResponses:
+        plugin.sanitizeResponseCapture !== undefined ||
+        plugin.sanitizeNativeJsonResponseCapture !== undefined,
     })
     const savedOrExplicitId = providerArtistId ?? target.providerArtistId
     let id = savedOrExplicitId
@@ -246,6 +248,7 @@ export async function runArtistEnrichment(
         }),
       providerResponseSecretValues(secrets),
       plugin.sanitizeResponseCapture,
+      plugin.sanitizeNativeJsonResponseCapture,
     )
     storageError = capture.storageError
     const requestContext = {

@@ -3,6 +3,7 @@ import type { MediaPluginTestContext } from '@repo/media-plugin-sdk'
 import {
   createProviderResponseRecorder,
   createProviderResponseReplay,
+  pairedProviderResponseCapture,
   replayProviderResponses,
   type ProviderResponseCapture,
 } from './provider-response-history'
@@ -30,7 +31,7 @@ function fixture() {
     ) {
       await record(...request)?.(
         { status, receivedAt: fixtureTime, contentType, body },
-        native,
+        native ? 'native' : 'adapter',
       )
     },
   }
@@ -38,6 +39,106 @@ function fixture() {
 
 describe('provider response archive', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it('preserves trusted JSON bytes and keeps anchors distinct from generic archives', async () => {
+    const archive: ProviderResponseCapture[] = []
+    const hook = vi.fn(({ text }: { text: string }) => text)
+    const begin = createProviderResponseRecorder(
+      async (entry) => {
+        archive.push(entry)
+      },
+      ['fixture-config-secret'],
+      undefined,
+      hook,
+    )('media')
+    const text =
+      '{ "notes": "[url]https://example.test/page#credits[/url]", "nested": [{ "id": 900719925474099312345, "userId": 101 }, { "id": 2, "uploaderId": 42 }]}'
+    const response = {
+      status: 200,
+      receivedAt: fixtureTime,
+      contentType: 'application/json',
+      body: { state: 'captured', text },
+    } satisfies ProviderResponseCapture['response']
+    await begin(fixtureUrl)?.(response, 'native')
+    await begin(fixtureUrl)?.(response, 'legacy-native')
+    await begin(fixtureUrl)?.(response, 'adapter')
+    expect(hook).toHaveBeenCalledExactlyOnceWith({
+      text,
+      sensitiveValues: ['fixture-config-secret'],
+    })
+    expect(archive[0]?.response.body).toEqual({
+      state: 'captured',
+      text,
+      redacted: false,
+    })
+    for (const entry of archive.slice(1)) {
+      expect(entry.response.body).toEqual({
+        state: 'captured',
+        text: '{"notes":"[url]https://example.test/page[/url]","nested":[{"id":900719925474099312345},{"id":2}]}',
+        redacted: true,
+      })
+    }
+    expect(archive[0]?.request.key).toBe(archive[1]?.request.key)
+    expect(archive[0]?.request.key).not.toBe(archive[2]?.request.key)
+  })
+
+  it.each([
+    ['{"nested":[{"x":1,"\\u0078":2}]}', '{"x":1}'],
+    ['{"safe":1}', '{"nested":[{"accessToken":"opaque-fixture"}]}'],
+    ['{"safe":1}', '{"nested":[{"uploaderUsername":"opaque-fixture"}]}'],
+    ['{"safe":1}', '{"note":"Bearer abc"}'],
+    ['{"safe":1}', '{"nested":[{"description":"fixture-config-secret"}]}'],
+    ['{"safe":1}', '{"x":1,"x":2}'],
+    ['{"safe":1}', '{"link":"https://example.test/page#token=opaque-fixture"}'],
+    ['{"safe":1}', '{"truncated":'],
+  ])(
+    'fails closed for invalid or unsafe native JSON %#',
+    async (text, approved) => {
+      const archive: ProviderResponseCapture[] = []
+      const begin = createProviderResponseRecorder(
+        async (entry) => {
+          archive.push(entry)
+        },
+        ['fixture-config-secret'],
+        undefined,
+        () => approved,
+      )('media')
+      await begin(fixtureUrl)?.(
+        {
+          status: 200,
+          receivedAt: fixtureTime,
+          contentType: 'application/json',
+          body: { state: 'captured', text },
+        },
+        'native',
+      )
+      expect(archive[0]?.response.body).toEqual({
+        state: 'unavailable',
+        reason: 'policy',
+      })
+    },
+  )
+
+  it('requires an explicit native representation to select the registered policy', () => {
+    const capture = {
+      contentType: 'application/json',
+      body: { state: 'captured', text: '{}' },
+    }
+    expect(
+      pairedProviderResponseCapture({ providerResponseCapture: capture })
+        ?.representation,
+    ).toBe('legacy-native')
+    expect(
+      pairedProviderResponseCapture({
+        providerResponseCapture: { ...capture, representation: 'native' },
+      })?.representation,
+    ).toBe('native')
+    expect(
+      pairedProviderResponseCapture({
+        providerResponseCapture: { ...capture, representation: 'unexpected' },
+      }),
+    ).toBeUndefined()
+  })
 
   it('keeps validated native boolean token capabilities byte-for-byte', async () => {
     const { capture, archive } = fixture()

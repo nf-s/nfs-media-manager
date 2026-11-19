@@ -11,6 +11,10 @@ const normalizedKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]/g, '')
 export const sensitiveKey = (value: string) =>
   sensitive.test(normalizedKey(value))
+const nativeCredential =
+  /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?$|credential|session|apikey|apiuser|privatekey|csrf|xsrf|signature|^auth$|^key$|^jwt$|^(?:email(?:address)?|username|(?:uploader|uploadedby|createdby|owner)(?:name|username))$/i
+const nativeCredentialKey = (value: string) =>
+  nativeCredential.test(normalizedKey(value))
 // A JSON boolean can describe permission to use a token without carrying it.
 const tokenCapability = /^can[A-Z][A-Za-z]*Token$/
 const collection = /^(?:collages?|collections?)$/
@@ -42,49 +46,87 @@ const privatePath =
   /^(?:(?:file:)?\/\/|file:)?(?:[A-Z](?::|%3a)(?:[\\/]|%5c|%2f)|(?:\/|%2f)(?:Users|home|private|Volumes|tmp|var|mnt|media)(?:\/|%2f))/i
 
 export function scrubText(value: string, secrets: readonly string[]) {
+  return scrubResponseText(value, secrets, false)
+}
+
+function scrubResponseText(
+  value: string,
+  secrets: readonly string[],
+  nativeCredentialsOnly: boolean,
+) {
+  const isSensitive = nativeCredentialsOnly ? nativeCredentialKey : sensitiveKey
   let safe = value
   for (const secret of secrets) safe = safe.split(secret).join('[REDACTED]')
-  safe = safe.replace(/https?:\/\/[^\s<>"']+/gi, (link) => {
+  safe = safe.replace(/https?:\/\/[^\s<>"']+/gi, (match, offset: number) => {
+    // Preserve a matching BBCode URL delimiter outside the URL itself.
+    const closingTag =
+      safe.slice(Math.max(0, offset - 5), offset).toLowerCase() === '[url]'
+        ? match.search(/\[\/url\]/i)
+        : -1
+    const link = closingTag < 0 ? match : match.slice(0, closingTag)
+    const suffix = match.slice(link.length)
     try {
       const url = new URL(link)
-      let changed = Boolean(url.username || url.password || url.hash)
+      const removeFragment =
+        Boolean(url.hash) &&
+        !(
+          nativeCredentialsOnly && /^#[a-z][a-z0-9_.:-]{0,127}$/i.test(url.hash)
+        )
+      let changed = Boolean(url.username || url.password || removeFragment)
       url.username = ''
       url.password = ''
-      url.hash = ''
+      if (removeFragment) url.hash = ''
       for (const key of new Set(url.searchParams.keys())) {
         if (
-          !sensitiveKey(key) &&
-          !url.searchParams.getAll(key).some((part) => privatePath.test(part))
+          !isSensitive(key) &&
+          !url.searchParams
+            .getAll(key)
+            .some((part) =>
+              nativeCredentialsOnly
+                ? containsSecret(part, secrets)
+                : privatePath.test(part),
+            )
         )
           continue
         changed = true
         url.searchParams.delete(key)
       }
       if (
+        !nativeCredentialsOnly &&
         /(?:%2f(?:Users|home|private|Volumes|tmp|var|mnt|media)%2f|[a-z]%3a%5c)/i.test(
           url.pathname,
         )
       )
-        return '[REDACTED]'
-      return changed ? url.href : link
+        return '[REDACTED]' + suffix
+      return changed ? url.href + suffix : match
     } catch {
-      return link
+      return match
     }
   })
-  return safe
-    .replace(
-      /(^|[\s"'=(])(?:file:\/\/)?(?:[A-Z](?::|%3a)(?:[\\/]|%5c|%2f)|(?:\/|%2f)(?:Users|home|private|Volumes|tmp|var|mnt|media)(?:\/|%2f))[^<>"'\r\n,;|)]+/gi,
-      '$1[REDACTED]',
+  if (!nativeCredentialsOnly)
+    safe = safe
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')
+      .replace(
+        /(^|[\s"'=(])(?:file:\/\/)?(?:[A-Z](?::|%3a)(?:[\\/]|%5c|%2f)|(?:\/|%2f)(?:Users|home|private|Volumes|tmp|var|mnt|media)(?:\/|%2f))[^<>"'\r\n,;|)]+/gi,
+        '$1[REDACTED]',
+      )
+  if (nativeCredentialsOnly)
+    safe = safe
+      .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '[REDACTED]')
+      .replace(
+        /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+        '[REDACTED]',
+      )
+  else
+    safe = safe.replace(
+      /\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_=.-]{5,}/gi,
+      '[REDACTED]',
     )
-    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_=.-]{5,}/gi, '[REDACTED]')
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')
-    .replace(
-      /(["']?)([a-z][a-z0-9_-]{0,60})\1(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}&]+)/gi,
-      (piece: string, quote: string, key: string, separator: string) =>
-        sensitiveKey(key)
-          ? `${quote}${key}${quote}${separator}[REDACTED]`
-          : piece,
-    )
+  return safe.replace(
+    /(["']?)([a-z][a-z0-9_-]{0,60})\1(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}&]+)/gi,
+    (piece: string, quote: string, key: string, separator: string) =>
+      isSensitive(key) ? `${quote}${key}${quote}${separator}[REDACTED]` : piece,
+  )
 }
 
 export function sanitizeProviderResponseBody(
@@ -92,6 +134,7 @@ export function sanitizeProviderResponseBody(
   contentType: string | null,
   secrets: readonly string[],
 ): CaptureBody {
+  const scrub = (text: string) => scrubText(text, secrets)
   if (body.state !== 'captured') return body
   if (!body.text.length) return { state: 'unavailable', reason: 'empty' }
   if (
@@ -140,7 +183,7 @@ export function sanitizeProviderResponseBody(
       // Do not archive HTML forms, XML tags, or binary-looking text as plaintext.
       if (/[\x00-\x08\x0b-\x1f]|<\/?[a-z][^>]*>/i.test(body.text))
         return { state: 'unavailable', reason: 'unsupported-format' }
-      const text = scrubText(body.text, secrets)
+      const text = scrub(body.text)
       return {
         state: 'captured',
         text,
@@ -158,7 +201,7 @@ export function sanitizeProviderResponseBody(
         if (changed) return token
         const decoded: unknown = JSON.parse(token)
         if (typeof decoded !== 'string') return token
-        if (scrubText(decoded, secrets) !== decoded) changed = true
+        if (scrub(decoded) !== decoded) changed = true
         if (!sensitiveKey(decoded)) return token
         const end = offset + token.length
         booleanMember.lastIndex = end
@@ -169,7 +212,7 @@ export function sanitizeProviderResponseBody(
         return token
       },
     )
-    if (!changed) changed = scrubText(probe, secrets) !== probe
+    if (!changed) changed = scrub(probe) !== probe
     const privateContainers = new WeakSet<object>()
     const privateRecords = new WeakSet<object>()
     const cleaned = JSON.stringify(
@@ -220,7 +263,7 @@ export function sanitizeProviderResponseBody(
           return value
         }
         if (typeof value !== 'string') return value
-        const safe = scrubText(value, secrets)
+        const safe = scrub(value)
         if (safe !== value) changed = true
         return safe
       },
@@ -234,5 +277,75 @@ export function sanitizeProviderResponseBody(
     }
   } catch {
     return { state: 'unavailable', reason: 'redact-failed' }
+  }
+}
+
+/** Verify duplicate-free object/array JSON without reserializing its source. */
+export function isNativeJsonResponse(text: string): boolean {
+  if (
+    text.length > MAX_PROVIDER_RESPONSE_BYTES ||
+    new TextEncoder().encode(text).byteLength > MAX_PROVIDER_RESPONSE_BYTES
+  )
+    return false
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null) return false
+    const containers: (Set<string> | null)[] = []
+    const member = /\s*:/y
+    for (const { 0: token, index } of text.matchAll(
+      /"(?:[^"\\]|\\.)*"|[{}\[\]]/g,
+    )) {
+      if (token === '{' || token === '[') {
+        containers.push(token === '{' ? new Set() : null)
+      } else if (token === '}' || token === ']') {
+        containers.pop()
+      } else if (index !== undefined) {
+        const keys = containers.at(-1)
+        if (!keys) continue
+        member.lastIndex = index + token.length
+        if (!member.test(text)) continue
+        const key: unknown = JSON.parse(token)
+        if (typeof key !== 'string' || keys.has(key)) return false
+        keys.add(key)
+      }
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function isSafeNativeJsonResponse(
+  text: string,
+  secrets: readonly string[],
+): boolean {
+  if (!isNativeJsonResponse(text)) return false
+  try {
+    const variants = [
+      ...new Set(
+        secrets.flatMap((value) => [value, encodeURIComponent(value)]),
+      ),
+    ]
+    if (containsSecret(text, variants)) return false
+    const member = /\s*:/y
+    const booleanMember = /\s*:\s*(?:true|false)\s*(?=[,}])/y
+    for (const { 0: token, index } of text.matchAll(/"(?:[^"\\]|\\.)*"/g)) {
+      const value: unknown = JSON.parse(token)
+      if (
+        typeof value !== 'string' ||
+        scrubResponseText(value, variants, true) !== value
+      )
+        return false
+      if (index === undefined || !nativeCredentialKey(value)) continue
+      const end = index + token.length
+      member.lastIndex = end
+      if (!member.test(text)) continue
+      booleanMember.lastIndex = end
+      if (!tokenCapability.test(value) || !booleanMember.test(text))
+        return false
+    }
+    return true
+  } catch {
+    return false
   }
 }

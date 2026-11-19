@@ -706,7 +706,9 @@ async function processJob(
         plugin.manifest.secrets,
       )
       diagnostics = createJobDiagnostics(jobLogSecrets(secrets), {
-        protectProviderResponses: plugin.sanitizeResponseCapture !== undefined,
+        protectProviderResponses:
+          plugin.sanitizeResponseCapture !== undefined ||
+          plugin.sanitizeNativeJsonResponseCapture !== undefined,
       })
 
       const referenceHints = await getProviderReferenceHints({
@@ -727,6 +729,7 @@ async function processJob(
           }),
         providerResponseSecretValues(secrets),
         plugin.sanitizeResponseCapture,
+        plugin.sanitizeNativeJsonResponseCapture,
       )
       storageError = capture.storageError
       const requestFor = (artistId?: string) =>

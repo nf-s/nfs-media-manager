@@ -752,6 +752,7 @@ for (const failedProjection of [false, true]) {
           })
         : json({ projected: 1 }).body,
       capture: {
+        representation: 'native',
         contentType: 'application/json',
         body: {
           state: 'captured',
@@ -763,6 +764,7 @@ for (const failedProjection of [false, true]) {
     const [result] = h.uploads
     assert.equal(result.kind, failedProjection ? 'error' : 'response')
     assert.deepEqual(result.capture, {
+      representation: 'native',
       contentType: 'application/json',
       status: 200,
       body: {

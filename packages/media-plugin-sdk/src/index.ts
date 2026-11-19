@@ -385,6 +385,11 @@ export const StoredPersonalStateSchema = z.object({
 
 export interface MediaProviderPlugin {
   /** Pure, provider-specific privacy filter applied before retaining a response. */
+  /** Recheck native JSON from an explicitly marked response of a paired worker. */
+  sanitizeNativeJsonResponseCapture?: (input: {
+    text: string
+    sensitiveValues: readonly string[]
+  }) => string | null
   sanitizeResponseCapture?: (input: {
     contentType: string | null
     text: string
@@ -660,6 +665,7 @@ export function isMediaProviderPlugin(
     'importLegacyRecord',
     'importFileRecord',
     'sanitizeResponseCapture',
+    'sanitizeNativeJsonResponseCapture',
     'readStoredCollections',
     'readStoredPersonalState',
   ]) {
@@ -678,6 +684,8 @@ export function isMediaProviderPlugin(
 
 export {
   sanitizeProviderResponseBody,
+  isNativeJsonResponse,
+  isSafeNativeJsonResponse,
   containsSecret,
   scrubText,
   sensitiveKey,

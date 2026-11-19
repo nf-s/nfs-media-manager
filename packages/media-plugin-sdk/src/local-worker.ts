@@ -106,6 +106,7 @@ export const LocalWorkerCaptureSchema = z
   .object({
     contentType: ProviderResponseContentTypeSchema,
     body: ProviderResponseBodySchema,
+    representation: z.literal('native').optional(),
     status: z.number().int().min(100).max(599).optional(),
   })
   .strict()

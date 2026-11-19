@@ -149,6 +149,32 @@ test('local worker results allow Discogs quota headers without arbitrary headers
   )
 })
 
+test('only the native marker is accepted on typed worker evidence', () => {
+  const capture = {
+    contentType: 'application/json',
+    body: { state: 'captured', text: '{}' },
+  }
+  const result = {
+    kind: 'error',
+    id: '00000000-0000-4000-8000-000000000001',
+    error: 'policy',
+  }
+  assert.ok(LocalWorkerResultSchema.safeParse({ ...result, capture }).success)
+  assert.ok(
+    LocalWorkerResultSchema.safeParse({
+      ...result,
+      capture: { ...capture, representation: 'native' },
+    }).success,
+  )
+  assert.equal(
+    LocalWorkerResultSchema.safeParse({
+      ...result,
+      capture: { ...capture, representation: 'adapter' },
+    }).success,
+    false,
+  )
+})
+
 test('the native capture and projected response share the existing relay byte budget', () => {
   const limit = 2 * 1024 * 1024
   const response = {

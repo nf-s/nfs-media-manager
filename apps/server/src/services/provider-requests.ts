@@ -1066,7 +1066,7 @@ export function createProviderRequest(
             ...(notFound ? { notFound } : {}),
             ...(retryPolicy ? { retry: retryPolicy.attempt } : {}),
           },
-          paired?.representation === 'native',
+          paired?.representation,
         )
       } catch (error) {
         captureFailure =
