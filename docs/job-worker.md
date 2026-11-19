@@ -264,6 +264,13 @@ read-only archive POST. Unsupported content, detected account or ad fields
 and the shared capture limits can make a body unavailable. The archive
 stores up to 10 MiB per response and 64 MiB per attempt.
 
+Two kinds of NTS step do not replay. The sitemap files NTS serves declare
+namespaces the archive does not recognize, so their bodies are unavailable
+and the show list and a long show's older episodes cannot be read back from
+them. A step also does not save which mixes the library held: a replay asks
+for every episode of a page read from the sitemap, where the original run
+skipped the stored ones.
+
 Spotify matching tasks replay the saved catalogue query and market without
 exchanging tokens or reading listening or account history. Replayed album
 candidates have no linked library item because replay skips live-library

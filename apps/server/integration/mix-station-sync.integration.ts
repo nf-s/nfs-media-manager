@@ -219,6 +219,10 @@ const api: {
    * mixes carries its details.
    */
   partialCatalogue: boolean
+  /** A show's listing asks which of its mixes are stored and leaves those out. */
+  skipStored: boolean
+  /** The stored mixes a listing was told of. */
+  held: string[]
   /** Answers this numbered request with `failStatus`; a 429 carries Retry-After. */
   failAt: number
   failStatus: number
@@ -230,6 +234,8 @@ const api: {
   truncate: false,
   foreignId: false,
   partialCatalogue: false,
+  skipStored: false,
+  held: [],
   failAt: 0,
   failStatus: 500,
   requests: 0,
@@ -324,14 +330,22 @@ function fakeAdapter(
                 }
               : listed
           },
-          listShowEpisodes: async (stationRequest, target, page) => {
+          listShowEpisodes: async (stationRequest, target, page, stored) => {
             await call(stationRequest, `episodes/${target.handle}`, page)
-            const listed = paged(
+            const all = paged(
               newestFirst(
                 fixture().mixes.filter((item) => item.show === target.handle),
               ).map((item) => stationEpisode(station, item)),
               page,
             )
+            const held = api.skipStored
+              ? await stored(all.entries.map((entry) => entry.id))
+              : new Set<string>()
+            api.held.push(...held)
+            const listed = {
+              ...all,
+              entries: all.entries.filter((entry) => !held.has(entry.id)),
+            }
             return api.partialCatalogue && page === null
               ? {
                   ...listed,
@@ -536,6 +550,8 @@ beforeEach(async () => {
     truncate: false,
     foreignId: false,
     partialCatalogue: false,
+    skipStored: false,
+    held: [],
     failAt: 0,
     failStatus: 500,
     requests: 0,
@@ -766,6 +782,30 @@ describe('mix station sync jobs with offline HTTP and a temporary database', () 
       'rinse.b1',
       'rinse.b2',
       'rinse.b3',
+    ])
+  })
+
+  it('tells a show listing which of its mixes are stored', async () => {
+    await syncToEnd()
+    // The station is read from the start again with every mix stored.
+    await databaseClient.delete(schema.subscriptionSync)
+    await databaseClient
+      .update(schema.subscriptionSource)
+      .set({ historyComplete: false })
+    api.skipStored = true
+    expect(await syncToEnd()).toMatchObject({
+      state: 'complete',
+      sourcesDone: 3,
+      newItems: 0,
+      storedItems: 6,
+    })
+    expect([...api.held].sort()).toEqual([
+      'rinse.b1',
+      'rinse.b2',
+      'rinse.b3',
+      'rinse.d1',
+      'rinse.t1',
+      'rinse.t2',
     ])
   })
 

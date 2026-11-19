@@ -4,7 +4,7 @@ import { lotRadioActionId } from '@/lib/mix-station-archive'
 import { createLotRadioAdapter } from '@/lib/lotradio-api'
 import { createNtsAdapter } from '@/lib/nts-api'
 import { createRinseAdapter } from '@/lib/rinse-api'
-import type { StationRequest } from '@/lib/mix-station'
+import type { StationRequest, StoredMixes } from '@/lib/mix-station'
 import type { ProviderTaskReplayStep } from './provider-task-replay'
 
 const date = z.string().datetime()
@@ -42,6 +42,13 @@ const args = z.discriminatedUnion('operation', [
     args: z.object({ at: date, handle }).strict(),
   }),
 ])
+
+/**
+ * A step does not save which mixes the library held, so a replay asks for
+ * every episode of a page. It matches the original requests only where the
+ * original run found none of them stored.
+ */
+const noneStored: StoredMixes = async () => new Set()
 
 export function validateMixStationStep(step: ProviderTaskReplayStep) {
   return args.parse(step)
@@ -87,6 +94,7 @@ export async function replayMixStationSteps(
           request,
           step.args.show,
           step.args.page,
+          noneStored,
         ),
       )
     } else {

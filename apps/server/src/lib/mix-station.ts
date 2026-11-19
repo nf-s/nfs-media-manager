@@ -63,6 +63,9 @@ export type StationEpisodePage = StationPage<StationEpisode> & {
   show?: StationShow
 }
 
+/** Which of the given mix IDs the library holds. */
+export type StoredMixes = (ids: string[]) => Promise<ReadonlySet<string>>
+
 /** An episode of the station-wide feed with the show it belongs to. */
 export type StationFeedEntry = {
   show: StationShow
@@ -100,11 +103,15 @@ export interface MixStationAdapter {
       request: StationRequest,
       page: string | null,
     ) => Promise<StationShowPage>
-    /** Newest first, so a later run can stop at the first stored episode. */
+    /**
+     * Newest first, so a later run can stop at the first stored episode. A
+     * listing that requests each mix on its own asks `stored` which it can skip.
+     */
     listShowEpisodes: (
       request: StationRequest,
       show: Pick<StationShow, 'id' | 'handle'>,
       page: string | null,
+      stored: StoredMixes,
     ) => Promise<StationEpisodePage>
   } | null
   /**

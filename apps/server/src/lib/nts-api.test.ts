@@ -5,7 +5,7 @@ import {
   NTS_FEED_MAX_OFFSET,
   NTS_MAX_OFFSET,
 } from './nts-api'
-import type { StationRequest } from './mix-station'
+import type { StationRequest, StoredMixes } from './mix-station'
 
 const NOW = new Date('2030-06-15T12:00:00Z')
 const API = 'https://www.nts.live/api/v2/'
@@ -113,6 +113,17 @@ function catalogue() {
   const value = adapter.catalogue
   if (!value) throw new Error('NTS has a catalogue.')
   return value
+}
+
+const noneStored: StoredMixes = async () => new Set()
+
+function listEpisodes(
+  request: StationRequest,
+  show: { id: string; handle: string },
+  page: string | null,
+  stored = noneStored,
+) {
+  return catalogue().listShowEpisodes(request, show, page, stored)
 }
 
 function getShow() {
@@ -242,7 +253,7 @@ describe('listShowEpisodes', () => {
     const { request, calls } = fakeRequest({
       [showPage]: withEpisodes([episode()], 13),
     })
-    const page = await catalogue().listShowEpisodes(request, target, null)
+    const page = await listEpisodes(request, target, null)
     expect(page).toEqual({
       show: {
         id: 'nts.fixture-hour',
@@ -278,10 +289,10 @@ describe('listShowEpisodes', () => {
       [showPage]: withEpisodes([episode()], 1, { status: 'draft' }),
       [`${API}shows/renamed-show`]: withEpisodes([episode()], 1),
     })
-    const draft = await catalogue().listShowEpisodes(request, target, null)
+    const draft = await listEpisodes(request, target, null)
     expect(draft.entries).toHaveLength(1)
     expect(draft).not.toHaveProperty('show')
-    const renamed = await catalogue().listShowEpisodes(
+    const renamed = await listEpisodes(
       request,
       { id: 'nts.renamed-show', handle: 'renamed-show' },
       null,
@@ -294,7 +305,7 @@ describe('listShowEpisodes', () => {
       [showPage]: show(),
       [listPage(0)]: envelope([episode()], 1),
     })
-    const page = await catalogue().listShowEpisodes(request, target, null)
+    const page = await listEpisodes(request, target, null)
     expect(page).toMatchObject({
       show: { title: 'Fixture Hour' },
       entries: [{ id: 'nts.fixture-hour.fixture-hour-1st-june-2030' }],
@@ -328,7 +339,7 @@ describe('listShowEpisodes', () => {
         2,
       ),
     })
-    const page = await catalogue().listShowEpisodes(request, target, null)
+    const page = await listEpisodes(request, target, null)
     expect(page.next).toBeNull()
     expect(page.entries).toMatchObject([
       {
@@ -361,7 +372,7 @@ describe('listShowEpisodes', () => {
         6,
       ),
     })
-    const page = await catalogue().listShowEpisodes(request, target, null)
+    const page = await listEpisodes(request, target, null)
     expect(page).toMatchObject({ entries: [], next: null, total: 6 })
   })
 
@@ -369,34 +380,190 @@ describe('listShowEpisodes', () => {
     const { request, calls } = fakeRequest({
       [listPage(12)]: envelope([episode()], 25, 12),
     })
-    const page = await catalogue().listShowEpisodes(request, target, '12')
+    const page = await listEpisodes(request, target, '12')
     expect(page.next).toBe('24')
     expect(page).not.toHaveProperty('show')
     expect(calls.map((call) => call.url)).toEqual([listPage(12)])
   })
 
-  it('ends at the deepest offset NTS serves', async () => {
+  it('continues from the sitemap past the deepest offset NTS serves', async () => {
     const before = NTS_MAX_OFFSET - 12
     const { request } = fakeRequest({
       [listPage(before)]: envelope([episode()], 5000, before),
       [listPage(NTS_MAX_OFFSET)]: envelope([episode()], 5000, NTS_MAX_OFFSET),
     })
+    expect(await listEpisodes(request, target, String(before))).toMatchObject({
+      next: String(NTS_MAX_OFFSET),
+      total: 5000,
+    })
     expect(
-      await catalogue().listShowEpisodes(request, target, String(before)),
-    ).toMatchObject({ next: String(NTS_MAX_OFFSET), total: 5000 })
+      await listEpisodes(request, target, String(NTS_MAX_OFFSET)),
+    ).toMatchObject({ next: 'after:', total: 5000 })
+  })
+
+  it('ends at the deepest offset when the listing ends there', async () => {
+    const count = NTS_MAX_OFFSET + 12
+    const { request } = fakeRequest({
+      [listPage(NTS_MAX_OFFSET)]: envelope([episode()], count, NTS_MAX_OFFSET),
+    })
     expect(
-      await catalogue().listShowEpisodes(
+      await listEpisodes(request, target, String(NTS_MAX_OFFSET)),
+    ).toMatchObject({ next: null, total: count })
+  })
+
+  describe('from the sitemap', () => {
+    const alias = (number: number) => `ep-${String(number).padStart(2, '0')}`
+    const episodePage = (name: string) =>
+      `${API}shows/fixture-hour/episodes/${name}`
+    const location = (name: string) =>
+      `https://www.nts.live/shows/fixture-hour/episodes/${name}`
+    const numbers = Array.from({ length: 14 }, (_, index) => index + 1)
+    const index = sitemap('sitemapindex', [sitemapFile(1), sitemapFile(2)])
+    // Out of order and split over both files, among other pages.
+    const files = {
+      [SITEMAP]: index,
+      [sitemapFile(1)]: sitemap('urlset', [
+        'https://www.nts.live/shows/fixture-hour',
+        ...numbers
+          .filter((number) => number % 2 === 0)
+          .map(alias)
+          .map(location),
+        'https://www.nts.live/shows/other-show/episodes/ep-99',
+        location('bad%20alias'),
+        location('broken%ZZ'),
+      ]),
+      [sitemapFile(2)]: sitemap('urlset', [
+        ...numbers
+          .filter((number) => number % 2 === 1)
+          .reverse()
+          .map(alias)
+          .map(location),
+        location(alias(2)),
+      ]),
+    }
+    const episodes = Object.fromEntries(
+      numbers
+        // NTS no longer has the third.
+        .filter((number) => number !== 3)
+        .map((number) => [
+          episodePage(alias(number)),
+          episode({ episode_alias: alias(number) }),
+        ]),
+    )
+
+    it('reads each listed episode from its own page, skipping stored and removed ones', async () => {
+      const { request, calls } = fakeRequest({ ...files, ...episodes })
+      const asked: string[][] = []
+      const stored: StoredMixes = async (ids) => {
+        asked.push(ids)
+        return new Set(['nts.fixture-hour.ep-02'])
+      }
+      const adapter = createNtsAdapter(() => NOW)
+      const first = await adapter.catalogue?.listShowEpisodes(
         request,
         target,
-        String(NTS_MAX_OFFSET),
-      ),
-    ).toMatchObject({ next: null, total: 5000 })
+        'after:',
+        stored,
+      )
+      expect(first?.entries.map((entry) => entry.id)).toEqual(
+        [1, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(
+          (number) => `nts.fixture-hour.${alias(number)}`,
+        ),
+      )
+      expect(first).toMatchObject({ next: 'after:ep-12', total: 14 })
+      expect(first).not.toHaveProperty('show')
+      expect(asked).toEqual([
+        numbers
+          .slice(0, 12)
+          .map((number) => `nts.fixture-hour.${alias(number)}`),
+      ])
+      expect(calls).toEqual([
+        { url: SITEMAP, notFoundOn404: false },
+        { url: sitemapFile(1), notFoundOn404: false },
+        { url: sitemapFile(2), notFoundOn404: false },
+        ...[1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((number) => ({
+          url: episodePage(alias(number)),
+          notFoundOn404: true,
+        })),
+      ])
+
+      // The next page reads on from the last alias without the sitemap again.
+      calls.length = 0
+      const second = await adapter.catalogue?.listShowEpisodes(
+        request,
+        target,
+        'after:ep-12',
+        stored,
+      )
+      expect(second?.entries.map((entry) => entry.id)).toEqual([
+        'nts.fixture-hour.ep-13',
+        'nts.fixture-hour.ep-14',
+      ])
+      expect(second).toMatchObject({ next: null, total: 14 })
+      expect(calls.map((call) => call.url)).toEqual([
+        episodePage(alias(13)),
+        episodePage(alias(14)),
+      ])
+    })
+
+    it('reads the sitemap again for another show or after its list has aged', async () => {
+      const { request, calls } = fakeRequest({ ...files, ...episodes })
+      let at = NOW.getTime()
+      const adapter = createNtsAdapter(() => new Date(at))
+      const read = (show: { id: string; handle: string }) =>
+        adapter.catalogue?.listShowEpisodes(
+          request,
+          show,
+          'after:ep-13',
+          noneStored,
+        )
+      const sitemapReads = () =>
+        calls.filter((call) => call.url === SITEMAP).length
+      await read(target)
+      await read(target)
+      expect(sitemapReads()).toBe(1)
+      at += 61 * 60 * 1000
+      await read(target)
+      expect(sitemapReads()).toBe(2)
+      expect(
+        await read({ id: 'nts.other-show', handle: 'other-show' }),
+      ).toMatchObject({ entries: [], next: null, total: 1 })
+      expect(sitemapReads()).toBe(3)
+    })
+
+    it('ends after the last alias and with a show the sitemap does not list', async () => {
+      const { request } = fakeRequest(files)
+      const adapter = createNtsAdapter(() => NOW)
+      expect(
+        await adapter.catalogue?.listShowEpisodes(
+          request,
+          target,
+          'after:ep-14',
+          noneStored,
+        ),
+      ).toEqual({ entries: [], next: null, total: 14 })
+      expect(
+        await adapter.catalogue?.listShowEpisodes(
+          request,
+          { id: 'nts.unlisted-show', handle: 'unlisted-show' },
+          'after:',
+          noneStored,
+        ),
+      ).toEqual({ entries: [], next: null, total: null })
+    })
+
+    it('rejects an invalid page token', async () => {
+      const { request } = fakeRequest(files)
+      await expect(
+        listEpisodes(request, target, 'after:bad alias!'),
+      ).rejects.toThrow('Invalid NTS page token.')
+    })
   })
 
   it('returns an empty last page for a removed show', async () => {
     const { request } = fakeRequest({})
     expect(
-      await catalogue().listShowEpisodes(
+      await listEpisodes(
         request,
         { id: 'nts.removed-show', handle: 'removed-show' },
         null,
@@ -408,9 +575,7 @@ describe('listShowEpisodes', () => {
     const { request } = fakeRequest({
       [showPage]: withEpisodes([{ ...episode(), broadcast: 42 }], 1),
     })
-    await expect(
-      catalogue().listShowEpisodes(request, target, null),
-    ).rejects.toThrow()
+    await expect(listEpisodes(request, target, null)).rejects.toThrow()
   })
 })
 

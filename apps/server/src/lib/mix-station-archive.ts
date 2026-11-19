@@ -21,6 +21,9 @@ const publicSlug = '[a-zA-Z0-9_~-]+'
 const rinseShow = new RegExp(`^/api/query/v1/shows/${publicSlug}$`)
 const ntsShow = new RegExp(`^/api/v2/shows/${publicSlug}$`)
 const ntsEpisodes = new RegExp(`^/api/v2/shows/${publicSlug}/episodes$`)
+const ntsEpisode = new RegExp(
+  `^/api/v2/shows/${publicSlug}/episodes/${publicSlug}$`,
+)
 const sitemap = /^\/sitemap(?:\d+)?\.xml(?:\.gz)?$/
 const page = /^\d{1,6}$/
 const site = {
@@ -309,7 +312,7 @@ export function mixStationCapturePolicy(
       const permitted =
         path === '/api/v2/collections/recently-added' || ntsEpisodes.test(path)
           ? queryMatches(url, { offset: page, limit: /^12$/ })
-          : !url.search && ntsShow.test(path)
+          : !url.search && (ntsShow.test(path) || ntsEpisode.test(path))
       return permitted ? { sanitizeBody: jsonBody } : null
     }
     if (url.search) return null

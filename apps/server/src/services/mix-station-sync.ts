@@ -394,6 +394,24 @@ async function upsertEpisodes(
   return { added: ids.length - known.length, known: known.length }
 }
 
+/** Which of the given mixes the station's library holds. */
+const storedMixes = (station: MixStation) => async (ids: string[]) =>
+  new Set(
+    ids.length
+      ? (
+          await db
+            .select({ id: subscriptionItem.id })
+            .from(subscriptionItem)
+            .where(
+              and(
+                eq(subscriptionItem.type, station),
+                inArray(subscriptionItem.id, ids),
+              ),
+            )
+        ).map((row) => row.id)
+      : [],
+  )
+
 /** The adapter's mixes, one per ID, after checking each belongs to the station. */
 function distinctEpisodes<T extends { episode: StationEpisode }>(
   station: MixStation,
@@ -514,6 +532,7 @@ async function syncShowEpisodesPage(
     request,
     { id: show.id, handle: show.handle },
     run.pageToken,
+    storedMixes(station),
   )
   if (!(await context.isActive())) return 'lost'
   const details = page.show
@@ -725,12 +744,12 @@ function recordStationAdapter(
         await record({ operation: 'listShows', args: { at: at(), page } })
         return catalogue.listShows(request, page)
       },
-      async listShowEpisodes(request, show, page) {
+      async listShowEpisodes(request, show, page, stored) {
         await record({
           operation: 'listShowEpisodes',
           args: { at: at(), page, show },
         })
-        return catalogue.listShowEpisodes(request, show, page)
+        return catalogue.listShowEpisodes(request, show, page, stored)
       },
     },
     getShow:

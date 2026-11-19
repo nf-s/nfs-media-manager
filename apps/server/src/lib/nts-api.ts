@@ -6,9 +6,11 @@ import {
   splitBilledArtists,
   type MixStationAdapter,
   type StationEpisode,
+  type StationEpisodePage,
   type StationFeedEntry,
   type StationRequest,
   type StationShow,
+  type StoredMixes,
 } from './mix-station'
 
 const NTS_API = 'https://www.nts.live/api/v2/'
@@ -24,9 +26,23 @@ export const NTS_PAGE_SIZE = 12
  * returned HTTP 422 for the show list and for a show's episodes, whatever the
  * listing's count. Observed in November 2026, not documented, so it may
  * change. The show list holds more shows than that, so shows are read from the
- * sitemap instead.
+ * sitemap instead, and so are the episodes of a show past that offset.
  */
 export const NTS_MAX_OFFSET = 996
+
+/**
+ * How long a show's episode pages from the sitemap are kept, so that the
+ * sitemap is not downloaded for every page read. The page token names an
+ * alias, so a list that has changed in the meantime is read from the same place.
+ */
+const SITEMAP_EPISODES_TTL_MS = 60 * 60 * 1000
+
+/**
+ * The page token of a show's episodes read from the sitemap: this prefix, then
+ * the alias of the last episode read. The prefix alone starts them.
+ */
+const SITEMAP_EPISODES = 'after:'
+const SITEMAP_EPISODES_TOKEN = /^after:([A-Za-z0-9._-]{0,200})$/
 
 /**
  * The deepest offset the recently-added collection serves: 240 returned a
@@ -98,6 +114,8 @@ export const NtsShowDetailSchema = NtsShowSchema.extend({
 const SITEMAP_LOCATION = /<loc>\s*([^<\s]+)\s*<\/loc>/g
 const SITEMAP_FILE = /^https:\/\/www\.nts\.live\/sitemap\d+\.xml(?:\.gz)?$/
 const SITEMAP_SHOW = /^https:\/\/www\.nts\.live\/shows\/([^/?#]+)\/?$/
+const SITEMAP_EPISODE =
+  /^https:\/\/www\.nts\.live\/shows\/([^/?#]+)\/episodes\/([^/?#]+)\/?$/
 
 async function ntsJson(
   request: StationRequest,
@@ -130,6 +148,15 @@ async function ntsSitemap(
   return locations
 }
 
+/** The sitemap files the index lists. */
+async function sitemapFiles(request: StationRequest): Promise<string[]> {
+  const files = (await ntsSitemap(request, NTS_SITEMAP)).filter((location) =>
+    SITEMAP_FILE.test(location),
+  )
+  if (!files.length) throw new Error('NTS sitemap lists no files.')
+  return files
+}
+
 /** The sitemap file a show list page reads; the list starts at the first. */
 function sitemapFile(page: string | null): number {
   if (page === null) return 0
@@ -151,12 +178,22 @@ function pageParams(offset: number) {
 }
 
 /**
- * The next offset while the listing continues past a non-empty page and NTS
- * serves it. A longer listing ends at the deepest offset.
+ * The token of the page after a non-empty one: the next offset while NTS
+ * serves it, then the start of the episodes read from the sitemap.
  */
-function nextOffset(offset: number, listed: number, count: number) {
+function nextPage(offset: number, listed: number, count: number) {
   const next = offset + NTS_PAGE_SIZE
-  return listed > 0 && next < count && next <= NTS_MAX_OFFSET ? next : null
+  if (listed === 0 || next >= count) return null
+  return next <= NTS_MAX_OFFSET ? String(next) : SITEMAP_EPISODES
+}
+
+/** A percent-encoded path segment as text; null when it is malformed. */
+function decoded(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return null
+  }
 }
 
 /** An absolute http(s) URL without its query string or fragment, which carry tracking. */
@@ -216,12 +253,44 @@ function namedShow(id: string, handle: string, title: string): StationShow {
 /** The show a sitemap entry is the page of, named by its alias. */
 function sitemapShow(location: string): StationShow | null {
   const alias = SITEMAP_SHOW.exec(location)?.[1]
-  if (!alias) return null
+  const handle = alias ? decoded(alias) : null
+  const id = showId(handle)
+  return id && handle ? namedShow(id, handle, handle) : null
+}
+
+/**
+ * The alias of the episode a sitemap entry is the page of, when the episode
+ * belongs to the show and its alias makes a usable mix ID.
+ */
+function sitemapEpisode(
+  location: string,
+  show: Pick<StationShow, 'id' | 'handle'>,
+): string | null {
+  const match = SITEMAP_EPISODE.exec(location)
+  if (!match?.[1] || !match[2] || decoded(match[1]) !== show.handle) return null
+  const alias = decoded(match[2])
+  return alias && MixIdSchema.safeParse(`${show.id}.${alias}`).success
+    ? alias
+    : null
+}
+
+/** One episode from its own page; null when NTS no longer has it. */
+async function ntsEpisode(
+  request: StationRequest,
+  handle: string,
+  alias: string,
+): Promise<NtsEpisode | null> {
   try {
-    const handle = decodeURIComponent(alias)
-    const id = showId(handle)
-    return id ? namedShow(id, handle, handle) : null
-  } catch {
+    return NtsEpisodeSchema.parse(
+      await ntsJson(
+        request,
+        `shows/${encodeURIComponent(handle)}/episodes/${encodeURIComponent(alias)}`,
+        {},
+        { notFoundOn404: true },
+      ),
+    )
+  } catch (error) {
+    if (!isProviderItemNotFoundError(error)) throw error
     return null
   }
 }
@@ -313,16 +382,70 @@ function present<T>(value: T | null): value is T {
 export function createNtsAdapter(
   now: () => Date = () => new Date(),
 ): MixStationAdapter {
+  let listed: { showId: string; aliases: string[]; until: number } | null = null
+
+  /** The show's episode pages in every sitemap file, by alias in a fixed order. */
+  async function sitemapEpisodes(
+    request: StationRequest,
+    show: Pick<StationShow, 'id' | 'handle'>,
+  ): Promise<string[]> {
+    const at = now().getTime()
+    if (listed?.showId === show.id && at < listed.until) return listed.aliases
+    const aliases = new Set<string>()
+    for (const file of await sitemapFiles(request))
+      for (const location of await ntsSitemap(request, file)) {
+        const alias = sitemapEpisode(location, show)
+        if (alias) aliases.add(alias)
+      }
+    listed = {
+      showId: show.id,
+      aliases: [...aliases].sort(),
+      until: at + SITEMAP_EPISODES_TTL_MS,
+    }
+    return listed.aliases
+  }
+
+  /**
+   * A page of the episodes NTS lists only in its sitemap: the aliases after
+   * the cursor, each read from its own page unless the library holds it.
+   */
+  async function sitemapEpisodePage(
+    request: StationRequest,
+    show: Pick<StationShow, 'id' | 'handle'>,
+    cursor: string,
+    stored: StoredMixes,
+  ): Promise<StationEpisodePage> {
+    const aliases = await sitemapEpisodes(request, show)
+    const start =
+      cursor === '' ? 0 : aliases.findIndex((alias) => alias > cursor)
+    const batch = start < 0 ? [] : aliases.slice(start, start + NTS_PAGE_SIZE)
+    const held = await stored(batch.map((alias) => `${show.id}.${alias}`))
+    const at = now()
+    const entries: StationEpisode[] = []
+    for (const alias of batch) {
+      if (held.has(`${show.id}.${alias}`)) continue
+      const episode = await ntsEpisode(request, show.handle, alias)
+      const entry = episode ? normalizeNtsEpisode(episode, at) : null
+      if (entry) entries.push(entry)
+    }
+    const last = batch.at(-1)
+    return {
+      entries,
+      next:
+        last !== undefined && start + batch.length < aliases.length
+          ? `${SITEMAP_EPISODES}${last}`
+          : null,
+      total: aliases.length || null,
+    }
+  }
+
   return {
     station: 'nts',
     catalogue: {
       // One page per sitemap file: every show page it lists, by alias alone.
       async listShows(request, page) {
         const file = sitemapFile(page)
-        const files = (await ntsSitemap(request, NTS_SITEMAP)).filter(
-          (location) => SITEMAP_FILE.test(location),
-        )
-        if (!files.length) throw new Error('NTS sitemap lists no files.')
+        const files = await sitemapFiles(request)
         const url = files[file]
         return {
           entries: url
@@ -333,7 +456,11 @@ export function createNtsAdapter(
           partial: true,
         }
       },
-      async listShowEpisodes(request, show, page) {
+      async listShowEpisodes(request, show, page, stored) {
+        const cursor =
+          page === null ? undefined : SITEMAP_EPISODES_TOKEN.exec(page)?.[1]
+        if (cursor !== undefined)
+          return sitemapEpisodePage(request, show, cursor, stored)
         const offset = pageOffset(page)
         const path = `shows/${encodeURIComponent(show.handle)}`
         let details: StationShow | null = null
@@ -359,13 +486,12 @@ export function createNtsAdapter(
         }
         const results = body.results ?? []
         const count = body.metadata.resultset.count
-        const next = nextOffset(offset, results.length, count)
         const at = now()
         return {
           entries: results
             .map((episode) => normalizeNtsEpisode(episode, at))
             .filter(present),
-          next: next === null ? null : String(next),
+          next: nextPage(offset, results.length, count),
           total: count,
           ...(details?.id === show.id ? { show: details } : {}),
         }

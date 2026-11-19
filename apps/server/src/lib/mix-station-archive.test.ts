@@ -113,6 +113,54 @@ describe('station provider archives and offline replay', () => {
     replay.assertComplete()
   })
 
+  it('archives an NTS episode read from its own page once the sitemap lists it', async () => {
+    const index =
+      '<sitemapindex><sitemap><loc>https://www.nts.live/sitemap1.xml.gz</loc></sitemap></sitemapindex>'
+    const catalogue =
+      '<urlset><url><loc>https://www.nts.live/shows/synthetic-show/episodes/synthetic-episode</loc></url></urlset>'
+    const episode =
+      '{"status":"published","name":"Fixture Artist","show_alias":"synthetic-show","episode_alias":"synthetic-episode","broadcast":"2025-12-12T12:00:00Z","futureIdentifier":9007199254740993123}'
+    const steps = [
+      {
+        operation: 'listShowEpisodes',
+        args: {
+          at,
+          page: 'after:',
+          show: { id: 'nts.synthetic-show', handle: 'synthetic-show' },
+        },
+      },
+    ]
+    const recorded = fixture('nts', [
+      ...[index, catalogue].map(
+        (text) =>
+          new Response(text, {
+            headers: { 'content-type': 'application/xml' },
+          }),
+      ),
+      new Response(episode, {
+        headers: { 'content-type': 'application/json' },
+      }),
+    ])
+    const projected = await replayMixStationSteps(
+      'nts',
+      steps,
+      recorded.request,
+    )
+    expect(projected).toMatchObject([
+      { entries: [{ title: 'Fixture Artist' }], next: null },
+    ])
+    expect(recorded.captures[2]?.response.body).toEqual({
+      state: 'captured',
+      text: episode,
+      redacted: false,
+    })
+    const replay = recorded.replay()
+    await expect(
+      replayMixStationSteps('nts', steps, replay.requestFor('task')),
+    ).resolves.toEqual(projected)
+    replay.assertComplete()
+  })
+
   it.each([
     {
       station: 'rinse',

@@ -5,10 +5,15 @@ import {
   RinseShowPageSchema,
   createRinseAdapter,
 } from './rinse-api'
-import type { MixStationAdapter, StationRequest } from './mix-station'
+import type {
+  MixStationAdapter,
+  StationRequest,
+  StoredMixes,
+} from './mix-station'
 
 const API = 'https://www.rinse.fm/api/query/v1'
 const NOW = new Date('2026-11-19T12:00:00.000Z')
+const noneStored: StoredMixes = async () => new Set()
 
 function fakeRequest(routes: Record<string, unknown>) {
   const calls: string[] = []
@@ -154,6 +159,7 @@ describe('rinse catalogue', () => {
       request,
       { id: 'rinse.501', handle: 'night-example' },
       null,
+      noneStored,
     )
     expect(calls).toEqual([`${API}/shows/night-example`])
     expect(page.next).toBeNull()
@@ -209,6 +215,7 @@ describe('rinse catalogue', () => {
       request,
       { id: 'rinse.501', handle: 'night-example' },
       null,
+      noneStored,
     )
     expect(page.entries[0]).toMatchObject({
       title: 'Night Example Live from Example Hall',
@@ -238,6 +245,7 @@ describe('rinse catalogue', () => {
       request,
       { id: 'rinse.501', handle: 'night-example' },
       null,
+      noneStored,
     )
     expect(page.entries[0]).toMatchObject({
       title: 'DJ Alpha with Guest One, Guest:Two & dj alpha',
@@ -252,6 +260,7 @@ describe('rinse catalogue', () => {
         request,
         { id: 'rinse.501', handle: 'gone-show' },
         null,
+        noneStored,
       ),
     ).resolves.toEqual({ entries: [], next: null, total: 0 })
   })
