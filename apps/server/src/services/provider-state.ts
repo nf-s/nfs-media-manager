@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
   JsonValueSchema,
+  ProviderItemAmbiguousError,
   ProviderItemNotFoundError,
   type PluginNormalizedResult,
   type JsonValue,
@@ -16,7 +17,10 @@ import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
-import { readAlbumMatchRejections } from './album-match-rejections'
+import {
+  discogsMasterReleaseMatch,
+  readAlbumMatchRejections,
+} from './album-match-rejections'
 import {
   lockLibraryTrackWrites,
   replaceAlbumTracks,
@@ -315,6 +319,20 @@ export async function applyProviderResultInTransaction(
         )
       : undefined
   const normalizedSpotifyUrl = input.normalized.albumPatch?.spotifyUrl
+  const discogs =
+    input.provider === 'discogs' && isRejectedMatch
+      ? discogsMasterReleaseMatch(input.payload, input.normalized.references)
+      : undefined
+  if (
+    discogs &&
+    isRejectedMatch?.({
+      referenceType: 'release',
+      externalId: discogs.releaseId,
+    })
+  )
+    throw new ProviderItemAmbiguousError(
+      'This Discogs master uses a main release already rejected for this album. Select a different edition.',
+    )
   if (
     input.normalized.references.some((reference) =>
       isRejectedMatch?.(reference),

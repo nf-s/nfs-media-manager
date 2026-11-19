@@ -1,5 +1,6 @@
 import '@hono/zod-openapi'
 import { randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
@@ -1815,6 +1816,175 @@ describe('album match rejection history', () => {
       listAlbumMatchRejections('film-one', { page: 1, size: 5 }),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('holds a Discogs master when its exact main release was rejected before persistence, while allowing a sibling release', async () => {
+    const id = 'discogs-pending-main-release-fixture'
+    const provider = 'discogs'
+    const releaseId = '5101'
+    const masterId = '5102'
+    const siblingId = '5103'
+    const release = { id: Number(releaseId), master_id: Number(masterId) }
+    await createAlbumFixture(id)
+    await storeMatchFixture(id, provider, 'discogs-pending-old-release', {
+      release: { ...release, title: 'Outside Edition' },
+    })
+    const [old] = await getFixtureMatches(id)
+    if (!old?.rejectionTarget) throw new Error('Missing fixture evidence')
+    const scraped = PluginResultSchema.parse({
+      payload: {
+        master: { id: Number(masterId), main_release: Number(releaseId) },
+        mainRelease: release,
+      },
+      normalized: {
+        references: [
+          { referenceType: 'master', externalId: masterId, isPrimary: true },
+        ],
+      },
+    })
+    const rejected = await rejectAlbumMatch(id, old.rejectionTarget, null)
+    await expect(
+      applyProviderResult({
+        mediaItemId: id,
+        mediaType: 'album',
+        provider,
+        source: 'scrape-job',
+        ...scraped,
+      }),
+    ).rejects.toThrow(/main release already rejected/)
+    expect(await getFixtureMatches(id)).toEqual([
+      expect.objectContaining({
+        identifier: releaseId,
+        rejectedAt: rejected.rejectedAt,
+      }),
+    ])
+    const sibling = PluginResultSchema.parse({
+      payload: {
+        release: {
+          id: Number(siblingId),
+          master_id: Number(masterId),
+          title: 'Reviewed Sibling',
+        },
+      },
+      normalized: {
+        references: [
+          { referenceType: 'release', externalId: siblingId, isPrimary: true },
+        ],
+      },
+    })
+    await applyProviderResult({
+      mediaItemId: id,
+      mediaType: 'album',
+      provider,
+      source: 'scrape-job',
+      ...sibling,
+    })
+    expect(await getFixtureMatches(id)).toEqual([
+      expect.objectContaining({ identifier: siblingId }),
+    ])
+    expect(await rejectAlbumMatch(id, old.rejectionTarget, null)).toEqual(
+      rejected,
+    )
+    expect(await getFixtureMatches(id)).toEqual([
+      expect.objectContaining({ identifier: siblingId }),
+    ])
+    expect(
+      (await listAlbumMatchRejections(id, { page: 1, size: 5 })).items,
+    ).toEqual([rejected])
+  })
+
+  it('archives an automatic Discogs projection that reused a rejected key release when the exact rejection is replayed', async () => {
+    const id = 'discogs-reused-main-release-fixture'
+    const provider = 'discogs'
+    const releaseId = '5201'
+    const masterId = '5202'
+    const oldSnapshot = 'discogs-reused-old-release'
+    const masterSnapshot = 'discogs-reused-invalid-master'
+    const oldPayload = {
+      release: { id: Number(releaseId), title: 'Prior Wrong CD' },
+    }
+    const payload = {
+      master: {
+        id: Number(masterId),
+        title: 'Possible Family',
+        main_release: Number(releaseId),
+      },
+      mainRelease: {
+        id: Number(releaseId),
+        title: 'Prior Wrong CD',
+        master_id: Number(masterId),
+        community: { rating: { average: 4.5, count: 19 } },
+      },
+    }
+    const reference = {
+      referenceType: 'master',
+      externalId: masterId,
+      isPrimary: true,
+      metadata: { discogsSearchMatch: true },
+    }
+    const link = {
+      provider,
+      label: 'Discogs',
+      url: `https://www.discogs.com/master/${masterId}`,
+    }
+    const metadata = {
+      browse: {
+        ratingDiscogsValue: 4.5,
+        ratingDiscogsVotes: 19,
+        popularityDiscogs: 38,
+        'plugin.discogs.ratingScope': `Main release ${releaseId} only`,
+        ratingMetacriticValue: 81,
+      },
+    }
+    await createAlbumFixture(id)
+    await storeMatchFixture(id, provider, oldSnapshot, oldPayload)
+    const [old] = await getFixtureMatches(id)
+    if (!old?.rejectionTarget) throw new Error('Missing fixture evidence')
+    const rejected = await rejectAlbumMatch(id, old.rejectionTarget, null)
+
+    // Reconstruct a projection written by an earlier worker after the rejection.
+    await storeMatchFixture(id, provider, masterSnapshot, payload, {
+      references: [reference],
+      links: [link],
+      mediaPatch: { metadata },
+    })
+    await databaseClient.insert(schema.providerReference).values({
+      id: 'discogs-reused-reference',
+      mediaItemId: id,
+      provider,
+      ...reference,
+    })
+    await databaseClient
+      .insert(schema.externalLink)
+      .values({ id: 'discogs-reused-link', mediaItemId: id, ...link })
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata })
+      .where(eq(schema.mediaItem.id, id))
+    expect((await getFixtureMatches(id))[0]?.identifier).toBe(masterId)
+
+    expect(await rejectAlbumMatch(id, old.rejectionTarget, null)).toEqual(
+      rejected,
+    )
+    expect(await getFixtureMatches(id)).toEqual([])
+    const album = await getAlbumDetail(id)
+    expect(
+      album?.providerReferences.find((r) => r.provider === provider),
+    ).toBeUndefined()
+    expect(album?.links.find((l) => l.provider === provider)).toBeUndefined()
+    expect(
+      album?.providerDetails.find((d) => d.provider === provider),
+    ).toBeUndefined()
+    expect(album?.metadata?.browse).toEqual({ ratingMetacriticValue: 81 })
+    expect(
+      (await listAlbumMatchRejections(id, { page: 1, size: 5 })).items,
+    ).toEqual([rejected])
+    expect(
+      await getMediaSourceSnapshot(id, provider, oldSnapshot),
+    ).toMatchObject({ data: oldPayload })
+    expect(
+      await getMediaSourceSnapshot(id, provider, masterSnapshot),
+    ).toMatchObject({ data: payload })
   })
 
   it('uses a corroborated URL alias and leaves query-dependent identities ineligible for rejection by display URL', async () => {

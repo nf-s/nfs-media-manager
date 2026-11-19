@@ -1,7 +1,11 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
-import { PluginLinkSchema, PluginReferenceSchema } from '@repo/media-plugin-sdk'
+import {
+  PluginLinkSchema,
+  PluginReferenceSchema,
+  type PluginReference,
+} from '@repo/media-plugin-sdk'
 import {
   type AlbumMatchRejectionHistoryQuerySchema,
   AlbumMatchRejectionInputSchema,
@@ -20,9 +24,18 @@ import {
 } from '@/lib/album-match-identities'
 import { LastFmUrlSchema } from '@/lib/album-provider-details'
 import { db } from '@/lib/db'
+import { StoredDiscogsIdSchema } from '@/lib/discogs-release-formats'
 import { ServerError } from '@/lib/error'
 import { AlbumMbidSchema } from '@/plugins/builtin/album-provider-helpers'
-import { album, mediaItem, mediaOverride, providerSnapshot } from '@/schemas/db'
+import {
+  album,
+  externalLink,
+  mediaItem,
+  mediaOverride,
+  providerCurrentState,
+  providerReference,
+  providerSnapshot,
+} from '@/schemas/db'
 import {
   legacyAlbumGoogleMatchEvidence,
   mediaMatchEvidence,
@@ -186,6 +199,137 @@ const PrimaryLinkEvidenceSchema = z.object({
   links: z.array(PluginLinkSchema),
 })
 
+const DiscogsMasterEvidenceSchema = z.object({
+  master: z.object({
+    id: StoredDiscogsIdSchema,
+    main_release: StoredDiscogsIdSchema,
+  }),
+  mainRelease: z.object({
+    id: StoredDiscogsIdSchema,
+    master_id: StoredDiscogsIdSchema.optional(),
+  }),
+})
+
+export function discogsMasterReleaseMatch(
+  payload: unknown,
+  references: readonly PluginReference[],
+) {
+  const linked = DiscogsMasterEvidenceSchema.safeParse(payload).data
+  const primary = references.filter(
+    ({ referenceType, isPrimary }) =>
+      isPrimary && (referenceType === 'master' || referenceType === 'release'),
+  )
+  const [selected] = primary
+  if (
+    !linked ||
+    primary.length !== 1 ||
+    selected?.referenceType !== 'master' ||
+    selected.externalId !== linked.master.id ||
+    linked.master.main_release !== linked.mainRelease.id ||
+    (linked.mainRelease.master_id !== undefined &&
+      linked.mainRelease.master_id !== linked.master.id)
+  )
+    return undefined
+
+  return { masterId: linked.master.id, releaseId: linked.mainRelease.id }
+}
+
+async function archiveDependentDiscogsProjection(
+  database: MatchDatabase,
+  mediaItemId: string,
+  target: AlbumMatchRejectionInput,
+) {
+  if (
+    target.provider !== 'discogs' ||
+    target.sourceProvider !== 'discogs' ||
+    target.referenceType !== 'release'
+  )
+    return
+
+  const [current] = await database
+    .select({
+      id: providerCurrentState.id,
+      payload: providerSnapshot.payload,
+      normalized: providerSnapshot.normalizedData,
+    })
+    .from(providerCurrentState)
+    .innerJoin(
+      providerSnapshot,
+      and(
+        eq(providerSnapshot.id, providerCurrentState.latestSnapshotId),
+        eq(providerSnapshot.mediaItemId, providerCurrentState.mediaItemId),
+        eq(providerSnapshot.provider, providerCurrentState.provider),
+        eq(providerSnapshot.checksum, providerCurrentState.checksum),
+      ),
+    )
+    .where(
+      and(
+        eq(providerCurrentState.mediaItemId, mediaItemId),
+        eq(providerCurrentState.provider, 'discogs'),
+        eq(providerCurrentState.status, 'ready'),
+      ),
+    )
+    .limit(1)
+  if (!current) return
+
+  const normalized = PrimaryLinkEvidenceSchema.safeParse(
+    current.normalized,
+  ).data
+  if (!normalized) return
+  const match = discogsMasterReleaseMatch(
+    current.payload,
+    normalized.references,
+  )
+  if (match?.releaseId !== target.identifier) return
+
+  // Only the active projection used the rejected issue. The snapshot and the
+  // owner’s group/edition overrides remain available independently.
+  await database
+    .delete(providerCurrentState)
+    .where(eq(providerCurrentState.id, current.id))
+  await database
+    .delete(providerReference)
+    .where(
+      and(
+        eq(providerReference.mediaItemId, mediaItemId),
+        eq(providerReference.provider, 'discogs'),
+        eq(providerReference.referenceType, 'master'),
+        eq(providerReference.externalId, match.masterId),
+        sql`${providerReference.metadata}->'discogsSearchMatch' = 'true'::jsonb`,
+      ),
+    )
+  const masterLink = `https://www.discogs.com/master/${match.masterId}`
+  if (
+    normalized.links.some(
+      ({ provider, url }) => provider === 'discogs' && url === masterLink,
+    )
+  )
+    await database
+      .delete(externalLink)
+      .where(
+        and(
+          eq(externalLink.mediaItemId, mediaItemId),
+          eq(externalLink.provider, 'discogs'),
+          eq(externalLink.url, masterLink),
+        ),
+      )
+  await database
+    .update(mediaItem)
+    .set({
+      metadata: sql`jsonb_set(${mediaItem.metadata} - array['plugin.discogs.details', 'plugin.discogs.tagEvidence'], '{browse}',
+      (${mediaItem.metadata}->'browse') - array['ratingDiscogsValue', 'ratingDiscogsVotes', 'popularityDiscogs',
+        'plugin.discogs.ratingScope', 'plugin.discogs.labels', 'plugin.discogs.formats',
+        'plugin.discogs.releaseCountry', 'plugin.discogs.have', 'plugin.discogs.want'], false)`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(mediaItem.id, mediaItemId),
+        sql`${mediaItem.metadata} #>> '{browse,plugin.discogs.ratingScope}' = ${`Main release ${match.releaseId} only`}`,
+      ),
+    )
+}
+
 function singlePrimaryLinkAlias(
   target: AlbumMatchRejectionInput,
   normalizedData: unknown,
@@ -324,7 +468,10 @@ export async function rejectAlbumMatch(
 
     const previous = await readAlbumMatchRejections(tx, mediaItemId)
     const replay = previous.find((row) => isSameAlbumMatch(row, target))
-    if (replay) return AlbumMatchRejectionSchema.parse(replay)
+    if (replay) {
+      await archiveDependentDiscogsProjection(tx, mediaItemId, replay)
+      return AlbumMatchRejectionSchema.parse(replay)
+    }
     if (!(await hasCurrentAlbumMatch(tx, mediaItemId, target)))
       throw currentMatchChanged()
 
