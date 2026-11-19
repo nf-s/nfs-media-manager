@@ -20,7 +20,10 @@ import {
   AlbumPatchSchema,
   AlbumQuerySchema,
 } from '@repo/schemas/media'
-import { PaginatedDataSchema } from '@repo/schemas/common'
+import {
+  PaginatedDataSchema,
+  PaginationQuerySchema,
+} from '@repo/schemas/common'
 import { authMiddleware } from '@/middlewares/auth'
 import {
   createOpenAPIApp,
@@ -53,12 +56,20 @@ import { getAlbumListeningSeries } from '@/services/listening-series'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { getAlbumPlaylists } from '@/services/album-playlists'
 import {
+  AlbumMatchRejectionInputSchema,
+  AlbumMatchRejectionPageSchema,
+  AlbumMatchRejectionSchema,
   MatchDiagnosticsPageSchema,
   MatchDiagnosticsQuerySchema,
 } from '@repo/schemas/match-diagnostics'
+import {
+  listAlbumMatchRejections,
+  rejectAlbumMatch,
+} from '@/services/album-match-rejections'
 import { listMediaMatchDiagnostics } from '@/services/media-match-diagnostics'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
+const AlbumMatchRejectionParams = z.object({ id: z.string().min(1).max(500) })
 
 app.openapi(
   createRoute({
@@ -83,6 +94,81 @@ app.openapi(
     generateJsonResponse(
       c,
       await listMediaMatchDiagnostics('album', c.req.valid('query')),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/:id/match-rejections',
+    middleware: [authMiddleware()],
+    request: {
+      params: AlbumMatchRejectionParams,
+      query: PaginationQuerySchema,
+    },
+    responses: {
+      200: {
+        description: 'Album match rejection history',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(AlbumMatchRejectionPageSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Album not found'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listAlbumMatchRejections(
+        c.req.valid('param').id,
+        c.req.valid('query'),
+      ),
+      200,
+    ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/:id/match-rejections',
+    middleware: [authMiddleware()],
+    request: {
+      params: AlbumMatchRejectionParams,
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: AlbumMatchRejectionInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Album match rejection recorded',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(AlbumMatchRejectionSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Album not found'),
+      409: jsonErrorResponse('Album match changed'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await rejectAlbumMatch(
+        c.req.valid('param').id,
+        c.req.valid('json'),
+        c.get('user')?.id ?? null,
+      ),
       200,
     ),
 )

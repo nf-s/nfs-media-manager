@@ -284,6 +284,10 @@ export interface MediaPluginScrapeContext {
     payload: JsonValue
   }[]
   existingReferences: PluginReference[]
+  /** Skip a rejected album identity before choosing a search result. */
+  isRejectedMatch?: (
+    candidate: Pick<PluginReference, 'referenceType' | 'externalId'>,
+  ) => boolean
   secrets: Record<string, string>
   request: MediaPluginTestContext['request']
   log: (level: 'info' | 'warn' | 'error', message: string) => Promise<void>

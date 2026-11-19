@@ -66,7 +66,8 @@ export async function requestLastFm(
     | 'album.getTopTags'
     | 'artist.search'
     | 'artist.getInfo'
-    | 'artist.getTopTracks',
+    | 'artist.getTopTracks'
+    | 'track.getInfo',
   params: Record<string, string>,
 ) {
   const url = new URL('https://ws.audioscrobbler.com/2.0/')
@@ -171,13 +172,24 @@ export const lastfmPlugin: MediaProviderPlugin = {
       ...(username ? { username } : {}),
     })
     const { album } = z.object({ album: LastFmAlbumSchema }).parse(info)
+    const mbid = album.mbid || lookup['mbid']
+    if (
+      (mbid &&
+        context.isRejectedMatch?.({
+          referenceType: 'mbid',
+          externalId: mbid,
+        })) ||
+      context.isRejectedMatch?.({ referenceType: 'url', externalId: album.url })
+    )
+      throw new ProviderItemNotFoundError(
+        'The album match was previously rejected.',
+      )
     if (
       lookup['mbid'] &&
       album.mbid &&
       lookup['mbid'].toLowerCase() !== album.mbid.toLowerCase()
     )
       throw new Error('Last.fm returned a different MBID.')
-    const mbid = album.mbid || lookup['mbid']
     const includeTopTags = context.options?.['includeTopTags'] === true
     const payload = includeTopTags
       ? {

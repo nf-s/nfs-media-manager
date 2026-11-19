@@ -2,13 +2,14 @@
 
 import { useDeferredValue, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   trackBrowseFields,
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import type {
+  AlbumMatchRejectionInput,
   MatchDiagnosticsPage,
   MatchDiagnosticsRow,
 } from '@repo/schemas/match-diagnostics'
@@ -19,6 +20,7 @@ import {
 } from '@repo/schemas/tracks'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
+import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import {
@@ -29,7 +31,11 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { formatItemCount } from '@repo/ui/lib/format'
+import {
+  formatCount,
+  formatDateTime,
+  formatItemCount,
+} from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -46,17 +52,21 @@ import {
   type DetailTarget,
 } from '@/utils/detail-inspector'
 import {
+  albumMatchHistoryKey,
   loadMatchDiagnosticsPage,
   loadTrackMatchDiagnosticsPage,
   matchDiagnosticsKey,
   matchDiagnosticsPageSize,
   matchDiagnosticsSort,
   playableMatchTrack,
+  rejectAlbumMatch,
   trackMatchDiagnosticsQuery,
 } from '@/utils/match-diagnostics'
 import { libraryMatchesHref, type LibraryView } from '@/utils/media-scope'
 import { withTrackFilter } from '@/utils/track-browse'
+import { AlbumMatchHistory } from './album-match-history'
 import { BrowseItemsHead, ItemThumb, useColumnWidths } from './browse-items'
+import { ConfirmAction } from './confirm-action'
 import { DetailInspector } from './detail-inspector'
 import {
   replaceWorkspaceUrl,
@@ -67,6 +77,7 @@ import { LibraryTrackPlayButton } from './play-controls'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
+  SecondaryCellDetails,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableSearch,
@@ -175,11 +186,15 @@ function ProviderMatchCell({
   library,
   provider,
   onCorrect,
+  onReject,
+  rejecting,
 }: {
   item: MatchDiagnosticsRow
   library: LibraryView
   provider: Provider
   onCorrect: (correction: TrackScrobbleCorrection) => void
+  onReject: (target: AlbumMatchRejectionInput) => void
+  rejecting: boolean
 }) {
   const matches = item.matches.filter(
     (match) => match.provider === provider.key,
@@ -256,6 +271,8 @@ function ProviderMatchCell({
     return {
       discogsAlbum: discogsPosition ? match.albumId : undefined,
       sourceProvider: match.sourceProvider ?? defaultSourceProvider,
+      rejectionTarget: library === 'album' ? match.rejectionTarget : undefined,
+      rejectedAt: library === 'album' ? match.rejectedAt : undefined,
       text: [text, match.identifier === text ? null : match.identifier]
         .filter(Boolean)
         .join(' · '),
@@ -276,6 +293,9 @@ function ProviderMatchCell({
   const hasMixedSources =
     providerView &&
     details.some((detail) => detail.sourceProvider !== sourceProvider)
+  const hasRejectionDetails = details.some(
+    ({ rejectionTarget, rejectedAt }) => rejectionTarget || rejectedAt,
+  )
   const correctionButton = (correction: TrackScrobbleCorrection) => (
     <Button
       size="xs"
@@ -292,12 +312,22 @@ function ProviderMatchCell({
       text={display}
       label={`${provider.label} identities for ${item.name}`}
       details={
-        details.length === 1 ? (
+        details.length === 1 && !hasRejectionDetails ? (
           details[0]?.text
         ) : (
           <ul>
             {details.map(
-              ({ text, correction, discogsAlbum, sourceProvider }, index) => (
+              (
+                {
+                  text,
+                  correction,
+                  discogsAlbum,
+                  sourceProvider,
+                  rejectedAt,
+                  rejectionTarget,
+                },
+                index,
+              ) => (
                 <li key={index}>
                   {discogsAlbum || hasMixedSources ? (
                     <DetailLink
@@ -313,6 +343,30 @@ function ProviderMatchCell({
                     text
                   )}
                   {correction && correctionButton(correction)}
+                  {rejectedAt && (
+                    <div>
+                      <Status state="attention">Incorrect</Status>{' '}
+                      <time dateTime={rejectedAt}>
+                        {formatDateTime(rejectedAt)}
+                      </time>
+                    </div>
+                  )}
+                  {rejectionTarget && !rejectedAt && (
+                    <ConfirmAction
+                      size="xs"
+                      variant="ghost"
+                      question="Mark this match as incorrect?"
+                      ariaLabel={`Mark ${text} as incorrect`}
+                      details={
+                        <>{text}. Future scrapes will skip this match.</>
+                      }
+                      confirmLabel="Mark incorrect"
+                      onConfirm={() => onReject(rejectionTarget)}
+                      disabled={rejecting}
+                    >
+                      Mark incorrect
+                    </ConfirmAction>
+                  )}
                 </li>
               ),
             )}
@@ -331,10 +385,18 @@ function ProviderMatchCell({
   )
   const onlyCorrection =
     details.length === 1 ? details[0]?.correction : undefined
-  return onlyCorrection ? (
+  const rejectedCount = details.filter(({ rejectedAt }) => rejectedAt).length
+  return onlyCorrection || rejectedCount ? (
     <div className="ds-cell-id">
       {cell}
-      {correctionButton(onlyCorrection)}
+      {onlyCorrection && correctionButton(onlyCorrection)}
+      {rejectedCount > 0 && (
+        <Status state="attention">
+          {details.length === 1
+            ? 'Incorrect'
+            : `${formatCount(rejectedCount)} incorrect`}
+        </Status>
+      )}
     </div>
   ) : (
     cell
@@ -420,6 +482,21 @@ export default function MatchDiagnosticsWorkspace({
 }) {
   const { apiBaseUrl } = useConfig()
   const inspector = useDetailInspector()
+  const client = useQueryClient()
+  const rejection = useMutation({
+    mutationFn: ({
+      id,
+      target,
+    }: {
+      id: string
+      target: AlbumMatchRejectionInput
+    }) => rejectAlbumMatch(apiBaseUrl, id, target),
+    onSettled: (_, __, { id }) =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: matchDiagnosticsKey('album') }),
+        client.invalidateQueries({ queryKey: albumMatchHistoryKey(id) }),
+      ]),
+  })
   const tracks = library === 'track'
   const path = libraryMatchesHref(library)
   const params = new URLSearchParams(useSearchParams())
@@ -578,6 +655,8 @@ export default function MatchDiagnosticsWorkspace({
           onCorrect={(correction) =>
             setMerge({ sourceId: item.id, correction })
           }
+          onReject={(target) => rejection.mutate({ id: item.id, target })}
+          rejecting={rejection.isPending}
         />
       )
     if (column.key === 'name' || column.key === 'title') {
@@ -640,6 +719,20 @@ export default function MatchDiagnosticsWorkspace({
             Review
           </DetailLink>
         </Button>
+        {library === 'album' && (
+          <SecondaryCellDetails
+            label={`Match history for ${item.name}`}
+            buttonText="Match history"
+          >
+            {() => (
+              <AlbumMatchHistory
+                id={item.id}
+                name={item.name}
+                providers={providers}
+              />
+            )}
+          </SecondaryCellDetails>
+        )}
         {library === 'track' &&
           item.mergeSourceId &&
           item.mergeSourceId !== item.id &&

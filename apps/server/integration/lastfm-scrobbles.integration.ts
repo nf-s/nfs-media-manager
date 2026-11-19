@@ -718,6 +718,43 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects a reviewed listening link only while it still points to that album', async () => {
+    const { relinkLastfmScrobbles, setLastfmAlbumLink } =
+      await import('@/services/lastfm-scrobbles')
+    const { getMediaSources } = await import('@/services/history')
+    respond(page(1, 1, [scrobble(recent, 'First track')]))
+    expect((await syncToEnd()).matchedScrobbles).toBe(1)
+    const group = { artistName: 'Artist fixture', albumName: 'Album fixture' }
+    await expect(
+      setLastfmAlbumLink({
+        action: 'unlink',
+        ...group,
+        expectedAlbumId: 'previous-album',
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    for (const attempt of [1, 2]) {
+      const result = await setLastfmAlbumLink({
+        action: 'unlink',
+        ...group,
+        expectedAlbumId: 'album-fixture',
+      })
+      expect(result.matchedScrobbles, `attempt ${attempt}`).toBe(0)
+    }
+    const history = (await getMediaSources('album-fixture')).changes
+    expect(
+      history.filter(
+        (change) => change.title === 'Last.fm listening match rejected',
+      ),
+    ).toHaveLength(1)
+    expect((await relinkLastfmScrobbles()).matchedScrobbles).toBe(0)
+    expect(
+      await databaseClient
+        .select({ id: schema.lastfmScrobble.id })
+        .from(schema.lastfmScrobble),
+    ).toHaveLength(1)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
   it('reports album listening by month and by track with its scrobbled names', async () => {
     const { getAlbumListening } = await import('@/services/lastfm-scrobbles')
     respond(

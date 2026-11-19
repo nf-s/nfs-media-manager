@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const listAlbums = vi.fn()
 const listAlbumFilterOptions = vi.fn()
 const listMediaMatchDiagnostics = vi.fn()
+const rejectAlbumMatch = vi.fn()
+const listAlbumMatchRejections = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/env', () => ({
@@ -52,6 +54,10 @@ function mockAppSession(authenticated: boolean) {
   vi.doMock('@/services/media-match-diagnostics', () => ({
     listMediaMatchDiagnostics,
   }))
+  vi.doMock('@/services/album-match-rejections', () => ({
+    rejectAlbumMatch,
+    listAlbumMatchRejections,
+  }))
 }
 
 describe('albums api', () => {
@@ -61,6 +67,75 @@ describe('albums api', () => {
     listAlbums.mockReset()
     listAlbumFilterOptions.mockReset()
     listMediaMatchDiagnostics.mockReset()
+    rejectAlbumMatch.mockReset()
+    listAlbumMatchRejections.mockReset()
+  })
+
+  const rejectionEndpoint = '/api/v1/albums/album-fixture/match-rejections'
+  const rejectionTarget = {
+    provider: 'google-custom-search',
+    sourceProvider: 'legacy-browser',
+    snapshotId: 'snapshot-fixture',
+    referenceType: 'rym-url',
+    identifier: 'https://rateyourmusic.com/release/album/fixture/record/',
+  }
+
+  function rejectRequest(body: object) {
+    return {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  }
+
+  it('requires authentication to record or review album match rejections', async () => {
+    mockAppSession(false)
+    const { default: app } = await import('@/app')
+    expect((await app.request(rejectionEndpoint)).status).toBe(401)
+    expect(
+      (await app.request(rejectionEndpoint, rejectRequest(rejectionTarget)))
+        .status,
+    ).toBe(401)
+    expect(rejectAlbumMatch).not.toHaveBeenCalled()
+    expect(listAlbumMatchRejections).not.toHaveBeenCalled()
+  })
+
+  it('validates and records the selected match and reads the requested history page', async () => {
+    mockAppSession(true)
+    const rejected = { ...rejectionTarget, rejectedAt: '2025-01-01T00:00:00Z' }
+    const page = {
+      items: [rejected],
+      totalCount: 6,
+      page: 2,
+      size: 5,
+      pageCount: 2,
+    }
+    rejectAlbumMatch.mockResolvedValue(rejected)
+    listAlbumMatchRejections.mockResolvedValue(page)
+    const { default: app } = await import('@/app')
+
+    expect(
+      (await app.request(rejectionEndpoint, rejectRequest({}))).status,
+    ).toBe(422)
+    const response = await app.request(
+      rejectionEndpoint,
+      rejectRequest(rejectionTarget),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: rejected })
+    expect(rejectAlbumMatch).toHaveBeenCalledExactlyOnceWith(
+      'album-fixture',
+      rejectionTarget,
+      'user-1',
+    )
+
+    const history = await app.request(`${rejectionEndpoint}?page=2&size=5`)
+    expect(history.status).toBe(200)
+    expect(await history.json()).toMatchObject({ data: page })
+    expect(listAlbumMatchRejections).toHaveBeenCalledExactlyOnceWith(
+      'album-fixture',
+      { page: 2, size: 5 },
+    )
   })
 
   it('requires authentication to read stored matches', async () => {

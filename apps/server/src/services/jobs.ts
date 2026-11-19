@@ -57,6 +57,7 @@ import {
 import { z } from 'zod'
 import {
   PluginResultSchema,
+  ProviderItemNotFoundError,
   ProviderRequestError,
   isProviderItemNotFoundError,
   type MediaProviderPlugin,
@@ -64,6 +65,7 @@ import {
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
 import {
   jobErrorDetails,
@@ -92,6 +94,7 @@ import {
   scrapeJobLog,
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
+import { readAlbumMatchRejections } from '@/services/album-match-rejections'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
 import { getAlbumReleaseHints } from '@/services/album-release-hints'
 import { MAX_CONSECUTIVE_PROVIDER_FAILURES } from '@/lib/request-policy'
@@ -639,10 +642,10 @@ async function processJob(
       return
     }
 
-    const references = await db.query.providerReference.findMany({
+    const storedReferences = await db.query.providerReference.findMany({
       where: (table, operators) => operators.eq(table.mediaItemId, mediaItemId),
     })
-    const overrides = await db.query.providerReferenceOverride.findMany({
+    const storedOverrides = await db.query.providerReferenceOverride.findMany({
       where: (table, operators) =>
         operators.and(
           operators.eq(table.mediaItemId, mediaItemId),
@@ -656,17 +659,33 @@ async function processJob(
         operators.asc(table.id),
       ],
     })
-    const effectiveIds = new Map(
-      overrides.map((override) => [
-        override.referenceType,
-        override.externalId,
-      ]),
-    )
-
     let secrets: Record<string, string> = {}
     let diagnostics: ReturnType<typeof createJobDiagnostics> | undefined
     let succeeded = false
     try {
+      const rejections =
+        mediaRecord.mediaType === 'album'
+          ? await readAlbumMatchRejections(db, mediaItemId)
+          : []
+      const isRejectedMatch = createAlbumMatchRejectionPredicate(
+        plugin.manifest.id,
+        rejections,
+      )
+      const references = storedReferences.filter(
+        (reference) => !isRejectedMatch(reference),
+      )
+      const latestOverrides = new Map(
+        storedOverrides.map((override) => [override.referenceType, override]),
+      )
+      const overrides = [...latestOverrides.values()].filter(
+        (reference) => !isRejectedMatch(reference),
+      )
+      const effectiveIds = new Map(
+        overrides.map(({ referenceType, externalId }) => [
+          referenceType,
+          externalId,
+        ]),
+      )
       const providerSecrets = await db.query.providerSecret.findMany({
         where: (table, operators) =>
           operators.eq(table.provider, plugin.manifest.id),
@@ -685,10 +704,6 @@ async function processJob(
         mediaItemId,
         existingReferences: [...references, ...overrides],
       })
-      const releaseHints =
-        mediaRecord.mediaType === 'album' && plugin.manifest.albumReleaseHints
-          ? await getAlbumReleaseHints(mediaItemId)
-          : undefined
       const request = createProviderRequest(plugin, assertActive, {
         onRetry: async ({ error, attempt, retryAt }) => {
           const credentials = jobLogSecrets(secrets)
@@ -720,6 +735,34 @@ async function processJob(
         .filter((credit) => credit.role === 'artist')
         .sort((a, b) => a.billingOrder - b.billingOrder)
         .map(({ artist: { id, name } }) => ({ id, name }))
+      const availableHints = referenceHints.filter(
+        (reference) => !isRejectedMatch(reference),
+      )
+      const artistNames = artists.map(({ name }) => name)
+      if (
+        (references.length < storedReferences.length ||
+          overrides.length < latestOverrides.size ||
+          availableHints.length < referenceHints.length) &&
+        !canIdentifyMedia(plugin.manifest, {
+          ...mediaRecord,
+          artists: artistNames,
+          providerReferences: [
+            ...references,
+            ...overrides,
+            ...availableHints.map((hint) => ({
+              ...hint,
+              provider: plugin.manifest.id,
+            })),
+          ],
+        })
+      )
+        throw new ProviderItemNotFoundError(
+          'The album match was previously rejected.',
+        )
+      const releaseHints =
+        mediaRecord.mediaType === 'album' && plugin.manifest.albumReleaseHints
+          ? await getAlbumReleaseHints(mediaItemId, rejections)
+          : undefined
       const artistProfiles =
         mediaRecord.mediaType === 'album' &&
         plugin.manifest.bootstrapAlbumArtists
@@ -753,7 +796,7 @@ async function processJob(
           options: nextJob.options,
           media: {
             title: mediaRecord.title,
-            artists: artists.map(({ name }) => name),
+            artists: artistNames,
             releaseDate: mediaRecord.releaseDate?.toISOString(),
             ...(releaseHints?.length ? { releaseHints } : {}),
           },
@@ -788,8 +831,9 @@ async function processJob(
                   },
                 }
               }),
-            ...referenceHints,
+            ...availableHints,
           ],
+          ...(rejections.length ? { isRejectedMatch } : {}),
           secrets,
           request,
           ...(artistProfiles === undefined ? {} : { artistProfiles }),

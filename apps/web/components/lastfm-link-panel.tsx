@@ -285,6 +285,7 @@ export default function LastfmLinkPanel({
                         update.mutate(
                           {
                             action: 'unlink',
+                            expectedAlbumId: group.album?.id,
                             artistName: group.artistName,
                             albumName,
                           },

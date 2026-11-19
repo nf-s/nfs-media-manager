@@ -2,14 +2,17 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
   JsonValueSchema,
+  ProviderItemNotFoundError,
   type PluginNormalizedResult,
   type JsonValue,
 } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
+import { readAlbumMatchRejections } from './album-match-rejections'
 import {
   lockLibraryTrackWrites,
   replaceAlbumTracks,
@@ -61,6 +64,7 @@ async function replaceProviderReferences(
   mediaItemId: string,
   providerId: string,
   references: PluginNormalizedResult['references'],
+  isRejectedMatch?: ReturnType<typeof createAlbumMatchRejectionPredicate>,
 ): Promise<void> {
   const overrides = await database
     .select()
@@ -84,6 +88,9 @@ async function replaceProviderReferences(
   const effective = new Map(
     overrides.map((override) => [override.referenceType, override.externalId]),
   )
+  for (const [referenceType, externalId] of effective)
+    if (isRejectedMatch?.({ referenceType, externalId }))
+      effective.delete(referenceType)
   const effectiveReferences: PluginNormalizedResult['references'] =
     references.map((reference) => ({
       ...reference,
@@ -278,6 +285,31 @@ export async function applyProviderResultInTransaction(
   await database.execute(
     sql`select id from media_item where id = ${input.mediaItemId} for update`,
   )
+  // An album match can be rejected while the provider request is in flight.
+  const isRejectedMatch =
+    input.mediaType === 'album' && input.source === 'scrape-job'
+      ? createAlbumMatchRejectionPredicate(
+          input.provider,
+          await readAlbumMatchRejections(database, input.mediaItemId),
+        )
+      : undefined
+  const normalizedSpotifyUrl = input.normalized.albumPatch?.spotifyUrl
+  if (
+    input.normalized.references.some((reference) =>
+      isRejectedMatch?.(reference),
+    ) ||
+    input.normalized.links.some(({ url }) =>
+      isRejectedMatch?.({ referenceType: 'url', externalId: url }),
+    ) ||
+    (normalizedSpotifyUrl &&
+      isRejectedMatch?.({
+        referenceType: 'album',
+        externalId: normalizedSpotifyUrl,
+      }))
+  )
+    throw new ProviderItemNotFoundError(
+      'The album match was previously rejected.',
+    )
   const checksum = checksumJson({
     provider: input.provider,
     payload: input.payload,
@@ -400,6 +432,24 @@ export async function applyProviderResultInTransaction(
   }
 
   if (input.mediaType === 'album' && input.normalized.albumPatch) {
+    let spotifyUrl = normalizedSpotifyUrl ?? undefined
+    if (spotifyUrl && overridden.has('spotifyUrl')) {
+      const existing = isRejectedMatch
+        ? await database.query.album.findFirst({
+            columns: { spotifyUrl: true },
+            where: (table, operators) =>
+              operators.eq(table.mediaItemId, input.mediaItemId),
+          })
+        : undefined
+      if (
+        !existing?.spotifyUrl ||
+        !isRejectedMatch?.({
+          referenceType: 'album',
+          externalId: existing.spotifyUrl,
+        })
+      )
+        spotifyUrl = undefined
+    }
     await database
       .update(album)
       .set({
@@ -410,9 +460,7 @@ export async function applyProviderResultInTransaction(
         durationSec: overridden.has('durationSec')
           ? undefined
           : (input.normalized.albumPatch.durationSec ?? undefined),
-        spotifyUrl: overridden.has('spotifyUrl')
-          ? undefined
-          : (input.normalized.albumPatch.spotifyUrl ?? undefined),
+        spotifyUrl,
         metadata: mergeMetadata(
           album.metadata,
           input.normalized.albumPatch.metadata,
@@ -460,6 +508,7 @@ export async function applyProviderResultInTransaction(
       input.mediaItemId,
       input.provider,
       input.normalized.references,
+      isRejectedMatch,
     )
   }
 

@@ -122,6 +122,25 @@ afterEach(() => {
 })
 
 describe('MusicBrainz album adapter', () => {
+  it('checks for a rejected identity before choosing an exact title match', async () => {
+    const alternative = { ...group, id: otherMbid }
+    const request = replies(
+      { count: 2, 'release-groups': [group, alternative] },
+      alternative,
+    )
+    const result = await scrape(
+      musicbrainzPlugin,
+      context({
+        request,
+        isRejectedMatch: ({ externalId }) => externalId === mbid,
+      }),
+    )
+    expect(result.normalized.references[0]?.externalId).toBe(otherMbid)
+    expect(new URL(request.mock.calls[1]?.[0] ?? '').pathname).toContain(
+      otherMbid,
+    )
+  })
+
   it('accepts unknown artist countries in searches and release-group lookups', async () => {
     const payload = {
       ...group,

@@ -497,9 +497,14 @@ function candidates(
   artistCredits: string[],
   singleEvidence: { artist: string; title: string }[],
   diagnostic: { candidates: JsonValue[]; reasons: Record<string, number> },
+  isRejectedMatch?: MediaPluginScrapeContext['isRejectedMatch'],
 ) {
   const matches = []
   const results = ResponseSchema.parse(payload).results
+  const isRejected = (page: NonNullable<ReturnType<typeof rymPage>>) =>
+    [page.referenceUrl, page.releaseUrl].some((externalId) =>
+      isRejectedMatch?.({ referenceType: 'rym-url', externalId }),
+    )
   for (const entry of results) {
     const result = ResultSchema.safeParse(entry)
     if (!result.success) continue
@@ -509,6 +514,7 @@ function candidates(
       if (
         page?.single &&
         !page.child &&
+        !isRejected(page) &&
         description?.kind === 'single' &&
         identityMatches(page.artist, description.artist) &&
         identityMatches(page.title, description.title) &&
@@ -634,6 +640,10 @@ function candidates(
         record('related-single-without-owned-reference')
         continue
       }
+    }
+    if (isRejected(page)) {
+      record('rejected-match')
+      continue
     }
     const exactReviewReference =
       reference?.review &&
@@ -1231,7 +1241,8 @@ export const serplyPlugin: MediaProviderPlugin = {
     const existing =
       owned ??
       context.existingReferences.find(
-        (item) => item.referenceType === 'rym-url',
+        (item) =>
+          item.referenceType === 'rym-url' && !context.isRejectedMatch?.(item),
       )
     // Owned references include explicit corrections and remain authoritative.
     // Historical Google references are hints, not constraints on new evidence.
@@ -1308,6 +1319,7 @@ export const serplyPlugin: MediaProviderPlugin = {
             .filter(Boolean) ?? [names.artist],
           singleEvidence,
           diagnostic,
+          context.isRejectedMatch,
         )
         matches.push(...accepted)
         acceptedSearches.push({

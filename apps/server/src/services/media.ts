@@ -8,6 +8,7 @@ import type { BrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
+import { readAlbumMatchRejections } from './album-match-rejections'
 import { listAlbumRelationshipSources } from './entity-relationships'
 import { albumAddedDates } from './album-added-dates'
 import { albumTrackPlaylistNames } from './album-playlists'
@@ -27,6 +28,7 @@ import {
 } from '@repo/schemas/media'
 import { nanoid } from 'nanoid'
 import { db } from '@/lib/db'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
 import { withRymRatingSourceLink } from '@/lib/rym-rating-links'
 import {
@@ -757,6 +759,35 @@ export async function patchAlbum(
         note: input.note ?? null,
         createdByUserId: userId,
       })
+    }
+
+    const identities = [
+      ...(input.referenceOverrides ?? []),
+      ...(input.spotifyUrl
+        ? [
+            {
+              provider: 'spotify',
+              referenceType: 'album',
+              externalId: input.spotifyUrl,
+            },
+          ]
+        : []),
+    ]
+    if (identities.length) {
+      const rejections = await readAlbumMatchRejections(tx, id)
+      if (
+        identities.some((identity) =>
+          createAlbumMatchRejectionPredicate(
+            identity.provider,
+            rejections,
+          )(identity),
+        )
+      )
+        throw new ServerError({
+          statusCode: 409,
+          message:
+            'This album match was previously rejected. Choose a different match.',
+        })
     }
 
     for (const override of input.referenceOverrides ?? []) {

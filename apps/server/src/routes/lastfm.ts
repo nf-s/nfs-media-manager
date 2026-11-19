@@ -260,13 +260,17 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
         ),
         401: jsonErrorResponse('Unauthorized'),
         404: jsonErrorResponse('Scrobbled name or album not found'),
+        409: jsonErrorResponse('Listening group changed since review'),
         422: validationErrorResponse,
       },
     }),
     async (c) =>
       generateJsonResponse(
         c,
-        await setLastfmAlbumLink(c.req.valid('json')),
+        await setLastfmAlbumLink(
+          c.req.valid('json'),
+          c.get('user')?.id ?? null,
+        ),
         200,
       ),
   )

@@ -96,6 +96,8 @@ async function resolveReleaseGroup(
 ): Promise<string> {
   const reference = albumReference(context, 'musicbrainz', 'release-group')
   if (reference) return AlbumMbidSchema.parse(reference.externalId)
+  const isRejected = (externalId: string) =>
+    context.isRejectedMatch?.({ referenceType: 'release-group', externalId })
   const barcode = albumBarcode(context)
   if (barcode) {
     const payload = await musicBrainzRequest(context, 'release/', {
@@ -125,7 +127,7 @@ async function resolveReleaseGroup(
           release['release-group'] ? [release['release-group'].id] : [],
         ),
       ),
-    ]
+    ].filter((id) => !isRejected(id))
     if (
       ids.length === 1 &&
       ids[0] &&
@@ -133,7 +135,13 @@ async function resolveReleaseGroup(
     )
       return ids[0]
     if (!names) {
-      if (result.releases.length)
+      if (
+        result.releases.some((release) => {
+          const id = release['release-group']?.id
+          return !id || !isRejected(id)
+        }) ||
+        (result.count !== undefined && result.count > result.releases.length)
+      )
         throw new Error(
           'MusicBrainz barcode match is ambiguous. Set a release-group ID.',
         )
@@ -149,8 +157,8 @@ async function resolveReleaseGroup(
     throw new Error(
       'MusicBrainz search exceeds the bounded matching window. Set a release-group ID.',
     )
-  const matches = result['release-groups'].filter((group) =>
-    groupMatches(group, names),
+  const matches = result['release-groups'].filter(
+    (group) => groupMatches(group, names) && !isRejected(group.id),
   )
   if (matches.length > 1)
     throw new Error('MusicBrainz search is ambiguous. Set a release-group ID.')

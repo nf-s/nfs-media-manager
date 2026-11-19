@@ -111,6 +111,9 @@ describe('job reference context', () => {
       vi.doMock('@/services/album-release-hints', () => ({
         getAlbumReleaseHints: readReleaseHints,
       }))
+      vi.doMock('@/services/album-match-rejections', () => ({
+        readAlbumMatchRejections: async () => [],
+      }))
       vi.doMock('@/lib/provider-secrets', () => ({
         resolveProviderSecrets: () => ({}),
       }))

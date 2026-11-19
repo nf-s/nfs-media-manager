@@ -18,6 +18,7 @@ import {
   type UnresolvedMatchQuery,
 } from '@repo/schemas/find-match'
 import { db } from '@/lib/db'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
 import {
   normalizeArtistProviderId,
@@ -26,6 +27,7 @@ import {
 import { getScrapePlugin } from '@/plugins/registry'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { getAlbumReleaseHints } from './album-release-hints'
+import { readAlbumMatchRejections } from './album-match-rejections'
 import { identifierUrl } from './artist-provider-evidence'
 import { loadArtistProviderTarget } from './artist-profiles'
 import { providerOperation } from './manual-add'
@@ -112,9 +114,15 @@ async function searchMedia(
   )
     throw unavailable()
   const media = await loadMediaTarget(kind, input.id)
+  const rejections =
+    kind === 'album' ? await readAlbumMatchRejections(db, input.id) : []
+  const isRejectedMatch = createAlbumMatchRejectionPredicate(
+    input.provider,
+    rejections,
+  )
   const releaseHints =
     kind === 'album' && plugin.manifest.albumReleaseHints
-      ? await getAlbumReleaseHints(input.id)
+      ? await getAlbumReleaseHints(input.id, rejections)
       : undefined
   const candidates = await providerOperation(
     input.provider,
@@ -139,18 +147,28 @@ async function searchMedia(
   return MatchSearchResultSchema.parse({
     provider: input.provider,
     query: input.q ?? mediaQuery(media),
-    items: candidates.map(
-      (candidate): MatchCandidate => ({
-        referenceType: candidate.referenceType,
-        externalId: candidate.externalId,
-        title: candidate.title,
-        subtitle: candidate.subtitle ?? null,
-        releaseDate: candidate.releaseDate ?? null,
-        artworkUrl: candidate.artworkUrl ?? null,
-        url: candidate.url ?? null,
-        current: current.get(candidate.referenceType) === candidate.externalId,
-      }),
-    ),
+    items: candidates
+      .filter(
+        (candidate) =>
+          !isRejectedMatch(candidate) &&
+          !(
+            candidate.url &&
+            isRejectedMatch({ referenceType: 'url', externalId: candidate.url })
+          ),
+      )
+      .map(
+        (candidate): MatchCandidate => ({
+          referenceType: candidate.referenceType,
+          externalId: candidate.externalId,
+          title: candidate.title,
+          subtitle: candidate.subtitle ?? null,
+          releaseDate: candidate.releaseDate ?? null,
+          artworkUrl: candidate.artworkUrl ?? null,
+          url: candidate.url ?? null,
+          current:
+            current.get(candidate.referenceType) === candidate.externalId,
+        }),
+      ),
   })
 }
 

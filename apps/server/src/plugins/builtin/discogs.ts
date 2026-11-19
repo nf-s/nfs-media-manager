@@ -97,6 +97,11 @@ async function resolveDiscogsReference(
       type: reference.referenceType === 'master' ? 'master' : 'release',
       id: DiscogsReferenceIdSchema.parse(reference.externalId),
     }
+  const isRejected = (item: z.infer<typeof SearchSchema>['results'][number]) =>
+    context.isRejectedMatch?.({
+      referenceType: item.type,
+      externalId: String(item.id),
+    })
   const barcode = albumBarcode(context)
   if (barcode) {
     const payload = await discogsRequest(context, 'database/search', {
@@ -106,14 +111,15 @@ async function resolveDiscogsReference(
       page: '1',
     })
     const { results, pagination } = SearchSchema.parse(payload)
+    const eligible = results.filter((item) => !isRejected(item))
     if (
-      results.length === 1 &&
-      results[0]?.type === 'release' &&
-      (pagination === undefined || pagination.items === 1)
+      eligible.length === 1 &&
+      eligible[0]?.type === 'release' &&
+      (pagination === undefined || pagination.items === results.length)
     )
-      return { type: 'release', id: String(results[0].id) }
+      return { type: 'release', id: String(eligible[0].id) }
     if (!context.media?.title || !context.media.artists.length) {
-      if (results.length)
+      if (eligible.length || (pagination && pagination.items > results.length))
         throw new Error(
           'Discogs barcode match is ambiguous. Set a master or release ID.',
         )
@@ -135,6 +141,7 @@ async function resolveDiscogsReference(
     const matches = results.filter(
       (item) =>
         item.type === type &&
+        !isRejected(item) &&
         albumNameMatches(
           item.title.replace(/ \(\d+\)(?= - )/, ''),
           `${names.artist} - ${names.title}`,

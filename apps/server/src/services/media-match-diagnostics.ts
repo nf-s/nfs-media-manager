@@ -5,14 +5,16 @@ import {
   type MatchDiagnosticsPage,
   type MatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
+import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { listProviderCatalog } from '@/plugins/registry'
+import { readAlbumMatchRejectionsForItems } from './album-match-rejections'
 import { getLastfmAccount } from './lastfm-scrobbles'
 import {
   legacyAlbumGoogleMatchEvidence,
-  legacyGoogleProvider,
   mediaMatchEvidence,
+  visibleMediaMatches,
 } from './media-match-evidence'
 
 const lastfmListeningProvider = 'lastfm-listening'
@@ -23,7 +25,7 @@ function listeningMatches(account: string) {
     select distinct scope.id, ${lastfmListeningProvider}::text as provider,
       scrobble.album_name, scrobble.artist_name, null::text,
       scrobble.artist_key, scrobble.album_key, null::text as source_provider,
-      null::integer as match_priority
+      null::integer as match_priority, null::text as snapshot_id, null::text as reference_type
     from evidence_scope scope
     join lastfm_scrobble scrobble on scrobble.album_media_item_id = scope.id
     where scrobble.username = ${account}
@@ -94,20 +96,7 @@ export async function listMediaMatchDiagnostics(
       ${mediaMatchEvidence(role)}
       ${kind === 'album' ? legacyAlbumGoogleMatchEvidence() : sql.empty()}
       ${lastfmAccount ? listeningMatches(lastfmAccount) : sql.empty()}
-    ), matches as (
-      select * from evidence match
-      where (name is not null or creator is not null or identifier is not null)
-      ${
-        kind === 'album'
-          ? sql`and not (match.provider = ${legacyGoogleProvider} and match.match_priority is null
-            and exists (select 1 from evidence saved where saved.id = match.id
-              and saved.provider = match.provider and saved.match_priority is not null
-              and (match.identifier = saved.identifier or (match.identifier is null
-                and (match.name is null or match.name = saved.name)
-                and (match.creator is null or match.creator = saved.creator)))))`
-          : sql.empty()
-      }
-    )${
+    ), matches as (${visibleMediaMatches(kind)})${
       sortByProvider
         ? sql`, provider_sort as (
       select id, (array_agg(${providerSortValue} order by match_priority nulls last, ${providerSortValue}))[1] as value
@@ -133,6 +122,16 @@ export async function listMediaMatchDiagnostics(
             jsonb_build_object('artistKey', artist_key, 'albumKey', album_key) end
           || case when source_provider is null or source_provider = provider then '{}'::jsonb else
             jsonb_build_object('sourceProvider', source_provider) end
+          ${
+            kind === 'album'
+              ? sql`|| case when identifier is not null and length(snapshot_id) between 1 and 500
+                and length(reference_type) between 1 and 200 and length(provider) between 1 and 200
+                and length(coalesce(source_provider, provider)) between 1 and 200 then
+                jsonb_build_object('rejectionTarget', jsonb_build_object('provider', provider,
+                  'sourceProvider', coalesce(source_provider, provider), 'snapshotId', snapshot_id,
+                  'referenceType', reference_type, 'identifier', identifier)) else '{}'::jsonb end`
+              : sql.empty()
+          }
           order by provider, match_priority nulls last, lower(name), name, lower(creator), creator, identifier, artist_key, album_key)
         from matches where matches.id = page.id
       ), '[]'::jsonb) as matches
@@ -152,6 +151,29 @@ export async function listMediaMatchDiagnostics(
     if (!providers.has(provider)) providers.set(provider, provider)
   if (sortByProvider && !providers.has(query.sortBy))
     throw new ServerError({ statusCode: 422, message: 'Unknown match column.' })
+  if (kind === 'album') {
+    const rejections = await readAlbumMatchRejectionsForItems(
+      db,
+      items
+        .filter((item) => item.matches.some((match) => match.rejectionTarget))
+        .map((item) => item.id),
+    )
+    for (const item of items) {
+      const albumRejections = rejections.get(item.id)
+      if (!albumRejections) continue
+      for (const match of item.matches) {
+        const target = match.rejectionTarget
+        if (!target) continue
+        const rejection = albumRejections.find((row) =>
+          createAlbumMatchRejectionPredicate(target.provider, [row])({
+            referenceType: target.referenceType,
+            externalId: target.identifier,
+          }),
+        )
+        if (rejection) match.rejectedAt = rejection.rejectedAt
+      }
+    }
+  }
 
   return {
     items,

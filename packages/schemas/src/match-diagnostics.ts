@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { DirectionSchema, PaginationQuerySchema } from './common'
+import {
+  DirectionSchema,
+  PaginatedDataSchema,
+  PaginationQuerySchema,
+} from './common'
 import { trackBrowseFields, type BrowseField } from './browse'
 import {
   TrackListItemSchema,
@@ -84,6 +88,29 @@ export const trackMatchDiagnosticFields: BrowseField[] = [
   diagnosticText('discogsArtist', 'Discogs track artist'),
 ]
 
+export const AlbumMatchRejectionInputSchema = z.object({
+  provider: z.string().min(1).max(200),
+  sourceProvider: z.string().min(1).max(200),
+  snapshotId: z.string().min(1).max(500),
+  referenceType: z.string().min(1).max(200),
+  identifier: z.string().min(1).max(500),
+})
+export type AlbumMatchRejectionInput = z.infer<
+  typeof AlbumMatchRejectionInputSchema
+>
+
+export const AlbumMatchRejectionSchema = AlbumMatchRejectionInputSchema.extend({
+  rejectedAt: z.string().datetime(),
+})
+export type AlbumMatchRejection = z.infer<typeof AlbumMatchRejectionSchema>
+
+export const AlbumMatchRejectionPageSchema = PaginatedDataSchema(
+  AlbumMatchRejectionSchema,
+)
+export type AlbumMatchRejectionPage = z.infer<
+  typeof AlbumMatchRejectionPageSchema
+>
+
 export const MatchDiagnosticsRowSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -104,6 +131,8 @@ export const MatchDiagnosticsRowSchema = z.object({
       trackKey: z.string().optional(),
       albumKey: z.string().optional(),
       albumId: z.string().optional(),
+      rejectionTarget: AlbumMatchRejectionInputSchema.optional(),
+      rejectedAt: z.string().datetime().optional(),
     }),
   ),
 })

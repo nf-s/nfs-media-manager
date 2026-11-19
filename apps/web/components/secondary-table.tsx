@@ -155,14 +155,16 @@ export function SecondaryCell({
 }
 
 /** Native top-layer detail surface, usable by mouse, keyboard and touch. */
-function SecondaryCellDetails({
+export function SecondaryCellDetails({
   children,
   label,
+  buttonText,
   tone = 'info',
   icon = 'info',
 }: {
   children: ReactNode | (() => ReactNode)
   label: string
+  buttonText?: string
   tone?: 'info' | 'warning'
   icon?: 'info' | 'eye'
 }) {
@@ -223,40 +225,56 @@ function SecondaryCellDetails({
     <div
       className="secondary-cell-details"
       ref={anchor}
-      onMouseEnter={show}
-      onMouseLeave={scheduleClose}
-      onBlur={scheduleClose}
+      onMouseEnter={buttonText ? undefined : show}
+      onMouseLeave={buttonText ? undefined : scheduleClose}
+      onBlur={buttonText ? undefined : scheduleClose}
       onClick={(event) => event.stopPropagation()}
     >
-      <button
-        type="button"
-        className="secondary-cell-action"
-        data-tone={tone}
-        ref={trigger}
-        title={label}
-        aria-label={label}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={id}
-        onFocus={show}
-        onClick={() => {
-          if (pinned.current) {
-            pinned.current = false
-            panel.current?.hidePopover()
-          } else {
-            pinned.current = true
-            show()
-          }
-        }}
-      >
-        {tone === 'warning' ? (
-          <TriangleAlert size={14} aria-hidden="true" />
-        ) : icon === 'eye' ? (
-          <Eye size={14} aria-hidden="true" />
-        ) : (
-          <Info size={14} aria-hidden="true" />
-        )}
-      </button>
+      {buttonText ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          ref={trigger}
+          aria-label={label}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={id}
+          popoverTarget={id}
+        >
+          {buttonText}
+        </Button>
+      ) : (
+        <button
+          type="button"
+          className="secondary-cell-action"
+          data-tone={tone}
+          ref={trigger}
+          title={label}
+          aria-label={label}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={id}
+          onFocus={show}
+          onClick={() => {
+            if (pinned.current) {
+              pinned.current = false
+              panel.current?.hidePopover()
+            } else {
+              pinned.current = true
+              show()
+            }
+          }}
+        >
+          {tone === 'warning' ? (
+            <TriangleAlert size={14} aria-hidden="true" />
+          ) : icon === 'eye' ? (
+            <Eye size={14} aria-hidden="true" />
+          ) : (
+            <Info size={14} aria-hidden="true" />
+          )}
+        </button>
+      )}
       <div
         id={id}
         ref={panel}

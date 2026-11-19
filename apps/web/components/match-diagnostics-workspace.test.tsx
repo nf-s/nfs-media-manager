@@ -11,9 +11,11 @@ import {
 } from '@repo/schemas/match-diagnostics'
 import {
   applyTrackMatchPreset,
+  loadAlbumMatchHistory,
   loadMatchDiagnosticsPage,
   loadTrackMatchDiagnosticsPage,
   matchDiagnosticsKey,
+  rejectAlbumMatch,
   trackMatchDiagnosticsQuery,
   trackMatchPreset,
 } from '@/utils/match-diagnostics'
@@ -548,4 +550,123 @@ test('legacy Google identities open the source that supplied each recorded match
     html,
     /href="\/albums\/google-album\?tab=sources&amp;sourceProvider=google-custom-search">Google Match<\/a>/,
   )
+})
+
+const rejectionTarget = {
+  provider: 'google-custom-search',
+  sourceProvider: 'legacy-browser',
+  snapshotId: 'fixture-snapshot',
+  referenceType: 'rym-url',
+  identifier: 'https://example.test/release/mismatched',
+}
+const rejectedAt = '2026-03-01T12:00:00.000Z'
+
+test('Albums Matches labels a rejected identity and only offers rejection for supported exact matches', async () => {
+  const html = await render(
+    'album',
+    MatchDiagnosticsPageSchema.parse({
+      totalCount: 1,
+      pageCount: 1,
+      providers: [
+        { key: 'google-custom-search', label: 'Google Custom Search (legacy)' },
+      ],
+      items: [
+        {
+          id: 'fixture-album',
+          name: 'Library Album',
+          creator: null,
+          matches: [
+            {
+              provider: rejectionTarget.provider,
+              sourceProvider: rejectionTarget.sourceProvider,
+              name: 'Incorrect Release',
+              creator: null,
+              identifier: rejectionTarget.identifier,
+              rejectionTarget,
+              rejectedAt,
+            },
+            {
+              provider: rejectionTarget.provider,
+              name: 'Other Candidate',
+              creator: null,
+              identifier: 'fixture-critic-release',
+              rejectionTarget: {
+                ...rejectionTarget,
+                referenceType: 'metacritic-url',
+                identifier: 'fixture-critic-release',
+              },
+            },
+            {
+              provider: rejectionTarget.provider,
+              name: 'Identity Without Evidence',
+              creator: null,
+              identifier: null,
+            },
+          ],
+        },
+      ],
+    }),
+  )
+  assert.match(html, /data-status="attention">Incorrect<\/span>/)
+  assert.match(html, /data-status="attention">1 incorrect<\/span>/)
+  assert.match(html, /aria-label="Match history for Library Album"/)
+  assert.match(
+    html,
+    /aria-label="Mark Other Candidate · fixture-critic-release as incorrect"/,
+  )
+  assert.doesNotMatch(
+    html,
+    /aria-label="Mark (Incorrect Release|Identity Without Evidence)/,
+  )
+})
+
+test('the rejection request preserves the exact source and history requests a bounded page', async (t) => {
+  const requests: { url: URL; method?: string; body?: BodyInit | null }[] = []
+  const record = { ...rejectionTarget, rejectedAt }
+  const history = {
+    page: 2,
+    size: 10,
+    totalCount: 11,
+    pageCount: 2,
+    items: [record],
+  }
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (input: string, options: RequestInit) => {
+      requests.push({
+        url: new URL(input),
+        method: options.method,
+        body: options.body,
+      })
+      return Response.json({
+        statusCode: 200,
+        message: 'OK',
+        data: options.method === 'POST' ? record : history,
+      })
+    },
+  )
+  assert.deepEqual(
+    await rejectAlbumMatch(
+      'http://example.test',
+      'fixture/album',
+      rejectionTarget,
+    ),
+    record,
+  )
+  assert.deepEqual(
+    await loadAlbumMatchHistory('http://example.test', 'fixture/album', 2, 10),
+    history,
+  )
+  assert.equal(
+    requests[0]?.url.pathname,
+    '/api/v1/albums/fixture%2Falbum/match-rejections',
+  )
+  assert.equal(requests[1]?.url.pathname, requests[0]?.url.pathname)
+  assert.equal(requests[0]?.method, 'POST')
+  assert.deepEqual(requests[0]?.body, JSON.stringify(rejectionTarget))
+  assert.deepEqual(Object.fromEntries(requests[1]?.url.searchParams ?? []), {
+    page: '2',
+    size: '10',
+  })
 })

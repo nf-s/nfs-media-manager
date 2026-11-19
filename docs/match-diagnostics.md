@@ -26,6 +26,12 @@ Open a provider cell to inspect its Sources row. Use **Find match** where provid
 
 In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
 
+For an incorrect album match, open the provider cell, choose **Mark incorrect**, and confirm the identifier. The decision is specific to that album and identity. **Match history** keeps the provider, identifier and date after a replacement arrives. The original snapshot stays available in Sources.
+
+Use **Refresh** in Sources to run a supported provider again. The lookup skips rejected identities. A different successful match becomes current. If the provider has no acceptable replacement, the earlier evidence remains marked incorrect. Google Custom Search is retired. Rate Your Music can be looked up with the indexed search provider, while a legacy Metacritic decision remains in history.
+
+For incorrect Last.fm listening associations, use **Unlink** on the scrobbled name. The album history records the previous link. Last.fm retains the listens and keeps the group unlinked across syncs until you choose another album or restore automatic linking.
+
 ## Subscriptions
 
 Videos and podcast episodes use their provider IDs. The table shows the recorded title, channel or show and the native YouTube or Spotify identity. Select the item or its source to inspect the corresponding record.

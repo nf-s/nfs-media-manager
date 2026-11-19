@@ -3,11 +3,19 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { PluginResultSchema, type JsonValue } from '@repo/media-plugin-sdk'
 import { MatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { env } from '@/env'
 import { getBuiltinProviderCatalog } from '@/lib/provider-catalog'
 import * as schema from '@/schemas/db'
+import {
+  listAlbumMatchRejections,
+  readAlbumMatchRejections,
+  rejectAlbumMatch,
+} from '@/services/album-match-rejections'
+import { getMediaHistory, getMediaSourceSnapshot } from '@/services/history'
 import { listMediaMatchDiagnostics } from '@/services/media-match-diagnostics'
+import { applyProviderResult } from '@/services/provider-state'
 
 const database = 'media_matches_' + randomUUID().replaceAll('-', '')
 const connection = {
@@ -727,5 +735,442 @@ describe('album and film match diagnostics', () => {
         MatchDiagnosticsQuerySchema.parse({ sortBy: 'irrelevant' }),
       ),
     ).rejects.toMatchObject({ response: { statusCode: 422 } })
+  })
+})
+
+async function createAlbumFixture(id: string) {
+  await databaseClient.insert(schema.mediaItem).values({
+    id,
+    slug: id,
+    title: id,
+    mediaType: 'album',
+  })
+  await databaseClient.insert(schema.album).values({ mediaItemId: id })
+}
+
+async function storeMatchFixture(
+  mediaItemId: string,
+  provider: string,
+  snapshotId: string,
+  payload: JsonValue,
+  normalizedData: Record<string, JsonValue> | null = null,
+) {
+  const state = { payload, normalizedData, checksum: snapshotId }
+  await databaseClient.insert(schema.providerSnapshot).values({
+    ...state,
+    id: snapshotId,
+    mediaItemId,
+    provider,
+    source: 'fixture',
+  })
+  await databaseClient
+    .insert(schema.providerCurrentState)
+    .values({
+      ...state,
+      id: `${mediaItemId}:${provider}`,
+      mediaItemId,
+      provider,
+      status: 'ready',
+      latestSnapshotId: snapshotId,
+    })
+    .onConflictDoUpdate({
+      target: [
+        schema.providerCurrentState.mediaItemId,
+        schema.providerCurrentState.provider,
+      ],
+      set: { ...state, latestSnapshotId: snapshotId },
+    })
+}
+
+async function getFixtureMatches(id: string) {
+  const result = await listMediaMatchDiagnostics(
+    'album',
+    MatchDiagnosticsQuerySchema.parse({ q: id }),
+  )
+  return result.items.find((row) => row.id === id)?.matches ?? []
+}
+
+describe('album match rejection history', () => {
+  it('rejects native Discogs, MusicBrainz and Last.fm records without normalized references', async () => {
+    const id = 'native-rejection-fixture'
+    const groupId = '33ce6ab1-9cbd-4974-ab55-200911ac233f'
+    const lastfmId = '0dc2c047-84c7-4f73-9654-a56bfa10751c'
+    const lastfmUrl = 'https://www.last.fm/music/Fixture+Artist/Fixture+Album'
+    await createAlbumFixture(id)
+    const discogs = {
+      master: { id: 4321, title: 'Native Master', main_release: 7654 },
+      mainRelease: { id: 7654, title: 'Other Edition', master_id: 4321 },
+    }
+    const musicbrainz = { releaseGroup: { id: groupId, title: 'Native Group' } }
+    const lastfm = {
+      name: 'Native Last.fm Album',
+      mbid: lastfmId,
+      url: lastfmUrl,
+    }
+    await storeMatchFixture(id, 'discogs', 'native-master', discogs)
+    await storeMatchFixture(id, 'musicbrainz', 'native-group', musicbrainz)
+    await storeMatchFixture(id, 'lastfm', 'native-lastfm', lastfm)
+
+    const matches = await getFixtureMatches(id)
+    expect(
+      matches.map(({ provider, identifier, rejectionTarget }) => [
+        provider,
+        identifier,
+        rejectionTarget?.referenceType,
+      ]),
+    ).toEqual([
+      ['discogs', '4321', 'master'],
+      ['lastfm', lastfmUrl, 'url'],
+      ['musicbrainz', groupId, 'release-group'],
+    ])
+    for (const match of matches) {
+      if (!match.rejectionTarget) throw new Error('Missing fixture snapshot')
+      await rejectAlbumMatch(id, match.rejectionTarget, null)
+    }
+    for (const [provider, referenceType, externalId] of [
+      ['discogs', 'master', '4321'],
+      ['musicbrainz', 'release-group', groupId],
+      ['lastfm', 'mbid', lastfmId],
+    ]) {
+      const result = PluginResultSchema.parse({
+        payload: {},
+        normalized: {
+          references: [{ referenceType, externalId, isPrimary: true }],
+        },
+      })
+      if (!provider) throw new Error('Missing fixture provider')
+      await expect(
+        applyProviderResult({
+          mediaItemId: id,
+          mediaType: 'album',
+          provider,
+          source: 'scrape-job',
+          ...result,
+        }),
+      ).rejects.toThrow('The album match was previously rejected.')
+    }
+    const replacement = PluginResultSchema.parse({
+      payload: { release: { id: '4321', title: 'Distinct Release' } },
+    })
+    await applyProviderResult({
+      mediaItemId: id,
+      mediaType: 'album',
+      provider: 'discogs',
+      source: 'scrape-job',
+      ...replacement,
+    })
+    await storeMatchFixture(id, 'lastfm', 'native-lastfm-url-only', {
+      ...lastfm,
+      mbid: 'unavailable',
+    })
+    await storeMatchFixture(id, 'musicbrainz', 'native-untyped', {
+      id: groupId,
+      title: 'Unidentified Entity',
+    })
+    const after = await getFixtureMatches(id)
+    const discogsMatch = after.find(({ provider }) => provider === 'discogs')
+    expect(discogsMatch).toMatchObject({
+      name: 'Distinct Release',
+      identifier: '4321',
+      rejectionTarget: { referenceType: 'release' },
+    })
+    expect(discogsMatch?.rejectedAt).toBeUndefined()
+    expect(after.find(({ provider }) => provider === 'lastfm')).toMatchObject({
+      identifier: lastfmUrl,
+      rejectionTarget: { referenceType: 'url' },
+      rejectedAt: expect.any(String),
+    })
+    expect(
+      after.find(({ provider }) => provider === 'musicbrainz'),
+    ).toMatchObject({ identifier: null })
+    expect(
+      await getMediaSourceSnapshot(id, 'discogs', 'native-master'),
+    ).toMatchObject({ data: discogs })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects one legacy identity once, preserves its shared snapshot, and marks equivalent URLs only on that album', async () => {
+    const id = 'legacy-rejection-fixture'
+    const other = 'neighbor-rejection-fixture'
+    const provider = 'google-custom-search'
+    const sourceProvider = 'legacy-record'
+    const snapshotId = 'legacy-rejection-snapshot'
+    const rym = 'https://rateyourmusic.com/release/album/fixture/rejectable/'
+    const equivalentRym =
+      'http://www.rateyourmusic.com/release/album/fixture/rejectable/reviews/2/'
+    const metacritic = 'https://www.metacritic.com/music/separate/fixture/'
+    const payload = {
+      rymGoogle: {
+        link: rym,
+        rawResponse: { title: 'Wrong Release by Source Artist - RYM' },
+      },
+      metacriticGoogle: {
+        link: metacritic,
+        rawResponse: { title: 'Correct Release by Source Artist - Metacritic' },
+      },
+    }
+    await createAlbumFixture(id)
+    await createAlbumFixture(other)
+    await storeMatchFixture(id, sourceProvider, snapshotId, payload)
+    await storeMatchFixture(
+      other,
+      sourceProvider,
+      'neighbor-rejection-snapshot',
+      payload,
+    )
+    await storeMatchFixture(
+      id,
+      'serply',
+      'serply-rejection-snapshot',
+      {},
+      {
+        references: [
+          {
+            referenceType: 'rym-url',
+            externalId: equivalentRym,
+            isPrimary: true,
+          },
+        ],
+      },
+    )
+
+    const before = await getFixtureMatches(id)
+    const rymTarget = before.find(
+      (match) => match.identifier === rym,
+    )?.rejectionTarget
+    const metacriticTarget = before.find(
+      (match) => match.identifier === metacritic,
+    )?.rejectionTarget
+    expect(rymTarget).toEqual({
+      provider,
+      sourceProvider,
+      snapshotId,
+      referenceType: 'rym-url',
+      identifier: rym,
+    })
+    expect(metacriticTarget).toEqual({
+      provider,
+      sourceProvider,
+      snapshotId,
+      referenceType: 'metacritic-url',
+      identifier: metacritic,
+    })
+    if (!rymTarget || !metacriticTarget)
+      throw new Error('Missing fixture evidence')
+
+    await expect(
+      rejectAlbumMatch(
+        id,
+        { ...rymTarget, sourceProvider: 'legacy-browser' },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    await expect(
+      rejectAlbumMatch(
+        id,
+        { ...rymTarget, referenceType: 'metacritic-url' },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    const [first, duplicate] = await Promise.all([
+      rejectAlbumMatch(id, rymTarget, null),
+      rejectAlbumMatch(id, rymTarget, null),
+    ])
+    expect(duplicate).toEqual(first)
+
+    const after = await getFixtureMatches(id)
+    expect(after.find((match) => match.identifier === rym)?.rejectedAt).toBe(
+      first.rejectedAt,
+    )
+    expect(
+      after.find((match) => match.identifier === equivalentRym)?.rejectedAt,
+    ).toBe(first.rejectedAt)
+    expect(
+      after.find((match) => match.identifier === metacritic)?.rejectedAt,
+    ).toBeUndefined()
+    expect(
+      (await getFixtureMatches(other)).find((match) => match.identifier === rym)
+        ?.rejectedAt,
+    ).toBeUndefined()
+    expect(
+      await getMediaSourceSnapshot(id, sourceProvider, snapshotId),
+    ).toMatchObject({ data: payload })
+    expect((await getMediaHistory(id)).events).toContainEqual(
+      expect.objectContaining({
+        title: 'Album match rejected',
+        provider,
+        data: rymTarget,
+      }),
+    )
+    expect(await listAlbumMatchRejections(id, { page: 1, size: 5 })).toEqual({
+      items: [first],
+      page: 1,
+      size: 5,
+      pageCount: 1,
+      totalCount: 1,
+    })
+
+    await rejectAlbumMatch(id, metacriticTarget, null)
+    expect(
+      await listAlbumMatchRejections(id, { page: 2, size: 1 }),
+    ).toMatchObject({
+      items: [first],
+      pageCount: 2,
+      totalCount: 2,
+    })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects stale source evidence, distinguishes Discogs master from release, and retains the original decision after replacement', async () => {
+    const id = 'discogs-rejection-fixture'
+    const provider = 'discogs'
+    await createAlbumFixture(id)
+    const releaseId = '1234'
+    const master = {
+      referenceType: 'master',
+      externalId: releaseId,
+      isPrimary: true,
+    }
+    const release = {
+      referenceType: 'release',
+      externalId: releaseId,
+      isPrimary: true,
+    }
+    await storeMatchFixture(
+      id,
+      provider,
+      'discogs-initial',
+      { master: { title: 'Initial Master' } },
+      { references: [master] },
+    )
+    const [initial] = await getFixtureMatches(id)
+    if (!initial?.rejectionTarget) throw new Error('Missing fixture evidence')
+
+    await storeMatchFixture(
+      id,
+      provider,
+      'discogs-current',
+      { master: { title: 'Current Master' } },
+      { references: [master] },
+    )
+    await expect(
+      rejectAlbumMatch(id, initial.rejectionTarget, null),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    const [current] = await getFixtureMatches(id)
+    if (!current?.rejectionTarget) throw new Error('Missing fixture evidence')
+    const rejected = await rejectAlbumMatch(id, current.rejectionTarget, null)
+    expect(await readAlbumMatchRejections(databaseClient, id)).toEqual([
+      {
+        ...rejected,
+        aliases: [
+          {
+            referenceType: 'url',
+            externalId: `https://www.discogs.com/master/${releaseId}`,
+          },
+        ],
+      },
+    ])
+
+    const replacement = { release: { title: 'Replacement Release' } }
+    await storeMatchFixture(id, provider, 'discogs-replacement', replacement, {
+      references: [release],
+    })
+    const [latest] = await getFixtureMatches(id)
+    expect(latest).toMatchObject({
+      name: 'Replacement Release',
+      rejectionTarget: {
+        referenceType: 'release',
+        snapshotId: 'discogs-replacement',
+      },
+    })
+    expect(latest?.rejectedAt).toBeUndefined()
+    expect(await rejectAlbumMatch(id, current.rejectionTarget, null)).toEqual(
+      rejected,
+    )
+    expect(
+      await listAlbumMatchRejections(id, { page: 1, size: 5 }),
+    ).toMatchObject({ items: [rejected], totalCount: 1 })
+    expect(
+      await getMediaSourceSnapshot(id, provider, 'discogs-current'),
+    ).toMatchObject({ data: { master: { title: 'Current Master' } } })
+    expect(
+      await getMediaSourceSnapshot(id, provider, 'discogs-replacement'),
+    ).toMatchObject({ data: replacement })
+    await expect(
+      rejectAlbumMatch('film-one', current.rejectionTarget, null),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await expect(
+      listAlbumMatchRejections('film-one', { page: 1, size: 5 }),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses a corroborated URL alias and leaves query-dependent identities ineligible for rejection by display URL', async () => {
+    const id = 'extension-rejection-fixture'
+    const provider = 'sample-extension'
+    const identifier = 'release-fixture'
+    const releaseUrl = 'https://catalog.example.test/album/fixture'
+    await createAlbumFixture(id)
+    await storeMatchFixture(
+      id,
+      provider,
+      'extension-initial',
+      {},
+      {
+        references: [
+          { referenceType: 'album', externalId: identifier, isPrimary: true },
+        ],
+        links: [
+          {
+            provider,
+            label: 'Fixture Album',
+            url: `${releaseUrl}?utm_source=test`,
+          },
+        ],
+      },
+    )
+    const [initial] = await getFixtureMatches(id)
+    if (!initial?.rejectionTarget) throw new Error('Missing fixture evidence')
+    const rejected = await rejectAlbumMatch(id, initial.rejectionTarget, null)
+    expect(await readAlbumMatchRejections(databaseClient, id)).toEqual([
+      {
+        ...rejected,
+        aliases: [{ referenceType: 'url', externalId: releaseUrl }],
+      },
+    ])
+
+    await storeMatchFixture(
+      id,
+      provider,
+      'extension-query',
+      {},
+      {
+        references: [
+          {
+            referenceType: 'url',
+            externalId: `${releaseUrl}?edition=fixture`,
+            isPrimary: true,
+          },
+        ],
+      },
+    )
+    const [queryMatch] = await getFixtureMatches(id)
+    expect(queryMatch).toMatchObject({ identifier: releaseUrl })
+    expect(queryMatch?.rejectionTarget).toBeUndefined()
+    expect(queryMatch?.rejectedAt).toBeUndefined()
+    await expect(
+      rejectAlbumMatch(
+        id,
+        {
+          provider,
+          sourceProvider: provider,
+          snapshotId: 'extension-query',
+          referenceType: 'url',
+          identifier: releaseUrl,
+        },
+        null,
+      ),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

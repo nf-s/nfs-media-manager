@@ -146,9 +146,10 @@ export const spotifyPlugin: MediaProviderPlugin = {
       throw new Error('Spotify supports albums only')
     const spotifyRef = context.existingReferences.find(
       (ref) =>
-        ref.referenceType === 'spotify' ||
-        (ref.referenceType === 'album' &&
-          ref.metadata?.['sourceProvider'] === 'spotify'),
+        (ref.referenceType === 'spotify' ||
+          (ref.referenceType === 'album' &&
+            ref.metadata?.['sourceProvider'] === 'spotify')) &&
+        !context.isRejectedMatch?.(ref),
     )
     let id = spotifyRef ? spotifyAlbumId(spotifyRef.externalId) : null
     if (spotifyRef && !id) throw new Error('Invalid Spotify album identifier')
@@ -174,7 +175,7 @@ export const spotifyPlugin: MediaProviderPlugin = {
         throw new Error(
           'Spotify lookup is ambiguous; set an album ID explicitly',
         )
-      const matches = upc
+      const identityMatches = upc
         ? found.items
         : found.items.filter(
             (item) =>
@@ -182,6 +183,13 @@ export const spotifyPlugin: MediaProviderPlugin = {
               artistKey(item.artists.map((artist) => artist.name)) ===
                 artistKey(media?.artists ?? []),
           )
+      const matches = identityMatches.filter(
+        (item) =>
+          !context.isRejectedMatch?.({
+            referenceType: 'album',
+            externalId: item.id,
+          }),
+      )
       if (!matches.length)
         throw new ProviderItemNotFoundError('No exact Spotify album match')
       if (matches.length !== 1)

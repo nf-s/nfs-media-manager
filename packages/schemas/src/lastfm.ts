@@ -262,7 +262,15 @@ export const LastfmLinkUpdateSchema = z.discriminatedUnion('action', [
     .strict(),
   z
     .object({
-      action: z.enum(['unlink', 'auto']),
+      action: z.literal('unlink'),
+      expectedAlbumId: z.string().min(1).max(200).optional(),
+      artistName: z.string().min(1).max(500),
+      albumName: z.string().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('auto'),
       artistName: z.string().min(1).max(500),
       albumName: z.string().min(1).max(500),
     })

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   references: vi.fn(),
   artist: vi.fn(),
   releaseHints: vi.fn(),
+  rejections: vi.fn(),
 }))
 vi.mock('@/lib/db', () => ({
   db: {
@@ -39,6 +40,9 @@ vi.mock('@/services/artist-profiles', () => ({
 vi.mock('@/services/album-imports', () => ({}))
 vi.mock('@/services/album-release-hints', () => ({
   getAlbumReleaseHints: mocks.releaseHints,
+}))
+vi.mock('@/services/album-match-rejections', () => ({
+  readAlbumMatchRejections: mocks.rejections,
 }))
 vi.mock('@/services/file-imports', () => ({}))
 
@@ -100,6 +104,7 @@ describe('find match', () => {
     })
     mocks.overrides.mockResolvedValue([])
     mocks.references.mockResolvedValue([])
+    mocks.rejections.mockResolvedValue([])
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -119,12 +124,35 @@ describe('find match', () => {
       id: 'album-1',
       provider: 'discogs',
     })
-    expect(mocks.releaseHints).toHaveBeenCalledWith('album-1')
+    expect(mocks.releaseHints).toHaveBeenCalledWith('album-1', [])
     expect(search).toHaveBeenCalledWith(
       expect.objectContaining({
         media: expect.objectContaining({ releaseHints }),
       }),
     )
+  })
+
+  it('omits a rejected identity while keeping a distinct candidate with the same ID', async () => {
+    mocks.rejections.mockResolvedValue([
+      {
+        provider: 'discogs',
+        sourceProvider: 'discogs',
+        referenceType: 'master',
+        identifier: '22',
+        aliases: [],
+      },
+    ])
+    mocks.request
+      .mockResolvedValueOnce(Response.json(discogsResults(22, 'master')))
+      .mockResolvedValueOnce(Response.json(discogsResults(22, 'release')))
+    const result = await searchMatchCandidates({
+      kind: 'album',
+      id: 'album-1',
+      provider: 'discogs',
+    })
+    expect(result.items).toEqual([
+      expect.objectContaining({ referenceType: 'release', externalId: '22' }),
+    ])
   })
 
   it('searches an album provider through its request policy and marks the stored record', async () => {

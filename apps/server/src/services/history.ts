@@ -1,6 +1,7 @@
 import { and, count, desc, eq, inArray } from 'drizzle-orm'
 import type { z } from 'zod'
 import type { PaginationQuerySchema } from '@repo/schemas/common'
+import { AlbumMatchRejectionInputSchema } from '@repo/schemas/match-diagnostics'
 import type {
   MediaHistory,
   MediaSources,
@@ -17,6 +18,7 @@ import {
   scrapeJob,
   scrapeJobItem,
 } from '@/schemas/db'
+import { albumMatchRejectionField } from './album-match-rejections'
 
 type MediaHistoryEvent = MediaHistory['events'][number]
 
@@ -37,6 +39,30 @@ function formatSnapshotSummary(
 function formatFieldOverride(
   override: typeof mediaOverride.$inferSelect,
 ): MediaHistoryEvent {
+  if (override.field === 'albumListeningLinkRejection') {
+    return {
+      id: override.id,
+      type: 'override',
+      provider: 'lastfm-listening',
+      title: 'Last.fm listening match rejected',
+      description: override.note,
+      createdAt: override.createdAt.toISOString(),
+      data: override.value,
+    }
+  }
+  if (override.field === albumMatchRejectionField) {
+    const rejection = AlbumMatchRejectionInputSchema.safeParse(override.value)
+    if (rejection.success)
+      return {
+        id: override.id,
+        type: 'override',
+        provider: rejection.data.provider,
+        title: 'Album match rejected',
+        description: rejection.data.identifier,
+        createdAt: override.createdAt.toISOString(),
+        data: rejection.data,
+      }
+  }
   return {
     id: override.id,
     type: 'override',

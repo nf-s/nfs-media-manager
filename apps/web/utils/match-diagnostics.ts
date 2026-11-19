@@ -1,9 +1,13 @@
 import {
+  AlbumMatchRejectionInputSchema,
+  AlbumMatchRejectionPageSchema,
+  AlbumMatchRejectionSchema,
   MatchDiagnosticsPageSchema,
   MatchDiagnosticsQuerySchema,
   TrackMatchDiagnosticsQuerySchema,
   TrackPlayabilitySchema,
   trackMatchProviderLabels,
+  type AlbumMatchRejectionInput,
   type MatchDiagnosticsQuery,
   type MatchDiagnosticsRow,
   type TrackMatchDiagnosticsQuery,
@@ -24,6 +28,46 @@ export const matchDiagnosticsPageSize = 50
 
 export function matchDiagnosticsKey(library: LibraryView) {
   return [`${library}s`, 'match-diagnostics']
+}
+
+export function albumMatchHistoryKey(id: string) {
+  return ['albums', 'match-rejections', id]
+}
+
+function albumMatchRejectionsPath(id: string) {
+  return `/api/v1/albums/${encodeURIComponent(id)}/match-rejections`
+}
+
+export function loadAlbumMatchHistory(
+  apiBaseUrl: string,
+  id: string,
+  page: number,
+  size: number,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  return fetchApiData(
+    apiBaseUrl,
+    `${albumMatchRejectionsPath(id)}?${params}`,
+    AlbumMatchRejectionPageSchema,
+    { signal },
+  )
+}
+
+export function rejectAlbumMatch(
+  apiBaseUrl: string,
+  id: string,
+  target: AlbumMatchRejectionInput,
+) {
+  return fetchApiData(
+    apiBaseUrl,
+    albumMatchRejectionsPath(id),
+    AlbumMatchRejectionSchema,
+    {
+      method: 'POST',
+      body: JSON.stringify(AlbumMatchRejectionInputSchema.parse(target)),
+    },
+  )
 }
 
 export function matchDiagnosticsSort(params: URLSearchParams) {

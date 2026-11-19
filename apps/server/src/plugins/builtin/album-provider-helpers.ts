@@ -45,7 +45,8 @@ export function albumReference(
   return context.existingReferences.find(
     (reference) =>
       referenceTypes.includes(reference.referenceType) &&
-      reference.metadata?.['sourceProvider'] === provider,
+      reference.metadata?.['sourceProvider'] === provider &&
+      !context.isRejectedMatch?.(reference),
   )
 }
 

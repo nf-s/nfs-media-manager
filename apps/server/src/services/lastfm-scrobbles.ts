@@ -35,6 +35,7 @@ import {
   lastfmAlbumLink,
   lastfmScrobble,
   lastfmSync,
+  mediaOverride,
   providerSecret,
   scrapeJob,
 } from '@/schemas/db'
@@ -549,7 +550,10 @@ export async function relinkLastfmScrobbles() {
  * Links one scrobbled artist and album name to an album, keeps it unlinked,
  * or returns it to automatic matching. Manual choices survive later syncs.
  */
-export async function setLastfmAlbumLink(input: LastfmLinkUpdate) {
+export async function setLastfmAlbumLink(
+  input: LastfmLinkUpdate,
+  userId: string | null = null,
+) {
   const { account } = await requireCredentials()
   const artistKey = albumNameKey(input.artistName)
   const albumKey = albumNameKey(input.albumName)
@@ -594,6 +598,56 @@ export async function setLastfmAlbumLink(input: LastfmLinkUpdate) {
       candidateIds: [],
     }
     await db.transaction(async (tx) => {
+      if (input.action === 'unlink') {
+        const [previous] = await tx
+          .select({
+            albumId: lastfmAlbumLink.albumMediaItemId,
+            source: lastfmAlbumLink.source,
+          })
+          .from(lastfmAlbumLink)
+          .where(group)
+          .for('update')
+        if (
+          input.expectedAlbumId &&
+          previous?.albumId !== input.expectedAlbumId
+        ) {
+          if (previous?.source === 'manual' && previous.albumId === null) {
+            const [recorded] = await tx
+              .select({ id: mediaOverride.id })
+              .from(mediaOverride)
+              .where(
+                and(
+                  eq(mediaOverride.mediaItemId, input.expectedAlbumId),
+                  eq(mediaOverride.field, 'albumListeningLinkRejection'),
+                  sql`${mediaOverride.value}->>'artistKey' = ${artistKey} and ${mediaOverride.value}->>'albumKey' = ${albumKey}`,
+                ),
+              )
+              .limit(1)
+            if (recorded) return
+          }
+          throw new ServerError({
+            statusCode: 409,
+            message:
+              'The listening group is no longer linked to the reviewed album.',
+          })
+        }
+        if (previous?.albumId) {
+          await tx.insert(mediaOverride).values({
+            id: randomUUID(),
+            mediaItemId: previous.albumId,
+            field: 'albumListeningLinkRejection',
+            value: {
+              artistKey,
+              albumKey,
+              artistName: input.artistName,
+              albumName: input.albumName,
+            },
+            note: `${input.artistName} – ${input.albumName}`,
+            createdByUserId: userId,
+          })
+        }
+      }
+
       await tx
         .insert(lastfmAlbumLink)
         .values({ username: account, artistKey, albumKey, ...link })

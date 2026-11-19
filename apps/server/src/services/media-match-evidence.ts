@@ -14,17 +14,25 @@ function stringValue(value: SQL) {
     then nullif(nullif(trim(${value} #>> '{}'), ''), 'N/A') end`
 }
 
+function objectValue(value: SQL) {
+  return sql`case when jsonb_typeof(${value}) = 'object' then ${value} end`
+}
+
 function arrayNames(values: SQL, name: SQL, condition = sql`true`) {
   return sql`(select string_agg(${name}, ', ' order by position)
     from jsonb_array_elements(${jsonArray(values)}) with ordinality as entry(value, position)
     where ${condition})`
 }
 
+const discogsMaster = objectValue(sql`${payload}->'master'`)
+const discogsRelease = objectValue(sql`${payload}->'release'`)
+const discogsMainRelease = objectValue(sql`${payload}->'mainRelease'`)
+const musicBrainzReleaseGroup = objectValue(sql`${payload}->'releaseGroup'`)
 const nativeRecord = sql`case source.provider
   when 'spotify' then coalesce(${payload}->'spotify', ${payload}->'album', ${payload})
-  when 'lastfm' then coalesce(${payload}->'album', ${payload})
-  when 'musicbrainz' then coalesce(${payload}->'releaseGroup', ${payload})
-  when 'discogs' then coalesce(${payload}->'master', ${payload}->'release', ${payload}->'mainRelease', ${payload})
+  when 'lastfm' then coalesce(${objectValue(sql`${payload}->'album'`)}, ${payload})
+  when 'musicbrainz' then coalesce(${musicBrainzReleaseGroup}, ${payload})
+  when 'discogs' then coalesce(${discogsMaster}, ${discogsRelease}, ${discogsMainRelease}, ${payload})
   else ${payload} end`
 
 // An indexed search records its selected result URL. Join only that hit, never the
@@ -69,15 +77,44 @@ const recordedCreator = sql`case source.provider
     substring(indexed.title from '(?i)^.+ by (.+) - (?:RYM|Rate Your Music)$'))
   end`
 
-const recordedIdentifier = sql`coalesce(
-  (select ${stringValue(sql`value->'externalId'`)}
-    from jsonb_array_elements(${jsonArray(sql`${normalized}->'references'`)}) with ordinality as item(value, position)
-    where ${stringValue(sql`value->'externalId'`)} is not null and value->>'referenceType' is distinct from 'upc'
-    order by (value->>'isPrimary' = 'true') desc nulls last, position limit 1),
-  case source.provider
+const normalizedReference = sql`select
+    ${stringValue(sql`value->'externalId'`)} as identifier,
+    ${stringValue(sql`value->'referenceType'`)} as reference_type
+  from jsonb_array_elements(${jsonArray(sql`${normalized}->'references'`)}) with ordinality as item(value, position)
+  where ${stringValue(sql`value->'externalId'`)} is not null and value->>'referenceType' is distinct from 'upc'
+  order by (value->>'isPrimary' = 'true') desc nulls last, position limit 1`
+
+// The wrapper that supplied the displayed record determines its namespace.
+// In a Discogs master response, the main release is separate evidence.
+const discogsReferenceType = sql`case
+    when ${discogsMaster} is not null then 'master'
+    when coalesce(${discogsRelease}, ${discogsMainRelease}) is not null then 'release'
+  end`
+const nativeId = sql`${record}->>'id'`
+const musicBrainzId = stringValue(sql`${record}->'id'`)
+const publicPathSegment = '(?!(?:[.]|%2e){1,2}(?:/|$))[^/[:space:]\\\\]+'
+const lastFmAlbumPath = `(?i)^https?://(?:www[.])?last[.]fm/music/(?:[+]noredirect/)?${publicPathSegment}/${publicPathSegment}/?$`
+
+const nativeIdentifier = sql`case source.provider
+    when 'discogs' then case
+      when ${discogsReferenceType} is not null and ${nativeId} ~ '^[1-9][0-9]{0,15}$'
+      then case when (${nativeId})::numeric <= 9007199254740991 then ${nativeId} end
+    end
+    when 'musicbrainz' then case
+      when ${musicBrainzReleaseGroup} is not null and ${musicBrainzId} ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      then lower(${musicBrainzId})
+    end
     when 'mdblist' then coalesce(${record}->'ids'->>'imdb', ${record}->>'imdb_id', ${record}->>'imdbid', ${record}->'ids'->>'tmdb', ${record}->>'tmdbid')
     when 'lastfm' then ${stringValue(sql`${record}->'url'`)}
-  end)`
+  end`
+
+const nativeReferenceType = sql`case source.provider
+    when 'discogs' then ${discogsReferenceType}
+    when 'musicbrainz' then 'release-group'
+    when 'lastfm' then case when identity.value ~ ${lastFmAlbumPath} then 'url' end
+  end`
+
+const recordedIdentifier = sql`coalesce(reference.identifier, ${nativeIdentifier})`
 
 /** Projects display fields from the stored response, without returning payload or lookup inputs. */
 export function mediaMatchEvidence(role: 'artist' | 'director') {
@@ -93,11 +130,19 @@ export function mediaMatchEvidence(role: 'artist' | 'director') {
         when length(identity.value) <= 500 and identity.value ~ '^https?://[[:alnum:]_.:-]+/[^?#[:space:]]+$' then identity.value
         end as identifier,
       null::text as artist_key, null::text as album_key, null::text as source_provider,
-      null::integer as match_priority
+      null::integer as match_priority, source.latest_snapshot_id as snapshot_id,
+      case when reference.reference_type is distinct from 'ean'
+        and (${recordedIdentifier} !~ '[?#]'
+          or (source.provider = 'lastfm' and identity.value ~ ${lastFmAlbumPath})
+          or (source.provider in ('serply', ${legacyGoogleProvider}) and identity.value ~ ${legacyRymUrl})
+          or (source.provider = ${legacyGoogleProvider} and identity.value ~ ${legacyMetacriticUrl}))
+        then case when reference.identifier is not null then reference.reference_type else ${nativeReferenceType} end
+      end as reference_type
     from evidence_scope scope
     join provider_current_state source on source.media_item_id = scope.id and source.status = 'ready'
     cross join lateral (select ${nativeRecord} as record) native
     cross join lateral (select case when source.provider = 'serply' then ${indexedTitle} end as title) indexed
+    left join lateral (${normalizedReference}) reference on true
     cross join lateral (select split_part(split_part(${recordedIdentifier}, '?', 1), '#', 1) as value) identity
     where source.provider not in ('legacy-record', 'legacy-browser', 'legacy-library', 'legacy-smart-playlists')`
 }
@@ -109,8 +154,7 @@ const legacyGooglePriority = sql`case source.provider
   when ${legacyGoogleProvider} then 0 when 'legacy-record' then 1 else 2 end`
 const legacyRymUrl =
   '(?i)^https?://(?:www[.])?rateyourmusic[.]com/(?:release/[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+(?:/(?:reviews|lists)(?:/[0-9]+)?)?|music-review/[^/[:space:]]+/[^/[:space:]]+/[^/[:space:]]+/[0-9]+)/?$'
-const metacriticPathSegment = '(?!(?:[.]|%2e){1,2}(?:/|$))[^/[:space:]\\\\]+'
-const legacyMetacriticUrl = `(?i)^https?://(?:www[.])?metacritic[.]com/music/${metacriticPathSegment}(?:/${metacriticPathSegment})*/?$`
+const legacyMetacriticUrl = `(?i)^https?://(?:www[.])?metacritic[.]com/music/${publicPathSegment}(?:/${publicPathSegment})*/?$`
 const legacyTypedTitle =
   '(?i)^(?:Reviews of |Lists with )?(.+) by (.+) \\((?:Album|EP|Mixtape|Compilation|Single|DJ Mix)[,);]'
 const legacyUntypedTitle = '(?i)^(.+) by (.+) - (?:RYM|Rate Your Music)$'
@@ -127,16 +171,17 @@ export function legacyAlbumGoogleMatchEvidence() {
       left(header.parts[2], 1000) as creator,
       saved.url as identifier,
       null::text as artist_key, null::text as album_key,
-      saved.provider as source_provider, site.match_priority
+      saved.provider as source_provider, site.match_priority,
+      saved.latest_snapshot_id as snapshot_id, site.reference_type
     from evidence_scope scope
     cross join (values
-      ('rymGoogle', 'rym', ${legacyRymUrl}::text, 0),
-      ('metacriticGoogle', 'metacritic', ${legacyMetacriticUrl}::text, 1)
-    ) site(raw_key, browse_key, url_pattern, match_priority)
+      ('rymGoogle', 'rym', ${legacyRymUrl}::text, 0, 'rym-url'),
+      ('metacriticGoogle', 'metacritic', ${legacyMetacriticUrl}::text, 1, 'metacritic-url')
+    ) site(raw_key, browse_key, url_pattern, match_priority, reference_type)
     cross join lateral (
-      select provider, title, url
+      select provider, latest_snapshot_id, title, url
       from (
-        select source.provider, fields.title, fields.url, ${legacyGooglePriority} as priority,
+        select source.provider, source.latest_snapshot_id, fields.title, fields.url, ${legacyGooglePriority} as priority,
           first_value(fields.url) over (order by ${legacyGooglePriority}) as selected_url
         from provider_current_state source
         cross join lateral (
@@ -165,4 +210,20 @@ export function legacyAlbumGoogleMatchEvidence() {
           then regexp_match(saved.title, ${legacyMetacriticTitle})
       end as parts
     ) header`
+}
+
+/** Keeps the selected legacy release evidence ahead of duplicate summary rows. */
+export function visibleMediaMatches(kind: 'album' | 'film') {
+  return sql`select * from evidence match
+    where (name is not null or creator is not null or identifier is not null)
+    ${
+      kind === 'album'
+        ? sql`and not (match.provider = ${legacyGoogleProvider} and match.match_priority is null
+          and exists (select 1 from evidence saved where saved.id = match.id
+            and saved.provider = match.provider and saved.match_priority is not null
+            and (match.identifier = saved.identifier or (match.identifier is null
+              and (match.name is null or match.name = saved.name)
+              and (match.creator is null or match.creator = saved.creator)))))`
+        : sql.empty()
+    }`
 }

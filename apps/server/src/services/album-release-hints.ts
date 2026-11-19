@@ -1,6 +1,10 @@
 import type { AlbumReleaseHint } from '@repo/media-plugin-sdk'
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
+import {
+  createAlbumMatchRejectionPredicate,
+  type RejectedAlbumIdentity,
+} from '@/lib/album-match-identities'
 import { DiscogsRecordSchema } from '@/lib/album-provider-details'
 import {
   AlbumEvidenceTrackLimit,
@@ -237,6 +241,7 @@ function snapshotMatches(source: ReleaseSource, payload: SQL, id: string) {
 
 export async function getAlbumReleaseHints(
   mediaItemId: string,
+  rejections: readonly RejectedAlbumIdentity[] = [],
 ): Promise<AlbumReleaseHint[]> {
   const [references, overrides, libraryTrackRows] = await Promise.all([
     db.query.providerReference.findMany({
@@ -277,14 +282,23 @@ export async function getAlbumReleaseHints(
   )
   const hints: AlbumReleaseHint[] = []
   for (const source of sources) {
-    const matching = references.filter((reference) =>
-      matchingReference(source, reference),
+    const isRejectedMatch = createAlbumMatchRejectionPredicate(
+      source,
+      rejections,
+    )
+    const matching = references.filter(
+      (reference) =>
+        matchingReference(source, reference) && !isRejectedMatch(reference),
     )
     const primary = matching.filter(({ isPrimary }) => isPrimary)
     const active = primary.length ? primary : matching
-    const override = overrides.find((reference) =>
+    const latestOverride = overrides.find((reference) =>
       matchingReference(source, reference),
     )
+    const override =
+      latestOverride && !isRejectedMatch(latestOverride)
+        ? latestOverride
+        : undefined
     if (
       source === 'discogs' &&
       (override

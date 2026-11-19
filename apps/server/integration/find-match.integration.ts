@@ -12,10 +12,16 @@ import {
   vi,
 } from 'vitest'
 import { CreateJobSchema } from '@repo/schemas/job'
+import { eq } from 'drizzle-orm'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import * as schema from '@/schemas/db'
+
+vi.mock('@/lib/load-workspace-env', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/load-workspace-env')>()),
+  loadWorkspaceEnv: () => {},
+}))
 
 const database = 'find_match_' + randomUUID().replaceAll('-', '')
 const connection = {
@@ -108,6 +114,137 @@ async function runJob(id: string) {
 }
 
 describe('find match', () => {
+  it('keeps rejected evidence through a concurrent refresh and retries with a different exact match', async () => {
+    const { rejectAlbumMatch } =
+      await import('@/services/album-match-rejections')
+    const { createJob, getJob, retryJob } = await import('@/services/jobs')
+    const { patchAlbum } = await import('@/services/media')
+    const reference = (externalId: string) => ({
+      provider: 'musicbrainz',
+      referenceType: 'release-group',
+      externalId,
+    })
+    const releaseGroup = (id: string) => ({
+      id,
+      title: 'Album Fixture',
+      'artist-credit': [{ artist: { id: firstMbid, name: artistName } }],
+    })
+    const enqueue = () =>
+      createJob(
+        CreateJobSchema.parse({
+          provider: 'musicbrainz',
+          scope: { mediaItemIds: [albumId] },
+          options: { force: true },
+        }),
+        null,
+      )
+    await databaseClient.insert(schema.providerReferenceOverride).values({
+      ...reference(firstMbid),
+      id: 'prior-override',
+      mediaItemId: albumId,
+      createdAt: new Date('2001-01-01T00:00:00Z'),
+    })
+    await patchAlbum(
+      albumId,
+      { referenceOverrides: [reference(groupMbid)] },
+      null,
+    )
+    const initial = await enqueue()
+    request.mockResolvedValueOnce(Response.json(releaseGroup(groupMbid)))
+    await runJob(initial.id)
+    const original = await databaseClient.query.providerSnapshot.findFirst({
+      where: eq(schema.providerSnapshot.scrapeJobId, initial.id),
+    })
+    if (!original) throw new Error('Expected original fixture snapshot.')
+
+    const queued = await enqueue()
+    let finishRequest = () => {}
+    const requestHold = new Promise<void>((resolve) => {
+      finishRequest = resolve
+    })
+    request.mockImplementationOnce(async () => {
+      await requestHold
+      return Response.json(releaseGroup(groupMbid))
+    })
+    const pending = runJob(queued.id)
+    try {
+      await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+      await rejectAlbumMatch(
+        albumId,
+        {
+          provider: 'musicbrainz',
+          sourceProvider: 'musicbrainz',
+          snapshotId: original.id,
+          referenceType: 'release-group',
+          identifier: groupMbid,
+        },
+        null,
+      )
+    } finally {
+      finishRequest()
+      await pending
+    }
+    expect(await getJob(queued.id)).toMatchObject({
+      status: 'failed',
+      errorMessage: expect.stringContaining('previously rejected'),
+    })
+    await expect(
+      patchAlbum(albumId, { referenceOverrides: [reference(groupMbid)] }, null),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 409,
+        message: expect.stringContaining('previously rejected'),
+      },
+    })
+
+    const onlyRejected = await retryJob(queued.id, null)
+    request.mockResolvedValueOnce(
+      Response.json({ count: 1, 'release-groups': [releaseGroup(groupMbid)] }),
+    )
+    await runJob(onlyRejected.id)
+    expect(await getJob(onlyRejected.id)).toMatchObject({ status: 'failed' })
+    expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
+      [original],
+    )
+
+    const replacement = await retryJob(onlyRejected.id, null)
+    request
+      .mockResolvedValueOnce(
+        Response.json({
+          count: 2,
+          'release-groups': [releaseGroup(groupMbid), releaseGroup(secondMbid)],
+        }),
+      )
+      .mockResolvedValueOnce(Response.json(releaseGroup(secondMbid)))
+    await runJob(replacement.id)
+    expect(await getJob(replacement.id)).toMatchObject({ status: 'succeeded' })
+    const snapshots = await databaseClient
+      .select()
+      .from(schema.providerSnapshot)
+    expect(snapshots).toHaveLength(2)
+    expect(snapshots).toEqual(
+      expect.arrayContaining([
+        original,
+        expect.objectContaining({ scrapeJobId: replacement.id }),
+      ]),
+    )
+    expect(
+      await databaseClient.select().from(schema.providerReference),
+    ).toEqual([
+      expect.objectContaining({
+        ...reference(secondMbid),
+        mediaItemId: albumId,
+      }),
+    ])
+    expect(
+      request.mock.calls.slice(2).map(([url]) => new URL(String(url)).pathname),
+    ).toEqual([
+      '/ws/2/release-group/',
+      '/ws/2/release-group/',
+      `/ws/2/release-group/${secondMbid}`,
+    ])
+  })
+
   it('lists the artists an ambiguous lookup kept without a new request', async () => {
     const { enqueueArtistEnrichment } =
       await import('@/services/artist-enrichment')
