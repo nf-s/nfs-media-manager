@@ -50,6 +50,7 @@ import { ServerError } from '@/lib/error'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
+import { serplyPlugin } from '@/plugins/builtin/serply'
 import { tmdbPlugin } from '@/plugins/builtin/tmdb'
 import { searchMatchCandidates } from '../find-match'
 
@@ -78,9 +79,13 @@ describe('find match', () => {
     )
     mocks.requestFactory.mockReturnValue(mocks.request)
     mocks.plugin.mockImplementation(async (provider: string) =>
-      [discogsPlugin, lastfmPlugin, musicbrainzPlugin, tmdbPlugin].find(
-        (plugin) => plugin.manifest.id === provider,
-      ),
+      [
+        discogsPlugin,
+        lastfmPlugin,
+        musicbrainzPlugin,
+        serplyPlugin,
+        tmdbPlugin,
+      ].find((plugin) => plugin.manifest.id === provider),
     )
     mocks.secrets.mockReturnValue({
       token: 'fixture-token',
@@ -292,7 +297,7 @@ describe('find match', () => {
         searchMatchCandidates({
           kind: 'album',
           id: 'album-1',
-          provider: 'lastfm',
+          provider: 'serply',
         }),
       ),
     ).toMatchObject({
