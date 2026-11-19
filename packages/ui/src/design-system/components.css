@@ -865,17 +865,24 @@ button.ds-pill:hover {
 .ds-table[data-scrolled] [data-sticky='edge'] {
   box-shadow: var(--ds-shadow-edge);
 }
-/* Phone: no column is wider than a little over half the screen, so the
-   pinned first column leaves the others in view. Column widths read this
-   through `columnWidth` in the table component. */
+/* Phone: no column stays in place. The whole table scrolls sideways, so the
+   first column never covers the others; headings still stay at the top. No
+   column is wider than two thirds of the screen, so part of the next one
+   always shows. Column widths read this through `columnWidth` in the table
+   component. */
 @media (max-width: 700px) {
   .ds-table {
-    --ds-col-max: 55vw;
+    --ds-col-max: 66vw;
   }
-  /* A pinned selection column (36px) before the pinned one counts toward
-     that share */
-  .ds-table:has(thead th[data-sticky] + th[data-sticky]) {
-    --ds-col-max: calc(55vw - 36px);
+  .ds-table td[data-sticky] {
+    position: static;
+  }
+  .ds-table th[data-sticky] {
+    right: auto;
+    left: auto;
+  }
+  .ds-table[data-scrolled] [data-sticky='edge'] {
+    box-shadow: none;
   }
 }
 .ds-th-sort {
@@ -928,6 +935,11 @@ button.ds-pill:hover {
 }
 .ds-cell-sub {
   color: var(--ds-ink-3);
+}
+/* In a narrow identity cell the label beside the title gives way first: its
+   share of the shortfall leaves the title whole until the label is gone */
+.ds-cell-id > .ds-cell-sub {
+  flex-shrink: 9999;
 }
 .ds-cell-actions {
   display: inline-flex;

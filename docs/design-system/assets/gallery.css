@@ -280,6 +280,17 @@ body.g {
   width: auto;
   min-width: calc(var(--ds-9) * 2.5);
 }
+/* The phone table, drawn at desktop width: no column stays in place */
+.g-phone .ds-table td[data-sticky] {
+  position: static;
+}
+.g-phone .ds-table th[data-sticky] {
+  right: auto;
+  left: auto;
+}
+.g-phone .ds-table[data-scrolled] [data-sticky='edge'] {
+  box-shadow: none;
+}
 .g-phone-tabs {
   display: grid;
   grid-auto-columns: 1fr;

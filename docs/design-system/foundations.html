@@ -341,14 +341,14 @@
                   [
                     'Phone',
                     'under 700px',
-                    'Navigation becomes a bottom tab bar. List is the default view; Table stays available with its title column pinned. Row actions are always visible.',
+                    'Navigation becomes a bottom tab bar. List is the default view; Table stays available and scrolls sideways as a whole, with no column pinned. Row actions are always visible.',
                   ],
                 ],
               ) +
               g.rules([
                 '<b>Scrollbar space is reserved</b> on every scroll area, with a 12px gutter on the scrollbar side, so content never sits under the bar or shifts when it appears.',
                 '<b>One scroll area per view.</b> A table inside the drawer shows its rows in the flow of the drawer and ends in a "Show all" row when it is long. It does not become a second scroll area with its own height cap.',
-                '<b>Sideways scroll is a last resort.</b> A table first drops its lowest-priority columns into the column menu. When it must scroll sideways the checkbox and identity columns stay pinned and a soft edge shows there is more.',
+                '<b>Sideways scroll is a last resort.</b> A table first drops its lowest-priority columns into the column menu. When it must scroll sideways the checkbox and identity columns stay pinned and a soft edge shows there is more; on a phone nothing is pinned and the whole table scrolls.',
                 '<b>Text</b> truncates with an ellipsis on one line (two lines for card titles) and never clips mid-glyph.',
                 '<b>Pills</b> never clip. A cell shows the pills that fit and +N for the rest. A single tag wider than its cell shortens with an ellipsis.',
                 '<b>Fixed-width columns</b> for dates, durations, counts and ratings, so values line up down the page.',

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -132,4 +133,57 @@ test('table errors keep explicit retry controls without firing them during rende
   assert.match(html, /role="alert"/)
   assert.match(html, /<button type="button">Retry<\/button>/)
   assert.equal(retries, 0)
+})
+
+test('no column stays in place on a phone', () => {
+  // Every pinned cell carries the shared table's own mark.
+  const html = renderToStaticMarkup(
+    <Table aria-label="Tracks" layout="fixed">
+      <TableHeader>
+        <TableRow>
+          <TableHead sticky={0}>Select</TableHead>
+          <TableHead sticky={36} stickyEdge>
+            Title
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        <TableRow>
+          <TableCell sticky={0}>1</TableCell>
+          <TableCell sticky={36} stickyEdge>
+            Example track
+          </TableCell>
+        </TableRow>
+      </TableBody>
+    </Table>,
+  )
+  assert.equal((html.match(/<th[^>]*data-sticky="(edge)?"/g) ?? []).length, 2)
+  assert.equal((html.match(/<td[^>]*data-sticky="(edge)?"/g) ?? []).length, 2)
+  const css = readFileSync(
+    new URL(
+      '../../../packages/ui/src/design-system/components.css',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  const phone = css
+    .split('@media (max-width: 700px) {')
+    .slice(1)
+    .map((block) => block.slice(0, block.indexOf('\n}\n')))
+    .find((block) => block.includes('--ds-col-max'))
+  assert.ok(phone)
+  // Body cells scroll with the rest; headings keep only their place at the top.
+  assert.match(
+    phone,
+    /\.ds-table td\[data-sticky\] \{\s*position: static;\s*\}/,
+  )
+  assert.match(
+    phone,
+    /\.ds-table th\[data-sticky\] \{\s*right: auto;\s*left: auto;\s*\}/,
+  )
+  assert.match(
+    phone,
+    /\.ds-table\[data-scrolled\] \[data-sticky='edge'\] \{\s*box-shadow: none;\s*\}/,
+  )
+  assert.match(phone, /--ds-col-max: 66vw;/)
 })

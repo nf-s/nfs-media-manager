@@ -68,7 +68,7 @@ Import from `@repo/ui/components/ds/<file>` or `@repo/ui/components/ui/<file>`.
 
 The components page states the rules for each one. The ones that matter most:
 
-- **One table.** 28px header, 32px rows, the identity column first and pinned, numbers right-aligned, ISO dates, one sort control per header, selection in the inverse bar. Columns have set widths and a handle on the header's right edge that changes them.
+- **One table.** 28px header, 32px rows, the identity column first and pinned (on a phone nothing is pinned and the whole table scrolls sideways), numbers right-aligned, ISO dates, one sort control per header, selection in the inverse bar. Columns have set widths and a handle on the header's right edge that changes them.
 - **Play.** Play is always immediately followed by Add to queue. Artwork and titles open the item; only the pair plays.
 - **Card.** Clean artwork, then title, creator, a line for the year and rating or the sorted value, and a line of tags.
 - **Pills** are never clipped or scrolled: show what fits and count the rest (`+N`).
