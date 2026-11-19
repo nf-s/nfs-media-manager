@@ -172,6 +172,7 @@ beforeAll(async () => {
     requestUrl: browseUrl,
     requestKey: nativeProviderReplayRequestKey(browseUrl, false),
     status: 200,
+    retry: 1,
     receivedAt: finishedAt,
     contentType: 'application/json',
     bodyState: 'captured',
@@ -343,6 +344,18 @@ it.skipIf(!adminUrl || process.platform !== 'darwin')(
     await expect(
       command('wrong-digest', archiveSha256('wrong')),
     ).rejects.toThrow('differs from the digest')
+    const response = eq(schema.providerResponse.id, 'fixture-response')
+    await database
+      .update(schema.providerResponse)
+      .set({ retry: 2 })
+      .where(response)
+    await expect(command('transport-retry')).rejects.toThrow(
+      'An original response differs from the reviewed archive.',
+    )
+    await database
+      .update(schema.providerResponse)
+      .set({ retry: 1 })
+      .where(response)
     await database
       .update(schema.track)
       .set({ title: 'Different Track' })

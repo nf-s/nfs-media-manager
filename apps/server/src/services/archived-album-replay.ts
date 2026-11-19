@@ -73,7 +73,8 @@ function bindArchivedResponses(
         row.ordinal === index + 1 &&
         row.method === 'GET' &&
         row.status === 200 &&
-        row.retry === null &&
+        // The worker numbers the first transport attempt as 1.
+        (row.retry === null || row.retry === 1) &&
         !row.notFound &&
         row.requestKey &&
         row.bodyState === 'captured' &&
@@ -90,6 +91,7 @@ function bindArchivedResponses(
         status: row.status,
         contentType: row.contentType,
         receivedAt: row.receivedAt?.toISOString() ?? null,
+        retry: row.retry ?? undefined,
         body,
       },
     })
