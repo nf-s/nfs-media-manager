@@ -8,6 +8,7 @@ import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   PlaylistDetailSchema,
   PlaylistEntrySortSchema,
+  PlaylistPresentationSchema,
   PlaylistSummarySchema,
   PlaylistSyncScheduleSchema,
   type PlaylistDetail,
@@ -260,10 +261,14 @@ export function playlistWindowSlots(
 
 function PlaylistEntries({
   playlist,
+  contents,
+  canSwitch,
   presentation,
   onPresentationChange,
 }: {
   playlist: PlaylistSummary
+  contents: PlaylistPresentation
+  canSwitch: boolean
   presentation: BrowseView
   onPresentationChange: (view: BrowseView) => void
 }) {
@@ -271,10 +276,6 @@ function PlaylistEntries({
   const detail = useDetailView()
   const { id } = playlist
   const view = playlistEntryView(detail.params.get('playlistView'), id)
-  const canSwitch = playlist.albumCount > 0 && playlist.trackCount > 0
-  const preferredContents =
-    view.contents ?? (view.kinds?.length ? 'tracks' : playlist.presentation)
-  const contents = canSwitch ? preferredContents : playlist.presentation
   const albums = contents === 'albums'
   const groupBy: PlaylistDetailQuery['groupBy'] = albums ? 'album' : undefined
   const sortBy =
@@ -295,7 +296,8 @@ function PlaylistEntries({
       playlistEntryViewParam(id, { ...view, ...patch }),
     )
     params.delete('tab')
-    params.set('view', nextPresentation)
+    if (patch.contents && patch.contents !== contents) params.delete('view')
+    else params.set('view', nextPresentation)
     return params
   }
   function onSort(key: TrackEntryColumn, direction: 'asc' | 'desc') {
@@ -387,7 +389,7 @@ function PlaylistEntries({
   const anyProvider = filter?.provider ? '' : ' from at least one provider'
   const gapDescription =
     filter?.gap === 'missing'
-      ? `without a successful ${gapProvider}scrape${anyProvider}`
+      ? `missing ${gapProvider}metadata${anyProvider}`
       : `with stale ${gapProvider}metadata${anyProvider}`
   const noun = albums
     ? { one: 'album', other: 'albums' }
@@ -472,7 +474,9 @@ function PlaylistEntries({
             : filter
               ? 'No entries match this metadata gap.'
               : albums
-                ? 'No library albums.'
+                ? playlist.trackCount > 0
+                  ? 'No linked library albums. Open Tracks to see the playlist entries.'
+                  : 'No library albums.'
                 : 'No tracks.'
         }
         error={
@@ -538,6 +542,74 @@ function PlaylistEntries({
         />
       )}
     </Section>
+  )
+}
+
+function PlaylistTypeSetting({ playlist }: { playlist: PlaylistSummary }) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const detail = useDetailView()
+  const update = useMutation({
+    mutationFn: (presentation: PlaylistPresentation | null) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/playlists/${encodeURIComponent(playlist.id)}/presentation`,
+        PlaylistSummarySchema,
+        { method: 'PUT', body: JSON.stringify({ presentation }) },
+      ),
+    onSuccess: (summary) => {
+      client.setQueryData<PlaylistDetail>(['playlist', playlist.id], (old) =>
+        old ? { ...old, ...summary } : old,
+      )
+      void client.invalidateQueries({ queryKey: ['playlists'] })
+    },
+  })
+  return (
+    <>
+      <label className="ds-actions">
+        Playlist type
+        <Select
+          value={playlist.presentationOverride ?? 'auto'}
+          disabled={update.isPending}
+          onChange={(event) => {
+            const value = event.target.value
+            const parsed = PlaylistPresentationSchema.nullable().safeParse(
+              value === 'auto' ? null : value,
+            )
+            if (!parsed.success) return
+            update.mutate(parsed.data, {
+              onSuccess: () => {
+                const params = new URLSearchParams(detail.params)
+                const view = playlistEntryView(
+                  params.get('playlistView'),
+                  playlist.id,
+                )
+                params.delete('view')
+                params.set(
+                  'playlistView',
+                  playlistEntryViewParam(playlist.id, {
+                    ...view,
+                    contents: undefined,
+                    kinds: undefined,
+                  }),
+                )
+                detail.replace(params)
+              },
+            })
+          }}
+        >
+          <option value="auto">Automatic</option>
+          {PlaylistPresentationSchema.options.map((value) => (
+            <option key={value} value={value}>
+              {playlistPresentationLabels[value]}
+            </option>
+          ))}
+        </Select>
+      </label>
+      {update.isError && (
+        <Notice tone="danger">Could not save the playlist type.</Notice>
+      )}
+    </>
   )
 }
 
@@ -693,13 +765,26 @@ export default function PlaylistDetailView({
 }) {
   const client = useQueryClient()
   const detail = useDetailView()
-  const [savedPresentation, setPresentation] =
-    useNestedMediaView('playlist-entries')
+  const summary = usePlaylistSummary(id)
+  const view = playlistEntryView(detail.params.get('playlistView'), id)
+  const defaultContents = summary.data?.presentation ?? 'tracks'
+  const canSwitch = Boolean(
+    summary.data &&
+    (defaultContents === 'albums'
+      ? summary.data.trackCount
+      : summary.data.albumCount),
+  )
+  const contents = canSwitch
+    ? (view.contents ?? (view.kinds?.length ? 'tracks' : defaultContents))
+    : defaultContents
+  const [savedPresentation, setPresentation] = useNestedMediaView(
+    `playlist-${contents}`,
+    contents === 'albums' ? 'grid' : 'table',
+  )
   const presentation = parseBrowseView(
     detail.params.get('view'),
     savedPresentation,
   )
-  const summary = usePlaylistSummary(id)
   const active = playlistJobActive(summary.data?.sync.job)
   const wasActive = useRef(active)
   useEffect(() => {
@@ -773,6 +858,7 @@ export default function PlaylistDetailView({
               compact={false}
               presentation={presentation}
             />
+            <PlaylistTypeSetting key={playlist.id} playlist={playlist} />
             <DetailActionsSpacer />
             {playlist.spotifyUrl && (
               <OpenAtProvider label="Spotify" url={playlist.spotifyUrl} />
@@ -840,6 +926,8 @@ export default function PlaylistDetailView({
           )}
           <PlaylistEntries
             playlist={playlist}
+            contents={contents}
+            canSwitch={canSwitch}
             presentation={presentation}
             onPresentationChange={setPresentation}
           />

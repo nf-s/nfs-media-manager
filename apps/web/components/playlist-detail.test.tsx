@@ -347,6 +347,9 @@ test('album playlists open grouped library albums and can link back to their ori
   const playlist = detail({ ...summary, presentation: 'albums' })
   const albums = drawerOf(await render('playlist=playlist-1', playlist))
   assert.match(albums, /Album playlist/)
+  assert.match(albums, /Playlist type<select/)
+  assert.match(albums, /class="ds-grid/)
+  assert.doesNotMatch(albums, /<table[^>]+aria-label="Playlist albums"/)
   assert.match(albums, /aria-label="Playlist albums"/)
   assert.match(albums, /aria-pressed="true"[^>]*>Albums</)
   assert.match(albums, /aria-label="Play Member album/)
@@ -368,7 +371,7 @@ test('album playlists open grouped library albums and can link back to their ori
   ])
   const tracks = drawerOf(await render(params.toString(), playlist))
   assert.match(tracks, /aria-pressed="true"[^>]*>Tracks</)
-  assert.match(tracks, /aria-label="Playlist tracks"/)
+  assert.match(tracks, /<table[^>]+aria-label="Playlist tracks"/)
   assert.match(tracks, /Opening track/)
 })
 
@@ -435,7 +438,7 @@ test('a legacy playlist says in one line that it is not synced', async () => {
   )
   const html = drawerOf(await render('playlist=playlist-1&tab=sync', legacy))
   assert.match(html, /This playlist is not synced from Spotify\./)
-  assert.doesNotMatch(html, /Sync now|<select/)
+  assert.doesNotMatch(html, /Sync now|aria-label="Schedule"/)
 })
 
 test('the Tracks browser opens the same drawer and filters itself by the playlist', async () => {

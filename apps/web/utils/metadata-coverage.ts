@@ -41,12 +41,9 @@ export function coverageGapIds(provider: ProviderCoverage, gap: CoverageGap) {
   ).slice(0, COVERAGE_ITEM_ID_LIMIT)
 }
 
-/**
- * The reviewed album queue request for one provider's gap. Missing albums
- * are those never scraped; stale ones were scraped before `olderThanDays`.
- * The queue rechecks freshness, so albums fetched since are skipped.
- */
+/** The reviewed album queue rechecks the same gap shown in Coverage. */
 export function coverageQueueRequest({
+  kind,
   provider,
   gap,
   ids,
@@ -54,6 +51,7 @@ export function coverageQueueRequest({
   confirmed,
   batchId,
 }: {
+  kind: MetadataCoverageKind
   provider: string
   gap: CoverageGap
   ids: readonly string[]
@@ -65,11 +63,15 @@ export function coverageQueueRequest({
   return QueueAlbumSelectionSchema.parse({
     providers: [provider],
     mediaItemIds,
-    freshness: [
-      gap === 'missing'
-        ? { provider, mode: 'unscraped' }
-        : { provider, mode: 'older', olderThanDays },
-    ],
+    ...(kind === 'playlist'
+      ? { coverageGap: { gap, olderThanDays } }
+      : {
+          freshness: [
+            gap === 'missing'
+              ? { provider, mode: 'unscraped' }
+              : { provider, mode: 'older', olderThanDays },
+          ],
+        }),
     confirmBroadRun: confirmed && mediaItemIds.length > BROAD_RUN_JOBS,
     batchId,
   })

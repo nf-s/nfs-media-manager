@@ -427,6 +427,10 @@ export type PlaylistSource = z.infer<typeof PlaylistSourceSchema>
 export const PlaylistPresentationSchema = z.enum(['albums', 'tracks'])
 export type PlaylistPresentation = z.infer<typeof PlaylistPresentationSchema>
 
+export const UpdatePlaylistPresentationSchema = z
+  .object({ presentation: PlaylistPresentationSchema.nullable() })
+  .strict()
+
 export const PlaylistSummarySchema = z.object({
   /** When this playlist was first added to this library, not saved on Spotify. */
   createdAt: z.string().datetime().nullable().default(null),
@@ -445,8 +449,10 @@ export const PlaylistSummarySchema = z.object({
   linkedTrackCount: z.number().int().nonnegative(),
   /** Library albums in the playlist, directly or through a linked track. */
   albumCount: z.number().int().nonnegative(),
-  /** Default view based on the stored playlist membership. */
+  /** Default view after applying the saved override, if any. */
   presentation: PlaylistPresentationSchema.default('tracks'),
+  /** Null follows automatic detection. */
+  presentationOverride: PlaylistPresentationSchema.nullable().default(null),
   durationSec: z.number().int().nonnegative(),
   /** An imported Spotify playlist the account owns or collaborates on; albums can be added to it. */
   acceptsAdditions: z.boolean().default(false),
