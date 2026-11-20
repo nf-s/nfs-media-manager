@@ -175,8 +175,8 @@
                       'row · at rest, playing, hover',
                     ),
                     g.item(
-                      `<div class="ds-actions">${play('header')}</div>`,
-                      'header',
+                      `<div class="ds-detail-head"><div class="ds-detail-side">${D.artBox(A[3])}<div class="ds-detail-play">${play('header')}</div></div></div>`,
+                      'header · under the artwork',
                     ),
                   ],
                   { top: true },
@@ -185,7 +185,7 @@
               g.rules([
                 '<b>Tile.</b> One white pill at the bottom right of the artwork. Hidden at rest on pointer devices, shown on hover and keyboard focus, always shown on touch and while the item is playing.',
                 '<b>Row.</b> The same pair at the end of the title cell, in lists and tables alike. The space is reserved, so nothing moves when it appears.',
-                '<b>Header.</b> Labelled buttons: Play is the primary action, Queue sits beside it.',
+                '<b>Header.</b> Under the artwork and exactly as wide as it. Play is the labelled primary button and takes the room that Queue, a square icon button, leaves.',
                 '<b>No inline play icons</b> beside album or playlist names inside another row. Follow the link, then play.',
                 '<b>Playing state.</b> The pair stays visible and Play becomes Pause.',
               ]) +
@@ -196,7 +196,7 @@
           },
           {
             id: 'pill',
-            title: 'Pill, count and provider mark',
+            title: 'Pill, count and provider logo',
             body:
               g.spec(
                 g.flow([
@@ -231,10 +231,6 @@
                     'count',
                   ),
                   g.item(
-                    `<span class="ds-actions">${mark('spotify')}${mark('lastfm')}${mark('rym')}</span>`,
-                    'provider mark',
-                  ),
-                  g.item(
                     fixed(pills(A[0].tags, { max: 2 }), 170),
                     'overflow: what fits, then +N',
                   ),
@@ -247,12 +243,45 @@
                 '<b>Tag names are in title case</b> whatever case their source used: Indie Rock, Based on Novel or Book, UK Garage. One formatter writes them; the stored name and the filter value are not changed.',
                 '<b>A tag on a detail page carries a sources icon</b> inside the pill when the tag is saved on that item. It lists where the tag came from for the item, with the provider page and the job. Rows, cards and tables show the tag alone.',
                 '<b>The label keeps its descenders.</b> The pill has a line of 1; the label inside has the body line height, so the clip that shortens a long tag never cuts a g, p or y.',
-                '<b>Provider marks</b> are neutral in rows, tables and cards. The placeholders here stand in for single-colour glyphs; brand colour is not used in repeated content.',
               ]) +
               g.note(
                 'Replaces',
                 'about ten pill styles, tags as pills in some tables and comma text in others, and three different click behaviours.',
-              ),
+              ) +
+              g.sub('Provider logo') +
+              g.spec(
+                g.flow(
+                  [
+                    ...[
+                      'spotify',
+                      'lastfm',
+                      'musicbrainz',
+                      'discogs',
+                      'rym',
+                      'tmdb',
+                      'youtube',
+                      'imdb',
+                    ].map((id) => g.item(mark(id), D.PROVIDERS[id].name)),
+                    g.item(mark('omdb'), 'OMDb · no logo'),
+                    g.item(
+                      `<span class="ds-actions">${mark('spotify', { size: 'sm' })}${mark('discogs', { size: 'sm' })}${mark('omdb', { size: 'sm' })}</span>`,
+                      'small · 14',
+                    ),
+                    g.item(
+                      D.logoLinks(['spotify', 'lastfm', 'discogs']),
+                      'links · darker on hover',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>The provider’s own logo</b> in one muted grey (<code>--ds-ink-3</code>), drawn from the shape of its logo file. Never in brand colour.',
+                '<b>16px,</b> or 14px in compact rows.',
+                '<b>Inside a link</b> it turns darker on hover and keyboard focus.',
+                '<b>A provider without a logo</b> shows a globe.',
+                '<b>Decorative beside a name.</b> Inside a link, or next to text that names the provider, the logo is hidden from assistive technology. On its own it is an image named after the provider, with the name as its tooltip.',
+              ]),
           },
           {
             id: 'status',
@@ -1016,7 +1045,7 @@
                   `<div style="max-width:220px;margin-top:12px">${D.progress(96, 240)}</div>`,
               ) +
               g.rules([
-                '<b>Source row.</b> One provider per row: match state, identifier, when it was last fetched, and the queue state if it is not idle. Refresh and Open at provider are always the same two icons. The row opens in place. The action follows the state: a row without an ID shows one button, Find match where the provider can be searched and Add ID where it cannot. When the facts do not fit on one line they wrap; they never overlap.',
+                '<b>Source row.</b> One provider per row: match state, identifier, when it was last fetched, and the queue state if it is not idle. Refresh and the link to the item on the provider’s site are always the same two icons. The row opens in place. The action follows the state: a row without an ID shows one button, Find match where the provider can be searched and Add ID where it cannot. When the facts do not fit on one line they wrap; they never overlap.',
                 "<b>Find match</b> opens in the row: a search field holding the item's own text, then the candidates as compact list rows with artwork, title, creator and year, a link to the provider and Choose. The stored candidate reads Current. The identifier form follows for a row without an ID.",
                 '<b>Coverage.</b> How many items in a set have a field or a source, with one button that queues the missing ones. On a phone the button takes its own line under the bar. A count links to the list of those items where the page has one.',
                 '<b>Progress.</b> A bar with <code>done / total</code>. Used for jobs, imports and batches in place of text.',
@@ -1041,12 +1070,32 @@
                   ],
                   'Harbour Lights',
                 ),
+              )}${g.spec(
+                D.menu(
+                  [
+                    [null, 'Filter tracks'],
+                    [null, 'Filter albums'],
+                    {
+                      group: 'Playlist type',
+                      choices: [
+                        ['Automatic', true],
+                        ['Album playlist'],
+                        ['Track playlist'],
+                      ],
+                    },
+                    [null, 'Open page'],
+                    [null, 'Copy link'],
+                  ],
+                  '',
+                  { label: 'More actions' },
+                ),
               )}</div>` +
               g.rules([
                 '<b>Notice.</b> One line, an optional single action. Neutral, attention or danger. It sits in the flow of the panel it concerns and never floats over content.',
                 '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
                 '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
                 '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button.',
+                '<b>A choice group</b> holds a setting inside a menu, such as Playlist type in a playlist’s More: its name, then the choices, the current one ticked, set apart by a hairline above and below. Choosing one saves it and closes the menu.',
               ]) +
               g.note(
                 'Replaces',
@@ -1057,20 +1106,69 @@
             id: 'detail',
             title: 'Detail header',
             body:
-              g.spec(
-                D.detailHead({
-                  item: A[0],
-                  kind: 'Album',
-                  by: 'by <a href="#">Mira Kestrel</a>',
-                  facts: ['2019-03-08', '11 tracks', '42:18', 'Tidewater'],
-                  actions: D.headActions({ open: 'Spotify' }),
-                }),
-                { style: 'max-width:600px' },
-              ) +
+              `<div class="g-cols">${[
+                [
+                  'Album',
+                  D.detailHead({
+                    item: A[0],
+                    kind: 'Album',
+                    by: 'by <a href="#">Mira Kestrel</a>',
+                    facts: ['2019-03-08', '11 tracks', '42:18', 'Tidewater'],
+                    play: play('header'),
+                    links: D.logoLinks([
+                      'spotify',
+                      'lastfm',
+                      'musicbrainz',
+                      'discogs',
+                      'rym',
+                    ]),
+                    actions: D.headActions(),
+                  }),
+                ],
+                [
+                  'Film',
+                  D.detailHead({
+                    item: F[0],
+                    kind: 'Film',
+                    by: 'directed by <a href="#">Anneke Solberg</a>',
+                    facts: ['2021', '1h 52m', 'Watched 2026-09-21'],
+                    links: D.logoLinks(['tmdb', 'imdb', 'letterboxd']),
+                    actions: D.headActions({
+                      lead: btn('Watched', {
+                        icon: 'check',
+                        size: 'md',
+                        pressed: true,
+                      }),
+                    }),
+                  }),
+                ],
+              ]
+                .map(
+                  ([label, html]) =>
+                    `<div>${g.label(label)}${g.spec(html)}</div>`,
+                )
+                .join('')}</div>` +
+              `<div style="margin-top:12px">${g.label('Album on a phone · More is in the drawer bar')}${g.spec(
+                fixed(
+                  D.detailHead({
+                    item: A[0],
+                    kind: 'Album',
+                    by: 'by <a href="#">Mira Kestrel</a>',
+                    facts: ['2019', '11 tracks', '42:18'],
+                    play: play('header'),
+                    links: D.logoLinks(['spotify', 'lastfm', 'discogs']),
+                  }),
+                  335,
+                ),
+              )}</div>` +
               g.rules([
-                '<b>Same order for every resource:</b> artwork, kind, title, creator, one line of facts, actions.',
+                '<b>Same order for every resource:</b> artwork, kind, title, creator, one line of facts, service logos, actions.',
                 '<b>Title is 18px</b> in the drawer and 22px on the standalone page.',
-                '<b>Actions:</b> Play and Queue first where the item can be played, then item-specific actions, then Open at provider and More at the far end.',
+                '<b>Play pair under the artwork,</b> exactly as wide as it, where the item can be played. Play is the labelled primary button and takes the room that Queue, a square icon button, leaves. An item without artwork starts its action row with the pair.',
+                '<b>Service logos</b> sit on a line of their own under the facts: one link per service, each opening the item there in a new tab.',
+                '<b>Action row:</b> the item’s own actions, such as Watched, Subscribed or Identify film, then More at the far end. A header with nothing else has just More.',
+                '<b>On a phone</b> More is in the drawer bar, so a header with no other action has no action row.',
+                '<b>Settings live in More</b> as a ticked group, such as a playlist’s type, never as a control in the header.',
                 '<b>Side panels.</b> Filters and view, Add and Scrobble link use the same modal side panel as details: a panel on the right, or a sheet from the top edge on a phone, closed by its Close button, Escape or the backdrop.',
               ]) +
               g.note(

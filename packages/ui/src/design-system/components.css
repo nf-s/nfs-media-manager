@@ -398,20 +398,49 @@ button.ds-pill:hover {
   background: var(--ds-danger-bg);
   color: var(--ds-danger);
 }
-/* Provider mark: stands in for the monochrome provider glyph */
-.ds-mark {
+/* Provider logo: the logo file's shape filled with the muted ink, so every
+   logo is the same quiet grey. A provider without a logo shows a globe. */
+.ds-logo {
   display: inline-grid;
   place-items: center;
   flex: none;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--ds-r-xs);
-  background: var(--ds-chip);
-  color: var(--ds-ink-2);
-  font-size: 8px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1;
+  width: 16px;
+  height: 16px;
+  background: var(--ds-ink-3);
+  color: var(--ds-ink-3);
+  mask: var(--ds-logo) center / contain no-repeat;
+}
+.ds-logo[data-size='sm'] {
+  width: 14px;
+  height: 14px;
+}
+.ds-logo[data-none] {
+  background: none;
+  mask: none;
+}
+a:hover > .ds-logo,
+a:focus-visible > .ds-logo {
+  background: var(--ds-ink);
+  color: var(--ds-ink);
+}
+a:hover > .ds-logo[data-none],
+a:focus-visible > .ds-logo[data-none] {
+  background: none;
+}
+/* An item's service links: its logos in a row, each link a 20px target */
+.service-links {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--ds-4);
+}
+.service-links > a {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-7);
+  height: var(--ds-7);
 }
 
 /* 5 Status --------------------------------------------------------------- */
@@ -1736,6 +1765,17 @@ button.ds-pill:hover {
   margin-left: auto;
   font-size: var(--ds-text-sm);
 }
+/* The room a tick takes in a menu of choices, kept by the unticked ones */
+.ds-menu-slot {
+  flex: none;
+  width: 14px;
+}
+/* A named group of choices inside a menu, such as a setting in More */
+.ds-menu-group {
+  margin: var(--ds-2) 0;
+  padding: var(--ds-2) 0;
+  border-block: 1px solid var(--ds-line-soft);
+}
 /* The sort picker's list: a search field over every field a list sorts by */
 .ds-sortpop {
   position: fixed;
@@ -1766,10 +1806,6 @@ button.ds-pill:hover {
   background: var(--ds-hover);
 }
 /* Holds the place of the check mark on fields that are not chosen */
-.ds-sortpop-slot {
-  flex: none;
-  width: 14px;
-}
 .ds-sortpop-none {
   padding: var(--ds-3) var(--ds-4);
   color: var(--ds-ink-3);
@@ -1980,6 +2016,36 @@ button.ds-pill:hover {
 }
 .ds-detail-actions .ds-spacer {
   flex: 1;
+}
+/* The artwork with the play pair under it, as wide as the artwork: Play
+   takes the room Queue's square button leaves */
+.ds-detail-side {
+  display: grid;
+  align-content: start;
+  gap: var(--ds-4);
+}
+.ds-detail-play {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-3);
+  width: 0;
+  min-width: 100%;
+}
+.ds-detail-play > .ds-btn:first-child {
+  flex: 1;
+  min-width: 0;
+}
+/* A message about playback takes its own line under the pair */
+.ds-detail-play > :not(.ds-btn) {
+  flex-basis: 100%;
+}
+/* The item's service logos, on a line of their own under the facts */
+.ds-detail-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-4);
+  margin-top: var(--ds-4);
 }
 
 /* 18 Shell, rail and player dock ------------------------------------------------ */

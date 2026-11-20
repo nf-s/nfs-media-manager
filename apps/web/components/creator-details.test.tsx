@@ -1055,7 +1055,7 @@ test('show details list stored mixes square and filter Mixes by the exact show I
   assert.equal(destination(html, 'Filter mixes').pathname, '/mixes')
   assert.match(
     html,
-    /aria-label="Open on The Lot Radio \(opens in a new tab\)"/,
+    /<div class="ds-detail-links"><span class="service-links"[^>]*><a [^>]*aria-label="Open on The Lot Radio: [^"]+ \(opens in a new tab\)"/,
   )
 })
 

@@ -35,7 +35,6 @@ import {
   connectionStatus,
   parseProviderTab,
   providerJobsHref,
-  providerMarkText,
   providerOverviewQuery,
   providerRoleLabels,
   queueBlocked,
@@ -43,6 +42,7 @@ import {
   runsOnLabel,
   type ProviderTab,
 } from '@/utils/provider-overview'
+import { providerLogoUrl } from '@/utils/provider-logos'
 import { useConfig } from '../providers'
 import { JobsTable } from '../jobs-table'
 import {
@@ -221,9 +221,10 @@ function ProviderDetail({
       <DetailHeader
         headingLevel={1}
         art={
-          <ProviderMark name={provider.displayName}>
-            {providerMarkText(provider.displayName)}
-          </ProviderMark>
+          <ProviderMark
+            name={provider.displayName}
+            src={providerLogoUrl(provider.id)}
+          />
         }
         kind="Provider"
         title={provider.displayName}

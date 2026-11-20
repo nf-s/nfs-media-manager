@@ -31,7 +31,7 @@ import {
   orderedFieldSources,
   providerLabel,
 } from '@/utils/field-provenance'
-import { providerMarkText } from '@/utils/source-rows'
+import { providerLogoUrl } from '@/utils/provider-logos'
 import { useSourceCatalog } from './provider-sources'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
@@ -122,9 +122,11 @@ function FieldSources({
       )}
       {matching.map((source) => (
         <span key={source.provider} title={sourceTitle(source, label)}>
-          <ProviderMark name={label(source.provider)}>
-            {providerMarkText(label(source.provider))}
-          </ProviderMark>
+          <ProviderMark
+            name={label(source.provider)}
+            src={providerLogoUrl(source.provider)}
+            hidden
+          />
           <span className="sr-only">{sourceTitle(source, label)}</span>
         </span>
       ))}

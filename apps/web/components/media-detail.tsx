@@ -83,7 +83,6 @@ import {
   DetailArt,
   DetailTabs,
   FilterPill,
-  OpenAtProvider,
   RatingCards,
   ratingStat,
   useDetailTab,
@@ -550,7 +549,7 @@ export default function MediaDetail({
     item.providerReferences,
     item.mediaType === 'album' ? albumHeadlineRatings : undefined,
   )
-  const [primaryLink, ...otherLinks] = serviceLinks(providers.links)
+  const links = serviceLinks(providers.links)
   const creators = item.credits.filter(
     (credit) => credit.role === (mediaType === 'album' ? 'artist' : 'director'),
   )
@@ -614,31 +613,33 @@ export default function MediaDetail({
         item.mediaType === 'film' ? textValues('country')[0] : null,
         needsId ? <Status state="attention">Needs ID</Status> : null,
       ]}
+      play={
+        item.mediaType === 'album' && (
+          <AlbumHeaderPlay
+            album={item}
+            source={() =>
+              createAlbumPlaybackSource(
+                item,
+                `${window.location.pathname}${window.location.search}`,
+              )
+            }
+          />
+        )
+      }
+      links={
+        links.length > 0 && (
+          <ServiceIconLinks links={links} itemTitle={item.title} />
+        )
+      }
       actions={
         <>
-          {item.mediaType === 'album' ? (
-            <AlbumHeaderPlay
-              album={item}
-              source={() =>
-                createAlbumPlaybackSource(
-                  item,
-                  `${window.location.pathname}${window.location.search}`,
-                )
-              }
-            />
-          ) : (
-            <WatchedButton item={item} />
-          )}
+          {item.mediaType === 'film' && <WatchedButton item={item} />}
           {needsId && (
             <Button size="md" onClick={() => setTab('sources')}>
               Identify film
             </Button>
           )}
           <DetailActionsSpacer />
-          {otherLinks.length > 0 && <ServiceIconLinks links={otherLinks} />}
-          {primaryLink && (
-            <OpenAtProvider label={primaryLink.label} url={primaryLink.url} />
-          )}
           <DetailMore
             crumb={{ title: item.title }}
             items={[{ label: 'Edit', onSelect: () => setTab('edit') }]}

@@ -264,15 +264,22 @@ test('the item header leads with a Watched toggle and shows the watched date', a
     /<button[^>]*aria-pressed="true"[^>]*><svg[^>]*class="lucide lucide-check[^"]*ds-i"[^>]*>.*?<\/svg>Watched<\/button>/,
   )
   assert.match(watched, /Watched 2026-09-21/)
-  // Watched leads the actions and More stays last.
+  // The Spotify logo sits on its own line; Watched leads the actions and
+  // More stays last.
+  const links = watched.indexOf('class="ds-detail-links"')
   const actions = watched.slice(
     watched.indexOf('aria-pressed="true"'),
     watched.indexOf('role="tablist"'),
   )
-  const open = actions.indexOf('aria-label="Open at Spotify')
+  assert.ok(links > 0 && links < watched.indexOf('aria-pressed="true"'))
+  assert.match(
+    watched,
+    /aria-label="Open on Spotify: [^"]+ \(opens in a new tab\)"/,
+  )
   const more = actions.indexOf('aria-label="More actions"')
-  assert.ok(open > 0 && more > open)
-  assert.doesNotMatch(actions.slice(more), /aria-pressed|Open at/)
+  assert.ok(more > 0)
+  assert.doesNotMatch(actions, /Open at|Open on/)
+  assert.doesNotMatch(actions.slice(more), /aria-pressed/)
 })
 
 test('the table follows the chosen column order and a filtered count reads N of M', async () => {
@@ -725,7 +732,7 @@ test('mix details lead with Listened and link to library artists, the show, the 
   )
   assert.match(
     html,
-    /href="https:\/\/www\.rinse\.fm\/episodes\/example-breakfast-2026-06-01"[^>]*aria-label="Open on Rinse FM \(opens in a new tab\)"/,
+    /href="https:\/\/www\.rinse\.fm\/episodes\/example-breakfast-2026-06-01"[^>]*aria-label="Open on Rinse FM: [^"]+ \(opens in a new tab\)"/,
   )
   assert.match(
     html,

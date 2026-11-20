@@ -134,7 +134,10 @@ test('Coverage shows each provider with its gap actions and unavailable reason',
         ? /42 of 42 library albums with metadata · stale after 180 days/
         : /42 albums · stale after 180 days/,
     )
-    assert.match(html, /class="ds-mark" title="Discogs">DI</)
+    assert.match(
+      html,
+      /<span class="ds-logo" style="--ds-logo:url\(&quot;\/icons\/ratings\/discogs.png&quot;\)" aria-hidden="true"><\/span>/,
+    )
     assert.match(html, kind === 'playlist' ? /38 of 40/ : /36 of 40/)
     assert.match(html, />Queue 2 missing</)
     assert.match(html, />Refresh 2 stale</)

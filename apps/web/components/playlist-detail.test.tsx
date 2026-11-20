@@ -347,7 +347,15 @@ test('album playlists open grouped library albums and can link back to their ori
   const playlist = detail({ ...summary, presentation: 'albums' })
   const albums = drawerOf(await render('playlist=playlist-1', playlist))
   assert.match(albums, /Album playlist/)
-  assert.match(albums, /Playlist type<select/)
+  // Playlist type is a group of choices in More, not a list in the header.
+  assert.doesNotMatch(
+    albums,
+    /<select[^>]*aria-label="Playlist type"|Playlist type<select/,
+  )
+  assert.match(
+    albums,
+    /<div role="group" aria-label="Playlist type" class="ds-menu-group"><div class="ds-pop-head" aria-hidden="true">Playlist type<\/div><button type="button" role="menuitemradio" aria-checked="true" class="ds-menu-item"><svg[^>]*>.*?<\/svg>Automatic<\/button><button type="button" role="menuitemradio" aria-checked="false" class="ds-menu-item"><span class="ds-menu-slot"><\/span>Album playlist<\/button><button type="button" role="menuitemradio" aria-checked="false" class="ds-menu-item"><span class="ds-menu-slot"><\/span>Track playlist<\/button><\/div>/,
+  )
   assert.match(albums, /class="ds-grid/)
   assert.doesNotMatch(albums, /<table[^>]+aria-label="Playlist albums"/)
   assert.match(albums, /aria-label="Playlist albums"/)

@@ -6,22 +6,6 @@ export type SourceMatch = { state: StatusState; label: string }
 /** The reason a provider cannot refresh when an identifier is missing. */
 export const IDENTIFIER_REQUIRED = 'Identifier required'
 
-/**
- * Two letters standing in for a provider's glyph: the first two capitals
- * (MusicBrainz → MB), the initials of a multi-word name (Last.fm → LF), or
- * the first two letters.
- */
-export function providerMarkText(label: string) {
-  const capitals = label.match(/[A-Z]/g) ?? []
-  if (capitals.length >= 2) return capitals.slice(0, 2).join('')
-  const words = label.split(/[^A-Za-z0-9]+/).filter(Boolean)
-  const initials =
-    words.length >= 2 ? words.map((word) => word.charAt(0)).join('') : ''
-  return (initials || label.replace(/[^A-Za-z0-9]/g, ''))
-    .slice(0, 2)
-    .toUpperCase()
-}
-
 /** How an item is matched to a provider, from what is stored. */
 export function sourceMatch(row: {
   identifier?: string

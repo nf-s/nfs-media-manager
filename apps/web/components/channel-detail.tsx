@@ -22,14 +22,10 @@ import {
 } from '@/utils/subscriptions'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
-import {
-  DetailArt,
-  DetailTabs,
-  OpenAtProvider,
-  useDetailTab,
-} from './detail-frame'
+import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
 import { ProviderSources } from './provider-sources'
 import { EmbeddedSubscriptionBrowser } from './subscription-browser'
+import ServiceIconLinks from './service-icon-links'
 
 type ChannelTab = 'overview' | 'sources'
 const channelTabs: readonly [ChannelTab, ...ChannelTab[]] = [
@@ -102,6 +98,18 @@ export function ChannelDetail({
           formatSubscriptionSourceSize(source),
           source.historyComplete ? null : 'Reading history',
         ]}
+        links={
+          <ServiceIconLinks
+            links={[
+              {
+                provider: isVideo ? 'youtube' : 'spotify',
+                label: isVideo ? 'YouTube' : 'Spotify',
+                url: source.url,
+              },
+            ]}
+            itemTitle={source.title}
+          />
+        }
         actions={
           <>
             <Button
@@ -118,10 +126,6 @@ export function ChannelDetail({
               {subscribedHelp}
             </span>
             <DetailActionsSpacer />
-            <OpenAtProvider
-              label={isVideo ? 'YouTube' : 'Spotify'}
-              url={source.url}
-            />
             <DetailMore
               crumb={{ title: source.title }}
               items={[
@@ -209,14 +213,15 @@ function ShowDetail({
           formatSubscriptionSourceSize(source),
           source.historyComplete ? null : 'Reading history',
         ]}
+        links={
+          <ServiceIconLinks
+            links={[{ provider: station, label: station, url: source.url }]}
+            itemTitle={source.title}
+          />
+        }
         actions={
           <>
             <DetailActionsSpacer />
-            <OpenAtProvider
-              label={station}
-              actionLabel={`Open on ${station}`}
-              url={source.url}
-            />
             <DetailMore
               crumb={{ title: source.title }}
               items={[

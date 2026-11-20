@@ -40,12 +40,12 @@ import {
   IDENTIFIER_REQUIRED,
   jobState,
   mergeHistory,
-  providerMarkText,
   sourceMatch,
   sourcesSummary,
   unavailableState,
   type SourceMatch,
 } from '@/utils/source-rows'
+import { providerLogoUrl } from '@/utils/provider-logos'
 import { DetailLink } from './detail-link'
 import { useDetailView } from './detail-inspector-context'
 import { useUnresolvedMatches, type FindMatchContext } from './find-match'
@@ -723,9 +723,11 @@ export function ProviderSources({
                   if (!next && open) setOpened(null)
                 }}
                 mark={
-                  <ProviderMark name={row.label}>
-                    {providerMarkText(row.label)}
-                  </ProviderMark>
+                  <ProviderMark
+                    name={row.label}
+                    src={providerLogoUrl(row.id)}
+                    hidden
+                  />
                 }
                 name={
                   row.href ? (

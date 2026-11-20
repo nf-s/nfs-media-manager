@@ -57,12 +57,7 @@ import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
-import {
-  DetailArt,
-  DetailTabs,
-  OpenAtProvider,
-  useDetailTab,
-} from './detail-frame'
+import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
 import { ProviderSources } from './provider-sources'
 import BrowseToolbar, {
   BrowseColumnFilterSection,
@@ -82,6 +77,7 @@ import {
   SecondaryVirtualRows,
   useTableColumns,
 } from './secondary-table'
+import ServiceIconLinks from './service-icon-links'
 
 type CollectionDetail = AlbumCollectionDetail | FilmCollectionDetail
 type CollectionSort = AlbumCollectionSort | FilmCollectionSort
@@ -574,18 +570,22 @@ export function CollectionEntries({
         facts={[
           summary ? formatItemCount(collectionCount(summary), countNoun) : null,
         ]}
+        links={
+          summary &&
+          destinations.length > 0 &&
+          // One group per saved destination: two on the same site stay apart.
+          destinations.map(({ provider, url, label }) => (
+            <ServiceIconLinks
+              key={`${provider}:${url}`}
+              links={[{ provider, label, url }]}
+              itemTitle={summary.name}
+            />
+          ))
+        }
         actions={
           summary && (
             <>
               <DetailActionsSpacer />
-              {destinations.map(({ provider, url, label }) => (
-                <OpenAtProvider
-                  key={`${provider}:${url}`}
-                  label={label}
-                  actionLabel={`Open on ${label}`}
-                  url={url}
-                />
-              ))}
               <DetailMore
                 crumb={{ title: summary.name }}
                 items={[

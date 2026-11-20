@@ -45,7 +45,7 @@
       const roles = (list) =>
         pills(list, { pill: { tone: 'outline', static: true } })
       const health = (p, st) =>
-        `<span class="ds-health">${mark(p)}${D.PROVIDERS[p].name}${status(st[0], st[1])}</span>`
+        `<span class="ds-health">${mark(p, { hidden: true })}${D.PROVIDERS[p].name}${status(st[0], st[1])}</span>`
       const pageTabs = (items, selected) =>
         D.tabs(items, selected).replace(
           'class="ds-tabs"',
@@ -501,7 +501,7 @@
         {
           h: 'Provider',
           c: (r) =>
-            `<span class="ds-cell-id">${mark(r.p)}<span class="ds-cell-two"><a class="ds-cell-title" href="#">${D.PROVIDERS[r.p].name}</a><span class="ds-cell-sub ds-muted">${r.roles}</span></span></span>`,
+            `<span class="ds-cell-id">${mark(r.p, { hidden: true })}<span class="ds-cell-two"><a class="ds-cell-title" href="#">${D.PROVIDERS[r.p].name}</a><span class="ds-cell-sub ds-muted">${r.roles}</span></span></span>`,
         },
         { h: 'Connection', w: 130, c: (r) => status(r.conn[0], r.conn[1]) },
         { h: 'Queue', w: 162, c: (r) => status(r.queue[0], r.queue[1]) },

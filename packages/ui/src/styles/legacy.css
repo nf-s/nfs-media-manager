@@ -568,25 +568,6 @@
     align-items: center;
     gap: 8px;
   }
-  .service-links {
-    display: inline-flex;
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-  }
-  .service-links a {
-    text-decoration: none;
-    color: var(--ds-ink-3);
-  }
-  .service-links a:hover {
-    color: var(--ds-ink);
-    text-decoration: underline;
-  }
-  .service-links .spotify-link {
-    color: var(--ds-accent);
-    font-weight: 600;
-  }
   .list-row {
     display: grid;
     align-items: center;

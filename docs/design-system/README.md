@@ -6,11 +6,13 @@ All interface work in this repository uses it. The rules for agents are in [AGEN
 
 ## Viewing it
 
-Open `index.html` in a browser. There is no build step and no server; the pages are static HTML, CSS and one script. The fonts load from Google Fonts, so the first view needs a connection.
+Serve the repository root over HTTP and open `docs/design-system/index.html`. There is no build step; the pages are static HTML, CSS and one script. Opened straight from disk (`file://`) the pages work but the provider logos stay blank, because browsers do not draw CSS masks from local files. The fonts load from Google Fonts, so the first view needs a connection.
 
 ```bash
-open docs/design-system/index.html
+python3 -m http.server 8080 --bind 127.0.0.1
 ```
+
+Then open `http://127.0.0.1:8080/docs/design-system/index.html`.
 
 ## Where things are
 
@@ -42,29 +44,30 @@ Mockups labelled **Before** show the interface the system replaced. They explain
 
 Import from `@repo/ui/components/ds/<file>` or `@repo/ui/components/ui/<file>`.
 
-| Need                                        | Component                                                                                                                          | File                                 |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| An action                                   | `Button` (`default`, `primary`, `ghost`, `danger`, `link`; `xs`, `sm`, `md`; `icon`)                                               | `ui/button`                          |
-| A form field                                | `Label`, `Input`, `Select`                                                                                                         | `ui/label`, `ui/input`, `ds/toolbar` |
-| Sections of one item                        | `Tabs` (underline)                                                                                                                 | `ui/tabs`                            |
-| A view or range switch                      | `Segmented`                                                                                                                        | `ds/segmented`                       |
-| Any table                                   | `TableScroll`, `Table`, `TableColumns`, `TableRow`, `TableHead`, `TableCell`, `TableSortButton`, `TableSelectionBar`, `TableState` | `ui/table`                           |
-| A state                                     | `Status`                                                                                                                           | `ds/status`                          |
-| A tag, filter, count, provider mark, rating | `Pill`, `Pills`, `Count`, `ProviderMark`, `Rating`, `EmptyValue`                                                                   | `ds/pill`                            |
-| Play and Add to queue                       | `PlayPair` (tile, row), `PlayHeaderButtons`                                                                                        | `ds/play`                            |
-| Artwork                                     | `Art`, `Thumb`, `ArtFallback`                                                                                                      | `ds/artwork`                         |
-| A grid item                                 | `CardGrid`, `Card`, `CardTitle`                                                                                                    | `ds/card`                            |
-| A list item                                 | `List`, `ListRow`, `RowTitle`, `RowValue`, `ListHead`                                                                              | `ds/list-row`                        |
-| Facts, headline figures, a titled group     | `Facts`, `KeyValues`, `Stats`, `Section`                                                                                           | `ds/facts`                           |
-| A share or progress                         | `Meter`, `Progress`, `Coverage`                                                                                                    | `ds/meter`                           |
-| A provider's record for an item             | `SourceRow`, `SourceBlock`, `Timeline`                                                                                             | `ds/source`                          |
-| Messages, empty, loading and error          | `Notice`, `State`, `Skeleton`                                                                                                      | `ds/feedback`                        |
-| The head of an item                         | `DetailHeader`                                                                                                                     | `ds/detail-header`                   |
-| The head of a page and its controls         | `PageHead`, `Toolbar`, `ToolbarCount`, `ToolbarEnd`, `FilterLine`                                                                  | `ds/toolbar`                         |
-| The field a list is sorted by               | `SortPicker`                                                                                                                       | `ds/sort-picker`                     |
-| Counts over time                            | `TrendChart`, `Sparkline`                                                                                                          | `ds/trend-chart`                     |
-| A range of counts, set by its bars          | `Histogram`                                                                                                                        | `ds/histogram`                       |
-| A filter rule written as a sentence         | `Condition`, `ConditionLine`                                                                                                       | `ds/condition`                       |
+| Need                                    | Component                                                                                                                          | File                                 |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| An action                               | `Button` (`default`, `primary`, `ghost`, `danger`, `link`; `xs`, `sm`, `md`; `icon`)                                               | `ui/button`                          |
+| A form field                            | `Label`, `Input`, `Select`                                                                                                         | `ui/label`, `ui/input`, `ds/toolbar` |
+| Sections of one item                    | `Tabs` (underline)                                                                                                                 | `ui/tabs`                            |
+| A view or range switch                  | `Segmented`                                                                                                                        | `ds/segmented`                       |
+| Any table                               | `TableScroll`, `Table`, `TableColumns`, `TableRow`, `TableHead`, `TableCell`, `TableSortButton`, `TableSelectionBar`, `TableState` | `ui/table`                           |
+| A state                                 | `Status`                                                                                                                           | `ds/status`                          |
+| A tag, filter, count, rating            | `Pill`, `Pills`, `Count`, `Rating`, `EmptyValue`                                                                                   | `ds/pill`                            |
+| A provider's logo                       | `ProviderMark`: the logo file's shape in muted grey (`src`, `size`, `hidden`); a globe without `src`                               | `ds/pill`                            |
+| Play and Add to queue                   | `PlayPair` (tile, row), `PlayHeaderButtons`                                                                                        | `ds/play`                            |
+| Artwork                                 | `Art`, `Thumb`, `ArtFallback`                                                                                                      | `ds/artwork`                         |
+| A grid item                             | `CardGrid`, `Card`, `CardTitle`                                                                                                    | `ds/card`                            |
+| A list item                             | `List`, `ListRow`, `RowTitle`, `RowValue`, `ListHead`                                                                              | `ds/list-row`                        |
+| Facts, headline figures, a titled group | `Facts`, `KeyValues`, `Stats`, `Section`                                                                                           | `ds/facts`                           |
+| A share or progress                     | `Meter`, `Progress`, `Coverage`                                                                                                    | `ds/meter`                           |
+| A provider's record for an item         | `SourceRow`, `SourceBlock`, `Timeline`                                                                                             | `ds/source`                          |
+| Messages, empty, loading and error      | `Notice`, `State`, `Skeleton`                                                                                                      | `ds/feedback`                        |
+| The head of an item                     | `DetailHeader` (`play` under the artwork, `links` for the service logos, `actions`), `DetailActionsSpacer`                         | `ds/detail-header`                   |
+| The head of a page and its controls     | `PageHead`, `Toolbar`, `ToolbarCount`, `ToolbarEnd`, `FilterLine`                                                                  | `ds/toolbar`                         |
+| The field a list is sorted by           | `SortPicker`                                                                                                                       | `ds/sort-picker`                     |
+| Counts over time                        | `TrendChart`, `Sparkline`                                                                                                          | `ds/trend-chart`                     |
+| A range of counts, set by its bars      | `Histogram`                                                                                                                        | `ds/histogram`                       |
+| A filter rule written as a sentence     | `Condition`, `ConditionLine`                                                                                                       | `ds/condition`                       |
 
 The components page states the rules for each one. The ones that matter most:
 

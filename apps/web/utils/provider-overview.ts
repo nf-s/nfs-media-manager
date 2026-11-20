@@ -99,17 +99,6 @@ export function legacyProviderHref(params: URLSearchParams) {
   )
 }
 
-/** Two letters standing in for the provider's glyph. */
-export function providerMarkText(name: string) {
-  const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
-  const [first = '', second = ''] = words
-  if (second) return `${first.charAt(0)}${second.charAt(0)}`.toUpperCase()
-  const capitals = first.match(/\p{Lu}/gu) ?? []
-  return (
-    capitals.length >= 2 ? capitals.slice(0, 2).join('') : first.slice(0, 2)
-  ).toUpperCase()
-}
-
 /** What the provider is for: its description, or the libraries it supplies. */
 export function providerPurpose(item: ProviderOverviewItem) {
   return (

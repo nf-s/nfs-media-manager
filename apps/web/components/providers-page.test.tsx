@@ -138,7 +138,10 @@ test('the overview lists every provider once, grouped into accounts and metadata
   assert.ok(html.indexOf('>Fixture Account</a>') < metadata)
   assert.ok(html.indexOf('>Fixture Films</a>') > metadata)
   assert.match(html, /href="\/providers\/fixture-ratings"/)
-  assert.match(html, /<span class="ds-mark" title="Fixture Ratings">FR<\/span>/)
+  assert.match(
+    html,
+    /<span class="ds-logo" data-none="" aria-hidden="true"><svg[^>]*>.*?<\/svg><\/span><span class="ds-cell-two"><a class="ds-cell-title" href="\/providers\/fixture-ratings"/,
+  )
   const onlyMetadata = render('', (client) =>
     client.setQueryData(['providers', 'overview', 'all'], overview([ratings])),
   )

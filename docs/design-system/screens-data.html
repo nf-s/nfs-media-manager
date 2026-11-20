@@ -48,7 +48,15 @@
         kind: 'Album',
         by: 'by <a href="#">Mira Kestrel</a>',
         facts: ['2019-03-08', '11 tracks', '42:18', 'Tidewater'],
-        actions: D.headActions({ open: 'Spotify' }),
+        play: D.play('header'),
+        links: D.logoLinks([
+          'spotify',
+          'lastfm',
+          'musicbrainz',
+          'discogs',
+          'rym',
+        ]),
+        actions: D.headActions(),
       })
 
       const names = table(
@@ -273,10 +281,9 @@
         kind: 'Track playlist',
         by: 'from <a href="#">Spotify</a>',
         facts: ['42 tracks', '2h 51m', 'Updated 2026-11-09'],
-        actions: D.headActions({
-          open: 'Spotify',
-          lead: `<label class="ds-actions">Playlist type${D.select(['Automatic', 'Album playlist', 'Track playlist'], { label: 'Playlist type' })}</label>`,
-        }),
+        play: D.play('header'),
+        links: D.logoLinks(['spotify']),
+        actions: D.headActions(),
       })
       const missing = [
         [],

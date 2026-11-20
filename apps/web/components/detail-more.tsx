@@ -3,15 +3,27 @@
 import Link from 'next/link'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Ellipsis } from 'lucide-react'
+import { Check, Ellipsis } from 'lucide-react'
 import { Button, type ButtonSize } from '@repo/ui/components/ui/button'
 import type { DetailCrumb } from '@/utils/detail-inspector'
 import { useInspectorPage } from './detail-inspector-context'
 
-/** A secondary action of an item: something to do, or somewhere to go. */
+/**
+ * A secondary action of an item: something to do, somewhere to go, or a
+ * setting chosen from a named group, the current choice ticked.
+ */
 export type DetailMenuItem =
   | { label: string; onSelect: () => void; disabled?: boolean }
   | { label: string; href: string }
+  | {
+      group: string
+      choices: readonly {
+        label: string
+        checked: boolean
+        onSelect: () => void
+      }[]
+      disabled?: boolean
+    }
 
 /**
  * More actions, the last button of every detail header: the item's own
@@ -77,7 +89,7 @@ function MoreMenu({
       return
     }
     panel.current
-      ?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])')
+      ?.querySelector<HTMLElement>('[role^="menuitem"]:not([disabled])')
       ?.focus({ preventScroll: true })
     function position() {
       if (!trigger.current || !panel.current) return
@@ -124,7 +136,7 @@ function MoreMenu({
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
     const options = [
       ...(panel.current?.querySelectorAll<HTMLElement>(
-        '[role="menuitem"]:not([disabled])',
+        '[role^="menuitem"]:not([disabled])',
       ) ?? []),
     ]
     if (!options.length) return
@@ -171,7 +183,39 @@ function MoreMenu({
         onKeyDown={onKeyDown}
       >
         {items.map((item) =>
-          'href' in item ? (
+          'choices' in item ? (
+            <div
+              key={item.group}
+              role="group"
+              aria-label={item.group}
+              className="ds-menu-group"
+            >
+              <div className="ds-pop-head" aria-hidden="true">
+                {item.group}
+              </div>
+              {item.choices.map((choice) => (
+                <button
+                  key={choice.label}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={choice.checked}
+                  className="ds-menu-item"
+                  disabled={item.disabled}
+                  onClick={() => {
+                    close()
+                    if (!choice.checked) choice.onSelect()
+                  }}
+                >
+                  {choice.checked ? (
+                    <Check className="ds-i" data-size="sm" aria-hidden />
+                  ) : (
+                    <span className="ds-menu-slot" />
+                  )}
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          ) : 'href' in item ? (
             <Link
               key={item.label}
               href={item.href}

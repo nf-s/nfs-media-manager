@@ -19,7 +19,7 @@ Each story gives the path before the design system, the path now and the mockup 
 > I want Play and Queue in the same place on every album, track and playlist, so I never hunt for them.
 
 - **Before.** The buttons sit over the artwork, before the title, in their own column, in place of the track number or at the end of the row, in nine styles.
-- **Now.** One Play and Queue pair. On a card it sits on the artwork. In a row it sits at the end of the title cell. In a header it is the first two buttons. Artwork and titles open the item and never play it.
+- **Now.** One Play and Queue pair. On a card it sits on the artwork. In a row it sits at the end of the title cell. In a header it sits under the artwork, as wide as it. Artwork and titles open the item and never play it.
 - **See.** [Play control](components.html#play).
 
 ### 3. Read a table without losing my place

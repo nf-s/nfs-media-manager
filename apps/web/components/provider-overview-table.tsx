@@ -31,11 +31,11 @@ import {
   connectionStatus,
   providerHref,
   providerJobsHref,
-  providerMarkText,
   providerPurpose,
   queueStatus,
   runsOnLabel,
 } from '@/utils/provider-overview'
+import { providerLogoUrl } from '@/utils/provider-logos'
 import {
   ProviderCooldownConfirm,
   useProviderCooldown,
@@ -212,9 +212,11 @@ function ProviderOverviewRow({
       <TableRow>
         <TableCell sticky={0} stickyEdge>
           <span className="ds-cell-id">
-            <ProviderMark name={item.name}>
-              {providerMarkText(item.name)}
-            </ProviderMark>
+            <ProviderMark
+              name={item.name}
+              src={providerLogoUrl(item.id)}
+              hidden
+            />
             <span className="ds-cell-two">
               <Link className="ds-cell-title" href={providerHref(item.id)}>
                 {item.name}

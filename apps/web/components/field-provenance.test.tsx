@@ -135,7 +135,11 @@ test('All fields lists each value with the providers that supply it and marks ed
       new RegExp(`>${header}<span class="ds-th-resizer" role="separator"`),
     )
   assert.match(html, /title="Harbour Lights">Harbour Lights</)
-  assert.match(html, /class="ds-mark" title="Spotify">SP</)
+  // Each source is its logo in grey; its name is in the tooltip.
+  assert.match(
+    html,
+    /<span class="ds-logo" style="--ds-logo:url\(&quot;\/icons\/services\/spotify.svg&quot;\)" aria-hidden="true"><\/span>/,
+  )
   assert.match(html, /\+1 differs/)
   assert.match(
     html,

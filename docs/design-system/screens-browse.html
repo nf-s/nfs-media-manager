@@ -511,10 +511,10 @@
                         {
                           item: A[0],
                           kind: 'Album',
-                          size: 'sm',
                           by: 'by <a href="#">Mira Kestrel</a>',
                           facts: ['2019', '11 tracks', '42:18'],
-                          actions: D.play('header'),
+                          play: D.play('header'),
+                          links: D.logoLinks(['spotify', 'lastfm', 'discogs']),
                         },
                       )}${D.tabs(['Overview', 'Listening', 'Sources'], 0).replace('class="ds-tabs"', 'class="ds-tabs" style="margin-top:12px"')}${D.section(
                         'Tracks',
@@ -525,13 +525,14 @@
                         { note: '11 · 42:18', flush: true },
                       )}</div>`,
                     ),
-                    'Details: the same header, tabs and track table as the drawer',
+                    'Details: the same header, tabs and track table as the drawer; More is in the bar',
                   ),
                 ],
                 { top: true },
               ) +
               g.rules([
                 '<b>Controls are 40px tall</b> on touch; type sizes do not change.',
+                '<b>A detail’s More</b> is in the drawer bar, not the header. A header with no other action has no action row.',
                 '<b>The toolbar takes two lines:</b> the search on the first; the sort picker, direction, view switch and the short Filters button on the second, the sort picker taking the room the others leave. The count follows them, on that line when it fits and on its own when it does not. Grid size is in the Filters drawer.',
                 '<b>Tables scroll sideways as a whole.</b> No column stays in place, so the title column never covers the others, and no column is wider than two thirds of the screen, so part of the next one always shows.',
               ]),

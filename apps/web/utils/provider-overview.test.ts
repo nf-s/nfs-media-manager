@@ -11,7 +11,6 @@ import {
   providerLibraryOptions,
   providerHref,
   providerJobsHref,
-  providerMarkText,
   queueBlocked,
   queueStatus,
   runsOnLabel,
@@ -154,10 +153,7 @@ test('old provider links open the provider page on the matching tab', () => {
   )
 })
 
-test('marks and worker labels are short', () => {
-  assert.equal(providerMarkText('Fixture Ratings'), 'FR')
-  assert.equal(providerMarkText('FixtureBase'), 'FB')
-  assert.equal(providerMarkText('fixture'), 'FI')
+test('worker labels are short', () => {
   assert.equal(runsOnLabel({ runsOn: 'server', worker: null }), 'Server')
   assert.equal(
     runsOnLabel({

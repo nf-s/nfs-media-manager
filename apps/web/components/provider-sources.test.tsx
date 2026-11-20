@@ -14,7 +14,6 @@ import { ProviderSources, type ProviderSourceRow } from './provider-sources'
 import {
   jobState,
   mergeHistory,
-  providerMarkText,
   sourceMatch,
   sourcesSummary,
 } from '@/utils/source-rows'
@@ -148,7 +147,10 @@ test('each provider is one row with its mark, match, identifier, age, state and 
   ])
   assert.match(html, /4 sources · 3 matched · 1 needs an ID/)
   assert.match(html, />Refresh all</)
-  assert.match(html, /class="ds-mark" title="Matched provider">MP</)
+  assert.match(
+    html,
+    /<span class="ds-logo" data-none="" aria-hidden="true"><svg/,
+  )
   assert.match(html, /href="\/providers\/matched"/)
   assert.match(html, /data-status="done">Matched by ID</)
   assert.match(html, /release\/42/)
@@ -384,11 +386,7 @@ test('read-only rows without a scope offer no refresh and an empty list says so'
   client.clear()
 })
 
-test('source helpers name marks, match states, summaries and merge paged history', () => {
-  assert.equal(providerMarkText('MusicBrainz'), 'MB')
-  assert.equal(providerMarkText('Last.fm'), 'LF')
-  assert.equal(providerMarkText('Spotify'), 'SP')
-  assert.equal(providerMarkText('Rate Your Music'), 'RY')
+test('source helpers name match states, summaries and merge paged history', () => {
   assert.deepEqual(sourceMatch({ identifier: 'x', refreshable: true }), {
     state: 'done',
     label: 'Matched by ID',

@@ -3,9 +3,10 @@ import { cn } from '../../lib/utils'
 
 /**
  * The one header for every item: artwork, kind, title, creator, one line of
- * facts, then actions. The title is 18px in the drawer and 22px on a
- * standalone page (inside `.ds-page`). Actions start with the play pair where
- * the item can be played.
+ * facts, the item's service logos on a line of their own, then actions. The
+ * title is 18px in the drawer and 22px on a standalone page (inside
+ * `.ds-page`). `play` is the play pair, under the artwork and as wide as it;
+ * an item without artwork starts its actions with it.
  */
 export function DetailHeader({
   art,
@@ -13,6 +14,8 @@ export function DetailHeader({
   title,
   by,
   facts = [],
+  play,
+  links,
   actions,
   headingLevel = 2,
   className,
@@ -22,6 +25,8 @@ export function DetailHeader({
   title: ReactNode
   by?: ReactNode
   facts?: readonly ReactNode[]
+  play?: ReactNode
+  links?: ReactNode
   actions?: ReactNode
   headingLevel?: 1 | 2
   className?: string
@@ -30,12 +35,22 @@ export function DetailHeader({
   const shown = facts.filter(
     (fact) => fact != null && fact !== false && fact !== '',
   )
+  const hasPlay = play != null && play !== false
+  const playInRow = hasPlay && !art
+  const hasActions = actions != null && actions !== false
   return (
     <header
       className={cn('ds-detail-head', className)}
       data-art={art ? undefined : 'none'}
     >
-      {art}
+      {art && hasPlay ? (
+        <div className="ds-detail-side">
+          {art}
+          <div className="ds-detail-play">{play}</div>
+        </div>
+      ) : (
+        art
+      )}
       <div>
         <div className="ds-kicker">{kind}</div>
         <Heading className="ds-detail-title">{title}</Heading>
@@ -47,8 +62,14 @@ export function DetailHeader({
             ))}
           </div>
         )}
-        {actions != null && actions !== false && (
-          <div className="ds-detail-actions">{actions}</div>
+        {links != null && links !== false && (
+          <div className="ds-detail-links">{links}</div>
+        )}
+        {(playInRow || hasActions) && (
+          <div className="ds-detail-actions">
+            {playInRow && play}
+            {actions}
+          </div>
         )}
       </div>
     </header>

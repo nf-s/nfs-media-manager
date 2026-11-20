@@ -1,6 +1,6 @@
 import { Children, type HTMLAttributes, type ReactNode } from 'react'
 import { Slot } from '@radix-ui/react-slot'
-import { X } from 'lucide-react'
+import { Globe2, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { EMPTY_VALUE } from '../../lib/format'
 
@@ -101,18 +101,40 @@ export function Count({
   )
 }
 
-/** A provider's glyph, or its two-letter mark, in a fixed neutral box. */
+/**
+ * A provider's logo in the muted ink, drawn from the shape of its logo file
+ * (`src`), or a globe for a provider without one. `hidden` keeps it out of the
+ * accessibility tree where a link or text beside it already names the
+ * provider.
+ */
 export function ProviderMark({
   name,
-  children,
+  src,
+  size,
+  hidden = false,
 }: {
   name: string
-  children: ReactNode
+  src?: string
+  size?: 'sm'
+  hidden?: boolean
 }) {
+  const label = hidden
+    ? { 'aria-hidden': true }
+    : { role: 'img', 'aria-label': name, title: name }
+  if (!src)
+    return (
+      <span className="ds-logo" data-none="" data-size={size} {...label}>
+        <Globe2 className="ds-i" data-size="sm" aria-hidden />
+      </span>
+    )
+  const shape: Record<string, string> = { '--ds-logo': `url("${src}")` }
   return (
-    <span className="ds-mark" title={name}>
-      {children}
-    </span>
+    <span
+      className="ds-logo"
+      data-size={size}
+      style={{ ...shape }}
+      {...label}
+    />
   )
 }
 

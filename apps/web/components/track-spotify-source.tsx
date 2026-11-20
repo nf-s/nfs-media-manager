@@ -11,7 +11,7 @@ import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatAge, formatDateTime } from '@repo/ui/lib/format'
 import { spotifyTrackUri } from '@/utils/album-links'
-import { providerMarkText } from '@/utils/source-rows'
+import { providerLogoUrl } from '@/utils/provider-logos'
 import { DetailLink } from './detail-link'
 import { invalidateScrobbleLinks } from './lastfm-sync'
 import {
@@ -106,9 +106,11 @@ export function TrackSpotifySource({
       <SourceRow
         name="Spotify"
         mark={
-          <ProviderMark name="Spotify">
-            {providerMarkText('Spotify')}
-          </ProviderMark>
+          <ProviderMark
+            name="Spotify"
+            src={providerLogoUrl('spotify')}
+            hidden
+          />
         }
         match={
           <Status state={needsMatch ? 'attention' : 'done'}>{label}</Status>

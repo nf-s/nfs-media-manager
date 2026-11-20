@@ -81,6 +81,8 @@
     download: '<path d="M12 4v11M7.5 11l4.5 4.5 4.5-4.5M5 19.5h14"/>',
     stop: '<circle cx="12" cy="12" r="8.5"/><path d="m9 9 6 6M15 9l-6 6"/>',
     eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.5"/>',
+    globe:
+      '<path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"/><path d="M7 3.34V5a3 3 0 0 0 3 3 2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"/><path d="M11 21.95V18a2 2 0 0 0-2-2 2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"/><circle cx="12" cy="12" r="10"/>',
   }
   const FILLED = new Set(['play', 'pause', 'prev', 'next'])
 
@@ -161,9 +163,11 @@
     })}>${inner}</button>`
   }
 
+  /* The header pair goes under the artwork (detailHead's o.play): a labelled
+     Play that takes the artwork's width and a square Queue button. */
   function play(place = 'row', o = {}) {
     if (place === 'header') {
-      return `${btn('Play', { icon: 'play', variant: 'primary', size: 'md' })}${btn('Queue', { icon: 'queue', size: 'md' })}`
+      return `${btn('Play', { icon: 'play', variant: 'primary', size: 'md' })}${btn('', { icon: 'queue', size: 'md', aria: 'Add to queue', title: 'Add to queue' })}`
     }
     return `<span class="ds-play" data-place="${place}"><button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}">${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue">${icon('queue', { size: 'sm' })}</button></span>`
   }
@@ -209,22 +213,64 @@
   const status = (state, label) =>
     `<span class="ds-status" data-status="${state}">${esc(label || STATUS[state])}</span>`
 
+  /* Each provider's logo file in the app, from this folder. A provider
+     without one shows a globe. */
+  const PUBLIC = '../../apps/web/public/'
   const PROVIDERS = {
-    spotify: { name: 'Spotify', mark: 'SP' },
-    lastfm: { name: 'Last.fm', mark: 'LF' },
-    discogs: { name: 'Discogs', mark: 'DC' },
-    musicbrainz: { name: 'MusicBrainz', mark: 'MB' },
-    rym: { name: 'Rate Your Music', short: 'RYM', mark: 'RY' },
-    tmdb: { name: 'TMDb', mark: 'TM' },
-    omdb: { name: 'OMDb', mark: 'OM' },
-    mdblist: { name: 'MDBList', mark: 'MD' },
-    youtube: { name: 'YouTube', mark: 'YT' },
-    sonos: { name: 'Sonos', mark: 'SO' },
+    spotify: { name: 'Spotify', logo: `${PUBLIC}icons/services/spotify.svg` },
+    lastfm: { name: 'Last.fm', logo: `${PUBLIC}icons/logos/lastfm.png` },
+    discogs: { name: 'Discogs', logo: `${PUBLIC}icons/ratings/discogs.png` },
+    musicbrainz: { name: 'MusicBrainz', logo: `${PUBLIC}img/mb.png` },
+    rym: {
+      name: 'Rate Your Music',
+      short: 'RYM',
+      logo: `${PUBLIC}icons/logos/rym.png`,
+    },
+    tmdb: { name: 'TMDb', logo: `${PUBLIC}icons/ratings/tmdb.svg` },
+    omdb: { name: 'OMDb' },
+    mdblist: { name: 'MDBList' },
+    youtube: { name: 'YouTube', logo: `${PUBLIC}icons/logos/youtube.svg` },
+    sonos: { name: 'Sonos' },
+    imdb: { name: 'IMDb', logo: `${PUBLIC}icons/ratings/imdb.svg` },
+    letterboxd: {
+      name: 'Letterboxd',
+      logo: `${PUBLIC}icons/logos/letterboxd.svg`,
+    },
+    trakt: { name: 'Trakt', logo: `${PUBLIC}icons/ratings/trakt.svg` },
+    metacritic: {
+      name: 'Metacritic',
+      logo: `${PUBLIC}icons/ratings/metacritic.svg`,
+    },
+    rottentomatoes: {
+      name: 'Rotten Tomatoes',
+      logo: `${PUBLIC}icons/ratings/rottentomatoes.svg`,
+    },
   }
-  const mark = (id) =>
-    `<span class="ds-mark" title="${PROVIDERS[id].name}">${PROVIDERS[id].mark}</span>`
+  /* Provider logo: the logo file's shape in the muted ink, so every logo is
+     the same grey, or a globe. o.hidden inside a link or beside the
+     provider's name, which already name it; o.size 'sm' is 14px. A relative
+     url() in a custom property resolves against the stylesheet that uses
+     it, so the file's path is made absolute here, as the app's paths are. */
+  function mark(id, o = {}) {
+    const p = PROVIDERS[id]
+    const named = o.hidden
+      ? { 'aria-hidden': 'true' }
+      : { role: 'img', 'aria-label': p.name, title: p.name }
+    return p.logo
+      ? `<span class="ds-logo"${attrs({ 'data-size': o.size, style: `--ds-logo:url("${new URL(p.logo, document.baseURI).href}")`, ...named })}></span>`
+      : `<span class="ds-logo" data-none=""${attrs({ 'data-size': o.size, ...named })}>${icon('globe', { size: 'sm' })}</span>`
+  }
   const provider = (id, o = {}) =>
-    `<span class="ds-cell-id">${mark(id)}<a href="#">${(o.short && PROVIDERS[id].short) || PROVIDERS[id].name}</a></span>`
+    `<span class="ds-cell-id">${mark(id, { hidden: true })}<a href="#">${(o.short && PROVIDERS[id].short) || PROVIDERS[id].name}</a></span>`
+  /* An item's service logos: one link per service, opening the item there
+     in a new tab. The logo is decorative; the link names the service. */
+  const logoLinks = (ids) =>
+    `<span class="service-links" role="group" aria-label="Service links">${ids
+      .map((id) => {
+        const name = PROVIDERS[id].short || PROVIDERS[id].name
+        return `<a href="#" aria-label="Open on ${esc(name)} (opens in a new tab)" title="Open on ${esc(name)} (new tab)">${mark(id, { hidden: true })}</a>`
+      })
+      .join('')}</span>`
 
   const EMPTY = '<span class="ds-empty-value">–</span>'
   function rating(source, value, o = {}) {
@@ -278,7 +324,7 @@
     const items = fields
       .map(
         ([label, on], i) =>
-          `<button type="button" role="option" aria-selected="${Boolean(on)}" class="ds-menu-item"${attrs({ 'data-active': i === o.active })}>${on ? icon('check', { size: 'sm' }) : '<span class="ds-sortpop-slot"></span>'}${esc(label)}</button>`,
+          `<button type="button" role="option" aria-selected="${Boolean(on)}" class="ds-menu-item"${attrs({ 'data-active': i === o.active })}>${on ? icon('check', { size: 'sm' }) : '<span class="ds-menu-slot"></span>'}${esc(label)}</button>`,
       )
       .join('')
     return `<div class="ds-pop ds-sortpop" style="position:static"><label class="ds-search">${icon('search', { size: 'sm' })}<input type="search" placeholder="Find a field" aria-label="Find a field"${attrs({ value: o.query })} /></label><div class="ds-sortpop-list" role="listbox" aria-label="Sort by">${items || '<p class="ds-sortpop-none">No field matches</p>'}</div></div>`
@@ -422,8 +468,8 @@
   function source(o) {
     const actions =
       o.actions ||
-      `${btn('', { icon: 'refresh', size: 'xs', variant: 'ghost', aria: 'Refresh from provider' })}${btn('', { icon: 'external', size: 'xs', variant: 'ghost', aria: 'Open at provider' })}`
-    return `<details class="ds-source"${attrs({ open: o.open })}><summary>${icon('chevR')}${mark(o.p)}<span class="ds-source-main"><span class="ds-source-line"><a class="ds-source-name" href="#">${PROVIDERS[o.p].name}</a>${status(o.match[0], o.match[1])}</span><span class="ds-source-id">${esc(o.id)}</span></span><span class="ds-source-when"><span>${esc(o.when)}</span>${o.state || ''}</span><span class="ds-cell-actions">${actions}</span></summary>${o.body ? `<div class="ds-source-body">${o.body}</div>` : ''}</details>`
+      `${btn('', { icon: 'refresh', size: 'xs', variant: 'ghost', aria: 'Refresh from provider' })}${btn('', { icon: 'external', size: 'xs', variant: 'ghost', aria: `Open on ${PROVIDERS[o.p].name} (opens in a new tab)`, title: `Open on ${PROVIDERS[o.p].name} (new tab)` })}`
+    return `<details class="ds-source"${attrs({ open: o.open })}><summary>${icon('chevR')}${mark(o.p, { hidden: true })}<span class="ds-source-main"><span class="ds-source-line"><a class="ds-source-name" href="#">${PROVIDERS[o.p].name}</a>${status(o.match[0], o.match[1])}</span><span class="ds-source-id">${esc(o.id)}</span></span><span class="ds-source-when"><span>${esc(o.when)}</span>${o.state || ''}</span><span class="ds-cell-actions">${actions}</span></summary>${o.body ? `<div class="ds-source-body">${o.body}</div>` : ''}</details>`
   }
 
   const timeline = (items) =>
@@ -436,17 +482,48 @@
   const state = (title, text, o = {}) =>
     `<div class="ds-state"${attrs({ 'data-size': o.size })}><strong>${esc(title)}</strong>${text ? `<span>${esc(text)}</span>` : ''}${o.action || ''}</div>`
 
-  const menu = (items, head) =>
-    `<div class="ds-pop">${head ? `<div class="ds-pop-head">${esc(head)}</div>` : ''}${items.map(([ic, label, hint, hover]) => `<button type="button" class="ds-menu-item"${attrs({ 'data-state': hover ? 'hover' : undefined })}>${ic ? icon(ic, { size: 'sm' }) : ''}${esc(label)}${hint ? `<span class="ds-muted">${esc(hint)}</span>` : ''}</button>`).join('')}</div>`
+  /* Menu. An item is [icon, label, hint, hover], or a named group of
+     choices, { group, choices: [[label, chosen]] }, with the chosen one
+     ticked. o.label names a menu of actions, such as More. */
+  const choiceGroup = (item) =>
+    `<div class="ds-menu-group" role="group" aria-label="${esc(item.group)}"><div class="ds-pop-head" aria-hidden="true">${esc(item.group)}</div>${item.choices
+      .map(
+        ([label, on]) =>
+          `<button type="button" class="ds-menu-item" role="menuitemradio" aria-checked="${Boolean(on)}">${on ? icon('check', { size: 'sm' }) : '<span class="ds-menu-slot"></span>'}${esc(label)}</button>`,
+      )
+      .join('')}</div>`
+  const menu = (items, head, o = {}) =>
+    `<div class="ds-pop"${attrs({ role: o.label ? 'menu' : undefined, 'aria-label': o.label })}>${head ? `<div class="ds-pop-head">${esc(head)}</div>` : ''}${items
+      .map((item) =>
+        item.group
+          ? choiceGroup(item)
+          : `<button type="button" class="ds-menu-item"${attrs({ role: o.label ? 'menuitem' : undefined, 'data-state': item[3] ? 'hover' : undefined })}>${item[0] ? icon(item[0], { size: 'sm' }) : ''}${esc(item[1])}${item[2] ? `<span class="ds-muted">${esc(item[2])}</span>` : ''}</button>`,
+      )
+      .join('')}</div>`
 
   /* Detail header and inspector */
 
+  /* o.play is the play pair: under the artwork and as wide as it, or first
+     in the action row when o.art is false. o.links is the line of service
+     logos under the facts (logoLinks). o.actions is the action row (see
+     headActions); without it, and without a pair to put there, the row is
+     not drawn. */
   function detailHead(o) {
-    return `<header class="ds-detail-head">${artBox(o.item, { ratio: o.ratio, size: o.size })}<div><div class="ds-kicker">${esc(o.kind)}</div><h2 class="ds-detail-title">${esc(o.title || o.item.title)}</h2>${o.by ? `<div class="ds-detail-by">${o.by}</div>` : ''}<div class="ds-detail-facts">${o.facts.map((f) => `<span>${f}</span>`).join('')}</div><div class="ds-detail-actions">${o.actions || ''}</div></div></header>`
+    const art =
+      o.art === false ? '' : artBox(o.item, { ratio: o.ratio, size: o.size })
+    const lead =
+      art && o.play
+        ? `<div class="ds-detail-side">${art}<div class="ds-detail-play">${o.play}</div></div>`
+        : art
+    const row = `${art ? '' : o.play || ''}${o.actions || ''}`
+    return `<header class="ds-detail-head"${attrs({ 'data-art': art ? undefined : 'none' })}>${lead}<div><div class="ds-kicker">${esc(o.kind)}</div><h2 class="ds-detail-title">${esc(o.title || o.item.title)}</h2>${o.by ? `<div class="ds-detail-by">${o.by}</div>` : ''}<div class="ds-detail-facts">${o.facts.map((f) => `<span>${f}</span>`).join('')}</div>${o.links ? `<div class="ds-detail-links">${o.links}</div>` : ''}${row ? `<div class="ds-detail-actions">${row}</div>` : ''}</div></header>`
   }
 
+  /* The action row: the item's own actions (o.lead), then More at the far
+     end. On a phone More is in the drawer bar, so leave the row out of a
+     phone header with nothing else. */
   const headActions = (o = {}) =>
-    `${o.play === false ? '' : play('header')}${o.lead || ''}<span class="ds-spacer"></span>${o.open ? btn(o.open, { end: 'external', variant: 'ghost', size: 'md' }) : ''}${btn('', { icon: 'more', variant: 'ghost', size: 'md', aria: 'More actions' })}`
+    `${o.lead || ''}<span class="ds-spacer"></span>${btn('', { icon: 'more', variant: 'ghost', size: 'md', aria: 'More actions', title: 'More actions' })}`
 
   function inspector(o) {
     const crumbs = o.crumbs
@@ -1481,6 +1558,7 @@
     STATUS,
     mark,
     provider,
+    logoLinks,
     PROVIDERS,
     rating,
     EMPTY,

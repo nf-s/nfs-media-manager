@@ -209,12 +209,17 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.match(html, /aria-label="Play Synthetic track">.*Play<\/button>/)
   assert.match(
     html,
-    /aria-label="Add Synthetic track to queue">.*Queue<\/button>/,
+    /title="Add to queue" aria-label="Add Synthetic track to queue"><svg/,
   )
   for (const source of ['Last.fm', 'Spotify playlists', 'Liked Songs'])
     assert.ok(pillHref(html, source).length)
   assert.doesNotMatch(html, /No Spotify match/)
-  assert.match(html, /aria-label="Open at Spotify \(opens in a new tab\)"/)
+  // The Spotify logo, on the line under the facts.
+  assert.match(
+    html,
+    /<div class="ds-detail-links"><span class="service-links"[^>]*><a [^>]*aria-label="Open on Spotify: Synthetic track \(opens in a new tab\)"/,
+  )
+  assert.doesNotMatch(html, /Open at Spotify/)
   assert.match(
     html,
     /href="https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL"/,

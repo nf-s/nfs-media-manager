@@ -45,7 +45,7 @@ import {
   type CoverageGap,
   type MetadataCoverageKind,
 } from '@/utils/metadata-coverage'
-import { providerMarkText } from '@/utils/source-rows'
+import { providerLogoUrl } from '@/utils/provider-logos'
 import { useConfig } from './providers'
 
 export type { MetadataCoverageKind }
@@ -439,9 +439,11 @@ function CoverageSection({
                             : undefined
                         }
                       >
-                        <ProviderMark name={provider.displayName}>
-                          {providerMarkText(provider.displayName)}
-                        </ProviderMark>
+                        <ProviderMark
+                          name={provider.displayName}
+                          src={providerLogoUrl(provider.provider)}
+                          hidden
+                        />
                         <span className="ds-truncate">
                           {provider.displayName}
                         </span>

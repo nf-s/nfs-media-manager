@@ -270,7 +270,7 @@ test('collection deep links open members in source order without renumbering gap
   assert.match(drawer, /aria-label="Resize details panel"/)
   assert.match(
     drawer,
-    /href="https:\/\/example.test\/collections\/17" target="_blank" rel="noopener noreferrer"[^>]*>Open on Fixture/,
+    /<div class="ds-detail-links"><span class="service-links"[^>]*><a href="https:\/\/example.test\/collections\/17" target="_blank" rel="noopener noreferrer"[^>]*aria-label="Open on Fixture: [^"]+ \(opens in a new tab\)"/,
   )
   assert.match(drawer, /aria-pressed="true" aria-label="Table view"/)
   assert.match(
@@ -442,7 +442,7 @@ test('album collection details open albums and expose each saved destination', a
   for (const [index, link] of albumCollection.sourceLinks.entries())
     assert.ok(
       inspector.includes(
-        `href="${link.url}" target="_blank" rel="noopener noreferrer" aria-label="Open on Fixture (${index + 1}) (opens in a new tab)"`,
+        `href="${link.url}" target="_blank" rel="noopener noreferrer" title="Open on Fixture (${index + 1}): ${albumCollection.name} (new tab)" aria-label="Open on Fixture (${index + 1}): ${albumCollection.name} (opens in a new tab)"`,
       ),
     )
   const href = /href="([^"]+)">Z first album<\/a>/.exec(inspector)?.[1]

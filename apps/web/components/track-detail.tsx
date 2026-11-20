@@ -46,7 +46,6 @@ import {
   DetailArt,
   DetailTabs,
   FilterPill,
-  OpenAtProvider,
   PlaylistPills,
   useDetailTab,
 } from './detail-frame'
@@ -326,7 +325,7 @@ export default function TrackDetailView({
         `/tracks/${encodeURIComponent(targetId)}${tab ? `?tab=${tab}` : ''}`,
       )
   }
-  const [primaryLink, ...otherLinks] = serviceLinks(trackServiceLinks(item))
+  const links = serviceLinks(trackServiceLinks(item))
   return (
     <article className="dtl-detail">
       {detail.isRefetchError && (
@@ -372,14 +371,15 @@ export default function TrackDetailView({
             : formatTrackLength(item.durationSec * 1000),
           item.releaseDate?.slice(0, 4),
         ]}
+        play={<TrackHeaderPlay track={item} />}
+        links={
+          links.length > 0 && (
+            <ServiceIconLinks links={links} itemTitle={item.title} />
+          )
+        }
         actions={
           <>
-            <TrackHeaderPlay track={item} />
             <DetailActionsSpacer />
-            {otherLinks.length > 0 && <ServiceIconLinks links={otherLinks} />}
-            {primaryLink && (
-              <OpenAtProvider label={primaryLink.label} url={primaryLink.url} />
-            )}
             <DetailMore
               crumb={{ title: item.title }}
               items={

@@ -579,13 +579,15 @@ export function ArtistDetail({ id }: { id: string }) {
           `${formatCount(artist.albumCount)} ${artist.albumCount === 1 ? 'album' : 'albums'}`,
           `${formatCount(artist.trackCount)} ${artist.trackCount === 1 ? 'track' : 'tracks'}`,
         ]}
+        links={
+          <ArtistProfileLinks
+            snapshots={artist.providers}
+            identifiers={artist.identifiers}
+          />
+        }
         actions={
           <>
             <DetailActionsSpacer />
-            <ArtistProfileLinks
-              snapshots={artist.providers}
-              identifiers={artist.identifiers}
-            />
             <DetailMore crumb={{ title: artist.name }} />
           </>
         }

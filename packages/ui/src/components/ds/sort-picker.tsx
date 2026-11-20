@@ -214,7 +214,7 @@ export function SortPicker<Key extends string>({
               {option.key === value ? (
                 <Check className="ds-i" data-size="sm" aria-hidden />
               ) : (
-                <span className="ds-sortpop-slot" />
+                <span className="ds-menu-slot" />
               )}
               {option.label}
             </button>

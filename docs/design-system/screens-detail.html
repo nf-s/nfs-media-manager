@@ -65,7 +65,15 @@
         kind: 'Album',
         by: 'by <a href="#">Mira Kestrel</a>',
         facts: ['2019-03-08', '11 tracks', '42:18', 'Tidewater'],
-        actions: D.headActions({ open: 'Spotify' }),
+        play: D.play('header'),
+        links: D.logoLinks([
+          'spotify',
+          'lastfm',
+          'musicbrainz',
+          'discogs',
+          'rym',
+        ]),
+        actions: D.headActions(),
       })
       const trackHead = D.detailHead({
         item: A[0],
@@ -73,23 +81,25 @@
         title: 'Harbour Lights',
         by: 'by <a href="#">Mira Kestrel</a> · on <a href="#">Harbour Lights</a>',
         facts: ['3:48', 'Track 3 of 11', '2019'],
-        actions: D.headActions({ open: 'Spotify' }),
+        play: D.play('header'),
+        links: D.logoLinks(['spotify', 'lastfm']),
+        actions: D.headActions(),
       })
       const artistHead = D.detailHead({
         item: AR[0],
         kind: 'Artist',
         facts: ['New Zealand', '3 albums', '31 tracks'],
-        actions: D.headActions({ open: 'Spotify' }),
+        links: D.logoLinks(['spotify', 'lastfm', 'musicbrainz', 'discogs']),
+        actions: D.headActions(),
       })
       const filmHead = D.detailHead({
         item: F[0],
         kind: 'Film',
         by: 'directed by <a href="#">Anneke Solberg</a>',
         facts: ['2021', '1h 52m', 'Norway', 'Watched 2026-09-21'],
+        links: D.logoLinks(['tmdb', 'imdb', 'letterboxd']),
         actions: D.headActions({
-          play: false,
           lead: btn('Watched', { icon: 'check', size: 'md', pressed: true }),
-          open: 'TMDb',
         }),
       })
       const playlistHead = D.detailHead({
@@ -97,26 +107,45 @@
         kind: 'Track playlist',
         by: 'from <a href="#">Spotify</a>',
         facts: ['42 tracks', '2h 51m', 'Updated 2026-11-09'],
-        actions: D.headActions({
-          open: 'Spotify',
-          lead: `<label class="ds-actions">Playlist type${D.select(['Automatic', 'Album playlist', 'Track playlist'], { label: 'Playlist type' })}</label>`,
-        }),
+        play: D.play('header'),
+        links: D.logoLinks(['spotify']),
+        actions: D.headActions(),
       })
+      /* A playlist's More menu: its type is a setting, so it is a ticked
+         group here and not a control in the header */
+      const playlistMore = D.menu(
+        [
+          [null, 'Filter tracks'],
+          [null, 'Filter albums'],
+          {
+            group: 'Playlist type',
+            choices: [
+              ['Automatic', true],
+              ['Album playlist'],
+              ['Track playlist'],
+            ],
+          },
+          [null, 'Open page'],
+          [null, 'Copy link'],
+        ],
+        '',
+        { label: 'More actions' },
+      )
       const channelHead = D.detailHead({
         item: { kind: 'artist', seed: 9, title: 'Slow Workshop' },
         kind: 'Channel',
         facts: ['YouTube', '24 videos', 'Last upload 2026-11-12'],
+        links: D.logoLinks(['youtube']),
         actions: D.headActions({
-          play: false,
           lead: btn('Subscribed', { icon: 'check', size: 'md', pressed: true }),
-          open: 'YouTube',
         }),
       })
       const personHead = D.detailHead({
         item: { kind: 'person', seed: 2, title: 'Anneke Solberg' },
         kind: 'Person',
         facts: ['Director, writer', '4 films'],
-        actions: D.headActions({ play: false, open: 'TMDb' }),
+        links: D.logoLinks(['tmdb', 'imdb']),
+        actions: D.headActions(),
       })
 
       /* Album */
@@ -309,7 +338,7 @@
       ]
         .map(
           ([p, st, when]) =>
-            `<div class="ds-coverage" style="grid-template-columns:18px minmax(0,1fr) auto auto">${mark(p)}<a href="#">${D.PROVIDERS[p].name}</a>${st}<span class="ds-muted ds-num" style="width:76px;text-align:right">${when}</span></div>`,
+            `<div class="ds-coverage" style="grid-template-columns:18px minmax(0,1fr) auto auto">${mark(p, { hidden: true })}<a href="#">${D.PROVIDERS[p].name}</a>${st}<span class="ds-muted ds-num" style="width:76px;text-align:right">${when}</span></div>`,
         )
         .join('')
       const albumPage = `<div class="ds-page">${albumHead}${D.tabs(['Overview', 'Sources', 'Edit'], 0).replace('class="ds-tabs"', 'class="ds-tabs" style="margin-top:16px"')}<div class="ds-page-cols"><div>${section('Tracks', `<div class="ds-table-wrap">${pageTracks}</div>`, { note: '11 · 42:18', flush: true })}${section(
@@ -620,13 +649,14 @@
             id: 'headers',
             title: 'One header for every resource',
             body:
-              `<p>Artwork, kind, title, creator, one line of facts, actions. Only the artwork shape and the facts change.</p>` +
-              `<div class="g-cols" style="grid-template-columns:repeat(auto-fit,minmax(440px,1fr))">${[albumHead, trackHead, artistHead, filmHead, playlistHead, channelHead, personHead].map((h) => g.spec(h)).join('')}</div>` +
+              `<p>Artwork, kind, title, creator, one line of facts, service logos, actions. Only the artwork shape, the facts, the logos and the item's own actions change.</p>` +
+              `<div class="g-cols" style="grid-template-columns:repeat(auto-fit,minmax(440px,1fr))">${[albumHead, trackHead, artistHead, filmHead, playlistHead, channelHead, personHead].map((h) => g.spec(h)).join('')}<div>${g.label('Playlist · More, open')}${g.spec(`<div style="width:240px">${playlistMore}</div>`)}</div></div>` +
               g.rules([
                 '<b>Title 18px</b> everywhere in the drawer. Today the same slot is 18, 20, 22 or 28px depending on the resource.',
                 '<b>Creators and parents are links</b> in the byline: artist, album, director, provider.',
-                '<b>Play and Queue</b> lead the actions for anything playable. A film or channel puts its own state there instead: Watched, Subscribed.',
-                '<b>Open at provider and More</b> are always the last two, at the right.',
+                '<b>The play pair</b> sits under the artwork of anything playable, exactly as wide as the artwork. A film or channel has no pair; its own state, Watched or Subscribed, comes first in the action row.',
+                '<b>Service logos</b> are on a line of their own under the facts, one link per service. <b>More</b> is always last in the action row, at the right; on a phone it is in the drawer bar.',
+                '<b>Settings are in More,</b> such as a playlist’s type: Automatic, Album playlist or Track playlist, the chosen one ticked. No setting is a control in the header.',
               ]),
           },
           {

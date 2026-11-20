@@ -59,7 +59,7 @@ test('the sort picker names the chosen field and lists every field', () => {
     html,
     /aria-selected="true" data-active="" class="ds-menu-item"><svg[^>]*lucide-check[^>]*>.*?<\/svg>Released \(first issue\)<\/button>/,
   )
-  assert.match(html, /<span class="ds-sortpop-slot"><\/span>Title<\/button>/)
+  assert.match(html, /<span class="ds-menu-slot"><\/span>Title<\/button>/)
 })
 
 test('typing in the sort picker puts names that start with the text first', () => {

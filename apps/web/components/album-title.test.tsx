@@ -25,7 +25,11 @@ test('album titles open local details and Spotify has a separate compact link', 
   )
   assert.match(html, /href="https:\/\/open.spotify.com\/album\//)
   assert.match(html, /aria-label="Open Spotify \(opens in a new tab\)"/)
-  assert.match(html, /width="14" height="14"/)
+  // The compact logo: the Spotify logo's shape in the muted ink, at 14px.
+  assert.match(
+    html,
+    /<span class="ds-logo" data-size="sm" style="--ds-logo:url\(&quot;\/icons\/services\/spotify.svg&quot;\)" aria-hidden="true"><\/span>/,
+  )
   assert.match(html, /target="_blank"/)
   assert.match(html, /rel="noopener noreferrer"/)
 })
@@ -43,7 +47,7 @@ test('missing or unsafe Spotify destinations omit the outbound icon', () => {
   assert.equal(renderToStaticMarkup(<AlbumTitle item={item} />), 'Test album')
 })
 
-test('service links use local icons, accessible names and safe separate-tab anchors', () => {
+test('service links use local logos, accessible names and safe separate-tab anchors', () => {
   const html = renderToStaticMarkup(
     <ServiceIconLinks
       links={[
@@ -63,12 +67,14 @@ test('service links use local icons, accessible names and safe separate-tab anch
     />,
   )
   assert.equal((html.match(/<a /g) ?? []).length, 3)
-  for (const icon of [
+  // Each logo is drawn from its local file's shape, in one grey.
+  for (const logo of [
     '/icons/services/spotify.svg',
-    '/img/lastfm.png',
+    '/icons/logos/lastfm.png',
     '/img/mb.png',
   ])
-    assert.ok(html.includes(`src="${icon}"`))
+    assert.ok(html.includes(`--ds-logo:url(&quot;${logo}&quot;)`))
+  assert.doesNotMatch(html, /<img/)
   assert.doesNotMatch(html, /lucide-radio|lucide-audio-lines|lucide-disc-3/)
   for (const label of ['Spotify', 'Last.fm', 'MusicBrainz'])
     assert.ok(html.includes(`aria-label="Open ${label} (opens in a new tab)"`))
@@ -102,8 +108,8 @@ test('service identity follows hostname rather than a shared search adapter', ()
   assert.equal((html.match(/<a /g) ?? []).length, 2)
   assert.match(html, /aria-label="Open RYM/)
   assert.match(html, /aria-label="Open Metacritic/)
-  assert.match(html, /src="\/icons\/ratings\/sonemic.png"/)
-  assert.match(html, /src="\/icons\/ratings\/metacritic.svg"/)
+  assert.match(html, /url\(&quot;\/icons\/logos\/rym.png&quot;\)/)
+  assert.match(html, /url\(&quot;\/icons\/ratings\/metacritic.svg&quot;\)/)
 })
 
 test('unrecognized hosts do not inherit another site identity or collapse by adapter', () => {
@@ -124,5 +130,5 @@ test('unrecognized hosts do not inherit another site identity or collapse by ada
     />,
   )
   assert.equal((html.match(/<a /g) ?? []).length, 2)
-  assert.doesNotMatch(html, /sonemic.png|aria-label="Open RYM/)
+  assert.doesNotMatch(html, /rym.png|aria-label="Open RYM/)
 })

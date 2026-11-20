@@ -70,7 +70,10 @@ export function PlayPair({
   )
 }
 
-/** The same pair as labelled buttons, for a detail header. */
+/**
+ * The same pair for a detail header, under the artwork: a labelled Play that
+ * takes the artwork's width and a square Queue button.
+ */
 export function PlayHeaderButtons({
   title,
   playing = false,
@@ -105,13 +108,13 @@ export function PlayHeaderButtons({
       </Button>
       <Button
         size="md"
+        icon
         disabled={disabled}
-        title={disabled ? disabledReason : undefined}
+        title={disabled ? disabledReason : 'Add to queue'}
         aria-label={`Add ${title} to queue`}
         onClick={onQueue}
       >
         <ListPlus className="ds-i" data-size="sm" aria-hidden />
-        Queue
       </Button>
     </>
   )

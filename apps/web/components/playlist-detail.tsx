@@ -88,8 +88,9 @@ import { usePlayback, usePlaybackControls } from './playback-provider'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { CreatorDetailState } from './creator-detail-state'
-import { DetailArt, DetailTabs, OpenAtProvider } from './detail-frame'
-import { DetailMore } from './detail-more'
+import { DetailArt, DetailTabs } from './detail-frame'
+import { DetailMore, type DetailMenuItem } from './detail-more'
+import ServiceIconLinks from './service-icon-links'
 import { ScrobbleStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
 import { PlaylistCoverage } from './metadata-coverage'
@@ -562,7 +563,15 @@ function PlaylistEntries({
   )
 }
 
-function PlaylistTypeSetting({ playlist }: { playlist: PlaylistSummary }) {
+/**
+ * Playlist type as a group in the header's More menu: Automatic, or one kind
+ * the playlist is always shown as. `failed` says the last choice was not
+ * saved.
+ */
+function usePlaylistType(playlist: PlaylistSummary): {
+  menu: DetailMenuItem
+  failed: boolean
+} {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const detail = useDetailView()
@@ -581,53 +590,44 @@ function PlaylistTypeSetting({ playlist }: { playlist: PlaylistSummary }) {
       void client.invalidateQueries({ queryKey: ['playlists'] })
     },
   })
-  return (
-    <>
-      <label className="ds-actions">
-        Playlist type
-        <Select
-          value={playlist.presentationOverride ?? 'auto'}
-          disabled={update.isPending}
-          onChange={(event) => {
-            const value = event.target.value
-            const parsed = PlaylistPresentationSchema.nullable().safeParse(
-              value === 'auto' ? null : value,
-            )
-            if (!parsed.success) return
-            update.mutate(parsed.data, {
-              onSuccess: () => {
-                const params = new URLSearchParams(detail.params)
-                const view = playlistEntryView(
-                  params.get('playlistView'),
-                  playlist.id,
-                )
-                params.delete('view')
-                params.set(
-                  'playlistView',
-                  playlistEntryViewParam(playlist.id, {
-                    ...view,
-                    contents: undefined,
-                    kinds: undefined,
-                  }),
-                )
-                detail.replace(params)
-              },
-            })
-          }}
-        >
-          <option value="auto">Automatic</option>
-          {PlaylistPresentationSchema.options.map((value) => (
-            <option key={value} value={value}>
-              {playlistPresentationLabels[value]}
-            </option>
-          ))}
-        </Select>
-      </label>
-      {update.isError && (
-        <Notice tone="danger">Could not save the playlist type.</Notice>
-      )}
-    </>
-  )
+  function choose(presentation: PlaylistPresentation | null) {
+    update.mutate(presentation, {
+      onSuccess: () => {
+        const params = new URLSearchParams(detail.params)
+        const view = playlistEntryView(params.get('playlistView'), playlist.id)
+        params.delete('view')
+        params.set(
+          'playlistView',
+          playlistEntryViewParam(playlist.id, {
+            ...view,
+            contents: undefined,
+            kinds: undefined,
+          }),
+        )
+        detail.replace(params)
+      },
+    })
+  }
+  const current = playlist.presentationOverride ?? null
+  return {
+    menu: {
+      group: 'Playlist type',
+      disabled: update.isPending,
+      choices: [
+        {
+          label: 'Automatic',
+          checked: current === null,
+          onSelect: () => choose(null),
+        },
+        ...PlaylistPresentationSchema.options.map((value) => ({
+          label: playlistPresentationLabels[value],
+          checked: current === value,
+          onSelect: () => choose(value),
+        })),
+      ],
+    },
+    failed: update.isError,
+  }
 }
 
 function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
@@ -768,6 +768,117 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
   )
 }
 
+/** A playlist's header: play pair, Spotify logo and More, with Playlist type in More. */
+function PlaylistHeader({
+  playlist,
+  presentation,
+  filterTracks,
+}: {
+  playlist: PlaylistDetail
+  presentation: BrowseView
+  filterTracks?: (playlist: PlaylistSummary) => void
+}) {
+  const type = usePlaylistType(playlist)
+  const sourceLabel = playlistSourceLabel(playlist.source)
+  return (
+    <>
+      <DetailHeader
+        art={
+          <DetailArt
+            src={playlist.artworkUrl}
+            fallback={<ListMusic className="ds-i" aria-hidden="true" />}
+          />
+        }
+        kind={playlistPresentationLabels[playlist.presentation]}
+        title={playlist.name}
+        by={
+          [
+            sourceLabel ? `from ${sourceLabel}` : null,
+            playlist.ownerName ? `by ${playlist.ownerName}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
+        }
+        facts={[
+          ...(playlist.presentation === 'albums'
+            ? [
+                formatItemCount(playlist.albumCount, {
+                  one: 'album',
+                  other: 'albums',
+                }),
+              ]
+            : []),
+          playlist.presentation === 'tracks' || playlist.trackCount > 0
+            ? formatItemCount(playlist.trackCount, {
+                one: 'track',
+                other: 'tracks',
+              })
+            : null,
+          playlist.durationSec > 0
+            ? formatPlaylistDuration(playlist.durationSec)
+            : null,
+          playlist.importedAt
+            ? `Updated ${formatDate(playlist.importedAt)}`
+            : null,
+        ]}
+        play={
+          <PlaylistPlayButton
+            playlist={playlist}
+            total={playlist.items.totalCount}
+            compact={false}
+            presentation={presentation}
+          />
+        }
+        links={
+          playlist.spotifyUrl && (
+            <ServiceIconLinks
+              links={[
+                {
+                  provider: 'spotify',
+                  label: 'Spotify',
+                  url: playlist.spotifyUrl,
+                },
+              ]}
+              itemTitle={playlist.name}
+            />
+          )
+        }
+        actions={
+          <>
+            <DetailActionsSpacer />
+            <DetailMore
+              crumb={{ title: playlist.name }}
+              items={[
+                filterTracks
+                  ? {
+                      label: 'Filter tracks',
+                      onSelect: () => filterTracks(playlist),
+                    }
+                  : {
+                      label: 'Filter tracks',
+                      href: playlistTracksHref(playlist.name),
+                    },
+                ...(playlist.albumCount > 0
+                  ? [
+                      {
+                        label: 'Filter albums',
+                        href: playlistAlbumsHref(playlist.name),
+                      },
+                    ]
+                  : []),
+                type.menu,
+              ]}
+            />
+          </>
+        }
+      />
+      {type.failed && (
+        <Notice tone="danger">Could not save the playlist type.</Notice>
+      )}
+    </>
+  )
+}
+
 export default function PlaylistDetailView({
   id,
   tab,
@@ -818,7 +929,6 @@ export default function PlaylistDetailView({
       />
     )
   const playlist = summary.data
-  const sourceLabel = playlistSourceLabel(playlist.source)
   return (
     <article className="dtl-detail">
       {summary.isRefetchError && (
@@ -828,82 +938,11 @@ export default function PlaylistDetailView({
           subject="playlist"
         />
       )}
-      <DetailHeader
-        art={
-          <DetailArt
-            src={playlist.artworkUrl}
-            fallback={<ListMusic className="ds-i" aria-hidden="true" />}
-          />
-        }
-        kind={playlistPresentationLabels[playlist.presentation]}
-        title={playlist.name}
-        by={
-          [
-            sourceLabel ? `from ${sourceLabel}` : null,
-            playlist.ownerName ? `by ${playlist.ownerName}` : null,
-          ]
-            .filter(Boolean)
-            .join(' · ') || undefined
-        }
-        facts={[
-          ...(playlist.presentation === 'albums'
-            ? [
-                formatItemCount(playlist.albumCount, {
-                  one: 'album',
-                  other: 'albums',
-                }),
-              ]
-            : []),
-          playlist.presentation === 'tracks' || playlist.trackCount > 0
-            ? formatItemCount(playlist.trackCount, {
-                one: 'track',
-                other: 'tracks',
-              })
-            : null,
-          playlist.durationSec > 0
-            ? formatPlaylistDuration(playlist.durationSec)
-            : null,
-          playlist.importedAt
-            ? `Updated ${formatDate(playlist.importedAt)}`
-            : null,
-        ]}
-        actions={
-          <>
-            <PlaylistPlayButton
-              playlist={playlist}
-              total={playlist.items.totalCount}
-              compact={false}
-              presentation={presentation}
-            />
-            <PlaylistTypeSetting key={playlist.id} playlist={playlist} />
-            <DetailActionsSpacer />
-            {playlist.spotifyUrl && (
-              <OpenAtProvider label="Spotify" url={playlist.spotifyUrl} />
-            )}
-            <DetailMore
-              crumb={{ title: playlist.name }}
-              items={[
-                filterTracks
-                  ? {
-                      label: 'Filter tracks',
-                      onSelect: () => filterTracks(playlist),
-                    }
-                  : {
-                      label: 'Filter tracks',
-                      href: playlistTracksHref(playlist.name),
-                    },
-                ...(playlist.albumCount > 0
-                  ? [
-                      {
-                        label: 'Filter albums',
-                        href: playlistAlbumsHref(playlist.name),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          </>
-        }
+      <PlaylistHeader
+        key={playlist.id}
+        playlist={playlist}
+        presentation={presentation}
+        filterTracks={filterTracks}
       />
       <DetailTabs
         label="Playlist details"

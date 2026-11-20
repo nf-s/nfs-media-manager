@@ -1,36 +1,11 @@
 'use client'
 
 import React from 'react'
-import { Globe2 } from 'lucide-react'
+import { ProviderMark } from '@repo/ui/components/ds/pill'
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
-import { providerIconUrl, safeRatingHref } from '../utils/provider-ratings'
+import { safeRatingHref } from '../utils/provider-ratings'
+import { providerLogoUrl } from '../utils/provider-logos'
 import { albumSpotifyDestination } from '../utils/album-links'
-
-function ServiceIcon({
-  provider,
-  size = 16,
-}: {
-  provider: string
-  size?: number
-}) {
-  const serviceIcons: Record<string, string> = {
-    spotify: '/icons/services/spotify.svg',
-    lastfm: '/img/lastfm.png',
-    musicbrainz: '/img/mb.png',
-  }
-  const icon = serviceIcons[provider] ?? providerIconUrl(provider)
-  if (icon)
-    return (
-      <img
-        src={icon}
-        width={size}
-        height={size}
-        alt=""
-        className="object-contain"
-      />
-    )
-  return <Globe2 size={size} aria-hidden="true" />
-}
 
 function ServiceAnchor({
   link,
@@ -51,14 +26,19 @@ function ServiceAnchor({
       rel="noopener noreferrer"
       title={`${label} (new tab)`}
       aria-label={`${label} (opens in a new tab)`}
-      className={`inline-flex shrink-0 items-center justify-center size-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] ${link.provider === 'spotify' ? 'spotify-link' : ''}`}
+      className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
       }}
     >
-      <ServiceIcon provider={link.provider} size={compact ? 14 : 16} />
+      <ProviderMark
+        name={link.label}
+        src={providerLogoUrl(link.provider)}
+        size={compact ? 'sm' : undefined}
+        hidden
+      />
     </a>
   )
 }

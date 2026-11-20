@@ -102,7 +102,11 @@ test('every control is the shared play pair: Play immediately followed by Queue'
   for (const pair of html.match(/<span class="ds-play"[^>]*>.*?<\/span>/g) ??
     [])
     assert.match(pair, /aria-label="(Play|Pause) [^"]+".*aria-label="Add /)
-  assert.match(html, />Play<\/button><button[^>]*>.*?Queue<\/button>/)
+  // Play is labelled; Queue is the square icon button after it.
+  assert.match(
+    html,
+    />Play<\/button><button class="ds-btn"[^>]*data-icon=""[^>]*title="Add to queue"[^>]*>(?:(?!<\/button>).)*<\/svg><\/button>/,
+  )
 })
 
 test('play controls name the album and track they act on', () => {
@@ -110,7 +114,7 @@ test('play controls name the album and track they act on', () => {
   assert.match(html, /aria-label="Play Fixture album"/)
   assert.match(html, /aria-label="Add Fixture album to queue"/)
   assert.match(html, />Play<\/button>/)
-  assert.match(html, />Queue<\/button>/)
+  assert.doesNotMatch(html, />Queue<\/button>/)
   assert.match(html, /aria-label="Play Second track"/)
   assert.match(html, /aria-label="Add Second track to queue"/)
   assert.match(html, /class="browse-play-position">2<\/span>/)
@@ -200,7 +204,7 @@ test('library track controls play, number and queue the track', () => {
     3,
   )
   assert.match(html, />Play<\/button>/)
-  assert.match(html, />Queue<\/button>/)
+  assert.match(html, /title="Add to queue"/)
   assert.doesNotMatch(html, /Pause/)
 })
 

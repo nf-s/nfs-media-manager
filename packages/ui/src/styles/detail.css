@@ -49,6 +49,10 @@
   .dtl-bar-more {
     display: contents;
   }
+  /* A header whose only action was More keeps no empty action row */
+  .ds-detail-actions:not(:has(> :not(.ds-spacer, .dtl-more, [popover]))) {
+    display: none;
+  }
 }
 /* More actions menu, placed beside its button */
 .dtl-more-pop {

@@ -183,7 +183,11 @@ function renderSources(
 test('Sources keeps archived snapshots and shared film identifiers accessible with refresh restricted to eligible rows', () => {
   const html = renderSources()
   assert.match(html, /Google Custom Search \(legacy\)/)
-  assert.match(html, /title="Google Custom Search \(legacy\)">GC</)
+  // A provider without a logo shows a globe.
+  assert.match(
+    html,
+    /<span class="ds-logo" data-none="" aria-hidden="true"><svg/,
+  )
   assert.doesNotMatch(html, /<details class="ds-source" open/)
   assert.match(html, /tt1234567/)
   assert.match(html, /aria-label="Edit Example provider identifier"/)
@@ -575,7 +579,10 @@ test('the Last.fm row of an album holds its scrobble names and each row lists wh
     [['history', 'album-1', 'provenance'], provenance],
   ]
   const closed = renderSources(albumProvider, undefined, album, '', seed)
-  assert.match(closed, /title="Last.fm">LF</)
+  assert.match(
+    closed,
+    /<span class="ds-logo" style="--ds-logo:url\(&quot;\/icons\/logos\/lastfm.png&quot;\)" aria-hidden="true"><\/span>/,
+  )
   assert.match(closed, /1 name linked · 1 similar name not linked/)
   assert.match(closed, /data-status="done">Matched by name</)
   const lastfm = renderSources(

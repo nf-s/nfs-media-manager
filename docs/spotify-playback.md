@@ -1,6 +1,6 @@
 # Spotify Playback
 
-Optional in-app playback of library albums and tracks through a connected Spotify Premium account. It is off until connected from the player bar. The Spotify link at the end of a detail header opens the service; music titles open library details. Play buttons remain visible when playback is disconnected, with a connection explanation.
+Optional in-app playback of library albums and tracks through a connected Spotify Premium account. It is off until connected from the player bar. The Spotify logo on its own line in a detail header opens the service; music titles open library details. Play buttons remain visible when playback is disconnected, with a connection explanation.
 
 ## Turning it on
 

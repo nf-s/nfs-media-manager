@@ -44,6 +44,7 @@ import {
 } from '@/utils/subscriptions'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
+import ServiceIconLinks from './service-icon-links'
 
 type ItemTab = 'overview' | 'sources'
 const itemTabs: readonly [ItemTab, ...ItemTab[]] = ['overview', 'sources']
@@ -186,11 +187,22 @@ function ItemDetails({
             : null,
           item.watchedAt ? `Watched ${formatDate(item.watchedAt)}` : null,
         ]}
+        links={
+          <ServiceIconLinks
+            links={[
+              {
+                provider: item.type === 'youtube' ? 'youtube' : 'spotify',
+                label: provider,
+                url: item.url,
+              },
+            ]}
+            itemTitle={item.title}
+          />
+        }
         actions={
           <>
             <WatchedButton item={item} />
             <DetailActionsSpacer />
-            <OpenAtProvider label={provider} url={item.url} />
             <DetailMore crumb={{ title: item.title }} />
           </>
         }
@@ -362,15 +374,16 @@ function MixDetails({
           known ? duration : null,
           item.watchedAt ? `Listened ${formatDate(item.watchedAt)}` : null,
         ]}
+        links={
+          <ServiceIconLinks
+            links={[{ provider: station, label: station, url: item.url }]}
+            itemTitle={item.title}
+          />
+        }
         actions={
           <>
             <WatchedButton item={item} />
             <DetailActionsSpacer />
-            <OpenAtProvider
-              label={station}
-              actionLabel={`Open on ${station}`}
-              url={item.url}
-            />
             {item.audioUrl && (
               <OpenAtProvider
                 label={station}
