@@ -76,7 +76,7 @@ import {
   SpotifyTrackSearchReview,
   SpotifyTrackSearchSelectionBar,
   isActiveSpotifyTrackSearch,
-  useSpotifyTrackSearchStatus,
+  useSpotifyTrackSearchStatusForPages,
 } from './spotify-track-search'
 import { TrackBrowseValue } from './track-browse-cells'
 import { TrackBrowseSearch } from './track-browse-controls'
@@ -196,9 +196,7 @@ export default function TrackMetadataTable({
         signal,
       ),
   })
-  const status = useSpotifyTrackSearchStatus(
-    tracks.slots.flatMap(({ item }) => (item?.track ? [item.track.id] : [])),
-  )
+  const status = useSpotifyTrackSearchStatusForPages(tracks.windowPageItems)
   const ids = tracks.loadedSlots.flatMap(({ item }) => {
     const { track } = item
     const job = track ? status.byId.get(track.id)?.job : undefined

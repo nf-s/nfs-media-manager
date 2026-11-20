@@ -8,12 +8,14 @@ import {
   SpotifyTrackSearchJobSchema,
   SpotifyTrackSearchSchema,
 } from '@repo/schemas/spotify-track-search'
+import { useVirtualPages } from '@/hooks/useVirtualBrowse'
 import { ConfigContext } from './providers'
 import {
   SpotifyTrackSearchConfirmation,
   SpotifyTrackSearchJobCell,
   SpotifyTrackSearchReview,
   SpotifyTrackSearchSelectionBar,
+  useSpotifyTrackSearchStatusForPages,
 } from './spotify-track-search'
 
 const createdAt = '2026-01-01T00:00:00.000Z'
@@ -56,6 +58,68 @@ function render(element: React.ReactNode, client = new QueryClient()) {
     client.clear()
   }
 }
+
+test('scrolling Track Metadata keeps the saved Spotify search for overlapping rows', () => {
+  const trackIds = Array.from({ length: 125 }, (_, index) => `track-${index}`)
+  const pageSize = 50
+  const tableKey = ['tracks', 'metadata-selection', 'fixture']
+  const pageIds = (page: number) =>
+    trackIds.slice((page - 1) * pageSize, page * pageSize)
+  const loadPage = (page: number) => ({
+    items: pageIds(page).map((id) => ({ track: { id } })),
+    totalCount: trackIds.length,
+  })
+  function SearchAges({ scrollTop }: { scrollTop: number }) {
+    const tracks = useVirtualPages({
+      queryKey: tableKey,
+      columns: 1,
+      rowHeight: 32,
+      viewportHeight: 320,
+      headerHeight: 0,
+      scrollTop,
+      pageSize,
+      loadPage: async (page) => loadPage(page),
+    })
+    const status = useSpotifyTrackSearchStatusForPages(tracks.windowPageItems)
+    return tracks.slots.map(({ item }) => {
+      if (!item) return null
+      const { id } = item.track
+      return (
+        <span key={id} data-track={id}>
+          {status.byId.get(id)?.lastSuccessfulAt ?? 'Loading'}
+        </span>
+      )
+    })
+  }
+  function renderAt(scrollTop: number, settledPages: number[]) {
+    const client = new QueryClient()
+    for (const page of [1, 2, 3])
+      client.setQueryData([...tableKey, page], loadPage(page))
+    for (const page of settledPages) {
+      const ids = pageIds(page)
+      client.setQueryData(['tracks', 'spotify-track-search', 'status', ids], {
+        items: ids.map((trackId) => ({
+          trackId,
+          job,
+          lastSuccessfulAt: createdAt,
+        })),
+      })
+    }
+    return render(<SearchAges scrollTop={scrollTop} />, client)
+  }
+
+  assert.match(renderAt(0, [1]), /data-track="track-10">2026-01-01T/)
+  assert.match(renderAt(64, [1]), /data-track="track-10">2026-01-01T/)
+  const boundary = renderAt(40 * 32, [1])
+  assert.match(boundary, /data-track="track-45">2026-01-01T/)
+  assert.match(boundary, /data-track="track-50">Loading/)
+  assert.match(renderAt(40 * 32, [1, 2]), /data-track="track-50">2026-01-01T/)
+  assert.match(
+    renderAt(100 * 32, [1, 2, 3]),
+    /data-track="track-100">2026-01-01T/,
+  )
+  assert.match(renderAt(64, [1, 2, 3]), /data-track="track-10">2026-01-01T/)
+})
 
 test('Spotify track search requires review above five explicitly selected rows', () => {
   function selection(count: number) {
