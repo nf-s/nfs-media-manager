@@ -136,6 +136,7 @@ const sections = new Map([
   ['/jobs/metadata', 'Metadata'],
   ['/jobs/new', 'Metadata'],
   ['/jobs/refresh', 'Metadata'],
+  ['/tracks/spotify-match-audit', 'Spotify match audit'],
   ['/tags/all', 'All tags'],
   ['/tags/hidden', 'Hidden tags'],
   ['/tags/hierarchy', 'Hierarchy'],

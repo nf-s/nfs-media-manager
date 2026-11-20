@@ -38,7 +38,8 @@
     "db:sample-statements": "tsx scripts/sample-statements.ts",
     "verify:legacy": "tsx scripts/verify-legacy.ts",
     "backfill:film-added": "tsx scripts/backfill-film-added.ts",
-    "backfill:spotify-track-searches": "tsx scripts/backfill-spotify-track-searches.ts"
+    "backfill:spotify-track-searches": "tsx scripts/backfill-spotify-track-searches.ts",
+    "audit:spotify-track-matches": "tsx scripts/audit-spotify-track-matches.ts"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",

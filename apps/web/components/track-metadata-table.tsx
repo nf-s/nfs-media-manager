@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import {
@@ -336,6 +337,11 @@ export default function TrackMetadataTable({
         filters={
           <>
             {library}
+            <Button asChild size="xs">
+              <Link href="/tracks/spotify-match-audit">
+                Spotify match audit
+              </Link>
+            </Button>
             <Select
               aria-label="Playability"
               value={playability}

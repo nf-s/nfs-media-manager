@@ -55,7 +55,7 @@ type ReconciliationResult =
   | { status: 'unmatched' | 'stale' }
 
 /** Confirming a recording must preserve independently recorded release positions and annotations. */
-async function checkRecordingTransfer(
+export async function spotifyRecordingTransferConflict(
   tx: Transaction,
   source: { id: string; title: string },
   targetId: string,
@@ -91,21 +91,12 @@ async function checkRecordingTransfer(
   const flags = z
     .object({ conflicting_release: z.boolean(), has_annotations: z.boolean() })
     .parse(result.rows[0])
-  if (flags.conflicting_release)
-    throw new ServerError({
-      statusCode: 409,
-      message:
-        'This Spotify version conflicts with the stored album position. Choose the version on that release.',
-    })
-  if (flags.has_annotations)
-    throw new ServerError({
-      statusCode: 409,
-      message:
-        'This track has independently saved metadata. Use Sources to link its scrobbled names individually.',
-    })
+  if (flags.conflicting_release) return 'position'
+  if (flags.has_annotations) return 'metadata'
+  return undefined
 }
 
-async function libraryRecording(tx: Transaction, id: string) {
+export async function libraryRecording(tx: Transaction, id: string) {
   const [row] = await tx
     .select({
       id: mediaItem.id,
@@ -223,7 +214,7 @@ const AcceptedSchema = z.object({
   acceptedSpotifyTrackId: z.string(),
 })
 
-function newRecordingTarget(
+export function newRecordingTarget(
   source: { id: string; source: string | null },
   candidate: SpotifyTrackSearchCandidate,
 ) {
@@ -337,6 +328,35 @@ async function linkSpotifyRecording(
     .where(eq(scrapeJob.id, jobId))
 }
 
+/** Resolve the same retained-recording checks for automatic matches and their explanations. */
+export async function checkSpotifySearchDestination(
+  tx: Transaction,
+  sourceId: string,
+  targetId: string,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  if (targetId === sourceId) return { compatible: true }
+  const target = await libraryRecording(tx, targetId)
+  if (!target) return { compatible: true }
+  const evidence = await spotifySearchRecordingEvidence(tx, targetId)
+  if (!evidence) return { compatible: false }
+  const matches = spotifySearchMatchesDestination(evidence, candidate)
+  const albumFallbackArtistCreditCorrection = matches
+    ? undefined
+    : await readSpotifyAlbumFallbackArtistCreditCorrection(
+        tx,
+        targetId,
+        candidate,
+        evidence,
+      )
+  return {
+    compatible: matches || Boolean(albumFallbackArtistCreditCorrection),
+    evidence,
+    reusedSpotifyTrackId: target.spotifyId === candidate.spotifyTrackId,
+    albumFallbackArtistCreditCorrection,
+  }
+}
+
 /** The worker calls this after saving the candidates, within its cancellation fence. */
 export async function reconcileSpotifyTrackSearchInTransaction(
   tx: Transaction,
@@ -369,37 +389,17 @@ export async function reconcileSpotifyTrackSearchInTransaction(
   )) {
     const { candidate } = choice
     const targetId = choice.targetId ?? newRecordingTarget(source, candidate)
-    let reusedSpotifyTrackId = false
-    let albumFallbackArtistCreditCorrection:
-      | AlbumFallbackArtistCreditCorrection
-      | undefined
-    if (targetId !== source.id) {
-      const target = await libraryRecording(tx, targetId)
-      const targetEvidence =
-        target && (await spotifySearchRecordingEvidence(tx, targetId))
-      if (target && !targetEvidence) continue
-      if (
-        targetEvidence &&
-        !spotifySearchMatchesDestination(targetEvidence, candidate)
-      ) {
-        albumFallbackArtistCreditCorrection =
-          await readSpotifyAlbumFallbackArtistCreditCorrection(
-            tx,
-            targetId,
-            candidate,
-            targetEvidence,
-          )
-        if (!albumFallbackArtistCreditCorrection) continue
-      }
-      reusedSpotifyTrackId = target?.spotifyId === candidate.spotifyTrackId
-    }
-    try {
-      await checkRecordingTransfer(tx, source, targetId, candidate)
-    } catch (error) {
-      if (error instanceof ServerError && error.response.statusCode === 409)
-        continue
-      throw error
-    }
+    const destination = await checkSpotifySearchDestination(
+      tx,
+      source.id,
+      targetId,
+      candidate,
+    )
+    if (!destination.compatible) continue
+    const { reusedSpotifyTrackId, albumFallbackArtistCreditCorrection } =
+      destination
+    if (await spotifyRecordingTransferConflict(tx, source, targetId, candidate))
+      continue
     if (!dryRun)
       await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic', {
         reusedSpotifyTrackId,
@@ -474,7 +474,20 @@ export async function acceptSpotifyTrackSearch(input: {
     const targets = await resolveSpotifyTrackIds(tx, [candidate])
     const targetId =
       targets.get(spotifyTrackId) ?? newRecordingTarget(source, candidate)
-    await checkRecordingTransfer(tx, source, targetId, candidate)
+    const conflict = await spotifyRecordingTransferConflict(
+      tx,
+      source,
+      targetId,
+      candidate,
+    )
+    if (conflict)
+      throw new ServerError({
+        statusCode: 409,
+        message:
+          conflict === 'position'
+            ? 'This Spotify version conflicts with the stored album position. Choose the version on that release.'
+            : 'This track has independently saved metadata. Use Sources to link its scrobbled names individually.',
+      })
     let albumFallbackArtistCreditCorrection:
       | AlbumFallbackArtistCreditCorrection
       | undefined

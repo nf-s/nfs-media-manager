@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SpotifyTrackSearchCandidate } from '@repo/schemas/spotify-track-search'
 import {
+  spotifySearchDestinationReasons,
   spotifySearchHasAlternateVersion,
+  spotifySearchMatchesDestination,
   spotifySearchMatchesObservedAlbum,
   spotifySearchMatchesSource,
   spotifySearchMatchesTitleVersion,
+  spotifySearchSourceReasons,
 } from '../spotify-track-search-evidence'
 
 vi.mock('../album-library-tracks', () => ({}))
@@ -302,11 +305,227 @@ describe('Spotify track search source evidence', () => {
       ],
     },
   ])('keeps contradictory or manual evidence reviewable (%j)', (patch) => {
+    const source = recording(patch)
+    const candidate = result({ artists: ['Café Signal', 'Glass Bell'] })
+    expect(spotifySearchMatchesSource(source, candidate)).toBe(false)
     expect(
-      spotifySearchMatchesSource(
-        recording(patch),
-        result({ artists: ['Café Signal', 'Glass Bell'] }),
-      ),
+      spotifySearchSourceReasons(source, candidate, [candidate]),
+    ).not.toEqual([])
+  })
+})
+
+describe('Spotify track search audit reasons', () => {
+  it('has no source reason for supported punctuation, title versions or featured billing', () => {
+    const source = recording({
+      title: 'Hárbour Lights! (feat. Glass Bell)',
+      artists: ['Cafe Signal'],
+      durations: [175],
+      scrobbled_albums: ['Uncatalogued Single'],
+    })
+    const candidate = result({
+      title: 'Harbour Lights - Original Mix',
+      artists: ['Café Signal', 'Glass Bell'],
+    })
+    expect(spotifySearchMatchesSource(source, candidate)).toBe(true)
+    expect(
+      spotifySearchHasAlternateVersion(source, candidate, [candidate]),
     ).toBe(false)
+    expect(spotifySearchSourceReasons(source, candidate, [candidate])).toEqual(
+      [],
+    )
+  })
+
+  it('reports concrete conflicts and missing metadata together', () => {
+    const source = recording({
+      title: 'Harbour Lights (Radio Edit)',
+      position_titles: ['Harbour Lights (Radio Edit)'],
+      spotify_url: 'https://example.invalid/fixture-account?fixture=private',
+      album_ids: [albumId],
+      isrc: 'AA-FI1-20-00001',
+      durations: [172],
+    })
+    const candidate = result({
+      spotifyAlbumId: null,
+      isrc: null,
+      durationSec: 0,
+    })
+    expect(
+      spotifySearchSourceReasons(source, candidate, [candidate]),
+    ).toMatchObject([
+      {
+        code: 'source-spotify-album-id',
+        library: albumId,
+        spotify: 'Unavailable',
+      },
+      {
+        code: 'source-title',
+        library: 'Harbour Lights (Radio Edit)',
+        spotify: 'Harbour Lights',
+      },
+      {
+        code: 'source-position-title',
+        library: 'Harbour Lights (Radio Edit)',
+        spotify: 'Harbour Lights',
+      },
+      {
+        code: 'source-spotify-track-link',
+        library: 'Unrecognised Spotify link',
+        spotify: trackId,
+      },
+      {
+        code: 'source-isrc',
+        library: 'AA-FI1-20-00001',
+        spotify: 'Unavailable',
+      },
+      {
+        code: 'source-duration',
+        library: '172 seconds',
+        spotify: 'Unavailable',
+      },
+    ])
+  })
+
+  it('describes both alternate version vetoes that can block a compatible source', () => {
+    const candidate = result()
+    const other = result({
+      spotifyTrackId: otherId,
+      title: 'Harbour Lights (Acoustic)',
+      albumName: 'Harbour Anthology',
+    })
+    const explicitRelease = recording({ scrobbled_albums: ['Harbour Live'] })
+    const competingResult = recording({
+      scrobbled_albums: ['Tidal Atlas', 'Harbour Anthology'],
+    })
+    for (const source of [explicitRelease, competingResult]) {
+      expect(spotifySearchMatchesSource(source, candidate)).toBe(true)
+      expect(
+        spotifySearchHasAlternateVersion(source, candidate, [candidate, other]),
+      ).toBe(true)
+    }
+    expect(
+      spotifySearchSourceReasons(explicitRelease, candidate, [
+        candidate,
+        other,
+      ]),
+    ).toMatchObject([
+      {
+        code: 'source-alternate-version',
+        library: 'Harbour Live',
+        spotify: 'Tidal Atlas',
+      },
+    ])
+    expect(
+      spotifySearchSourceReasons(competingResult, candidate, [
+        candidate,
+        other,
+      ]),
+    ).toMatchObject([
+      {
+        code: 'source-alternate-version',
+        library: 'Harbour Anthology',
+        spotify: 'Harbour Lights (Acoustic) · Harbour Anthology',
+      },
+    ])
+  })
+
+  it('shows independently billed guest and artist IDs', () => {
+    const source = recording({
+      title: 'Harbour Lights (feat. Different Guest)',
+      artist_credits: [{ id: otherId, name: 'Café Signal' }],
+    })
+    const candidate = result({ artists: ['Café Signal', 'Glass Bell'] })
+    expect(
+      spotifySearchSourceReasons(source, candidate, [candidate]),
+    ).toMatchObject([
+      {
+        code: 'source-artist-credit',
+        library: 'Café Signal · Featuring Different Guest',
+        spotify: 'Café Signal, Glass Bell',
+      },
+      {
+        code: 'source-spotify-artist-id',
+        library: 'Café Signal (' + otherId + ')',
+        spotify: 'Café Signal (' + artistId + ')',
+      },
+    ])
+  })
+
+  it.each([
+    { spotify_track_id: trackId, has_manual_overrides: false, expected: true },
+    { spotify_track_id: trackId, has_manual_overrides: true, expected: false },
+    { spotify_track_id: null, has_manual_overrides: false, expected: false },
+  ])(
+    'reports precisely when destination title and duration tolerances are disabled (%j)',
+    ({ expected, ...stored }) => {
+      const destination = recording({
+        title: 'Hárbour Lights',
+        position_titles: ['Hárbour Lights'],
+        durations: [175],
+        ...stored,
+      })
+      const candidate = result()
+      expect(spotifySearchMatchesDestination(destination, candidate)).toBe(
+        expected,
+      )
+      const reasons = spotifySearchDestinationReasons(destination, candidate)
+      expect(reasons.length === 0).toBe(expected)
+      if (!expected)
+        expect(reasons).toMatchObject([
+          {
+            code: 'destination-title',
+            library: 'Hárbour Lights',
+            spotify: 'Harbour Lights',
+          },
+          {
+            code: 'destination-position-title',
+            library: 'Hárbour Lights',
+            spotify: 'Harbour Lights',
+          },
+          {
+            code: 'destination-duration',
+            library: '175 seconds',
+            spotify: '174 seconds',
+          },
+        ])
+    },
+  )
+
+  it('preserves stricter destination artist and scrobbled-name rules', () => {
+    const destination = recording({
+      spotify_track_id: trackId,
+      artists: ['Cafe Signal'],
+      scrobbles: [
+        {
+          title: 'harbour lights remix',
+          artist: 'different artist',
+          manual: true,
+        },
+      ],
+    })
+    const candidate = result()
+    expect(spotifySearchMatchesDestination(destination, candidate)).toBe(false)
+    expect(
+      spotifySearchDestinationReasons(destination, candidate),
+    ).toMatchObject([
+      {
+        code: 'destination-artist-credit',
+        library: 'Cafe Signal',
+        spotify: 'Café Signal',
+      },
+      {
+        code: 'destination-manual-scrobble',
+        library: 'harbour lights remix · different artist',
+      },
+      {
+        code: 'destination-scrobble-title',
+        library: 'harbour lights remix',
+        spotify: 'Harbour Lights',
+      },
+      {
+        code: 'destination-scrobble-artist-credit',
+        library: 'different artist',
+        spotify: 'Café Signal',
+      },
+    ])
   })
 })

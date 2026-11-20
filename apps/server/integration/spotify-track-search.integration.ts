@@ -2507,3 +2507,235 @@ it('reports saved search history on the retained track after acceptance changes 
   expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject(result)
   expect(request).not.toHaveBeenCalled()
 })
+
+it.each(['failed', 'empty', 'skipped'])(
+  'reads and accepts saved results after a newer %s Spotify search',
+  async (newerAttempt) => {
+    const query = 'Fixture catalog search'
+    await queueSpotifyTrackSearches({ trackIds: [recordingId], query }, userId)
+    await processQueuedJobs()
+    const saved = await getSpotifyTrackSearch(recordingId, userId)
+    const jobId = saved.job?.jobId
+    if (!jobId || !saved.job) throw new Error('Expected a saved search')
+    expect(saved.candidates).toHaveLength(1)
+    if (newerAttempt === 'skipped')
+      await fixture
+        .update(schema.scrapeJob)
+        .set({
+          options: sql`${schema.scrapeJob.options} - 'resultCount' - 'query'`,
+        })
+        .where(eq(schema.scrapeJob.id, jobId))
+    const createdAt = new Date(Date.parse(saved.job.createdAt) + 1000)
+    const newerJobId = 'newer-fixture-search'
+    const newerQuery = 'Another fixture query'
+    const status = newerAttempt === 'failed' ? 'failed' : 'succeeded'
+    await fixture.insert(schema.scrapeJob).values({
+      id: newerJobId,
+      provider: 'spotify',
+      status,
+      scope: { mediaType: 'track', mediaItemIds: [recordingId], limit: 1 },
+      options: {
+        task: SPOTIFY_TRACK_SEARCH_TASK,
+        trackId: recordingId,
+        query: newerQuery,
+        ...(newerAttempt === 'empty' ? { resultCount: 0 } : {}),
+      },
+      requestedByUserId: userId,
+      createdAt,
+      startedAt: createdAt,
+      finishedAt: createdAt,
+    })
+    if (newerAttempt === 'empty')
+      await fixture.insert(schema.scrapeJobLog).values({
+        id: 'newer-empty-search-log',
+        jobId: newerJobId,
+        level: 'success',
+        message: 'Fixture search returned no results.',
+        metadata: {
+          diagnostics: [
+            {
+              kind: SPOTIFY_TRACK_SEARCH_TASK,
+              query: newerQuery,
+              candidates: [],
+            },
+          ],
+        },
+      })
+    request.mockClear()
+
+    expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+      job: { jobId: newerJobId, status },
+      resultJob: { jobId, status: 'succeeded', resultCount: 1 },
+      query,
+      candidates: saved.candidates,
+    })
+    expect(await getSpotifyTrackSearch(recordingId, otherUserId)).toMatchObject(
+      {
+        job: null,
+        resultJob: null,
+        candidates: [],
+      },
+    )
+    const selection = {
+      trackId: recordingId,
+      jobId,
+      spotifyTrackId: candidateId,
+    }
+    await expect(
+      acceptSpotifyTrackSearch({ ...selection, userId: otherUserId }),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+    expect(await acceptSpotifyTrackSearch({ ...selection, userId })).toEqual({
+      targetId: recordingId,
+    })
+    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+      { spotifyTrackId: candidateId },
+    ])
+    expect(request).not.toHaveBeenCalled()
+  },
+)
+
+it('keeps older saved candidates read-only when a search or the recording has changed', async () => {
+  const { source } = await addScrobbledRecording()
+  const trackId = source.trackMediaItemId
+  await queueSpotifyTrackSearches(
+    { trackIds: [trackId], query: 'Fixture catalog search' },
+    userId,
+  )
+  await processQueuedJobs()
+  const saved = await getSpotifyTrackSearch(trackId, userId)
+  if (!saved.job) throw new Error('Expected a saved search')
+  const jobId = saved.job.jobId
+  const newerId = 'newer-owner-fixture-search'
+  await fixture.insert(schema.scrapeJob).values({
+    id: newerId,
+    provider: 'spotify',
+    status: 'running',
+    scope: { mediaType: 'track', mediaItemIds: [trackId], limit: 1 },
+    options: { task: SPOTIFY_TRACK_SEARCH_TASK, trackId },
+    requestedByUserId: otherUserId,
+    createdAt: new Date(Date.parse(saved.job.createdAt) + 1000),
+  })
+  request.mockClear()
+  const selection = { trackId, jobId, spotifyTrackId: candidateId, userId }
+  await expect(acceptSpotifyTrackSearch(selection)).rejects.toMatchObject({
+    response: { statusCode: 409 },
+  })
+
+  await fixture
+    .update(schema.scrapeJob)
+    .set({ status: 'failed', requestedByUserId: userId })
+    .where(eq(schema.scrapeJob.id, newerId))
+  await fixture
+    .update(schema.mediaItem)
+    .set({ title: 'A different recording' })
+    .where(eq(schema.mediaItem.id, trackId))
+  await expect(acceptSpotifyTrackSearch(selection)).rejects.toMatchObject({
+    response: {
+      statusCode: 409,
+      message: 'The library recording has changed. Review the current track.',
+    },
+  })
+
+  await fixture
+    .update(schema.mediaItem)
+    .set({ title })
+    .where(eq(schema.mediaItem.id, trackId))
+  await fixture
+    .update(schema.lastfmTrackSource)
+    .set({ manuallyMatched: true })
+    .where(eq(schema.lastfmTrackSource.trackMediaItemId, trackId))
+  await expect(acceptSpotifyTrackSearch(selection)).rejects.toMatchObject({
+    response: {
+      statusCode: 409,
+      message: 'This recording has a manual match. Review its Sources.',
+    },
+  })
+  expect(await fixture.select().from(schema.lastfmTrackSource)).toMatchObject([
+    { trackMediaItemId: trackId, manuallyMatched: true },
+  ])
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { mediaItemId: trackId, spotifyTrackId: null },
+  ])
+  expect(request).not.toHaveBeenCalled()
+})
+
+it('keeps distinct candidates from more than one successful search selectable', async () => {
+  const earlierQuery = 'Fixture earlier catalog search'
+  const latestQuery = 'Fixture latest catalog search'
+  mockCandidates(catalogTrack, otherEdition)
+  await queueSpotifyTrackSearches(
+    { trackIds: [recordingId], query: earlierQuery },
+    userId,
+  )
+  await processQueuedJobs()
+  const earlier = await getSpotifyTrackSearch(recordingId, userId)
+  if (!earlier.job) throw new Error('Expected an earlier search')
+
+  const [previousJob] = await fixture
+    .select()
+    .from(schema.scrapeJob)
+    .where(eq(schema.scrapeJob.id, earlier.job.jobId))
+  if (!previousJob) throw new Error('Expected the earlier job to be retained')
+  const latestJobId = 'fixture-latest-catalog-search'
+  const createdAt = new Date(previousJob.createdAt.getTime() + 1000)
+  await fixture.insert(schema.scrapeJob).values({
+    ...previousJob,
+    id: latestJobId,
+    options: { ...previousJob.options, query: latestQuery, resultCount: 1 },
+    createdAt,
+    startedAt: createdAt,
+    finishedAt: createdAt,
+  })
+  await fixture.insert(schema.scrapeJobLog).values({
+    id: 'fixture-latest-candidate-log',
+    jobId: latestJobId,
+    level: 'success',
+    message: 'Fixture search returned one candidate.',
+    metadata: {
+      diagnostics: [
+        {
+          kind: SPOTIFY_TRACK_SEARCH_TASK,
+          query: latestQuery,
+          candidates: earlier.candidates.filter(
+            ({ spotifyTrackId }) => spotifyTrackId === candidateId,
+          ),
+        },
+      ],
+    },
+  })
+  request.mockClear()
+  const latest = await getSpotifyTrackSearch(recordingId, userId)
+  expect(latest).toMatchObject({
+    job: { jobId: latestJobId, status: 'succeeded', resultCount: 1 },
+    resultJob: {
+      jobId: latestJobId,
+      status: 'succeeded',
+      resultCount: 1,
+    },
+    query: latestQuery,
+    candidates: [{ spotifyTrackId: candidateId }],
+    earlierResults: [
+      {
+        job: { jobId: earlier.job.jobId, status: 'succeeded', resultCount: 2 },
+        query: earlierQuery,
+        candidates: [{ spotifyTrackId: otherCandidateId }],
+      },
+    ],
+  })
+  expect(latest.job?.jobId).not.toBe(earlier.job.jobId)
+
+  const selection = { trackId: recordingId, jobId: earlier.job.jobId, userId }
+  await expect(
+    acceptSpotifyTrackSearch({ ...selection, spotifyTrackId: candidateId }),
+  ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  expect(
+    await acceptSpotifyTrackSearch({
+      ...selection,
+      spotifyTrackId: otherCandidateId,
+    }),
+  ).toEqual({ targetId: recordingId })
+  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    { spotifyTrackId: otherCandidateId },
+  ])
+  expect(request).not.toHaveBeenCalled()
+})

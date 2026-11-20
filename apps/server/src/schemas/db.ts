@@ -15,6 +15,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import type { JsonValue } from '@repo/media-plugin-sdk'
+import type { SpotifyTrackAuditItem } from '@repo/schemas/spotify-track-search'
 import type { ProviderResponseBody } from '@repo/schemas/provider-response'
 import type {
   ArtistProfile,
@@ -194,6 +195,28 @@ export const libraryTrack = pgTable(
       table.mediaItemId,
     ),
   ],
+)
+
+export const spotifyTrackMatchAudit = pgTable(
+  'spotify_track_match_audit',
+  {
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    trackId: text('track_id')
+      .notNull()
+      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
+    assessedAt: timestamp('assessed_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    assessment: text('assessment')
+      .$type<SpotifyTrackAuditItem['assessment']>()
+      .notNull(),
+    candidateCount: integer('candidate_count').notNull(),
+    searchText: text('search_text').notNull(),
+    report: jsonb('report').$type<SpotifyTrackAuditItem>().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.ownerId, table.trackId] })],
 )
 
 export const recordingBrowseOrderDirty = pgTable(

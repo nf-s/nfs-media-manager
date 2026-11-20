@@ -72,6 +72,14 @@ test('workspace labels follow the route, browse search and known detail title', 
     workspaceRoute('/jobs/metadata?mediaType=artist').label,
     'Metadata',
   )
+  assert.deepEqual(
+    workspaceRoute('/tracks/spotify-match-audit?assessment=likely'),
+    {
+      area: 'tracks',
+      label: 'Spotify match audit',
+      isDetail: false,
+    },
+  )
   assert.equal(workspaceRoute('/tags/hierarchy').label, 'Hierarchy')
   assert.equal(
     workspaceRoute('/films/toString', 'Fixture title').label,

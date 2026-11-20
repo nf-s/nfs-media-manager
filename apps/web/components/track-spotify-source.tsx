@@ -17,9 +17,13 @@ import { useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { invalidateScrobbleLinks } from './lastfm-sync'
 import {
+  SpotifyTrackSearchCandidates,
   SpotifyTrackSearchJobStatus,
   SpotifyTrackSearchResult,
   SpotifyTrackSearchReview,
+  isActiveSpotifyTrackSearch,
+  spotifyTrackSearchSavedResults,
+  type SpotifyTrackSearchSelection,
   useSavedSpotifyTrackSearch,
 } from './spotify-track-search'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
@@ -64,7 +68,9 @@ export function TrackSpotifySource({
   sourceParams.set('sourceProvider', 'spotify')
   sourceParams.set('tab', 'sources')
   const [matching, setMatching] = useState<
-    'edit-query' | 'review-results' | 'library' | null
+    | { mode: 'edit-query' | 'library' }
+    | { mode: 'review-results'; selection?: SpotifyTrackSearchSelection }
+    | null
   >(null)
   const search = useSavedSpotifyTrackSearch(item.id)
   const job = search.data?.job
@@ -74,10 +80,9 @@ export function TrackSpotifySource({
   const direct = Boolean(spotifyTrackUri(item.spotifyTrackId))
   const alternate = item.spotifyAlternate
   const needsMatch = !direct && !alternate
-  const hasCandidates =
-    job?.status === 'succeeded' &&
-    !job.acceptedTrackId &&
-    Boolean(search.data?.candidates.length)
+  const savedResults = spotifyTrackSearchSavedResults(search.data)
+  const hasCandidates = savedResults.length > 0
+  const searchActive = isActiveSpotifyTrackSearch(job)
   const canSearchLibrary = needsMatch && canMergeLastfmTrack(item)
   useEffect(() => {
     if (job === undefined) return
@@ -145,8 +150,8 @@ export function TrackSpotifySource({
             {needsMatch && hasCandidates && (
               <Button
                 size="xs"
-                aria-haspopup="dialog"
-                onClick={() => setMatching('review-results')}
+                aria-expanded={open}
+                onClick={() => setOpen(true)}
               >
                 Match to Spotify
               </Button>
@@ -155,7 +160,7 @@ export function TrackSpotifySource({
               <Button
                 size="xs"
                 aria-haspopup="dialog"
-                onClick={() => setMatching('edit-query')}
+                onClick={() => setMatching({ mode: 'edit-query' })}
               >
                 Search Spotify
               </Button>
@@ -163,7 +168,39 @@ export function TrackSpotifySource({
           </>
         }
       >
-        <SourceBlock title="Spotify match">{matchNote(item, job)}</SourceBlock>
+        {open && !direct && hasCandidates ? (
+          <SourceBlock title="Saved Spotify matches">
+            {savedResults.map(({ job: resultJob, candidates }) => (
+              <div className="data-stack" key={resultJob.jobId}>
+                {resultJob.jobId !== job?.jobId && (
+                  <p className="ds-help">
+                    Search from{' '}
+                    {formatDateTime(
+                      resultJob.finishedAt ?? resultJob.createdAt,
+                    )}
+                  </p>
+                )}
+                <SpotifyTrackSearchCandidates
+                  candidates={candidates}
+                  disabled={searchActive}
+                  onSelect={
+                    needsMatch
+                      ? (candidate) =>
+                          setMatching({
+                            mode: 'review-results',
+                            selection: { jobId: resultJob.jobId, candidate },
+                          })
+                      : undefined
+                  }
+                />
+              </div>
+            ))}
+          </SourceBlock>
+        ) : (
+          <SourceBlock title="Spotify match">
+            {matchNote(item, job)}
+          </SourceBlock>
+        )}
       </SourceRow>
       {search.isError && (
         <Notice
@@ -177,20 +214,26 @@ export function TrackSpotifySource({
           Could not load the saved Spotify search.
         </Notice>
       )}
-      {(matching === 'edit-query' || matching === 'review-results') && (
+      {(matching?.mode === 'edit-query' ||
+        matching?.mode === 'review-results') && (
         <SpotifyTrackSearchReview
           track={item}
-          searchMode={matching}
+          searchMode={matching.mode}
+          initialSelection={
+            matching.mode === 'review-results' ? matching.selection : undefined
+          }
           onClose={() => setMatching(null)}
           onSearchLibrary={
-            canSearchLibrary ? () => setMatching('library') : undefined
+            canSearchLibrary
+              ? () => setMatching({ mode: 'library' })
+              : undefined
           }
           onMatched={(id) => {
             if (id !== item.id) onResolved?.(id)
           }}
         />
       )}
-      {matching === 'library' && (
+      {matching?.mode === 'library' && (
         <TrackMergePanel
           track={item}
           onClose={() => setMatching(null)}

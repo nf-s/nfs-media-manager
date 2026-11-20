@@ -122,12 +122,23 @@ export const SpotifyTrackSearchJobSchema = z.object({
   finishedAt: dateTime.nullable(),
 })
 
-export const SpotifyTrackSearchSchema = z.object({
-  job: SpotifyTrackSearchJobSchema.nullable(),
+const SpotifyTrackSearchResultsSchema = z.object({
   query: z.string().max(200),
   candidates: z
     .array(SpotifyTrackSearchCandidateSchema)
     .max(SPOTIFY_TRACK_SEARCH_LIMIT),
+})
+
+export const SpotifyTrackSearchSchema = SpotifyTrackSearchResultsSchema.extend({
+  job: SpotifyTrackSearchJobSchema.nullable(),
+  resultJob: SpotifyTrackSearchJobSchema.nullable().optional(),
+  earlierResults: z
+    .array(
+      SpotifyTrackSearchResultsSchema.extend({
+        job: SpotifyTrackSearchJobSchema,
+      }),
+    )
+    .optional(),
 })
 
 export const SpotifyTrackSearchStatusSchema = z.object({
@@ -154,3 +165,81 @@ export type SpotifyTrackSearch = z.infer<typeof SpotifyTrackSearchSchema>
 export type SpotifyTrackSearchStatus = z.infer<
   typeof SpotifyTrackSearchStatusSchema
 >
+
+export const SpotifyTrackAuditReasonSchema = z.object({
+  code: z.string().min(1),
+  explanation: z.string().min(1),
+  library: z.string(),
+  spotify: z.string(),
+})
+export type SpotifyTrackAuditReason = z.infer<
+  typeof SpotifyTrackAuditReasonSchema
+>
+
+export const SpotifyTrackAuditAssessmentSchema = z.enum([
+  'likely',
+  'review',
+  'unlikely',
+])
+export type SpotifyTrackAuditAssessment = z.infer<
+  typeof SpotifyTrackAuditAssessmentSchema
+>
+
+const auditCandidate = SpotifyTrackSearchCandidateSchema.pick({
+  spotifyTrackId: true,
+  title: true,
+  artists: true,
+  albumName: true,
+  durationSec: true,
+  spotifyUrl: true,
+}).extend({
+  assessment: SpotifyTrackAuditAssessmentSchema,
+  summary: z.string(),
+  reasons: z.array(SpotifyTrackAuditReasonSchema),
+  searchedAt: dateTime,
+  historical: z.boolean(),
+})
+export type SpotifyTrackAuditCandidate = z.infer<typeof auditCandidate>
+
+export const SpotifyTrackAuditItemSchema = z.object({
+  trackId: id,
+  title: z.string(),
+  artists: z.array(z.string()),
+  albums: z.array(z.string()),
+  durations: z.array(z.number().nonnegative()),
+  assessment: SpotifyTrackAuditAssessmentSchema,
+  summary: z.string(),
+  candidates: z.array(auditCandidate).min(1),
+})
+export type SpotifyTrackAuditItem = z.infer<typeof SpotifyTrackAuditItemSchema>
+
+export const SpotifyTrackAuditQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(1000000).default(1),
+  size: z.coerce.number().int().min(1).max(100).default(25),
+  q: z
+    .string()
+    .trim()
+    .max(200)
+    .refine((value) => !value.includes('\0'))
+    .optional(),
+  assessment: SpotifyTrackAuditAssessmentSchema.optional(),
+  sort: z.enum(['assessment', 'title', 'candidates']).default('assessment'),
+  direction: z.enum(['asc', 'desc']).default('asc'),
+})
+export type SpotifyTrackAuditQuery = z.infer<
+  typeof SpotifyTrackAuditQuerySchema
+>
+
+export const SpotifyTrackAuditPageSchema = z.object({
+  generatedAt: dateTime.nullable(),
+  totalTracks: z.number().int().nonnegative(),
+  totalCandidates: z.number().int().nonnegative(),
+  counts: z.object({
+    likely: z.number().int().nonnegative(),
+    review: z.number().int().nonnegative(),
+    unlikely: z.number().int().nonnegative(),
+  }),
+  totalCount: z.number().int().nonnegative(),
+  pageCount: z.number().int().nonnegative(),
+  items: z.array(SpotifyTrackAuditItemSchema),
+})

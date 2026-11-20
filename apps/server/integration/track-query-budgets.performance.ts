@@ -5,6 +5,7 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { trackBrowseFields } from '@repo/schemas/browse'
+import { SpotifyTrackAuditQuerySchema } from '@repo/schemas/spotify-track-search'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -181,6 +182,69 @@ async function checkBudget(
     )
   }
 }
+
+it('bounds broad, selective, empty and deep Spotify match audit pages', async () => {
+  const { listSpotifyTrackMatchAudit } =
+    await import('@/services/spotify-track-match-audit-list')
+  const ownerId = 'audit-budget-owner'
+  await pool.query(`
+    insert into "user" (id, name, email) values
+      ('audit-budget-owner', 'Fixture owner', 'audit-owner@example.test'),
+      ('audit-budget-other', 'Fixture other owner', 'audit-other@example.test');
+    insert into spotify_track_match_audit
+      (owner_id, track_id, assessment, candidate_count, search_text, report)
+    select a.owner_id, mi.id, a.assessment, 1, lower(mi.title) ||
+        case when n = 250 then ' quartz-window' else '' end,
+      jsonb_build_object('trackId', mi.id, 'title', mi.title, 'artists', jsonb_build_array('Fixture artist'),
+        'albums', '[]'::jsonb, 'durations', '[174]'::jsonb, 'assessment', a.assessment, 'summary', 'Fixture audit',
+        'candidates', jsonb_build_array(jsonb_build_object(
+          'spotifyTrackId', repeat('1', 22), 'title', mi.title, 'artists', jsonb_build_array('Fixture artist'),
+          'albumName', 'Fixture album', 'durationSec', 174, 'assessment', a.assessment,
+          'spotifyUrl', 'https://open.spotify.com/track/' || repeat('1', 22),
+          'summary', 'Fixture candidate', 'reasons', '[]'::jsonb,
+          'searchedAt', '2026-01-01T00:00:00.000Z', 'historical', false)))
+    from generate_series(1, 3200) n join media_item mi on mi.id = 'track-' || n
+    cross join lateral (select
+      case when n <= 1200 then 'audit-budget-owner' else 'audit-budget-other' end as owner_id,
+      case when n % 20 = 0 then 'likely' when n % 5 = 0 then 'review' else 'unlikely' end as assessment
+    ) a
+  `)
+  await pool.query('vacuum analyze spotify_track_match_audit')
+  const queries = [
+    { label: 'first', parameters: {}, expected: 'track-20', count: 1200 },
+    {
+      label: 'selective',
+      parameters: { q: 'QUARTZ-WINDOW', assessment: 'review' },
+      expected: 'track-250',
+      count: 1,
+    },
+    {
+      label: 'miss',
+      parameters: { q: 'missing fixture term' },
+      expected: undefined,
+      count: 0,
+    },
+    {
+      label: 'deep',
+      parameters: { page: 47, sort: 'title' },
+      expected: 'track-1151',
+      count: 1200,
+    },
+  ]
+  for (const { label, parameters, expected, count } of queries) {
+    await checkBudget('Spotify match audit ' + label, 12_000, 1, async () => {
+      const page = await listSpotifyTrackMatchAudit(
+        ownerId,
+        SpotifyTrackAuditQuerySchema.parse(parameters),
+      )
+      expect(page.totalTracks).toBe(1200)
+      expect(page.totalCandidates).toBe(1200)
+      expect(page.counts).toEqual({ likely: 60, review: 180, unlikely: 960 })
+      expect(page.totalCount).toBe(count)
+      expect(page.items[0]?.trackId).toBe(expected)
+    })
+  }
+})
 
 it('bounds selective Track pages and exact counts', async () => {
   const { queryBrowsePageIds, queryBrowseCount } =

@@ -8,6 +8,7 @@ import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import {
   SpotifyTrackSearchCandidateSchema,
   SpotifyTrackSearchJobSchema,
+  type SpotifyTrackSearch,
   type SpotifyTrackSearchCandidate,
   type SpotifyTrackSearchJob,
 } from '@repo/schemas/spotify-track-search'
@@ -89,6 +90,8 @@ function render(
   view: 'detail' | 'sources' = 'detail',
   searchJob: SpotifyTrackSearchJob | null = null,
   searchCandidates: SpotifyTrackSearchCandidate[] = [],
+  resultJob?: SpotifyTrackSearchJob | null,
+  earlierResults?: SpotifyTrackSearch['earlierResults'],
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -98,6 +101,8 @@ function render(
     job: searchJob,
     query: item.title,
     candidates: searchCandidates,
+    resultJob,
+    earlierResults,
   })
   try {
     return renderToStaticMarkup(
@@ -291,18 +296,89 @@ const savedCandidate = SpotifyTrackSearchCandidateSchema.parse({
   spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
 })
 
-test('unmatched Sources offers Match to Spotify for saved candidates, including legacy searches without a summary count', () => {
+test('expanded unmatched Spotify Sources shows selectable saved candidates without another search', () => {
   for (const resultCount of [1, null]) {
     const html = render(
       scrobbled,
-      '',
+      'sourceProvider=spotify',
       'sources',
       { ...completedSearch, resultCount },
       [savedCandidate],
     )
     assert.match(html, />Unmatched</)
-    assert.match(html, /aria-haspopup="dialog"[^>]*>Match to Spotify<\/button>/)
+    assert.match(html, /<details class="ds-source" open=""/)
+    assert.match(html, /Saved Spotify matches/)
+    assert.match(html, /aria-label="Review Synthetic track from Catalog album"/)
   }
+})
+
+test('an empty recent search keeps older saved Spotify results in the expanded source', () => {
+  const html = render(
+    scrobbled,
+    'sourceProvider=spotify',
+    'sources',
+    { ...completedSearch, jobId: 'latest-empty-search', resultCount: 0 },
+    [savedCandidate],
+    { ...completedSearch, resultCount: 1 },
+  )
+  assert.match(html, /Saved Spotify matches/)
+  assert.match(html, /Search from /)
+  assert.match(html, /aria-label="Review Synthetic track from Catalog album"/)
+  assert.doesNotMatch(html, />No matches</)
+})
+
+test('expanded Spotify Sources shows distinct candidates from both successful searches', () => {
+  const older = { ...completedSearch, jobId: 'earlier-search', resultCount: 1 }
+  const html = render(
+    scrobbled,
+    'sourceProvider=spotify',
+    'sources',
+    { ...completedSearch, resultCount: 1 },
+    [savedCandidate],
+    undefined,
+    [
+      {
+        job: older,
+        query: 'Earlier query',
+        candidates: [
+          {
+            ...savedCandidate,
+            spotifyTrackId: 'ABCDEFGHIJKLMNOPQRSTUV',
+            spotifyUrl: 'https://open.spotify.com/track/ABCDEFGHIJKLMNOPQRSTUV',
+            title: 'Earlier candidate',
+          },
+        ],
+      },
+    ],
+  )
+  assert.match(html, /aria-label="Review Synthetic track from Catalog album"/)
+  assert.match(html, /aria-label="Review Earlier candidate from Catalog album"/)
+})
+
+test('an alternate Spotify version leaves the saved candidates read-only', () => {
+  const track = TrackDetailSchema.parse({
+    ...scrobbled,
+    spotifyAlternate: {
+      trackId: 'alternate-recording',
+      name: 'Synthetic track',
+      albumName: null,
+      identifier: 'ABCDEFGHIJKLMNOPQRSTUV',
+    },
+  })
+  const html = render(
+    track,
+    'sourceProvider=spotify',
+    'sources',
+    { ...completedSearch, resultCount: 1 },
+    [savedCandidate],
+  )
+  assert.match(html, /Open version/)
+  assert.match(html, /Saved Spotify matches/)
+  assert.match(html, /Catalog album/)
+  assert.doesNotMatch(
+    html,
+    /Search Spotify|Review Synthetic track from Catalog album/,
+  )
 })
 
 test('unmatched Sources opens Spotify search when there are no saved candidates', () => {

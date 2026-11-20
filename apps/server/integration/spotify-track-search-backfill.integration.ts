@@ -352,3 +352,126 @@ it('pages over latest owner jobs and lets newer queued, failed or accepted searc
   })
   expect(request).not.toHaveBeenCalled()
 })
+
+it('audits distinct saved candidates across all searches without changing the library', async () => {
+  const { rebuildSpotifyTrackMatchAudit } =
+    await import('@/services/spotify-track-match-audit')
+  const trackId = 'fixture-audit'
+  const title = 'Fixture Audit Recording'
+  await lastfmTrack(trackId, title)
+  const exact = catalogCandidate(title, '1')
+  const different = {
+    ...catalogCandidate('Different Song', '2'),
+    artists: ['Different Artist'],
+  }
+  await storeSearch(trackId, title, [different, exact])
+  const later = savedSearch(trackId, title, 'later-audit-search')
+  await fixture.insert(schema.scrapeJob).values({
+    ...later,
+    status: 'failed',
+    createdAt: new Date(createdAt.getTime() + 60000),
+  })
+  const secondOwner = savedSearch(trackId, title, 'other-owner-search')
+  await fixture
+    .insert(schema.scrapeJob)
+    .values({ ...secondOwner, requestedByUserId: otherUserId })
+  const unique = catalogCandidate('Other Result', '3')
+  await fixture.insert(schema.scrapeJobLog).values({
+    id: 'other-owner-log',
+    jobId: secondOwner.id,
+    level: 'success',
+    message: 'Fixture completed',
+    metadata: {
+      diagnostics: [
+        {
+          kind: SPOTIFY_TRACK_SEARCH_TASK,
+          query: secondOwner.options.query ?? '',
+          candidates: [unique],
+        },
+      ],
+    },
+  })
+  const repeat = savedSearch(trackId, title, 'earlier-fixture-result')
+  await fixture
+    .insert(schema.scrapeJob)
+    .values({ ...repeat, createdAt: new Date(createdAt.getTime() - 60000) })
+  await fixture.insert(schema.scrapeJobLog).values({
+    id: 'earlier-result-log',
+    jobId: repeat.id,
+    level: 'success',
+    message: 'Fixture completed',
+    metadata: {
+      diagnostics: [
+        {
+          kind: SPOTIFY_TRACK_SEARCH_TASK,
+          query: repeat.options.query ?? '',
+          candidates: [exact],
+        },
+      ],
+    },
+  })
+  expect(await rebuildSpotifyTrackMatchAudit()).toMatchObject({
+    tracks: 2,
+    candidates: 3,
+    likely: 1,
+    unlikely: 1,
+  })
+  expect(await rebuildSpotifyTrackMatchAudit()).toMatchObject({
+    tracks: 2,
+    candidates: 3,
+  })
+  const [owner] = await fixture
+    .select()
+    .from(schema.spotifyTrackMatchAudit)
+    .where(eq(schema.spotifyTrackMatchAudit.ownerId, userId))
+  expect(owner?.report.candidates).toHaveLength(2)
+  expect(owner?.report.candidates[0]).toMatchObject({
+    spotifyTrackId: exact.spotifyTrackId,
+    historical: true,
+    assessment: 'likely',
+    reasons: [{ code: 'historical-search' }],
+  })
+  expect(owner?.report.candidates[1]?.reasons.map((r) => r.code)).toEqual(
+    expect.arrayContaining(['source-title', 'source-artist-credit']),
+  )
+  const [track] = await fixture
+    .select()
+    .from(schema.libraryTrack)
+    .where(eq(schema.libraryTrack.mediaItemId, trackId))
+  expect(track?.spotifyTrackId).toBeNull()
+  expect(request).not.toHaveBeenCalled()
+})
+
+it('explains a release mismatch by album name and Spotify release ID', async () => {
+  const { rebuildSpotifyTrackMatchAudit } =
+    await import('@/services/spotify-track-match-audit')
+  const title = 'Fixture Recording From Two Releases'
+  await lastfmTrack('release-comparison', title)
+  const storedRelease = 'originalrelease'.padEnd(22, '1')
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ albumName: 'Library Edition', spotifyAlbumId: storedRelease })
+    .where(eq(schema.libraryTrack.mediaItemId, 'release-comparison'))
+  const result = catalogCandidate(title, '2')
+  await storeSearch('release-comparison', title, [result])
+  await rebuildSpotifyTrackMatchAudit()
+  const [audit] = await fixture
+    .select()
+    .from(schema.spotifyTrackMatchAudit)
+    .where(eq(schema.spotifyTrackMatchAudit.trackId, 'release-comparison'))
+  expect(audit?.report).toMatchObject({
+    assessment: 'likely',
+    albums: ['Library Edition'],
+    candidates: [
+      {
+        reasons: [
+          {
+            code: 'source-spotify-album-id',
+            library: 'Library Edition · ' + storedRelease,
+            spotify: result.albumName + ' · ' + result.spotifyAlbumId,
+          },
+        ],
+      },
+    ],
+  })
+})

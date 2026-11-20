@@ -24,6 +24,7 @@ import {
   SpotifyTrackSearchStatusInputSchema,
   SpotifyTrackSearchStatusSchema,
   SpotifyTrackSearchTargetConflictSchema,
+  type SpotifyTrackSearch,
   type SpotifyTrackSearchCandidate,
   type SpotifyTrackSearchFreshness,
   type SpotifyTrackSearchInput,
@@ -36,7 +37,11 @@ import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
-import { formatCount, formatItemCount } from '@repo/ui/lib/format'
+import {
+  formatCount,
+  formatDateTime,
+  formatItemCount,
+} from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
@@ -551,18 +556,110 @@ export function SpotifyTrackSearchConfirmation({
   )
 }
 
+export type SpotifyTrackSearchSelection = {
+  jobId: string
+  candidate: SpotifyTrackSearchCandidate
+}
+
+export function spotifyTrackSearchSavedResults(
+  search: SpotifyTrackSearch | undefined,
+) {
+  if (
+    !search ||
+    search.job?.acceptedTrackId ||
+    search.resultJob?.acceptedTrackId
+  )
+    return []
+  const primary = search.resultJob === undefined ? search.job : search.resultJob
+  return [
+    ...(primary
+      ? [{ job: primary, query: search.query, candidates: search.candidates }]
+      : []),
+    ...(search.earlierResults ?? []),
+  ].filter(
+    ({ job, candidates }) =>
+      job.status === 'succeeded' &&
+      !job.acceptedTrackId &&
+      candidates.length > 0,
+  )
+}
+
+export function SpotifyTrackSearchCandidates({
+  candidates,
+  disabled,
+  onSelect,
+}: {
+  candidates: readonly SpotifyTrackSearchCandidate[]
+  disabled?: boolean
+  onSelect?: (candidate: SpotifyTrackSearchCandidate) => void
+}) {
+  return (
+    <List compact aria-label="Spotify track matches">
+      {candidates.map((candidate) => (
+        <ListRow
+          key={candidate.spotifyTrackId}
+          thumb={
+            <MediaThumb kind="track" src={candidate.artworkUrl} size={40} />
+          }
+          title={
+            onSelect ? (
+              <RowTitle>
+                <button
+                  type="button"
+                  title={candidate.title}
+                  aria-label={`Review ${candidate.title}${candidate.albumName ? ` from ${candidate.albumName}` : ''}`}
+                  disabled={disabled}
+                  onClick={() => onSelect(candidate)}
+                >
+                  {candidate.title}
+                </button>
+              </RowTitle>
+            ) : (
+              <span className="ds-row-title" title={candidate.title}>
+                {candidate.title}
+              </span>
+            )
+          }
+          by={[
+            candidate.artists.join(', '),
+            candidate.albumName,
+            candidate.durationSec !== null
+              ? formatTrackDuration(candidate.durationSec)
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+          action={
+            <ServiceIconLinks
+              links={[
+                {
+                  provider: 'spotify',
+                  label: 'Spotify',
+                  url: candidate.spotifyUrl,
+                },
+              ]}
+            />
+          }
+        />
+      ))}
+    </List>
+  )
+}
+
 export function SpotifyTrackSearchReview({
   track,
   onClose,
   onMatched,
   onSearchLibrary,
   searchMode,
+  initialSelection,
 }: {
   track: SearchTrack
   onClose: () => void
   onMatched: (targetId: string) => void
   onSearchLibrary?: () => void
   searchMode?: 'edit-query' | 'review-results'
+  initialSelection?: SpotifyTrackSearchSelection
 }) {
   const { apiBaseUrl } = useConfig()
   const catalog = useQueueSpotifyTrackSearch()
@@ -575,10 +672,9 @@ export function SpotifyTrackSearchReview({
   const [draft, setDraft] = useState(() =>
     [track.title, ...track.artists].join(' ').slice(0, 200).trim(),
   )
-  const [chosen, setChosen] = useState<{
-    jobId: string
-    candidate: SpotifyTrackSearchCandidate
-  } | null>(null)
+  const [chosen, setChosen] = useState<SpotifyTrackSearchSelection | null>(
+    initialSelection ?? null,
+  )
   const search = useSavedSpotifyTrackSearch(track.id)
   const queue = useMutation({
     retry: false,
@@ -630,7 +726,21 @@ export function SpotifyTrackSearchReview({
     }
   }, [searchMode])
   const job = search.data?.job
-  const candidates = search.data?.candidates ?? []
+  const savedResults = spotifyTrackSearchSavedResults(search.data)
+  const searchActive = isActiveSpotifyTrackSearch(job)
+  const confirmation =
+    !searchActive &&
+    chosen &&
+    savedResults.some(
+      (result) =>
+        result.job.jobId === chosen.jobId &&
+        result.candidates.some(
+          (candidate) =>
+            candidate.spotifyTrackId === chosen.candidate.spotifyTrackId,
+        ),
+    )
+      ? chosen
+      : null
   const query = SpotifyTrackSearchQuerySchema.safeParse(draft)
   const canSubmit =
     query.success &&
@@ -638,7 +748,7 @@ export function SpotifyTrackSearchReview({
     !search.isPending &&
     !queue.isPending &&
     !accept.isPending &&
-    !isActiveSpotifyTrackSearch(job)
+    !searchActive
   return (
     <dialog
       ref={dialog}
@@ -737,67 +847,38 @@ export function SpotifyTrackSearchReview({
             <Skeleton height={48} />
           ) : job?.acceptedTrackId ? (
             <SpotifyTrackSearchResult job={job} />
-          ) : chosen && chosen.jobId === job?.jobId ? (
+          ) : confirmation ? (
             <SpotifyTrackSearchConfirmation
-              candidate={chosen.candidate}
+              candidate={confirmation.candidate}
               failure={accept.error}
               pending={accept.isPending}
-              onConfirm={() => accept.mutate(chosen)}
+              onConfirm={() => accept.mutate(confirmation)}
               onChooseAnother={() => setChosen(null)}
               onClose={onClose}
             />
-          ) : job?.status === 'succeeded' && candidates.length > 0 ? (
-            <Section title={formatItemCount(candidates.length, MATCHES)}>
-              <List compact aria-label="Spotify track matches">
-                {candidates.map((candidate) => (
-                  <ListRow
-                    key={candidate.spotifyTrackId}
-                    thumb={
-                      <MediaThumb
-                        kind="track"
-                        src={candidate.artworkUrl}
-                        size={40}
-                      />
-                    }
-                    title={
-                      <RowTitle>
-                        <button
-                          type="button"
-                          title={candidate.title}
-                          aria-label={`Review ${candidate.title}${candidate.albumName ? ` from ${candidate.albumName}` : ''}`}
-                          onClick={() => {
-                            accept.reset()
-                            setChosen({ jobId: job.jobId, candidate })
-                          }}
-                        >
-                          {candidate.title}
-                        </button>
-                      </RowTitle>
-                    }
-                    by={[
-                      candidate.artists.join(', '),
-                      candidate.albumName,
-                      candidate.durationSec !== null
-                        ? formatTrackDuration(candidate.durationSec)
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    action={
-                      <ServiceIconLinks
-                        links={[
-                          {
-                            provider: 'spotify',
-                            label: 'Spotify',
-                            url: candidate.spotifyUrl,
-                          },
-                        ]}
-                      />
-                    }
-                  />
-                ))}
-              </List>
-            </Section>
+          ) : savedResults.length > 0 ? (
+            savedResults.map(({ job: resultJob, candidates }) => (
+              <Section
+                key={resultJob.jobId}
+                title={formatItemCount(candidates.length, MATCHES)}
+                note={
+                  resultJob.jobId !== job?.jobId
+                    ? formatDateTime(
+                        resultJob.finishedAt ?? resultJob.createdAt,
+                      )
+                    : undefined
+                }
+              >
+                <SpotifyTrackSearchCandidates
+                  candidates={candidates}
+                  disabled={searchActive}
+                  onSelect={(candidate) => {
+                    accept.reset()
+                    setChosen({ jobId: resultJob.jobId, candidate })
+                  }}
+                />
+              </Section>
+            ))
           ) : (
             search.isSuccess && (
               <Section>

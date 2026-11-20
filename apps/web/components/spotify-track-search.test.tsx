@@ -278,6 +278,50 @@ test('the Spotify search panel prefills plain text and keeps searching opt-in', 
   }
 })
 
+test('selecting an older saved candidate opens confirmation without starting a search', () => {
+  const client = new QueryClient()
+  const track = {
+    id: 'stored-track',
+    title: 'Stored recording',
+    artists: ['Example artist'],
+    albumName: null,
+    durationSec: null,
+  }
+  client.setQueryData(
+    ['tracks', 'spotify-track-search', track.id],
+    SpotifyTrackSearchSchema.parse({
+      job: { ...job, jobId: 'latest-job' },
+      resultJob: { ...job, jobId: 'latest-job' },
+      query: 'Newer search',
+      candidates: [
+        {
+          ...candidate,
+          spotifyTrackId: 'ABCDEFGHIJKLMNOPQRSTUV',
+          spotifyUrl: 'https://open.spotify.com/track/ABCDEFGHIJKLMNOPQRSTUV',
+          title: 'Newer recording',
+        },
+      ],
+      earlierResults: [
+        { job, query: 'Earlier search', candidates: [candidate] },
+      ],
+    }),
+  )
+  const inactive = () => assert.fail('Rendering must not mutate a search')
+  assert.match(
+    render(
+      <SpotifyTrackSearchReview
+        track={track}
+        searchMode="review-results"
+        initialSelection={{ jobId: job.jobId, candidate }}
+        onClose={inactive}
+        onMatched={inactive}
+      />,
+      client,
+    ),
+    /Confirm Spotify match/,
+  )
+})
+
 function renderConfirmation(failure: unknown) {
   const inactive = () => assert.fail('Rendering must not invoke dialog actions')
   return render(

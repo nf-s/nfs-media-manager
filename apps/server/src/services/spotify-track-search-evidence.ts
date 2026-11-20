@@ -1,7 +1,10 @@
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
-import type { SpotifyTrackSearchCandidate } from '@repo/schemas/spotify-track-search'
+import type {
+  SpotifyTrackAuditReason,
+  SpotifyTrackSearchCandidate,
+} from '@repo/schemas/spotify-track-search'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import {
   hasTrackVersionQualifier,
@@ -57,6 +60,45 @@ const RecordingEvidenceSchema = z.object({
   ),
 })
 export type RecordingEvidence = z.infer<typeof RecordingEvidenceSchema>
+
+type RecordingAudit = {
+  side: 'source' | 'destination'
+  reasons: SpotifyTrackAuditReason[]
+}
+
+// Returning true lets an audit collect the remaining mismatches. Live checks
+// stop at the failed condition without building or formatting audit evidence.
+function addMatchingReason(
+  audit: RecordingAudit,
+  code: string,
+  detail: string,
+  library: string,
+  spotify: string,
+) {
+  const subject =
+    audit.side === 'source' ? 'The searched track' : 'The retained track'
+  audit.reasons.push({
+    code: audit.side + '-' + code,
+    explanation: subject + ' ' + detail,
+    library: library || 'Unavailable',
+    spotify: spotify || 'Unavailable',
+  })
+  return true
+}
+
+function evidenceList(values: Iterable<string>) {
+  return [...new Set(values)].join(', ')
+}
+
+function spotifyTrackIdFromLink(link: string | null) {
+  return /^(?:https:\/\/open\.spotify\.com\/track\/|spotify:track:)([A-Za-z0-9]{22})(?:[/?#]|$)/.exec(
+    link ?? '',
+  )?.[1]
+}
+
+function displaySpotifyId(id: string) {
+  return spotifyIdPattern.test(id) ? id : 'Unrecognised Spotify ID'
+}
 
 export async function spotifySearchRecordingEvidence(
   tx: Transaction,
@@ -153,10 +195,53 @@ function albumNames(recording: RecordingEvidence) {
 function spotifySearchReleaseIdsAgree(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
+  audit?: RecordingAudit,
 ) {
   return (
-    recording.track_ids.every((id) => id === candidate.spotifyTrackId) &&
-    recording.album_ids.every((id) => id === candidate.spotifyAlbumId)
+    recording.track_ids.every(
+      (id) =>
+        id === candidate.spotifyTrackId ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            'spotify-track-id',
+            'has a different Spotify track ID.',
+            displaySpotifyId(id),
+            candidate.spotifyTrackId,
+          )),
+    ) &&
+    recording.album_ids.every(
+      (id) =>
+        id === candidate.spotifyAlbumId ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            'spotify-album-id',
+            'has a Spotify release ID that the result does not share.',
+            displaySpotifyId(id),
+            candidate.spotifyAlbumId ?? '',
+          )),
+    )
+  )
+}
+
+function spotifySearchReleaseNamesAgree(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+  namesMatch: typeof sameName,
+  audit?: RecordingAudit,
+) {
+  return albumNames(recording).every(
+    (name) =>
+      namesMatch(candidate.albumName, name) ||
+      (audit !== undefined &&
+        addMatchingReason(
+          audit,
+          'album-name',
+          'has a stored release name that differs from the Spotify release.',
+          name,
+          candidate.albumName ?? '',
+        )),
   )
 }
 
@@ -166,20 +251,45 @@ function spotifySearchExactRelease(
   {
     allowTargetTitleDiacritics = false,
   }: { allowTargetTitleDiacritics?: boolean } = {},
+  audit?: RecordingAudit,
 ) {
-  const albums = albumNames(recording)
   const titleKey = allowTargetTitleDiacritics
     ? diacriticInsensitiveTitleKey
     : albumNameKey
   const candidateTitle = titleKey(candidate.title)
   return (
-    candidateTitle === titleKey(recording.title) &&
-    sameSpotifySearchArtists(recording.artists, candidate.artists) &&
+    (candidateTitle === titleKey(recording.title) ||
+      (audit !== undefined &&
+        addMatchingReason(
+          audit,
+          'title',
+          'has a title that differs from the Spotify title.',
+          recording.title,
+          candidate.title,
+        ))) &&
+    (sameSpotifySearchArtists(recording.artists, candidate.artists) ||
+      (audit !== undefined &&
+        addMatchingReason(
+          audit,
+          'artist-credit',
+          'has different artist billing from the Spotify result.',
+          evidenceList(recording.artists),
+          evidenceList(candidate.artists),
+        ))) &&
     recording.position_titles.every(
-      (title) => candidateTitle === titleKey(title),
+      (title) =>
+        candidateTitle === titleKey(title) ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            'position-title',
+            'has an album position title that differs from the Spotify title.',
+            title,
+            candidate.title,
+          )),
     ) &&
-    spotifySearchReleaseIdsAgree(recording, candidate) &&
-    albums.every((name) => sameName(candidate.albumName, name))
+    spotifySearchReleaseIdsAgree(recording, candidate, audit) &&
+    spotifySearchReleaseNamesAgree(recording, candidate, sameName, audit)
   )
 }
 
@@ -282,6 +392,14 @@ export function spotifySearchMatchesSource(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
 ) {
+  return checkSpotifySearchSource(recording, candidate)
+}
+
+function checkSpotifySearchSource(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+  audit?: RecordingAudit,
+) {
   const candidateTitle = sourceTitleKey(candidate.title)
   const labelledTitles = new Set(
     [
@@ -296,30 +414,100 @@ export function spotifySearchMatchesSource(
     recording.standalone_lastfm &&
     !recording.position_titles.length &&
     labelledTitles.size <= 1
-  const nameMatches = (title: string, artists: string[]) => {
+  const nameMatches = (
+    title: string,
+    artists: string[],
+    from: '' | 'position-' | 'scrobble-',
+  ) => {
     const credit = titleCredit(title)
     const titleKey = plainKey(credit.title)
     return (
       (titleKey === candidateTitle ||
         (allowUnlabelled &&
-          sameVersionOrUnlabelled(titleKey, candidateTitle))) &&
-      spotifySearchSourceBillingMatches(artists, candidate, credit.guest)
+          sameVersionOrUnlabelled(titleKey, candidateTitle)) ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            from + 'title',
+            from === 'position-'
+              ? 'has an album position title that differs from the Spotify title.'
+              : from === 'scrobble-'
+                ? 'has a scrobbled title that differs from the Spotify title.'
+                : 'has a title that differs from the Spotify title.',
+            title,
+            candidate.title,
+          ))) &&
+      (spotifySearchSourceBillingMatches(artists, candidate, credit.guest) ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            from + 'artist-credit',
+            from === 'position-'
+              ? 'has artist billing at an album position that differs from the Spotify result.'
+              : from === 'scrobble-'
+                ? 'has a scrobbled artist credit that differs from the Spotify result.'
+                : 'has different artist billing from the Spotify result.',
+            billingEvidence(artists, credit.guest),
+            billingEvidence(
+              candidate.artists,
+              titleCredit(candidate.title).guest,
+            ),
+          )))
     )
   }
   return (
-    !recording.has_manual_overrides &&
-    spotifySearchReleaseIdsAgree(recording, candidate) &&
+    (!recording.has_manual_overrides ||
+      (audit !== undefined &&
+        addMatchingReason(
+          audit,
+          'manual-override',
+          'has a manual override that prevents an automatic match.',
+          'Manual override',
+          candidate.title,
+        ))) &&
+    spotifySearchReleaseIdsAgree(recording, candidate, audit) &&
     (recording.standalone_lastfm ||
-      albumNames(recording).every((album) =>
-        sameSourceName(candidate.albumName, album),
+      spotifySearchReleaseNamesAgree(
+        recording,
+        candidate,
+        sameSourceName,
+        audit,
       )) &&
-    [recording.title, ...recording.position_titles].every((title) =>
-      nameMatches(title, recording.artists),
+    nameMatches(recording.title, recording.artists, '') &&
+    recording.position_titles.every((title) =>
+      nameMatches(title, recording.artists, 'position-'),
     ) &&
-    spotifySearchConsistentMetadata(recording, candidate, plainKey, 1) &&
+    spotifySearchConsistentMetadata(recording, candidate, plainKey, 1, audit) &&
     recording.scrobbles.every(
-      ({ title, artist, manual }) => !manual && nameMatches(title, [artist]),
+      ({ title, artist, manual }) =>
+        scrobbledNameCanMatch(candidate, title, artist, manual, audit) &&
+        nameMatches(title, [artist], 'scrobble-'),
     )
+  )
+}
+
+function billingEvidence(artists: string[], featured: string | undefined) {
+  const credits = evidenceList(artists)
+  return featured ? credits + ' · Featuring ' + featured : credits
+}
+
+function scrobbledNameCanMatch(
+  candidate: SpotifyTrackSearchCandidate,
+  title: string,
+  artist: string,
+  manual: boolean,
+  audit?: RecordingAudit,
+) {
+  return (
+    !manual ||
+    (audit !== undefined &&
+      addMatchingReason(
+        audit,
+        'manual-scrobble',
+        'has a scrobbled name with a manual match decision.',
+        title + ' · ' + artist,
+        candidate.title + ' · ' + evidenceList(candidate.artists),
+      ))
   )
 }
 
@@ -342,25 +530,76 @@ export function spotifySearchHasAlternateVersion(
   chosen: SpotifyTrackSearchCandidate,
   candidates: SpotifyTrackSearchCandidate[],
 ) {
+  return checkSpotifySearchAlternateVersion(recording, chosen, candidates)
+}
+
+function checkSpotifySearchAlternateVersion(
+  recording: RecordingEvidence,
+  chosen: SpotifyTrackSearchCandidate,
+  candidates: SpotifyTrackSearchCandidate[],
+  audit?: RecordingAudit,
+) {
   const matchedAlbum = chosen.albumName
   if (!recording.standalone_lastfm) return false
   const albums = albumNames(recording).filter(
     (album) => !sameSourceName(matchedAlbum, album),
   )
-  return (
-    hasUnmatchedVersionAlbum(albums, matchedAlbum ?? '') ||
-    candidates.some(
-      (candidate) =>
-        albums.some((album) => sameSourceName(candidate.albumName, album)) &&
-        spotifySearchSourceBillingMatches(recording.artists, candidate) &&
-        haveDifferentVersions(candidate.title, recording.title),
-    )
+  if (hasUnmatchedVersionAlbum(albums, matchedAlbum ?? '')) {
+    if (audit) {
+      const versionAlbum = albums.find((album) =>
+        hasUnmatchedVersionAlbum([album], matchedAlbum ?? ''),
+      )
+      addMatchingReason(
+        audit,
+        'alternate-version',
+        'has another scrobbled release whose name indicates a different version.',
+        versionAlbum ?? '',
+        matchedAlbum ?? '',
+      )
+    }
+    return true
+  }
+  const alternate = candidates.find(
+    (candidate) =>
+      albums.some((album) => sameSourceName(candidate.albumName, album)) &&
+      spotifySearchSourceBillingMatches(recording.artists, candidate) &&
+      haveDifferentVersions(candidate.title, recording.title),
   )
+  if (alternate && audit) {
+    const observedAlbum = albums.find((album) =>
+      sameSourceName(alternate.albumName, album),
+    )
+    addMatchingReason(
+      audit,
+      'alternate-version',
+      'has a scrobbled release that matches another Spotify result for a different version.',
+      observedAlbum ?? '',
+      alternate.title + ' · ' + (alternate.albumName ?? ''),
+    )
+  }
+  return alternate !== undefined
+}
+
+/** Explain both gates that compare a saved Spotify result with the searched track. */
+export function spotifySearchSourceReasons(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+  candidates: SpotifyTrackSearchCandidate[],
+) {
+  const audit: RecordingAudit = { side: 'source', reasons: [] }
+  checkSpotifySearchSource(recording, candidate, audit)
+  checkSpotifySearchAlternateVersion(recording, candidate, candidates, audit)
+  return audit.reasons
 }
 
 const normalizedIsrc = (value: string) =>
   value.trim().toUpperCase().replaceAll('-', '')
 const isrcPattern = /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/
+
+function displayIsrc(value: string | null) {
+  if (!value) return ''
+  return isrcPattern.test(normalizedIsrc(value)) ? value : 'Unrecognised ISRC'
+}
 
 /** Check the retained library recording's own evidence during an explicit match. */
 export function spotifySearchTargetConflicts(
@@ -375,10 +614,7 @@ export function spotifySearchTargetConflicts(
   )
     return true
 
-  const urlId =
-    /^(?:https:\/\/open\.spotify\.com\/track\/|spotify:track:)([A-Za-z0-9]{22})(?:[/?#]|$)/.exec(
-      recording.spotify_url ?? '',
-    )?.[1]
+  const urlId = spotifyTrackIdFromLink(recording.spotify_url)
   if (
     [...recording.track_ids, urlId].some(
       (id) =>
@@ -437,25 +673,97 @@ function spotifySearchConsistentMetadata(
   candidate: SpotifyTrackSearchCandidate,
   artistKey: (name: string) => string,
   maximumDurationDifference: number,
+  audit?: RecordingAudit,
 ) {
   const durationTolerance =
     candidate.durationSec > 0 ? maximumDurationDifference : 0
   return (
     (!recording.spotify_url ||
-      recording.spotify_url === candidate.spotifyUrl) &&
+      recording.spotify_url === candidate.spotifyUrl ||
+      (audit !== undefined &&
+        addMatchingReason(
+          audit,
+          'spotify-track-link',
+          'has a stored Spotify link that differs from the result’s link.',
+          displaySpotifyTrackLink(
+            recording.spotify_url,
+            candidate.spotifyTrackId,
+          ),
+          candidate.spotifyTrackId,
+        ))) &&
     (!recording.isrc ||
       (candidate.isrc !== null &&
-        normalizedIsrc(recording.isrc) === normalizedIsrc(candidate.isrc))) &&
-    recording.artist_credits.every(({ id, name }) =>
-      candidate.artistCredits.some(
-        (credit) =>
-          credit.id === id && artistKey(credit.name) === artistKey(name),
-      ),
+        normalizedIsrc(recording.isrc) === normalizedIsrc(candidate.isrc)) ||
+      (audit !== undefined &&
+        addMatchingReason(
+          audit,
+          'isrc',
+          'has a stored recording code that the Spotify result does not share.',
+          displayIsrc(recording.isrc),
+          displayIsrc(candidate.isrc),
+        ))) &&
+    recording.artist_credits.every(
+      ({ id, name }) =>
+        candidate.artistCredits.some(
+          (credit) =>
+            credit.id === id && artistKey(credit.name) === artistKey(name),
+        ) ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            'spotify-artist-id',
+            'has a Spotify artist credit whose name and ID do not both appear in the result.',
+            displaySpotifyArtistCredit({ id, name }),
+            candidateArtistCreditEvidence(candidate, artistKey, name),
+          )),
     ) &&
     recording.durations.every(
       (duration) =>
-        Math.abs(duration - candidate.durationSec) <= durationTolerance,
+        Math.abs(duration - candidate.durationSec) <= durationTolerance ||
+        (audit !== undefined &&
+          addMatchingReason(
+            audit,
+            'duration',
+            candidate.durationSec === 0
+              ? 'has a stored duration and the Spotify result has no duration.'
+              : durationTolerance > 0
+                ? 'has a stored duration that differs by more than one second.'
+                : 'has a stored duration that differs from the Spotify duration.',
+            duration + ' seconds',
+            candidate.durationSec > 0 ? candidate.durationSec + ' seconds' : '',
+          )),
     )
+  )
+}
+
+function displaySpotifyTrackLink(link: string, candidateId: string) {
+  const id = spotifyTrackIdFromLink(link)
+  if (!id) return 'Unrecognised Spotify link'
+  return id === candidateId ? id + ' in a different link format' : id
+}
+
+function displaySpotifyArtistCredit({
+  name,
+  id,
+}: {
+  name: string
+  id: string
+}) {
+  return name + ' (' + displaySpotifyId(id) + ')'
+}
+
+function candidateArtistCreditEvidence(
+  candidate: SpotifyTrackSearchCandidate,
+  artistKey: (name: string) => string,
+  name: string,
+) {
+  const sameNameCredits = candidate.artistCredits.filter(
+    (credit) => artistKey(credit.name) === artistKey(name),
+  )
+  return evidenceList(
+    (sameNameCredits.length ? sameNameCredits : candidate.artistCredits).map(
+      displaySpotifyArtistCredit,
+    ),
   )
 }
 
@@ -465,6 +773,7 @@ function spotifySearchConsistentRecording(
   {
     allowTargetDurationRounding = false,
   }: { allowTargetDurationRounding?: boolean } = {},
+  audit?: RecordingAudit,
 ) {
   return (
     spotifySearchConsistentMetadata(
@@ -472,12 +781,29 @@ function spotifySearchConsistentRecording(
       candidate,
       albumNameKey,
       allowTargetDurationRounding ? 1 : 0,
+      audit,
     ) &&
     recording.scrobbles.every(
       ({ title, artist, manual }) =>
-        !manual &&
-        sameName(candidate.title, title) &&
-        sameName(candidate.artists.join(', '), artist),
+        scrobbledNameCanMatch(candidate, title, artist, manual, audit) &&
+        (sameName(candidate.title, title) ||
+          (audit !== undefined &&
+            addMatchingReason(
+              audit,
+              'scrobble-title',
+              'has a scrobbled title that differs from the Spotify title.',
+              title,
+              candidate.title,
+            ))) &&
+        (sameName(candidate.artists.join(', '), artist) ||
+          (audit !== undefined &&
+            addMatchingReason(
+              audit,
+              'scrobble-artist-credit',
+              'has a scrobbled artist credit that differs from the Spotify result.',
+              artist,
+              evidenceList(candidate.artists),
+            ))),
     )
   )
 }
@@ -487,17 +813,45 @@ export function spotifySearchMatchesDestination(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
 ) {
+  return checkSpotifySearchDestination(recording, candidate)
+}
+
+function checkSpotifySearchDestination(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+  audit?: RecordingAudit,
+) {
   const allowTolerance =
     recording.spotify_track_id === candidate.spotifyTrackId &&
     !recording.has_manual_overrides
   return (
-    spotifySearchExactRelease(recording, candidate, {
-      allowTargetTitleDiacritics: allowTolerance,
-    }) &&
-    spotifySearchConsistentRecording(recording, candidate, {
-      allowTargetDurationRounding: allowTolerance,
-    })
+    spotifySearchExactRelease(
+      recording,
+      candidate,
+      {
+        allowTargetTitleDiacritics: allowTolerance,
+      },
+      audit,
+    ) &&
+    spotifySearchConsistentRecording(
+      recording,
+      candidate,
+      {
+        allowTargetDurationRounding: allowTolerance,
+      },
+      audit,
+    )
   )
+}
+
+/** Explain the ordinary automatic match gate for a distinct retained track. */
+export function spotifySearchDestinationReasons(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const audit: RecordingAudit = { side: 'destination', reasons: [] }
+  checkSpotifySearchDestination(recording, candidate, audit)
+  return audit.reasons
 }
 
 /** Prove that an existing track's generic billing came from its one exact Spotify release. */
