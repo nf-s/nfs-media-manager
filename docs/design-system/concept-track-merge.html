@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merge duplicate tracks · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <style>
+      .g-main {
+        display: grid;
+        grid-template-columns: repeat(
+          auto-fit,
+          minmax(min(100%, calc(var(--ds-rail) * 2)), 1fr)
+        );
+        align-content: start;
+        align-items: start;
+        gap: var(--ds-8);
+      }
+      .g-head {
+        grid-column: 1 / -1;
+      }
+      .g-sec {
+        margin: 0;
+        min-width: 0;
+      }
+      .g-sec > p {
+        margin-bottom: var(--ds-5);
+      }
+      .preview-body {
+        padding: var(--ds-6);
+      }
+      .preview-body .ds-actions {
+        flex-wrap: wrap;
+      }
+      .preview-body .ds-notice {
+        margin-bottom: var(--ds-5);
+      }
+      .preview-body .ds-search {
+        width: 100%;
+      }
+      .preview-body .ds-table-wrap {
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-track-merge.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const duplicate = {
+        kind: 'track',
+        art: null,
+        title: "Winter's Relay",
+        by: 'Mira Kestrel',
+        album: 'Harbour Lights',
+        source: 'Last.fm',
+        plays: 8,
+      }
+      const versions = [
+        {
+          kind: 'track',
+          seed: 7,
+          title: 'Winter’s Relay',
+          by: 'Mira Kestrel',
+          album: 'Harbour Lights',
+          source: 'Album track list',
+          plays: 24,
+          overlap: 8,
+        },
+        {
+          kind: 'track',
+          seed: 3,
+          title: 'Winter’s Relay',
+          by: 'Mira Kestrel',
+          album: 'Relay Singles',
+          source: 'Album track list',
+          plays: 5,
+          overlap: 0,
+        },
+      ]
+      const concepts = [
+        {
+          id: 'suggestion',
+          title: 'Review a suggestion',
+          note: 'Recommended when the album points to one likely track. You can still choose a different release.',
+        },
+        {
+          id: 'library',
+          title: 'Search first',
+          note: 'Compare releases before choosing. Each merge takes one extra selection.',
+        },
+      ]
+      D.page({
+        title: 'Merge duplicate tracks',
+        lede: 'Both previews open after selecting <b>Merge duplicate…</b> in Track Sources. Try either flow with the sample entries.',
+        sections: concepts.map(({ id, title, note }) => ({
+          id,
+          title,
+          body:
+            '<p>' +
+            note +
+            '</p>' +
+            D.g.spec('<div data-preview="' + id + '"></div>', { flush: true }),
+        })),
+      })
+
+      function button(action, label, options = {}) {
+        return (
+          '<span data-action="' +
+          action +
+          '">' +
+          D.btn(label, options) +
+          '</span>'
+        )
+      }
+      function identity(track, label, plays = track.plays, actions = '') {
+        return D.detailHead({
+          item: track,
+          size: 'sm',
+          kind: label,
+          by: track.by + ' · ' + track.album,
+          facts: [track.source, plays + ' scrobbles'],
+          actions,
+        })
+      }
+      const normalize = (text) =>
+        text.toLowerCase().replace(/[‘’]/g, "'").trim()
+      function searchResults(query) {
+        const rows = versions.flatMap((track, index) => {
+          if (
+            !normalize([track.title, track.by, track.album].join(' ')).includes(
+              normalize(query),
+            )
+          )
+            return []
+          return [
+            '<div class="ds-row">' +
+              D.thumb(track) +
+              '<div class="ds-row-main"><span class="ds-row-title">' +
+              track.title +
+              '</span><span class="ds-row-by">' +
+              track.by +
+              ' · ' +
+              track.album +
+              '</span></div>' +
+              button('pick-' + index, 'Choose', {
+                size: 'xs',
+                aria: 'Choose ' + track.title + ' on ' + track.album,
+              }) +
+              '</div>',
+          ]
+        })
+        return rows.length
+          ? '<div class="ds-list" data-compact>' + rows.join('') + '</div>'
+          : D.state('No matching tracks', 'Try a track, artist or album name.')
+      }
+      function recordedName(action) {
+        return D.section(
+          'Recorded by Last.fm',
+          '<div class="ds-table-wrap">' +
+            D.table(
+              [
+                { h: 'Recorded name', c: () => D.esc(duplicate.title) },
+                { h: 'Scrobbles', end: true, c: () => String(duplicate.plays) },
+                ...(action ? [{ h: '', end: true, c: () => action }] : []),
+              ],
+              [duplicate],
+            ) +
+            '</div>',
+        )
+      }
+      function mount(preview) {
+        const suggested = preview.dataset.preview === 'suggestion'
+        const initialStage = suggested ? 'review' : 'search'
+        let stage = initialStage
+        let mode = 'merge'
+        let selected = 0
+        function draw(moveFocus = false) {
+          const target = versions[selected]
+          const total = target.plays + duplicate.plays - target.overlap
+          const merge = mode === 'merge'
+          const task = merge ? 'Merge duplicate' : 'Change match'
+          let content
+          if (stage === 'sources') {
+            content =
+              identity(
+                duplicate,
+                'Track',
+                duplicate.plays,
+                button('start', 'Merge duplicate…'),
+              ) +
+              recordedName(
+                button('name', 'Change match', {
+                  size: 'xs',
+                  variant: 'ghost',
+                }),
+              )
+          } else if (stage === 'done') {
+            content =
+              identity(target, 'Track kept', total) +
+              D.section(
+                '',
+                D.notice(
+                  'The separate Last.fm entry was removed. Its recorded name now belongs to this track.',
+                  { icon: 'check' },
+                ),
+              ) +
+              recordedName('') +
+              button('reset', 'Restart preview', { variant: 'ghost' })
+          } else {
+            content = identity(
+              duplicate,
+              merge ? 'Duplicate entry' : 'Recorded name to move',
+            )
+            if (stage === 'search') {
+              content += D.section(
+                merge
+                  ? 'Choose the track to keep'
+                  : 'Choose the track for these plays',
+                '<label class="ds-search">' +
+                  D.icon('search') +
+                  '<input type="search" aria-label="Search library tracks" placeholder="Track, artist or album" value="' +
+                  D.esc(duplicate.title) +
+                  '"></label>' +
+                  '<div data-results>' +
+                  searchResults(duplicate.title) +
+                  '</div>',
+              )
+              content += button('cancel', 'Cancel', { variant: 'ghost' })
+            } else {
+              const effect =
+                target.overlap === duplicate.plays
+                  ? 'All ' +
+                    duplicate.plays +
+                    ' plays already count here. The total stays at <b>' +
+                    total +
+                    ' scrobbles</b>.'
+                  : 'Moving these ' +
+                    duplicate.plays +
+                    ' plays brings the total to <b>' +
+                    total +
+                    ' scrobbles</b>.'
+              content +=
+                D.section(
+                  '',
+                  identity(
+                    target,
+                    merge ? 'Track to keep' : 'Track for these plays',
+                    target.plays,
+                    button('search', 'Choose another track', {
+                      variant: 'link',
+                      size: 'xs',
+                    }),
+                  ),
+                ) +
+                D.section(
+                  '',
+                  D.notice(
+                    (merge
+                      ? 'The separate Last.fm entry will be removed. '
+                      : 'Moving its only recorded name removes the separate Last.fm entry. ') +
+                      effect,
+                  ) +
+                    '<div class="ds-actions">' +
+                    button(
+                      'confirm',
+                      merge ? 'Confirm merge' : 'Confirm match',
+                      { variant: 'primary' },
+                    ) +
+                    button('cancel', 'Cancel', { variant: 'ghost' }) +
+                    '</div>',
+                )
+            }
+          }
+          const inTask = stage === 'review' || stage === 'search'
+          preview.innerHTML =
+            '<div class="ds-inspector-bar"><div class="ds-crumbs">' +
+            (inTask
+              ? button('cancel', 'Track Sources', {
+                  variant: 'link',
+                  size: 'xs',
+                }) +
+                D.icon('chevR', { size: 'sm' }) +
+                '<b>' +
+                task +
+                '</b>'
+              : '<b>Track Sources</b>') +
+            '</div></div><div class="preview-body" tabindex="-1">' +
+            content +
+            '</div>'
+          if (moveFocus)
+            preview
+              .querySelector('.preview-body')
+              .focus({ preventScroll: true })
+        }
+        preview.addEventListener('click', (event) => {
+          const action = event.target
+            .closest('button')
+            ?.closest('[data-action]')?.dataset.action
+          if (!action) return
+          switch (action) {
+            case 'start':
+            case 'reset':
+              mode = 'merge'
+              selected = 0
+              stage = initialStage
+              break
+            case 'cancel':
+              stage = 'sources'
+              break
+            case 'name':
+              mode = 'name'
+              stage = 'search'
+              break
+            case 'search':
+              stage = 'search'
+              break
+            case 'confirm':
+              stage = 'done'
+              break
+            default:
+              const choice = versions.findIndex(
+                (_, index) => action === 'pick-' + index,
+              )
+              if (choice < 0) return
+              selected = choice
+              stage = 'review'
+          }
+          draw(true)
+        })
+        preview.addEventListener('input', (event) => {
+          if (event.target.matches('input[type="search"]')) {
+            preview.querySelector('[data-results]').innerHTML = searchResults(
+              event.target.value,
+            )
+          }
+        })
+        draw()
+      }
+      document.querySelectorAll('[data-preview]').forEach(mount)
+    </script>
+  </body>
+</html>
