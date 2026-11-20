@@ -181,6 +181,7 @@ export default function PlaylistsWorkspace() {
     countError,
     retryCount,
   } = useCountedVirtualTable({
+    performanceScreen: 'playlists',
     queryKey: ['playlists', 'browse', q, sources, sortBy, direction],
     countKey: ['playlists', 'browse-count', q, sources],
     loadCount: (signal) =>

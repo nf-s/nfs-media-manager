@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  hashKey,
   QueryObserver,
   queryOptions,
   useQueries,
@@ -19,6 +20,10 @@ import {
 } from '@/utils/virtual-browse'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { isBrowseCounting } from '@/utils/browse-items'
+import {
+  useBrowsePerformance,
+  type BrowsePerformanceScreen,
+} from './useBrowsePerformance'
 
 const DefaultItemSchema = z.union([AlbumListItemSchema, FilmListItemSchema])
 
@@ -31,6 +36,7 @@ type VirtualBrowseOptions = {
   identity: string
   params: URLSearchParams
   enabled: boolean
+  performanceScreen?: BrowsePerformanceScreen
   columns: number
   rowHeight: number
   scrollTop: number
@@ -48,6 +54,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     identity,
     params,
     enabled,
+    performanceScreen,
     columns,
     rowHeight,
     scrollTop,
@@ -97,6 +104,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     pageSize: browsePageSize,
     loadPage,
     enabled,
+    performanceScreen,
     columns,
     rowHeight,
     scrollTop,
@@ -172,6 +180,7 @@ export type VirtualPageOptions<Page extends VirtualPageData> = {
   pageSize: number
   loadPage: (page: number, size: number, signal: AbortSignal) => Promise<Page>
   enabled?: boolean
+  performanceScreen?: BrowsePerformanceScreen
   viewportEnabled?: boolean
   totalCount?: number
   refetchInterval?: number | ((page: Page | undefined) => number | false)
@@ -183,6 +192,7 @@ export function useVirtualPages<Page extends VirtualPageData>({
   pageSize,
   loadPage,
   enabled = true,
+  performanceScreen,
   viewportEnabled = true,
   refetchInterval,
   extraRowHeights,
@@ -293,6 +303,23 @@ export function useVirtualPages<Page extends VirtualPageData>({
     const page = pages.get(Math.floor(index / pageSize) + 1)
     const items: Page['items'] | undefined = page?.data?.items
     return { index, item: items?.[index % pageSize] }
+  })
+  const visiblePage = Math.floor(window.firstVisibleIndex / pageSize) + 1
+  const visible = pages.get(visiblePage)
+  const visibleSlot = slots[window.firstVisibleIndex - window.start]
+  useBrowsePerformance(performanceScreen, {
+    identity: performanceScreen ? hashKey(queryKey) : '',
+    enabled,
+    page: visiblePage,
+    scrollTop,
+    outcome:
+      visibleSlot?.item !== undefined
+        ? 'rows'
+        : first.isError || visible?.isError
+          ? 'error'
+          : first.data && first.data.items.length === 0 && total === 0
+            ? 'empty'
+            : undefined,
   })
   const failures = [...pages.values()].filter((query) => query.isError)
   return {

@@ -62,6 +62,7 @@ export function browseWindow({
   return {
     start,
     end,
+    firstVisibleIndex: firstVisible * columns,
     pages,
     padTop: rowTop(startRow),
     padBottom: rowTop(rows) - rowTop(endRow),

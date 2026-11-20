@@ -434,6 +434,7 @@ function TrackBrowse({
     : undefined
   const queryClient = useQueryClient()
   const query = useVirtualBrowse({
+    performanceScreen: embedded ? undefined : 'tracks',
     apiBaseUrl,
     collection,
     identity: queryKey,

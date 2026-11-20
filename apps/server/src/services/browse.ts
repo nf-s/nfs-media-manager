@@ -539,8 +539,18 @@ function groupedTrackBrowse(
   const groupKey = sql`g.group_key`
   const groupConditions = (requested?: BrowseListening) =>
     and(...groupRanges, requested?.condition('recording', groupKey))
-  const groupJoins = (requested?: BrowseListening, members?: SQL) => {
+  const groupJoins = (
+    requested?: BrowseListening,
+    members?: SQL,
+    bounded?: SQL,
+  ) => {
     const source = requested?.source('recording', members)
+    const unbounded = bounded && requested?.source('recording')
+    if (source && unbounded)
+      return sql`left join (
+        select * from ${source} where ${bounded}
+        union all select * from ${unbounded} where not ${bounded}
+      ) listening_counts on listening_counts.id = ${groupKey}`
     return source
       ? sql`left join ${source} on listening_counts.id = ${groupKey}`
       : sql``
@@ -594,7 +604,7 @@ function groupedTrackBrowse(
     : sql``
   // Resolve release order only for rows that can reach the page. Keep every
   // tie at the boundary so page and position reads use the same total order.
-  function groupRows(bound: number) {
+  function groupRows(bound: number, listeningJoin = groupListening) {
     const columns = groupSort ? sql`` : sql`, ${sort} as primary_value`
     const sortJoins = groupSort
       ? sql``
@@ -602,7 +612,7 @@ function groupedTrackBrowse(
     return sql`from (
       select g.*, ${listeningValue}${columns}
       from recording_stats g
-      ${groupListening} ${sortJoins} ${groupPredicate}
+      ${listeningJoin} ${sortJoins} ${groupPredicate}
       order by ${primaryOrdering(groupSort ?? sort)}
       fetch first (${bound}) rows with ties
     ) g join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}`
@@ -695,9 +705,23 @@ function groupedTrackBrowse(
             : undefined
       if (stored) rows = RecordingGroupRowsSchema.parse(stored)
     }
+    // Count the linked names of selective first-page matches. Reuse the title
+    // lookup bound to keep name preaggregation for broad filters.
+    const pageListening =
+      offset === 0 &&
+      listeningSorted &&
+      !query.creatorId &&
+      versionId === undefined &&
+      (query.q || query.filters.some((chip) => chip.mode !== 'exclude'))
+        ? groupJoins(
+            listening,
+            sql`recording_members`,
+            sql`(select bounded from recording_title_scope)`,
+          )
+        : groupListening
     const page = sql`${grouped}
       select ${recordingGroupProjection}, g.listening_scrobbles
-      ${groupRows(offset + limit)}
+      ${groupRows(offset + limit, pageListening)}
       order by ${ordering(rowSort)} limit ${limit} offset ${offset}`
     rows ??= await recordingPageCache(
       checksumJson(dialect.sqlToQuery(page)),

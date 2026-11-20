@@ -420,6 +420,7 @@ function SubscriptionBrowse({
   }, [selectedId])
 
   const query = useVirtualBrowse({
+    performanceScreen: embedded || mixes ? undefined : 'subscriptions',
     apiBaseUrl,
     collection,
     endpoint: 'subscriptions',

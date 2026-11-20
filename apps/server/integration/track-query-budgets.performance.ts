@@ -251,14 +251,20 @@ it('bounds selective live and broad stored Track autocomplete', async () => {
   })
 })
 
-it('bounds a hydrated Track page and exact total with playlist, current artist tag and rolling listening filters', async () => {
+it('bounds hydrated Track pages and exact totals with playlist, current artist tag and rolling listening filters', async () => {
   const { queryBrowseCounts } = await import('@/services/browse')
   const { listTrackBrowsePage } = await import('@/services/tracks')
   // Keep these tables empty for the other workloads. Include a stale tag,
   // a tagged non-member and both expired and recent linked listening events.
+  // A second playlist isolates two releases of one recording and a tie at
+  // the grouped page boundary among a much larger unrelated listening history.
   await pool.query(`
     insert into playlist (id, kind, name) values
-      ('fixture-listening-playlist', 'playlist', 'Fixture listening playlist');
+      ('fixture-listening-playlist', 'playlist', 'Fixture listening playlist'),
+      ('fixture-recording-playlist', 'playlist', 'Fixture recording playlist');
+    insert into playlist_item (playlist_id, media_item_id)
+    select 'fixture-recording-playlist', id from media_item
+    where id in ('track-1', 'track-18001', 'track-19997', 'track-19999', 'track-19996');
     insert into playlist_item (playlist_id, media_item_id)
     select 'fixture-listening-playlist', 'track-' || n
     from generate_series(19900, 20000) n where n <> 19996;
@@ -276,6 +282,11 @@ it('bounds a hydrated Track page and exact total with playlist, current artist t
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
     select 'fixture-listener', 'fixture-artist', 'fixture-track-' || n, 'track-' || n, 'name'
     from generate_series(15001, 20000) n;
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    values ('fixture-listener', 'fixture-artist', 'fixture-track-1', 'track-1', 'normalized');
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    values ('fixture-event-1', 'fixture-listener', statement_timestamp() - interval '2 days',
+      'Fixture artist', 'Fixture track 1', 'fixture-artist', 'fixture-track-1');
     insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
     select 'fixture-event-' || n || '-' || event, 'fixture-listener',
       (case when n in (19997, 19999) or n < 19990 then statement_timestamp() - interval '2 days'
@@ -330,6 +341,41 @@ it('bounds a hydrated Track page and exact total with playlist, current artist t
     ])
     expect(page.hasMore).toBe(true)
   })
+  const period = { kind: 'rolling', amount: 1, unit: 'years' }
+  const grouped = TrackQuerySchema.parse({
+    groupRecordings: true,
+    filters: [
+      {
+        field: 'playlist',
+        value: 'Fixture recording playlist',
+        mode: 'required',
+      },
+    ],
+    listening: { match: 'all', rules: [{ period, min: 1 }] },
+    listeningSort: period,
+    sortBy: 'listeningScrobbles',
+    direction: 'desc',
+    size: 2,
+  })
+  await checkBudget(
+    'filtered grouped Track page sorted by period plays',
+    1_500,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage(grouped)
+      expect(
+        page.items.map(({ id, listeningScrobbles, recordingGroup }) => [
+          id,
+          listeningScrobbles,
+          recordingGroup?.versionCount,
+        ]),
+      ).toEqual([
+        ['track-1', 21, 2],
+        ['track-19997', 20, undefined],
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+  )
   await checkBudget('filtered exact Track totals', 1_500, 4, async () => {
     expect(await queryBrowseCounts('track', query)).toEqual({
       totalCount: 7,
@@ -517,5 +563,32 @@ it('bounds first Added page with an artist tag and unrelated Last.fm placeholder
       'track-20000',
     ])
     expect(page.hasMore).toBe(true)
+  })
+})
+
+it('bounds the Spotify alternate lookup for detail on a common track title', async () => {
+  const { getTrackDetail } = await import('@/services/tracks')
+  // These tracks share a title across many artists. An earlier playable
+  // release also shares the ISRC and one artist with the target.
+  await pool.query(`
+    update media_item set title = 'Fixture Intro'
+    where id in (select 'track-' || n from generate_series(1, 9000) n);
+    update media_item set title = ' Fixture   INTRO ' where id = 'track-18001';
+    update library_track set spotify_track_id = null where media_item_id = 'track-1';
+    update library_track set spotify_track_id = 'ZZZFixture000000000001',
+      album_media_item_id = 'album-2' where media_item_id = 'track-18001';
+    update library_track set spotify_track_id = 'ZZZFixture000000000002',
+      album_media_item_id = 'album-1',
+      isrc = (select isrc from library_track where media_item_id = 'track-1')
+      where media_item_id = 'track-1001';
+    insert into media_credit (media_item_id, artist_id, role, billing_order)
+    values ('track-1001', 'artist-2', 'artist', 1);
+  `)
+  await pool.query('vacuum analyze media_item')
+  await checkBudget('Track detail for a common title', 1_500, 4, async () => {
+    const detail = await getTrackDetail('track-1')
+    expect(detail?.spotifyTrackId).toBeNull()
+    expect(detail?.spotifyAlternate?.trackId).toBe('track-18001')
+    expect(detail?.spotifyAlternate?.identifier).toBe('ZZZFixture000000000001')
   })
 })

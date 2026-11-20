@@ -2,6 +2,7 @@
 
 import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
+import { useDetailPerformance } from '@/hooks/useDetailPerformance'
 import { useQuery } from '@tanstack/react-query'
 import { AudioLines, Disc3 } from 'lucide-react'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
@@ -345,6 +346,7 @@ export default function TrackDetailView({
         TrackDetailSchema,
       ),
   })
+  useDetailPerformance('tracks', id, detail)
   if (!detail.data)
     return (
       <CreatorDetailState

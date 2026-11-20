@@ -97,6 +97,7 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     countError,
     retryCount,
   } = useCountedVirtualTable({
+    performanceScreen: 'collections',
     viewportKey,
     queryKey: [...viewportKey, includeSources],
     countKey: [directoryKey, 'browse-count', q],

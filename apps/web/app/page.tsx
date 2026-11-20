@@ -1,8 +1,8 @@
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { getUserServerSession } from '@/utils/getUserServerSession'
+import { hasSessionToken } from '@/utils/session-cookie'
 
 export default async function HomePage() {
-  const { user } = await getUserServerSession()
-
-  redirect(user ? '/albums' : '/login')
+  // The destination's admin layout validates the session with the API.
+  redirect(hasSessionToken(await cookies()) ? '/albums' : '/login')
 }

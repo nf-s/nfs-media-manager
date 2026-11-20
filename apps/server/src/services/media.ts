@@ -583,39 +583,44 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     return null
   }
 
-  const addedDate = (await albumAddedDates([id])).get(id)
+  const metadata = { ...record.album.metadata, ...record.metadata }
+  // Keep the independent reads in small batches. Relationship resolution
+  // also starts its own reads, so run it separately from these batches.
+  const [addedDates, preferredTags, rejections] = await Promise.all([
+    albumAddedDates([id]),
+    rymTagIds([id]),
+    readAlbumMatchRejections(db, id),
+  ])
+  const [trackRows, artistTags, providerDetails] = await Promise.all([
+    loadTracks(record.album.tracks.map((entry) => entry.trackMediaItemId)),
+    loadArtistTags([id]),
+    getAlbumProviderDetails(id),
+  ])
+  const [collectionSources, trackPlaylists] = await Promise.all([
+    getCollectionSourceLinks(id, metadata, 'album'),
+    albumTrackPlaylistNames([id]),
+  ])
+  const relationshipSources = await listAlbumRelationshipSources(id)
+  const addedDate = addedDates.get(id)
   const common = withAlbumMetacriticMatch(
     buildCommonPayload(
       {
         ...record,
         mediaType: 'album',
-        metadata: { ...record.album.metadata, ...record.metadata },
+        metadata,
       },
-      (await rymTagIds([id])).get(id),
+      preferredTags.get(id),
     ),
-    await readAlbumMatchRejections(db, id),
+    rejections,
   )
-  const tracks = new Map(
-    (
-      await loadTracks(
-        record.album.tracks.map((entry) => entry.trackMediaItemId),
-      )
-    ).map((item) => [item.id, item]),
-  )
+  const tracks = new Map(trackRows.map((item) => [item.id, item]))
   const albumDetail: AlbumDetail = {
-    artistTags: (await loadArtistTags([id])).get(id) ?? [],
-    providerDetails: await getAlbumProviderDetails(id),
-    relationshipSources: await listAlbumRelationshipSources(id),
-    collectionSources: await getCollectionSourceLinks(
-      id,
-      { ...record.album.metadata, ...record.metadata },
-      'album',
-    ),
+    artistTags: artistTags.get(id) ?? [],
+    providerDetails,
+    relationshipSources,
+    collectionSources,
     ...common,
-    playlists: withTrackPlaylists(
-      common.playlists,
-      (await albumTrackPlaylistNames([id])).get(id),
-    ),
+    playlists: withTrackPlaylists(common.playlists, trackPlaylists.get(id)),
     mediaType: 'album',
     dateAdded: addedDate?.dateAdded ?? toIsoString(record.album.dateAdded),
     dateAddedSource: addedDate?.dateAddedSource,

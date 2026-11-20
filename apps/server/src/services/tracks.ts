@@ -319,14 +319,20 @@ async function getTrackListeningDetail(id: string) {
 }
 
 export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
-  const [item] = await loadTracks([id])
+  const [item] = await measureRequestPhase('trackDetailHydrate', () =>
+    loadTracks([id]),
+  )
   if (!item) return null
   const [listening, lastfmSources, spotifyAlternate] = await Promise.all([
-    getTrackListeningDetail(id),
-    getLastfmTrackNames(id),
+    measureRequestPhase('trackDetailListening', () =>
+      getTrackListeningDetail(id),
+    ),
+    measureRequestPhase('trackDetailNames', () => getLastfmTrackNames(id)),
     item.spotifyTrackId && spotifyIdPattern.test(item.spotifyTrackId)
       ? undefined
-      : getTrackSpotifyAlternate(id),
+      : measureRequestPhase('trackDetailAlternate', () =>
+          getTrackSpotifyAlternate(id),
+        ),
   ])
   return TrackDetailSchema.parse({
     ...item,

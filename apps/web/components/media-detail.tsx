@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Fragment, useState, type ReactNode } from 'react'
+import { useDetailPerformance } from '@/hooks/useDetailPerformance'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Disc3, Film } from 'lucide-react'
 import { z } from 'zod'
@@ -616,6 +617,7 @@ export default function MediaDetail({
         ))
       : EMPTY_VALUE
   }
+  useDetailPerformance(mediaType === 'album' ? 'albums' : undefined, id, detail)
   const subject = mediaType === 'album' ? 'album' : 'film'
   if (!detail.data)
     return (

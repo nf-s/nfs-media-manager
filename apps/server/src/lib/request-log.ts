@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from 'drizzle-orm/logger'
+import type { BrowserBrowseTiming } from '@repo/schemas/performance'
 import {
   SONOS_PAGE_HEADER,
   SONOS_REASON_HEADER,
@@ -24,6 +25,10 @@ type RequestPhase =
   | 'accessCheck'
   | 'ids'
   | 'hydrate'
+  | 'trackDetailHydrate'
+  | 'trackDetailListening'
+  | 'trackDetailNames'
+  | 'trackDetailAlternate'
   | 'count'
   | 'facets'
   | 'facetRead'
@@ -57,6 +62,7 @@ interface SonosDispatch {
 }
 
 type RequestEvent =
+  | ({ event: 'browser.browse' } & BrowserBrowseTiming)
   | { event: 'database.probe'; outcome: 'ok' | 'failed'; durationMs: number }
   | {
       event:

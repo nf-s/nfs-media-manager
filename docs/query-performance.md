@@ -22,6 +22,12 @@ CI runs the suite on PostgreSQL 17 and 18 for pushes, pull requests and the nigh
 
 ### Continuous production monitoring
 
+For browser latency, filter the API Worker's structured events to `browser.browse`. Group by `screen`, `action` and `outcome`. Report volume and visible-result duration for Tracks, Albums, Artists, Films, Playlists, Collections and Subscriptions. Track, Album and Artist detail openings also report a `detail` action. Look at errors separately. The browser sends fixed categories and elapsed milliseconds only. Make the same foreground measurement part of the acceptance check for a new Browse or detail screen.
+
+The `document` action starts at document navigation when the browser can verify it stayed visible. An in-app `open` or `detail` starts when the screen first commits. A `change` starts when the new query is committed, and `page` starts when scrolling exposes an unloaded leading page. Each ends after a paint opportunity for the rows, empty state or terminal error. Hidden and superseded interactions are discarded. Monitor cold document opens separately from in-app opens. Count abandoned interactions, time spent typing and delays before an in-app screen mounts as gaps in this measurement. Investigate foreground samples over five seconds even at low volume. Compare daily medians and p95 by action and screen alongside the corresponding server route.
+
+For slow Track details, compare the `trackDetailHydrate`, `trackDetailListening`, `trackDetailNames` and `trackDetailAlternate` phases on `api.request`. The latter three can overlap. The alternate lookup runs only when the track needs a playable sibling. For Album details, independent reads run in bounded batches to reduce round trips.
+
 The API emits one `api.request` access event per completed handler invocation. In Workers Query Builder, select the API Worker and filter by this event. Group by the registered `route` and `method`. For successful interactive reads, show count, median, p95 and maximum of `durationMs`. Count server errors in a separate series covering all statuses. Get the traffic count before adding optional phase fields. Query each applicable phase separately so missing fields do not exclude requests from the denominator. Start with the following alert thresholds and recalibrate from measured traffic when usage or capacity changes. [Cloudflare Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/)
 
 | Interactive read     | Starting p95 threshold |

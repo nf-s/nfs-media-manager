@@ -22,6 +22,7 @@ import {
 import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { createStableId } from '@/lib/media-utils'
+import { logApiRequest, requestQueryLogger } from '@/lib/request-log'
 import * as schema from '@/schemas/db'
 
 const database = `lastfm_tracks_${randomUUID().replaceAll('-', '')}`
@@ -33,7 +34,7 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const databaseClient = drizzle(pool, { schema, logger: requestQueryLogger })
 const request = vi.fn<typeof fetch>()
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -299,6 +300,57 @@ afterAll(async () => {
 })
 
 describe('Last.fm tracks library', () => {
+  it('attributes Track detail statements and skips unnecessary phases', async () => {
+    const id = 'track-detail-timing'
+    await spotifyTrack(id, 'Timing fixture')
+    const read = (trackId: string) =>
+      logApiRequest(new Request('http://localhost'), async () => {
+        const detail = await getTrackDetail(trackId)
+        return new Response(null, { status: detail ? 200 : 404 })
+      })
+    const logs = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const expectedPhase = {
+      drizzleStatementCount: 1,
+      durationMs: expect.any(Number),
+    }
+    try {
+      await read(id)
+      await databaseClient
+        .update(schema.libraryTrack)
+        .set({ spotifyTrackId: null })
+        .where(eq(schema.libraryTrack.mediaItemId, id))
+      await read(id)
+      await read('fixture-missing')
+      const records = logs.mock.calls.map(([line]) =>
+        typeof line === 'string' ? JSON.parse(line) : line,
+      )
+      const phases = {
+        trackDetailHydrate: expectedPhase,
+        trackDetailListening: expectedPhase,
+        trackDetailNames: expectedPhase,
+      }
+      expect(records).toMatchObject([
+        { status: 200, drizzleStatementCount: 3, phases },
+        {
+          status: 200,
+          drizzleStatementCount: 4,
+          phases: { ...phases, trackDetailAlternate: expectedPhase },
+        },
+        {
+          status: 404,
+          drizzleStatementCount: 1,
+          phases: { trackDetailHydrate: expectedPhase },
+        },
+      ])
+      expect(records[0]?.phases).not.toHaveProperty('trackDetailAlternate')
+      expect(Object.keys(records[2]?.phases ?? {})).toEqual([
+        'trackDetailHydrate',
+      ])
+    } finally {
+      logs.mockRestore()
+    }
+  })
+
   it('keeps an albumless scrobble as a playable catalog recording, then reuses it on a later release', async () => {
     await scrobble('02 - Test Recording')
     await scrobble('02 - Test Recording', { at: LAST_LISTEN })

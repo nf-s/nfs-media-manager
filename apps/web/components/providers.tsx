@@ -7,7 +7,9 @@ import {
   QueryClient,
   QueryClientProvider,
 } from '@tanstack/react-query'
-import { createContext, useContext } from 'react'
+import { usePathname } from 'next/navigation'
+import { createContext, useContext, useLayoutEffect } from 'react'
+import { observeDocumentBrowsePath } from '@/hooks/useBrowsePerformance'
 import { clientQueryDefaults } from '@/utils/query-cache'
 
 type ServerErrorLike = {
@@ -113,10 +115,19 @@ interface Props {
   apiBaseUrl: string
 }
 
+function BrowseDocumentTiming() {
+  const pathname = usePathname()
+  useLayoutEffect(() => {
+    if (pathname) observeDocumentBrowsePath()
+  }, [pathname])
+  return null
+}
+
 const Providers: React.FC<Props> = ({ children, appUrl, apiBaseUrl }) => {
   return (
     <ConfigContext.Provider value={{ appUrl, apiBaseUrl }}>
       <QueryClientProvider client={queryClient}>
+        <BrowseDocumentTiming />
         {children}
         <Toaster />
       </QueryClientProvider>

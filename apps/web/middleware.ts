@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { env } from '@/env'
+import { hasSessionToken } from '@/utils/session-cookie'
 
 const privateHeaders = {
   'Cache-Control': 'private, no-store',
@@ -36,11 +37,7 @@ export async function middleware(request: NextRequest) {
       headers: privateHeaders,
     })
   }
-  const sessionToken =
-    request.cookies.get('better-auth.session_token') ??
-    request.cookies.get('__Secure-better-auth.session_token')
-
-  if (!sessionToken && isProtectedRoute(pathname)) {
+  if (isProtectedRoute(pathname) && !hasSessionToken(request.cookies)) {
     return NextResponse.redirect(
       new URL('/login', env.INTERNAL_FRONTEND_URL ?? env.APP_URL),
       { headers: privateHeaders },

@@ -700,6 +700,11 @@ function MediaBrowse({
   if (requestedListeningPeriod)
     params.set('listeningSort', JSON.stringify(requestedListeningPeriod))
   const query = useVirtualBrowse({
+    performanceScreen: embedded
+      ? undefined
+      : mediaType === 'album'
+        ? 'albums'
+        : 'films',
     apiBaseUrl,
     collection,
     identity: queryKey,

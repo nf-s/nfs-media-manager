@@ -1,0 +1,66 @@
+import { describe, expect, it, vi } from 'vitest'
+
+const { getSession, writeRequestLog } = vi.hoisted(() => ({
+  getSession: vi.fn(),
+  writeRequestLog: vi.fn(),
+}))
+
+vi.mock('@/lib/auth', () => ({ auth: { api: { getSession } } }))
+vi.mock('@/lib/db', () => ({ db: {} }))
+vi.mock('@/env', () => ({
+  env: { NODE_ENV: 'test', TRUSTED_ORIGINS: ['https://example.test'] },
+}))
+vi.mock('@/lib/request-log', async (load) => ({
+  ...(await load<typeof import('@/lib/request-log')>()),
+  writeRequestLog,
+}))
+
+const report = {
+  screen: 'albums',
+  action: 'open',
+  outcome: 'rows',
+  durationMs: 120,
+}
+
+async function submit(body: unknown, origin = 'https://example.test') {
+  const { default: app } = await import('@/app')
+  return app.request('/api/v1/performance/browse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: origin },
+    body: JSON.stringify(body),
+  })
+}
+
+describe('browser Browse timings', () => {
+  it('accepts only bounded telemetry from an owner browser session', async () => {
+    getSession.mockResolvedValue(null)
+    expect((await submit(report)).status).toBe(401)
+    getSession.mockResolvedValue({
+      user: {
+        id: 'example-owner',
+        email: 'owner@example.test',
+        name: 'Example',
+      },
+      session: { id: 'example-session', userId: 'example-owner' },
+    })
+    expect((await submit(report, 'https://other.example')).status).toBe(403)
+    for (const body of [
+      { ...report, screen: '/albums/example' },
+      { ...report, path: '/albums/example' },
+      { ...report, durationMs: -1 },
+      { ...report, durationMs: 300_001 },
+    ])
+      expect((await submit(body)).status).toBe(422)
+    expect((await submit({ ...report, path: 'x'.repeat(1024) })).status).toBe(
+      413,
+    )
+    expect(writeRequestLog).not.toHaveBeenCalled()
+    const response = await submit(report)
+    expect(response.status).toBe(204)
+    expect(await response.text()).toBe('')
+    expect(writeRequestLog).toHaveBeenCalledExactlyOnceWith({
+      event: 'browser.browse',
+      ...report,
+    })
+  })
+})

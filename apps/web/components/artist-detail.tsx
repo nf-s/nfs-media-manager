@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { useDetailPerformance } from '@/hooks/useDetailPerformance'
 import { useQuery } from '@tanstack/react-query'
 import type { z } from 'zod'
 import { Disc3, UserRound } from 'lucide-react'
@@ -544,6 +545,7 @@ export function ArtistDetail({ id }: { id: string }) {
         { signal },
       ),
   })
+  useDetailPerformance('artists', id, query)
   if (!query.data)
     return (
       <CreatorDetailState

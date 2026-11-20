@@ -35,10 +35,16 @@ const knownDuration = sql`case when lt.duration_sec > 0 then lt.duration_sec end
 const visibleTrack = sql`mi.media_type = 'track'
   and mi.metadata->>'legacyHidden' is distinct from 'true'`
 
-function recordingTracksWithTitles(titles: SQL) {
+function recordingTracksWithTitles(titles: SQL, creatorId?: SQL) {
   const title = exactName(sql`mi.title`)
   return sql`select mi.id, ${title} as title_key from media_item mi
-    where ${visibleTrack} and ${title} = any(array(${titles}))`
+    where ${visibleTrack} and ${title} = any(array(${titles}))
+    ${
+      creatorId
+        ? sql`and mi.id in (select media_item_id from media_credit
+          where artist_id = (${creatorId}) and role = 'artist')`
+        : sql``
+    }`
 }
 
 function recordingVersionTracks(id: string) {
@@ -134,17 +140,27 @@ export function recordingMemberships(
     versionId?: string
     includePeerMembers?: boolean
     useTargetTitles?: boolean
+    targetArtist?: SQL
   } = {},
 ) {
-  const { creatorId, versionId, includePeerMembers, useTargetTitles } = options
+  const {
+    creatorId,
+    versionId,
+    includePeerMembers,
+    useTargetTitles,
+    targetArtist,
+  } = options
   const titledTracks =
     versionId !== undefined
       ? sql`recording_version_tracks`
       : useTargetTitles
-        ? sql`(${recordingTracksWithTitles(sql`
+        ? sql`(${recordingTracksWithTitles(
+            sql`
             select distinct ${exactName(sql`mi.title`)} as title_key
             from recording_matches target join media_item mi using (id)
-          `)})`
+          `,
+            targetArtist,
+          )})`
         : undefined
   const contenders = titledTracks
     ? sql`recording_contenders as (${recordingIdentities(titledTracks)})`
@@ -268,7 +284,11 @@ export function playableSpotifyId(id: SQL) {
 /** A playable sibling covers the recording while each release keeps its own identity. */
 export function spotifyAlternates(
   scope: SQL,
-  options: { creatorId?: string; useTargetTitles?: boolean } = {},
+  options: {
+    creatorId?: string
+    useTargetTitles?: boolean
+    targetArtist?: SQL
+  } = {},
 ) {
   const matches = sql`select target.id from (${scope}) target
     where not ${playableSpotifyId(sql`target.spotify_track_id`)} and (
@@ -309,7 +329,12 @@ export function trackSpotifyAlternate(id: string) {
   const target = sql`select mi.id, mi.source_label, lt.spotify_track_id
     from media_item mi join library_track lt on lt.media_item_id = mi.id
     where mi.id = ${id} and ${visibleTrack}`
-  return sql`with ${spotifyAlternates(target, { useTargetTitles: true })}
+  // Every sibling has the same complete artist credits. Use one to narrow
+  // common titles before validating all credits and recording evidence.
+  const targetArtist = sql`select artist_id from media_credit
+    where media_item_id = ${id} and role = 'artist'
+    order by billing_order, artist_id limit 1`
+  return sql`with ${spotifyAlternates(target, { useTargetTitles: true, targetArtist })}
     select ${spotifyAlternateValue} as alternate from spotify_alternates a`
 }
 

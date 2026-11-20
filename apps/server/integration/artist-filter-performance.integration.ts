@@ -292,14 +292,23 @@ it('counts artist listening periods in one grouped read of the scrobbles', async
   await pool.query(`
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
       select 'listener', 'fixture artist ' || ((n-1) % 5000 + 1), 'fixture track ' || n, 'track-' || n, 'exact'
-      from generate_series(1, 20000) n;
+      from generate_series(1, 20000) n
+  `)
+  // Seed in batches so a busy CI runner spends the statement budget on the
+  // queries under test rather than on one large fixture insert.
+  for (let start = 1; start <= 300_000; start += 50_000) {
+    await pool.query(
+      `
     insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key, album_media_item_id)
       select 'scrobble-' || n, 'listener', timestamp '2021-01-01' + n * interval '8 minutes',
         'Fixture artist', 'Fixture track', 'fixture artist ' || ((n % 20000) % 5000 + 1),
         'fixture track ' || (n % 20000 + 1),
         case when n % 3 = 0 then null else 'album-' || ((n % 20000) % 5000 + 1) end
-      from generate_series(1, 300000) n;
-  `)
+      from generate_series($1::int, $2::int) n
+    `,
+      [start, start + 49_999],
+    )
+  }
   for (const table of ['lastfm_track_link', 'lastfm_scrobble'])
     await pool.query('vacuum analyze ' + table)
   const { refreshArtistListeningTotals } =

@@ -24,7 +24,7 @@ corepack pnpm --filter @repo/server typecheck
 corepack pnpm --filter web typecheck
 corepack pnpm --filter @repo/schemas test:unit
 corepack pnpm --filter @repo/server test:unit
-apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/components/*.test.ts apps/web/components/*.test.tsx apps/web/utils/*.test.ts
+apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/components/*.test.ts apps/web/components/*.test.tsx apps/web/hooks/*.test.ts apps/web/utils/*.test.ts
 corepack pnpm --filter @repo/server test:integration
 ```
 

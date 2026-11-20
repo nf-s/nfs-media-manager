@@ -361,6 +361,7 @@ export default function ArtistBrowser() {
       : {}),
   })
   const query = useVirtualBrowse({
+    performanceScreen: 'artists',
     apiBaseUrl,
     collection,
     identity: queryKey,
