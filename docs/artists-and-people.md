@@ -60,4 +60,4 @@ Artist tags remain artist evidence. The app does not copy them into album or tra
 - Tracks apply the same rule using their linked library album's tags and their credited artists' tags.
 - The default Tags filter follows that display rule. Album tags and Artist tags are also available independently, so artist evidence can be queried even when an album has enough release tags.
 
-Artist-derived pills are identified as artist tags. Search can find artist tags independently of whether they are used in the default fallback display. Refreshing a profile changes these projections on the next read without rewriting media tags or their provenance.
+The sources icon on a tag opens the provider evidence for the artist, album or track being viewed. Where a provider derives an artist tag from releases, the source details can show how many distinct tagged releases support it. See [tag sources](tag-source-navigation.md). Search can find artist tags independently of whether they are used in the default fallback display. Refreshing a profile changes these projections on the next read without rewriting media tags or their provenance.

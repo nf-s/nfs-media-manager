@@ -144,8 +144,7 @@ function FilterPills({
   selected: readonly BrowseFilter[]
   /** Shows this many, then a button for the rest. */
   max?: number
-  /** The item whose sources each tag offers, from an icon inside its pill. */
-  sourcesFor?: string
+  sourcesFor?: Pick<AlbumDetail | FilmDetail, 'id' | 'mediaType'>
 }) {
   const [all, setAll] = useState(false)
   const shown = max === undefined || all ? values : values.slice(0, max)
@@ -167,10 +166,9 @@ function FilterPills({
             action={
               sourcesFor && (
                 <MetadataSourceControl
-                  field="genre"
+                  field={field}
                   name={value}
-                  mediaId={sourcesFor}
-                  inPill
+                  resource={{ kind: sourcesFor.mediaType, id: sourcesFor.id }}
                 />
               )
             }
@@ -655,8 +653,6 @@ export default function MediaDetail({
       field: string
       values: string[]
       max?: number
-      /** Tags saved on this item, which can show where they came from. */
-      sources?: boolean
     }[],
   ) => {
     const shown = sections.filter((section) => section.values.length > 0)
@@ -680,7 +676,7 @@ export default function MediaDetail({
           max={section.max}
           onFilter={filter}
           selected={selectedFilters}
-          sourcesFor={section.sources ? item.id : undefined}
+          sourcesFor={item}
         />
       </Section>
     ))
@@ -812,7 +808,6 @@ export default function MediaDetail({
               label: 'Album tags',
               field: 'genre',
               values: item.tags.map((tag) => tag.name),
-              sources: true,
             },
             { label: 'Artist tags', field: 'artistTag', values: artistTags },
           ])}
@@ -922,13 +917,12 @@ export default function MediaDetail({
         </div>
         <div className="dtl-side">
           {tagSection([
-            { label: 'Genres', field: 'genre', values: genres, sources: true },
+            { label: 'Genres', field: 'genre', values: genres },
             {
               label: 'Keywords',
               field: 'genre',
               values: keywords,
               max: 6,
-              sources: true,
             },
           ])}
           <DetailsSection mediaItemId={item.id} facts={facts} />

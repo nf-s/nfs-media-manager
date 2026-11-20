@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const listTags = vi.fn()
 const mergeTags = vi.fn()
 const getTagProvenance = vi.fn()
+const getItemTagProvenance = vi.fn()
 const getTagDetail = vi.fn()
 const setTagVisibility = vi.fn()
 const getTagHierarchy = vi.fn()
@@ -53,6 +54,7 @@ function mockAppSession(authenticated: boolean) {
     getTagDetail,
     setTagVisibility,
   }))
+  vi.doMock('@/services/item-tag-provenance', () => ({ getItemTagProvenance }))
   vi.doMock('@/services/tag-hierarchy', () => ({
     getTagHierarchy,
     setTagParents,
@@ -112,6 +114,14 @@ describe('tag administration API', () => {
     expect(listTags).not.toHaveBeenCalled()
     expect(mergeTags).not.toHaveBeenCalled()
     expect(getTagProvenance).not.toHaveBeenCalled()
+    expect(
+      (
+        await app.request(
+          '/api/v1/tags/item-provenance?resourceType=artist&resourceId=artist-1&name=Ambient',
+        )
+      ).status,
+    ).toBe(401)
+    expect(getItemTagProvenance).not.toHaveBeenCalled()
     expect(getTagDetail).not.toHaveBeenCalled()
     expect(setTagVisibility).not.toHaveBeenCalled()
   })
@@ -441,6 +451,46 @@ describe('tag administration API', () => {
         (await app.request(`/api/v1/tags/provenance?${query}`)).status,
       ).toBe(422)
     expect(getTagProvenance).not.toHaveBeenCalled()
+  })
+
+  it('validates and forwards paginated provenance for a displayed item tag', async () => {
+    mockAppSession(true)
+    const app = await loadApp()
+    const data = {
+      items: [],
+      totalCount: 0,
+      page: 2,
+      size: 25,
+      pageCount: 0,
+      originType: 'album',
+      reason: 'linked-album',
+      linkedAlbum: { id: 'album-1', title: 'Fixture album' },
+    }
+    getItemTagProvenance.mockResolvedValue(data)
+    const response = await app.request(
+      '/api/v1/tags/item-provenance?resourceType=track&resourceId=track-1&name=Ambient&page=2',
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data })
+    expect(getItemTagProvenance).toHaveBeenCalledWith({
+      resourceType: 'track',
+      resourceId: 'track-1',
+      name: 'Ambient',
+      page: 2,
+      size: 25,
+    })
+    getItemTagProvenance.mockClear()
+    for (const query of [
+      'resourceType=playlist&resourceId=fixture&name=Ambient',
+      'resourceType=album&name=Ambient',
+      'resourceId=fixture&name=Ambient',
+      'resourceType=film&resourceId=fixture&name=Ambient&size=101',
+    ]) {
+      expect(
+        (await app.request(`/api/v1/tags/item-provenance?${query}`)).status,
+      ).toBe(422)
+    }
+    expect(getItemTagProvenance).not.toHaveBeenCalled()
   })
 
   it('rejects empty, duplicate, self and oversized selections before calling the service', async () => {

@@ -3,7 +3,7 @@ import { CreatorIdSchema, PaginatedDataSchema } from './common'
 import { ProviderFreshnessFiltersSchema } from './film-selection'
 import { JobSchema } from './job'
 import { uniqueMusicTags } from './music-tags'
-import { SourceNavigationLinkSchema } from './tags'
+import { SourceNavigationLinkSchema, TagReleaseSupportSchema } from './tags'
 import { EntityRelationshipSchema } from './entity-relationships'
 
 export const ARTIST_ENRICHMENT_TASK = 'artist-enrichment'
@@ -63,6 +63,9 @@ export const ArtistProfileSchema = z.object({
   externalId: ProfileTextSchema.optional(),
   url: ProfileUrlSchema.optional(),
   tags: z.array(z.string()).transform(uniqueMusicTags).default([]),
+  tagReleaseSupport: z
+    .array(TagReleaseSupportSchema.safeExtend({ name: ProfileTextSchema }))
+    .optional(),
   relationships: z.array(EntityRelationshipSchema).max(100).optional(),
   similarArtists: z
     .array(

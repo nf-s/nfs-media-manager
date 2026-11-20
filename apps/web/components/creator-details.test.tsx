@@ -313,6 +313,10 @@ test('artist overview displays profile evidence and independent music filters wi
   assert.deepEqual(JSON.parse(tags.searchParams.get('filters') ?? '[]'), [
     { field: 'artistTag', value: 'Synth-pop', mode: 'required' },
   ])
+  assert.match(
+    html,
+    /<button type="button"[^>]*aria-label="Sources for Synth-Pop"[^>]*class="browse-pill-action"/,
+  )
 })
 
 test('copied artist album Grid preserves the parent detail and playback controls', async () => {

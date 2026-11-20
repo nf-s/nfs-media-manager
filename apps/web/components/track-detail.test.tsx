@@ -199,12 +199,14 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.deepEqual(pillHref(html, 'Synth-Pop'), [
     { field: 'artistTag', value: 'Synth-pop' },
   ])
-  // Album tags are saved on the library album, which can show their sources.
   assert.match(
     html,
     /<button type="button"[^>]*aria-label="Sources for Electronic"[^>]*class="browse-pill-action"/,
   )
-  assert.doesNotMatch(html, /Sources for Synth-Pop/)
+  assert.match(
+    html,
+    /<button type="button"[^>]*aria-label="Sources for Synth-Pop"[^>]*class="browse-pill-action"/,
+  )
   assert.match(html, /4:03/)
   assert.match(html, /aria-label="Play Synthetic track">.*Play<\/button>/)
   assert.match(

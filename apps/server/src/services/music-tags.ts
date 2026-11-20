@@ -65,11 +65,19 @@ export function mediaIdsWithArtistTag(name: string): SQL {
 const currentArtistProfiles = sql`select state.artist_id, state.latest_snapshot_id
   from artist_provider_current_state state`
 
-function profileTagRows(profiles: SQL): SQL {
+function profileTagRows(profiles: SQL, includeEvidence = false): SQL {
   return sql`select p.artist_id, provider_tag.name
+    ${
+      includeEvidence
+        ? sql`, provider_tag.position, s.id as snapshot_id, s.provider,
+            s.scrape_job_id, s.normalized_data->>'url' as url,
+            s.normalized_data->'tagReleaseSupport' as tag_release_support`
+        : sql``
+    }
     from (${profiles}) p
     join artist_provider_snapshot s on s.id = p.latest_snapshot_id
-    cross join lateral jsonb_array_elements_text(s.normalized_data->'tags') provider_tag(name)`
+    cross join lateral jsonb_array_elements_text(s.normalized_data->'tags')
+      ${includeEvidence ? sql`with ordinality provider_tag(name, position)` : sql`provider_tag(name)`}`
 }
 
 /** Read artist evidence once per provider profile and resolve aliases once per label. */
@@ -144,7 +152,7 @@ export function firstArtistTag(mediaId: SQL): SQL {
   return sql`(select min(a.name) from (${artistTagRows(mediaId)}) a)`
 }
 
-function releaseTagMemberships(albumId?: SQL): SQL {
+export function releaseTagMemberships(albumId?: SQL): SQL {
   const nameKey = normalizedTagSql(sql`t.name`)
   return sql`select mt.media_item_id, min(t.name) as name, ${nameKey} as name_key
     from media_item_tag mt join tag t on t.id = mt.tag_id
@@ -225,4 +233,80 @@ export async function loadArtistTags(
     ).rows,
   )
   return new Map(rows.map((row) => [row.id, row.tags]))
+}
+
+const ArtistTagEvidenceSchema = z.object({
+  artistId: z.string(),
+  artistName: z.string(),
+  provider: z.string(),
+  rawName: z.string(),
+  snapshotId: z.string(),
+  jobId: z.string().nullable(),
+  url: z.string().nullable(),
+  releaseSupport: z.unknown(),
+})
+
+export async function loadArtistTagEvidence(
+  scope: { artistId: string } | { mediaId: string },
+  name: string,
+  page: number,
+  size: number,
+) {
+  const directArtist = 'artistId' in scope
+  const profiles = directArtist
+    ? sql`${currentArtistProfiles} where state.artist_id = ${scope.artistId}`
+    : sql`${currentArtistProfiles}
+      join media_credit c on c.artist_id = state.artist_id and c.role = 'artist'
+      where c.media_item_id = ${scope.mediaId}`
+  const rawKey = sql`profile_label.key`
+  const displayKey = directArtist
+    ? rawKey
+    : normalizedTagSql(sql`coalesce(canonical.name, e.name)`)
+  const canonical = directArtist
+    ? sql``
+    : sql`left join lateral (
+        select min(name) as name, bool_or(hidden) as hidden
+        from (${canonicalTagRows('album', rawKey)}) matching
+      ) canonical on true`
+  const visible = directArtist
+    ? sql``
+    : sql`and not coalesce(canonical.hidden, false)`
+  const rows = await db.execute(sql`
+    with matches as materialized (
+      select distinct on (e.artist_id, e.snapshot_id, ${rawKey})
+        e.artist_id as "artistId", a.name as "artistName",
+        e.provider, e.name as "rawName", e.snapshot_id as "snapshotId",
+        e.scrape_job_id as "jobId", e.url, support.tag as "releaseSupport"
+      from (${profileTagRows(profiles, true)}) e
+      join artist a on a.id = e.artist_id
+      cross join lateral (select ${normalizedTagSql(sql`e.name`)} as key) profile_label
+      left join lateral (
+        select tag
+        from jsonb_array_elements(
+          case when jsonb_typeof(e.tag_release_support) = 'array'
+            then e.tag_release_support else '[]'::jsonb end
+        ) support(tag)
+        where ${normalizedTagSql(sql`tag->>'name'`)} = ${rawKey}
+        limit 1
+      ) support on true
+      ${canonical}
+      where ${displayKey} = ${name} ${visible}
+      order by e.artist_id, e.snapshot_id, ${rawKey}, e.position
+    )
+    select (select count(*)::int from matches) as "totalCount",
+      coalesce((select jsonb_agg(e) from (
+        select * from matches
+        order by provider, "artistName", "artistId", "rawName", "snapshotId"
+        limit ${size} offset ${(page - 1) * size}
+      ) e), '[]'::jsonb) as items
+  `)
+  const [evidence] = z
+    .tuple([
+      z.object({
+        totalCount: z.number().int().nonnegative(),
+        items: z.array(ArtistTagEvidenceSchema),
+      }),
+    ])
+    .parse(rows.rows)
+  return evidence
 }

@@ -71,6 +71,7 @@ import { EmbeddedTrackBrowser } from './track-browser'
 import { ListeningTrend } from './listening-trend'
 import { EmbeddedMediaBrowser } from './media-browser'
 import { MetadataCoverage } from './metadata-coverage'
+import MetadataSourceControl from './metadata-source-control'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
 
@@ -499,6 +500,13 @@ function ArtistOverview({
                 label={formatTagName(tag)}
                 href={artistTagBrowseHref(library, tag)}
                 title={`Filter ${library} by artist tag ${formatTagName(tag)}`}
+                action={
+                  <MetadataSourceControl
+                    field="artistTag"
+                    name={tag}
+                    resource={{ kind: 'artist', id: artist.id }}
+                  />
+                }
               />
             ))}
           </span>

@@ -9,48 +9,100 @@ import React, {
   type ReactNode,
 } from 'react'
 import { Layers3 } from 'lucide-react'
+import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
 import {
   formatTagName,
+  ItemTagProvenancePageSchema,
   TagProvenancePageSchema,
+  type ItemTagProvenancePage,
   type SourceNavigationLink,
+  type TagProvenancePage,
 } from '@repo/schemas/tags'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
+import { DetailLink } from './detail-link'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import styles from './metadata-source-control.module.css'
 import { VirtualTagSources } from './metadata-source-list'
 import TagDetailModal from './tag-detail-modal'
 
+type TagResource = { kind: 'artist' | 'track' | 'album' | 'film'; id: string }
+
+function tagSourceExplanation(
+  resource: TagResource,
+  page: ItemTagProvenancePage,
+) {
+  switch (page.reason) {
+    case 'linked-album':
+      return page.linkedAlbum ? (
+        <>
+          Inherited from the linked album{' '}
+          <DetailLink kind="album" id={page.linkedAlbum.id}>
+            {page.linkedAlbum.title}
+          </DetailLink>
+          .
+        </>
+      ) : (
+        'Inherited from this track’s linked album.'
+      )
+    case 'artist-fallback':
+      return `This ${resource.kind} has fewer than ${artistTagFallbackThreshold} album tags, so tags from credited artists are also shown.`
+    case 'direct':
+      return resource.kind === 'artist'
+        ? 'From this artist’s saved metadata.'
+        : `Saved on this ${resource.kind}.`
+  }
+}
+
 function TagSources({
-  mediaId,
   mediaType,
   name,
+  resource,
   tagId,
   onManage,
 }: {
-  mediaId?: string
   mediaType?: 'album' | 'film'
   name: string
+  resource?: TagResource
   tagId?: string
   onManage: (id: string, mediaType: 'album' | 'film') => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const query = useVirtualTable({
-    queryKey: ['tag-provenance', mediaType, mediaId, name],
+  const query = useVirtualTable<TagProvenancePage | ItemTagProvenancePage>({
+    queryKey: ['tag-provenance', mediaType, resource, name],
     pageSize: 25,
-    loadPage: (page, size, signal) =>
-      fetchApiData(
+    loadPage: (page, size, signal) => {
+      const params = new URLSearchParams({
+        name,
+        page: String(page),
+        size: String(size),
+      })
+      if (resource) {
+        params.set('resourceType', resource.kind)
+        params.set('resourceId', resource.id)
+        return fetchApiData(
+          apiBaseUrl,
+          `/api/v1/tags/item-provenance?${params}`,
+          ItemTagProvenancePageSchema,
+          { signal },
+        )
+      }
+      if (mediaType) params.set('mediaType', mediaType)
+      return fetchApiData(
         apiBaseUrl,
-        `/api/v1/tags/provenance?${new URLSearchParams({ ...(mediaId ? { mediaId } : {}), ...(mediaType ? { mediaType } : {}), name, page: String(page), size: String(size) })}`,
+        `/api/v1/tags/provenance?${params}`,
         TagProvenancePageSchema,
         { signal },
-      ),
+      )
+    },
   })
-  const canonicalId = tagId ?? query.firstPage?.tagId
-  const scope = query.firstPage?.mediaType ?? mediaType
+  const page = query.firstPage
+  const itemPage = page && 'reason' in page ? page : undefined
+  const canonicalId = tagId ?? page?.tagId
+  const scope = page?.mediaType ?? mediaType
   return (
     <>
       {query.isError && (
@@ -65,19 +117,26 @@ function TagSources({
           Could not load sources.
         </Notice>
       )}
-      <VirtualTagSources query={query} label="Source links" linksOnly />
-      <span>
-        <Button
-          size="xs"
-          variant="link"
-          disabled={!canonicalId || !scope}
-          onClick={() => {
-            if (canonicalId && scope) onManage(canonicalId, scope)
-          }}
-        >
-          Manage tag
-        </Button>
-      </span>
+      {resource && itemPage && (
+        <p className="ds-help">{tagSourceExplanation(resource, itemPage)}</p>
+      )}
+      <VirtualTagSources
+        query={query}
+        label={resource ? 'Tag sources' : 'Source links'}
+        linksOnly={!resource}
+        showArtist={itemPage?.reason === 'artist-fallback'}
+      />
+      {canonicalId && scope && (
+        <span>
+          <Button
+            size="xs"
+            variant="link"
+            onClick={() => onManage(canonicalId, scope)}
+          >
+            Manage tag
+          </Button>
+        </span>
+      )}
     </>
   )
 }
@@ -167,7 +226,10 @@ function SourcePopover({
         onDoubleClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           event.stopPropagation()
-          if (event.key === 'Escape') {
+          if (
+            event.key === 'Escape' &&
+            !event.currentTarget.querySelector(':popover-open')
+          ) {
             event.preventDefault()
             panel.current?.hidePopover()
             trigger.current?.focus()
@@ -205,22 +267,19 @@ function SourcePopover({
 export default function MetadataSourceControl({
   field,
   name,
-  mediaId,
   mediaType,
   collectionSources = [],
+  resource,
   tagId,
   onManage,
-  inPill = false,
 }: {
   field: string
   name: string
-  mediaId?: string
   mediaType?: 'album' | 'film'
   collectionSources?: SourceNavigationLink[]
+  resource?: TagResource
   tagId?: string
   onManage?: (id: string) => void
-  /** Renders the control as an action inside the tag's pill. */
-  inPill?: boolean
 }) {
   const [managed, setManaged] = useState<{
     id: string
@@ -268,16 +327,16 @@ export default function MetadataSourceControl({
       </SourcePopover>
     )
   }
-  if ((field !== 'genre' && field !== 'keyword') || (!mediaId && !mediaType))
+  if (!resource && ((field !== 'genre' && field !== 'keyword') || !mediaType))
     return null
   return (
     <>
-      <SourcePopover name={formatTagName(name)} inPill={inPill}>
+      <SourcePopover name={formatTagName(name)} inPill={Boolean(resource)}>
         {(close) => (
           <TagSources
-            mediaId={mediaId}
             mediaType={mediaType}
             name={name}
+            resource={resource}
             tagId={tagId}
             onManage={(id, scope) => {
               close()

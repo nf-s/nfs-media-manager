@@ -3,7 +3,10 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import MetadataSourceList, { MetadataSourceLinks } from './metadata-source-list'
-import type { TagProvenancePage } from '@repo/schemas/tags'
+import type {
+  ItemTagProvenancePage,
+  TagProvenancePage,
+} from '@repo/schemas/tags'
 
 test('compact source links omit identifiers and verbose attribution, deduplicate links and retain runtime labels', () => {
   const source: TagProvenancePage['items'][number] = {
@@ -137,4 +140,27 @@ test('distinguishes item fallbacks from actual tag links', () => {
   )
   assert.match(html, /View film on Fixture/)
   assert.doesNotMatch(html, /View tag on source/)
+})
+
+test('item source details retain attributed names and release support without a provider link', () => {
+  const source: ItemTagProvenancePage['items'][number] = {
+    provider: 'fixture-transport',
+    providerLabel: 'Fixture Transport',
+    source: 'fixture-upstream',
+    sourceLabel: 'Fixture Upstream',
+    rawName: 'synth pop',
+    kind: 'tag',
+    onMedia: true,
+    link: null,
+    linkKind: null,
+    originType: 'artist',
+    originId: 'fixture-artist',
+    originTitle: 'Synthetic Artist',
+    releaseSupport: { matchingReleases: 8, taggedReleases: 12 },
+  }
+  const html = renderToStaticMarkup(<MetadataSourceList items={[source]} />)
+  assert.match(html, /Fixture Upstream via Fixture Transport/)
+  assert.match(html, /8 of 12 tagged releases/)
+  assert.match(html, /No source link was saved/)
+  assert.doesNotMatch(html, /href=/)
 })

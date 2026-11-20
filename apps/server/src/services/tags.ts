@@ -10,6 +10,7 @@ import {
   type SQL,
 } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
+import { z } from 'zod'
 import {
   MergeTagsSchema,
   TagListQuerySchema,
@@ -19,6 +20,7 @@ import {
   TagProvenanceQuerySchema,
   type TagProvenanceQuery,
   type TagProvenancePage,
+  type ItemTagProvenancePage,
   TagParamsSchema,
   TagDetailQuerySchema,
   SetTagVisibilitySchema,
@@ -84,16 +86,48 @@ function visibleTagOccurrenceSql(occurrence: SQL): SQL {
 export async function getTagProvenance(
   input: TagProvenanceQuery,
 ): Promise<TagProvenancePage> {
-  const query = TagProvenanceQuerySchema.parse(input)
-  const [media] = query.mediaId
-    ? await db
-        .select({ mediaType: mediaItem.mediaType })
-        .from(mediaItem)
-        .where(eq(mediaItem.id, query.mediaId))
-        .limit(1)
-    : []
+  return queryTagProvenance(TagProvenanceQuerySchema.parse(input))
+}
+
+type ReleaseTagScope = {
+  id: string
+  type: 'album' | 'film'
+}
+
+type ItemTagSourceFields = Pick<
+  ItemTagProvenancePage['items'][number],
+  'sourceLabel' | 'snapshotId'
+>
+
+type ReleaseTagProvenance = TagProvenancePage & {
+  items: (TagProvenancePage['items'][number] & ItemTagSourceFields)[]
+}
+
+export function getReleaseTagProvenance(
+  release: ReleaseTagScope,
+  query: Pick<TagProvenanceQuery, 'name' | 'page' | 'size'>,
+) {
+  return queryTagProvenance(
+    { ...query, mediaType: release.type, mediaId: release.id },
+    release,
+  )
+}
+
+async function queryTagProvenance(
+  query: TagProvenanceQuery,
+  release?: ReleaseTagScope,
+): Promise<ReleaseTagProvenance> {
+  const [media] =
+    query.mediaId && !release
+      ? await db
+          .select({ mediaType: mediaItem.mediaType })
+          .from(mediaItem)
+          .where(eq(mediaItem.id, query.mediaId))
+          .limit(1)
+      : []
   if (
     query.mediaId &&
+    !release &&
     (!media || (query.mediaType && query.mediaType !== media.mediaType))
   )
     throw new ServerError({
@@ -113,6 +147,7 @@ export async function getTagProvenance(
     .where(
       and(
         eq(tag.mediaType, mediaType),
+        release ? eq(tag.hidden, false) : undefined,
         sql`${normalizedTagSql(sql`${tag.name}`)} = ${normalizeTagName(query.name)}`,
         notExists(
           db
@@ -129,9 +164,10 @@ export async function getTagProvenance(
       message: 'Tag not found',
     })
   const tagIds = memberships.map((item) => item.id)
+  let tagId = memberships[0]?.id
   if (query.mediaId) {
     const [membership] = await db
-      .select()
+      .select({ tagId: mediaItemTag.tagId })
       .from(mediaItemTag)
       .where(
         and(
@@ -139,12 +175,14 @@ export async function getTagProvenance(
           inArray(mediaItemTag.tagId, tagIds),
         ),
       )
+      .orderBy(asc(mediaItemTag.tagId))
       .limit(1)
     if (!membership)
       throw new ServerError({
         statusCode: 404,
         message: 'Tag not found on this item',
       })
+    if (release) tagId = membership.tagId
   }
   const origins = db
     .select({
@@ -170,6 +208,7 @@ export async function getTagProvenance(
     .where(
       and(
         inArray(tagOccurrence.tagId, tagIds),
+        release ? eq(tagOccurrence.mediaItemId, release.id) : undefined,
         visibleTagOccurrenceSql(sql`${tagOccurrence}`),
       ),
     )
@@ -200,7 +239,7 @@ export async function getTagProvenance(
   if (!exampleIds.length)
     return {
       mediaType,
-      tagId: memberships[0]?.id,
+      tagId,
       items: [],
       totalCount: total?.count ?? 0,
       page: query.page,
@@ -232,20 +271,24 @@ export async function getTagProvenance(
     .select({ id: mediaItem.id, title: mediaItem.title })
     .from(mediaItem)
     .where(inArray(mediaItem.id, exampleIds))
-  // Every scrape saves the provider's tags again; its current snapshot is the
-  // latest job to have done so for the item.
-  const jobs = await db
-    .select({
-      mediaItemId: providerCurrentState.mediaItemId,
-      provider: providerCurrentState.provider,
-      jobId: providerSnapshot.scrapeJobId,
-    })
-    .from(providerCurrentState)
-    .innerJoin(
-      providerSnapshot,
-      eq(providerSnapshot.id, providerCurrentState.latestSnapshotId),
-    )
-    .where(inArray(providerCurrentState.mediaItemId, exampleIds))
+  // In the library-wide view, the job link is the provider's current snapshot.
+  const jobs = release
+    ? []
+    : await db
+        .select({
+          mediaItemId: providerCurrentState.mediaItemId,
+          provider: providerCurrentState.provider,
+          jobId: providerSnapshot.scrapeJobId,
+        })
+        .from(providerCurrentState)
+        .innerJoin(
+          providerSnapshot,
+          eq(providerSnapshot.id, providerCurrentState.latestSnapshotId),
+        )
+        .where(inArray(providerCurrentState.mediaItemId, exampleIds))
+  const recordedSnapshots = release
+    ? await findOccurrenceSnapshots(release.id, rows)
+    : []
   const tmdbMediaIds = [
     ...new Set(
       rows
@@ -293,7 +336,7 @@ export async function getTagProvenance(
   ])
   return {
     mediaType,
-    tagId: memberships[0]?.id,
+    tagId,
     items: rows.map(({ exampleMediaId, ...row }) => {
       const manifest = plugins.find(
         (plugin) => plugin.manifest.id === row.provider,
@@ -338,9 +381,28 @@ export async function getTagProvenance(
         ) ??
         itemLink?.link ??
         null
+      const savedEvidence = recordedSnapshots.find(
+        (snapshot) =>
+          snapshot.provider === row.provider &&
+          snapshot.source === row.source &&
+          snapshot.sourceId === row.sourceId &&
+          snapshot.rawName === row.rawName &&
+          snapshot.kind === row.kind,
+      )
       return {
         ...row,
         sourceId: row.sourceId ?? undefined,
+        ...(release
+          ? {
+              sourceLabel: tagProvider
+                ? sourceProviderLabel(
+                    tagProvider,
+                    tagProvider === row.provider ? providerLabel : null,
+                  )
+                : undefined,
+              snapshotId: savedEvidence?.snapshotId,
+            }
+          : {}),
         providerLabel,
         link,
         linkKind: link ? (tagUrl ? 'tag' : (itemLink?.kind ?? 'item')) : null,
@@ -356,11 +418,13 @@ export async function getTagProvenance(
               : 'No supported source URL could be resolved from the stored identifiers.'
             : undefined,
         jobId:
+          savedEvidence?.jobId ??
           jobs.find(
             (job) =>
               job.mediaItemId === exampleMediaId &&
               job.provider === row.provider,
-          )?.jobId ?? undefined,
+          )?.jobId ??
+          undefined,
       }
     }),
     totalCount: total?.count ?? 0,
@@ -368,6 +432,57 @@ export async function getTagProvenance(
     size: query.size,
     pageCount: Math.ceil((total?.count ?? 0) / query.size),
   }
+}
+
+const OccurrenceSnapshotSchema = z.object({
+  provider: z.string().nullable(),
+  source: z.string().nullable(),
+  sourceId: z.string().nullable(),
+  rawName: z.string(),
+  kind: z.string(),
+  snapshotId: z.string(),
+  jobId: z.string().nullable(),
+})
+
+async function findOccurrenceSnapshots(
+  mediaId: string,
+  rows: Pick<
+    z.infer<typeof OccurrenceSnapshotSchema>,
+    'provider' | 'source' | 'sourceId' | 'rawName' | 'kind'
+  >[],
+) {
+  const attributed = rows.filter(({ provider }) => provider !== null)
+  if (!attributed.length) return []
+  const origins = sql.join(
+    attributed.map(
+      (row) =>
+        sql`(${row.provider}::text, ${row.source}::text, ${row.sourceId}::text, ${row.rawName}::text, ${row.kind}::text)`,
+    ),
+    sql`, `,
+  )
+  const evidence = await db.execute(sql`
+    select origin.provider, origin.source, origin.source_id as "sourceId",
+      origin.raw_name as "rawName", origin.kind, evidence.id as "snapshotId",
+      evidence.scrape_job_id as "jobId"
+    from (values ${origins}) origin(provider, source, source_id, raw_name, kind)
+    join lateral (
+      select snapshot.id, snapshot.scrape_job_id
+      from provider_snapshot snapshot
+      where snapshot.media_item_id = ${mediaId} and snapshot.provider = origin.provider
+        and exists (
+          select 1 from jsonb_array_elements(
+            case when jsonb_typeof(snapshot.normalized_data->'tags') = 'array'
+              then snapshot.normalized_data->'tags' else '[]'::jsonb end
+          ) saved(tag)
+          where coalesce(saved.tag->>'rawName', saved.tag->>'name') = origin.raw_name
+            and saved.tag->>'kind' = origin.kind
+            and saved.tag->>'source' is not distinct from origin.source
+            and saved.tag->>'sourceId' is not distinct from origin.source_id
+        )
+      order by snapshot.created_at desc, snapshot.id desc limit 1
+    ) evidence on true
+  `)
+  return z.array(OccurrenceSnapshotSchema).parse(evidence.rows)
 }
 
 export async function listTags(input: TagListQuery): Promise<TagPage> {

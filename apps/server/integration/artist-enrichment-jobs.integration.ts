@@ -54,6 +54,10 @@ const fixturePlugin: MediaProviderPlugin = {
   },
   scrapeArtist: fixtureArtist,
   scrapeMediaItem: fixtureAlbum,
+  readStoredArtistTagReleaseSupport: (payload) =>
+    payload === 'fixture release evidence'
+      ? [{ name: 'Fixture tag', matchingReleases: 2, taggedReleases: 3 }]
+      : null,
 }
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -222,6 +226,84 @@ afterAll(async () => {
 })
 
 describe('artist enrichment through queued jobs and stored evidence', () => {
+  it('previews and rebuilds only current release-derived tags from immutable evidence', async () => {
+    const { rebuildArtistTags } = await import('../scripts/rebuild-artist-tags')
+    const provider = fixturePlugin.manifest.id
+    const args = ['--provider', provider]
+    const original = {
+      id: 'saved-artist-tags',
+      provider,
+      artistId,
+      payload: 'fixture release evidence',
+      normalizedData: {
+        name: 'Saved display name',
+        tags: ['Fixture tag', 'Rare tag'],
+      },
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+    }
+    const pointer = {
+      artistId,
+      provider,
+      latestSnapshotId: original.id,
+      updatedAt: original.createdAt,
+    }
+    await databaseClient.insert(schema.artistProviderSnapshot).values(original)
+    await databaseClient
+      .insert(schema.artistProviderCurrentState)
+      .values(pointer)
+    const preview = await rebuildArtistTags(args)
+    expect(preview).toMatchObject({
+      scanned: 1,
+      changed: 1,
+      before: 2,
+      after: 1,
+      applied: false,
+    })
+    await expect(
+      rebuildArtistTags([...args, '--apply', '--review', '0'.repeat(64)]),
+    ).rejects.toThrow('reviewed preview')
+    expect(
+      await databaseClient.select().from(schema.artistProviderSnapshot),
+    ).toHaveLength(1)
+    const applied = await rebuildArtistTags([
+      ...args,
+      '--apply',
+      '--review',
+      preview.review,
+    ])
+    expect(applied).toMatchObject({ ...preview, applied: true })
+    const [current] = await databaseClient
+      .select()
+      .from(schema.artistProviderCurrentState)
+    expect(current).toMatchObject({
+      artistId,
+      provider,
+      updatedAt: original.createdAt,
+    })
+    expect(current?.latestSnapshotId).not.toBe(original.id)
+    const history = await databaseClient
+      .select()
+      .from(schema.artistProviderSnapshot)
+    expect(history).toHaveLength(2)
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining(original),
+        expect.objectContaining({
+          ...original,
+          id: current?.latestSnapshotId,
+          normalizedData: {
+            name: 'Saved display name',
+            tags: ['Fixture tag'],
+            tagReleaseSupport: [
+              { name: 'Fixture tag', matchingReleases: 2, taggedReleases: 3 },
+            ],
+          },
+        }),
+      ]),
+    )
+    expect((await rebuildArtistTags(args)).changed).toBe(0)
+    expect(request).not.toHaveBeenCalled()
+  })
   async function queueFixtureAlbum(mediaItemId: string) {
     const { createJob } = await import('@/services/jobs')
     return createJob(

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   ArtistProfileSchema,
   ArtistSimilarCandidateSchema,
+  type ArtistProfile,
 } from '@repo/schemas/artist-profiles'
 import { EntityRelationshipCandidateSchema } from '@repo/schemas/entity-relationships'
 import {
@@ -417,6 +418,10 @@ export interface MediaProviderPlugin {
   readStoredCollections?: (
     payload: JsonValue,
   ) => Array<{ id: string; name: string }>
+  /** Recompute this provider's release-derived artist tags from a saved artist response. */
+  readStoredArtistTagReleaseSupport?: (
+    payload: JsonValue,
+  ) => NonNullable<ArtistProfile['tagReleaseSupport']> | null
   testConnection?: (context: MediaPluginTestContext) => Promise<void>
   scrapeMediaItem?: (context: MediaPluginScrapeContext) => Promise<PluginResult>
   /** Enrich one explicitly queued artist through the same request gate as media. */
@@ -704,6 +709,7 @@ export function isMediaProviderPlugin(
     'sanitizeResponseCapture',
     'sanitizeNativeJsonResponseCapture',
     'readStoredCollections',
+    'readStoredArtistTagReleaseSupport',
     'readStoredPersonalState',
   ]) {
     if (key in value && typeof Reflect.get(value, key) !== 'function')

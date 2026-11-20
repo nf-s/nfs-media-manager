@@ -44,6 +44,7 @@ async function applyTags(
   tags: PluginTag[],
   provider = 'tmdb',
   mediaType: 'film' | 'album' = 'film',
+  scrapeJobId?: string,
 ) {
   const { applyProviderResult } = await import('@/services/provider-state')
   await applyProviderResult({
@@ -51,6 +52,7 @@ async function applyTags(
     mediaType,
     provider,
     source: 'scrape-job',
+    scrapeJobId,
     ...PluginResultSchema.parse({ payload: { tags }, normalized: { tags } }),
   })
 }
@@ -1026,6 +1028,108 @@ describe('temporary Postgres tag provenance and media-scoped merges', () => {
     ).rejects.toMatchObject({ response: { statusCode: 404 } })
     expect(fetch).not.toHaveBeenCalled()
   })
+  it('returns only a film’s contributing providers and links the saved occurrence evidence', async () => {
+    const { getItemTagProvenance } =
+      await import('@/services/item-tag-provenance')
+    await addMedia('item-evidence-film')
+    await addMedia('another-evidence-film')
+    await databaseClient.insert(schema.scrapeJob).values([
+      {
+        id: 'fixture-source-job',
+        provider: 'mdblist',
+        status: 'succeeded',
+        scope: {},
+        options: {},
+      },
+      {
+        id: 'fixture-unrelated-job',
+        provider: 'mdblist',
+        status: 'succeeded',
+        scope: {},
+        options: {},
+      },
+    ])
+    await applyTags(
+      'item-evidence-film',
+      [
+        {
+          name: 'Fixture Evidence',
+          rawName: 'imdb.fixture-evidence',
+          kind: 'keyword',
+          source: 'imdb',
+        },
+      ],
+      'mdblist',
+      'film',
+      'fixture-source-job',
+    )
+    await applyTags('item-evidence-film', [
+      {
+        name: 'Fixture Evidence',
+        kind: 'keyword',
+        source: 'tmdb',
+        sourceId: '12',
+      },
+    ])
+    await applyTags(
+      'item-evidence-film',
+      [
+        {
+          name: 'Unrelated newer evidence',
+          kind: 'keyword',
+        },
+      ],
+      'mdblist',
+      'film',
+      'fixture-unrelated-job',
+    )
+    await applyTags(
+      'another-evidence-film',
+      [
+        {
+          name: 'Fixture Evidence',
+          kind: 'keyword',
+        },
+      ],
+      'omdb',
+    )
+    const request = {
+      resourceType: 'film',
+      resourceId: 'item-evidence-film',
+      name: 'Fixture evidence',
+      page: 1,
+      size: 1,
+    } satisfies Parameters<typeof getItemTagProvenance>[0]
+    const first = await getItemTagProvenance(request)
+    expect(first).toMatchObject({
+      originType: 'film',
+      reason: 'direct',
+      totalCount: 2,
+      pageCount: 2,
+      items: [
+        {
+          provider: 'mdblist',
+          sourceLabel: 'IMDb',
+          rawName: 'imdb.fixture-evidence',
+          jobId: 'fixture-source-job',
+          originType: 'film',
+          originId: 'item-evidence-film',
+          link: { provider: 'imdb' },
+        },
+      ],
+    })
+    expect(first.items[0]?.snapshotId).toEqual(expect.any(String))
+    expect(
+      (await getItemTagProvenance({ ...request, page: 2 })).items,
+    ).toMatchObject([
+      { provider: 'tmdb', sourceId: '12', link: { provider: 'tmdb' } },
+    ])
+    expect((await getItemTagProvenance({ ...request, page: 3 })).items).toEqual(
+      [],
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('unifies historical cross-kind names, counts distinct films, and merges the complete displayed group', async () => {
     const { listTags, getTagProvenance, mergeTags } =
       await import('@/services/tags')

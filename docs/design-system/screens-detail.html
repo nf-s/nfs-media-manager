@@ -53,7 +53,7 @@
       const ratingCards = (list) =>
         `<div class="ds-ratings">${list.map(([v, l]) => `<div class="ds-ratingcard"><b>${v}</b><span>${l}</span></div>`).join('')}</div>`
       const md = { pill: { size: 'md' }, wrap: true }
-      // Tags saved on the item: each pill carries the sources icon.
+      // Each tag pill in a detail overview carries the sources icon.
       const sourced = { pill: { size: 'md', sources: true }, wrap: true }
       const inspectorFrame = (html, height) =>
         `<div class="g-inspector" style="--g-h:${height || 760}px">${html}</div>`
@@ -166,21 +166,10 @@
         ['2026-11-09', 'last played'],
       ])
       const albumTags =
-        section(
-          'Album tags',
-          pills(
-            [
-              'Dream Pop',
-              'Shoegaze',
-              'Ethereal Wave',
-              'Nocturnal',
-              'Lush',
-              'Atmospheric',
-            ],
-            sourced,
-          ),
-          { aside: linkBtn('Manage tags') },
-        ) + section('Artist tags', pills(['Bedroom Pop', 'New Zealand'], md))
+        section('Album tags', pills(['Dream Pop'], sourced), {
+          aside: linkBtn('Manage tags'),
+        }) +
+        section('Artist tags', pills(['Bedroom Pop', 'New Zealand'], sourced))
       const albumDetails = [
         ['Released', '2019-03-08'],
         ['Added', '2026-10-02'],
@@ -381,7 +370,8 @@
           `<div class="ds-list" data-compact style="margin:0 -12px">${D.row(A[0], { by: 'Album · Mira Kestrel · 2019' })}</div>${pills(['Late shift', 'Kitchen'], md)}`,
           { aside: linkBtn('Add to playlist') },
         ) +
-        section('Album tags', pills(['Dream Pop', 'Shoegaze'], sourced)) +
+        section('Album tags', pills(['Dream Pop'], sourced)) +
+        section('Artist tags', pills(['Bedroom Pop', 'New Zealand'], sourced)) +
         section(
           'Details',
           facts([
@@ -443,7 +433,10 @@
         ) +
         section(
           'Tags',
-          pills(['Dream Pop', 'Shoegaze', 'Ethereal Wave', 'Bedroom Pop'], md),
+          pills(
+            ['Dream Pop', 'Shoegaze', 'Ethereal Wave', 'Bedroom Pop'],
+            sourced,
+          ),
         )
 
       const filmOverview =
@@ -746,7 +739,7 @@
               g.rules([
                 '<b>Summary:</b> scrobbles with an all-time sparkline, the headline ratings and last played. Each rating opens the page that supplied its score, in a new tab; a provider with no rating shown keeps its icon in the header. Provider statistics (votes, have, want, listeners) move to each source.',
                 '<b>Tracks are a compact table</b> in the overview: number, title, duration, scrobbles. No toolbar, no Artist or Album column. An Artist column appears only on a compilation. Past 20 tracks the list shows the first 20 and a Show all button.',
-                '<b>Each tag group is its own section</b> (Album tags, Artist tags; Genres, Keywords on a film), merged across providers and set flush left like Playlists and Details. A tag saved on the item carries a sources icon inside its pill: it lists the providers that supplied the tag for this item, each with its page and its job. Artist tags come from the artist, so they have no icon here.',
+                '<b>Each tag group is its own section</b> (Album tags, Artist tags, or Genres and Keywords on a film), set flush left like Playlists and Details. The sources icon inside each tag pill opens the stored evidence for the open item. Inherited tags identify their contributing album or artists. The tag label still filters the library.',
                 '<b>Details</b> holds six facts. All fields opens the full list with the source of each.',
                 '<b>A section has one action,</b> a link button at the end of its heading: Manage tags, Add to playlist, All fields. No section uses a bordered button or an icon for it.',
               ]) +

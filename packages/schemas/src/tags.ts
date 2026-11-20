@@ -179,18 +179,19 @@ export const SourceNavigationLinkSchema = z.object({
     }),
 })
 
-export const TagProvenanceQuerySchema = z
-  .object({
-    mediaType: MediaTypeSchema.optional(),
-    mediaId: z.string().min(1).max(200).optional(),
-    name: z.string().min(1).max(1000),
-    page: z.coerce.number().int().positive().default(1),
-    size: z.coerce.number().int().positive().max(100).default(25),
-  })
-  .refine((query) => query.mediaType || query.mediaId, {
-    message: 'Provide a media type or media item',
-    path: ['mediaType'],
-  })
+const TagSourcesQuerySchema = z.object({
+  name: z.string().min(1).max(1000),
+  page: z.coerce.number().int().positive().default(1),
+  size: z.coerce.number().int().positive().max(100).default(25),
+})
+
+export const TagProvenanceQuerySchema = TagSourcesQuerySchema.extend({
+  mediaType: MediaTypeSchema.optional(),
+  mediaId: z.string().min(1).max(200).optional(),
+}).refine((query) => query.mediaType || query.mediaId, {
+  message: 'Provide a media type or media item',
+  path: ['mediaType'],
+})
 
 export const TagSourceSchema = z.object({
   provider: z.string().nullable(),
@@ -253,6 +254,51 @@ export const TagProvenanceSourceSchema = TagSourceSchema.extend({
 export const TagProvenancePageSchema = PaginatedDataSchema(
   TagProvenanceSourceSchema,
 ).extend({ tagId: z.string().optional(), mediaType: MediaTypeSchema })
+const TagOriginTypeSchema = MediaTypeSchema.or(z.literal('artist'))
+
+export const ItemTagProvenanceQuerySchema = TagSourcesQuerySchema.extend({
+  resourceType: z.enum(['album', 'film', 'track', 'artist']),
+  resourceId: z.string().min(1).max(200),
+})
+
+export const TagReleaseSupportSchema = z
+  .object({
+    matchingReleases: z.number().int().positive(),
+    taggedReleases: z.number().int().positive(),
+  })
+  .refine(
+    ({ matchingReleases, taggedReleases }) =>
+      matchingReleases <= taggedReleases,
+    {
+      path: ['matchingReleases'],
+      message: 'Matching releases cannot exceed tagged releases',
+    },
+  )
+
+export const ItemTagProvenanceSourceSchema = TagProvenanceSourceSchema.extend({
+  originType: TagOriginTypeSchema,
+  originId: z.string(),
+  originTitle: z.string(),
+  sourceLabel: z.string().optional(),
+  snapshotId: z.string().optional(),
+  releaseSupport: TagReleaseSupportSchema.optional(),
+})
+
+export const ItemTagProvenancePageSchema = PaginatedDataSchema(
+  ItemTagProvenanceSourceSchema,
+).extend({
+  mediaType: MediaTypeSchema.optional(),
+  tagId: z.string().optional(),
+  originType: TagOriginTypeSchema,
+  reason: z.enum(['direct', 'linked-album', 'artist-fallback']),
+  linkedAlbum: z.object({ id: z.string(), title: z.string() }).optional(),
+})
+
+export type ItemTagProvenanceQuery = z.infer<
+  typeof ItemTagProvenanceQuerySchema
+>
+export type ItemTagProvenancePage = z.infer<typeof ItemTagProvenancePageSchema>
+
 export const TagParamsSchema = z.object({
   id: z.string().min(1).max(200),
 })

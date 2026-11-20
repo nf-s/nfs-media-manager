@@ -80,7 +80,7 @@ function FilterValues({
   field: string
   values: readonly string[]
   onFilter?: OnFilter
-  /** The album whose sources each tag offers, from an icon inside its pill. */
+  /** The track whose tag sources are shown. */
   sourcesFor?: string
 }) {
   const params = useSearchParams()
@@ -94,10 +94,9 @@ function FilterValues({
         const label = formatBrowseFilterValue(field, value)
         const action = sourcesFor && (
           <MetadataSourceControl
-            field="genre"
+            field={field}
             name={value}
-            mediaId={sourcesFor}
-            inPill
+            resource={{ kind: 'track', id: sourcesFor }}
           />
         )
         return onFilter ? (
@@ -158,13 +157,11 @@ function TrackOverview({
       label: 'Album tags',
       field: 'albumTag',
       values: item.albumTags,
-      sourcesFor: item.album?.id,
     },
     {
       label: 'Artist tags',
       field: 'artistTag',
       values: artistTags,
-      sourcesFor: undefined,
     },
   ].filter((group) => group.values.length > 0)
   return (
@@ -221,7 +218,7 @@ function TrackOverview({
               field={group.field}
               values={group.values}
               onFilter={onFilter}
-              sourcesFor={group.sourcesFor}
+              sourcesFor={item.id}
             />
           </Section>
         ))}

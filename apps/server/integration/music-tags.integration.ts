@@ -49,7 +49,12 @@ beforeAll(async () => {
     artistId: 'fixture-artist',
     provider: 'lastfm',
     payload: {},
-    normalizedData: { tags: ['Ambient', 'Jazz', 'ambient'] },
+    normalizedData: {
+      tags: ['Ambient', 'Jazz', 'ambient'],
+      tagReleaseSupport: [
+        { name: 'Ambient', matchingReleases: 2, taggedReleases: 7 },
+      ],
+    },
   })
   await databaseClient.insert(schema.artistProviderCurrentState).values({
     artistId: 'fixture-artist',
@@ -183,10 +188,75 @@ describe('artist tag projections', () => {
     ).toHaveLength(3)
   })
 
+  it('attributes visible album and track tags to the evidence used in each display', async () => {
+    const { getItemTagProvenance } =
+      await import('@/services/item-tag-provenance')
+    const { ItemTagProvenanceQuerySchema, ItemTagProvenancePageSchema } =
+      await import('@repo/schemas/tags')
+    const query = (
+      resourceType: 'album' | 'track' | 'artist',
+      resourceId: string,
+      name: string,
+    ) => ItemTagProvenanceQuerySchema.parse({ resourceType, resourceId, name })
+    const artistSource = {
+      provider: 'lastfm',
+      providerLabel: 'Last.fm',
+      originType: 'artist',
+      originId: 'fixture-artist',
+      originTitle: 'Fixture Artist',
+      snapshotId: 'fixture-profile',
+    }
+    expect(
+      ItemTagProvenancePageSchema.parse(
+        await getItemTagProvenance(query('artist', 'fixture-artist', 'Jazz')),
+      ),
+    ).toMatchObject({
+      reason: 'direct',
+      items: [artistSource],
+    })
+    for (const request of [
+      query('album', 'fixture-album-0', 'Jazz'),
+      query('track', 'fixture-track-0', 'Jazz'),
+    ]) {
+      expect(await getItemTagProvenance(request)).toMatchObject({
+        reason: 'artist-fallback',
+        items: [artistSource],
+      })
+    }
+    expect(
+      await getItemTagProvenance(query('album', 'fixture-album-1', 'Jazz')),
+    ).toMatchObject({
+      originType: 'album',
+      reason: 'direct',
+      items: [],
+      totalCount: 0,
+    })
+    expect(
+      await getItemTagProvenance(query('track', 'fixture-track-1', 'Jazz')),
+    ).toMatchObject({
+      originType: 'album',
+      reason: 'linked-album',
+      linkedAlbum: { id: 'fixture-album-1', title: 'fixture-album-1' },
+      items: [],
+      totalCount: 0,
+    })
+    await expect(
+      getItemTagProvenance(query('track', 'fixture-track-2', 'Ambient')),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await expect(
+      getItemTagProvenance(query('track', 'fixture-unlinked', 'Jazz')),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+    await expect(
+      getItemTagProvenance(query('track', 'fixture-album-0', 'Jazz')),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  })
+
   it('projects album aliases and hidden groups without changing artist evidence or film tag groups', async () => {
     const { queryBrowseIds, listBrowseFacets } =
       await import('@/services/browse')
     const { loadArtistTags } = await import('@/services/music-tags')
+    const { getItemTagProvenance } =
+      await import('@/services/item-tag-provenance')
     const { mergeTags, setTagVisibility } = await import('@/services/tags')
     await databaseClient.insert(schema.mediaItem).values({
       id: 'fixture-film',
@@ -248,6 +318,24 @@ describe('artist tag projections', () => {
         .ids,
     ).toEqual(['fixture-film'])
 
+    const alias = {
+      resourceType: 'track',
+      resourceId: 'fixture-track-1',
+      name: 'Drone',
+      page: 1,
+      size: 1,
+    } satisfies Parameters<typeof getItemTagProvenance>[0]
+    expect(await getItemTagProvenance(alias)).toMatchObject({
+      reason: 'artist-fallback',
+      items: [
+        {
+          rawName: 'Ambient',
+          snapshotId: 'fixture-profile',
+          releaseSupport: { matchingReleases: 2, taggedReleases: 7 },
+        },
+      ],
+    })
+
     await setTagVisibility({
       mediaType: 'album',
       tagIds: ['drone-album'],
@@ -256,6 +344,17 @@ describe('artist tag projections', () => {
     expect(await loadArtistTags(mediaIds)).toEqual(
       new Map(mediaIds.map((id) => [id, ['Jazz']])),
     )
+    await expect(getItemTagProvenance(alias)).rejects.toMatchObject({
+      response: { statusCode: 404 },
+    })
+    expect(
+      await getItemTagProvenance({
+        ...alias,
+        resourceType: 'artist',
+        resourceId: 'fixture-artist',
+        name: 'Ambient',
+      }),
+    ).toMatchObject({ reason: 'direct' })
     expect(await listBrowseFacets('album', { q: 'Drone' })).toEqual([])
     expect(
       (await queryBrowseIds('track', TrackQuerySchema.parse({ q: 'Drone' })))
@@ -620,5 +719,103 @@ describe('artist tag projections', () => {
       await pool.query(`alter table track_facet_state
         rename column fixture_missing_column to maintenance_only`)
     }
+  })
+
+  it('paginates current evidence from every credited artist on a track without an album', async () => {
+    const { getItemTagProvenance } =
+      await import('@/services/item-tag-provenance')
+    await databaseClient.insert(schema.artist).values({
+      id: 'fixture-guest',
+      name: 'Fixture Guest',
+    })
+    await databaseClient.insert(schema.mediaCredit).values([
+      {
+        mediaItemId: 'fixture-unlinked',
+        artistId: 'fixture-artist',
+        role: 'artist',
+      },
+      {
+        mediaItemId: 'fixture-unlinked',
+        artistId: 'fixture-guest',
+        role: 'artist',
+      },
+    ])
+    await databaseClient.insert(schema.artistProviderSnapshot).values([
+      {
+        id: 'fixture-guest-old',
+        artistId: 'fixture-guest',
+        provider: 'musicbrainz',
+        payload: {},
+        normalizedData: { tags: ['Soul'] },
+      },
+      {
+        id: 'fixture-guest-current',
+        artistId: 'fixture-guest',
+        provider: 'musicbrainz',
+        payload: {},
+        normalizedData: {
+          tags: ['Jazz'],
+          url: 'https://example.com/fixture-guest',
+        },
+      },
+      {
+        id: 'fixture-second-provider',
+        artistId: 'fixture-artist',
+        provider: 'spotify',
+        payload: {},
+        normalizedData: { tags: ['Jazz'] },
+      },
+    ])
+    await databaseClient.insert(schema.artistProviderCurrentState).values([
+      {
+        artistId: 'fixture-guest',
+        provider: 'musicbrainz',
+        latestSnapshotId: 'fixture-guest-current',
+      },
+      {
+        artistId: 'fixture-artist',
+        provider: 'spotify',
+        latestSnapshotId: 'fixture-second-provider',
+      },
+    ])
+    const query = {
+      resourceType: 'track',
+      resourceId: 'fixture-unlinked',
+      name: 'Jazz',
+      page: 1,
+      size: 1,
+    } satisfies Parameters<typeof getItemTagProvenance>[0]
+    expect(await getItemTagProvenance(query)).toMatchObject({
+      reason: 'artist-fallback',
+      totalCount: 3,
+      items: [{ provider: 'lastfm', originId: 'fixture-artist' }],
+    })
+    expect(await getItemTagProvenance({ ...query, page: 2 })).toMatchObject({
+      totalCount: 3,
+      items: [
+        {
+          provider: 'musicbrainz',
+          originId: 'fixture-guest',
+          snapshotId: 'fixture-guest-current',
+          linkKind: 'item',
+          link: { url: 'https://example.com/fixture-guest' },
+        },
+      ],
+    })
+    expect(
+      await getItemTagProvenance({
+        ...query,
+        resourceType: 'artist',
+        resourceId: 'fixture-artist',
+        size: 25,
+      }),
+    ).toMatchObject({
+      reason: 'direct',
+      totalCount: 2,
+      items: [{ provider: 'lastfm' }, { provider: 'spotify' }],
+    })
+    await expect(
+      getItemTagProvenance({ ...query, name: 'Soul' }),
+    ).rejects.toMatchObject({ response: { statusCode: 404 } })
   })
 })

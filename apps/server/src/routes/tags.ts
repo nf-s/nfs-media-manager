@@ -6,6 +6,8 @@ import {
   TagPageSchema,
   TagProvenanceQuerySchema,
   TagProvenancePageSchema,
+  ItemTagProvenanceQuerySchema,
+  ItemTagProvenancePageSchema,
   TagParamsSchema,
   TagDetailQuerySchema,
   TagDetailSchema,
@@ -27,6 +29,7 @@ import {
   validationErrorResponse,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
+import { getItemTagProvenance } from '@/services/item-tag-provenance'
 import {
   getTagDetail,
   getTagProvenance,
@@ -66,6 +69,33 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await getTagProvenance(c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/item-provenance',
+      middleware: [authMiddleware()],
+      request: { query: ItemTagProvenanceQuerySchema },
+      responses: {
+        200: {
+          description: 'Stored tag sources for an album, film, track or artist',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(ItemTagProvenancePageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        404: jsonErrorResponse('Tag not found on this item'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getItemTagProvenance(c.req.valid('query')),
         200,
       ),
   )

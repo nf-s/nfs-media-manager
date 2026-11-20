@@ -38,6 +38,12 @@ An optional pure `readStoredCollections(payload)` hook returns `{id: string, nam
 
 An optional pure `readStoredPersonalState({payload, sourceKind, sourceLabel})` hook interprets retained import evidence as bookmark/watchlist flags and ISO dates. CSV preview and commit use this to recognize equivalent legacy personal state without rewriting canonical metadata or snapshots. The server validates the result against `StoredPersonalStateSchema`; newest retained evidence is preferred, and explicit canonical values take precedence. Return `null` for unsupported payloads. Keep legacy field names and source-label interpretation inside the local package; this hook receives no secrets or network capability and must not perform writes or requests.
 
+## Release-derived artist tags
+
+A plugin can attach `profile.tagReleaseSupport` entries with `name`, `matchingReleases` and `taggedReleases` to explain tags derived from release groups. Count a release group once per tag. Keep the original provider evidence in the artist response. A plugin that can derive these counts from saved responses may implement the pure `readStoredArtistTagReleaseSupport(payload)` hook. It returns supported tags, an empty array for a recognized response without qualifying tags, or `null` for unsupported data.
+
+From the server workspace, run `pnpm exec tsx scripts/rebuild-artist-tags.ts --provider=<provider-id>` to preview changes for a provider with that hook. Add `--artist-id=<artist-id>` to limit the selection. The preview reports aggregate counts and a review hash. After backing up the database, repeat the same selection with `--apply --review=<hash>` to save the reviewed changes. A changed selection or changed evidence rolls the transaction back. The rebuild advances each affected current pointer to a copy with the revised tag fields. It retains the original snapshot, job, response, scrape timestamp and freshness. It runs entirely on stored evidence.
+
 ## Safety and Maintenance
 
 Set `rateLimit.respectRateLimitHeaders: true` only for providers whose contract uses `X-RateLimit-Limit`, `X-RateLimit-Remaining` and a Unix-second `X-RateLimit-Reset`. This opt-in persists a cooldown when a successful response reports zero remaining and a valid positive limit/future reset; the current result still succeeds. For 429 or explicit API quota errors, a valid future reset extends (never shortens) Retry-After and the minimum cooldown. These headers do not change local request caps, clear access halts or trigger retries. No additional quota-discovery calls are made.
