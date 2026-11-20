@@ -330,6 +330,13 @@
       "when": 1795169712959,
       "tag": "0046_scope_browse_cache_invalidation",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795171229108,
+      "tag": "0047_scope_artist_profile_facet_invalidation",
+      "breakpoints": true
     }
   ]
 }

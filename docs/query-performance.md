@@ -200,3 +200,5 @@ Migrations `0042_grouped_recording_browse_order` and `0043_track_facet_vocabular
 Migration `0044` stores the decision to rebuild a slow autocomplete vocabulary during maintenance across requests and Worker restarts.
 
 Migration `0045` adds a B-tree for listening presence checks by track name, artist name and time. Retain the shorter name index for other access patterns. Migration `0046` narrows invalidation of the two stored Track browse caches. Both use stored data and require no reimport. On a busy database, build the `0045` index concurrently ahead of cutover using the migration's exact key order. Verify its definition and validity before applying the journaled migration.
+
+Migration `0047` limits Track vocabulary invalidation from artist enrichment to changes that can affect tag labels. Saving history and replacing a current profile with the same normalized tags preserve the vocabulary. The publication check locks the affected snapshots while comparing tag sets.
