@@ -1252,6 +1252,101 @@ it('bounds first Added pages with artist tags and unrelated Last.fm placeholders
   expect(await queryBrowseCount('track', populousCreator)).toEqual({
     totalCount: 4_000,
   })
+
+  // Exercise global duplicate visibility through a first title page. A
+  // placeholder remains visible if any of its source names must be retained.
+  await pool.query(`
+    insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id, manually_matched) values
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-manual-extra', 'placeholder-11997', true),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-uncovered-extra', 'placeholder-11996', false),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-covered-extra', 'placeholder-11995', false);
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-manual-extra', 'track-11997', 'exact'),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-visibility-11995', 'track-13000', 'exact'),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-covered-extra', 'track-11995', 'exact');
+    update library_track set spotify_track_id = 'fixture-hidden-peer' where media_item_id = 'track-13000';
+    update media_item set metadata = '{"legacyHidden":true}' where id in ('track-11994', 'track-13000');
+    update lastfm_track_link set strategy = 'normalized' where track_media_item_id = 'track-11993';
+  `)
+  for (const table of [
+    'library_track',
+    'lastfm_track_link',
+    'lastfm_track_source',
+    'media_item',
+  ])
+    await pool.query(`vacuum analyze ${table}`)
+  const titlePage = TrackQuerySchema.parse({
+    groupRecordings: false,
+    sortBy: 'title',
+    direction: 'asc',
+    size: 100,
+  })
+  const retained = [11993, 11994, 11996, 11997, 11998, 12000]
+  await checkBudget(
+    'global Track title page with dense duplicate matches',
+    320_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', titlePage)
+      expect(page.ids).toHaveLength(100)
+      expect(page.ids.filter((id) => id.startsWith('placeholder-'))).toEqual(
+        retained.map((index) => `placeholder-${index}`),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+
+  await pool.query(`
+    update library_track set album_name = 'Fixture existing album label'
+    where media_item_id in (select 'placeholder-' || n from generate_series(129, 12000) n)
+  `)
+  await pool.query('vacuum analyze library_track')
+  const higherPlaceholderIds = Array.from(
+    { length: 11_872 },
+    (_, index) => 129 + index,
+  )
+  await checkBudget(
+    'global Track title page with sparse eligible source names',
+    8_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', titlePage)
+      expect(page.ids).toEqual(
+        higherPlaceholderIds
+          .map((index) => `placeholder-${index}`)
+          .sort()
+          .slice(0, 100),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+
+  await pool.query(`
+    update library_track set album_name = null where media_item_id like 'placeholder-%';
+    update lastfm_track_link set strategy = 'normalized'
+    where track_media_item_id in (select 'track-' || n from generate_series(129, 11989) n)
+  `)
+  await pool.query('vacuum analyze library_track')
+  await pool.query('vacuum analyze lastfm_track_link')
+  await checkBudget(
+    'global Track title page with sparse exact peers',
+    240_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', titlePage)
+      expect(page.ids).toEqual(
+        higherPlaceholderIds
+          .filter((index) => index < 11990 || retained.includes(index))
+          .map((index) => `placeholder-${index}`)
+          .sort()
+          .slice(0, 100),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
 })
 
 it('bounds the Spotify alternate lookup for detail on a common track title', async () => {
