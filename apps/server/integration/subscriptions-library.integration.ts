@@ -104,7 +104,7 @@ const items: Item[] = [
     type: 'youtube',
     title: 'Transfer orbits explained',
     description: 'Hohmann transfers and delta-v budgets.',
-    tags: ['Spaceflight'],
+    tags: ['Spaceflight', 'spaceflight'],
     publishedAt: '2026-03-01T23:30:00Z',
     durationSec: 750,
     viewCount: 5000,
@@ -724,6 +724,12 @@ describe('subscription facets and sources', () => {
         label: expect.stringMatching(/^Tags: spaceflight$/i),
       },
     ])
+    expect(
+      (await listSubscriptionFacets({ q: '' })).find(
+        (row) =>
+          row.field === 'genre' && row.value.toLowerCase() === 'spaceflight',
+      ),
+    ).toEqual(spaceflight[0])
     const bread = await listSubscriptionFacets({
       q: 'bread',
       limitPerField: 50,

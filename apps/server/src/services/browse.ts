@@ -27,7 +27,7 @@ import {
 } from '@repo/schemas/listening'
 import { PersonRoleSchema } from '@repo/schemas/common'
 import { formatTagName } from '@repo/schemas/tags'
-import { rangeCondition } from '@/lib/browse-range'
+import { rangeCondition, timestampRangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
@@ -43,16 +43,13 @@ import {
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { albumMatchRejectionField } from './album-match-rejections'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
-import {
-  tagAncestorKeys,
-  tagAncestorRows,
-  visibleSubtagCounts,
-} from './tag-hierarchy'
+import { tagAncestorRows, visibleSubtagCounts } from './tag-hierarchy'
 import { albumAddedDateExpression } from './album-added-dates'
 import { createBrowseListening, type BrowseListening } from './browse-listening'
 import {
   firstMusicTagRows,
   albumsWithEnoughTags,
+  artistTagFacetKeys,
   artistTagMemberships,
   firstArtistTag,
   firstMusicTag,
@@ -373,8 +370,16 @@ function browseFieldConditions(
         statusCode: 422,
         message: 'Unknown numeric filter',
       })
+    const timestamp =
+      range.field === 'releaseDate' && mediaType !== 'track'
+        ? sql`${mediaItem.releaseDate}`
+        : range.field === 'dateAdded' && mediaType === 'track'
+          ? sql`${libraryTrack.dateAdded}`
+          : undefined
     conditions.push(
-      rangeCondition(range, numericExpression(range.field, mediaType)),
+      timestamp
+        ? timestampRangeCondition(range, timestamp)
+        : rangeCondition(range, numericExpression(range.field, mediaType)),
     )
   }
   return conditions
@@ -831,14 +836,7 @@ async function browseQueries(
       countedListening,
       versionId,
     )
-  const missing =
-    options.sort?.field.key === sortField.key && options.sort.missingFirst
-      ? sql`nulls first`
-      : sql`nulls last`
-  const order =
-    query.direction === 'asc'
-      ? sql`${sort} asc ${missing}`
-      : sql`${sort} desc ${missing}`
+  const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
   // Library tracks always have a subtype row, also required by loadTracks.
   // The inner join lets their date ordering use an index before pagination.
   // Other libraries do not read track columns.
@@ -898,7 +896,7 @@ async function browseQueries(
   // Page, ordering and result caps do not change membership; IDs stay uncached.
   async function readCount() {
     const total = await countCache(
-      JSON.stringify(
+      checksumJson(
         dialect.sqlToQuery(sql`${countSource ?? sql``} ${countWhere}`),
       ),
       async () => {
@@ -979,7 +977,7 @@ async function browseQueries(
   async function readHistogram(edges: readonly number[]) {
     const items = base().where(pageWhere).as('histogram_items')
     return histogramCache(
-      JSON.stringify([
+      checksumJson([
         edges,
         dialect.sqlToQuery(sql`${pageSource ?? sql``} ${pageWhere}`),
       ]),
@@ -1122,7 +1120,6 @@ function unfilteredBrowseQuery<Query extends BrowseQuery>(
     Boolean(query.q) ||
     query.filters.length > 0 ||
     query.ranges.length > 0 ||
-    query.limitResults !== undefined ||
     query.creatorId !== undefined ||
     ('listening' in query && query.listening !== undefined)
   if (!filtered) return null
@@ -1145,7 +1142,7 @@ export async function queryBrowseCounts(
 ) {
   const unfiltered = unfilteredBrowseQuery(query)
   const [{ totalCount }, scope] = await Promise.all([
-    queryBrowseCount(mediaType, query),
+    queryBrowseCount(mediaType, { ...query, limitResults: undefined }),
     unfiltered
       ? queryBrowseCount(mediaType, unfiltered, {
           includeLastfmSourceRows:
@@ -1154,7 +1151,7 @@ export async function queryBrowseCounts(
       : undefined,
   ])
   return {
-    totalCount,
+    totalCount: Math.min(totalCount, query.limitResults ?? totalCount),
     unfilteredCount: scope?.totalCount ?? totalCount,
   }
 }
@@ -1208,6 +1205,20 @@ function browseSortExpression(field: BrowseField, mediaType: MediaType) {
   )
 }
 
+function fieldOrder(
+  value: SQL,
+  key: string,
+  direction: TrackQuery['direction'],
+  override?: BrowseQueryOptions['sort'],
+) {
+  // Titles are required. Native descending null order permits a backward title index scan.
+  const missingFirst =
+    override?.field.key === key
+      ? override.missingFirst
+      : key === 'title' && direction === 'desc'
+  return sql`${value} ${direction === 'desc' ? sql`desc` : sql`asc`} ${missingFirst ? sql`nulls first` : sql`nulls last`}`
+}
+
 /** Ordering for an ordinary track field over media_item, library_track and track_sort_album. */
 export function trackBrowseOrder(
   sortBy: string,
@@ -1216,7 +1227,7 @@ export function trackBrowseOrder(
   const field = trackBrowseFields.find((entry) => entry.key === sortBy)
   if (!field) return
   return [
-    sql`${browseSortExpression(field, 'track')} ${direction === 'desc' ? sql`desc` : sql`asc`} nulls last`,
+    fieldOrder(browseSortExpression(field, 'track'), sortBy, direction),
     ...trackNaturalOrder(sortBy),
     sql`${mediaItem.id}`,
   ]
@@ -1308,9 +1319,6 @@ function textRows(
     const mediaId = sql`media_item.id`
     const albumId =
       mediaType === 'track' ? sql`lt.album_media_item_id` : mediaId
-    const value = options.normalizeTags
-      ? sql`artist_tag.name_key`
-      : sql`artist_tag.name`
     const trackJoin =
       mediaType === 'track'
         ? sql`join library_track lt on lt.media_item_id = media_item.id`
@@ -1318,11 +1326,8 @@ function textRows(
     const membership = options.sharedArtistTags
       ? sql`select media_item_id, name, name_key from browse_artist_tags`
       : artistTagMemberships(mediaType)
-    const artistRows = (
-      rollUp: boolean,
-    ) => sql`select media_item.id, ${rollUp ? sql`ancestor.ancestor_key` : value} as value
+    const artistRows = sql`select media_item.id, artist_tag.name as value
       from (${membership}) artist_tag
-      ${rollUp ? sql`join (${tagAncestorKeys('album')}) ancestor on ancestor.descendant_key = artist_tag.name_key` : sql``}
       join media_item on media_item.id = artist_tag.media_item_id ${trackJoin}
       where ${visible}`
     // Release tags stand alone on an album that has enough of them.
@@ -1330,12 +1335,9 @@ function textRows(
       key === 'artistTag'
         ? sql``
         : sql` and (${albumId} is null or ${albumId} not in (${albumsWithEnoughTags()}))`
-    const artistSource = options.rollUpTags
-      ? sql`${artistRows(false)}${sparse} union all ${artistRows(true)}${sparse}`
-      : sql`${artistRows(false)}${sparse}`
-    if (key === 'artistTag') return artistSource
+    if (key === 'artistTag') return artistRows
     return sql`${textRows('albumTag', mediaType, options)}
-      union all ${artistSource}`
+      union all ${artistRows}${sparse}`
   }
   if (key === 'genre' || key === 'keyword' || key === 'albumTag') {
     const tagType = mediaType === 'track' ? 'album' : mediaType
@@ -1376,7 +1378,34 @@ const FacetRowSchema = z.object({
   count: z.coerce.number().int().positive(),
 })
 type FacetRow = z.infer<typeof FacetRowSchema> & { subtags?: number }
-const tagFacetFields = ['genre', 'keyword', 'albumTag', 'artistTag']
+const musicTagFacetFields = ['genre', 'albumTag', 'artistTag']
+const tagFacetFields = [...musicTagFacetFields, 'keyword']
+
+const releaseTagFacetKeys = sql`select t.id as tag_id, ${normalizedTagSql(sql`t.name`)} as value
+  from tag t where t.media_type = 'album' and not t.hidden
+  union all select tag_id, ancestor_key from (${tagAncestorRows('album')}) ancestors`
+
+function musicTagFacetRows(key: string, mediaType: 'album' | 'track') {
+  const track = mediaType === 'track'
+  const albumId = track ? sql`lt.album_media_item_id` : sql`media_item.id`
+  const items = track
+    ? sql`media_item join library_track lt on lt.media_item_id = media_item.id`
+    : sql`media_item`
+  const visible = sql`media_item.media_type = ${mediaType}
+    and media_item.metadata->>'legacyHidden' is distinct from 'true'`
+  const release = sql`select media_item.id, labels.value from ${items}
+    join media_item_tag mt on mt.media_item_id = ${albumId}
+    join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
+    where ${visible}`
+  if (key === 'albumTag') return release
+  const artist = sql`select media_item.id, labels.value from ${items}
+    join media_credit c on c.media_item_id = media_item.id and c.role = 'artist'
+    join browse_artist_facet_keys labels on labels.artist_id = c.artist_id
+    where ${visible}`
+  if (key === 'artistTag') return artist
+  return sql`${release} union all ${artist}
+    and (${albumId} is null or ${albumId} not in (${albumsWithEnoughTags()}))`
+}
 
 export async function listBrowseFacets(
   mediaType: MediaType,
@@ -1406,6 +1435,10 @@ export function browseFacetRows(
   query: BrowseFacetQuery,
   limit: number,
   visibility = sql``,
+  counting:
+    | 'distinctItems'
+    | 'uniqueRows'
+    | 'deduplicateRows' = 'distinctItems',
 ) {
   const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const matches = words
@@ -1416,10 +1449,19 @@ export function browseFacetRows(
     )
     .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
   const search = matches.length ? sql`and ${and(...matches)}` : sql``
+  const values = sql`from (${source}) values_for_field
+    where value is not null and value <> '' ${search} ${visibility}`
+  // Music tag rows can overlap through several source tags or credits. Let
+  // PostgreSQL deduplicate those item/value pairs before grouping by value.
+  const distinctValues =
+    counting === 'deduplicateRows'
+      ? sql`from (select distinct value, id ${values}) distinct_items`
+      : values
+  const count =
+    counting === 'distinctItems' ? sql`count(distinct id)` : sql`count(*)`
   // Limit each field independently so common values never crowd out other fields.
-  return sql`(select ${field.key}::text as field, value, count(distinct id)::int as count
-    from (${source}) values_for_field
-    where value is not null and value <> '' ${search} ${visibility}
+  return sql`(select ${field.key}::text as field, value, ${count}::int as count
+    ${distinctValues}
     group by value
     order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
       count desc, value asc
@@ -1437,20 +1479,25 @@ async function queryBrowseFacets(
     query.limitPerField,
     Math.max(1, Math.floor(1000 / fields.length)),
   )
-  const sharedArtistTags = mediaType === 'album' || mediaType === 'track'
-  const sources = sharedArtistTags
-    ? sql`with browse_artist_tags as materialized (${artistTagMemberships(mediaType)})`
-    : sql``
-  const redundant =
-    mediaType === 'track' && !options.includeLastfmSourceRows
-      ? sql`, redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds()})`
-      : sql``
+  const music = mediaType === 'album' || mediaType === 'track'
+  const sources: SQL[] = []
+  if (music && fields.some((field) => musicTagFacetFields.includes(field.key)))
+    sources.push(
+      sql`browse_artist_facet_keys as materialized (${artistTagFacetKeys(mediaType)})`,
+      sql`browse_release_facet_keys as materialized (${releaseTagFacetKeys})`,
+    )
+  if (mediaType === 'track' && !options.includeLastfmSourceRows)
+    sources.push(
+      sql`redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds()})`,
+    )
   const queries = fields.map((field) => {
-    const source = textRows(field.key, mediaType, {
-      normalizeTags: true,
-      sharedArtistTags,
-      rollUpTags: true,
-    })
+    const musicTagFacet = music && musicTagFacetFields.includes(field.key)
+    const source = musicTagFacet
+      ? musicTagFacetRows(field.key, mediaType)
+      : textRows(field.key, mediaType, {
+          normalizeTags: true,
+          rollUpTags: true,
+        })
     // Choosing the Last.fm source explicitly includes its retained source rows.
     const visibility =
       mediaType !== 'track' || options.includeLastfmSourceRows
@@ -1458,6 +1505,11 @@ async function queryBrowseFacets(
         : field.key === 'source'
           ? sql`and (value = ${trackSourceLabels.lastfm} or id not in (select id from redundant_lastfm_tracks))`
           : sql`and id not in (select id from redundant_lastfm_tracks)`
+    const uniqueValuePerItem =
+      field.key === 'title' ||
+      (mediaType === 'track'
+        ? ['album', 'albumLink', 'spotifyMatch'].includes(field.key)
+        : field.key === 'source')
     return browseFacetRows(
       field,
       source,
@@ -1466,10 +1518,16 @@ async function queryBrowseFacets(
       options.includeLastfmSourceRows && mediaType === 'track'
         ? sql`and id in (select media_item_id from library_track)`
         : visibility,
+      musicTagFacet
+        ? 'deduplicateRows'
+        : uniqueValuePerItem
+          ? 'uniqueRows'
+          : 'distinctItems',
     )
   })
   const result = await db.execute(
-    sql`${sources}${redundant} ${sql.join(queries, sql` union all `)}`,
+    sql`${sources.length ? sql`with ${sql.join(sources, sql`, `)}` : sql``}
+      ${sql.join(queries, sql` union all `)}`,
   )
   const rows: FacetRow[] = z.array(FacetRowSchema).parse(result.rows)
   // A tag with subtags is counted over all of them; say how many there are.

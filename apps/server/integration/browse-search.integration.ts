@@ -214,6 +214,38 @@ it('counts the same filtered, capped browse set without blocking any row-only pa
   })
 })
 
+it('uses the title index for both directions of Track Browse', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  for (const direction of ['asc', 'desc']) {
+    capturedQueries.length = 0
+    const page = await queryBrowsePageIds(
+      'track',
+      TrackQuerySchema.parse({ sortBy: 'title', direction, size: 2 }),
+    )
+    expect(page.ids).toEqual(
+      direction === 'asc'
+        ? ['song-20000', 'song-1']
+        : ['song-9999', 'song-9998'],
+    )
+    const statement = capturedQueries.find(({ query }) =>
+      query.includes('order by'),
+    )
+    if (!statement) throw new Error('Expected ordered track query')
+    const result = await pool.query(
+      `explain (analyze, format json) ${statement.query}`,
+      statement.params,
+    )
+    const plans = PlanRowsSchema.parse(result.rows).flatMap((row) =>
+      row['QUERY PLAN'].flatMap((plan) => flattenPlan(plan.Plan)),
+    )
+    expect(
+      plans.some(
+        (plan) => plan['Index Name'] === 'media_item_type_title_id_idx',
+      ),
+    ).toBe(true)
+  }
+})
+
 it('uses the default track date ordering index', async () => {
   const { queryBrowseIds } = await import('@/services/browse')
   capturedQueries.length = 0

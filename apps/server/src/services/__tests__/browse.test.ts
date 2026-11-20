@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { sql, type SQL } from 'drizzle-orm'
-import { FilmQuerySchema } from '@repo/schemas/media'
+import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 
 const mocks = vi.hoisted(() => ({
   count: vi.fn(),
@@ -81,6 +81,31 @@ describe('bounded browse reads', () => {
     expect(last.pageCount).toBe(5)
     expect(mocks.rows.mock.calls).toEqual([[0], [200]])
     expect(mocks.count).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses long tag-filter counts and distinguishes the filter values', async () => {
+    const { queryBrowseCount } = await import('../browse')
+    const filters = Array.from({ length: 8 }, (_, index) => ({
+      field: 'artistTag',
+      value: `Fixture tag ${index}`,
+    }))
+    const count = (first: string) =>
+      queryBrowseCount(
+        'album',
+        AlbumQuerySchema.parse({
+          filters: JSON.stringify([
+            { field: 'artistTag', value: first },
+            ...filters,
+          ]),
+        }),
+      )
+    await count('First')
+    await count('First')
+    await count('Second')
+    expect(mocks.count).toHaveBeenCalledTimes(2)
+    version = '101:101:'
+    await count('Second')
+    expect(mocks.count).toHaveBeenCalledTimes(3)
   })
 
   it('reuses facets only while the database version is unchanged', async () => {

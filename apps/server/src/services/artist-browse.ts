@@ -110,13 +110,22 @@ function pattern(value: string, substring = true) {
 }
 
 /** Field sources remain relational so selective names are matched before memberships. */
-function textRows(field: string, playlistFilter?: SQL): SQL {
+function textRows(
+  field: string,
+  options: { playlistFilter?: SQL; distinctPlaylists?: boolean } = {},
+): SQL {
   if (field === 'name') return sql`select a.id, a.name as value from artist a`
-  if (field === 'playlist')
+  if (field === 'playlist') {
+    const credits = artistPlaylistCredits(undefined, options.playlistFilter)
+    // Facets need the artist and playlist pair only, even across several credits.
+    const members = options.distinctPlaylists
+      ? sql`select distinct artist_id, playlist_id from (${credits}) credits`
+      : credits
     return sql`select membership.artist_id as id, playlist.name as value
-    from (${artistPlaylistCredits(undefined, playlistFilter)}) membership
+    from (${members}) membership
     join playlist on playlist.id = membership.playlist_id
-    ${playlistFilter ? sql`` : sql`where ${visiblePlaylist}`}`
+    ${options.playlistFilter ? sql`` : sql`where ${visiblePlaylist}`}`
+  }
   if (field === 'provider')
     return sql`select state.artist_id as id, state.provider as value from artist_provider_current_state state`
   if (field === 'genre')
@@ -492,10 +501,9 @@ export async function artistBrowseCounts(query: ArtistQuery) {
     query.filters.length > 0 ||
     query.ranges.length > 0 ||
     query.playlistIds.length > 0 ||
-    query.limitResults !== undefined ||
     query.listening !== undefined
   const [{ totalCount }, unfiltered] = await Promise.all([
-    countArtistBrowse(query),
+    countArtistBrowse({ ...query, limitResults: undefined }),
     filtered
       ? countArtistBrowse({
           ...query,
@@ -508,7 +516,10 @@ export async function artistBrowseCounts(query: ArtistQuery) {
         })
       : undefined,
   ])
-  return { totalCount, unfilteredCount: unfiltered?.totalCount ?? totalCount }
+  return {
+    totalCount: Math.min(totalCount, query.limitResults ?? totalCount),
+    unfilteredCount: unfiltered?.totalCount ?? totalCount,
+  }
 }
 
 export async function listArtistMetadataBrowsePage(query: ArtistMetadataQuery) {
@@ -585,7 +596,7 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
           union all
           select artist_tag_keys.id, ancestor.ancestor_key as value from artist_tag_keys
           join (${tagAncestorKeys('album', true)}) ancestor on ancestor.descendant_key = artist_tag_keys.value`
-        : textRows(field.key, playlistFilter)
+        : textRows(field.key, { playlistFilter, distinctPlaylists: true })
       return sql`(select ${field.key}::text as field, min(artist_values.value) as value, count(*)::int as count
         from (
           select ${group} as value_key, min(values_for_field.value) as value
@@ -596,10 +607,17 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
         group by artist_values.value_key
         order by case when lower(min(artist_values.value)) = ${(query.q ?? '').toLowerCase()} then 0 else 1 end, count desc, value asc limit ${query.limitPerField})`
     })
+    // Normalize a stored label once across the artists and providers using it.
     const result = await db.execute(sql`with visible_artists as materialized (
       select a.id from artist a where ${visibleArtist}
+    ), raw_artist_tags as materialized (
+      select distinct id, value from (${textRows('genre')}) artist_tags
+    ), normalized_tag_labels as materialized (
+      select value as raw_name, ${normalizedTagSql(sql`value`)} as value
+      from (select distinct value from raw_artist_tags) labels
     ), artist_tag_keys as materialized (
-      select id, ${normalizedTagSql(sql`value`)} as value from (${textRows('genre')}) artist_tags
+      select raw.id, labels.value from raw_artist_tags raw
+      join normalized_tag_labels labels on labels.raw_name = raw.value
     ) ${sql.join(queries, sql` union all `)}`)
     const facets: Facet[] = z.array(FacetSchema).parse(result.rows)
     // A tag with subtags is counted over all of them; say how many there are.

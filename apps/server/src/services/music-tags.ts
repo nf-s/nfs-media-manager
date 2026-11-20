@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
 import { db } from '@/lib/db'
 import { normalizedTagSql } from '@/lib/tag-sql'
-import { descendantTagNames } from './tag-hierarchy'
+import { descendantTagNames, tagAncestorKeys } from './tag-hierarchy'
 
 function canonicalTagRows(
   mediaType: 'album' | 'film',
@@ -122,6 +122,22 @@ export function artistTagMemberships(mediaType: 'album' | 'track'): SQL {
     from (${projectedArtistTags(currentArtistProfiles)}) artist_tag
     join media_credit c on c.artist_id = artist_tag.artist_id and c.role = 'artist'
     join media_item m on m.id = c.media_item_id and m.media_type = ${mediaType}`
+}
+
+/** Resolve displayed tag keys and their ancestors before joining media credits. */
+export function artistTagFacetKeys(mediaType: 'album' | 'track'): SQL {
+  const profiles =
+    mediaType === 'album'
+      ? sql`${currentArtistProfiles} where state.artist_id in (
+          select c.artist_id from media_credit c join media_item m on m.id = c.media_item_id
+          where c.role = 'artist' and m.media_type = 'album'
+            and m.metadata->>'legacyHidden' is distinct from 'true')`
+      : currentArtistProfiles
+  return sql`with projected as materialized (${projectedArtistTags(profiles)})
+    select artist_id, name_key as value from projected
+    union all
+    select p.artist_id, a.ancestor_key from projected p
+    join (${tagAncestorKeys('album')}) a on a.descendant_key = p.name_key`
 }
 
 export function firstArtistTag(mediaId: SQL): SQL {

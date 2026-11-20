@@ -24,3 +24,23 @@ export function rangeCondition(
     ? sql`(${predicate} or ${value} is null)`
     : predicate
 }
+
+function isTimestampBound(value: number | undefined) {
+  if (value === undefined) return true
+  if (!Number.isSafeInteger(value)) return false
+  const year = new Date(value).getUTCFullYear()
+  return year >= 1 && year <= 9999
+}
+
+/** Compare stored UTC timestamps directly for ordinary millisecond bounds. */
+export function timestampRangeCondition(range: BrowseRange, value: SQL) {
+  // Keep numeric comparisons for sub-millisecond precision and dates outside
+  // the four-digit AD years shared by JavaScript ISO strings and PostgreSQL.
+  if (!isTimestampBound(range.min) || !isTimestampBound(range.max))
+    return rangeCondition(range, sql`extract(epoch from ${value}) * 1000`)
+  return rangeCondition(
+    range,
+    value,
+    (bound) => sql`${new Date(bound).toISOString()}::timestamp`,
+  )
+}

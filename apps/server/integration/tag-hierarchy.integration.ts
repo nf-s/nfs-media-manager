@@ -205,7 +205,21 @@ describe('tag hierarchy', () => {
     expect(subtags('shoegaze')).toBe(1)
     expect(subtags('jazz')).toBeUndefined()
 
-    const { queryBrowseIds } = await import('@/services/browse')
+    const { listBrowseFacets, queryBrowseIds } =
+      await import('@/services/browse')
+    expect(
+      (await listBrowseFacets('album', { q: 'Artist tags Rock' })).filter(
+        (facet) => facet.value === 'rock',
+      ),
+    ).toEqual([
+      {
+        field: 'artistTag',
+        value: 'rock',
+        count: 1,
+        subtags: 3,
+        label: 'Artist tags: Rock',
+      },
+    ])
     const tracks = await queryBrowseIds(
       'track',
       TrackQuerySchema.parse({
@@ -228,14 +242,12 @@ describe('tag hierarchy', () => {
     }
     for (const [artistId, tag] of Object.entries(profiles)) {
       const trackId = `t-${artistId}`
-      await databaseClient
-        .insert(schema.mediaItem)
-        .values({
-          id: trackId,
-          slug: trackId,
-          title: trackId,
-          mediaType: 'track',
-        })
+      await databaseClient.insert(schema.mediaItem).values({
+        id: trackId,
+        slug: trackId,
+        title: trackId,
+        mediaType: 'track',
+      })
       await databaseClient
         .insert(schema.libraryTrack)
         .values({ mediaItemId: trackId })

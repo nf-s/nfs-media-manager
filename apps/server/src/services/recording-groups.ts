@@ -165,6 +165,10 @@ export function recordingMemberships(
       join recording_credits credits using (id)
       join lastfm_track_link l on l.track_media_item_id = c.id and l.strategy = 'exact'
         and l.track_key = c.title_key and l.artist_key = any(credits.artist_keys)
+      -- Exact links can resolve or rule out an assignment for a missing ISRC.
+      where c.isrc is null or c.title_key in (
+        select title_key from recording_contenders where isrc is null
+      )
       order by c.id, l.artist_key, l.username
     ),
     recording_guard as (

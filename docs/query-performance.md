@@ -78,6 +78,16 @@ The table measures database execution for IDs and counts. Loading full track det
 
 Jobs counts group matching batch IDs without sorting or loading individual job details. The page limits individual jobs before combining them with batch summaries. Subscription and Mixes compatibility pages count narrow rows and load page details within the same SQL statement, including when a page lies beyond the last match. Source directories count stored items through each source's indexed membership. In separate synthetic fixtures, the Jobs first page took 15 ms for 300,000 jobs (previously 229 ms), and a subscription page with its exact total took 32 ms for 250,000 items (previously 306 ms). These are medians of five warm database measurements.
 
+## Sorts, ranges and autocomplete
+
+Titles are required, so descending title order can scan the title index backwards. On 20,000 synthetic tracks the first 50 IDs took 0.8 ms, down from 192 ms. A one-day Added range on 65,000 tracks counted 25 matches in 0.13 ms, down from 26 ms. Film and Album Released ranges also use the stored timestamp for whole-millisecond bounds. Fractional bounds retain their exact precision. When a result cap is the only filter, one count supplies both the displayed total and the uncapped total.
+
+Tracks and Albums resolve tag labels and their visible ancestors before joining media memberships. On 60,000 tracks, 6,000 albums and 60,000 current artist profiles, a one-character autocomplete request fell from 2.02 to 1.22 seconds for Tracks and from 493 to 328 ms for Albums. A selective search took 333 ms and 113 ms respectively. Exact counts on broad searches still require reading memberships across the library.
+
+Subscription and Mix autocomplete count scalar values once per item and collapse repeated array labels within each item on broad searches. On a synthetic fixture with 160,000 subscription and mix items, empty autocomplete took 180 ms for Subscriptions and 256 ms for Mixes, down from 584 ms and 683 ms. Artist suggestions collapse repeated profile labels and playlist memberships before counting.
+
+Deep pages still use offsets to support jumping to an arbitrary position. On the same 20,000-track fixture, the first title-ordered page took about 1 ms and page 390 took 239 ms at 50 tracks per page. Rolling listening windows also move between requests. Exact count cache keys include the window boundaries, and concurrent database writes can invalidate cached totals.
+
 ## Verification
 
 The browse-search and query-indexes integration tests create disposable databases and synthetic libraries. They cover query results, substring escaping, cross-field word matching and PostgreSQL query plans. They do not read or scrape a real library. Run them from the workspace root:

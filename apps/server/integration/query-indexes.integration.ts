@@ -12,8 +12,9 @@ import {
   vi,
 } from 'vitest'
 import { z } from 'zod'
-import { AlbumQuerySchema } from '@repo/schemas/media'
+import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { TagListQuerySchema } from '@repo/schemas/tags'
+import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { SubscriptionItemQuerySchema } from '@repo/schemas/subscriptions'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -31,6 +32,7 @@ const pool = new pg.Pool({
   ...connection,
   database: name,
   max: 2,
+  options: '-c TimeZone=Pacific/Auckland',
   statement_timeout: 10000,
 })
 const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
@@ -58,13 +60,28 @@ beforeAll(async () => {
   await migrate(database, { migrationsFolder: './drizzle' })
   // Selective matches sit beyond the first page in an entirely synthetic library.
   await pool.query(`
-    insert into media_item (id, slug, media_type, title)
-    select 'film-' || n, 'film-' || n, 'film', 'Fixture film ' || n
+    insert into media_item (id, slug, media_type, title, release_date)
+    select 'film-' || n, 'film-' || n, 'film', 'Fixture film ' || n,
+      case
+        when n = 1 then timestamp '1969-12-31 23:59:59.999'
+        when n = 2 then timestamp '1969-12-31 23:59:59.999999'
+        when n = 3 then null
+        when n > 19980 then timestamp '2026-01-01'
+        else timestamp '1940-01-01' + n * interval '1 day'
+      end
     from generate_series(1, 20000) n;
     insert into media_item (id, slug, media_type, title)
     select 'album-' || n, 'album-' || n, 'album', 'Fixture album ' || n
     from generate_series(1, 2000) n;
     insert into album (media_item_id) select id from media_item where media_type = 'album';
+    insert into media_item (id, slug, media_type, title)
+    select 'track-' || n, 'track-' || n, 'track', 'Fixture track ' || n
+    from generate_series(1, 5000) n;
+    insert into library_track (media_item_id, date_added)
+    select 'track-' || n,
+      case when n > 4980 then timestamp '2026-01-01'
+        else timestamp '2020-01-01' + n * interval '1 hour' end
+    from generate_series(1, 5000) n;
     insert into artist (id, name)
     select 'artist-' || n, case when n > 19990 then 'Needle artist ' else 'Fixture artist ' end || n
     from generate_series(1, 20000) n;
@@ -114,6 +131,7 @@ beforeAll(async () => {
     'tag_occurrence',
     'media_item_tag',
     'album',
+    'library_track',
     'lastfm_scrobble',
     'subscription_source',
     'subscription_item',
@@ -165,6 +183,56 @@ function expectIndex(plan: string, name: string) {
 describe('library query index coverage', () => {
   // Let PostgreSQL choose each plan after ANALYZE; do not force index scans or
   // impose wall-clock limits that depend on the developer's machine.
+  it('uses the stored timestamp indexes for selective date ranges', async () => {
+    const { queryBrowseIds } = await import('@/services/browse')
+    const date = Date.parse('2026-01-01')
+    const films = await queryBrowseIds(
+      'film',
+      FilmQuerySchema.parse({
+        sortBy: 'title',
+        ranges: [{ field: 'releaseDate', min: date, max: date }],
+      }),
+    )
+    expect(films.totalCount).toBe(20)
+    expectIndex(
+      await explainServiceQuery('select count(*)::int from'),
+      'media_item_type_release_id_idx',
+    )
+
+    logQuery.mockClear()
+    const tracks = await queryBrowseIds(
+      'track',
+      TrackQuerySchema.parse({
+        sortBy: 'title',
+        ranges: [{ field: 'dateAdded', min: date, max: date }],
+      }),
+    )
+    expect(tracks.totalCount).toBe(20)
+    expectIndex(
+      await explainServiceQuery('select count(*)::int from'),
+      'library_track_added_id_idx',
+    )
+  })
+
+  it('preserves inclusive UTC, fractional and out-of-range date bounds', async () => {
+    const { queryBrowseIds } = await import('@/services/browse')
+    const ids = async (min?: number, max?: number, includeMissing = false) =>
+      (
+        await queryBrowseIds(
+          'film',
+          FilmQuerySchema.parse({
+            sortBy: 'title',
+            ranges: [{ field: 'releaseDate', min, max, includeMissing }],
+          }),
+        )
+      ).ids
+
+    expect(await ids(-1, -1)).toEqual(['film-1'])
+    expect(await ids(-0.001, -0.001)).toEqual(['film-2'])
+    expect(await ids(-1, -1, true)).toEqual(['film-3', 'film-1'])
+    expect(await ids(undefined, -Number.MAX_VALUE, true)).toEqual(['film-3'])
+  })
+
   it('finds selective creator suggestions through artist and reverse credit indexes', async () => {
     const { listBrowseFacets } = await import('@/services/browse')
     const facets = await listBrowseFacets('film', { q: 'Needle' })

@@ -150,6 +150,36 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
+it('counts each library once when only a result cap changes the displayed total', async () => {
+  const { queryBrowseCounts } = await import('@/services/browse')
+  const { artistBrowseCounts } = await import('@/services/artist-browse')
+  const counts = { totalCount: 1, unfilteredCount: 2 }
+  logQuery.mockClear()
+  expect(
+    await queryBrowseCounts(
+      'track',
+      TrackQuerySchema.parse({
+        groupRecordings: true,
+        limitResults: 1,
+      }),
+    ),
+  ).toEqual(counts)
+  expect(
+    logQuery.mock.calls.filter(([query]) =>
+      query.includes('recording_matches as materialized'),
+    ),
+  ).toHaveLength(1)
+  logQuery.mockClear()
+  expect(
+    await artistBrowseCounts(ArtistQuerySchema.parse({ limitResults: 1 })),
+  ).toEqual(counts)
+  expect(
+    logQuery.mock.calls.filter(([query]) =>
+      query.includes('select count(*)::int as count'),
+    ),
+  ).toHaveLength(1)
+})
+
 it('returns the unfiltered album and track totals in the same scope', async () => {
   const { queryBrowseCounts } = await import('@/services/browse')
   expect(await queryBrowseCounts('album', AlbumQuerySchema.parse({}))).toEqual({
@@ -521,6 +551,16 @@ it('uses conflicting recording evidence from editions excluded by filters', asyn
       ({ id }) => id,
     ),
   ).toEqual(['guard-a'])
+
+  await pool.query(`
+    update library_track set isrc = 'USABC2600002' where media_item_id = 'guard-a';
+  `)
+  expect(await listTrackBrowsePage(query)).toMatchObject({
+    items: [{ id: 'guard-a', recordingGroup: { versionCount: 2 } }],
+  })
+  await pool.query(`
+    update library_track set isrc = null where media_item_id = 'guard-a';
+  `)
 
   await pool.query(`
     insert into track (id, album_media_item_id, track_media_item_id, title, position) values

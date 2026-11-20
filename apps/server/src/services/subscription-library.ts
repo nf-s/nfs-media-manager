@@ -341,18 +341,17 @@ const textValues: Record<z.infer<typeof SubscriptionTextFieldSchema>, SQL> = {
   title: sql`i.title`,
   source: sql`s.title`,
   type: typeLabel,
-  artist: sql`artist.value`,
-  genre: sql`tag.value`,
+  artist: sql`item_values.value`,
+  genre: sql`item_values.value`,
   // Yes or No, as the film Watched field.
   watched: sql`(case when i.watched_at is null then 'No'::text else 'Yes'::text end)`,
 }
 
-/** Facets read one row per value of an array field. */
-const textValueRows: Partial<
+const textArrays: Partial<
   Record<z.infer<typeof SubscriptionTextFieldSchema>, SQL>
 > = {
-  artist: sql`cross join lateral jsonb_array_elements_text(i.artists) artist(value)`,
-  genre: sql`cross join lateral jsonb_array_elements_text(i.tags) tag(value)`,
+  artist: sql`jsonb_array_elements_text(i.artists)`,
+  genre: sql`jsonb_array_elements_text(i.tags)`,
 }
 
 /**
@@ -877,12 +876,25 @@ async function queryFacets(query: SubscriptionFacetQuery) {
       )
       .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
     const search = matches.length ? sql`and ${and(...matches)}` : sql``
+    const values = textArrays[key]
+    // Broad array facets deduplicate within each item, so their library-wide
+    // aggregate can count rows. Selective facets filter before deduplicating.
+    const arrayValues = values
+      ? matches.length
+        ? sql`cross join lateral ${values} item_values(value)`
+        : sql`cross join lateral (
+          select min(value) as value from ${values} raw(value) group by lower(value)
+        ) item_values`
+      : sql``
+    // Each scalar value already appears at most once per item.
+    const count =
+      values && matches.length ? sql`count(distinct id)` : sql`count(*)`
     // Values differing only in case are one filter, as filters ignore case.
     return sql`(select ${key}::text as field, min(value) as value,
-        count(distinct id)::int as count
+        ${count}::int as count
       from (select i.id, ${textValues[key]} as value
         from subscription_item i
-        join subscription_source s on s.id = i.source_id ${textValueRows[key] ?? sql``}
+        join subscription_source s on s.id = i.source_id ${arrayValues}
         where s.subscribed and ${inSubscriptionLibrary(sql`i.type`, query.library)}) values_for_field
       where value is not null and value <> '' ${search}
       group by lower(value)
