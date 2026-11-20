@@ -290,8 +290,10 @@ export default {
       }
     }
   },
-  async scheduled(_event, bindings, ctx) {
-    ctx.waitUntil(run(bindings, runDatabaseMaintenance))
+  async scheduled(event, bindings, ctx) {
+    ctx.waitUntil(
+      run(bindings, () => runDatabaseMaintenance(event.scheduledTime)),
+    )
     await run(bindings, async () => {
       await dispatchQueuedImports()
       if (env.SCRAPING_ENABLED) {
