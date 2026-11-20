@@ -293,9 +293,12 @@ describe('tag browse predicate regression', () => {
       union all select 'film'::media_type, 'load old ' || n, 'genre', 'load-tag-' || n from generate_series(0, 999) n`)
     await database.execute(sql`insert into tag_alias (source_tag_id, target_tag_id)
       select 'load-old-' || n, 'load-tag-' || n from generate_series(0, 999) n`)
-    await database.execute(sql`insert into media_item_tag (media_item_id, tag_id)
-      select 'load-' || n, 'load-tag-' || ((n + offset_value) % 1000)
-      from generate_series(0, 2499) n cross join generate_series(0, 19) offset_value`)
+    // Seed in batches so the five-second budget measures Browse reads even on slower disks.
+    for (let start = 0; start < 2500; start += 500)
+      await database.execute(sql`insert into media_item_tag (media_item_id, tag_id)
+        select 'load-' || n, 'load-tag-' || ((n + offset_value) % 1000)
+        from generate_series(${start}::int, ${start + 499}::int) n
+        cross join generate_series(0, 19) offset_value`)
     for (const table of [
       schema.mediaItem,
       schema.film,

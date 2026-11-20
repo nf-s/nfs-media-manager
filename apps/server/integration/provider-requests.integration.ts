@@ -961,8 +961,9 @@ describe('saved HTTP response evidence', () => {
               responseBody: {
                 state: 'captured',
                 format: 'json',
-                text: '{"message":"Synthetic provider rate limit","token":"[REDACTED]"}',
-                redacted: true,
+                // This provider retains the public message before job diagnostics are built.
+                text: '{"message":"Synthetic provider rate limit"}',
+                redacted: false,
               },
             },
           },

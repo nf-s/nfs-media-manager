@@ -570,13 +570,19 @@ describe('field provenance', () => {
 })
 
 describe('coverage', () => {
-  async function scraped(id: string, provider: string, at: Date) {
+  async function scraped(
+    id: string,
+    provider: string,
+    at: Date,
+    summary?: string,
+  ) {
     await databaseClient.insert(schema.providerCurrentState).values({
       id: `${id}-${provider}`,
       mediaItemId: id,
       provider,
       checksum: 'fixture',
       payload: {},
+      normalizedData: summary ? { mediaPatch: { summary } } : undefined,
       status: 'ready',
       lastSuccessfulAt: at,
       lastScrapedAt: at,
@@ -677,7 +683,12 @@ describe('coverage', () => {
         mediaItemId: listed?.id ?? 'missing-track',
       },
     ])
-    await scraped('album-entry', 'fixture-a', new Date())
+    await scraped(
+      'album-entry',
+      'fixture-a',
+      new Date(),
+      'Fixture album summary',
+    )
 
     const coverage = await getPlaylistCoverage('playlist-coverage', {
       olderThanDays: 180,

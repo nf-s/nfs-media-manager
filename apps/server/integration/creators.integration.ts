@@ -348,6 +348,8 @@ describe('creator directories and related library items', () => {
     expect(await loadArtistProviderTarget('dual', 'spotify')).toEqual({
       name: 'Delta Fixture',
       providerArtistId: null,
+      snapshotId: null,
+      profile: null,
     })
     expect(await loadArtistProviderTarget('actor', 'spotify')).toBeNull()
     await saveArtistProviderResult('dual', 'spotify', {
