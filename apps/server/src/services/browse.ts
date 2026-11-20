@@ -1136,6 +1136,7 @@ async function browseQueries(
     ${mediaItem.id} not in (${redundantLastfmTrackIds()}))`
     : undefined
   if (visibleTrack && groupedTrackQuery) conditions.push(visibleTrack)
+  let creatorCredit: SQL | undefined
   if (query.creatorId) {
     const role = 'creatorRole' in query ? query.creatorRole : undefined
     const roles =
@@ -1144,13 +1145,12 @@ async function browseQueries(
           ? [role]
           : PersonRoleSchema.options
         : ['artist']
-    conditions.push(
-      sql`exists (select 1 from ${mediaCredit} where ${and(
-        eq(mediaCredit.mediaItemId, mediaItem.id),
-        eq(mediaCredit.artistId, query.creatorId),
-        inArray(mediaCredit.role, roles),
-      )})`,
-    )
+    creatorCredit = sql`exists (select 1 from ${mediaCredit} where ${and(
+      eq(mediaCredit.mediaItemId, mediaItem.id),
+      eq(mediaCredit.artistId, query.creatorId),
+      inArray(mediaCredit.role, roles),
+    )})`
+    conditions.push(creatorCredit)
   }
   conditions.push(...(options.conditions ?? []))
   if (!('includeArchived' in query) || query.includeArchived !== 'true')
@@ -1238,21 +1238,37 @@ async function browseQueries(
   const listeningSubject = mediaType === 'track' ? 'track' : 'album'
   const itemConditions = (requested?: BrowseListening) =>
     and(where, requested?.condition(listeningSubject, sql`${mediaItem.id}`))
-  // An ordered Added page can stop at its limit. Probe only source records
-  // encountered while walking that index, keeping full-set work for counts.
+  // An ordered Added page can stop at its limit. For creator scopes, keep
+  // the cheap indexed credit test before probes of redundant Last.fm rows.
+  // PostgreSQL can otherwise test those probes before joining artist credits.
+  const creatorTrackScope = mediaType === 'track' && !!creatorCredit
+  const nonredundantTrack = sql`not exists (
+    ${redundantLastfmTrackIds(sql`${mediaItem.id}`)})`
+  const scopedTrackVisibility = hideRedundant
+    ? creatorTrackScope
+      ? sql`case when ${mediaItem.sourceLabel} is distinct from 'lastfm' then true
+          when ${creatorCredit} then ${nonredundantTrack}
+          else false end`
+      : sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or ${nonredundantTrack})`
+    : undefined
   const addedTrackVisibility =
-    hideRedundant && query.sortBy === 'dateAdded' && query.direction === 'desc'
-      ? sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
-        ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
-      ))`
+    query.sortBy === 'dateAdded' && query.direction === 'desc'
+      ? scopedTrackVisibility
       : visibleTrack
   const pageMembership = itemConditions(listening)
   const pageWhere = and(
     pageMembership,
-    query.filters.length ? visibleTrack : addedTrackVisibility,
+    creatorTrackScope
+      ? scopedTrackVisibility
+      : query.filters.length
+        ? visibleTrack
+        : addedTrackVisibility,
   )
   const pageSource = listening?.source(listeningSubject)
-  const countWhere = and(itemConditions(countedListening), visibleTrack)
+  const countWhere = and(
+    itemConditions(countedListening),
+    creatorTrackScope ? scopedTrackVisibility : visibleTrack,
+  )
   const countSource = countedListening?.source(listeningSubject)
   const base = (rank: SQL<number> = sql<number>`0`, ordinal?: SQL<number>) => {
     const query = database
@@ -1318,6 +1334,7 @@ async function browseQueries(
   async function readTrackRanks(
     ranks: number[] | { first: number; last: number },
     firstArtistTagWhere?: SQL,
+    rankVisibility = visibleTrack,
   ) {
     const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
     const requested = Array.isArray(ranks)
@@ -1332,7 +1349,7 @@ async function browseQueries(
       sql<number>`row_number() over (order by ${order})`,
     )
       .where(
-        firstArtistTagWhere ?? and(itemConditions(listening), visibleTrack),
+        firstArtistTagWhere ?? and(itemConditions(listening), rankVisibility),
       )
       .orderBy(order)
     const releaseJoins = firstArtistTagWhere
@@ -1395,6 +1412,7 @@ async function browseQueries(
         ? await readTrackRanks(
             { first: offset + 1, last: offset + limit },
             firstArtistTagWhere,
+            creatorTrackScope ? scopedTrackVisibility : visibleTrack,
           )
         : await base()
             .where(pageWhere)
@@ -1528,6 +1546,7 @@ function recordBrowseShape(query: BrowseQuery) {
     filtered: Boolean(
       query.q || query.filters.length || query.ranges.length || query.creatorId,
     ),
+    creatorScoped: Boolean(query.creatorId),
     sort:
       query.sortBy === 'dateAdded'
         ? 'added'

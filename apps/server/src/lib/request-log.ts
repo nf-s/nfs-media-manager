@@ -41,6 +41,7 @@ interface RequestBrowseProfile {
   listening: boolean
   listeningUse?: 'filter' | 'column' | 'both'
   filtered: boolean
+  creatorScoped?: boolean
   sort: 'added' | 'title' | 'plays' | 'other'
   playSort?: 'scrobbles' | 'listeningScrobbles'
   recordingOrderLookup?: 'hit' | 'miss'
@@ -173,6 +174,7 @@ export function setRequestBrowseProfile({
   listening,
   listeningUse,
   filtered,
+  creatorScoped,
   sort,
   playSort,
 }: RequestBrowseProfile) {
@@ -184,6 +186,7 @@ export function setRequestBrowseProfile({
       listening,
       listeningUse,
       filtered,
+      creatorScoped,
       sort,
       playSort,
     }

@@ -1046,7 +1046,7 @@ it('bounds live Track autocomplete on shared artist and album tags', async () =>
 })
 
 it('bounds first Added pages with artist tags and unrelated Last.fm placeholders', async () => {
-  const { queryBrowsePageIds, queryBrowsePositions } =
+  const { queryBrowseCount, queryBrowsePageIds, queryBrowsePositions } =
     await import('@/services/browse')
   await pool.query(`
     insert into media_item (id, slug, media_type, title, source_label)
@@ -1146,6 +1146,112 @@ it('bounds first Added pages with artist tags and unrelated Last.fm placeholders
     },
     500_000,
   )
+
+  await pool.query(`
+    insert into media_credit (media_item_id, artist_id, role)
+    values ('track-19997', 'visibility-artist', 'artist');
+    update media_item set metadata = '{"legacyHidden":true}' where id = 'track-19997';
+  `)
+  const sparseCreator = TrackQuerySchema.parse({
+    creatorId: 'visibility-artist',
+    groupRecordings: false,
+    sortBy: 'title',
+    direction: 'asc',
+    size: 100,
+  })
+  await checkBudget(
+    'sparse creator Track title page',
+    800,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', sparseCreator)
+      expect(page.ids).toEqual([
+        'placeholder-11998',
+        'placeholder-12000',
+        'track-19999',
+        'track-20000',
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+    500_000,
+  )
+  await checkBudget(
+    'sparse creator Track exact count',
+    800,
+    3,
+    async () => {
+      expect(await queryBrowseCount('track', sparseCreator)).toEqual({
+        totalCount: 4,
+      })
+    },
+    500_000,
+  )
+
+  await checkBudget(
+    'sparse creator Track plays page',
+    800,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', {
+        ...sparseCreator,
+        sortBy: 'scrobbles',
+        direction: 'desc',
+        size: 5,
+      })
+      expect(page.ids).toEqual([
+        'track-20000',
+        'track-19999',
+        'placeholder-11998',
+        'placeholder-12000',
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+    500_000,
+  )
+  const sourceRows = TrackQuerySchema.parse({
+    ...sparseCreator,
+    filters: [{ field: 'source', value: 'Last.fm', mode: 'required' }],
+  })
+  expect((await queryBrowsePageIds('track', sourceRows)).ids).toEqual([
+    'placeholder-11998',
+    'placeholder-11999',
+    'placeholder-12000',
+  ])
+  expect(await queryBrowseCount('track', sourceRows)).toEqual({ totalCount: 3 })
+  // Include two equal titles across the page boundary. Natural release
+  // order places the higher ID first, so truncating on ID would skip it.
+  await pool.query(`
+    insert into artist (id, name) values ('fixture-populous-creator', 'Fixture populous creator');
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'track-' || n, 'fixture-populous-creator', 'artist' from generate_series(4001, 8000) n;
+    update media_item set title = 'Fixture track 04100' where id = 'track-4101';
+    update library_track set album_media_item_id = 'album-999' where media_item_id = 'track-4100';
+    update library_track set album_media_item_id = 'album-1' where media_item_id = 'track-4101';
+  `)
+  await pool.query('vacuum analyze media_credit')
+  await pool.query('vacuum analyze media_item')
+  await pool.query('vacuum analyze library_track')
+  const populousCreator = {
+    ...sparseCreator,
+    creatorId: 'fixture-populous-creator',
+  }
+  await checkBudget(
+    'populous creator Track title page',
+    24_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', populousCreator)
+      expect(page.ids).toEqual([
+        ...Array.from({ length: 99 }, (_, index) => `track-${4001 + index}`),
+        'track-4101',
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+  expect(await queryBrowseCount('track', populousCreator)).toEqual({
+    totalCount: 4_000,
+  })
 })
 
 it('bounds the Spotify alternate lookup for detail on a common track title', async () => {
