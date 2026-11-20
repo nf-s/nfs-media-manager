@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merge from Tracks · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <link rel="stylesheet" href="../../packages/ui/src/styles/detail.css" />
+    <style>
+      .g-main {
+        min-width: 0;
+      }
+      #track-table .ds-table {
+        min-width: calc(var(--ds-inspector) + var(--ds-rail));
+      }
+      .keep-options {
+        border: 0;
+        padding: 0;
+        margin: 0;
+        min-width: 0;
+      }
+      .keep-options legend {
+        margin-bottom: var(--ds-4);
+      }
+      .keep-options .ds-cell-id {
+        min-width: 0;
+      }
+      .keep-options .ds-row-by {
+        white-space: normal;
+      }
+      .review-actions {
+        justify-content: end;
+        flex-wrap: wrap;
+      }
+      .result-actions {
+        margin-top: var(--ds-4);
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-track-table-merge.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const range = (first, last) =>
+        Array.from({ length: last - first + 1 }, (_, i) => first + i)
+      const artist = 'Mira Kestrel'
+      const release = 'Harbour Lights'
+      const samples = [
+        {
+          id: 'lines',
+          title: 'Signal Lines',
+          album: release,
+          spotify: 'lines',
+          seed: 7,
+          plays: range(40, 45),
+        },
+        {
+          id: 'album',
+          title: 'Winter’s Relay',
+          album: release,
+          spotify: 'album',
+          seed: 7,
+          plays: range(1, 24),
+        },
+        {
+          id: 'straight',
+          title: "Winter's Relay",
+          album: release,
+          plays: range(1, 8),
+        },
+        {
+          id: 'plain',
+          title: 'Winters Relay',
+          album: release,
+          plays: range(23, 27),
+        },
+        {
+          id: 'live',
+          title: 'Winter’s Relay (Live)',
+          album: 'Relay Sessions',
+          spotify: 'live',
+          seed: 3,
+          plays: range(50, 61),
+        },
+        {
+          id: 'wires',
+          title: 'Wires at Dawn',
+          album: release,
+          spotify: 'wires',
+          seed: 7,
+          plays: range(70, 73),
+        },
+      ].map((track) => ({
+        ...track,
+        kind: 'track',
+        by: artist,
+        art: track.spotify ? undefined : null,
+        sources: [track.spotify ? 'Album track list' : 'Last.fm'],
+      }))
+      const initialSelection = ['album', 'straight', 'plain']
+      let tracks = [...samples]
+      let selected = new Set(initialSelection)
+      let keptId
+      let lastMerge = ''
+      D.page({
+        title: 'Merge from the Tracks table',
+        lede: 'Select two or more entries, then choose which track to keep. <a class="g-link" href="concept-track-merge.html">Track Sources mockup</a>',
+        sections: [
+          {
+            id: 'tracks',
+            title: 'Tracks',
+            body:
+              D.g.spec(
+                '<div id="track-table"></div><div id="selection" class="ds-selectbar"></div>',
+                { flush: true },
+              ) + '<div id="result" role="status"></div>',
+          },
+        ],
+      })
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        `
+        <dialog id="merge-review" class="dtl-dialog" aria-labelledby="merge-title">
+          <div class="dtl-dialog-inner">
+            <div class="ds-inspector-bar">
+              <div class="ds-crumbs"><b id="merge-title"></b></div>
+              ${D.btn('', { icon: 'x', aria: 'Close review', variant: 'ghost' })}
+            </div>
+            <div class="dtl-dialog-body"></div>
+          </div>
+        </dialog>`,
+      )
+      const tableRoot = document.getElementById('track-table')
+      const bar = document.getElementById('selection')
+      const dialog = document.getElementById('merge-review')
+      const result = document.getElementById('result')
+      const chosen = () => tracks.filter((t) => selected.has(t.id))
+      const uniquePlays = (rows) => [...new Set(rows.flatMap((t) => t.plays))]
+      const uniqueSources = (rows) => [
+        ...new Set(rows.flatMap((t) => t.sources)),
+      ]
+      const differentRecordings = (rows) =>
+        new Set(rows.map((t) => t.spotify).filter(Boolean)).size > 1
+
+      function showTable() {
+        const columns = [
+          D.checkCol((t) => selected.has(t.id), { sticky: true }),
+          {
+            h: 'Track',
+            sticky: 36,
+            edge: true,
+            c: (t) =>
+              `<span class="ds-cell-id">${D.thumb(t)}<span class="ds-cell-title">${D.esc(t.title)}</span>${D.play('row')}</span>`,
+          },
+          { h: 'Artist', w: 114, c: (t) => D.esc(t.by) },
+          { h: 'Album', w: 128, c: (t) => D.esc(t.album) },
+          { h: 'Source', w: 155, c: (t) => D.esc(t.sources.join(' · ')) },
+          {
+            h: 'Scrobbles',
+            w: 86,
+            end: true,
+            c: (t) => String(t.plays.length),
+          },
+        ]
+        tableRoot.innerHTML =
+          '<div class="ds-table-wrap">' +
+          D.table(columns, tracks, {
+            layout: 'fixed',
+            row: (t) => ({
+              'data-id': t.id,
+              'aria-selected': String(selected.has(t.id)),
+            }),
+          }) +
+          '</div>'
+        tableRoot
+          .querySelector('table')
+          .setAttribute('aria-label', 'Track entries')
+        for (const row of tableRoot.querySelectorAll('tbody tr')) {
+          row
+            .querySelector('.ds-check')
+            .setAttribute(
+              'aria-label',
+              'Select ' +
+                row.querySelector('.ds-cell-title').textContent +
+                ' from ' +
+                row.cells[4].textContent,
+            )
+        }
+        for (const control of tableRoot.querySelectorAll('.ds-play button')) {
+          control.disabled = true
+          control.title = 'Playback is unavailable for sample tracks'
+        }
+        updateSelection()
+      }
+      function updateSelection() {
+        const all = tableRoot.querySelector('thead input')
+        all.checked = selected.size === tracks.length
+        all.indeterminate = selected.size > 0 && selected.size < tracks.length
+        for (const row of tableRoot.querySelectorAll('tbody tr')) {
+          const checked = selected.has(row.dataset.id)
+          row.setAttribute('aria-selected', String(checked))
+          row.querySelector('.ds-check').checked = checked
+        }
+        bar.innerHTML = selected.size
+          ? `
+          <span><b>${selected.size} selected</b> <span class="ds-muted">of ${tracks.length}</span></span>
+          <span class="ds-actions ds-toolbar-end">
+            ${D.btn('Merge…', { variant: 'primary', disabled: selected.size < 2, title: 'Review selected tracks' })}
+            ${D.btn('', { icon: 'x', aria: 'Clear selection' })}
+          </span>`
+          : ''
+        result.innerHTML = lastMerge
+          ? '<div class="result-actions">' +
+            D.notice(D.esc(lastMerge), {
+              icon: 'check',
+              action: D.btn('Reset example', { size: 'xs' }),
+            }) +
+            '</div>'
+          : ''
+      }
+      tableRoot.addEventListener('change', (event) => {
+        if (!event.target.matches('.ds-check')) return
+        const row = event.target.closest('tr')
+        if (row.dataset.id) {
+          if (event.target.checked) selected.add(row.dataset.id)
+          else selected.delete(row.dataset.id)
+        } else
+          selected = event.target.checked
+            ? new Set(tracks.map((t) => t.id))
+            : new Set()
+        updateSelection()
+      })
+      function previewCount(rows, kept) {
+        const total = uniquePlays(rows).length
+        const added = total - kept.plays.length
+        const count = added
+          ? `${kept.plays.length} + ${added} new = <b>${total}</b>`
+          : `<b>${total}</b> · all selected plays already counted`
+        const transferred = rows.find((t) => t.spotify)
+        const membership =
+          transferred && !kept.spotify
+            ? ' The album position and Spotify link move here too.'
+            : ''
+        const removed = rows.length - 1
+        return D.section(
+          'After the merge',
+          D.kv([
+            ['Scrobbles', count],
+            ['Library entries', `${rows.length} → 1`],
+          ]) +
+            `<p class="ds-help">Each play counts once. Recorded names from the other ${removed === 1 ? 'entry' : removed + ' entries'} move to this track.${membership}</p>`,
+        )
+      }
+      function openReview() {
+        const rows = chosen()
+        if (rows.length < 2) return
+        document.getElementById('merge-title').textContent =
+          'Merge ' + rows.length + ' tracks'
+        const body = dialog.querySelector('.dtl-dialog-body')
+        if (differentRecordings(rows)) {
+          body.innerHTML =
+            D.notice(
+              'These entries contain different Spotify recordings. Select entries for one recording to merge.',
+              { tone: 'attention' },
+            ) +
+            '<div class="ds-actions review-actions">' +
+            D.btn('Edit selection') +
+            '</div>'
+        } else {
+          const suggested = rows.find((t) => t.spotify)
+          keptId = suggested?.id
+          const options = rows
+            .map((t) => {
+              const hint = [t.sources.join(' · '), t.by, t.album].join(' · ')
+              return `<label class="ds-row">
+              <input type="radio" class="ds-check" name="keep-track" value="${t.id}" ${t.id === keptId ? 'checked' : ''}>
+              <span class="ds-cell-id">${D.thumb(t)}<span class="ds-row-main"><span class="ds-row-title">${D.esc(t.title)}</span><span class="ds-row-by">${D.esc(hint)}</span></span></span>
+              <span class="ds-muted ds-num">${t.plays.length} plays</span></label>`
+            })
+            .join('')
+          body.innerHTML = `<fieldset class="keep-options"><legend class="ds-label">Track to keep</legend>
+            <div class="ds-list" data-compact>${options}</div></fieldset>
+            <div id="impact" aria-live="polite">${suggested ? previewCount(rows, suggested) : D.notice('Choose which track to keep.')}</div>
+            <div class="ds-actions review-actions">${D.btn('Cancel', { variant: 'ghost' })}
+              ${D.btn('Confirm merge', { variant: 'primary', disabled: !suggested })}</div>`
+        }
+        dialog.showModal()
+        const focusTarget =
+          body.querySelector('input:checked') ??
+          body.querySelector('input, button')
+        focusTarget?.focus()
+      }
+      bar.addEventListener('click', (event) => {
+        const button = event.target.closest('button')
+        if (!button) return
+        if (button.getAttribute('aria-label') === 'Clear selection') {
+          selected.clear()
+          updateSelection()
+          tableRoot.querySelector('tbody .ds-check').focus()
+        } else openReview()
+      })
+      dialog.addEventListener('change', (event) => {
+        if (!event.target.matches('input[name="keep-track"]')) return
+        const rows = chosen()
+        const kept = rows.find((t) => t.id === event.target.value)
+        if (!kept) return
+        keptId = kept.id
+        document.getElementById('impact').innerHTML = previewCount(rows, kept)
+        dialog.querySelector('[data-variant="primary"]').disabled = false
+      })
+      dialog.addEventListener('click', (event) => {
+        const button = event.target.closest('button')
+        if (!button) return
+        if (button.dataset.variant !== 'primary') {
+          dialog.close()
+          return
+        }
+        const rows = chosen()
+        const kept = rows.find((t) => t.id === keptId)
+        if (!kept || rows.length < 2 || differentRecordings(rows)) return
+        const catalog = rows.find((t) => t.spotify)
+        const merged = {
+          ...kept,
+          plays: uniquePlays(rows),
+          sources: uniqueSources(rows),
+          ...(catalog && {
+            spotify: catalog.spotify,
+            album: catalog.album,
+            seed: catalog.seed,
+            art: catalog.art,
+          }),
+        }
+        tracks = tracks.flatMap((t) =>
+          t.id === kept.id ? [merged] : selected.has(t.id) ? [] : [t],
+        )
+        selected.clear()
+        lastMerge = `Merged ${rows.length} tracks. Kept “${kept.title}” with ${merged.plays.length} scrobbles.`
+        dialog.close()
+        showTable()
+        tableRoot
+          .querySelector(`tr[data-id="${kept.id}"] input`)
+          .focus({ preventScroll: true })
+      })
+      result.addEventListener('click', (event) => {
+        if (!event.target.closest('button')) return
+        tracks = [...samples]
+        selected = new Set(initialSelection)
+        lastMerge = ''
+        showTable()
+        bar.querySelector('button').focus({ preventScroll: true })
+      })
+      showTable()
+    </script>
+  </body>
+</html>
