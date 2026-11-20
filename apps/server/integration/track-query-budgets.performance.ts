@@ -461,3 +461,61 @@ it('bounds live Track autocomplete on shared artist and album tags', async () =>
     { field: 'genre', value: 'fixture genre 48', count: 10_001 },
   ])
 })
+
+it('bounds first Added page with an artist tag and unrelated Last.fm placeholders', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  await pool.query(`
+    insert into media_item (id, slug, media_type, title, source_label)
+    select 'placeholder-' || n, 'placeholder-' || n, 'track', 'Fixture placeholder ' || n, 'lastfm'
+    from generate_series(1, 12000) n;
+    insert into library_track (media_item_id, date_added)
+    select 'placeholder-' || n, timestamp '2027-01-01' + n * interval '1 second'
+    from generate_series(1, 12000) n;
+    update library_track set spotify_track_id = 'fixture-peer-' || media_item_id
+    where media_item_id in (select 'track-' || n from generate_series(1, 12000) n);
+    insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id, manually_matched)
+    select 'fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-visibility-' || n,
+      'placeholder-' || n, n = 12000
+    from generate_series(1, 12000) n;
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    select 'fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-visibility-' || n,
+      'track-' || n, 'exact'
+    from generate_series(1, 12000) n where n <> 11998;
+    insert into artist (id, name) values ('visibility-artist', 'Fixture visibility artist');
+    insert into media_credit (media_item_id, artist_id, role)
+    select id, 'visibility-artist', 'artist'
+    from (values ('placeholder-12000'), ('placeholder-11999'), ('placeholder-11998'),
+      ('track-20000'), ('track-19999')) targets(id);
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    values ('visibility-profile', 'visibility-artist', 'musicbrainz', '{}',
+      '{"tags":["Fixture visibility tag"]}');
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    values ('visibility-artist', 'musicbrainz', 'visibility-profile');
+  `)
+  for (const table of [
+    'media_item',
+    'library_track',
+    'media_credit',
+    'artist_provider_snapshot',
+    'artist_provider_current_state',
+    'lastfm_track_source',
+    'lastfm_track_link',
+  ]) {
+    await pool.query(`vacuum analyze ${table}`)
+  }
+  const query = TrackQuerySchema.parse({
+    filters: [{ field: 'artistTag', value: 'Fixture visibility tag' }],
+    sortBy: 'dateAdded',
+    direction: 'desc',
+    size: 3,
+  })
+  await checkBudget('artist-tag first Added page', 1_200, 1, async () => {
+    const page = await queryBrowsePageIds('track', query)
+    expect(page.ids).toEqual([
+      'placeholder-12000',
+      'placeholder-11998',
+      'track-20000',
+    ])
+    expect(page.hasMore).toBe(true)
+  })
+})

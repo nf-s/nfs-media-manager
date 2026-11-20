@@ -130,6 +130,8 @@ Filtered artist bulk selection inserts matching IDs directly into an owner-bound
 
 An exact Artist tags chip resolves the requested tag, its visible descendants and the raw labels that can map to them. A GIN index finds matching profile snapshots by normalized label. Only the current snapshot for each artist and provider contributes credits. An explicit hidden tag still matches, and edits to aliases and parent tags take effect on the next read. Track pages load artist tags for their returned IDs together.
 
+On the first ungrouped Tracks page sorted by newest addition, a positive Artist tags filter checks Last.fm source visibility for candidate tracks. A synthetic fixture with 12,000 Last.fm source rows covers the cost of that check, the page order and the visibility of manually retained tracks.
+
 A standalone zero-play or at-least-one-play rule uses an existence check. Multiple rules and sorts that need exact counts share one aggregate over the listening history. Grouped Tracks use indexed normalized titles for small candidate sets and check every visible peer of those titles before admitting a recording group. A page resolves the release order of every group tied at its primary sort boundary. Broad grouped reads still process the matching recordings.
 
 On a disposable PostgreSQL fixture with 20,000 tracks, 9,000 current artist profiles and 240,000 recent scrobbles, a required playlist, artist tag and rolling year with zero plays selected 32 tracks. Median database timings from three warm executions follow.

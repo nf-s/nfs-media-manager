@@ -980,16 +980,17 @@ async function browseQueries(
     and(where, requested?.condition(listeningSubject, sql`${mediaItem.id}`))
   // An ordered Added page can stop at its limit. Probe only source records
   // encountered while walking that index, keeping full-set work for counts.
-  const pageVisibility =
-    hideRedundant &&
-    query.sortBy === 'dateAdded' &&
-    query.direction === 'desc' &&
-    !query.filters.length
+  const addedTrackVisibility =
+    hideRedundant && query.sortBy === 'dateAdded' && query.direction === 'desc'
       ? sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
         ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
       ))`
       : visibleTrack
-  const pageWhere = and(itemConditions(listening), pageVisibility)
+  const pageMembership = itemConditions(listening)
+  const pageWhere = and(
+    pageMembership,
+    query.filters.length ? visibleTrack : addedTrackVisibility,
+  )
   const pageSource = listening?.source(listeningSubject)
   const countWhere = and(itemConditions(countedListening), visibleTrack)
   const countSource = countedListening?.source(listeningSubject)
@@ -1097,12 +1098,22 @@ async function browseQueries(
   }
 
   async function readPage(limit: number) {
+    // A positive artist tag can leave very few candidates. Check their Last.fm
+    // sources without constructing the suppression set for the entire library.
+    const firstArtistTagPage =
+      offset === 0 &&
+      query.filters.some(
+        (chip) => chip.field === 'artistTag' && chip.mode !== 'exclude',
+      )
+    const directPageWhere = firstArtistTagPage
+      ? and(pageMembership, addedTrackVisibility)
+      : pageWhere
     // Keep the direct limit for early pages, where there are few ties to skip.
     const rows =
       useTrackRanks && limit > 0 && offset >= 3 * limit
         ? await readTrackRanks({ first: offset + 1, last: offset + limit })
         : await base()
-            .where(pageWhere)
+            .where(directPageWhere)
             .orderBy(order, ...naturalOrder, mediaItem.id)
             .limit(limit)
             .offset(offset)
