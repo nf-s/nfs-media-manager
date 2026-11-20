@@ -43,7 +43,7 @@ vi.mock('@/cloudflare/playback-session-store', () => ({
 }))
 
 import app from '@/app'
-import '@/cloudflare/worker'
+import { workerBindings } from '@/cloudflare/worker'
 
 const path = '/api/v1/cloud/providers/fixture/dispatch'
 const status = {
@@ -82,9 +82,16 @@ beforeEach(() => {
     getStatus: mocks.getStatus,
     setPaused: mocks.setPaused,
   })
-  vi.spyOn(AsyncLocalStorage.prototype, 'getStore').mockReturnValue({
-    PROVIDER_COORDINATORS: { getByName: mocks.getByName },
-  })
+  const getStore = AsyncLocalStorage.prototype.getStore
+  vi.spyOn(AsyncLocalStorage.prototype, 'getStore').mockImplementation(
+    function (this: AsyncLocalStorage<unknown>) {
+      if (this === workerBindings)
+        return {
+          PROVIDER_COORDINATORS: { getByName: mocks.getByName },
+        }
+      return getStore.call(this)
+    },
+  )
 })
 
 afterEach(() => vi.restoreAllMocks())

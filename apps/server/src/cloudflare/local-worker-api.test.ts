@@ -67,7 +67,7 @@ vi.mock('@/services/provider-requests', async (importOriginal) => ({
 }))
 
 import app from '@/app'
-import '@/cloudflare/worker'
+import { workerBindings } from '@/cloudflare/worker'
 import {
   handleLocalWorkerRequest,
   localProviderTransport,
@@ -217,10 +217,17 @@ beforeEach(() => {
     setWorkerMode: mocks.setWorkerMode,
     wake: mocks.wake,
   })
-  vi.spyOn(AsyncLocalStorage.prototype, 'getStore').mockReturnValue({
-    LOCAL_WORKERS: { getByName: mocks.getWorker },
-    PROVIDER_COORDINATORS: { getByName: mocks.getCoordinator },
-  })
+  const getStore = AsyncLocalStorage.prototype.getStore
+  vi.spyOn(AsyncLocalStorage.prototype, 'getStore').mockImplementation(
+    function (this: AsyncLocalStorage<unknown>) {
+      if (this === workerBindings || this === bindingContext)
+        return {
+          LOCAL_WORKERS: { getByName: mocks.getWorker },
+          PROVIDER_COORDINATORS: { getByName: mocks.getCoordinator },
+        }
+      return getStore.call(this)
+    },
+  )
 })
 
 afterEach(() => {

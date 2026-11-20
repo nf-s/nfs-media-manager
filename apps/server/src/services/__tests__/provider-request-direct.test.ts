@@ -132,7 +132,10 @@ function requestResults() {
   const results = mocks.log.mock.calls.flatMap<
     | SonosResult
     | SonosLimitResult
-    | Extract<RequestEvent, { event: 'api.request' | 'sonos.blocked' }>
+    | Exclude<
+        RequestEvent,
+        { event: 'sonos.dispatch' | 'sonos.rate-limit' | 'sonos.request' }
+      >
   >(([event]) => {
     if (event.event === 'sonos.dispatch') {
       expect(dispatches.has(event.attemptId)).toBe(false)

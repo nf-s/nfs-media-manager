@@ -26,6 +26,7 @@ import {
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { measureRequestPhase } from '@/lib/request-log'
 import {
   albumTrackDurationExpression,
   trackSourcesExpression,
@@ -194,14 +195,15 @@ export async function listTracks(query: TrackQuery) {
 
 export async function listTrackBrowsePage(query: TrackQuery) {
   const { ids, hasMore, recordingGroups, listeningScrobbles } =
-    await queryBrowsePageIds('track', query)
+    await measureRequestPhase('ids', () => queryBrowsePageIds('track', query))
   return {
-    items: (await loadTracks(ids)).map((track) =>
-      trackWithRecordingGroup(
-        track,
-        recordingGroups?.get(track.id),
-        listeningScrobbles?.get(track.id),
-      ),
+    items: (await measureRequestPhase('hydrate', () => loadTracks(ids))).map(
+      (track) =>
+        trackWithRecordingGroup(
+          track,
+          recordingGroups?.get(track.id),
+          listeningScrobbles?.get(track.id),
+        ),
     ),
     page: query.page,
     size: query.size,
@@ -262,28 +264,22 @@ export async function listTracksAtPositions(query: TrackPositionsQuery) {
 export const listTrackFilterOptions = (query: Partial<BrowseFacetQuery>) =>
   listBrowseFacets('track', query)
 
-const ListeningSummarySchema = z
-  .array(
+const ListeningDetailSchema = z.object({
+  total: z.coerce.number(),
+  first: z.number().nullable(),
+  last: z.number().nullable(),
+  months: z.array(z.object({ month: z.string(), count: z.number() })),
+  sources: z.array(
     z.object({
-      total: z.coerce.number(),
-      first: z.number().nullable(),
-      last: z.number().nullable(),
+      artist_key: z.string(),
+      track_key: z.string(),
+      artist_name: z.string(),
+      track_name: z.string(),
+      count: z.number(),
+      strategy: TrackScrobbleLinkStrategySchema,
     }),
-  )
-  .length(1)
-const MonthRowsSchema = z.array(
-  z.object({ month: z.string(), count: z.coerce.number() }),
-)
-const SourceRowsSchema = z.array(
-  z.object({
-    artist_key: z.string(),
-    track_key: z.string(),
-    artist_name: z.string(),
-    track_name: z.string(),
-    count: z.coerce.number(),
-    strategy: TrackScrobbleLinkStrategySchema,
-  }),
-)
+  ),
+})
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
 
@@ -296,42 +292,37 @@ async function getTrackSpotifyAlternate(id: string) {
   return row?.alternate
 }
 
+async function getTrackListeningDetail(id: string) {
+  // Share one item-scoped history read across the lifetime, monthly and source aggregates.
+  const result = await db.execute(sql`
+    with linked as materialized (
+      select l.artist_key, l.track_key, l.strategy, s.artist_name, s.track_name, s.listened_at
+      from lastfm_track_link l join lastfm_scrobble s on s.username = l.username
+        and s.artist_key = l.artist_key and s.track_key = l.track_key
+      where l.track_media_item_id = ${id}
+    ), months as (
+      select to_char(listened_at, 'YYYY-MM') as month, count(*) as count
+      from linked group by 1
+    ), sources as (
+      select artist_key, track_key, max(artist_name) as artist_name, max(track_name) as track_name,
+        count(*) as count, max(strategy) as strategy
+      from linked group by artist_key, track_key
+      order by count desc, artist_key, track_key limit 50
+    )
+    select count(*) as total,
+      extract(epoch from min(listened_at))::float8 as first,
+      extract(epoch from max(listened_at))::float8 as last,
+      coalesce((select jsonb_agg(months order by month) from months), '[]'::jsonb) as months,
+      coalesce((select jsonb_agg(sources order by count desc, artist_key, track_key) from sources), '[]'::jsonb) as sources
+    from linked`)
+  return ListeningDetailSchema.parse(result.rows[0])
+}
+
 export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
   const [item] = await loadTracks([id])
   if (!item) return null
-  const linked = sql`from lastfm_track_link l
-    join lastfm_scrobble s on s.username = l.username
-      and s.artist_key = l.artist_key and s.track_key = l.track_key
-    where l.track_media_item_id = ${id}`
-  const summary = ListeningSummarySchema.parse(
-    (
-      await db.execute(sql`
-        select count(*) as total,
-          extract(epoch from min(s.listened_at))::float8 as first,
-          extract(epoch from max(s.listened_at))::float8 as last
-        ${linked}`)
-    ).rows,
-  )
-  const months = MonthRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select to_char(date_trunc('month', s.listened_at), 'YYYY-MM') as month,
-          count(*) as count
-        ${linked} group by 1 order by 1`)
-    ).rows,
-  )
-  const sources = SourceRowsSchema.parse(
-    (
-      await db.execute(sql`
-        select l.artist_key, l.track_key, max(s.artist_name) as artist_name,
-          max(s.track_name) as track_name, count(*) as count,
-          max(l.strategy) as strategy
-        ${linked}
-        group by l.artist_key, l.track_key
-        order by count(*) desc, l.artist_key, l.track_key limit 50`)
-    ).rows,
-  )
-  const [lastfmSources, spotifyAlternate] = await Promise.all([
+  const [listening, lastfmSources, spotifyAlternate] = await Promise.all([
+    getTrackListeningDetail(id),
     getLastfmTrackNames(id),
     item.spotifyTrackId && spotifyIdPattern.test(item.spotifyTrackId)
       ? undefined
@@ -342,11 +333,11 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
     ...(spotifyAlternate ? { spotifyAlternate } : {}),
     lastfmSources,
     listening: {
-      total: summary[0]?.total ?? 0,
-      firstListenedAt: isoSeconds(summary[0]?.first ?? null),
-      lastListenedAt: isoSeconds(summary[0]?.last ?? null),
-      months,
-      sources: sources.map((row) => ({
+      total: listening.total,
+      firstListenedAt: isoSeconds(listening.first),
+      lastListenedAt: isoSeconds(listening.last),
+      months: listening.months,
+      sources: listening.sources.map((row) => ({
         artistKey: row.artist_key,
         trackKey: row.track_key,
         artistName: row.artist_name,

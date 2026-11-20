@@ -2,6 +2,72 @@
 
 Library search keeps case-insensitive substring matching: every word must match a text value, and different words can match different fields. Search and autocomplete read stored library rows only.
 
+## Performance review for a feature
+
+1. List the API calls for a cold browser visit and for the interaction being changed. Include authentication, shell polling, exact totals and requests that continue after closing a control. Identify which calls block the first usable result.
+2. Capture the SQL through the real service entry point on the supported PostgreSQL versions. Use synthetic data with common and rare values, ties and skew. Exercise a selective hit, a miss, a broad result, a deep page and a write immediately followed by a read where applicable. Verify the result IDs, counts, ordering and visibility.
+3. Measure the whole operation and the database work separately. Record statements per request, serial round trips, logical shared blocks and temporary blocks. Repeat the service call on a warm connection and after invalidating any derived data. For an index, compare representative reads with and without it, including a broad query, and account for index size and writes.
+4. Add the representative workload and its ceiling to the performance suite. A budget change needs the old and new measurements and a reason. Include an interaction test when request fan-out, cancellation or visibility changes. The CI log records the measured plans' work for each tested workload.
+5. After deployment compare successful requests from the same route and query shape against their previous window. Report elapsed time, median, p95, sample count and errors. An empty window is unmeasured. Capture frontend timings separately when the browser still feels slow.
+
+### Running the regression check
+
+Run the following from a checkout with the normal local test environment and a disposable PostgreSQL server.
+
+```sh
+corepack pnpm --filter @repo/server test:performance
+```
+
+CI runs the suite on PostgreSQL 17 and 18 for pushes, pull requests and the nightly schedule. The suite builds a synthetic library, refreshes planner statistics, runs the service, and replays its captured reads with `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON)`. It sums hit and read blocks from each root plan. Child nodes are already included. It checks response semantics, bounds logical work and detects a spill to temporary storage. Elapsed execution time in the log helps diagnose changes. Cloud networking, authentication and browser rendering are measured separately. Add new workloads to `integration/*.performance.ts`. [PostgreSQL EXPLAIN guide](https://www.postgresql.org/docs/17/using-explain.html)
+
+### Continuous production monitoring
+
+The API emits one `api.request` access event per completed handler invocation. In Workers Query Builder, select the API Worker and filter by this event. Group by the registered `route` and `method`. For successful interactive reads, show count, median, p95 and maximum of `durationMs`. Count server errors in a separate series covering all statuses. Start with the following alert thresholds and recalibrate from measured traffic when usage or capacity changes. [Cloudflare Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/)
+
+| Interactive read     | Starting p95 threshold |
+| -------------------- | ---------------------: |
+| Browse page          |                 750 ms |
+| Exact Browse count   |               1,000 ms |
+| Facet suggestions    |                 500 ms |
+| Other foreground GET |               1,000 ms |
+
+Review the preceding 24 hours once a day. Require 20 successful requests before interpreting a route's p95. Investigate individual foreground requests above five seconds and server errors even at lower volume. For a persistent breach, compare the previous day and narrow by query shape. Check the error fraction as well as latency so failed requests cannot make the latency graph look healthier. To measure a longer-term objective, divide successful requests within the target by all eligible requests in the same workload. [Google SRE guidance for low traffic](https://sre.google/workbook/alerting-on-slos/)
+
+- `durationMs` measures API entry to response creation, including the Worker database pool lifecycle. `drizzleStatementCount` counts attempted Drizzle statements including prepared execution. Direct driver calls and PostgreSQL internal work are outside the count.
+- `phases.auth` times credential resolution. Tracks Browse reports `phases.ids` and `phases.hydrate`. Media Browse exact counts use `phases.count`. Facets report `phases.facets` and distinguish a vocabulary read, foreground rebuild attempt and live aggregation using `facetRead`, `facetBuild` and `facetLive`. Each phase includes elapsed time and its directly attributed statement count. Nested or parallel times can overlap.
+- The media Browse `browse` object groups requests by grouped recordings, page depth, filtering, listening and sort family. It contains no search values. For IDs that take most of the time, reproduce that shape in the synthetic suite. If authentication or many small statements dominate, inspect connection setup and dependent round trips. If API durations are healthy, trace the frontend's request waterfall and render time.
+- Cloud deployments run one daily `database.probe` at 20:00 UTC on a fresh invocation pool. It records the time for the first `SELECT 1`, including connection setup. The separate `database.facet-maintenance` event records whether the scheduler published the stored vocabulary, skipped a refresh or failed. Several skipped ticks can be normal. Compare skips with live facet reads. Treat failed probes or no successful probe over 26 hours as a monitoring incident even during quiet traffic.
+- Use aggregate views of fixed route templates and bounded field values. Keep query text, bind values, requested URLs, headers, row contents and personal identifiers out of performance measurements. PostgreSQL's optional `pg_stat_statements(showtext := false)` can identify costly statement IDs from changes in calls, total execution time and shared blocks between snapshots. It requires the extension and permission. Counters can reset and do not supply a p95. [PostgreSQL statement statistics](https://www.postgresql.org/docs/17/pgstatstatements.html)
+
+### Sampling production SQL work
+
+Use the read-only sampler from an operator environment configured with the application database role. PostgreSQL 17 or newer and the `pg_stat_statements` extension are required. On an installation with the module preloaded, the database administrator can enable the extension in the application database with `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`. The sampler does not install an extension or change privileges.
+
+```sh
+corepack pnpm --silent --filter @repo/server db:sample-statements --seconds 30 --limit 20
+```
+
+The JSON report ranks opaque statement fingerprints by execution time accumulated between two snapshots. It includes calls, shared blocks and temporary block counts when available. It filters to the connected role and database and never selects statement text. It reports counter resets and excludes invalid deltas. Use it while a specific operation is active to distinguish a single costly statement from many inexpensive calls. Multiple clients using the same role contribute to the same sample.
+
+### Query families to profile next
+
+These are access patterns identified in the service code. A plan and traffic for the affected route determine priority.
+
+| Surface                              | Work to measure                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracks Browse                        | The cold filtered page resolves IDs and hydrates them in two service statements. Its separate exact-count request uses up to four for the rolling filtered total and the unfiltered total, including version checks for the latter. Compare ungrouped and grouped results, rolling absence, large tied groups and cache invalidation under concurrent writes. |
+| Tracks detail and match diagnostics  | The detail now reads linked history once for lifetime totals, months and sources. Diagnostics text search and provider sorting can expand match evidence across the candidate set before paging.                                                                                                                                                              |
+| Albums                               | Default Added ordering computes the earlier of the album date and its first linked play. The timestamp comes from two tables. Profile candidate count, scrobble probes and sorting before introducing a maintained timestamp.                                                                                                                                 |
+| Films, People and collections        | Film Added uses a cross-table fallback. Aggregate ordering and broad facets need candidate counts. People name search now filters before grouped credit counts. Collection source hydration is already limited to returned collections.                                                                                                                       |
+| Artists                              | Profile genre normalization and identifier evidence can run before paging. The metadata table can also load monthly listening history that it does not display. Compare metadata and regular Browse separately.                                                                                                                                               |
+| Tags, facets and provenance          | A mutation can invalidate stored vocabularies across endpoints. Reproduce no-op writes, merges, visible descendants and a writer committing during a refresh. Measure exact grouping for tag sources and ancestor rollups separately.                                                                                                                         |
+| Playlists and subscription libraries | Check latest-job grouping for an individual playlist or item. Publication date and ID sort in opposite directions on Subscriptions. Assess mixed-direction ordering and deep offsets on common timestamps.                                                                                                                                                    |
+| Jobs and providers                   | Cold activity totals repeat correlated checks across libraries. Provider detail and wait-state hydration can read the same state more than once. Include the shell polling interval when estimating total work.                                                                                                                                               |
+| Metadata coverage and snapshots      | Some coverage endpoints load evidence for every album before selecting a page. Compare with source-specific endpoints that page narrow summaries and fetch a single requested payload.                                                                                                                                                                        |
+| Imports and background sync          | Whole-preview validation and growing checkpoints can make large confirmations quadratic. Measure the duration of advisory locks and full-library date/link refreshes. Scheduled eligibility checks should read only the state needed to decide if a job is due.                                                                                               |
+| Listening reports                    | Some charts scan a materialized set of plays several times for different calendar buckets. Candidate size and the first matching history timestamp matter more than the number of returned buckets.                                                                                                                                                           |
+| Auth and database transport          | A Worker invocation opens a request-scoped Neon WebSocket pool and closes it after the handler. Compare the scheduled first-round-trip probe, auth phase and service phases before changing routing, pooling or caching.                                                                                                                                      |
+
 ## Queries and indexes
 
 Search finds matching media IDs through field-specific queries. Titles, summaries, artists, playlists and tags are searched before their memberships are joined. This lets PostgreSQL use `pg_trgm` GIN indexes instead of constructing related JSON values for every library item. The same field sources serve autocomplete, preserving whole-library counts and per-field limits. Track source and match-status labels use separate branches so an unrelated search word does not calculate playback matches for every track.
@@ -16,6 +82,7 @@ Search finds matching media IDs through field-specific queries. Titles, summarie
 | Title ordering                            | Existing `(media_type, lower(title), id)` index, using the column directly                                 |
 | Default track and film ordering           | Added-date index supplies the track order before album ties; release-date index supports film date and ID  |
 | Track album-list matching                 | Album ID plus the exact normalized-title expression                                                        |
+| Rolling Track listening presence          | Composite `(track_key, artist_key, listened_at, username)` supports bounded name/time probes               |
 | Album listening date windows              | Partial `(listened_at, album_media_item_id)` index for linked scrobbles                                    |
 | Subscription text search                  | Existing full-text GIN index on `subscription_item.search`                                                 |
 | Subscription title and source suggestions | Trigram indexes on item and source titles                                                                  |
@@ -104,7 +171,7 @@ Both stored results use transactionally maintained invalidation markers. Relevan
 
 Track page jumps and position requests preserve their absolute ranks, including ties that cross either page boundary. For deep sorts by Title, Added, Artist, Album, Playlist, tags, Released, Duration or ascending lifetime scrobbles, PostgreSQL finds the range of primary sort keys containing the requested positions before looking up release credits and track numbers. For a selected listening period, the count aggregate keeps linked tracks that have zero plays in the window. This lets the planner estimate the number of links before joining the counts to Tracks. On 20,000 tracks and 240,000 scrobbles, a two-month play-count sort at page 390 fell from 3.65 seconds to 123 ms.
 
-On the 20,000-track fixture used for the combined-filter measurements, a title jump to page 390 at 50 tracks per page took 86 ms, down from 239 ms. The first page took about 1 ms both ways. On a separate 20,000-track fixture, a deep Released page fell from 101 ms to 37 ms and Duration fell from 99 ms to 28 ms. Early pages keep the direct ordered limit. Large tied groups and the number of primary keys preceding the page still affect the cost. Rolling listening windows also move between requests. Exact count cache keys include the window boundaries.
+On the 20,000-track fixture used for the combined-filter measurements, a title jump to page 390 at 50 tracks per page took 86 ms, down from 239 ms. The first page took about 1 ms both ways. On a separate 20,000-track fixture, a deep Released page fell from 101 ms to 37 ms and Duration fell from 99 ms to 28 ms. Early pages keep the direct ordered limit. Large tied groups and the number of primary keys preceding the page still affect the cost. Rolling listening windows move between requests, so an exact total with a rolling filter bypasses the snapshot cache. Stable date ranges and unfiltered totals retain snapshot validation.
 
 ## Verification
 
@@ -131,3 +198,5 @@ Migration `0041_browse_query_indexes` builds the normalized artist-profile tag i
 Migrations `0042_grouped_recording_browse_order` and `0043_track_facet_vocabulary` create the derived tables and their invalidation triggers. They populate on demand. A separate reader role can continue to query the live data. A runtime role that builds caches needs read access to the derived tables, insert and delete on the rank and value tables, insert and update on the state tables, and delete and update on the invalidation tables. The source write triggers run with the migration owner's privileges. Existing library data supplies both caches.
 
 Migration `0044` stores the decision to rebuild a slow autocomplete vocabulary during maintenance across requests and Worker restarts.
+
+Migration `0045` adds a B-tree for listening presence checks by track name, artist name and time. Retain the shorter name index for other access patterns. Migration `0046` narrows invalidation of the two stored Track browse caches. Both use stored data and require no reimport. On a busy database, build the `0045` index concurrently ahead of cutover using the migration's exact key order. Verify its definition and validity before applying the journaled migration.

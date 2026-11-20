@@ -2,57 +2,28 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { z } from 'zod'
 import {
-  BrowseFieldSchema,
-  trackBrowseFields,
   type BrowseField,
   type BrowseFilter,
   type BrowseRange,
 } from '@repo/schemas/browse'
-import { trackMatchDiagnosticFields } from '@repo/schemas/match-diagnostics'
-import { PaginatedDataSchema } from '@repo/schemas/common'
-import { TrackListItemSchema } from '@repo/schemas/tracks'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
-import { fetchApiData } from '@/utils/api'
-import {
-  formatFieldValue,
-  orderFields,
-  type BrowseFilterHref,
-} from '@/utils/browse-items'
+import { formatFieldValue, type BrowseFilterHref } from '@/utils/browse-items'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import {
   clearCreatorScope,
   type CreatorBrowseScope,
 } from '@/utils/creator-browse'
 import { loadTrackMatchDiagnosticsPage } from '@/utils/match-diagnostics'
-import { trackFieldOrder, trackTitleSuggestions } from '@/utils/track-browse'
+import {
+  loadTrackTitleMatches,
+  trackTitleSuggestions,
+} from '@/utils/track-browse'
 import AiSearch from './ai-search'
 import { BrowseFilterChips, BrowseFilterPill } from './browse-controls'
 import { CreatorScopeChip } from './creator-scope-chip'
 import { useConfig } from './providers'
-
-const PageSchema = PaginatedDataSchema(TrackListItemSchema)
-
-export function useTrackBrowseFields(matches = false, enabled = true) {
-  const { apiBaseUrl } = useConfig()
-  const fields = useQuery({
-    queryKey: matches ? ['tracks', 'match-fields'] : ['tracks', 'fields'],
-    enabled,
-    queryFn: ({ signal }) =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/tracks${matches ? '/match-diagnostics' : ''}/fields`,
-        z.array(BrowseFieldSchema),
-        { signal },
-      ),
-  })
-  return orderFields(
-    fields.data ?? (matches ? trackMatchDiagnosticFields : trackBrowseFields),
-    trackFieldOrder,
-  )
-}
 
 export function TrackBrowseSearch({
   fields,
@@ -100,19 +71,18 @@ export function TrackBrowseSearch({
     ],
     enabled: ready && !disabled && titleFilters.length > 0,
     queryFn: async ({ signal }) => {
-      const direction: 'asc' = 'asc'
-      const query = {
-        page: 1,
-        size: 100,
-        filters: titleFilters,
-        sortBy: 'title',
-        direction,
-        ...creator,
-      }
       if (matches) {
         const result = await loadTrackMatchDiagnosticsPage(
           apiBaseUrl,
-          { ...query, ranges: [] },
+          {
+            page: 1,
+            size: 100,
+            filters: titleFilters,
+            ranges: [],
+            sortBy: 'title',
+            direction: 'asc',
+            ...creator,
+          },
           signal,
         )
         return {
@@ -123,17 +93,7 @@ export function TrackBrowseSearch({
           })),
         }
       }
-      const params = new URLSearchParams({
-        page: String(query.page),
-        size: String(query.size),
-        filters: JSON.stringify(query.filters),
-        sortBy: query.sortBy,
-        direction: query.direction,
-        ...creator,
-      })
-      return fetchApiData(apiBaseUrl, `/api/v1/tracks?${params}`, PageSchema, {
-        signal,
-      })
+      return loadTrackTitleMatches(apiBaseUrl, titleFilters, creator, signal)
     },
   })
   const titlesLoading =

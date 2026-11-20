@@ -1123,6 +1123,12 @@ export const lastfmScrobble = pgTable(
     index('lastfm_scrobble_name_idx').on(table.albumKey, table.artistKey),
     index('lastfm_scrobble_user_time_idx').on(table.username, table.listenedAt),
     index('lastfm_scrobble_track_idx').on(table.trackKey, table.artistKey),
+    index('lastfm_scrobble_track_time_user_idx').on(
+      table.trackKey,
+      table.artistKey,
+      table.listenedAt,
+      table.username,
+    ),
     index('lastfm_scrobble_time_album_idx')
       .on(table.listenedAt, table.albumMediaItemId)
       .where(sql`${table.albumMediaItemId} is not null`),

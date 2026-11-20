@@ -256,6 +256,29 @@ function syncState(
     : 'stopped'
 }
 
+async function readLastfmSync(account: string) {
+  const [row] = await db
+    .select()
+    .from(lastfmSync)
+    .where(eq(lastfmSync.username, account))
+  const job = await latestSyncJob()
+  const state = syncState(row, job)
+  const schedule = LastfmSyncScheduleSchema.catch('daily').parse(row?.schedule)
+  const minutes = SCHEDULE_MINUTES[schedule]
+  const nextScheduledAt =
+    state === 'complete' && row?.completedAt && minutes !== null
+      ? new Date(row.completedAt.getTime() + minutes * 60 * 1000)
+      : null
+  return { row, job, state, schedule, nextScheduledAt }
+}
+
+export async function getLastfmNextScheduledAt(): Promise<Date | null> {
+  const configured = await credentials()
+  if (!configured) return null
+  const { nextScheduledAt } = await readLastfmSync(configured.account)
+  return nextScheduledAt
+}
+
 export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
   const configured = await credentials()
   if (!configured)
@@ -274,11 +297,9 @@ export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
       lastCompletedAt: null,
       errorMessage: null,
     }
-  const [row] = await db
-    .select()
-    .from(lastfmSync)
-    .where(eq(lastfmSync.username, configured.account))
-  const job = await latestSyncJob()
+  const { row, job, state, schedule, nextScheduledAt } = await readLastfmSync(
+    configured.account,
+  )
   const counts = CountsSchema.parse(
     (
       await db.execute(sql`
@@ -286,20 +307,12 @@ export async function getLastfmSyncStatus(): Promise<LastfmSyncStatus> {
         from lastfm_scrobble where username = ${configured.account}`)
     ).rows,
   )
-  const state = syncState(row, job)
-  const schedule = LastfmSyncScheduleSchema.catch('daily').parse(row?.schedule)
-  const minutes = SCHEDULE_MINUTES[schedule]
   return {
     configured: true,
     state,
     job: job ? { id: job.id, status: job.status } : null,
     schedule,
-    nextScheduledAt:
-      state === 'complete' && row?.completedAt && minutes !== null
-        ? new Date(
-            row.completedAt.getTime() + minutes * 60 * 1000,
-          ).toISOString()
-        : null,
+    nextScheduledAt: nextScheduledAt?.toISOString() ?? null,
     pagesFetched: row ? row.nextPage - 1 : 0,
     totalPages: row?.totalPages ?? null,
     newScrobbles: row?.newScrobbles ?? 0,

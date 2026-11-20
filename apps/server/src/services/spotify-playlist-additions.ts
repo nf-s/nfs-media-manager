@@ -410,7 +410,7 @@ export async function queueSpotifyPlaylistAddition(
 export async function listSpotifyPlaylistAdditions(albumId: string) {
   const additions: PlaylistAlbumAddition[] = []
   for (const latest of (
-    await latestSpotifyJobs(SPOTIFY_PLAYLIST_ADD_ALBUM_TASK)
+    await latestSpotifyJobs(SPOTIFY_PLAYLIST_ADD_ALBUM_TASK, undefined, albumId)
   ).values()) {
     const target = RequestSchema.safeParse(latest.options)
     if (target.success && target.data.albumId === albumId)

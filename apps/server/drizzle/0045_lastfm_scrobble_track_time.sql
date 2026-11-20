@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "lastfm_scrobble_track_time_user_idx" ON "lastfm_scrobble" USING btree ("track_key","artist_key","listened_at","username");

@@ -182,6 +182,8 @@ export const SavedPlaybackSchema = z.object({
       sent: z.array(PlayableItemSchema).max(200),
       index: z.number().int().nonnegative(),
       anchorUri: UriSchema.nullable(),
+      /** The replacement being sent to Spotify, beginning at the current track. */
+      pendingSent: z.array(PlayableItemSchema).min(1).max(200).optional(),
     })
     .nullable(),
   /** What the device was playing at the save, with its position then. */

@@ -1,10 +1,24 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, SlidersHorizontal, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { Count } from '@repo/ui/components/ds/pill'
+
+const FilterPanelVisibility = createContext(true)
+
+export function useFilterPanelVisible() {
+  return useContext(FilterPanelVisibility)
+}
 
 export function FilterPanelSection({
   title,
@@ -105,7 +119,11 @@ function FilterDialog({
             <X className="ds-i" aria-hidden />
           </Button>
         </div>
-        <div className="ds-inspector-body browse-drawer-body">{children}</div>
+        <div className="ds-inspector-body browse-drawer-body">
+          <FilterPanelVisibility.Provider value={open}>
+            {children}
+          </FilterPanelVisibility.Provider>
+        </div>
       </div>
     </dialog>,
     document.body,

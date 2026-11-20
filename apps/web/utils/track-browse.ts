@@ -1,10 +1,20 @@
-import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
 import {
+  BrowsePageSliceSchema,
+  sameBrowseFilter,
+  trackBrowseFields,
+  type BrowseFilter,
+} from '@repo/schemas/browse'
+import { trackMatchDiagnosticFields } from '@repo/schemas/match-diagnostics'
+import {
+  TrackListItemSchema,
   TrackQuerySchema,
   type TrackListItem,
   type TrackScrobbleLinkStrategy,
 } from '@repo/schemas/tracks'
 import { formatTrackLength } from '@repo/ui/lib/format'
+import { fetchApiData } from './api'
+import { orderFields } from './browse-items'
+import type { CreatorBrowseScope } from './creator-browse'
 import type { TitleSuggestion } from './browse-suggestions'
 
 /** Column, picker and sort order: identity, creator, parent, properties, dates, counts, pills. */
@@ -25,6 +35,40 @@ export const trackFieldOrder = [
   'albumTag',
   'artistTag',
 ]
+
+export const orderedTrackBrowseFields = orderFields(
+  trackBrowseFields,
+  trackFieldOrder,
+)
+
+export const orderedTrackMatchBrowseFields = orderFields(
+  trackMatchDiagnosticFields,
+  trackFieldOrder,
+)
+
+const TrackBrowsePageSchema = BrowsePageSliceSchema(TrackListItemSchema)
+
+export function loadTrackTitleMatches(
+  apiBaseUrl: string,
+  filters: BrowseFilter[],
+  creator: CreatorBrowseScope | undefined,
+  signal: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    page: '1',
+    size: '100',
+    filters: JSON.stringify(filters),
+    sortBy: 'title',
+    direction: 'asc',
+    ...creator,
+  })
+  return fetchApiData(
+    apiBaseUrl,
+    `/api/v1/tracks/browse-page?${params}`,
+    TrackBrowsePageSchema,
+    { signal },
+  )
+}
 
 export const defaultTrackColumns = [
   'title',

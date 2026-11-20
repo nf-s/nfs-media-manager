@@ -3,6 +3,7 @@ import { Pool } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-serverless'
 import * as schema from '@/schemas/db'
 import { env } from '@/env'
+import { requestQueryLogger } from '@/lib/request-log'
 
 function createDatabase(connectionString: string) {
   const pool = new Pool({
@@ -10,7 +11,7 @@ function createDatabase(connectionString: string) {
     max: 4,
     connectionTimeoutMillis: 10000,
   })
-  return drizzle(pool, { schema })
+  return drizzle(pool, { schema, logger: requestQueryLogger })
 }
 
 type Database = ReturnType<typeof createDatabase>

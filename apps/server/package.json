@@ -34,6 +34,8 @@
     "import:legacy": "tsx scripts/import-legacy.ts",
     "test:unit": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:performance": "vitest run --config vitest.performance.config.ts",
+    "db:sample-statements": "tsx scripts/sample-statements.ts",
     "verify:legacy": "tsx scripts/verify-legacy.ts",
     "backfill:film-added": "tsx scripts/backfill-film-added.ts",
     "backfill:spotify-track-searches": "tsx scripts/backfill-spotify-track-searches.ts"

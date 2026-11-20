@@ -1,16 +1,32 @@
 import { Hono } from 'hono'
+import { Pool as NeonPool } from '@neondatabase/serverless'
+import { sql } from 'drizzle-orm'
+import pg from 'pg'
 import { afterEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { SONOS_PAGE_HEADER, SONOS_REASON_HEADER } from '@repo/schemas/sonos'
-import { logApiRequest, setPlaybackLogRole } from '@/lib/request-log'
+import { db as cloudDb, withCloudDatabase } from '@/cloudflare/db'
+import { db as nodeDb } from '@/lib/db'
+import {
+  logApiRequest,
+  measureRequestPhase,
+  setPlaybackLogRole,
+  setRequestBrowseProfile,
+} from '@/lib/request-log'
 import { createSonosRequestFetch } from '@/lib/sonos-request-log'
 import { logger } from './logger'
 
-const runtime = vi.hoisted(() => ({ RUNTIME_KIND: 'node' }))
+const runtime = vi.hoisted(() => ({
+  RUNTIME_KIND: 'node',
+  DATABASE_URL: 'postgresql://fixture.invalid.neon.tech/fixture',
+}))
 vi.mock('@/env', () => ({ env: runtime }))
 
 const app = new Hono()
 app.use(logger())
+app.get('/api/v1/tracks/browse-page', (c) => c.body(null, 200))
+app.get('/api/v1/tracks/forward', (_c, next) => next())
+app.get('/api/v1/tracks/:id', (c) => c.body(null, 204))
 app.get('/api/v1/sonos/groups/:id/state', async (c) => {
   await createSonosRequestFetch('oauth.refresh')(
     'https://api.ws.sonos.com/control/api/v1/groups/fixture-room/playback',
@@ -48,12 +64,146 @@ const RecordSchema = z.object({
   visibility: z.enum(['visible', 'hidden']).optional(),
   playbackRole: z.enum(['driver', 'follower']).optional(),
   stateReason: z.literal('room-watching').optional(),
+  drizzleStatementCount: z.number().optional(),
+  browse: z
+    .object({
+      grouped: z.boolean(),
+      depth: z.enum(['first', 'near', 'deep']),
+      listening: z.boolean(),
+      filtered: z.boolean(),
+      sort: z.enum(['added', 'title', 'plays', 'other']),
+    })
+    .optional(),
+  phases: z
+    .record(
+      z.string(),
+      z.object({
+        durationMs: z.number().nonnegative(),
+        drizzleStatementCount: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
 })
 
 afterEach(() => {
   runtime.RUNTIME_KIND = 'node'
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+it('logs the registered route that handled a request with multiple matches', async () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  await serve('/api/v1/tracks/browse-page?search=fixture-secret', '')
+  await serve('/api/v1/tracks/fixture-secret', '')
+  await serve('/api/v1/tracks/forward', '')
+  const logs = info.mock.calls.map(([line]) =>
+    RecordSchema.parse(JSON.parse(line)),
+  )
+  expect(logs.map(({ route, status }) => [route, status])).toEqual([
+    ['/api/v1/tracks/browse-page', 200],
+    ['/api/v1/tracks/:id', 204],
+    ['/api/v1/tracks/:id', 204],
+  ])
+  expect(JSON.stringify(info.mock.calls)).not.toContain('fixture-secret')
+})
+
+it('counts Drizzle executions and phases separately across concurrent requests', async () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const driverError = new Error('fixture driver failure')
+  vi.spyOn(pg.Pool.prototype, 'query').mockImplementation(() => {
+    throw driverError
+  })
+  vi.spyOn(NeonPool.prototype, 'query').mockImplementation(() => {
+    throw driverError
+  })
+  const statement = sql`select ${'fixture-bind-secret'} as fixture_statement`
+  const request = new Request('https://fixture.invalid')
+  const browse = {
+    grouped: true,
+    depth: 'first',
+    listening: true,
+    filtered: false,
+    sort: 'plays',
+  } satisfies NonNullable<z.infer<typeof RecordSchema>['browse']>
+  // Executing without a request, as a background job would, emits no record.
+  await expect(nodeDb.execute(statement)).rejects.toThrow()
+
+  await Promise.all([
+    logApiRequest(request, async () => {
+      setRequestBrowseProfile(browse)
+      await Promise.all([
+        measureRequestPhase('ids', async () => {
+          const prepared = nodeDb
+            .select({ value: sql<string>`${sql.placeholder('value')}` })
+            .from(sql`(select 1) as fixture_input`)
+            .prepare('fixture_prepared')
+          await expect(
+            prepared.execute({ value: 'fixture-bind-secret' }),
+          ).rejects.toThrow()
+          await expect(nodeDb.execute(statement)).rejects.toThrow()
+        }),
+        measureRequestPhase('hydrate', async () => {
+          await expect(nodeDb.execute(statement)).rejects.toThrow()
+        }),
+      ])
+      await measureRequestPhase('ids', async () => {
+        await expect(nodeDb.execute(statement)).rejects.toThrow()
+      })
+      return new Response(null, { status: 204 })
+    }),
+    logApiRequest(request, () =>
+      withCloudDatabase(async () => {
+        await measureRequestPhase('count', async () => {
+          const prepared = cloudDb
+            .select({ value: sql<string>`${sql.placeholder('value')}` })
+            .from(sql`(select 1) as fixture_input`)
+            .prepare('fixture_prepared')
+          await expect(
+            prepared.execute({ value: 'fixture-bind-secret' }),
+          ).rejects.toThrow()
+        })
+        await expect(cloudDb.execute(statement)).rejects.toThrow()
+        return new Response(null, { status: 200 })
+      }),
+    ),
+  ])
+
+  const logs = info.mock.calls.map(([line]) =>
+    RecordSchema.parse(JSON.parse(line)),
+  )
+  expect(logs).toHaveLength(2)
+  expect(logs.find(({ status }) => status === 204)).toMatchObject({
+    drizzleStatementCount: 4,
+    browse,
+    phases: {
+      ids: { drizzleStatementCount: 3 },
+      hydrate: { drizzleStatementCount: 1 },
+    },
+  })
+  expect(logs.find(({ status }) => status === 200)).toMatchObject({
+    drizzleStatementCount: 2,
+    phases: { count: { drizzleStatementCount: 1 } },
+  })
+  expect(logs.find(({ status }) => status === 200)?.browse).toBeUndefined()
+  expect(
+    Object.keys(logs.find(({ status }) => status === 200)?.phases ?? {}),
+  ).toEqual(['count'])
+  expect(JSON.stringify(info.mock.calls)).not.toMatch(/fixture[_-]/)
+})
+
+it('preserves the request result and thrown error when log delivery fails', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => {
+    throw new Error('fixture log failure')
+  })
+  const request = new Request('https://fixture.invalid')
+  const response = new Response(null, { status: 204 })
+  const operationError = new Error('fixture operation failure')
+  await expect(logApiRequest(request, () => response)).resolves.toBe(response)
+  await expect(
+    logApiRequest(request, () => {
+      throw operationError
+    }),
+  ).rejects.toBe(operationError)
 })
 
 it('correlates concurrent Sonos sends with the initiating page and access result', async () => {
@@ -140,5 +290,10 @@ it('omits unrecognized paths and untrusted correlation headers', async () => {
         log.stateReason === undefined,
     ),
   ).toBe(true)
-  expect(logs.at(-1)).toMatchObject({ event: 'api.request', status: 404 })
+  expect(logs.at(-1)).toMatchObject({
+    event: 'api.request',
+    route: 'unmatched',
+    status: 404,
+    drizzleStatementCount: 0,
+  })
 })

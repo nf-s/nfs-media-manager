@@ -61,6 +61,7 @@ import {
 } from '@/hooks/useBrowseHost'
 import { embeddedScrollClass } from '@/utils/embedded-browse'
 import {
+  orderedTrackBrowseFields,
   defaultTrackColumns,
   formatTrackDuration,
   parseTrackFilters,
@@ -100,7 +101,6 @@ import {
 import {
   TrackBrowseFilterChips,
   TrackBrowseSearch,
-  useTrackBrowseFields,
 } from './track-browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import {
@@ -221,7 +221,7 @@ function TrackBrowse({
     !embedded && inspector?.root?.kind === 'track' ? inspector.root.id : null
   const { listening, listeningSort } = parseListeningParams(searchParams)
   const fields = [
-    ...useTrackBrowseFields(),
+    ...orderedTrackBrowseFields,
     listeningScrobblesField(listeningSort),
   ]
   const sortField = fields.find((field) => field.key === sortBy)

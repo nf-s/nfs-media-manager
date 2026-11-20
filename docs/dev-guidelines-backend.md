@@ -23,6 +23,10 @@
 - Reuse [`apps/server/src/services/provider-state.ts`](../apps/server/src/services/provider-state.ts) to persist provider history and current state.
 - Reuse the plugin registry in [`apps/server/src/plugins/registry.ts`](../apps/server/src/plugins/registry.ts) instead of hardcoding external providers.
 
+## Query performance
+
+For changes to data access, follow the [performance review and regression check](query-performance.md#performance-review-for-a-feature). Include a representative synthetic workload and its budget with a new access pattern. For an existing query, name the covered workload, verify its output and compare its work before and after the change. Confirm the production route's latency and error rate after rollout.
+
 ## Database
 
 - Generate migrations from the intended Drizzle schema. With a running watch server, stage column-dependent schema/code outside watched source until the migration is verified and applied. Back up and quiesce incompatible writers for the schema/application cutover; never expose new-column consumers to an old database.

@@ -23,7 +23,7 @@ import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
 import { withDispatchStatusReader } from '@/services/dispatch-status'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
-import { refreshTrackFacetVocabularyForMaintenance } from '@/services/browse'
+import { runDatabaseMaintenance } from './database-maintenance'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -211,7 +211,7 @@ app.post(
   },
 )
 
-const workerBindings = new AsyncLocalStorage<CloudflareBindings>()
+export const workerBindings = new AsyncLocalStorage<CloudflareBindings>()
 
 export default {
   fetch(request, bindings) {
@@ -290,7 +290,10 @@ export default {
       }
     }
   },
-  async scheduled(_event, bindings) {
+  async scheduled(event, bindings, ctx) {
+    ctx.waitUntil(
+      run(bindings, () => runDatabaseMaintenance(event.scheduledTime)),
+    )
     await run(bindings, async () => {
       await dispatchQueuedImports()
       if (env.SCRAPING_ENABLED) {
@@ -305,7 +308,6 @@ export default {
           ).wake(plugin.manifest.id)
         }
       }
-      await refreshTrackFacetVocabularyForMaintenance()
     })
   },
 } satisfies ExportedHandler<CloudflareBindings>

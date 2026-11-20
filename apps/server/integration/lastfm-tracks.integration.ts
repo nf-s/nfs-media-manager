@@ -1321,18 +1321,21 @@ describe('Last.fm tracks library', () => {
       dateAdded: FIRST_LISTEN,
       lastListenedAt: LAST_LISTEN,
     })
-    expect((await getTrackDetail(items[0]?.id ?? ''))?.listening).toMatchObject(
-      {
-        total: 2,
-        firstListenedAt: FIRST_LISTEN,
-        lastListenedAt: LAST_LISTEN,
-        months: [
-          { month: '2020-02', count: 1 },
-          { month: '2024-03', count: 1 },
-        ],
-      },
-    )
-    expect((await getTrackDetail(items[0]?.id ?? ''))?.lastfmSources).toEqual([
+    const reads = vi.spyOn(databaseClient, 'execute')
+    const detail = await getTrackDetail(items[0]?.id ?? '')
+    const statementCount = reads.mock.calls.length
+    reads.mockRestore()
+    expect(statementCount).toBeLessThanOrEqual(4)
+    expect(detail?.listening).toMatchObject({
+      total: 2,
+      firstListenedAt: FIRST_LISTEN,
+      lastListenedAt: LAST_LISTEN,
+      months: [
+        { month: '2020-02', count: 1 },
+        { month: '2024-03', count: 1 },
+      ],
+    })
+    expect(detail?.lastfmSources).toEqual([
       {
         artistKey: albumNameKey(ARTIST),
         trackKey: 'uncatalogued song',

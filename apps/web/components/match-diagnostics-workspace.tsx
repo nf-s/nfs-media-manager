@@ -67,7 +67,10 @@ import {
   trackMatchDiagnosticsQuery,
 } from '@/utils/match-diagnostics'
 import { libraryMatchesHref, type LibraryView } from '@/utils/media-scope'
-import { withTrackFilter } from '@/utils/track-browse'
+import {
+  orderedTrackMatchBrowseFields,
+  withTrackFilter,
+} from '@/utils/track-browse'
 import { AlbumMatchHistory } from './album-match-history'
 import { BrowseItemsHead, ItemThumb } from './browse-items'
 import { ConfirmAction } from './confirm-action'
@@ -99,7 +102,6 @@ import {
 import TrackMatchesToolbar, {
   clearTrackMatchesFilters,
 } from './track-matches-toolbar'
-import { useTrackBrowseFields } from './track-browse-controls'
 import { TrackBrowseValue } from './track-browse-cells'
 
 const libraryLabels = {
@@ -531,7 +533,7 @@ export default function MatchDiagnosticsWorkspace({
   const { sortBy, direction } = tracks
     ? trackQuery
     : matchDiagnosticsSort(params)
-  const matchFields = useTrackBrowseFields(true, tracks)
+  const matchFields = orderedTrackMatchBrowseFields
   const [knownProviders, setKnownProviders] = useState<Provider[]>([])
   const [merge, setMerge] = useState<MergeSelection | null>(null)
   const query = useVirtualTable({

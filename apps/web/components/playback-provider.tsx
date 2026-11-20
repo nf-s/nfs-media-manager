@@ -267,25 +267,28 @@ export function useSpotifyAccount() {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: ['spotify-account'],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
         '/api/v1/spotify/status',
         SpotifyAccountStatusSchema,
+        { signal },
       ),
   })
 }
 
 /** The Last.fm sign-in that scrobbles what this app plays on Sonos rooms. */
-export function useLastfmScrobbling() {
+export function useLastfmScrobbling(enabled = true) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: ['lastfm-scrobbling'],
-    queryFn: () =>
+    enabled,
+    queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
         '/api/v1/lastfm/scrobbling',
         LastfmScrobblingStatusSchema,
+        { signal },
       ),
   })
 }
@@ -302,7 +305,7 @@ export default function PlaybackProvider({
   const account = useSpotifyAccount()
   const enabled = account.data?.playback === true
   const client = useQueryClient()
-  const lastfm = useLastfmScrobbling()
+  const lastfm = useLastfmScrobbling(enabled)
   const scrobbling = useRef(false)
   useEffect(() => {
     scrobbling.current = lastfm.data?.connected === true

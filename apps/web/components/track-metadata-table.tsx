@@ -45,7 +45,11 @@ import {
   parseListeningParams,
 } from '@/utils/listening-filters'
 import { loadTrackMatchDiagnosticsPage } from '@/utils/match-diagnostics'
-import { parseTrackFilters, withTrackFilter } from '@/utils/track-browse'
+import {
+  orderedTrackBrowseFields,
+  parseTrackFilters,
+  withTrackFilter,
+} from '@/utils/track-browse'
 import { DetailLink } from './detail-link'
 import {
   replaceWorkspaceUrl,
@@ -77,10 +81,7 @@ import {
   useSpotifyTrackSearchStatus,
 } from './spotify-track-search'
 import { TrackBrowseValue } from './track-browse-cells'
-import {
-  TrackBrowseSearch,
-  useTrackBrowseFields,
-} from './track-browse-controls'
+import { TrackBrowseSearch } from './track-browse-controls'
 
 const selectionWidth = 36
 const pageSize = 50
@@ -110,7 +111,7 @@ export default function TrackMetadataTable({
   const [matched, setMatched] = useState<string | null>(null)
   const { listening, listeningSort } = parseListeningParams(params)
   const fields = [
-    ...useTrackBrowseFields(),
+    ...orderedTrackBrowseFields,
     listeningScrobblesField(listeningSort),
   ]
   const columns = useTableColumns('track-metadata-selection', [

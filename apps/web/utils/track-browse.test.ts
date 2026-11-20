@@ -5,6 +5,7 @@ import { browseSuggestions } from './browse-suggestions'
 import {
   defaultTrackColumns,
   formatTrackDuration,
+  loadTrackTitleMatches,
   parseTrackFilters,
   trackTitleSuggestions,
   tracksHref,
@@ -90,4 +91,45 @@ test('title suggestions name the artists and rank exact titles first', () => {
       'Song B Live',
     ],
   )
+})
+
+test('title lookup requests only a browse row slice within the artist scope', async (t) => {
+  const filters: BrowseFilter[] = [{ field: 'title', value: 'Song & Intro' }]
+  const controller = new AbortController()
+  const requests: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ input, init })
+      return Response.json({
+        statusCode: 200,
+        message: 'OK',
+        data: { items: [], page: 1, size: 100, hasMore: false },
+      })
+    },
+  )
+  assert.deepEqual(
+    await loadTrackTitleMatches(
+      '',
+      filters,
+      { creatorId: 'artist-example' },
+      controller.signal,
+    ),
+    { items: [], page: 1, size: 100, hasMore: false },
+  )
+  assert.equal(requests.length, 1)
+  const request = requests[0]
+  assert.ok(request)
+  const url = new URL(String(request.input), 'https://media.example')
+  assert.equal(url.pathname, '/api/v1/tracks/browse-page')
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    page: '1',
+    size: '100',
+    filters: JSON.stringify(filters),
+    sortBy: 'title',
+    direction: 'asc',
+    creatorId: 'artist-example',
+  })
+  assert.equal(request.init?.signal, controller.signal)
 })

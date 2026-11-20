@@ -1,10 +1,19 @@
 import { createMiddleware } from 'hono/factory'
-import { routePath } from 'hono/route'
+import { matchedRoutes } from 'hono/route'
 import { setRequestLogRoute } from '@/lib/request-log'
 
 export function logger() {
   return createMiddleware(async (c, next) => {
-    setRequestLogRoute(routePath(c, -1), c.req.raw.headers)
-    await next()
+    const routes = matchedRoutes(c)
+    const candidate = routes.find(({ method }) => method !== 'ALL')
+    // Downstream Sonos logs and early responses need a label before dispatch.
+    if (candidate) setRequestLogRoute(candidate.path, c.req.raw.headers)
+    try {
+      await next()
+    } finally {
+      const resolved = routes[c.req.routeIndex]
+      if (resolved && resolved.method !== 'ALL' && resolved !== candidate)
+        setRequestLogRoute(resolved.path, c.req.raw.headers)
+    }
   })
 }

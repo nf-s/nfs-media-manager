@@ -245,7 +245,7 @@ function personDirectory(q?: string, role?: PersonRole, id?: string) {
     .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
     .where(
       and(
-        creatorFilter(undefined, id),
+        creatorFilter(q, id),
         eq(mediaItem.mediaType, 'film'),
         inArray(mediaCredit.role, personRoles),
         visible,
