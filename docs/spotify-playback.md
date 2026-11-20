@@ -82,7 +82,7 @@ The play history needs the `user-read-recently-played` permission. When Spotify 
 
 ### Sources
 
-The source belongs to the shared player, so leaving its page does not dispose it. The source captures the view's query and ordering when playback starts; stored library pages and album tracks are loaded as needed for playback and the upcoming list. This reads existing metadata and does not trigger scraping or playlist imports.
+A loaded Track can start while Browse is counting. The queue reads more matching tracks in view order while the count is unavailable. Shuffle across the full result and saving the source to the shared session wait until the count or the final page establishes the total. The source belongs to the shared player, so leaving its page does not dispose it. The source captures the view's query and ordering when playback starts; stored library pages and album tracks are loaded as needed for playback and the upcoming list. This reads existing metadata and does not trigger scraping or playlist imports.
 
 A shuffled track list picks tracks spread over the whole list, so it does not read a page for each. The player draws every track it still wants ahead (up to 30) from different rows and reads them in one request, `GET /api/v1/tracks/positions`, which takes the view's query and a comma-separated `positions` list of at most 50 zero-based positions and returns `{ items: [{ position, item }] }`. Rows without a Spotify recording are dropped and another round is drawn for the shortfall; tracks already read are shown as upcoming while that round is read. A list played in order, a playlist and the album library still read pages.
 

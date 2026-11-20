@@ -12,6 +12,7 @@ import {
   startUnverified,
   stepSession,
   WATCHED_MS,
+  type PendingPlaybackSource,
   type PlayableItem,
   type PlayedTrack,
   type PlaybackSource,
@@ -268,7 +269,13 @@ type Planned =
   | { from: 'queue'; item: PlayableItem; entry: QueueEntry }
   | { from: 'source'; item: PlayableItem; entry: SourceTrack }
 type SourceSession = {
-  definition: PlaybackSource
+  definition: Omit<PlaybackSource, 'length'> & { length: number | undefined }
+  ordered?: {
+    nextIndex: number
+    readPageEnd: PendingPlaybackSource['readPageEnd']
+    terminal?: number
+    complete: (end: number) => void
+  }
   tracks: Map<number, Promise<PlayableItem[]>>
   remaining: number[]
   /** Tracks played, and those moved to the queue or removed by hand. */
@@ -817,9 +824,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       active.tracks.set(index, cached)
       return cached
     }
-    const scattered = state.shuffle
-      ? active.definition.loadScattered
-      : undefined
+    const scattered =
+      state.shuffle && active.definition.length !== undefined
+        ? active.definition.loadScattered
+        : undefined
     return rememberSourceEntry(
       active,
       index,
@@ -871,7 +879,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function fillSource(active: SourceSession): Promise<void> {
     if (active.filling) return active.filling
     const revision = active.revision
-    const shuffled = state.shuffle
+    const shuffled = state.shuffle && active.definition.length !== undefined
     const scattered = shuffled ? active.definition.loadScattered : undefined
     const upcoming = [...active.upcoming]
     let shown = upcoming.length
@@ -889,7 +897,30 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       for (const entry of upcoming)
         used.add(sourceTrackKey(entry.index, entry.position))
       let candidates = [...active.remaining]
-      while (upcoming.length < SOURCE_AHEAD_SIZE && candidates.length) {
+      while (upcoming.length < SOURCE_AHEAD_SIZE) {
+        if (candidates.length === 0) {
+          const ordered = active.ordered
+          if (!ordered || ordered.terminal !== undefined) break
+          const from = ordered.nextIndex
+          if (shown !== upcoming.length) show()
+          const { end, hasMore } = await ordered.readPageEnd(from)
+          if (source !== active || revision !== active.revision || disposed)
+            return
+          candidates = Array.from(
+            { length: Math.max(0, end - from) },
+            (_, offset) => from + offset,
+          )
+          active.remaining.push(...candidates)
+          if (hasMore && end > from) ordered.nextIndex = end
+          else if (
+            !hasMore &&
+            end >= from &&
+            end > active.definition.startIndex
+          )
+            ordered.terminal = end
+          else active.ordered = undefined
+          if (candidates.length === 0) break
+        }
         const pick = (draw: number) =>
           candidates[shuffled ? Math.floor(draw * candidates.length) : 0]
         if (scattered && !active.draws.length) {
@@ -982,6 +1013,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         if (source === active && revision === active.revision) {
           active.filling = null
           set({ sourceLoading: false })
+          const ordered = active.ordered
+          if (ordered?.terminal !== undefined)
+            ordered.complete(ordered.terminal)
         }
       })
     active.filling = filling
@@ -1050,7 +1084,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   function startSourceNext(): boolean {
     const active = source
-    if (!active || (!active.remaining.length && !active.upcoming.length))
+    if (
+      !active ||
+      (!active.ordered && !active.remaining.length && !active.upcoming.length)
+    )
       return false
     const next = active.upcoming.shift()
     if (next) {
@@ -1089,12 +1126,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return true
   }
 
-  async function startSource(item: PlayableItem, definition: PlaybackSource) {
-    const active: SourceSession = {
+  function createSource(
+    definition: SourceSession['definition'],
+  ): SourceSession {
+    return {
       definition: { ...definition },
       tracks: new Map(),
       remaining: Array.from(
-        { length: Math.max(0, definition.length - definition.startIndex) },
+        {
+          length: Math.max(0, (definition.length ?? 0) - definition.startIndex),
+        },
         (_, offset) => definition.startIndex + offset,
       ),
       played: new Set(),
@@ -1107,6 +1148,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       filling: null,
       draws: [],
     }
+  }
+
+  async function startSource(item: PlayableItem, definition: PlaybackSource) {
+    const active = createSource(definition)
     const captured = active.definition
     source = active
     sourceStarting = true
@@ -1143,7 +1188,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       active.initializing = false
       if (state.shuffle)
         active.remaining = Array.from(
-          { length: captured.length },
+          { length: definition.length },
           (_, index) => index,
         )
       const first = tracks[position]
@@ -1175,6 +1220,48 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       set({ sourceLoading: false })
       fail(error)
     }
+  }
+
+  function startPendingSource(
+    item: PlayableItem,
+    pending: PendingPlaybackSource,
+  ) {
+    clearSource()
+    const { resolve, readPageEnd, withLength, ...definition } = pending
+    const active = createSource({ ...definition, length: undefined })
+    active.initializing = false
+    function complete(resolved: PlaybackSource) {
+      if (
+        source !== active ||
+        disposed ||
+        active.definition.length !== undefined
+      )
+        return
+      active.definition = resolved
+      active.ordered = undefined
+      active.revision += 1
+      active.filling = null
+      if (state.shuffle) active.upcoming = []
+      active.remaining = Array.from(
+        { length: resolved.length - (state.shuffle ? 0 : resolved.startIndex) },
+        (_, index) => (state.shuffle ? index : resolved.startIndex + index),
+      ).filter((index) => !active.exhausted.has(index))
+      set({ upcoming: upcomingEntries(active.upcoming) })
+      previewSource(active)
+      refreshDeviceQueue()
+    }
+    active.ordered = {
+      nextIndex: definition.startIndex,
+      readPageEnd,
+      complete: (end) => complete(withLength(end)),
+    }
+    const entry = { index: definition.startIndex, position: 0, item }
+    rememberSourceEntry(active, entry.index, Promise.resolve([item]))
+    source = active
+    set({ source: { label: definition.label, href: definition.href } })
+    takeSource(active, entry)
+    void start(item)
+    void resolve().then(complete, () => undefined)
   }
 
   /**
@@ -2680,7 +2767,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function savedSource(): SavedSource | null {
     const active = source
     const descriptor = active?.definition.descriptor
-    if (!active || !descriptor || active.initializing) return null
+    if (
+      !active ||
+      !descriptor ||
+      active.initializing ||
+      active.definition.length === undefined
+    )
+      return null
     const { label, href, length, startIndex, kind } = active.definition
     return {
       descriptor,
@@ -3317,10 +3410,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     clearFailure() {
       if (state.failure || state.rejoin) set({ failure: null, rejoin: null })
     },
-    play(item: PlayableItem, definition?: PlaybackSource) {
+    play(
+      item: PlayableItem,
+      definition?: PlaybackSource | PendingPlaybackSource,
+    ) {
       if (refused()) return
       activate()
-      if (definition) void startSource(item, definition)
+      if (definition && 'resolve' in definition)
+        startPendingSource(item, definition)
+      else if (definition) void startSource(item, definition)
       else {
         clearSource()
         if (item.kind === 'album') set({ shuffle: false })
@@ -3345,15 +3443,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         set({ shuffle })
         return
       }
+      const length = active.definition.length
+      if (length === undefined) {
+        set({ shuffle })
+        return
+      }
       if (shuffle) active.skipped.clear()
       active.revision += 1
       active.filling = null
       active.upcoming = []
       active.remaining = shuffle
-        ? Array.from(
-            { length: active.definition.length },
-            (_, index) => index,
-          ).filter((index) => !active.exhausted.has(index))
+        ? Array.from({ length }, (_, index) => index).filter(
+            (index) => !active.exhausted.has(index),
+          )
         : [...active.remaining].sort((a, b) => a - b)
       set({ shuffle, upcoming: [] })
       if (!active.initializing) previewSource(active)
@@ -3457,7 +3559,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       activate()
       acted()
       if (currentFromSource && source?.initializing && state.current) {
-        void startSource(state.current, source.definition)
+        const { length, ...definition } = source.definition
+        if (length !== undefined)
+          void startSource(state.current, { ...definition, length })
         return
       }
       if (!latest || (resume && latest.paused)) {

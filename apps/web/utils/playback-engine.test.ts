@@ -6,6 +6,7 @@ import {
   type PlaybackTarget,
 } from './playback-engine'
 import type {
+  PendingPlaybackSource,
   PlayableItem,
   PlaybackSnapshot,
   PlaybackSource,
@@ -1078,6 +1079,194 @@ async function playSource(
   await settle()
   setup.remote.device = speaker
 }
+
+function pendingSource() {
+  let resolve: (source: PlaybackSource) => void = () => undefined
+  let reject: (error: Error) => void = () => undefined
+  const promise = new Promise<PlaybackSource>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { resolve, reject, promise }
+}
+
+function pendingFixture(
+  count: ReturnType<typeof pendingSource>,
+  readPageEnd: PendingPlaybackSource['readPageEnd'],
+): PendingPlaybackSource {
+  const { kind, label, startIndex, load } = fixtureSource(4, 1)
+  return {
+    kind,
+    label,
+    startIndex,
+    load,
+    href: '/tracks',
+    resolve: () => count.promise,
+    withLength: (length) => fixtureSource(length, 1),
+    readPageEnd,
+  }
+}
+
+test('starts a loaded track while its Browse playback source is still counting', async () => {
+  const setup = harness()
+  const pending = pendingSource()
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  setup.engine.play(
+    sourceTrack(1),
+    pendingFixture(pending, (index) =>
+      index < 4
+        ? Promise.resolve({ end: 4, hasMore: true })
+        : new Promise(() => undefined),
+    ),
+  )
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.engine.getState().source, {
+    label: 'Tracks',
+    href: '/tracks',
+  })
+  const saved = setup.engine.saved()
+  assert.ok(saved)
+  assert.equal(saved.source, null)
+
+  const removed = setup.engine.getState().upcoming[0]
+  assert.ok(removed)
+  setup.engine.removeUpcoming(removed.key)
+
+  const queued = sourceTrack(8)
+  setup.engine.enqueue(queued)
+  pending.resolve(fixtureSource(4, 1))
+  await settle()
+  assert.deepEqual(
+    setup.engine.getState().queue.map(({ item }) => item),
+    [queued],
+  )
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map(({ item }) => item.uri),
+    [sourceTrack(3).uri],
+  )
+  setup.engine.dispose()
+})
+
+test('a deferred Browse source preserves queue removals and follows a Spotify output transfer', async () => {
+  const setup = harness()
+  const pending = pendingSource()
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  setup.engine.play(
+    sourceTrack(1),
+    pendingFixture(pending, async () => ({ end: 4, hasMore: false })),
+  )
+  await settle()
+  setup.engine.enqueue(sourceTrack(8))
+  setup.engine.enqueue(sourceTrack(9))
+  const removed = setup.engine.getState().queue[0]
+  assert.ok(removed)
+  setup.engine.removeFromQueue(removed.key)
+  setup.engine.clearQueue()
+  const output: PlaybackDevice = { ...speaker, id: 'other', name: 'Other' }
+  await setup.engine.selectDevice({ kind: 'remote', device: output })
+
+  pending.resolve(fixtureSource(4, 1))
+  await settle()
+  assert.deepEqual(setup.engine.getState().target, {
+    kind: 'remote',
+    device: output,
+  })
+  assert.deepEqual(setup.engine.getState().queue, [])
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map(({ item }) => item.uri),
+    [sourceTrack(2).uri, sourceTrack(3).uri],
+  )
+  setup.engine.dispose()
+})
+
+test('ordered Browse playback can advance across a page boundary after the count fails', async () => {
+  const setup = harness()
+  const pending = pendingSource()
+  const pageReads: number[] = []
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  setup.engine.play(sourceTrack(1), {
+    ...pendingFixture(pending, async (index) => {
+      pageReads.push(index)
+      return index < 3 ? { end: 3, hasMore: true } : { end: 5, hasMore: false }
+    }),
+    withLength: (length) => ({
+      ...fixtureSource(length, 1),
+      descriptor: { type: 'browse', collection: 'tracks', params: '' },
+    }),
+  })
+  pending.reject(new Error('Count unavailable'))
+  await settle()
+  assert.deepEqual(pageReads, [1, 3])
+  assert.equal(setup.engine.saved()?.source?.length, 5)
+  assert.deepEqual(
+    setup.engine.getState().upcoming.map(({ item }) => item.uri),
+    [sourceTrack(2).uri, sourceTrack(3).uri, sourceTrack(4).uri],
+  )
+  setup.engine.next()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
+
+  setup.remote.device = speaker
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(2).uri,
+    contextUri: null,
+    positionMs: 198_000,
+  })
+  await advance(700)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(2).uri,
+    contextUri: null,
+    paused: true,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(3).uri)
+
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: sourceTrack(3).uri,
+    contextUri: null,
+    positionMs: 500,
+  })
+  await advance(700)
+  setup.engine.previous()
+  await settle()
+  assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
+  assert.deepEqual(pageReads, [1, 3])
+  setup.engine.dispose()
+})
+
+test('a failed or obsolete Browse count leaves the current playback alone', async () => {
+  for (const outcome of ['failed', 'obsolete']) {
+    const setup = harness()
+    const pending = pendingSource()
+    await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+    setup.engine.play(
+      sourceTrack(1),
+      pendingFixture(pending, async () => ({ end: 4, hasMore: false })),
+    )
+    await settle()
+    if (outcome === 'failed') {
+      pending.reject(new Error('Count unavailable'))
+    } else {
+      setup.engine.play(sourceTrack(3))
+      await settle()
+      pending.resolve(fixtureSource(4, 1))
+    }
+    await settle()
+    assert.equal(
+      setup.engine.getState().current?.uri,
+      sourceTrack(outcome === 'failed' ? 1 : 3).uri,
+    )
+    assert.equal(
+      setup.engine.getState().source?.href,
+      outcome === 'failed' ? '/tracks' : undefined,
+    )
+    assert.equal(setup.engine.getState().failure, null)
+    setup.engine.dispose()
+  }
+})
 
 test('captures a source and loads only the tracks kept ahead until playback advances', async () => {
   const setup = harness()

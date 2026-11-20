@@ -18,13 +18,18 @@ import {
   trackPlayable,
   type AlbumSource,
   type LibraryTrackSource,
+  type PendingPlaybackSource,
   type PlaybackSource,
   type PlayableItem,
 } from '@/utils/playback'
 
 type Track = { position: number; externalId: string | null; title: string }
-type PlaybackSourceFactory = () => PlaybackSource | Promise<PlaybackSource>
-const playRequests = new WeakMap<PlaybackControls, object>()
+type PlaybackSourceFactory = () =>
+  | PlaybackSource
+  | PendingPlaybackSource
+  | Promise<PlaybackSource>
+type ViewPlayControls = Pick<PlaybackControls, 'play' | 'toggle'>
+const playRequests = new WeakMap<ViewPlayControls, object>()
 
 /** Why a play pair is disabled, in the words shown on the buttons. */
 export function unavailableReason(available: boolean, enabled: boolean) {
@@ -161,7 +166,7 @@ export function AlbumReferencePlayButton({
  * `source`. Only the latest request starts once a source resolves.
  */
 export function playFromView(
-  controls: PlaybackControls,
+  controls: ViewPlayControls,
   view: PlaybackView,
   item: PlayableItem,
   current: boolean,
@@ -174,9 +179,17 @@ export function playFromView(
     return
   }
   const next = source?.()
-  function start(resolved: PlaybackSource | undefined) {
+  function start(resolved: PlaybackSource | PendingPlaybackSource | undefined) {
     if (playRequests.get(controls) !== request) return
-    if (current && (!resolved || view.source?.href === resolved.href))
+    const pendingCurrent =
+      resolved &&
+      'resolve' in resolved &&
+      view.starting &&
+      view.current?.uri === item.uri
+    if (
+      (current || pendingCurrent) &&
+      (!resolved || view.source?.href === resolved.href)
+    )
       controls.toggle()
     else controls.play(item, resolved)
   }

@@ -21,6 +21,7 @@ import {
   type ReactNode,
 } from 'react'
 import Link from 'next/link'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
@@ -110,7 +111,11 @@ import {
   useTrackRecordingVersions,
 } from './track-recording-versions'
 import { LibraryTrackPlayButton } from './play-controls'
-import { createBrowsePlaybackSource } from '@/utils/playback-source'
+import {
+  createBrowsePlaybackSource,
+  createPendingTrackBrowseSource,
+  type TrackBrowsePage,
+} from '@/utils/playback-source'
 import {
   defaultBrowseView,
   gridCardMin,
@@ -423,6 +428,7 @@ function TrackBrowse({
         ],
       ])
     : undefined
+  const queryClient = useQueryClient()
   const query = useVirtualBrowse({
     apiBaseUrl,
     collection,
@@ -499,27 +505,40 @@ function TrackBrowse({
     index: number,
     place: 'tile' | 'row' = 'row',
   ) {
-    const source = (length: number) =>
-      createBrowsePlaybackSource({
-        apiBaseUrl,
-        collection: 'tracks',
-        params,
-        href:
-          host.browseHref ??
-          `/tracks?${searchParams.size ? searchParams : params}`,
-        label: 'Tracks',
-        total: length,
-        startIndex: index,
-        initialItem: item,
-      })
+    const href =
+      host.browseHref ?? `/tracks?${searchParams.size ? searchParams : params}`
+    const sourceOptions = {
+      apiBaseUrl,
+      params,
+      href,
+      label: 'Tracks',
+      startIndex: index,
+      initialItem: item,
+    }
     return (
       <LibraryTrackPlayButton
         track={item}
         place={place}
         source={() =>
-          query.isCounting
-            ? query.resolveTotal(index).then(source)
-            : source(total)
+          query.hasTotal && query.conflictingPage === undefined
+            ? createBrowsePlaybackSource({
+                ...sourceOptions,
+                collection: 'tracks',
+                total,
+              })
+            : createPendingTrackBrowseSource(
+                {
+                  ...sourceOptions,
+                  getCachedPage: (page) =>
+                    queryClient.getQueryData<TrackBrowsePage>([
+                      collection,
+                      'browse',
+                      queryKey,
+                      page,
+                    ]),
+                },
+                () => query.resolveTotal(index),
+              )
         }
       />
     )

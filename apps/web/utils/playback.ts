@@ -39,6 +39,13 @@ export type PlaybackSource = {
   descriptor?: SourceDescriptor
 }
 
+/** A captured track list whose exact extent is still being read. */
+export type PendingPlaybackSource = Omit<PlaybackSource, 'length'> & {
+  resolve: () => Promise<PlaybackSource>
+  withLength: (length: number) => PlaybackSource
+  readPageEnd: (index: number) => Promise<{ end: number; hasMore: boolean }>
+}
+
 /** A track from the track library, with a Spotify ID only when matched. */
 export type LibraryTrackSource = Pick<
   TrackListItem,

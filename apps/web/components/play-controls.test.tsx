@@ -6,13 +6,16 @@ import {
   AlbumPlayButtons,
   LibraryTrackPlayButton,
   LibraryTrackPlayButtons,
+  playFromView,
   TilePlayControls,
   TrackPlayButton,
 } from './play-controls'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
 import {
   albumPlayable,
+  libraryTrackPlayable,
   type LibraryTrackSource,
+  type PendingPlaybackSource,
   type PlaybackSnapshot,
 } from '@/utils/playback'
 import { idlePlaybackState } from '@/utils/playback-engine'
@@ -251,4 +254,43 @@ test("a library track pair can sit on a card's artwork", () => {
   )
   assert.match(off, /data-place="tile"/)
   assert.equal((off.match(/disabled=""/g) ?? []).length, 2)
+})
+
+test('clicking the same Browse track during startup or while paused uses toggle', () => {
+  const item = libraryTrackPlayable(libraryTrack)
+  assert.ok(item)
+  const source: PendingPlaybackSource = {
+    label: 'Tracks',
+    href: '/tracks?sortBy=title',
+    kind: 'list',
+    startIndex: 0,
+    load: async () => [],
+    readPageEnd: async () => ({ end: 1, hasMore: false }),
+    withLength: () => {
+      throw new Error('The source should not be constructed again')
+    },
+    resolve: async () => {
+      throw new Error('The count should not be requested again')
+    },
+  }
+  const commands: string[] = []
+  const controls = {
+    play: () => commands.push('play'),
+    toggle: () => commands.push('toggle'),
+  }
+  playFromView(
+    controls,
+    { ...on, current: item, starting: true, source },
+    item,
+    false,
+    () => source,
+  )
+  playFromView(
+    controls,
+    { ...on, current: item, snapshot: { ...snapshot, paused: true }, source },
+    item,
+    true,
+    () => source,
+  )
+  assert.deepEqual(commands, ['toggle', 'toggle'])
 })

@@ -10,6 +10,7 @@ import {
   albumTrackView,
   createAlbumPlaybackSource,
   createBrowsePlaybackSource,
+  createPendingTrackBrowseSource,
   createPlaylistPlaybackSource,
   restorePlaybackSource,
 } from './playback-source'
@@ -125,6 +126,10 @@ function page<T>(items: T[], pageNumber = 1) {
   }
 }
 
+function trackPage<T>(items: T[], pageNumber = 1) {
+  return { page: pageNumber, size: browsePageSize, hasMore: true, items }
+}
+
 test('a browse source stays lazy and retains its query beyond the visible page', async (t) => {
   const calls: URL[] = []
   t.mock.method(
@@ -134,7 +139,7 @@ test('a browse source stays lazy and retains its query beyond the visible page',
       const url = new URL(String(input))
       calls.push(url)
       assert.equal(init?.credentials, 'include')
-      return response(page([track], Number(url.searchParams.get('page'))))
+      return response(trackPage([track], Number(url.searchParams.get('page'))))
     },
   )
   const params = new URLSearchParams({
@@ -159,7 +164,7 @@ test('a browse source stays lazy and retains its query beyond the visible page',
   assert.equal(source.href, '/tracks?q=Fixture&sortBy=title&direction=asc')
   const loaded = await source.load(500)
   assert.equal(loaded[0]?.uri, `spotify:track:${firstTrackId}`)
-  assert.equal(calls[0]?.pathname, '/api/v1/tracks')
+  assert.equal(calls[0]?.pathname, '/api/v1/tracks/browse-page')
   assert.equal(calls[0]?.searchParams.get('page'), '6')
   assert.equal(calls[0]?.searchParams.get('size'), String(browsePageSize))
   assert.equal(calls[0]?.searchParams.get('q'), 'Fixture')
@@ -172,9 +177,48 @@ test('a browse source stays lazy and retains its query beyond the visible page',
   assert.equal(calls.length, 1)
 })
 
+test('pending Track playback reuses cached Browse rows before fetching a later page', async (t) => {
+  const calls: URL[] = []
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    calls.push(new URL(String(input)))
+    return response({ ...trackPage([track], 2), hasMore: false })
+  })
+  const source = createPendingTrackBrowseSource(
+    {
+      ...options,
+      startIndex: browsePageSize - 2,
+      initialItem: track,
+      getCachedPage: (page) =>
+        page === 1
+          ? trackPage(Array.from({ length: browsePageSize }, () => track))
+          : undefined,
+    },
+    async () => {
+      throw new Error('Count unavailable')
+    },
+  )
+  assert.deepEqual(await source.readPageEnd(browsePageSize - 2), {
+    end: browsePageSize,
+    hasMore: true,
+  })
+  assert.equal((await source.load(browsePageSize - 1))[0]?.title, track.title)
+  assert.equal(calls.length, 0)
+  assert.deepEqual(await source.readPageEnd(browsePageSize), {
+    end: browsePageSize + 1,
+    hasMore: false,
+  })
+  assert.equal((await source.load(browsePageSize))[0]?.title, track.title)
+  const exact = source.withLength(browsePageSize + 1)
+  assert.equal(exact.length, browsePageSize + 1)
+  assert.equal((await exact.load(browsePageSize))[0]?.title, track.title)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.pathname, '/api/v1/tracks/browse-page')
+  assert.equal(calls[0]?.searchParams.get('page'), '2')
+})
+
 test('the clicked track starts without fetching and unplayable or missing rows are skipped', async (t) => {
   const network = t.mock.method(globalThis, 'fetch', async () =>
-    response(page([track, { ...track, spotifyTrackId: null }])),
+    response(trackPage([track, { ...track, spotifyTrackId: null }])),
   )
   const source = createBrowsePlaybackSource({
     ...options,
@@ -466,7 +510,9 @@ test('page validation failures are not cached and can be retried explicitly', as
   t.mock.method(globalThis, 'fetch', async () => {
     requests += 1
     return response(
-      requests === 1 ? page([{ title: 'Incomplete' }]) : page([track]),
+      requests === 1
+        ? trackPage([{ title: 'Incomplete' }])
+        : trackPage([track]),
     )
   })
   const source = createBrowsePlaybackSource({
@@ -481,7 +527,7 @@ test('page validation failures are not cached and can be retried explicitly', as
 
 test('source page caches stay bounded while concurrent reads share a request', async (t) => {
   const network = t.mock.method(globalThis, 'fetch', async () =>
-    response(page([track])),
+    response(trackPage([track])),
   )
   const source = createBrowsePlaybackSource({
     ...options,

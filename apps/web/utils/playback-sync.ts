@@ -16,7 +16,12 @@ import {
 import type { SonosRooms } from '@repo/schemas/sonos'
 import { createPlaybackSonosRooms } from './playback-sonos-rooms'
 import { fetchApiData } from './api'
-import { positionAt, type PlayableItem, type PlaybackSource } from './playback'
+import {
+  positionAt,
+  type PendingPlaybackSource,
+  type PlayableItem,
+  type PlaybackSource,
+} from './playback'
 import {
   upcomingEntries,
   type PlaybackEngine,
@@ -558,8 +563,11 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
       unsubscribe()
       listeners.clear()
     },
-    play: drive((item: PlayableItem, definition?: PlaybackSource) =>
-      engine.play(item, definition),
+    play: drive(
+      (
+        item: PlayableItem,
+        definition?: PlaybackSource | PendingPlaybackSource,
+      ) => engine.play(item, definition),
     ),
     enqueue: drive(engine.enqueue),
     playFromQueue: drive(engine.playFromQueue),

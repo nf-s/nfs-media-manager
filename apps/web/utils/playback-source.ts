@@ -1,3 +1,4 @@
+import { BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import { z } from 'zod'
 import {
@@ -20,13 +21,15 @@ import { fetchApiData } from './api'
 import {
   albumPlayable,
   libraryTrackPlayable,
+  type PendingPlaybackSource,
   type PlayableItem,
   type PlaybackSource,
 } from './playback'
 import { browsePageSize } from './virtual-browse'
 
 const AlbumPageSchema = PaginatedDataSchema(AlbumListItemSchema)
-const TrackPageSchema = PaginatedDataSchema(TrackListItemSchema)
+const TrackPageSchema = BrowsePageSliceSchema(TrackListItemSchema)
+export type TrackBrowsePage = z.infer<typeof TrackPageSchema>
 const PAGE_CACHE_SIZE = 4
 const ALBUM_CACHE_SIZE = 12
 const AlbumTrackViewSchema = z.object({
@@ -124,6 +127,24 @@ function validIndex(index: number, length: number) {
   return Number.isInteger(index) && index >= 0 && index < length
 }
 
+function trackBrowsePages(
+  apiBaseUrl: string,
+  params: URLSearchParams,
+  getCachedPage?: (page: number) => TrackBrowsePage | undefined,
+) {
+  const captured = new URLSearchParams(params)
+  return cached(
+    PAGE_CACHE_SIZE,
+    async (page: number) =>
+      getCachedPage?.(page) ??
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/tracks/browse-page?${pageQuery(captured, page)}`,
+        TrackPageSchema,
+      ),
+  )
+}
+
 /** Captures a browse query; later navigation cannot change its source. */
 export function createBrowsePlaybackSource({
   apiBaseUrl,
@@ -134,17 +155,25 @@ export function createBrowsePlaybackSource({
   total,
   startIndex,
   initialItem,
+  readTrackPage = trackBrowsePages(apiBaseUrl, params),
 }: SourceOptions & {
   collection: 'albums' | 'tracks'
   initialItem?: AlbumListItem | TrackListItem
+  readTrackPage?: ReturnType<typeof trackBrowsePages>
 }): PlaybackSource {
   const captured = new URLSearchParams(params)
   const albums = albumLoader(apiBaseUrl)
   const pages = cached(PAGE_CACHE_SIZE, async (page: number) => {
-    const path = `/api/v1/${collection}?${pageQuery(captured, page)}`
+    const query = pageQuery(captured, page)
     if (collection === 'albums')
-      return (await fetchApiData(apiBaseUrl, path, AlbumPageSchema)).items
-    return (await fetchApiData(apiBaseUrl, path, TrackPageSchema)).items
+      return (
+        await fetchApiData(
+          apiBaseUrl,
+          `/api/v1/albums?${query}`,
+          AlbumPageSchema,
+        )
+      ).items
+    return (await readTrackPage(page)).items
   })
   const playables = async (item: AlbumListItem | TrackListItem | undefined) => {
     if (!item) return []
@@ -205,6 +234,55 @@ export function createBrowsePlaybackSource({
       )
     },
     ...(collection === 'tracks' ? { loadScattered } : {}),
+  }
+}
+
+/** Ordered playback can read more rows while the exact matching count is unavailable. */
+export function createPendingTrackBrowseSource(
+  options: Omit<SourceOptions, 'total'> & {
+    initialItem: TrackListItem
+    getCachedPage?: (page: number) => TrackBrowsePage | undefined
+  },
+  resolveTotal: () => Promise<number>,
+): PendingPlaybackSource {
+  const { apiBaseUrl, href, label, startIndex, initialItem } = options
+  const params = new URLSearchParams(options.params)
+  const readTrackPage = trackBrowsePages(
+    apiBaseUrl,
+    params,
+    options.getCachedPage,
+  )
+  const withLength = (total: number) =>
+    createBrowsePlaybackSource({
+      ...options,
+      params,
+      collection: 'tracks',
+      total,
+      readTrackPage,
+    })
+  const readAt = (index: number) =>
+    readTrackPage(Math.floor(index / browsePageSize) + 1)
+  return {
+    href,
+    label,
+    startIndex,
+    kind: 'list',
+    async load(index) {
+      const track =
+        index === startIndex
+          ? initialItem
+          : (await readAt(index)).items[index % browsePageSize]
+      const item = track && libraryTrackPlayable(track)
+      return item ? [item] : []
+    },
+    async readPageEnd(index) {
+      const { items, page, hasMore } = await readAt(index)
+      return { end: (page - 1) * browsePageSize + items.length, hasMore }
+    },
+    withLength,
+    async resolve() {
+      return withLength(await resolveTotal())
+    },
   }
 }
 
