@@ -555,7 +555,8 @@ describe('artist tag projections', () => {
         ),
       ).toBe(false)
 
-      // The maintenance attempt shares the same lease and can outlast the foreground budget.
+      // An attempted vocabulary from before the migration learns the same policy.
+      await pool.query('update track_facet_state set maintenance_only = false')
       expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(true)
       expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
       expect(
