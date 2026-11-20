@@ -220,6 +220,7 @@ const DEVICE_RETRY_MS = 700
 const REJOIN_NOTICE_MS = 10_000
 const DEVICE_RETRIES = 6
 const VOLUME_DEBOUNCE_MS = 250
+const REMOTE_QUEUE_DEBOUNCE_MS = 200
 const RESTART_AFTER_MS = 3_000
 const MISSING_STATES = 3
 /** How long a start waits for the tracks that follow, so they go with it. */
@@ -463,6 +464,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let quietAt: number | null = null
   let pollErrors = 0
   let run = 0
+  // Spotify starts a new URI list to change what follows a Connect track.
+  // Transport commands must not overtake that write, or an old list can win.
+  let remoteCommand: Promise<void> | null = null
+  let remoteCommandRevision = 0
+  let pendingRemoteQueue: {
+    active: PlaybackSession
+    sent: PlayableItem[]
+  } | null = null
+  let remoteQueueEdited = false
+  let remoteSourceUnavailable = false
+  let rejectedRemoteTrack: PlayableItem | null = null
   let sequence = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   let volumeTimer: ReturnType<typeof setTimeout> | null = null
@@ -759,15 +771,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return true
   }
 
-  /** The tracks due after the current one, while no album comes between. */
-  function planned(): Planned[] {
+  /** A Spotify track list ends at an album. Recovery can look beyond it. */
+  function planned(includeAfterAlbum = false): Planned[] {
     const tracks: Planned[] = []
     for (const entry of state.queue) {
-      if (entry.item.kind !== 'track') return tracks
+      if (!includeAfterAlbum && entry.item.kind !== 'track') return tracks
       tracks.push({ from: 'queue', item: entry.item, entry })
     }
     for (const entry of source?.upcoming ?? []) {
-      if (entry.item.kind !== 'track') break
+      if (!includeAfterAlbum && entry.item.kind !== 'track') break
       tracks.push({ from: 'source', item: entry.item, entry })
     }
     return tracks
@@ -1018,7 +1030,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     active.filling = null
     set({ ...patch, upcoming: upcomingEntries(upcoming) })
     previewSource(active)
-    refreshRoomQueue()
+    refreshDeviceQueue()
   }
 
   /** Takes a track out of the source for good: it is not drawn or read again. */
@@ -1253,10 +1265,108 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     )
   }
 
-  /** A queue edit should reach the room before its next routine read. */
-  function refreshRoomQueue() {
-    if (holdsSonosLease() && state.target.kind === 'room' && session && latest)
+  function sendRemote(command: () => Promise<void>) {
+    remoteCommandRevision += 1
+    const sent = remoteCommand ? remoteCommand.then(command) : command()
+    const done = () => {
+      if (remoteCommand === finished) remoteCommand = null
+    }
+    const finished = sent.then(done, done)
+    remoteCommand = finished
+    return sent
+  }
+
+  /** Read the device promptly after an edit, coalescing changes made together. */
+  function refreshDeviceQueue() {
+    if (state.target.kind === 'remote' && session) {
+      remoteQueueEdited = true
+      rejectedRemoteTrack = null
+      schedule(REMOTE_QUEUE_DEBOUNCE_MS)
+    } else if (
+      holdsSonosLease() &&
+      state.target.kind === 'room' &&
+      session &&
+      latest
+    )
       schedule(FOLLOW_UP_MS)
+  }
+
+  /**
+   * Give Connect the edited order while it still plays the current track.
+   * A normal source refill can wait until the device reaches its last sent
+   * track. An explicit edit also sends additions to the end of the list.
+   */
+  function updateRemoteQueue(
+    deviceId: string,
+    snapshot: PlaybackSnapshot,
+    resuming = false,
+  ): Promise<void> | null {
+    const active = session
+    if (
+      !active ||
+      active.phase !== 'playing' ||
+      active.item.kind !== 'track' ||
+      remoteSourceUnavailable ||
+      rejectedRemoteTrack === active.item ||
+      remoteCommand ||
+      snapshot.trackUri !== active.anchorUri ||
+      !snapshot.trackUri ||
+      snapshot.contextUri?.startsWith('spotify:playlist:') ||
+      (snapshot.paused && !resuming) ||
+      rejoining !== null ||
+      (source?.filling && !source.upcoming.length && !state.queue.length)
+    )
+      return null
+    const following = followingFor(active.item)
+    const tail = active.sent.slice(active.index + 1)
+    const extend =
+      remoteQueueEdited || !tail.length || state.queue.length > tail.length
+    remoteQueueEdited = false
+    if (
+      tail.every((item, at) => following[at]?.uri === item.uri) &&
+      (!extend || tail.length === following.length)
+    )
+      return null
+    const position = positionAt(snapshot, now())
+    // A report at the very end can already describe the previous track.
+    if (
+      !resuming &&
+      snapshot.durationMs > 0 &&
+      position >= snapshot.durationMs - FOLLOW_UP_MS
+    )
+      return null
+    const current = () =>
+      !disposed &&
+      session === active &&
+      state.target.kind === 'remote' &&
+      state.target.device.id === deviceId
+    const pending = { active, sent: [active.item, ...following] }
+    pendingRemoteQueue = pending
+    // Let the shared session save both possibilities while the write is in flight.
+    set({})
+    return sendRemote(() =>
+      api.play(deviceId, playRequest(active.item, following, position)),
+    )
+      .then(
+        () => {
+          if (!current()) return
+          session = { ...active, sent: pending.sent, index: 0 }
+          // A save (including the page-close save) now describes the list the
+          // device actually accepted, even if no visible field changed.
+          set({ failure: null })
+        },
+        (error: unknown) => {
+          if (!current()) return
+          if (!remoteQueueEdited) rejectedRemoteTrack = active.item
+          if (resuming) expect({ paused: true })
+          fail(error)
+        },
+      )
+      .finally(() => {
+        if (pendingRemoteQueue !== pending) return
+        pendingRemoteQueue = null
+        if (remoteQueueEdited && !disposed) schedule(0)
+      })
   }
 
   /**
@@ -1280,6 +1390,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
     run += 1
     const started = run
+    remoteQueueEdited = false
+    remoteSourceUnavailable = false
+    rejectedRemoteTrack = null
     resume = null
     listen = null
     sighted = null
@@ -1334,9 +1447,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (started !== run || disposed) return
       const following = followingFor(item)
       if (session) session = { ...session, sent: [item, ...following] }
-      await onDevice(target.kind === 'local', () =>
-        api.play(deviceId, playRequest(item, following, from)),
-      )
+      const play = async () => {
+        if (started === run && !disposed)
+          await api.play(deviceId, playRequest(item, following, from))
+      }
+      if (target.kind === 'remote') await sendRemote(play)
+      else await onDevice(true, play)
       if (started !== run) return
       schedule(FOLLOW_UP_MS)
     } catch (error) {
@@ -1376,13 +1492,18 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    * one at `to`, and returns how that one was planned. Only tracks the
    * device was given count: one queued after they were sent is still due.
    */
-  function pass(active: PlaybackSession, to: number): Planned | null {
+  function pass(
+    active: PlaybackSession,
+    to: number,
+    alsoReached?: ReadonlySet<string>,
+  ): Planned | null {
     const reached = new Set(
       active.sent.slice(active.index + 1, to + 1).map((sent) => sent.uri),
     )
     const last = active.sent[to]
     let found: Planned | null = null
-    for (const next of planned()) {
+    for (const next of planned(true)) {
+      if (alsoReached && !alsoReached.has(next.item.uri)) continue
       if (!reached.delete(next.item.uri)) continue
       take(next)
       if (next.item.uri === last?.uri) found = next
@@ -2304,6 +2425,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const room = state.target.kind === 'room'
     if (shouldPoll()) {
       if (room && session?.phase !== 'starting') return ROOM_PLAYING_POLL_MS
+      if (
+        state.target.kind === 'remote' &&
+        session?.phase === 'playing' &&
+        latest &&
+        !latest.paused &&
+        latest.durationMs > latest.positionMs &&
+        (state.queue.length || source?.upcoming.length)
+      ) {
+        // An edit in the final moments, an album or a repeated URI may need
+        // a separate start. Read just past the boundary before acting.
+        const remaining = latest.durationMs - positionAt(latest, now())
+        if (remaining > 0) return Math.min(REMOTE_POLL_MS, remaining + 100)
+      }
       return state.target.kind === 'local' ? LOCAL_POLL_MS : REMOTE_POLL_MS
     }
     const idle =
@@ -2334,14 +2468,31 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           if (missing === MISSING_STATES || handedOver) await followElsewhere()
           else await lookElsewhere()
         }
-      } else {
+      } else if (!remoteCommand) {
+        const generation = run
+        const revision = remoteCommandRevision
+        const before = latest
         const remote = await api.state()
         pollErrors = 0
-        if (state.target === target) {
+        if (
+          !disposed &&
+          state.target === target &&
+          generation === run &&
+          revision === remoteCommandRevision
+        ) {
           if (remote.snapshot) {
             missing = 0
             retarget(target, remote)
             observe(remote.snapshot)
+            if (
+              remote.device &&
+              state.target.kind === 'remote' &&
+              remote.device.id === state.target.device.id &&
+              generation === run &&
+              latest === remote.snapshot &&
+              (!before || remote.snapshot.at - before.at <= WATCHED_MS)
+            )
+              await updateRemoteQueue(remote.device.id, remote.snapshot)
           } else {
             missed()
             if (missing === MISSING_STATES) playbackStopped()
@@ -2405,7 +2556,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     expect({ positionMs: position })
     if (target.kind === 'local') guard(player?.seek(position))
     else if (target.kind === 'remote')
-      guard(api.seek(target.device.id, position))
+      guard(sendRemote(() => api.seek(target.device.id, position)))
     else
       sonosSend(groupId(target), {
         action: 'seek',
@@ -2420,7 +2571,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (target.kind === 'local') {
       if (localId) api.pause(localId).catch(ignored)
     } else if (target.kind === 'remote')
-      api.pause(target.device.id).catch(ignored)
+      sendRemote(() => api.pause(target.device.id)).catch(ignored)
     else if (isSonosTarget(target) && holdsSonosLease())
       options.sonos
         ?.command(groupId(target), { action: 'pause' })
@@ -2559,6 +2710,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (!active && !state.current && !state.queue.length && !kept) return null
     const at = now()
     const from = active && active.sent.length > SAVED_SENT ? active.index : 0
+    const pending =
+      pendingRemoteQueue?.active === active ? pendingRemoteQueue.sent : null
     return {
       version: 1,
       savedAt: at,
@@ -2572,6 +2725,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
             sent: active.sent.slice(from, from + SAVED_SENT),
             index: active.index - from,
             anchorUri: active.anchorUri,
+            ...(pending ? { pendingSent: pending.slice(0, SAVED_SENT) } : {}),
           }
         : null,
       snapshot: latest
@@ -2614,6 +2768,28 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return index
   }
 
+  /** A track can confirm a pending replacement only by its recording URI. */
+  function observedReplacement(
+    confirmed: PlaybackSession | null,
+    sent: PlayableItem[] | undefined,
+    before: PlaybackSnapshot | null,
+    after: PlaybackSnapshot | null,
+  ) {
+    if (!confirmed || !sent || !after?.trackUri) return null
+    const matches = (item: PlayableItem) =>
+      item.uri === after.trackUri || item.uri === after.linkedFromUri
+    if (sent.filter(matches).length !== 1) return null
+    const replacement = { ...confirmed, sent, index: 0 }
+    const verdict = rejoinVerdict(replacement, before, after, false)
+    if (verdict.verdict !== 'rejoined' || verdict.index === 0) return null
+    return {
+      replacement,
+      index: verdict.index,
+      ambiguous:
+        after.trackUri === confirmed.anchorUri || confirmed.sent.some(matches),
+    }
+  }
+
   function targetName(target: PlaybackTarget): string | null {
     if (target.kind === 'local') return null
     if (target.kind === 'room') return target.room.name
@@ -2650,13 +2826,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         const due = playedThrough(active.sent, active.index, history, since)
         if (due <= active.index) return
         if (room) heardInHistory(active, history, since, due)
-        if (!held) {
-          // The tracks before the one due were played; it stays due.
-          pass(active, due - 1)
-          return
-        }
+        pass(active, due - 1)
+        if (!held) return
         const next = active.sent[due]
-        const reached = pass(active, due)
+        const first = planned()[0]
+        // A saved edit may put another item ahead of Spotify's next track.
+        const reached = first && next?.uri === first.item.uri ? first : null
+        if (reached) take(reached)
         currentFromSource = reached?.from === 'source'
         resume =
           next && reached
@@ -2699,10 +2875,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       /** The saved device's name, for a device that has gone since. */
       device: string | null
     } | null,
+    pendingSent?: PlayableItem[],
   ) {
     rejoining = null
     resume = null
-    const active = session
+    const pending = observedReplacement(
+      session,
+      pendingSent,
+      saved.snapshot,
+      after,
+    )
+    const active = pending && !pending.ambiguous ? pending.replacement : session
     const room = state.target.kind === 'room'
     const device = targetName(state.target) ?? check?.device ?? null
     const report = (status: PlaybackRejoin['status']) => {
@@ -2723,7 +2906,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (after && active && index >= 0) {
       const item = active.sent[index]
       if (item && index > active.index) {
-        const reached = pass(active, index)
+        // If the report fits both lists, keep anything either may not have played.
+        const alsoReached = pending?.ambiguous
+          ? new Set(
+              pending.replacement.sent
+                .slice(1, pending.index + 1)
+                .map((track) => track.uri),
+            )
+          : undefined
+        const reached = pass(active, index, alsoReached)
         if (reached) currentFromSource = reached.from === 'source'
         session = { ...active, item, index, anchorUri: after.trackUri }
         set({ current: item })
@@ -2771,7 +2962,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       return
     }
     latest = null
-    if (active && verdict?.verdict === 'ended' && verdict.finished) {
+    if (
+      active &&
+      verdict?.verdict === 'ended' &&
+      verdict.finished &&
+      !pending
+    ) {
       // The device played all it was given, so the queue goes on after it.
       if (room) heardToEnd(active)
       pass(active, active.sent.length)
@@ -2849,6 +3045,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         : null
     source = active
     sourceStarting = false
+    // Without its source, the app cannot reconstruct the list the device has.
+    remoteSourceUnavailable =
+      !active && (kept !== null || restored.currentFromSource)
+    remoteQueueEdited = false
+    rejectedRemoteTrack = null
     currentFromSource = active !== null && restored.currentFromSource
     sequence = Math.max(sequence, restored.sequence)
     used = true
@@ -2865,8 +3066,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     roomRetryAt = 0
     roomPolls = 0
     resume = null
-    session = restored.session
-      ? { ...restored.session, phase: 'playing', startedAt: now() }
+    const storedSession = restored.session
+    session = storedSession
+      ? {
+          item: storedSession.item,
+          sent: storedSession.sent,
+          index: storedSession.index,
+          anchorUri: storedSession.anchorUri,
+          phase: 'playing',
+          startedAt: now(),
+        }
       : null
     const shown = restored.snapshot
     listen = restored.listen ?? null
@@ -2955,6 +3164,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       restored,
       found,
       claimed ? null : { idle, unreadable, announce, device: savedName },
+      restored.target.kind === 'spotify' && restored.target.browser === null
+        ? storedSession?.pendingSent
+        : undefined,
     )
     if (!timer && pollDelay() !== null) schedule(FOLLOW_UP_MS)
   }
@@ -3145,7 +3357,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         : [...active.remaining].sort((a, b) => a - b)
       set({ shuffle, upcoming: [] })
       if (!active.initializing) previewSource(active)
-      refreshRoomQueue()
+      refreshDeviceQueue()
     },
     enqueue(item: PlayableItem) {
       sequence += 1
@@ -3155,7 +3367,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: [...state.queue, { key: `queue-${sequence}`, item }],
         announcement: `Added to queue: ${item.title}`,
       })
-      refreshRoomQueue()
+      refreshDeviceQueue()
     },
     playFromQueue(key: string) {
       const entry = state.queue.find((candidate) => candidate.key === key)
@@ -3173,7 +3385,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: state.queue.filter((candidate) => candidate !== entry),
         announcement: `Removed from queue: ${entry.item.title}`,
       })
-      refreshRoomQueue()
+      refreshDeviceQueue()
     },
     moveInQueue(from: number, to: number) {
       const entry = state.queue[from]
@@ -3182,12 +3394,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         queue: moveEntry(state.queue, from, to),
         announcement: `${entry.item.title}: position ${to + 1} of ${state.queue.length}`,
       })
-      refreshRoomQueue()
+      refreshDeviceQueue()
     },
     clearQueue() {
       if (!state.queue.length) return
       set({ queue: [], announcement: 'Queue cleared' })
-      refreshRoomQueue()
+      refreshDeviceQueue()
     },
     /**
      * Skips ahead in the source to one of its upcoming tracks. The tracks
@@ -3263,10 +3475,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'local') guard(player?.togglePlay())
       else {
         const paused = latest.paused
+        const updated =
+          paused && target.kind === 'remote'
+            ? updateRemoteQueue(target.device.id, latest, true)
+            : null
         expect({ paused: !paused })
         if (target.kind === 'remote')
           guard(
-            paused ? api.resume(target.device.id) : api.pause(target.device.id),
+            updated ??
+              sendRemote(() =>
+                paused
+                  ? api.resume(target.device.id)
+                  : api.pause(target.device.id),
+              ),
           )
         else sonosSend(groupId(target), { action: paused ? 'play' : 'pause' })
       }
@@ -3320,7 +3541,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       skippedAt = now()
       set({ failure: null })
       if (target.kind === 'local') guard(player?.nextTrack())
-      else guard(api.next(target.device.id))
+      else guard(sendRemote(() => api.next(target.device.id)))
       schedule(FOLLOW_UP_MS)
     },
     previous() {
@@ -3361,11 +3582,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           if (holdsSonosLease(lease)) seek(0)
         })
       } else
-        api.previous(target.device.id).catch((error: unknown) => {
-          // Spotify refuses to go back from the first track of a context.
-          if (error instanceof PlaybackApiError && error.status === 403) seek(0)
-          else fail(error)
-        })
+        sendRemote(() => api.previous(target.device.id)).catch(
+          (error: unknown) => {
+            // Spotify refuses to go back from the first track of a context.
+            if (error instanceof PlaybackApiError && error.status === 403)
+              seek(0)
+            else fail(error)
+          },
+        )
       schedule(FOLLOW_UP_MS)
     },
     seek,
@@ -3418,10 +3642,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       try {
         if (next.kind === 'local') {
           const id = await ensureLocal()
-          if (moving) await onDevice(true, () => api.transfer(id, playing))
+          if (moving)
+            await sendRemote(() =>
+              onDevice(true, () => api.transfer(id, playing)),
+            )
           set({ target: next, volume: localVolume })
         } else {
-          if (moving) await api.transfer(next.device.id, playing)
+          if (moving)
+            await sendRemote(() => api.transfer(next.device.id, playing))
           set({ target: next, volume: next.device.volume })
         }
         fallback = null
