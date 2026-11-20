@@ -403,12 +403,15 @@ test('Tracks inside a detail keep every Browse control and none of the page', as
   assert.doesNotMatch(html, /class="media-browser"|class="browse-main"/)
   assert.match(
     html,
-    /class="[^"]*browse-scroll bi-scroll max-h-\[min\(420px,50dvh\)\][^"]*"[^>]*data-inspector-scroll=""/,
+    /class="[^"]*browse-scroll bi-scroll dtl-browse-entries[^"]*"[^>]*data-inspector-scroll=""/,
   )
   // The page list scrolls with the page frame instead.
   const page = await render()
   assert.match(page, /class="media-browser"/)
-  assert.doesNotMatch(page, /data-inspector-scroll|Show in Tracks/)
+  assert.doesNotMatch(
+    page,
+    /dtl-browse-entries|data-inspector-scroll|Show in Tracks/,
+  )
 })
 
 test('Tracks inside a detail are held to their creator, which is not a filter', async () => {

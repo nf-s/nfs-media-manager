@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { AlbumDetail } from '@repo/schemas/media'
 import type { PlaylistEntry } from '@repo/schemas/tracks'
 import {
@@ -15,6 +15,8 @@ import {
 } from '@repo/ui/components/ui/table'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatCount, formatTrackLength } from '@repo/ui/lib/format'
+import { tableHeaderHeight, tableRowHeight } from '@/hooks/useVirtualTable'
+import { observeDetailListSpace } from '@/utils/detail-list-space'
 import { sortTableRows } from '@/utils/secondary-table'
 import {
   albumTrackView,
@@ -37,8 +39,13 @@ type Column = {
   fill?: boolean
 }
 
-/** Tracks beyond this are behind Show all. */
+/** A long album shows at least this many tracks before Show all. */
 export const ALBUM_TRACK_LIMIT = 20
+
+export function albumTrackPreviewLimit(height: number) {
+  const rows = Math.floor((height - tableHeaderHeight) / tableRowHeight)
+  return Math.max(ALBUM_TRACK_LIMIT, rows)
+}
 
 /**
  * An album's track list counts as a compilation when its tracks credit
@@ -138,7 +145,18 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
       ),
     [album.tracks, view.sortBy, view.direction],
   )
-  const shown = expanded ? ordered : ordered.slice(0, ALBUM_TRACK_LIMIT)
+  const [previewLimit, setPreviewLimit] = useState(ALBUM_TRACK_LIMIT)
+  const longAlbum = ordered.length > ALBUM_TRACK_LIMIT
+  const measurePreview = useCallback(
+    (table: HTMLTableElement | null) => {
+      if (!table || !longAlbum) return
+      return observeDetailListSpace(table, (height) => {
+        setPreviewLimit(albumTrackPreviewLimit(height))
+      })
+    },
+    [longAlbum],
+  )
+  const shown = expanded ? ordered : ordered.slice(0, previewLimit)
 
   function viewParams(next: Partial<typeof view>) {
     const params = new URLSearchParams(detail.params)
@@ -156,7 +174,7 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
   }
   return (
     <>
-      <Table aria-label="Album tracks" {...layout.table}>
+      <Table ref={measurePreview} aria-label="Album tracks" {...layout.table}>
         {layout.colgroup}
         <TableHeader>
           <TableRow>
@@ -211,7 +229,7 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
           ))}
         </TableBody>
       </Table>
-      {ordered.length > ALBUM_TRACK_LIMIT && (
+      {ordered.length > previewLimit && (
         <div>
           <Button
             variant="link"

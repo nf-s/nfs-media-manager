@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { AlbumDetailSchema } from '@repo/schemas/media'
-import AlbumTracksTable from './album-tracks-table'
+import AlbumTracksTable, { albumTrackPreviewLimit } from './album-tracks-table'
+import { tableHeaderHeight, tableRowHeight } from '@/hooks/useVirtualTable'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
@@ -168,7 +169,14 @@ test('an old Tracks link opens the album Overview with its saved table order', a
   assert.match(html, /aria-expanded="false"[^>]*>All fields</)
 })
 
-test('long albums show the first twenty tracks and compilations add Artists', async () => {
+test('the album preview adds only whole rows that fit below the header', () => {
+  const roomForThirty = tableHeaderHeight + 30 * tableRowHeight
+  assert.equal(albumTrackPreviewLimit(0), 20)
+  assert.equal(albumTrackPreviewLimit(roomForThirty - 1), 29)
+  assert.equal(albumTrackPreviewLimit(roomForThirty), 30)
+})
+
+test('long albums initially show twenty tracks and compilations add Artists', async () => {
   const tracks = Array.from({ length: 21 }, (_, index) => {
     const entry = albumTrack(index + 1, `Track ${index + 1}`, null, 100)
     return index === 3
