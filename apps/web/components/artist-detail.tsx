@@ -181,11 +181,13 @@ function useOverviewList<Schema extends z.ZodTypeAny>(
   key: string,
   params: Record<string, string>,
   schema: Schema,
+  enabled: boolean,
 ) {
   const { apiBaseUrl } = useConfig()
   const search = new URLSearchParams({ page: '1', ...params })
   return useQuery({
     queryKey: ['artist-overview', path, key, search.toString()],
+    enabled,
     queryFn: ({ signal }) =>
       fetchApiData(apiBaseUrl, `${path}/${key}?${search}`, schema, { signal }),
   })
@@ -227,17 +229,23 @@ function ArtistOverview({
   tabHref: (tab: ArtistTab) => string
 }) {
   const { profile } = artist
+  const hasAlbums = artist.albumCount > 0
+  const hasTracks = artist.trackCount > 0
+  const hasPlaylists = artist.playlistCount > 0
+  const hasMixes = artist.mixCount > 0
   const albums = useOverviewList(
     path,
     'albums',
     { size: '6', sortBy: 'releaseDate', direction: 'desc' },
     ArtistAlbumPageSchema,
+    hasAlbums,
   )
   const tracks = useOverviewList(
     path,
     'tracks',
     { size: '5', sortBy: 'scrobbles', direction: 'desc' },
     ArtistTrackPageSchema,
+    hasTracks,
   )
   const topTrackWidths = useTableWidths('artist-top-tracks', topTrackColumns)
   const topTrackLayout = topTrackWidths.layout(
@@ -248,14 +256,16 @@ function ArtistOverview({
     'playlists',
     { size: '24', sortBy: 'name', direction: 'asc' },
     ArtistPlaylistPageSchema,
+    hasPlaylists,
   )
   const mixes = useOverviewList(
     path,
     'mixes',
     { size: '5', sortBy: 'publishedAt', direction: 'desc' },
     SubscriptionItemPageSchema,
+    hasMixes,
   )
-  const library = artist.albumCount > 0 ? 'albums' : 'tracks'
+  const library = hasAlbums ? 'albums' : 'tracks'
   return (
     <>
       <Section flush>
@@ -273,7 +283,7 @@ function ArtistOverview({
           <p className="dtl-text">{profile.summary}</p>
         </Section>
       )}
-      {artist.albumCount > 0 && (
+      {hasAlbums && (
         <Section
           title="Albums"
           note={formatCount(artist.albumCount)}
@@ -351,7 +361,7 @@ function ArtistOverview({
           )}
         </Section>
       )}
-      {artist.trackCount > 0 && (
+      {hasTracks && (
         <Section
           title="Top tracks"
           note={formatCount(artist.trackCount)}
@@ -426,7 +436,7 @@ function ArtistOverview({
           )}
         </Section>
       )}
-      {artist.mixCount > 0 && (
+      {hasMixes && (
         <Section
           title="Latest mixes"
           note={formatCount(artist.mixCount)}
@@ -483,7 +493,7 @@ function ArtistOverview({
           )}
         </Section>
       )}
-      {artist.playlistCount > 0 && (
+      {hasPlaylists && (
         <Section title="Playlists" note={formatCount(artist.playlistCount)}>
           {playlists.data ? (
             <PlaylistPills
