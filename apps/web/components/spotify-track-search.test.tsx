@@ -11,6 +11,7 @@ import {
 import { useVirtualPages } from '@/hooks/useVirtualBrowse'
 import { ConfigContext } from './providers'
 import {
+  SpotifySavedCandidateConfirmation,
   SpotifyTrackSearchConfirmation,
   SpotifyTrackSearchJobCell,
   SpotifyTrackSearchReview,
@@ -320,6 +321,128 @@ test('selecting an older saved candidate opens confirmation without starting a s
     ),
     /Confirm Spotify match/,
   )
+})
+
+test('inline confirmation shows the original query for the selected earlier result', () => {
+  const client = new QueryClient()
+  client.setQueryData(
+    ['tracks', 'spotify-track-search', 'stored-track'],
+    SpotifyTrackSearchSchema.parse({
+      job: { ...job, jobId: 'latest-job' },
+      resultJob: { ...job, jobId: 'latest-job' },
+      query: 'Newer search',
+      candidates: [
+        {
+          ...candidate,
+          spotifyTrackId: 'ABCDEFGHIJKLMNOPQRSTUV',
+          spotifyUrl: 'https://open.spotify.com/track/ABCDEFGHIJKLMNOPQRSTUV',
+        },
+      ],
+      earlierResults: [
+        {
+          job,
+          query: 'Earlier search for the original recording',
+          candidates: [candidate],
+        },
+      ],
+    }),
+  )
+  const html = render(
+    <SpotifySavedCandidateConfirmation
+      trackId="stored-track"
+      candidateId={candidate.spotifyTrackId}
+      onAccepted={() => assert.fail('Rendering must not accept a match')}
+    />,
+    client,
+  )
+  assert.match(html, /Earlier search for the original recording/)
+  assert.match(html, />Confirm Spotify match<\/button>/)
+  assert.doesNotMatch(
+    html,
+    /Newer search|type="search"|<dialog|Choose another track|Spotify track to link/,
+  )
+})
+
+test('inline confirmation waits for an active search and recognises a recorded match', () => {
+  for (const active of [true, false]) {
+    const client = new QueryClient()
+    client.setQueryData(
+      ['tracks', 'spotify-track-search', 'stored-track'],
+      SpotifyTrackSearchSchema.parse({
+        job: active ? { ...job, jobId: 'newer-job', status: 'running' } : job,
+        resultJob: active ? job : null,
+        query: 'Another search',
+        candidates: active ? [candidate] : [],
+        earlierResults: active
+          ? []
+          : [
+              {
+                job: {
+                  ...job,
+                  jobId: 'earlier-accepted-job',
+                  acceptedTrackId: 'matched-track',
+                },
+                query: 'Earlier accepted search',
+                candidates: [candidate],
+              },
+            ],
+      }),
+    )
+    const html = render(
+      <SpotifySavedCandidateConfirmation
+        trackId="stored-track"
+        candidateId={candidate.spotifyTrackId}
+      />,
+      client,
+    )
+    assert.match(
+      html,
+      active ? /search is still running/ : /A match was already confirmed/,
+    )
+    assert.match(html, active ? /Another search/ : /Earlier accepted search/)
+    assert.doesNotMatch(html, />Confirm Spotify match<\/button>/)
+  }
+})
+
+test('an older accepted search leaves a newer candidate confirmable unless read-only', () => {
+  for (const canConfirm of [true, false]) {
+    const client = new QueryClient()
+    const recent = { ...job, jobId: 'recent-job' }
+    client.setQueryData(
+      ['tracks', 'spotify-track-search', 'stored-track'],
+      SpotifyTrackSearchSchema.parse({
+        job: recent,
+        resultJob: recent,
+        query: 'Recent query for the selected recording',
+        candidates: [candidate],
+        earlierResults: [
+          {
+            job: { ...job, acceptedTrackId: 'previously-matched-track' },
+            query: 'Older query',
+            candidates: [
+              {
+                ...candidate,
+                spotifyTrackId: 'ABCDEFGHIJKLMNOPQRSTUV',
+                spotifyUrl:
+                  'https://open.spotify.com/track/ABCDEFGHIJKLMNOPQRSTUV',
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    const html = render(
+      <SpotifySavedCandidateConfirmation
+        trackId="stored-track"
+        candidateId={candidate.spotifyTrackId}
+        canConfirm={canConfirm}
+      />,
+      client,
+    )
+    assert.match(html, /Recent query for the selected recording/)
+    assert.equal(html.includes('>Confirm Spotify match</button>'), canConfirm)
+    assert.doesNotMatch(html, /Older query|A match was already confirmed/)
+  }
 })
 
 function renderConfirmation(failure: unknown) {

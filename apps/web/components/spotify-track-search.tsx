@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
   queryOptions,
+  useIsMutating,
   useMutation,
   useQueries,
   useQuery,
@@ -491,27 +492,31 @@ export function SpotifyTrackSearchConfirmation({
   onConfirm,
   onChooseAnother,
   onClose,
+  inline = false,
 }: {
   candidate: SpotifyTrackSearchCandidate
   failure: unknown
   pending: boolean
   onConfirm: () => void
-  onChooseAnother: () => void
-  onClose: () => void
+  onChooseAnother?: () => void
+  onClose?: () => void
+  inline?: boolean
 }) {
   const parsed = TargetConflictErrorSchema.safeParse(failure)
   const conflict = parsed.success ? parsed.data.data : undefined
   return (
     <>
-      <Section title="Spotify track to link">
-        <TrackIdentity track={candidate} />
-        {!conflict && (
-          <p className="ds-help">
-            Link this Spotify track to the recording and keep its listening
-            history.
-          </p>
-        )}
-      </Section>
+      {!inline && (
+        <Section title="Spotify track to link">
+          <TrackIdentity track={candidate} />
+          {!conflict && (
+            <p className="ds-help">
+              Link this Spotify track to the recording and keep its listening
+              history.
+            </p>
+          )}
+        </Section>
+      )}
       {failure != null && (
         <Notice tone="danger">
           {errorMessage(failure, 'Could not save the Spotify match.')}
@@ -531,7 +536,7 @@ export function SpotifyTrackSearchConfirmation({
                     !event.ctrlKey &&
                     !event.shiftKey
                   )
-                    onClose()
+                    onClose?.()
                 }}
               >
                 Open Sources for {conflict.title}
@@ -543,14 +548,17 @@ export function SpotifyTrackSearchConfirmation({
       <div className="ds-actions flex-wrap">
         <Button
           variant="primary"
+          size={inline ? 'xs' : undefined}
           disabled={pending || Boolean(conflict)}
           onClick={onConfirm}
         >
           {pending ? 'Saving...' : 'Confirm Spotify match'}
         </Button>
-        <Button disabled={pending} onClick={onChooseAnother}>
-          Choose another track
-        </Button>
+        {onChooseAnother && (
+          <Button disabled={pending} onClick={onChooseAnother}>
+            Choose another track
+          </Button>
+        )}
       </div>
     </>
   )
@@ -561,26 +569,176 @@ export type SpotifyTrackSearchSelection = {
   candidate: SpotifyTrackSearchCandidate
 }
 
-export function spotifyTrackSearchSavedResults(
+function spotifyTrackSearchResultGroups(
   search: SpotifyTrackSearch | undefined,
 ) {
-  if (
-    !search ||
-    search.job?.acceptedTrackId ||
-    search.resultJob?.acceptedTrackId
-  )
-    return []
+  if (!search) return []
   const primary = search.resultJob === undefined ? search.job : search.resultJob
   return [
     ...(primary
       ? [{ job: primary, query: search.query, candidates: search.candidates }]
       : []),
     ...(search.earlierResults ?? []),
-  ].filter(
+  ]
+}
+
+export function spotifyTrackSearchSavedResults(
+  search: SpotifyTrackSearch | undefined,
+) {
+  if (search?.job?.acceptedTrackId || search?.resultJob?.acceptedTrackId)
+    return []
+  return spotifyTrackSearchResultGroups(search).filter(
     ({ job, candidates }) =>
       job.status === 'succeeded' &&
       !job.acceptedTrackId &&
       candidates.length > 0,
+  )
+}
+
+function spotifyTrackSearchAcceptKey(trackId: string) {
+  return [...spotifySearchKey, trackId, 'accept']
+}
+
+export function useSpotifyTrackSearchAcceptPending(trackId: string) {
+  return (
+    useIsMutating({
+      mutationKey: spotifyTrackSearchAcceptKey(trackId),
+      exact: true,
+    }) > 0
+  )
+}
+
+function useAcceptSpotifyTrackSearch(
+  trackId: string,
+  onAccepted?: (targetId: string) => void,
+) {
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const mutationKey = spotifyTrackSearchAcceptKey(trackId)
+  const pending = useSpotifyTrackSearchAcceptPending(trackId)
+  const mutation = useMutation({
+    mutationKey,
+    retry: false,
+    mutationFn: (selection: SpotifyTrackSearchSelection) =>
+      fetchApiData(
+        apiBaseUrl,
+        `${spotifySearchPath}/${encodeURIComponent(trackId)}/accept`,
+        SpotifyTrackSearchAcceptResultSchema,
+        {
+          method: 'POST',
+          errorData: {
+            status: targetConflictStatus,
+            schema: SpotifyTrackSearchTargetConflictSchema,
+          },
+          body: JSON.stringify(
+            SpotifyTrackSearchAcceptInputSchema.parse({
+              jobId: selection.jobId,
+              spotifyTrackId: selection.candidate.spotifyTrackId,
+            }),
+          ),
+        },
+      ),
+    onSuccess: ({ targetId }) => {
+      onAccepted?.(targetId)
+      return invalidateScrobbleLinks(
+        client,
+        trackId !== targetId ? trackId : undefined,
+      )
+    },
+  })
+  return {
+    ...mutation,
+    isPending: pending,
+    confirm(selection: SpotifyTrackSearchSelection) {
+      if (!client.isMutating({ mutationKey, exact: true }))
+        mutation.mutate(selection)
+    },
+  }
+}
+
+/** Confirm the selected catalog result in its original saved search. */
+export function SpotifySavedCandidateConfirmation({
+  trackId,
+  candidateId,
+  canConfirm = true,
+  onAccepted,
+  onOpenConflict,
+}: {
+  trackId: string
+  candidateId: string
+  canConfirm?: boolean
+  onAccepted?: (targetId: string) => void
+  onOpenConflict?: () => void
+}) {
+  const search = useSavedSpotifyTrackSearch(trackId)
+  const accept = useAcceptSpotifyTrackSearch(trackId, onAccepted)
+  const job = search.data?.job
+  const results = spotifyTrackSearchResultGroups(search.data).filter(
+    ({ job }) => job.status === 'succeeded',
+  )
+  const position = results.findIndex(({ candidates }) =>
+    candidates.some(({ spotifyTrackId }) => spotifyTrackId === candidateId),
+  )
+  const result = results[position]
+  const candidate = result?.candidates.find(
+    ({ spotifyTrackId }) => spotifyTrackId === candidateId,
+  )
+  const selection =
+    result && candidate ? { jobId: result.job.jobId, candidate } : null
+  const failure =
+    accept.variables?.jobId === selection?.jobId &&
+    accept.variables?.candidate.spotifyTrackId === candidateId
+      ? accept.error
+      : null
+  const alreadyMatched =
+    job?.acceptedTrackId ||
+    results.slice(0, position + 1).some(({ job }) => job.acceptedTrackId)
+  if (search.isPending) return <Skeleton height={48} />
+  if (search.isError && !accept.data)
+    return (
+      <Notice
+        tone="danger"
+        action={
+          <Button size="xs" onClick={() => search.refetch()}>
+            Retry
+          </Button>
+        }
+      >
+        Could not load the saved Spotify search.
+      </Notice>
+    )
+  return (
+    <>
+      {result && (
+        <p className="ds-help break-words">
+          <strong>Saved query</strong> {result.query}
+        </p>
+      )}
+      {accept.data || alreadyMatched ? (
+        <p role="status" className="ds-help">
+          {accept.data
+            ? 'Spotify match saved.'
+            : 'A match was already confirmed from this or a newer search.'}
+        </p>
+      ) : !canConfirm ? null : isActiveSpotifyTrackSearch(job) ? (
+        <p role="status" className="ds-help">
+          {job?.status === 'queued'
+            ? 'A Spotify search is queued.'
+            : 'A Spotify search is still running.'}
+        </p>
+      ) : selection ? (
+        <SpotifyTrackSearchConfirmation
+          inline
+          candidate={selection.candidate}
+          failure={failure}
+          pending={accept.isPending}
+          onConfirm={() => accept.confirm(selection)}
+          onClose={onOpenConflict}
+        />
+      ) : (
+        <p className="ds-help">This saved candidate is no longer available.</p>
+      )}
+    </>
   )
 }
 
@@ -661,10 +819,8 @@ export function SpotifyTrackSearchReview({
   searchMode?: 'edit-query' | 'review-results'
   initialSelection?: SpotifyTrackSearchSelection
 }) {
-  const { apiBaseUrl } = useConfig()
   const catalog = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
-  const path = `${spotifySearchPath}/${encodeURIComponent(track.id)}`
   const dialog = useRef<HTMLDialogElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
@@ -683,35 +839,9 @@ export function SpotifyTrackSearchReview({
     onSuccess: () => setChosen(null),
     onSettled: () => invalidateSpotifySearchJobs(client),
   })
-  const accept = useMutation({
-    retry: false,
-    mutationFn: (input: NonNullable<typeof chosen>) =>
-      fetchApiData(
-        apiBaseUrl,
-        `${path}/accept`,
-        SpotifyTrackSearchAcceptResultSchema,
-        {
-          method: 'POST',
-          errorData: {
-            status: targetConflictStatus,
-            schema: SpotifyTrackSearchTargetConflictSchema,
-          },
-          body: JSON.stringify(
-            SpotifyTrackSearchAcceptInputSchema.parse({
-              jobId: input.jobId,
-              spotifyTrackId: input.candidate.spotifyTrackId,
-            }),
-          ),
-        },
-      ),
-    onSuccess: async ({ targetId }) => {
-      onMatched(targetId)
-      onClose()
-      await invalidateScrobbleLinks(
-        client,
-        track.id !== targetId ? track.id : undefined,
-      )
-    },
+  const accept = useAcceptSpotifyTrackSearch(track.id, (targetId) => {
+    onMatched(targetId)
+    onClose()
   })
   useEffect(() => {
     const element = dialog.current
@@ -852,7 +982,7 @@ export function SpotifyTrackSearchReview({
               candidate={confirmation.candidate}
               failure={accept.error}
               pending={accept.isPending}
-              onConfirm={() => accept.mutate(confirmation)}
+              onConfirm={() => accept.confirm(confirmation)}
               onChooseAnother={() => setChosen(null)}
               onClose={onClose}
             />

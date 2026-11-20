@@ -13,13 +13,17 @@ import {
   type SpotifyTrackAuditItem,
   type SpotifyTrackAuditQuery,
 } from '@repo/schemas/spotify-track-search'
-import { Facts, KeyValues, Section, Stats } from '@repo/ui/components/ds/facts'
+import { KeyValues, Section, Stats } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead, Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
-import { TableCell, TableRow, TableState } from '@repo/ui/components/ui/table'
+import {
+  TableCell,
+  TableHead,
+  TableRow,
+  TableState,
+} from '@repo/ui/components/ui/table'
 import {
   EMPTY_VALUE,
   formatCount,
@@ -36,7 +40,6 @@ import {
   useDetailInspector,
 } from './detail-inspector-context'
 import { useConfig } from './providers'
-import { MediaThumb } from './media-artwork'
 import {
   SecondaryCell,
   SecondaryTableHead,
@@ -44,9 +47,13 @@ import {
   SecondaryTableSearch,
   SecondaryTableToolbar,
   SecondaryVirtualRows,
-  useTableWidths,
+  useTableColumns,
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
+import {
+  SpotifySavedCandidateConfirmation,
+  useSpotifyTrackSearchAcceptPending,
+} from './spotify-track-search'
 
 const metadataHref = '/jobs/metadata?mediaType=track'
 const pageSize = 25
@@ -57,12 +64,20 @@ const assessmentLabels: Record<SpotifyTrackAuditAssessment, string> = {
   unlikely: 'Unlikely match',
 }
 const auditColumns: ReadonlyArray<{
-  key: SpotifyTrackAuditQuery['sort']
+  key: SpotifyTrackAuditQuery['sort'] | 'spotify'
+  required?: boolean
   label: string
   width: number
   fill?: boolean
 }> = [
-  { key: 'title', label: 'Track', width: 240, fill: true },
+  {
+    key: 'title',
+    label: 'Library track',
+    width: 270,
+    fill: true,
+    required: true,
+  },
+  { key: 'spotify', label: 'Best Spotify candidate', width: 300 },
   { key: 'assessment', label: 'Assessment', width: 144 },
   { key: 'candidates', label: 'Candidates', width: 116 },
 ]
@@ -93,17 +108,56 @@ function searchDate(candidate: SpotifyTrackAuditCandidate) {
   )
 }
 
+function RecordingDetails({
+  title,
+  artists,
+  albums,
+  durations,
+}: {
+  title: string
+  artists: readonly string[]
+  albums: readonly string[]
+  durations: readonly number[]
+}) {
+  return (
+    <div className="break-words">
+      <KeyValues
+        items={[
+          { label: 'Title', value: title },
+          { label: 'Artists', value: artists.join(', ') || EMPTY_VALUE },
+          { label: 'Albums', value: albums.join(', ') || EMPTY_VALUE },
+          {
+            label: 'Duration',
+            value:
+              durations
+                .map((seconds) => formatTrackLength(seconds * 1000))
+                .join(', ') || EMPTY_VALUE,
+          },
+        ]}
+      />
+    </div>
+  )
+}
+
 export function SpotifyTrackAuditEvidence({
   track,
   onClose,
+  onAccepted,
 }: {
   track: SpotifyTrackAuditItem
   onClose: () => void
+  onAccepted?: (targetId: string) => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const close = useRef<HTMLButtonElement>(null)
   const titleId = useId()
-  const [candidate, setCandidate] = useState(track.candidates[0])
+  const [candidateId, setCandidateId] = useState(
+    track.candidates[0]?.spotifyTrackId ?? '',
+  )
+  const candidate = track.candidates.find(
+    (item) => item.spotifyTrackId === candidateId,
+  )
+  const pending = useSpotifyTrackSearchAcceptPending(track.trackId)
   useEffect(() => {
     const previous = document.activeElement
     const element = dialog.current
@@ -124,34 +178,91 @@ export function SpotifyTrackAuditEvidence({
       onCancel={(event) => {
         event.preventDefault()
         event.stopPropagation()
-        onClose()
+        if (!pending) onClose()
       }}
       onClick={(event) => {
         event.stopPropagation()
-        if (event.target === event.currentTarget) onClose()
+        if (!pending && event.target === event.currentTarget) onClose()
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
       <div className="ds-inspector">
         <div className="ds-inspector-bar">
           <h2 className="ds-crumbs" id={titleId}>
-            <b>{track.title}</b>
+            <b>Review Spotify match</b>
           </h2>
           <Button
             ref={close}
             variant="ghost"
             icon
             aria-label="Close Spotify match audit details"
+            disabled={pending}
             onClick={onClose}
           >
             <X className="ds-i" aria-hidden="true" />
           </Button>
         </div>
         <div className="ds-inspector-body">
-          <Section
-            title="Library track"
-            flush
-            aside={
+          <Section title="Comparison" flush>
+            {track.candidates.length > 1 && (
+              <label className="ds-field">
+                <span className="ds-label">Saved Spotify candidates</span>
+                <Select
+                  className="w-full"
+                  value={candidateId}
+                  disabled={pending}
+                  onChange={(event) => setCandidateId(event.target.value)}
+                >
+                  {track.candidates.map((item) => (
+                    <option
+                      key={item.spotifyTrackId}
+                      value={item.spotifyTrackId}
+                    >
+                      {[item.title, item.artists.join(', '), item.albumName]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            )}
+            <Section title="Library track" flush>
+              <RecordingDetails {...track} />
+            </Section>
+            {candidate && (
+              <Section
+                title="Spotify candidate"
+                note={searchDate(candidate)}
+                aside={
+                  <Assessment
+                    value={candidate.assessment}
+                    summary={candidate.summary}
+                  />
+                }
+              >
+                <RecordingDetails
+                  title={candidate.title}
+                  artists={candidate.artists}
+                  albums={candidate.albumName ? [candidate.albumName] : []}
+                  durations={[candidate.durationSec]}
+                />
+              </Section>
+            )}
+            {candidate && (
+              <SpotifySavedCandidateConfirmation
+                key={candidate.spotifyTrackId}
+                trackId={track.trackId}
+                candidateId={candidate.spotifyTrackId}
+                canConfirm={
+                  !candidate.reasons.some(
+                    ({ code }) => code === 'alternate-coverage',
+                  )
+                }
+                onAccepted={onAccepted ?? onClose}
+                onOpenConflict={onClose}
+              />
+            )}
+            <div className="ds-actions flex-wrap">
               <Button asChild size="xs">
                 <DetailLink
                   kind="track"
@@ -159,6 +270,10 @@ export function SpotifyTrackAuditEvidence({
                   tab="sources"
                   view={{ sourceProvider: 'spotify' }}
                   onClick={(event) => {
+                    if (pending) {
+                      event.preventDefault()
+                      return
+                    }
                     if (
                       event.button === 0 &&
                       !event.metaKey &&
@@ -172,102 +287,44 @@ export function SpotifyTrackAuditEvidence({
                   Open track Sources
                 </DetailLink>
               </Button>
-            }
-          >
-            <Facts
-              items={[
-                {
-                  label: 'Artists',
-                  value: track.artists.join(', ') || EMPTY_VALUE,
-                },
-                {
-                  label: 'Albums',
-                  value: track.albums.join(', ') || EMPTY_VALUE,
-                },
-                {
-                  label: 'Duration',
-                  value:
-                    track.durations
-                      .map((seconds) => formatTrackLength(seconds * 1000))
-                      .join(', ') || EMPTY_VALUE,
-                },
-              ]}
-            />
-            <p>{track.summary}</p>
-          </Section>
-          <Section
-            title="Saved Spotify candidates"
-            note={formatCount(track.candidates.length)}
-          >
-            <List compact aria-label="Saved Spotify candidates">
-              {track.candidates.map((item, index) => (
-                <ListRow
-                  key={`${item.spotifyTrackId}-${item.searchedAt}-${index}`}
-                  thumb={<MediaThumb kind="track" src={null} size={40} />}
-                  title={
-                    <RowTitle>
-                      <button
-                        type="button"
-                        aria-pressed={candidate === item}
-                        aria-label={`Compare ${item.title}${item.albumName ? ` from ${item.albumName}` : ''}`}
-                        onClick={() => setCandidate(item)}
-                      >
-                        {item.title}
-                      </button>
-                    </RowTitle>
-                  }
-                  by={[
-                    item.artists.join(', '),
-                    item.albumName,
-                    formatTrackLength(item.durationSec * 1000),
-                    formatDate(item.searchedAt),
-                    item.historical ? 'Earlier search' : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                  meta={
-                    <Assessment
-                      value={item.assessment}
-                      summary={item.summary}
-                    />
-                  }
-                  action={
-                    <ServiceIconLinks
-                      itemTitle={item.title}
-                      links={[
-                        {
-                          provider: 'spotify',
-                          label: 'Spotify',
-                          url: item.spotifyUrl,
-                        },
-                      ]}
-                    />
-                  }
+              {candidate && (
+                <ServiceIconLinks
+                  itemTitle={candidate.title}
+                  links={[
+                    {
+                      provider: 'spotify',
+                      label: 'Spotify',
+                      url: candidate.spotifyUrl,
+                    },
+                  ]}
                 />
-              ))}
-            </List>
+              )}
+            </div>
           </Section>
-          {candidate && (
-            <Section title="Comparison" note={searchDate(candidate)}>
-              <strong>{candidate.title}</strong>
-              <p>{candidate.summary}</p>
+          {candidate && (candidate.summary || candidate.reasons.length > 0) && (
+            <Section title="Match evidence">
+              {candidate.summary && (
+                <p className="break-words">{candidate.summary}</p>
+              )}
               {candidate.reasons.map((reason, index) => (
                 <Section
                   key={`${reason.code}-${index}`}
                   title={reason.explanation}
                 >
-                  <KeyValues
-                    items={[
-                      {
-                        label: 'Library',
-                        value: reason.library || EMPTY_VALUE,
-                      },
-                      {
-                        label: 'Spotify',
-                        value: reason.spotify || EMPTY_VALUE,
-                      },
-                    ]}
-                  />
+                  <div className="break-words">
+                    <KeyValues
+                      items={[
+                        {
+                          label: 'Library',
+                          value: reason.library || EMPTY_VALUE,
+                        },
+                        {
+                          label: 'Spotify',
+                          value: reason.spotify || EMPTY_VALUE,
+                        },
+                      ]}
+                    />
+                  </div>
                 </Section>
               ))}
             </Section>
@@ -306,6 +363,7 @@ export default function SpotifyTrackMatchAudit() {
   const params = useSearchParams()
   const inspector = useDetailInspector()
   const [opened, setOpened] = useState<SpotifyTrackAuditItem | null>(null)
+  const [matchedId, setMatchedId] = useState<string | null>(null)
   const urlSearch = (params.get('q') ?? '').slice(0, 200)
   const [search, setSearch] = useState(urlSearch)
   useEffect(() => setSearch(urlSearch), [urlSearch])
@@ -337,8 +395,10 @@ export default function SpotifyTrackMatchAudit() {
       ),
   })
   const report = rows.firstPage
-  const widths = useTableWidths('spotify-track-match-audit', auditColumns)
-  const layout = widths.layout(auditColumns.map(({ key }) => key))
+  const columns = useTableColumns('spotify-track-match-audit', auditColumns)
+  const shown = auditColumns.filter(({ key }) => columns.visible(key))
+  const layout = columns.layout([104, ...shown.map(({ key }) => key)])
+  const columnCount = 1 + shown.length
   function updateParams(updates: Record<string, string | undefined>) {
     const next = new URLSearchParams(window.location.search)
     for (const [key, value] of Object.entries(updates)) {
@@ -420,12 +480,21 @@ export default function SpotifyTrackMatchAudit() {
               ))}
             </Select>
           }
+          columns={columns.controls}
           count={
             rows.hasTotal
               ? formatItemCount(rows.total, trackNoun)
               : 'Loading tracks…'
           }
         />
+        {matchedId && (
+          <p role="status" className="ds-muted">
+            Spotify match saved.{' '}
+            <DetailLink kind="track" id={matchedId} tab="sources">
+              Open track
+            </DetailLink>
+          </p>
+        )}
         {rows.isError && (
           <div className="ops-notice">
             <Notice
@@ -456,32 +525,38 @@ export default function SpotifyTrackMatchAudit() {
             {layout.colgroup}
             <thead>
               <TableRow>
-                {auditColumns.map(({ key, label }) => (
-                  <SecondaryTableHead
-                    key={key}
-                    label={label}
-                    sortKey={key}
-                    sortBy={sort}
-                    direction={direction}
-                    align={key === 'candidates' ? 'end' : undefined}
-                    sticky={key === 'title' ? 0 : undefined}
-                    resizer={widths.resizer(key)}
-                    onSort={(next) =>
-                      updateParams({
-                        sort: next === 'assessment' ? undefined : next,
-                        direction:
-                          sort === next && direction === 'asc'
-                            ? 'desc'
-                            : undefined,
-                      })
-                    }
-                  />
-                ))}
+                <TableHead>Review</TableHead>
+                {shown.map(({ key, label }) =>
+                  key === 'spotify' ? (
+                    <TableHead key={key} resizer={columns.resizer(key)}>
+                      {label}
+                    </TableHead>
+                  ) : (
+                    <SecondaryTableHead
+                      key={key}
+                      label={label}
+                      sortKey={key}
+                      sortBy={sort}
+                      direction={direction}
+                      align={key === 'candidates' ? 'end' : undefined}
+                      resizer={columns.resizer(key)}
+                      onSort={(next) =>
+                        updateParams({
+                          sort: next === 'assessment' ? undefined : next,
+                          direction:
+                            sort === next && direction === 'asc'
+                              ? 'desc'
+                              : undefined,
+                        })
+                      }
+                    />
+                  ),
+                )}
               </TableRow>
             </thead>
             <tbody>
               {!rows.isError && rows.hasTotal && rows.total === 0 && (
-                <TableState colSpan={auditColumns.length}>
+                <TableState colSpan={columnCount}>
                   {q || assessment
                     ? 'No tracks match these filters.'
                     : 'No unmatched tracks with saved Spotify candidates.'}
@@ -489,40 +564,72 @@ export default function SpotifyTrackMatchAudit() {
               )}
               <SecondaryVirtualRows
                 window={rows}
-                colSpan={auditColumns.length}
-                renderRow={(item, index) => (
-                  <TableRow key={item.trackId} aria-rowindex={index + 2}>
-                    <TableCell sticky={0}>
-                      <SecondaryCell
-                        text={[item.title, ...item.artists].join(' · ')}
-                      >
+                colSpan={columnCount}
+                renderRow={(item, index) => {
+                  const bestCandidate = item.candidates[0]
+                  return (
+                    <TableRow key={item.trackId} aria-rowindex={index + 2}>
+                      <TableCell>
                         <Button
-                          variant="link"
                           size="xs"
                           aria-haspopup="dialog"
+                          aria-label={`Review match for ${item.title}`}
                           onClick={() => setOpened(item)}
                         >
-                          {item.title}
+                          Review match
                         </Button>
-                        {item.artists.length > 0 && (
-                          <span className="ds-muted">
-                            {' '}
-                            · {item.artists.join(', ')}
-                          </span>
-                        )}
-                      </SecondaryCell>
-                    </TableCell>
-                    <TableCell>
-                      <Assessment
-                        value={item.assessment}
-                        summary={item.summary}
-                      />
-                    </TableCell>
-                    <TableCell align="end">
-                      {formatCount(item.candidates.length)}
-                    </TableCell>
-                  </TableRow>
-                )}
+                      </TableCell>
+                      <TableCell>
+                        <SecondaryCell
+                          text={[item.title, ...item.artists].join(' · ')}
+                        >
+                          <Button
+                            variant="link"
+                            size="xs"
+                            aria-haspopup="dialog"
+                            onClick={() => setOpened(item)}
+                          >
+                            {item.title}
+                          </Button>
+                          {item.artists.length > 0 && (
+                            <span className="ds-muted">
+                              {' '}
+                              · {item.artists.join(', ')}
+                            </span>
+                          )}
+                        </SecondaryCell>
+                      </TableCell>
+                      {columns.visible('spotify') && (
+                        <TableCell>
+                          <SecondaryCell>
+                            {bestCandidate
+                              ? [
+                                  bestCandidate.title,
+                                  ...bestCandidate.artists,
+                                  bestCandidate.albumName,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')
+                              : EMPTY_VALUE}
+                          </SecondaryCell>
+                        </TableCell>
+                      )}
+                      {columns.visible('assessment') && (
+                        <TableCell>
+                          <Assessment
+                            value={item.assessment}
+                            summary={item.summary}
+                          />
+                        </TableCell>
+                      )}
+                      {columns.visible('candidates') && (
+                        <TableCell align="end">
+                          {formatCount(item.candidates.length)}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  )
+                }}
               />
             </tbody>
           </table>
@@ -532,6 +639,10 @@ export default function SpotifyTrackMatchAudit() {
         <SpotifyTrackAuditEvidence
           key={opened.trackId}
           track={opened}
+          onAccepted={(targetId) => {
+            setMatchedId(targetId)
+            setOpened(null)
+          }}
           onClose={() => setOpened(null)}
         />
       )}

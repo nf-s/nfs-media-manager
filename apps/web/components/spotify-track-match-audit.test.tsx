@@ -2,12 +2,20 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  PathnameContext,
+  SearchParamsContext,
+} from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import { ConfigContext } from './providers'
 import {
   SpotifyTrackAuditItemSchema,
   SpotifyTrackAuditPageSchema,
   SpotifyTrackAuditQuerySchema,
+  SpotifyTrackSearchSchema,
+  type SpotifyTrackAuditItem,
 } from '@repo/schemas/spotify-track-search'
-import {
+import SpotifyTrackMatchAudit, {
   loadSpotifyTrackAudit,
   SpotifyTrackAuditEvidence,
 } from './spotify-track-match-audit'
@@ -60,15 +68,101 @@ const track = SpotifyTrackAuditItemSchema.parse({
   ],
 })
 
-test('the audit shows the saved choices and field evidence for the selected candidate', () => {
-  const html = renderToStaticMarkup(
-    <SpotifyTrackAuditEvidence track={track} onClose={() => {}} />,
+const savedQuery = 'Fixture search query with the full version and edition'
+
+function renderEvidence(item: SpotifyTrackAuditItem) {
+  const client = new QueryClient()
+  const savedJob = {
+    jobId: 'fixture-search',
+    status: 'succeeded',
+    resultCount: 1,
+    errorMessage: null,
+    createdAt: searchedAt,
+    startedAt: searchedAt,
+    finishedAt: searchedAt,
+  }
+  client.setQueryData(
+    ['tracks', 'spotify-track-search', item.trackId],
+    SpotifyTrackSearchSchema.parse({
+      job: savedJob,
+      resultJob: savedJob,
+      query: savedQuery,
+      candidates: item.candidates.slice(0, 1).map((result) => ({
+        ...result,
+        artworkUrl: null,
+        isrc: null,
+        spotifyAlbumId: null,
+      })),
+    }),
   )
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'http://localhost:3001',
+            apiBaseUrl: 'http://localhost:4001',
+          }}
+        >
+          <SpotifyTrackAuditEvidence track={item} onClose={() => {}} />
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+  } finally {
+    client.clear()
+  }
+}
+
+test('review immediately shows complete library and Spotify details', () => {
+  const longTitle =
+    'A long recorded title with a suffix that must remain readable'
+  const longArtist =
+    'The Spotify artist name has several credits lasting beyond one line'
+  const html = renderEvidence({
+    ...track,
+    title: longTitle,
+    candidates: track.candidates.map((candidate) => ({
+      ...candidate,
+      artists: [longArtist],
+    })),
+  })
+  const candidates = html.indexOf('Saved Spotify candidates')
+  const comparison = html.indexOf('Comparison')
+  const evidence = html.indexOf('Match evidence')
+  assert.ok(
+    comparison >= 0 && comparison < candidates && candidates < evidence,
+    'Keep the candidate picker in the comparison',
+  )
+  const initialReview = html.slice(comparison, evidence)
+  for (const value of [
+    longTitle,
+    longArtist,
+    'Fixture Recorded EP',
+    'Fixture Catalog Album',
+    '3:14',
+    '3:15',
+  ]) {
+    assert.ok(initialReview.includes(value), value)
+  }
+  assert.doesNotMatch(initialReview, /ds-facts|ds-row-title/)
+})
+
+test('the audit shows the saved choices and field evidence for the selected candidate', () => {
+  const html = renderEvidence(track)
   assert.match(html, /class="sec-drawer"/)
   assert.match(html, /Library Recording/)
-  assert.match(html, /Candidate needs review/)
-  assert.match(html, /Compare Catalog Recording from Fixture Catalog Album/)
-  assert.match(html, /Compare Unrelated Candidate from Fixture Catalog Album/)
+  assert.match(html, /Artist and recording fit/)
+  assert.doesNotMatch(html, /Candidate needs review/)
+  assert.match(
+    html,
+    />Catalog Recording · Fixture Artist · Fixture Catalog Album<\/option>/,
+  )
+  assert.match(
+    html,
+    />Unrelated Candidate · Fixture Artist · Fixture Catalog Album<\/option>/,
+  )
+  assert.ok(html.includes(`<strong>Saved query</strong> ${savedQuery}`))
+  assert.match(html, />Confirm Spotify match<\/button>/)
   assert.match(html, /Historical|Earlier search/)
   assert.match(html, /2026-01-05/)
   assert.match(
@@ -80,6 +174,27 @@ test('the audit shows the saved choices and field evidence for the selected cand
   assert.match(html, /<dt>Library<\/dt><dd>Fixture Recorded EP<\/dd>/)
   assert.match(html, /<dt>Spotify<\/dt><dd>Fixture Catalog Album<\/dd>/)
   assert.match(html, /The duration is close/)
+})
+
+test('review keeps alternate coverage evidence and the saved query readable without offering confirmation', () => {
+  const html = renderEvidence({
+    ...track,
+    candidates: track.candidates.map((item) => ({
+      ...item,
+      reasons: [
+        {
+          code: 'alternate-coverage',
+          explanation: 'Another library version already plays on Spotify.',
+          library: 'Open the existing version from Sources.',
+          spotify: '',
+        },
+      ],
+    })),
+  })
+  assert.match(html, /Another library version already plays on Spotify/)
+  assert.ok(html.includes(`<strong>Saved query</strong> ${savedQuery}`))
+  assert.match(html, /Open track Sources/)
+  assert.doesNotMatch(html, />Confirm Spotify match<\/button>/)
 })
 
 test('the audit reads a bounded filtered page and preserves the server order', async (t) => {
@@ -115,4 +230,51 @@ test('the audit reads a bounded filtered page and preserves the server order', a
     page,
   )
   assert.equal(fetch.mock.callCount(), 1)
+})
+
+test('audit rows show both recording credits and an explicit review action', () => {
+  const client = new QueryClient()
+  const path = '/tracks/spotify-match-audit'
+  const result = {
+    ...track,
+    candidates: [{ ...track.candidates[0], artists: ['Catalog Performer'] }],
+  }
+  client.setQueryData(
+    ['tracks', 'spotify-match-audit', '', undefined, 'assessment', 'asc', 1],
+    SpotifyTrackAuditPageSchema.parse({
+      generatedAt: searchedAt,
+      totalTracks: 1,
+      totalCandidates: 1,
+      counts: { likely: 1, review: 0, unlikely: 0 },
+      totalCount: 1,
+      pageCount: 1,
+      items: [result],
+    }),
+  )
+  try {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'https://example.test',
+            apiBaseUrl: 'https://example.test',
+          }}
+        >
+          <PathnameContext.Provider value={path}>
+            <SearchParamsContext.Provider value={new URLSearchParams()}>
+              <SpotifyTrackMatchAudit />
+            </SearchParamsContext.Provider>
+          </PathnameContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+    const body = html.split('<tbody>')[1]?.split('</tbody>')[0] ?? ''
+    assert.match(body, /Library Recording/)
+    assert.match(body, /Fixture Artist/)
+    assert.match(body, />Catalog Recording/)
+    assert.match(body, /Catalog Performer/)
+    assert.match(body, />Review match<\/button>/)
+  } finally {
+    client.clear()
+  }
 })
