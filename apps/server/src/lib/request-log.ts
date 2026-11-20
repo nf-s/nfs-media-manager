@@ -56,6 +56,7 @@ interface RequestLogContext {
   drizzleStatementCount: number
   phases: Partial<Record<RequestPhase, PhaseMetrics>>
   browse?: RequestBrowseProfile
+  recordingOrderRefreshDue?: boolean
 }
 
 interface SonosDispatch {
@@ -71,6 +72,7 @@ type RequestEvent =
       event:
         | 'database.facet-maintenance'
         | 'database.recording-order-maintenance'
+      source?: 'scheduled' | 'browse'
       outcome: 'published' | 'skipped' | 'failed'
       durationMs: number
     }
@@ -187,9 +189,14 @@ export function setRequestBrowseProfile({
     }
 }
 
-export function recordRecordingOrderLookup(outcome: 'hit' | 'miss') {
-  const browse = context.getStore()?.browse
-  if (browse) browse.recordingOrderLookup = outcome
+export function recordRecordingOrderLookup(
+  outcome: 'hit' | 'miss',
+  canRefreshAfterBrowse = false,
+) {
+  const current = context.getStore()
+  if (!current?.browse) return
+  current.browse.recordingOrderLookup = outcome
+  current.recordingOrderRefreshDue = outcome === 'miss' && canRefreshAfterBrowse
 }
 
 /** Drizzle calls the hook at execution time, including for prepared statements. */
@@ -225,16 +232,17 @@ export async function measureRequestPhase<T>(
 }
 
 /** Owns one access record at the HTTP entry point, including early responses. */
-export function logApiRequest(
+export async function logApiRequest(
   request: Request,
   respond: () => Response | Promise<Response>,
+  requestRecordingOrderRefresh?: () => void,
 ) {
   const current: RequestLogContext = {
     details: { requestId: randomUUID(), route: 'unmatched' },
     drizzleStatementCount: 0,
     phases: {},
   }
-  return context.run(current, async () => {
+  const response = await context.run(current, async () => {
     const start = performance.now()
     let status = 500
     try {
@@ -255,4 +263,18 @@ export function logApiRequest(
       })
     }
   })
+  if (
+    response.ok &&
+    request.method === 'GET' &&
+    current.recordingOrderRefreshDue &&
+    (current.details.route === '/api/v1/tracks/browse-page' ||
+      current.details.route === '/api/v1/tracks/browse-count')
+  ) {
+    try {
+      requestRecordingOrderRefresh?.()
+    } catch {
+      // A best-effort maintenance registration must not change the response.
+    }
+  }
+  return response
 }

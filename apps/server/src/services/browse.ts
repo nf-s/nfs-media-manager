@@ -84,6 +84,7 @@ import {
   RecordingGroupRowsSchema,
   type RecordingGroup,
   type RecordingGroupRow,
+  type RecordingOrderMaintenanceSource,
 } from './recording-groups'
 
 type MediaType = 'album' | 'film' | 'track'
@@ -1056,8 +1057,12 @@ function groupedTrackBrowse(
     readPositions,
     readVersions,
     refreshStoredOrder: useStoredOrder
-      ? async () =>
-          (await refreshRecordingBrowseOrder(completeOrder())) !== undefined
+      ? async (source: RecordingOrderMaintenanceSource) =>
+          (await refreshRecordingBrowseOrder(
+            completeOrder(),
+            undefined,
+            source,
+          )) !== undefined
       : undefined,
     readHistogram: listeningSort
       ? (edges: readonly number[]) => readHistogram(listeningSort, edges)
@@ -1487,12 +1492,14 @@ async function browseQueries(
 }
 
 /** Warm only an order that a Browse page has previously requested. */
-export async function refreshRecordingBrowseOrderForMaintenance() {
+export async function refreshRecordingBrowseOrderForMaintenance(
+  source: RecordingOrderMaintenanceSource = 'scheduled',
+) {
   const grouped = await browseQueries(
     'track',
     TrackQuerySchema.parse({ groupRecordings: true, sortBy: 'scrobbles' }),
   )
-  return (await grouped.refreshStoredOrder?.()) ?? false
+  return (await grouped.refreshStoredOrder?.(source)) ?? false
 }
 
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery

@@ -23,7 +23,10 @@ import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
 import { withDispatchStatusReader } from '@/services/dispatch-status'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
-import { runDatabaseMaintenance } from './database-maintenance'
+import {
+  runDatabaseMaintenance,
+  runRecordingOrderMaintenance,
+} from './database-maintenance'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -214,8 +217,8 @@ app.post(
 export const workerBindings = new AsyncLocalStorage<CloudflareBindings>()
 
 export default {
-  fetch(request, bindings) {
-    return logApiRequest(request, async () => {
+  fetch(request, bindings, ctx?: ExecutionContext) {
+    const respond = async () => {
       try {
         assertConfiguration()
         const local = await handleLocalWorkerRequest(request, bindings)
@@ -268,6 +271,17 @@ export default {
           { status: 503, headers: { 'Cache-Control': 'private, no-store' } },
         )
       }
+    }
+    return logApiRequest(request, respond, () => {
+      // Yield the response before opening a separate pool for the refresh.
+      ctx?.waitUntil(
+        scheduler
+          .wait(0)
+          .then(() =>
+            withCloudDatabase(() => runRecordingOrderMaintenance('browse')),
+          )
+          .catch(() => undefined),
+      )
     })
   },
   async queue(batch, bindings) {

@@ -13,6 +13,7 @@ import {
   recordRecordingOrderLookup,
   setPlaybackLogRole,
   setRequestBrowseProfile,
+  setRequestLogRoute,
 } from '@/lib/request-log'
 import { createSonosRequestFetch } from '@/lib/sonos-request-log'
 import { logger } from './logger'
@@ -303,4 +304,73 @@ it('omits unrecognized paths and untrusted correlation headers', async () => {
     status: 404,
     drizzleStatementCount: 0,
   })
+})
+
+it.each([
+  ['/api/v1/tracks/browse-page', 200, true, true],
+  ['/api/v1/tracks/browse-count', 200, true, true],
+  ['/api/v1/tracks/browse-page', 200, false, false],
+  ['/api/v1/tracks/browse-page', 401, true, false],
+  ['/api/v1/tracks/positions', 200, true, false],
+])(
+  'requests only due foreground recording maintenance for %s',
+  async (route, status, due, requested) => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const request = new Request('https://fixture.invalid')
+    const requestRefresh = vi.fn(() => {
+      expect(info).toHaveBeenCalledOnce()
+      expect(() => cloudDb.execute(sql`select 1`)).toThrow(
+        'outside a Worker invocation',
+      )
+    })
+
+    const response = await logApiRequest(
+      request,
+      () =>
+        withCloudDatabase(async () => {
+          setRequestLogRoute(route, request.headers)
+          setRequestBrowseProfile({
+            grouped: true,
+            depth: 'first',
+            listening: false,
+            filtered: false,
+            sort: 'plays',
+          })
+          recordRecordingOrderLookup('miss', due)
+          return new Response(null, { status })
+        }),
+      requestRefresh,
+    )
+
+    expect(response.status).toBe(status)
+    expect(requestRefresh).toHaveBeenCalledTimes(Number(requested))
+  },
+)
+
+it('returns the completed response when maintenance registration throws', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => {})
+  const request = new Request('https://fixture.invalid')
+  const refresh = vi.fn(() => {
+    throw new Error('fixture registration failure')
+  })
+  const response = new Response(null, { status: 200 })
+  expect(
+    await logApiRequest(
+      request,
+      () => {
+        setRequestLogRoute('/api/v1/tracks/browse-page', request.headers)
+        setRequestBrowseProfile({
+          grouped: true,
+          depth: 'first',
+          listening: false,
+          filtered: false,
+          sort: 'plays',
+        })
+        recordRecordingOrderLookup('miss', true)
+        return response
+      },
+      refresh,
+    ),
+  ).toBe(response)
+  expect(refresh).toHaveBeenCalledOnce()
 })
