@@ -6,7 +6,6 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import { trackBrowseFields } from '@repo/schemas/browse'
 import { TrackListItemSchema } from '@repo/schemas/tracks'
 import { ConfigContext } from './providers'
 
@@ -92,7 +91,6 @@ async function render(
     )
   }
   client.setQueryData(['ai-status'], { available: true, reason: null })
-  client.setQueryData(['tracks', 'fields'], trackBrowseFields)
   client.setQueryData(['tracks', 'browse', identity, 1], {
     items: total ? [grouped ? groupedTrack : track] : [],
     page: 1,
@@ -118,6 +116,7 @@ async function render(
       </QueryClientProvider>,
     )
   } finally {
+    assert.equal(client.getQueryState(['tracks', 'fields']), undefined)
     client.clear()
     assert.equal(network.mock.callCount(), 0)
   }
@@ -357,7 +356,6 @@ async function renderEmbedded(search = 'tab=tracks') {
     unfilteredCount: 1024,
   })
   client.setQueryData(['ai-status'], { available: true, reason: null })
-  client.setQueryData(['tracks', 'fields'], trackBrowseFields)
   client.setQueryData(['tracks', 'browse', identity, 1], {
     items: [track],
     page: 1,
@@ -383,6 +381,7 @@ async function renderEmbedded(search = 'tab=tracks') {
       </QueryClientProvider>,
     )
   } finally {
+    assert.equal(client.getQueryState(['tracks', 'fields']), undefined)
     client.clear()
     assert.equal(network.mock.callCount(), 0)
   }

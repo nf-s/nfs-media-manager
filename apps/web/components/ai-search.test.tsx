@@ -7,7 +7,6 @@ import {
   PathnameContext,
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
-import { trackBrowseFields } from '@repo/schemas/browse'
 import { ConfigContext } from './providers'
 
 // The pages import CSS modules, which Node cannot load; class names are not under test.
@@ -24,7 +23,6 @@ function render(path: string, search: string, children: ReactNode) {
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['ai-status'], { available: true, reason: null })
-  client.setQueryData(['tracks', 'fields'], trackBrowseFields)
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -43,7 +41,9 @@ function render(path: string, search: string, children: ReactNode) {
       </QueryClientProvider>,
     )
   } finally {
+    const fieldsQuery = client.getQueryState(['tracks', 'match-fields'])
     client.clear()
+    assert.equal(fieldsQuery, undefined)
     assert.equal(network.mock.callCount(), 0)
   }
 }

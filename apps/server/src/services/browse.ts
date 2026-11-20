@@ -29,6 +29,7 @@ import { PersonRoleSchema } from '@repo/schemas/common'
 import { formatTagName } from '@repo/schemas/tags'
 import { rangeCondition, timestampRangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
+import { measureRequestPhase, setRequestBrowseProfile } from '@/lib/request-log'
 import { ServerError } from '@/lib/error'
 import {
   canReadDatabaseWithoutCache,
@@ -103,6 +104,22 @@ const histogramCache = createDatabaseReadCache<number[]>({
   maxValueBytes: 256,
 })
 const dialect = new PgDialect()
+
+function readBrowseTotal(
+  query: BrowseQuery,
+  predicate: SQL,
+  load: () => Promise<number>,
+) {
+  // Rolling rules bind the current instant and can change without a write.
+  if (
+    'listening' in query &&
+    query.listening?.rules.some(({ period }) => period.kind === 'rolling')
+  ) {
+    return load()
+  }
+  return countCache(checksumJson(dialect.sqlToQuery(predicate)), load)
+}
+
 const trackSortAlbum = alias(mediaItem, 'track_sort_album')
 const trackSortAlbumName = sql`lower(coalesce(nullif(trim(${trackSortAlbum.title}), ''), nullif(trim(${libraryTrack.albumName}), '')))`
 
@@ -653,15 +670,11 @@ function groupedTrackBrowse(
       ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
         ${countedGroupListening} where ${countedGroupCondition}`
       : sql`${memberships} ${recordingCount}`
-    const total = await countCache(
-      checksumJson(dialect.sqlToQuery(counted)),
-      async () => {
-        const { rows } = await db.execute(counted)
-        return z
-          .object({ value: z.number().int().nonnegative() })
-          .parse(rows[0]).value
-      },
-    )
+    const total = await readBrowseTotal(query, counted, async () => {
+      const { rows } = await db.execute(counted)
+      return z.object({ value: z.number().int().nonnegative() }).parse(rows[0])
+        .value
+    })
     return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
   }
 
@@ -1008,10 +1021,9 @@ async function browseQueries(
   // Cache the raw count by the actual predicate, including caller SQL options.
   // Page, ordering and result caps do not change membership; IDs stay uncached.
   async function readCount() {
-    const total = await countCache(
-      checksumJson(
-        dialect.sqlToQuery(sql`${countSource ?? sql``} ${countWhere}`),
-      ),
+    const total = await readBrowseTotal(
+      query,
+      sql`${countSource ?? sql``} ${countWhere}`,
       async () => {
         const query = database
           .select({ value: sql<number>`count(*)::int` })
@@ -1180,6 +1192,27 @@ async function browseQueries(
 
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
 
+function recordBrowseShape(query: BrowseQuery) {
+  setRequestBrowseProfile({
+    grouped: 'groupRecordings' in query && query.groupRecordings === true,
+    depth: query.page === 1 ? 'first' : query.page <= 4 ? 'near' : 'deep',
+    listening:
+      ('listening' in query && query.listening !== undefined) ||
+      ('listeningSort' in query && query.listeningSort !== undefined),
+    filtered: Boolean(
+      query.q || query.filters.length || query.ranges.length || query.creatorId,
+    ),
+    sort:
+      query.sortBy === 'dateAdded'
+        ? 'added'
+        : query.sortBy === 'title'
+          ? 'title'
+          : ['scrobbles', 'listeningScrobbles'].includes(query.sortBy)
+            ? 'plays'
+            : 'other',
+  })
+}
+
 export async function queryBrowseIds(
   mediaType: MediaType,
   query: BrowseQuery,
@@ -1208,6 +1241,7 @@ export async function queryBrowsePageIds(
   mediaType: MediaType,
   query: BrowseQuery,
 ) {
+  recordBrowseShape(query)
   const { offset, readPage } = await browseQueries(mediaType, query)
   const remaining =
     query.limitResults === undefined
@@ -1313,16 +1347,19 @@ export async function queryBrowseCounts(
   mediaType: MediaType,
   query: BrowseQuery,
 ) {
+  recordBrowseShape(query)
   const unfiltered = unfilteredBrowseQuery(query)
-  const [{ totalCount }, scope] = await Promise.all([
-    queryBrowseCount(mediaType, { ...query, limitResults: undefined }),
-    unfiltered
-      ? queryBrowseCount(mediaType, unfiltered, {
-          includeLastfmSourceRows:
-            mediaType === 'track' && requestsLastfmSource(query),
-        })
-      : undefined,
-  ])
+  const [{ totalCount }, scope] = await measureRequestPhase('count', () =>
+    Promise.all([
+      queryBrowseCount(mediaType, { ...query, limitResults: undefined }),
+      unfiltered
+        ? queryBrowseCount(mediaType, unfiltered, {
+            includeLastfmSourceRows:
+              mediaType === 'track' && requestsLastfmSource(query),
+          })
+        : undefined,
+    ]),
+  )
   return {
     totalCount: Math.min(totalCount, query.limitResults ?? totalCount),
     unfilteredCount: scope?.totalCount ?? totalCount,
@@ -1608,9 +1645,10 @@ export async function listBrowseFacets(
   const fields = (options.fields ?? (await listBrowseFields(mediaType))).filter(
     (field) => field.type === 'text' && field.filterable,
   )
-  const rows = await facetCache(
-    JSON.stringify([mediaType, fields, query, options]),
-    () => queryBrowseFacets(mediaType, fields, query, options),
+  const rows = await measureRequestPhase('facets', () =>
+    facetCache(JSON.stringify([mediaType, fields, query, options]), () =>
+      queryBrowseFacets(mediaType, fields, query, options),
+    ),
   )
   return rows
     .map((row) => ({
@@ -1849,6 +1887,10 @@ async function refreshTrackFacets(maintenance = false): Promise<boolean> {
           await tx.execute(statement)
         }
 
+        // Claim visible markers before the build so concurrent writers skip them.
+        // Later commits still leave their own markers to invalidate this snapshot.
+        await executeWithinBudget(sql`delete from track_facet_dirty where transaction_id in (
+        select transaction_id from track_facet_dirty for update skip locked)`)
         await executeWithinBudget(sql`delete from track_facet_value`)
         await executeWithinBudget(sql`insert into track_facet_value (field, rank, value, count)
         ${trackFacetBuildQuery}`)
@@ -1858,9 +1900,6 @@ async function refreshTrackFacets(maintenance = false): Promise<boolean> {
         builder = ${trackFacetBuilder}, retry_after = clock_timestamp() + interval '5 seconds',
         maintenance_only = maintenance_only or ${tookTooLong}
         where ${claimed}`)
-        // Markers from commits after this snapshot remain and invalidate this build.
-        await executeWithinBudget(sql`delete from track_facet_dirty where transaction_id in (
-        select transaction_id from track_facet_dirty for update skip locked)`)
         return true
       },
       { isolationLevel: 'repeatable read' },
@@ -1895,11 +1934,14 @@ async function readTrackFacetsFromVocabulary(query: SQL, broad: boolean) {
   const read = async () =>
     CachedTrackFacetsSchema.parse((await db.execute(query)).rows[0])
   try {
-    const result = await read()
+    const result = await measureRequestPhase('facetRead', read)
     if (result.ready) return result.rows
     // Selective queries can use indexed live rows until a broad query builds the vocabulary.
-    if (broad && (await refreshTrackFacets())) {
-      const refreshed = await read()
+    if (
+      broad &&
+      (await measureRequestPhase('facetBuild', () => refreshTrackFacets()))
+    ) {
+      const refreshed = await measureRequestPhase('facetRead', read)
       if (refreshed.ready) return refreshed.rows
     }
   } catch (error) {
@@ -1926,8 +1968,11 @@ async function queryBrowseFacets(
     z
       .array(FacetRowSchema)
       .parse(
-        (await db.execute(browseFacetQuery(mediaType, fields, query, options)))
-          .rows,
+        (
+          await measureRequestPhase('facetLive', async () =>
+            db.execute(browseFacetQuery(mediaType, fields, query, options)),
+          )
+        ).rows,
       )
   // A tag with subtags is counted over all of them; say how many there are.
   const subtags = await visibleSubtagCounts(

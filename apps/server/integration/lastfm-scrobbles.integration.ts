@@ -27,7 +27,15 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const queries: string[] = []
+const databaseClient = drizzle(pool, {
+  schema,
+  logger: {
+    logQuery(query) {
+      queries.push(query)
+    },
+  },
+})
 const request = vi.fn<typeof fetch>()
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -522,7 +530,11 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
         nextScheduledAt: null,
         startedAt: null,
       })
+      queries.length = 0
       expect(await queueDueLastfmSync(Date.now() + 365 * day)).toBe(false)
+      expect(
+        queries.some((query) => query.includes('from lastfm_scrobble')),
+      ).toBe(false)
 
       respond(page(1, 1, [scrobble(recent, 'First track')]))
       const complete = await syncToEnd()
@@ -531,18 +543,26 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
         new Date(completedAt + 7 * day).toISOString(),
       )
       expect((await setLastfmSyncSchedule('off')).nextScheduledAt).toBeNull()
+      queries.length = 0
       expect(await queueDueLastfmSync(completedAt + 365 * day)).toBe(false)
+      expect(
+        queries.some((query) => query.includes('from lastfm_scrobble')),
+      ).toBe(false)
       const interval = minutes * 60 * 1000
       expect(
         (await setLastfmSyncSchedule(LastfmSyncScheduleSchema.parse(schedule)))
           .nextScheduledAt,
       ).toBe(new Date(completedAt + interval).toISOString())
 
+      queries.length = 0
       expect(await queueDueLastfmSync(completedAt + interval - 1000)).toBe(
         false,
       )
       expect(await queueDueLastfmSync(completedAt + interval)).toBe(true)
       expect(await queueDueLastfmSync(completedAt + interval + day)).toBe(false)
+      expect(
+        queries.some((query) => query.includes('from lastfm_scrobble')),
+      ).toBe(false)
       expect(await getLastfmSyncStatus()).toMatchObject({
         state: 'running',
         schedule,

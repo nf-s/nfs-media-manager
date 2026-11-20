@@ -308,6 +308,23 @@ describe('creator directories and related library items', () => {
     })
   })
 
+  it('searches visible film people by name and sort name', async () => {
+    expect(
+      await listPeople(PersonQuerySchema.parse({ q: 'sCrEeN' })),
+    ).toMatchObject({ totalCount: 1, items: [{ id: 'actor' }] })
+    expect(
+      await listPeople(
+        PersonQuerySchema.parse({ q: 'FIXTURE, DE', role: 'director' }),
+      ),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [{ id: 'dual', directorCount: 1, actorCount: 2 }],
+    })
+    expect(await listPeople(PersonQuerySchema.parse({ q: '%' }))).toMatchObject(
+      { totalCount: 0, items: [] },
+    )
+  })
+
   it('shares the creator identity, deduplicates films, and filters by supported film roles', async () => {
     expect(
       await listPeople(PersonQuerySchema.parse({ role: 'director' })),

@@ -89,7 +89,11 @@ export async function requirePlaylistAccess(userId: string) {
 }
 
 /** The latest job of a Spotify task in each job group, with its progress. */
-export async function latestSpotifyJobs(task: string, groupKeys?: string[]) {
+export async function latestSpotifyJobs(
+  task: string,
+  groupKeys?: string[],
+  albumId?: string,
+) {
   const groupKey = sql<string>`${scrapeJob.options}->>'groupKey'`
   const latest = new Map<
     string,
@@ -111,6 +115,9 @@ export async function latestSpotifyJobs(task: string, groupKeys?: string[]) {
         eq(scrapeJob.provider, 'spotify'),
         sql`${scrapeJob.options}->>'task' = ${task}`,
         groupKeys ? inArray(groupKey, groupKeys) : undefined,
+        albumId === undefined
+          ? undefined
+          : sql`${scrapeJob.options}->>'albumId' = ${albumId}`,
       ),
     )
     .orderBy(groupKey, desc(scrapeJob.createdAt), desc(scrapeJob.id))

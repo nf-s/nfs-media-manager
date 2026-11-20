@@ -616,6 +616,126 @@ describe('artist tag projections', () => {
     )
   })
 
+  it('publishes a facet snapshot without waiting for a concurrent source writer', async () => {
+    const { listBrowseFacets, refreshTrackFacetVocabularyForMaintenance } =
+      await import('@/services/browse')
+    const setTitle = (title: string) =>
+      pool.query('update media_item set title = $1 where id = $2', [
+        title,
+        'fixture-track-0',
+      ])
+    const allowRefresh = () =>
+      pool.query("update track_facet_state set retry_after = '-infinity'")
+    const storedTitle = `select value from track_facet_value
+      where field = 'title' and value like '% concurrency fixture'`
+    await pool.query('delete from track_facet_state')
+    await setTitle('Initial concurrency fixture')
+    await listBrowseFacets('track', {})
+    expect((await pool.query(storedTitle)).rows).toEqual([
+      { value: 'Initial concurrency fixture' },
+    ])
+
+    const oldReader = await pool.connect()
+    const publishLock = await pool.connect()
+    try {
+      await oldReader.query('begin isolation level repeatable read')
+      expect((await oldReader.query(storedTitle)).rows).toEqual([
+        { value: 'Initial concurrency fixture' },
+      ])
+      await setTitle('Snapshot concurrency fixture')
+      await allowRefresh()
+      await pool.query(`
+        create function fixture_pause_facet_publication() returns trigger language plpgsql as $$
+        begin
+          while not pg_try_advisory_xact_lock(381026194) loop
+            perform pg_sleep(0.005);
+          end loop;
+          return null;
+        end;
+        $$;
+        create trigger fixture_pause_facet_publication before insert on track_facet_value
+          for each statement execute function fixture_pause_facet_publication();
+      `)
+      await publishLock.query('select pg_advisory_lock(381026194)')
+      logQuery.mockClear()
+      const rebuild = refreshTrackFacetVocabularyForMaintenance()
+      try {
+        await vi.waitFor(() =>
+          expect(
+            logQuery.mock.calls.some(([statement]) =>
+              statement.includes('insert into track_facet_value'),
+            ),
+          ).toBe(true),
+        )
+        // This commits before the paused builder resumes.
+        await setTitle('Writer concurrency fixture')
+      } finally {
+        await publishLock.query('select pg_advisory_unlock(381026194)')
+      }
+      expect(await rebuild).toBe(true)
+      expect((await oldReader.query(storedTitle)).rows).toEqual([
+        { value: 'Initial concurrency fixture' },
+      ])
+      expect((await pool.query(storedTitle)).rows).toEqual([
+        { value: 'Snapshot concurrency fixture' },
+      ])
+      expect(
+        (await pool.query('select 1 from track_facet_dirty')).rowCount,
+      ).toBe(1)
+      expect(
+        await listBrowseFacets('track', { q: 'Writer concurrency' }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'title',
+            value: 'Writer concurrency fixture',
+          }),
+        ]),
+      )
+    } finally {
+      await oldReader.query('rollback')
+      await pool.query(`
+        drop trigger if exists fixture_pause_facet_publication on track_facet_value;
+        drop function if exists fixture_pause_facet_publication();
+      `)
+      publishLock.release()
+      oldReader.release()
+    }
+
+    await allowRefresh()
+    await pool.query(`
+      create function fixture_cancel_facet_publication() returns trigger language plpgsql as $$
+      begin
+        raise exception 'Fixture statement canceled' using errcode = '57014';
+      end;
+      $$;
+      create trigger fixture_cancel_facet_publication before insert on track_facet_value
+        for each statement execute function fixture_cancel_facet_publication();
+    `)
+    try {
+      expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
+      expect(
+        (await pool.query('select 1 from track_facet_dirty')).rowCount,
+      ).toBe(1)
+      expect((await pool.query(storedTitle)).rows).toEqual([
+        { value: 'Snapshot concurrency fixture' },
+      ])
+    } finally {
+      await pool.query(`
+        drop trigger fixture_cancel_facet_publication on track_facet_value;
+        drop function fixture_cancel_facet_publication();
+      `)
+    }
+    await allowRefresh()
+    expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(true)
+    expect((await pool.query('select 1 from track_facet_dirty')).rowCount).toBe(
+      0,
+    )
+    expect((await pool.query(storedTitle)).rows).toEqual([
+      { value: 'Writer concurrency fixture' },
+    ])
+  })
+
   it('hands a slow vocabulary rebuild to maintenance and keeps foreground reads live', async () => {
     const { listBrowseFacets, refreshTrackFacetVocabularyForMaintenance } =
       await import('@/services/browse')

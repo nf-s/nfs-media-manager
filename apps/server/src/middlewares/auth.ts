@@ -4,6 +4,7 @@ import { APIError } from 'better-auth/api'
 import { auth, type AuthType } from '@/lib/auth'
 import { ServerError } from '@/lib/error'
 import { env } from '@/env'
+import { measureRequestPhase } from '@/lib/request-log'
 import { isMutationOriginAllowed, isOwnerUser } from '@/lib/owner'
 import { authenticateApiKey } from '@/services/api-keys'
 
@@ -76,7 +77,8 @@ async function resolveCredentials(c: AuthContext) {
 export function authMiddleware({ sessionOnly = false } = {}) {
   return createMiddleware<{ Variables: AuthType }>(async (c, next) => {
     c.header('Cache-Control', 'no-store')
-    if (c.get('session') === undefined) await resolveCredentials(c)
+    if (c.get('session') === undefined)
+      await measureRequestPhase('auth', () => resolveCredentials(c))
     requireOwnerUser(c)
     if (sessionOnly) requireBrowserSession(c)
     await next()

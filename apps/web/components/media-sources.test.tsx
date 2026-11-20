@@ -401,9 +401,9 @@ test('album tags show in one letter case and each offers its sources for that al
       html,
       /<span class="ds-pill browse-filter-pill" data-size="md"><button type="button"[^>]*class="browse-pill-action"><span class="ds-pill-label">Dream Pop<\/span><\/button><button type="button"[^>]*aria-label="Sources for Dream Pop"[^>]*class="browse-pill-action">/,
     )
-    // Artist tags are not saved on the album, so they have no sources here.
+    // Inherited tags expose the credited artist as a source.
     assert.match(html, /<span class="ds-pill-label">Shoegaze<\/span>/)
-    assert.doesNotMatch(html, /Sources for Shoegaze/)
+    assert.match(html, /aria-label="Sources for Shoegaze"/)
   } finally {
     client.clear()
     assert.equal(network.mock.callCount(), 0)

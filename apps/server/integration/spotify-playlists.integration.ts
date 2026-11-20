@@ -42,7 +42,8 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
+const databaseClient = drizzle(pool, { schema, logger: { logQuery } })
 const request = vi.fn<typeof fetch>()
 const account = vi.hoisted(() => ({ playlistChanges: true }))
 vi.mock('@/lib/db', () => ({
@@ -2581,6 +2582,7 @@ describe('Spotify playlist imports', () => {
       'New One',
       'New Two',
     ])
+    logQuery.mockClear()
     expect(await listSpotifyPlaylistAdditions('added-album')).toEqual({
       additions: [
         {
@@ -2593,6 +2595,14 @@ describe('Spotify playlist imports', () => {
         },
       ],
     })
+    expect(logQuery.mock.calls).toEqual([
+      [
+        expect.stringMatching(
+          /select distinct on .* where .*->>'albumId' = \$\d+.* order by /,
+        ),
+        expect.arrayContaining(['added-album']),
+      ],
+    ])
     expect(await listSpotifyPlaylistAdditions('other-album')).toEqual({
       additions: [],
     })

@@ -50,7 +50,10 @@ import {
   type ListeningView,
 } from '@/utils/listening-filters'
 import { BrowseFilterPill } from './browse-controls'
-import { FilterPanelSection } from './browse-filter-panel'
+import {
+  FilterPanelSection,
+  useFilterPanelVisible,
+} from './browse-filter-panel'
 import { DetailLink } from './detail-link'
 import { MediaThumb } from './media-artwork'
 
@@ -432,6 +435,7 @@ export function ListeningControls({
   const noun = listeningNoun(library)
   const bars = listeningBars(library)
   const [open, setOpen] = useState(Boolean(filter?.rules.length))
+  const visible = useFilterPanelVisible()
   const [view, setView] = useState(storedView)
   const [editor, update] = useUrlDrafts(serializeListeningFilter(filter), () =>
     arrange(editorFrom(filter), view),
@@ -500,13 +504,14 @@ export function ListeningControls({
   histogramParams.set('period', serializeListeningPeriod(histogramPeriod))
   const histogram = useQuery({
     queryKey: ['listening-histogram', collection, histogramParams.toString()],
-    enabled: open,
+    enabled: visible && open,
     placeholderData: keepPreviousData,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
         `/api/v1/${collection}/listening-histogram?${histogramParams}`,
         ListeningHistogramSchema,
+        { signal },
       ),
   })
   const counts =

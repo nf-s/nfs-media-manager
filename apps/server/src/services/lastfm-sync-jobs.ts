@@ -1,7 +1,10 @@
 import { LASTFM_SCROBBLE_SYNC_TASK } from '@repo/schemas/lastfm'
 import { ServerError } from '@/lib/error'
 import { createTaskJob } from './jobs'
-import { getLastfmSyncStatus } from './lastfm-scrobbles'
+import {
+  getLastfmNextScheduledAt,
+  getLastfmSyncStatus,
+} from './lastfm-scrobbles'
 
 /** Queues a sync job, or resumes an unfinished run from its checkpoint. */
 export async function queueLastfmSync(userId: string | null) {
@@ -22,9 +25,8 @@ export async function queueLastfmSync(userId: string | null) {
  * time, so the first sync and a failed or stopped run wait for the owner.
  */
 export async function queueDueLastfmSync(now = Date.now()): Promise<boolean> {
-  const status = await getLastfmSyncStatus()
-  if (!status.nextScheduledAt || Date.parse(status.nextScheduledAt) > now)
-    return false
+  const nextScheduledAt = await getLastfmNextScheduledAt()
+  if (!nextScheduledAt || nextScheduledAt.getTime() > now) return false
   try {
     await createTaskJob(LASTFM_SCROBBLE_SYNC_TASK, null, { scheduled: true })
     return true
