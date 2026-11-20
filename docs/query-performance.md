@@ -94,7 +94,7 @@ On a disposable fixture of 64,000 tracks and 252,000 scrobbles, the first descen
 
 ### Tracks autocomplete
 
-Default Tracks autocomplete stores the distinct values and exact counts for each of its ten text fields, ranked by count and display value. Suggestions on focus can read the first ranks for each field. Typed suggestions retain exact-value priority, multiword substring matching and per-field limits. A cold selective request can still search indexed live rows. A broad request can build the vocabulary for subsequent searches from any Worker.
+Default Tracks autocomplete stores the distinct values and exact counts for each of its ten text fields, ranked by count and display value. Suggestions on focus can read the first ranks for each field. Typed suggestions retain exact-value priority, multiword substring matching and per-field limits. A cold selective request can still search indexed live rows. A broad request can build the vocabulary for subsequent searches from any Worker. If a build exceeds the five-second foreground budget, later requests search live while the existing five-minute maintenance check rebuilds it with a 60-second budget. Each check skips unused and current vocabularies. Newly committed edits remain visible during that interval.
 
 On 60,000 synthetic tracks, a fresh application process served empty suggestions in 3 ms with a current vocabulary. One-character, common-word and selective searches took 23 ms, 16 ms and 13 ms of database time, down from 1,143 ms, 629 ms and 373 ms on the same fixture. Building on the first request took 1.22 seconds, compared with 1.18 seconds live. The ranked values and index occupied about 9 MB on this fixture.
 
@@ -102,7 +102,9 @@ Both stored results use transactionally maintained invalidation markers. Relevan
 
 ### Deep Track pages
 
-Track page jumps and position requests preserve their absolute ranks, including ties that cross either page boundary. For deep sorts by Title, Added, Artist, Album, Playlist, tags, Released, Duration or ascending lifetime scrobbles, PostgreSQL finds the range of primary sort keys containing the requested positions before looking up release credits and track numbers. On the 20,000-track fixture used for the combined-filter measurements, a title jump to page 390 at 50 tracks per page took 86 ms, down from 239 ms. The first page took about 1 ms both ways. On a separate 20,000-track fixture, a deep Released page fell from 101 ms to 37 ms and Duration fell from 99 ms to 28 ms. Early pages keep the direct ordered limit. Large tied groups and the number of primary keys preceding the page still affect the cost. Rolling listening windows also move between requests. Exact count cache keys include the window boundaries.
+Track page jumps and position requests preserve their absolute ranks, including ties that cross either page boundary. For deep sorts by Title, Added, Artist, Album, Playlist, tags, Released, Duration or ascending lifetime scrobbles, PostgreSQL finds the range of primary sort keys containing the requested positions before looking up release credits and track numbers. For a selected listening period, the count aggregate keeps linked tracks that have zero plays in the window. This lets the planner estimate the number of links before joining the counts to Tracks. On 20,000 tracks and 240,000 scrobbles, a two-month play-count sort at page 390 fell from 3.65 seconds to 123 ms.
+
+On the 20,000-track fixture used for the combined-filter measurements, a title jump to page 390 at 50 tracks per page took 86 ms, down from 239 ms. The first page took about 1 ms both ways. On a separate 20,000-track fixture, a deep Released page fell from 101 ms to 37 ms and Duration fell from 99 ms to 28 ms. Early pages keep the direct ordered limit. Large tied groups and the number of primary keys preceding the page still affect the cost. Rolling listening windows also move between requests. Exact count cache keys include the window boundaries.
 
 ## Verification
 
@@ -127,3 +129,5 @@ Migration `0034_artist_scrobble_count` adds `artist.scrobble_count`, fills it fr
 Migration `0041_browse_query_indexes` builds the normalized artist-profile tag index and the media-type/normalized-title index, then updates planner statistics. Follow the standard upgrade procedure before starting this version. Existing snapshots and tracks supply all indexed data.
 
 Migrations `0042_grouped_recording_browse_order` and `0043_track_facet_vocabulary` create the derived tables and their invalidation triggers. They populate on demand. A separate reader role can continue to query the live data. A runtime role that builds caches needs read access to the derived tables, insert and delete on the rank and value tables, insert and update on the state tables, and delete and update on the invalidation tables. The source write triggers run with the migration owner's privileges. Existing library data supplies both caches.
+
+Migration `0044` stores the decision to rebuild a slow autocomplete vocabulary during maintenance across requests and Worker restarts.

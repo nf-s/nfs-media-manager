@@ -23,6 +23,7 @@ import { consumeCloudJobMessage } from '@/services/cloud-job-queue'
 import { withJobDispatchWakeup } from '@/services/job-dispatch-context'
 import { withDispatchStatusReader } from '@/services/dispatch-status'
 import { dispatchQueuedImports, executeQueuedImport } from '@/services/imports'
+import { refreshTrackFacetVocabularyForMaintenance } from '@/services/browse'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -304,6 +305,7 @@ export default {
           ).wake(plugin.manifest.id)
         }
       }
+      await refreshTrackFacetVocabularyForMaintenance()
     })
   },
 } satisfies ExportedHandler<CloudflareBindings>

@@ -347,6 +347,29 @@ describe('exclusive worker lifecycle', () => {
     }
   })
 
+  it('warms a previously requested Tracks vocabulary on the scheduled check', async () => {
+    await pool.query(`
+      insert into media_item (id, slug, media_type, title)
+        values ('scheduled-track', 'scheduled-track', 'track', 'Scheduled Track');
+      insert into library_track (media_item_id) values ('scheduled-track');
+      insert into track_facet_state (singleton, builder, retry_after)
+        values (true, 'fixture', '-infinity');
+    `)
+    const worker = await start(20)
+    try {
+      await vi.waitFor(async () => {
+        const vocabulary = await pool.query(`
+          select count from track_facet_value
+          where field = 'title' and value = 'Scheduled Track'`)
+        expect(vocabulary.rows).toEqual([{ count: 1 }])
+      })
+      expect(fatal).not.toHaveBeenCalled()
+    } finally {
+      await worker.stop()
+      await pool.query('delete from track_facet_state')
+    }
+  })
+
   it('does not overlap dispatches across polling ticks', async () => {
     const held = signal()
     dispatch.mockImplementation(() => held.promise)

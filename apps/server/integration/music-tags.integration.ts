@@ -516,4 +516,108 @@ describe('artist tag projections', () => {
       ]),
     )
   })
+
+  it('hands a slow vocabulary rebuild to maintenance and keeps foreground reads live', async () => {
+    const { listBrowseFacets, refreshTrackFacetVocabularyForMaintenance } =
+      await import('@/services/browse')
+    await pool.query(`
+      delete from track_facet_state;
+      update media_item set title = 'Delayed fixture track' where id = 'fixture-track-0';
+      create function fixture_delay_facet_refresh() returns trigger language plpgsql as $$
+      begin
+        perform pg_sleep(5.1);
+        return null;
+      end;
+      $$;
+      create trigger fixture_delay_facet_refresh after insert on track_facet_value
+        for each statement execute function fixture_delay_facet_refresh();
+    `)
+    expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
+    const titles = async (q: string) =>
+      (await listBrowseFacets('track', { q }))
+        .filter(({ field }) => field === 'title')
+        .map(({ value }) => value)
+
+    try {
+      expect(await titles('de')).toContain('Delayed fixture track')
+      expect(
+        (
+          await pool.query(
+            'select ready, maintenance_only from track_facet_state',
+          )
+        ).rows,
+      ).toEqual([{ ready: false, maintenance_only: true }])
+      logQuery.mockClear()
+      expect(await titles('d')).toContain('Delayed fixture track')
+      expect(
+        logQuery.mock.calls.some(([query]) =>
+          query.includes('insert into track_facet_value'),
+        ),
+      ).toBe(false)
+
+      // The maintenance attempt shares the same lease and can outlast the foreground budget.
+      expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(true)
+      expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
+      expect(
+        (
+          await pool.query(
+            'select ready, maintenance_only from track_facet_state',
+          )
+        ).rows,
+      ).toEqual([{ ready: true, maintenance_only: true }])
+    } finally {
+      await pool.query(
+        'drop trigger fixture_delay_facet_refresh on track_facet_value',
+      )
+    }
+
+    await pool.query(`
+      update media_item set title = 'Finished fixture track' where id = 'fixture-track-0';
+      update track_facet_state set retry_after = '-infinity';
+    `)
+    logQuery.mockClear()
+    expect(await titles('fi')).toContain('Finished fixture track')
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('insert into track_facet_value'),
+      ),
+    ).toBe(false)
+    const builder = await pool.connect()
+    try {
+      await builder.query('begin')
+      await builder.query(`select pg_advisory_xact_lock(
+        hashtextextended(current_schema() || ':track_facet_vocabulary', 0))`)
+      expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
+    } finally {
+      await builder.query('rollback')
+      builder.release()
+    }
+    expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
+    await pool.query("update track_facet_state set retry_after = '-infinity'")
+    expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(true)
+    logQuery.mockClear()
+    expect(await titles('finished')).toContain('Finished fixture track')
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('ready_track_facet_vocabulary'),
+      ),
+    ).toBe(true)
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('browse_artist_facet_keys'),
+      ),
+    ).toBe(false)
+
+    await pool.query(`
+      update media_item set title = 'Rolling fixture track' where id = 'fixture-track-0';
+      alter table track_facet_state rename column maintenance_only to fixture_missing_column;
+    `)
+    try {
+      expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(false)
+      expect(await titles('ro')).toContain('Rolling fixture track')
+    } finally {
+      await pool.query(`alter table track_facet_state
+        rename column fixture_missing_column to maintenance_only`)
+    }
+  })
 })

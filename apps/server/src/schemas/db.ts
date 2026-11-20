@@ -242,6 +242,7 @@ export const trackFacetState = pgTable('track_facet_state', {
   singleton: boolean('singleton').primaryKey(),
   builder: text('builder').notNull(),
   ready: boolean('ready').default(false).notNull(),
+  maintenanceOnly: boolean('maintenance_only').default(false).notNull(),
   retryAfter: timestamp('retry_after', { withTimezone: true })
     .defaultNow()
     .notNull(),

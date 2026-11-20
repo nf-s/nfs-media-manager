@@ -73,11 +73,15 @@ describe('listening query periods', () => {
     if (!query) throw new Error('Expected a listening query')
     const track = sourceQuery(query, 'track')
     expect(track).toContain('from lastfm_track_link linked')
+    expect(track).toContain('left join (select username, artist_key, track_key')
     expect(track).toContain('group by username, artist_key, track_key')
     expect(track).toContain('group by linked.track_media_item_id')
     const recording = sourceQuery(query, 'recording')
     // Each linked name of a group's members is counted once.
     expect(recording).toContain('select distinct m.group_key')
+    expect(recording).toContain(
+      'left join (select username, artist_key, track_key',
+    )
     expect(recording).toContain('group by linked.group_key')
     expect(sourceQuery(query, 'album')).toContain(
       'group by album_media_item_id',

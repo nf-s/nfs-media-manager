@@ -1767,42 +1767,128 @@ function readTrackFacetQuery(fields: BrowseField[], query: BrowseFacetQuery) {
     from ready_track_facet_vocabulary`
 }
 
-async function refreshTrackFacets() {
-  // Keep retrying a large or failed rebuild off the normal request path.
-  const claim = await db.transaction(async (tx) => {
+const foregroundTrackFacetBudget = 5_000
+const FacetClaimSchema = z.object({ lease: z.string() })
+const FacetRefreshErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+})
+const staleTrackFacetState = sql`(not track_facet_state.ready
+  or track_facet_state.builder <> ${trackFacetBuilder}
+  or exists (select 1 from track_facet_dirty))`
+
+function facetRefreshError(error: unknown) {
+  const cause = error instanceof Error ? (error.cause ?? error) : error
+  const parsed = FacetRefreshErrorSchema.safeParse(cause)
+  if (parsed.success) return parsed.data
+}
+
+async function claimTrackFacetRefresh(maintenance: boolean) {
+  return db.transaction(async (tx) => {
     await tx.execute(sql`set local lock_timeout = '100ms'`)
-    return tx.execute(sql`insert into track_facet_state (singleton, builder, retry_after)
-      select true, ${trackFacetBuilder}, statement_timestamp() + interval '30 seconds'
-      where not exists (select 1 from track_facet_state
-        where singleton and retry_after > statement_timestamp())
-      on conflict (singleton) do update set retry_after = excluded.retry_after
-      where track_facet_state.retry_after <= statement_timestamp()
-        and (not track_facet_state.ready or track_facet_state.builder <> excluded.builder
-          or exists (select 1 from track_facet_dirty))
-      returning 1`)
+    const result = await tx.execute(
+      maintenance
+        ? sql`update track_facet_state
+          set retry_after = statement_timestamp() + interval '120 seconds'
+          where singleton and retry_after <= statement_timestamp() and ${staleTrackFacetState}
+          returning retry_after::text as lease, maintenance_only`
+        : sql`insert into track_facet_state (singleton, builder, retry_after)
+          select true, ${trackFacetBuilder}, statement_timestamp() + interval '30 seconds'
+          where not exists (select 1 from track_facet_state
+            where singleton and (maintenance_only or retry_after > statement_timestamp()))
+          on conflict (singleton) do update set retry_after = excluded.retry_after
+          where not track_facet_state.maintenance_only
+            and track_facet_state.retry_after <= statement_timestamp()
+            and ${staleTrackFacetState}
+          returning retry_after::text as lease`,
+    )
+    const row = result.rows[0]
+    return row ? FacetClaimSchema.parse(row).lease : undefined
   })
-  if (!claim.rows.length) return
-  return db.transaction(
-    async (tx) => {
-      const guard =
-        await tx.execute(sql`select set_config('statement_timeout', '5000ms', true),
-      set_config('lock_timeout', '100ms', true),
-      set_config('jit', 'off', true),
-      pg_try_advisory_xact_lock(hashtextextended(current_schema() || ':track_facet_vocabulary', 0)) as ready`)
-      if (!z.object({ ready: z.boolean() }).parse(guard.rows[0]).ready) return
-      await tx.execute(sql`delete from track_facet_value`)
-      await tx.execute(sql`insert into track_facet_value (field, rank, value, count)
+}
+
+async function deferTrackFacetRefreshToMaintenance(lease: string) {
+  try {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`set local lock_timeout = '100ms'`)
+      await tx.execute(sql`update track_facet_state
+        set maintenance_only = true, retry_after = clock_timestamp()
+        where singleton and retry_after = ${lease}::timestamptz`)
+    })
+  } catch (error) {
+    if (!canReadDatabaseWithoutCache(error)) throw error
+  }
+}
+
+async function refreshTrackFacets(maintenance = false): Promise<boolean> {
+  const expired = new Error('Track facet refresh exceeded its budget')
+  let lease: string | undefined
+  try {
+    lease = await claimTrackFacetRefresh(maintenance)
+    if (!lease) return false
+    const claimed = sql`singleton and retry_after = ${lease}::timestamptz`
+    const started = performance.now()
+    const deadline =
+      started + (maintenance ? 60_000 : foregroundTrackFacetBudget)
+    return await db.transaction(
+      async (tx) => {
+        const guard =
+          await tx.execute(sql`select set_config('lock_timeout', '100ms', true),
+        set_config('jit', 'off', true),
+        pg_try_advisory_xact_lock(hashtextextended(current_schema() || ':track_facet_vocabulary', 0))
+          and exists (select 1 from track_facet_state where ${claimed}) as ready`)
+        if (!z.object({ ready: z.boolean() }).parse(guard.rows[0]).ready)
+          return false
+
+        async function executeWithinBudget(statement: SQL) {
+          const remaining = Math.floor(deadline - performance.now())
+          if (remaining <= 0) throw expired
+          await tx.execute(
+            sql`select set_config('statement_timeout', ${`${remaining}ms`}, true)`,
+          )
+          await tx.execute(statement)
+        }
+
+        await executeWithinBudget(sql`delete from track_facet_value`)
+        await executeWithinBudget(sql`insert into track_facet_value (field, rank, value, count)
         ${trackFacetBuildQuery}`)
-      await tx.execute(sql`update track_facet_state set ready = true,
-        builder = ${trackFacetBuilder}, retry_after = clock_timestamp() + interval '5 seconds'
-        where singleton`)
-      // Markers from commits after this snapshot remain and invalidate this build.
-      await tx.execute(sql`delete from track_facet_dirty where transaction_id in (
+        const tookTooLong =
+          performance.now() - started >= foregroundTrackFacetBudget
+        await executeWithinBudget(sql`update track_facet_state set ready = true,
+        builder = ${trackFacetBuilder}, retry_after = clock_timestamp() + interval '5 seconds',
+        maintenance_only = maintenance_only or ${tookTooLong}
+        where ${claimed}`)
+        // Markers from commits after this snapshot remain and invalidate this build.
+        await executeWithinBudget(sql`delete from track_facet_dirty where transaction_id in (
         select transaction_id from track_facet_dirty for update skip locked)`)
-      return true
-    },
-    { isolationLevel: 'repeatable read' },
-  )
+        return true
+      },
+      { isolationLevel: 'repeatable read' },
+    )
+  } catch (error) {
+    const failure = facetRefreshError(error)
+    if (
+      !maintenance &&
+      lease &&
+      (error === expired ||
+        (failure?.code === '57014' &&
+          failure.message.includes('statement timeout')))
+    )
+      await deferTrackFacetRefreshToMaintenance(lease)
+    // The optional claim column may be absent during a rolling upgrade.
+    if (
+      error === expired ||
+      (!lease && failure?.code === '42703') ||
+      canReadDatabaseWithoutCache(error)
+    )
+      return false
+    throw error
+  }
+}
+
+/** Refresh an already requested vocabulary outside the foreground latency budget. */
+export async function refreshTrackFacetVocabularyForMaintenance(): Promise<boolean> {
+  return refreshTrackFacets(true)
 }
 
 async function readTrackFacetsFromVocabulary(query: SQL, broad: boolean) {

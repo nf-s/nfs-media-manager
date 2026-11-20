@@ -1,0 +1,1 @@
+ALTER TABLE "track_facet_state" ADD COLUMN "maintenance_only" boolean DEFAULT false NOT NULL;

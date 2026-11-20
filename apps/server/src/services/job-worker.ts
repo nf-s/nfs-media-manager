@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
+import { refreshTrackFacetVocabularyForMaintenance } from '@/services/browse'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -39,6 +40,7 @@ export async function startJobWorker({
   let released = false
   let timer: ReturnType<typeof setInterval> | undefined = undefined
   let processing: Promise<void> | undefined
+  let maintenance: Promise<boolean> | undefined
   let checking: Promise<void> | undefined
   let stopPromise: Promise<void> | undefined
   let nextScheduleCheck = 0
@@ -186,6 +188,16 @@ export async function startJobWorker({
       await queueDueSpotifyPodcastSync()
       await queueDueMixStationSync()
       await queueDueSpotifyPlaylistSyncs()
+      if (!maintenance) {
+        maintenance = refreshTrackFacetVocabularyForMaintenance()
+          .catch(() => {
+            console.error('Tracks autocomplete maintenance failed.')
+            return false
+          })
+          .finally(() => {
+            maintenance = undefined
+          })
+      }
     }
     processing = processQueuedJobs(() => !stopping)
       .catch(fatal)
@@ -209,7 +221,7 @@ export async function startJobWorker({
       stopPromise ??= (async () => {
         try {
           await checking
-          await processing
+          await Promise.all([processing, maintenance])
           if (!failed) {
             const ownership = lockResultSchema.parse(
               await client.query('select pg_advisory_unlock($1) as locked', [

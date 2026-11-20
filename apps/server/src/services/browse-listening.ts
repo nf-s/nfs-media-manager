@@ -177,8 +177,10 @@ export function createBrowseListening(
     ),
     sql`, `,
   )
+  // Keep the linked subjects even when no name was played in the period.
+  // This preserves the join's cardinality estimate. Counts coalesce to zero.
   const linkedNames = (links: SQL) => sql`from ${links}
-    join (select username, artist_key, track_key, ${counts}
+    left join (select username, artist_key, track_key, ${counts}
       from lastfm_scrobble where ${inPeriods}
       group by username, artist_key, track_key) listening_names
     on listening_names.username = linked.username
