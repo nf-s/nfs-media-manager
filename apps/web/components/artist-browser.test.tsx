@@ -120,7 +120,7 @@ test('Artists list uses 48px rows: round thumbnail, title, country, tag pills an
   assert.match(html, /class="ds-listhead"/)
   assert.match(
     html,
-    /<div class="ds-row" data-item-index="0"><a class="bi-thumb-link" aria-label="Open details for Example Artist" tabindex="-1" href="\/artists\/artist-example"><span class="ds-thumb" data-ratio="round">/,
+    /<div class="ds-row" data-item-index="0"><a[^>]* class="bi-thumb-link" aria-label="Open details for Example Artist" tabindex="-1" href="\/artists\/artist-example"><span class="ds-thumb" data-ratio="round">/,
   )
   assert.match(
     html,

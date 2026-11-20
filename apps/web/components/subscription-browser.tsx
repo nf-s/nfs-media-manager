@@ -1,5 +1,6 @@
 'use client'
 
+import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -219,6 +220,7 @@ function SubscriptionBrowse({
   const { apiBaseUrl } = useConfig()
   const { embedded } = host
   const searchParams = host.params
+  const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [ready, setReady] = useState(embedded)
   const [draft, setDraft] = useState('')
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
@@ -350,13 +352,12 @@ function SubscriptionBrowse({
     if (embedded) return
     try {
       const saved = window.localStorage.getItem(`browse:${collection}`)
-      if (!window.location.search && saved)
-        window.history.replaceState(null, '', `${libraryPath}?${saved}`)
+      if (saved) restoreBrowsePreferences(`${libraryPath}?${saved}`)
     } catch {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [collection, embedded, libraryPath])
+  }, [collection, embedded, libraryPath, restoreBrowsePreferences])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -685,6 +686,7 @@ function SubscriptionBrowse({
 
   const autocomplete = {
     items: titleItems,
+    itemKind,
     titlesLoading,
     titlesError:
       facets.isError || (titleFilters.length > 0 && titleMatches.isError),

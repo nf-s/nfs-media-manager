@@ -32,6 +32,7 @@ import {
 } from '@/utils/media-grid'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 import { formatTagName } from '@repo/schemas/tags'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 
 const views = [
   {
@@ -185,6 +186,7 @@ export function BrowseFilterPill({
   title,
   label,
   onActivate,
+  destination,
   onRemove,
   removeLabel,
 }: {
@@ -193,6 +195,7 @@ export function BrowseFilterPill({
   title?: string
   label?: string
   onActivate?: () => void
+  destination?: { href: string; label: string }
   onRemove: () => void
   removeLabel: string
 }) {
@@ -201,6 +204,9 @@ export function BrowseFilterPill({
       <span className="browse-filter-pill">
         {onActivate ? (
           <button
+            {...(destination
+              ? workspaceTabLinkProps(destination.href, destination.label)
+              : undefined)}
             type="button"
             className="browse-pill-action"
             title={title}

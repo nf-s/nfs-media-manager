@@ -112,9 +112,10 @@ function render({
 
 function collectionDestination(html: string) {
   const href =
-    /href="([^"]+)"[^>]*><span class="ds-pill-label">Synthetic collection</.exec(
+    /<a[^>]* href="([^"]+)"[^>]*><span class="ds-pill-label">Synthetic collection</.exec(
       html,
-    )?.[1] ?? /href="([^"]+)"[^>]*>Synthetic collection<\/a>/.exec(html)?.[1]
+    )?.[1] ??
+    /<a[^>]* href="([^"]+)"[^>]*>Synthetic collection<\/a>/.exec(html)?.[1]
   assert.ok(href, 'Expected the collection name to link to its inspector')
   return new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
 }
@@ -141,6 +142,10 @@ test('film details open the stored collection on top of the current inspector en
     entry,
     { kind: 'collection', id: collection.id },
   ])
+  assert.match(
+    html,
+    /<a[^>]* data-workspace-href="\/collections\/stored-collection-17"[^>]*><span class="ds-pill-label">Synthetic collection/,
+  )
   // Where a collection comes from is answered in Sources, not beside the pill.
   assert.ok(!html.includes(`href="${sourceUrl}"`))
   assert.match(

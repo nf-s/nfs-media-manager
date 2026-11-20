@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import type { ComponentProps } from 'react'
 import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useDetailInspector } from './detail-inspector-context'
 
 type DetailLinkProps = DetailTarget &
@@ -10,15 +11,17 @@ type DetailLinkProps = DetailTarget &
     tab?: string
     /** Further view state for the open tab, such as an open source row. */
     view?: Record<string, string>
+    workspaceLabel?: string
   }
 
-/** Normal clicks open the inspector; copied and modified clicks follow its URL. */
+/** Plain clicks open the inspector. Workspace tabs use the item's own page. */
 export function DetailLink({
   kind,
   id,
   mediaType,
   tab,
   view: state,
+  workspaceLabel,
   onClick,
   ...props
 }: DetailLinkProps) {
@@ -33,10 +36,14 @@ export function DetailLink({
     ...(kind === 'collection' && mediaType === 'album' ? { mediaType } : {}),
     view: view?.toString(),
   }
+  const pageHref = detailPageHref(target, view)
   return (
     <Link
+      {...(inspector
+        ? workspaceTabLinkProps(pageHref, workspaceLabel)
+        : { 'data-workspace-label': workspaceLabel })}
       {...props}
-      href={inspector?.href(target) ?? detailPageHref(target, view)}
+      href={inspector?.href(target) ?? pageHref}
       prefetch={false}
       onClick={(event) => {
         onClick?.(event)

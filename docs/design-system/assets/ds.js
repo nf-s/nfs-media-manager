@@ -287,6 +287,22 @@
       .join('')}</div>`
   }
 
+  function workspaceTabs(items, selected = 0) {
+    return `<div class="ds-workspace-tabs"><div class="ds-workspace-tab-list" role="tablist" aria-label="Workspace tabs">${items
+      .map(({ label, glyph }, index) => {
+        const closeLabel = `Close ${label} tab`
+        const active = index === selected
+        const tabIndex = active ? 0 : -1
+        return `<span class="ds-workspace-tab" role="presentation">
+          <button type="button" class="ds-btn" data-variant="ghost" role="tab" aria-selected="${active}" aria-keyshortcuts="Delete" tabindex="${tabIndex}" title="${esc(label)}"><span class="ds-workspace-tab-icon" aria-hidden="true">${icon(glyph)}</span><span class="ds-truncate">${esc(label)}</span></button>
+          <button type="button" class="ds-btn" data-variant="ghost" data-size="xs" data-icon data-close tabindex="${tabIndex}" aria-label="${esc(closeLabel)}" title="${esc(closeLabel)}">${icon('x', { size: 'sm' })}</button>
+        </span>`
+      })
+      .join(
+        '',
+      )}</div><button type="button" class="ds-btn" data-variant="ghost" data-icon aria-label="Duplicate current tab" title="Duplicate current tab">${icon('plus')}</button></div>`
+  }
+
   function seg(items, selected = 0, o = {}) {
     return `<div class="ds-seg" role="group"${attrs({ 'aria-label': o.label, 'data-toggle': true })}>${items
       .map((item, i) => {
@@ -1563,6 +1579,7 @@
     rating,
     EMPTY,
     tabs,
+    workspaceTabs,
     seg,
     VIEWS,
     search,

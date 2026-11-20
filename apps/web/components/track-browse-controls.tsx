@@ -117,6 +117,7 @@ export function TrackBrowseSearch({
       queryIdentity={queryIdentity}
       autocomplete={{
         items,
+        itemKind: 'track',
         titlesLoading,
         titlesError:
           facets.isError || (titleFilters.length > 0 && titleMatches.isError),

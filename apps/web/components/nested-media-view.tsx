@@ -246,6 +246,7 @@ export function NestedMediaCard({
             className="browse-thumb-link"
             kind={kind}
             id={id}
+            workspaceLabel={title}
             tabIndex={-1}
             aria-hidden="true"
           >
@@ -271,6 +272,7 @@ export function NestedMediaCard({
               className="browse-art-link"
               kind={kind}
               id={id}
+              workspaceLabel={title}
               tabIndex={-1}
               aria-hidden="true"
             >

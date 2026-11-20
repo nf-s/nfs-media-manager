@@ -449,6 +449,7 @@ function SelectionTable({
             target={mediaAiSearchTarget(mediaType, available)}
             queryIdentity={queryIdentity}
             autocomplete={{
+              itemKind: mediaType,
               options: (facets.data ?? []).filter(
                 (option) =>
                   !filters.some(

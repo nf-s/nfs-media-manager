@@ -36,12 +36,14 @@ import {
   detailBrowseKind,
   detailCrumbKey,
   detailCrumbTrail,
+  detailKindNames,
   detailPageHref,
   parseTagDetailId,
   withoutDetailEntries,
   type DetailCrumb,
   type DetailEntry,
 } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { parsePlaylistTab, type PlaylistTab } from '@/utils/playlist-links'
 
 /** Plain clicks step within the drawer; modified clicks follow the link. */
@@ -171,11 +173,15 @@ export function DetailInspector(options: InspectorOptions) {
       libraryViewForPath(pathname, params.get('mediaType')),
     )
   const pageHref = detailPageHref(target, pageParams)
+  const pageLabel = crumbs.get(activeKey)?.title ?? detailKindNames[activeKind]
   const trail = detailCrumbTrail(
     pathname,
     nav.entries,
     crumbs,
     params.get('mediaType'),
+  )
+  const entryPageHrefs = nav.entries.map((entry) =>
+    detailPageHref(entry, new URLSearchParams(entry.view)),
   )
 
   return (
@@ -223,6 +229,12 @@ export function DetailInspector(options: InspectorOptions) {
                         </Link>
                       ) : (
                         <a
+                          {...workspaceTabLinkProps(
+                            step.to === 'entry'
+                              ? (entryPageHrefs[step.index] ?? nav.closedHref)
+                              : nav.closedHref,
+                            step.label,
+                          )}
                           href={
                             step.to === 'library'
                               ? nav.closedHref
@@ -251,7 +263,11 @@ export function DetailInspector(options: InspectorOptions) {
             </div>
             <span className="dtl-bar-end">
               <Button asChild variant="ghost" className="dtl-bar-open">
-                <Link href={pageHref} prefetch={false}>
+                <Link
+                  {...workspaceTabLinkProps(pageHref, pageLabel)}
+                  href={pageHref}
+                  prefetch={false}
+                >
                   <Maximize2
                     className="ds-i"
                     data-size="sm"

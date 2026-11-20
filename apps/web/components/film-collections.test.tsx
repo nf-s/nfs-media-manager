@@ -407,9 +407,10 @@ test('the album collection directory opens a scoped collection with album action
   assert.match(html, /aria-label="Album collections"/)
   assert.match(html, /title="Sort by Albums"/)
   assert.match(html, /title="Filter albums by Synthetic album collection"/)
-  const href = /href="([^"]+)"[^>]*>Synthetic album collection<\/a>/.exec(
-    html,
-  )?.[1]
+  const href =
+    /<a[^>]* href="([^"]+)"[^>]*>Synthetic album collection<\/a>/.exec(
+      html,
+    )?.[1]
   assert.ok(href)
   const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
   assert.equal(url.searchParams.get('mediaType'), 'album')

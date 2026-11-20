@@ -254,7 +254,7 @@ test('Tracks Table: drawn default columns, pinned title with thumbnail and play 
   assert.doesNotMatch(html, /Artwork and playback/)
   assert.match(
     html,
-    /<td data-sticky="edge" style="--ds-sticky-left:0px" title="Example Song"><span class="ds-cell-id"><a class="bi-thumb-link"[^>]*><span class="ds-thumb">.*?<a class="ds-cell-title"[^>]*>Example Song<\/a><span class="ds-play" data-place="row">/,
+    /<td data-sticky="edge" style="--ds-sticky-left:0px" title="Example Song"><span class="ds-cell-id"><a[^>]* class="bi-thumb-link"[^>]*><span class="ds-thumb">.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><span class="ds-play" data-place="row">/,
   )
   assert.match(
     html,

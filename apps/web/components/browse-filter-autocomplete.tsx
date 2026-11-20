@@ -4,6 +4,8 @@ import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Search, Sparkles } from 'lucide-react'
 import { FilterIndicator } from './filter-affordance'
 import type { BrowseFilter } from '@repo/schemas/browse'
+import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import {
   browseSuggestions,
   filterSuggestionNote,
@@ -16,6 +18,7 @@ import {
 export type BrowseFilterAutocompleteProps = {
   options: FilterSuggestion[]
   items: TitleSuggestion[]
+  itemKind?: DetailTarget['kind']
   titlesLoading: boolean
   titlesError: boolean
   placeholder: string
@@ -71,6 +74,7 @@ export function autocompleteEnterOption(
 export default function BrowseFilterAutocomplete({
   options,
   items,
+  itemKind,
   titlesLoading,
   titlesError,
   placeholder,
@@ -104,6 +108,15 @@ export default function BrowseFilterAutocomplete({
     !hideSuggestions &&
     !disabled &&
     (!textActionsOnly || menuOptions.length > 0)
+  function workspaceProps(option: SearchMenuOption | undefined) {
+    if (!itemKind || option?.kind !== 'suggestion') return undefined
+    const suggestion = option.suggestion
+    if (suggestion.kind !== 'item') return undefined
+    return workspaceTabLinkProps(
+      detailPageHref({ kind: itemKind, id: suggestion.item.id }),
+      suggestion.item.title,
+    )
+  }
   function select(option: BrowseSuggestion) {
     if (option.kind === 'item') {
       setOpen(false)
@@ -147,6 +160,7 @@ export default function BrowseFilterAutocomplete({
       <div className="ds-search" data-actions={inputActions ? '' : undefined}>
         <Search className="ds-i" data-size="sm" aria-hidden />
         <input
+          {...(menuVisible ? workspaceProps(menuOptions[active]) : undefined)}
           id={`${id}-input`}
           type="search"
           aria-label="Search and filter library"
@@ -227,6 +241,7 @@ export default function BrowseFilterAutocomplete({
               )}
             {menuOptions.map((option, index) => (
               <button
+                {...workspaceProps(option)}
                 type="button"
                 role="option"
                 aria-selected={index === active}

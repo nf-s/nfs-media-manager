@@ -23,7 +23,11 @@ import { TabsContent } from '@repo/ui/components/ui/tabs'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { tagDetailId } from '@/utils/detail-inspector'
+import {
+  detailPageHref,
+  tagDetailId,
+  type DetailTarget,
+} from '@/utils/detail-inspector'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
 import { useDetailInspector } from './detail-inspector-context'
@@ -109,8 +113,16 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
   function change(input: Omit<SetTagParentsInput, 'mediaType'>) {
     parents.mutate({ mediaType: tag.mediaType, ...input })
   }
-  function openTag(id: string) {
-    inspector?.open({ kind: 'tag', id: tagDetailId(tag.mediaType, id) })
+  function tagActivation(id: string, name: string) {
+    if (!inspector) return undefined
+    const target: DetailTarget = {
+      kind: 'tag',
+      id: tagDetailId(tag.mediaType, id),
+    }
+    return {
+      onActivate: () => inspector.open(target),
+      destination: { href: detailPageHref(target), label: formatTagName(name) },
+    }
   }
   const failure = parents.isError
     ? errorMessage(parents.error, 'Could not update parent tags.')
@@ -124,7 +136,7 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
               <BrowseFilterPill
                 key={parent.id}
                 label={`Open ${formatTagName(parent.name)}`}
-                onActivate={inspector ? () => openTag(parent.id) : undefined}
+                {...tagActivation(parent.id, parent.name)}
                 removeLabel={`Remove parent ${formatTagName(parent.name)}`}
                 onRemove={() => {
                   if (pending) return
@@ -167,7 +179,7 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
               <BrowseFilterPill
                 key={child.id}
                 label={`Open ${formatTagName(child.name)}`}
-                onActivate={inspector ? () => openTag(child.id) : undefined}
+                {...tagActivation(child.id, child.name)}
                 removeLabel={`Remove subtag ${formatTagName(child.name)}`}
                 onRemove={() => {
                   if (pending) return

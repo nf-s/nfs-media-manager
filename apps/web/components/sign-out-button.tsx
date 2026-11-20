@@ -3,6 +3,7 @@
 import { Button } from '@repo/ui/components/ui/button'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthClient } from '@/hooks/useAuthClient'
+import { forgetWorkspace } from '@/utils/workspace-tabs'
 import { clearSessionData } from '@/utils/logout'
 
 export default function SignOutButton() {
@@ -18,6 +19,7 @@ export default function SignOutButton() {
       }
     },
     onSuccess: async () => {
+      forgetWorkspace()
       await clearSessionData(queryClient, (path) =>
         window.location.replace(path),
       )

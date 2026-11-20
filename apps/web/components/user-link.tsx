@@ -34,6 +34,7 @@ export default function UserLink() {
         <DetailLink
           kind="user"
           id={userDetailId}
+          view={{ mediaType: scope }}
           aria-expanded={inspector.active?.kind === 'user'}
           title="User"
         >

@@ -1,5 +1,24 @@
 /* Layout for the shell screens. Tokens only; visual patterns belong in the design system. */
 
+/* The workspace bar stays above the shared route, its drawers and the player. */
+.workspace-frame {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--ds-page);
+}
+.workspace-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  contain: layout;
+}
+.workspace-panel .app-shell {
+  position: absolute;
+  height: 100%;
+}
 /* Frame: cool grey page, rail, one white panel */
 .app-shell {
   background-color: var(--ds-page);
