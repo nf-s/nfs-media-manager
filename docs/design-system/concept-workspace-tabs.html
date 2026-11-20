@@ -113,6 +113,10 @@
         inset-inline: 0;
         min-width: 0;
       }
+      .sample-grid kbd {
+        white-space: nowrap;
+        font-family: var(--ds-mono);
+      }
       .sample-grid .ds-menu-item {
         height: auto;
         min-height: var(--ds-h-sm);
@@ -143,7 +147,8 @@
         overflow: hidden;
       }
       @media (max-width: 700px) {
-        .tab-list {
+        .tab-list,
+        .sample-grid kbd {
           display: none;
         }
         .picker-label {
@@ -251,7 +256,7 @@
       }
 
       function openAction(i) {
-        return `<button type="button" class="ds-menu-item" data-open="${i}">${icon('layers')}Open in workspace tab</button>`
+        return `<button type="button" class="ds-menu-item" data-open="${i}">${icon('layers')}Open in workspace tab<kbd class="ds-muted" aria-hidden="true">${shortcut.startsWith('Option') ? '⌥↩' : 'Alt+↵'}</kbd></button>`
       }
 
       function filmCards() {
@@ -349,22 +354,21 @@
         }
 
         function dismissDrawer(drawer) {
-          const origin = drawer.parentElement.querySelector(
-            '.ds-card-title[data-destination="' + drawer.dataset.film + '"]',
-          )
+          const origin = drawer.parentElement.querySelector('[data-origin]')
+          origin?.removeAttribute('data-origin')
           for (const sibling of drawer.parentElement.children)
             sibling.inert = false
           drawer.remove()
           origin?.focus()
         }
 
-        function inspect(i) {
+        function inspect(i, origin) {
           const film = films[i]
           if (!film) return
           for (const child of active.panel.children) child.inert = true
           const drawer = document.createElement('aside')
           drawer.className = 'ds-inspector sample-drawer'
-          drawer.dataset.film = i
+          origin.setAttribute('data-origin', '')
           drawer.setAttribute('role', 'dialog')
           drawer.setAttribute('aria-label', film.title)
           drawer.innerHTML = `<div class="ds-inspector-bar"><div class="ds-crumbs">Films ${icon('chevR')}<b>${esc(film.title)}</b></div>
@@ -449,7 +453,7 @@
               renderPage(active.panel, active.film)
               drawTools()
               active.panel.querySelector('summary').focus()
-            } else inspect(i)
+            } else inspect(i, button)
           }
         })
 
