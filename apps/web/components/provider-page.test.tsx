@@ -237,7 +237,7 @@ test('overview shows job figures, queue settings, budget, credentials and suppli
   assert.match(html, /aria-valuetext="312 of 1,000"/)
   assert.match(
     html,
-    /<dt>API key<\/dt><dd><span class="ds-status" data-status="done">Set<\/span>/,
+    /<dt>API key<\/dt><dd><span class="ds-status" data-status="done"[^>]*data-workspace-href="\/providers\/fixture-ratings\?tab=settings"[^>]*>Set<\/span>/,
   )
   assert.match(html, />Albums<\/span>.*>Artists<\/span>/)
 })

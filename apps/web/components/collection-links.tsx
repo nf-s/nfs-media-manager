@@ -5,6 +5,8 @@ import { sameBrowseFilter, type BrowseFilter } from '@repo/schemas/browse'
 import type { AlbumDetail, FilmDetail } from '@repo/schemas/media'
 import type { MediaScope } from '@/utils/media-scope'
 import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
+import { browseFilterHref } from '@/utils/browse-items'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { DetailLink } from './detail-link'
 
 /**
@@ -15,14 +17,27 @@ export function CollectionLinks({
   item,
   mediaType,
   activeFilters,
+  filterHref,
   pills = false,
 }: {
   item: Pick<AlbumDetail | FilmDetail, 'playlists'>
   mediaType: MediaScope
   activeFilters?: BrowseFilter[]
+  filterHref?: (filter: BrowseFilter) => string
   pills?: boolean
 }) {
   const collections = item.playlists.filter(({ kind }) => kind === 'collection')
+  function nameOnlyDestination(name: string) {
+    const filter = { field: 'collection', value: name }
+    const path = mediaType === 'album' ? '/albums' : '/films'
+    return {
+      ...workspaceTabLinkProps(
+        filterHref?.(filter) ?? browseFilterHref(path, [filter]),
+        name,
+      ),
+      tabIndex: 0,
+    }
+  }
   if (!collections.length) return pills ? null : <EmptyValue />
   if (pills)
     return (
@@ -44,7 +59,12 @@ export function CollectionLinks({
               </DetailLink>
             </Pill>
           ) : (
-            <Pill size="md" mode={mode} key={name}>
+            <Pill
+              size="md"
+              mode={mode}
+              key={name}
+              {...nameOnlyDestination(name)}
+            >
               {name}
             </Pill>
           )
@@ -67,7 +87,7 @@ export function CollectionLinks({
               {name}
             </DetailLink>
           ) : (
-            name
+            <span {...nameOnlyDestination(name)}>{name}</span>
           )}
         </Fragment>
       ))}

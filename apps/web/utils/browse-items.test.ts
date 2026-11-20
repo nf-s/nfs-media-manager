@@ -4,6 +4,8 @@ import { trackBrowseFields, type BrowseField } from '@repo/schemas/browse'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { subscriptionBrowseFields } from '@repo/schemas/subscriptions'
 import {
+  browseFilterHref,
+  browseSearchHref,
   columnOrderParam,
   formatFieldValue,
   hasCustomColumnOrder,
@@ -25,6 +27,54 @@ import {
 
 const labels = (fields: BrowseField[], keys: string[]) =>
   fields.filter((field) => keys.includes(field.key)).map(({ label }) => label)
+
+test('a filter destination retains Browse scope and layout and drops the inspector and page', () => {
+  const source = new URLSearchParams({
+    q: 'harbour',
+    creatorId: 'example-director',
+    sortBy: 'releaseDate',
+    view: 'list',
+    inspect: '[{"kind":"film","id":"example"}]',
+    page: '4',
+  })
+  const filters = [{ field: 'country', value: 'Example & Islands' }]
+  const destination = new URL(
+    browseFilterHref(`/films?${source}`, filters),
+    'https://example.test',
+  )
+  assert.equal(destination.pathname, '/films')
+  assert.deepEqual(Object.fromEntries(destination.searchParams), {
+    q: 'harbour',
+    creatorId: 'example-director',
+    sortBy: 'releaseDate',
+    view: 'list',
+    filters: JSON.stringify(filters),
+  })
+  assert.equal(source.get('page'), '4')
+})
+
+test('a search destination replaces its applied text and preserves other filters', () => {
+  const href = browseSearchHref('/tracks?filters=%5B%5D&q=harbour', {
+    q: 'river? basin',
+  })
+  assert.equal(href, '/tracks?filters=%5B%5D&q=river%3F+basin')
+})
+
+test('a Browse destination preserves question marks in query values and its hash', () => {
+  const href = browseFilterHref(
+    '/films?q=where?when&item=film-example&tab=sources#results?row=2',
+    [{ field: 'language', value: 'Example #2?' }],
+  )
+  const url = new URL(href, 'https://example.test')
+  assert.equal(url.searchParams.get('q'), 'where?when')
+  assert.equal(url.searchParams.get('item'), null)
+  assert.equal(url.searchParams.get('tab'), null)
+  assert.equal(
+    url.searchParams.get('filters'),
+    '[{"field":"language","value":"Example #2?"}]',
+  )
+  assert.equal(url.hash, '#results?row=2')
+})
 
 test('default columns follow the drawn order for each resource', () => {
   assert.deepEqual(

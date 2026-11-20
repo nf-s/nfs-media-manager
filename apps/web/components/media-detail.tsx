@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { useState, type ReactNode } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Disc3, Film } from 'lucide-react'
 import { z } from 'zod'
@@ -55,8 +55,14 @@ import {
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { invalidateMediaItem } from '@/utils/query-cache'
-import { withoutDetailEntries } from '@/utils/detail-inspector'
+import {
+  detailPageHref,
+  tagDetailId,
+  withoutDetailEntries,
+} from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { scopedHref } from '@/utils/media-scope'
+import { browseFilterHref, type BrowseFilterHref } from '@/utils/browse-items'
 import { createAlbumPlaybackSource } from '@/utils/playback-source'
 import {
   getDetailProviderLinks,
@@ -78,6 +84,7 @@ import { FieldProvenance } from './field-provenance'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { AlbumHeaderPlay } from './detail-play'
 import { DetailMore } from './detail-more'
+import { useDetailView } from './detail-inspector-context'
 import { WatchedToggle } from './watched-button'
 import {
   DetailArt,
@@ -134,6 +141,7 @@ function FilterPills({
   field,
   values,
   onFilter,
+  filterHref,
   selected,
   max,
   sourcesFor,
@@ -141,12 +149,22 @@ function FilterPills({
   field: string
   values: readonly string[]
   onFilter: OnFilter
+  filterHref: BrowseFilterHref
   selected: readonly BrowseFilter[]
   /** Shows this many, then a button for the rest. */
   max?: number
-  sourcesFor?: Pick<AlbumDetail | FilmDetail, 'id' | 'mediaType'>
+  sourcesFor?: Pick<AlbumDetail | FilmDetail, 'id' | 'mediaType' | 'tags'>
 }) {
-  const [all, setAll] = useState(false)
+  const view = useDetailView()
+  const more = `${field}:${values[0] ?? ''}`
+  const [all, setAll] = useState(
+    view.params.get('moreValues') === more ||
+      values
+        .slice(max)
+        .some((value) => view.params.get('tagSources') === `${field}:${value}`),
+  )
+  const expanded = new URLSearchParams(view.params)
+  expanded.set('moreValues', more)
   const shown = max === undefined || all ? values : values.slice(0, max)
   const hidden = values.length - shown.length
   return (
@@ -156,6 +174,9 @@ function FilterPills({
           sameBrowseFilter(filter, { field, value }),
         )
         const label = formatBrowseFilterValue(field, value)
+        const tagId = sourcesFor?.tags.find((tag) =>
+          sameBrowseFilter({ field, value: tag.name }, { field, value }),
+        )?.id
         return (
           <FilterPill
             key={value}
@@ -163,12 +184,21 @@ function FilterPills({
             mode={active ? (active.mode ?? 'any') : undefined}
             title={`Filter ${field}: ${label}. Shift-click to keep details open.`}
             onClick={(event) => onFilter({ field, value }, event.shiftKey)}
+            workspaceHref={
+              sourcesFor && tagId
+                ? detailPageHref({
+                    kind: 'tag',
+                    id: tagDetailId(sourcesFor.mediaType, tagId),
+                  })
+                : filterHref({ field, value })
+            }
             action={
               sourcesFor && (
                 <MetadataSourceControl
                   field={field}
                   name={value}
                   resource={{ kind: sourcesFor.mediaType, id: sourcesFor.id }}
+                  tagId={tagId ?? undefined}
                 />
               )
             }
@@ -176,7 +206,15 @@ function FilterPills({
         )
       })}
       {hidden > 0 && (
-        <Button variant="link" size="xs" onClick={() => setAll(true)}>
+        <Button
+          {...workspaceTabLinkProps(
+            view.workspaceHref(expanded),
+            `+${formatCount(hidden)} more`,
+          )}
+          variant="link"
+          size="xs"
+          onClick={() => setAll(true)}
+        >
           +{formatCount(hidden)} more
         </Button>
       )}
@@ -192,12 +230,16 @@ function DetailsSection({
   mediaItemId: string
   facts: readonly { label: string; value: ReactNode }[]
 }) {
-  const [open, setOpen] = useState(false)
+  const view = useDetailView()
+  const [open, setOpen] = useState(view.params.get('fieldsExpanded') === 'true')
+  const expanded = new URLSearchParams(view.params)
+  expanded.set('fieldsExpanded', 'true')
   return (
     <Section
       title="Details"
       aside={
         <Button
+          {...workspaceTabLinkProps(view.workspaceHref(expanded), 'All fields')}
           variant="link"
           size="xs"
           aria-expanded={open}
@@ -208,7 +250,12 @@ function DetailsSection({
       }
     >
       <Facts items={facts.slice(0, 6)} />
-      {open && <FieldProvenance mediaItemId={mediaItemId} />}
+      {open && (
+        <FieldProvenance
+          mediaItemId={mediaItemId}
+          focusedField={view.params.get('provenanceField')}
+        />
+      )}
     </Section>
   )
 }
@@ -433,6 +480,7 @@ export default function MediaDetail({
   mediaType,
   id,
   onFilter,
+  filterHref: workspaceFilterHref,
   onFiltersChange,
   highlightField,
   browseMetric,
@@ -440,6 +488,7 @@ export default function MediaDetail({
   mediaType: 'album' | 'film'
   id: string
   onFilter?: OnFilter
+  filterHref?: BrowseFilterHref
   onFiltersChange?: (filters: BrowseFilter[]) => void
   /** Browse sort field, pinned first among the details. */
   highlightField?: string
@@ -461,7 +510,8 @@ export default function MediaDetail({
   const queryClient = useQueryClient()
   const albumTab = useDetailTab(albumTabs, { aliases: tabAliases })
   const filmTab = useDetailTab(filmTabs, { aliases: tabAliases })
-  const { tab, setTab } = mediaType === 'album' ? albumTab : filmTab
+  const { tab, setTab, tabHref } = mediaType === 'album' ? albumTab : filmTab
+  const view = useDetailView()
   const [saved, setSaved] = useState(false)
   const detail = useQuery({
     queryKey: [mediaType, id],
@@ -481,25 +531,46 @@ export default function MediaDetail({
     await invalidateMediaItem(queryClient, mediaType, id)
     setSaved(true)
   }
+  function filtersWith(value: BrowseFilter) {
+    return selectedFilters.some((item) => sameBrowseFilter(item, value))
+      ? selectedFilters
+      : [...selectedFilters, value]
+  }
+  function browseDestination(filters: BrowseFilter[]) {
+    const params = new URLSearchParams(browseParams)
+    for (const key of [
+      'tab',
+      'tagSources',
+      'fieldsExpanded',
+      'provenanceField',
+      'sourceProvider',
+      'sourceMode',
+      'sourceSnapshot',
+      'albumTrackView',
+      'moreValues',
+    ])
+      params.delete(key)
+    return browseFilterHref(`/${collection}?${params}`, filters)
+  }
+  function filterHref(value: BrowseFilter) {
+    return workspaceFilterHref?.(value) ?? browseDestination(filtersWith(value))
+  }
   function filter(value: BrowseFilter, keepOpen = false) {
     if (onFilter) {
       onFilter(value, keepOpen)
       return
     }
-    const next = selectedFilters.some((item) => sameBrowseFilter(item, value))
-      ? selectedFilters
-      : [...selectedFilters, value]
-    const params = keepOpen
-      ? new URLSearchParams(window.location.search)
-      : browseParams
-    params.set('filters', JSON.stringify(next))
-    if (keepOpen)
-      window.history.replaceState(
-        null,
-        '',
-        `${window.location.pathname}?${params}`,
-      )
-    else window.location.assign(`/${collection}?${params}`)
+    if (!keepOpen) {
+      window.location.assign(filterHref(value))
+      return
+    }
+    const params = new URLSearchParams(window.location.search)
+    params.set('filters', JSON.stringify(filtersWith(value)))
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}?${params}`,
+    )
   }
   function changeFilters(next: BrowseFilter[]) {
     if (onFiltersChange) {
@@ -515,6 +586,35 @@ export default function MediaDetail({
       '',
       `${window.location.pathname}${params.size ? `?${params}` : ''}`,
     )
+  }
+  function ratingHref(rating: ProviderRating) {
+    const params = new URLSearchParams(view.params)
+    params.delete('tab')
+    params.delete('tagSources')
+    params.set('fieldsExpanded', 'true')
+    params.set('provenanceField', rating.key)
+    return view.workspaceHref(params)
+  }
+  function metadataValue(field: string, value: string) {
+    return (
+      <span
+        {...workspaceTabLinkProps(filterHref({ field, value }), value)}
+        tabIndex={0}
+      >
+        {value}
+      </span>
+    )
+  }
+  function metadataValues(field: string) {
+    const entries = textValues(field)
+    return entries.length > 0
+      ? entries.map((value, index) => (
+          <Fragment key={value}>
+            {index > 0 && ', '}
+            {metadataValue(field, value)}
+          </Fragment>
+        ))
+      : EMPTY_VALUE
   }
   const subject = mediaType === 'album' ? 'album' : 'film'
   if (!detail.data)
@@ -562,6 +662,7 @@ export default function MediaDetail({
         ? [value]
         : []
   }
+  const [country] = textValues('country')
 
   const header = (
     <DetailHeader
@@ -587,6 +688,12 @@ export default function MediaDetail({
             <CreatorLinks
               creators={creators}
               kind={item.mediaType === 'album' ? 'artist' : 'person'}
+              fallbackHref={(value) =>
+                filterHref({
+                  field: item.mediaType === 'album' ? 'artist' : 'director',
+                  value,
+                })
+              }
             />
           </>
         )
@@ -608,8 +715,17 @@ export default function MediaDetail({
           : item.runtimeMinutes
             ? formatRuntime(item.runtimeMinutes)
             : null,
-        item.mediaType === 'film' ? textValues('country')[0] : null,
-        needsId ? <Status state="attention">Needs ID</Status> : null,
+        item.mediaType === 'film' && country
+          ? metadataValue('country', country)
+          : null,
+        needsId ? (
+          <span
+            {...workspaceTabLinkProps(tabHref('sources'), 'Needs ID')}
+            tabIndex={0}
+          >
+            <Status state="attention">Needs ID</Status>
+          </span>
+        ) : null,
       ]}
       play={
         item.mediaType === 'album' && (
@@ -633,14 +749,24 @@ export default function MediaDetail({
         <>
           {item.mediaType === 'film' && <WatchedButton item={item} />}
           {needsId && (
-            <Button size="md" onClick={() => setTab('sources')}>
+            <Button
+              {...workspaceTabLinkProps(tabHref('sources'), 'Identify film')}
+              size="md"
+              onClick={() => setTab('sources')}
+            >
               Identify film
             </Button>
           )}
           <DetailActionsSpacer />
           <DetailMore
             crumb={{ title: item.title }}
-            items={[{ label: 'Edit', onSelect: () => setTab('edit') }]}
+            items={[
+              {
+                label: 'Edit',
+                workspaceHref: tabHref('edit'),
+                onSelect: () => setTab('edit'),
+              },
+            ]}
           />
         </>
       }
@@ -675,6 +801,7 @@ export default function MediaDetail({
           values={section.values}
           max={section.max}
           onFilter={filter}
+          filterHref={filterHref}
           selected={selectedFilters}
           sourcesFor={item}
         />
@@ -700,7 +827,7 @@ export default function MediaDetail({
         label: 'scrobbles',
         value: typeof scrobbles === 'number' ? formatCount(scrobbles) : '0',
       },
-      ...ratings.map(ratingStat),
+      ...ratings.map((rating) => ratingStat(rating, ratingHref(rating))),
       {
         label: 'last played',
         value:
@@ -743,6 +870,7 @@ export default function MediaDetail({
               field="source"
               values={[source]}
               onFilter={filter}
+              filterHref={filterHref}
               selected={selectedFilters}
             />
           ) : (
@@ -752,7 +880,7 @@ export default function MediaDetail({
         {
           key: 'country',
           label: 'Country',
-          value: textValues('country').join(', ') || EMPTY_VALUE,
+          value: metadataValues('country'),
         },
         {
           key: 'durationSec',
@@ -818,6 +946,7 @@ export default function MediaDetail({
                 mediaType="album"
                 item={item}
                 activeFilters={selectedFilters}
+                filterHref={filterHref}
                 pills
               />
             </Section>
@@ -859,12 +988,12 @@ export default function MediaDetail({
         {
           key: 'country',
           label: 'Country',
-          value: textValues('country').join(', ') || EMPTY_VALUE,
+          value: metadataValues('country'),
         },
         {
           key: 'language',
           label: 'Language',
-          value: textValues('language').join(', ') || EMPTY_VALUE,
+          value: metadataValues('language'),
         },
         {
           key: 'dateAdded',
@@ -880,7 +1009,7 @@ export default function MediaDetail({
         {
           key: 'watched',
           label: 'Watched',
-          value: item.watched ? 'Yes' : 'No',
+          value: metadataValue('watched', item.watched ? 'Yes' : 'No'),
         },
       ],
       browseFields,
@@ -896,7 +1025,10 @@ export default function MediaDetail({
         <div className="dtl-main">
           {providers.ratings.some((rating) => rating.score !== undefined) && (
             <Section title="Ratings" flush>
-              <RatingCards ratings={providers.ratings} />
+              <RatingCards
+                ratings={providers.ratings}
+                ratingHref={ratingHref}
+              />
             </Section>
           )}
           {item.summary && (
@@ -909,7 +1041,15 @@ export default function MediaDetail({
               <KeyValues
                 items={people.map((group) => ({
                   label: group.label,
-                  value: <CastPills credits={group.credits} max={group.max} />,
+                  value: (
+                    <CastPills
+                      credits={group.credits}
+                      max={group.max}
+                      fallbackHref={(value) =>
+                        filterHref({ field: group.role, value })
+                      }
+                    />
+                  ),
                 }))}
               />
             </Section>
@@ -932,6 +1072,7 @@ export default function MediaDetail({
                 mediaType="film"
                 item={item}
                 activeFilters={selectedFilters}
+                filterHref={filterHref}
                 pills
               />
             </Section>
@@ -954,7 +1095,7 @@ export default function MediaDetail({
       {selectedFilters.length > 0 && (
         <div className="dtl-filters">
           <Button asChild size="xs">
-            <Link href={`/${collection}?${browseParams}`}>
+            <Link href={browseDestination(selectedFilters)}>
               <FilterIndicator />
               Browse with{' '}
               {formatItemCount(selectedFilters.length, {
@@ -966,6 +1107,7 @@ export default function MediaDetail({
           <BrowseFilterChips
             filters={selectedFilters}
             fields={fields.data ?? []}
+            filterHref={(filter) => browseDestination([filter])}
             onChange={changeFilters}
           />
         </div>
@@ -1012,16 +1154,23 @@ export default function MediaDetail({
 function CastPills({
   credits,
   max,
+  fallbackHref,
 }: {
   credits: FilmDetail['credits']
   max?: number
+  fallbackHref: (value: string) => string
 }) {
   const [all, setAll] = useState(false)
   const shown = max === undefined || all ? credits : credits.slice(0, max)
   const hidden = credits.length - shown.length
   return (
     <span className="dtl-pillrow">
-      <CreatorLinks creators={shown} kind="person" pills />
+      <CreatorLinks
+        creators={shown}
+        kind="person"
+        pills
+        fallbackHref={fallbackHref}
+      />
       {hidden > 0 && (
         <Button variant="link" size="xs" onClick={() => setAll(true)}>
           +{formatCount(hidden)} more

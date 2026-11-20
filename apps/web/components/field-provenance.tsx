@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { JsonValue } from '@repo/schemas/common'
 import {
@@ -32,6 +33,8 @@ import {
   providerLabel,
 } from '@/utils/field-provenance'
 import { providerLogoUrl } from '@/utils/provider-logos'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { useDetailView } from './detail-inspector-context'
 import { useSourceCatalog } from './provider-sources'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
@@ -102,9 +105,11 @@ function sourceTitle(source: FieldSource, label: Label) {
 function FieldSources({
   field,
   label,
+  providerHref,
 }: {
   field: MediaFieldProvenance
   label: Label
+  providerHref: (provider: string) => string
 }) {
   const sources = orderedFieldSources(field.sources)
   const matching = sources.filter((source) => source.matchesCurrent)
@@ -121,7 +126,15 @@ function FieldSources({
         </Pill>
       )}
       {matching.map((source) => (
-        <span key={source.provider} title={sourceTitle(source, label)}>
+        <span
+          key={source.provider}
+          title={sourceTitle(source, label)}
+          {...workspaceTabLinkProps(
+            providerHref(source.provider),
+            label(source.provider),
+          )}
+          tabIndex={0}
+        >
           <ProviderMark
             name={label(source.provider)}
             src={providerLogoUrl(source.provider)}
@@ -150,12 +163,31 @@ function FieldSources({
 }
 
 /** Every stored field of an album or film with the providers that supply it. */
-export function FieldProvenance({ mediaItemId }: { mediaItemId: string }) {
+export function FieldProvenance({
+  mediaItemId,
+  focusedField,
+}: {
+  mediaItemId: string
+  focusedField?: string | null
+}) {
   const provenance = useMediaProvenance(mediaItemId)
+  const view = useDetailView()
   const catalog = useSourceCatalog()
   const label: Label = (provider) => providerLabel(provider, catalog.data)
   const widths = useTableWidths('field-provenance', fieldColumns)
   const data = provenance.data
+  const focusedRow = useRef<HTMLTableRowElement>(null)
+  useEffect(() => {
+    focusedRow.current?.scrollIntoView({ block: 'nearest' })
+  }, [data, focusedField])
+  function providerHref(provider: string) {
+    const params = new URLSearchParams(view.params)
+    params.set('tab', 'sources')
+    params.set('sourceProvider', provider)
+    params.set('sourceMode', 'history')
+    params.delete('sourceSnapshot')
+    return view.workspaceHref(params)
+  }
   if (!data) {
     if (provenance.isError)
       return (
@@ -198,7 +230,10 @@ export function FieldProvenance({ mediaItemId }: { mediaItemId: string }) {
         {data.fields.map((field) => {
           const updated = fieldUpdatedAt(field)
           return (
-            <TableRow key={field.key}>
+            <TableRow
+              key={field.key}
+              ref={field.key === focusedField ? focusedRow : undefined}
+            >
               <TableCell sticky={0} stickyEdge className="ds-muted">
                 <span title={field.label}>{field.label}</span>
               </TableCell>
@@ -206,7 +241,11 @@ export function FieldProvenance({ mediaItemId }: { mediaItemId: string }) {
                 <FieldValue value={field.value} />
               </TableCell>
               <TableCell>
-                <FieldSources field={field} label={label} />
+                <FieldSources
+                  field={field}
+                  label={label}
+                  providerHref={providerHref}
+                />
               </TableCell>
               <TableCell className="ds-muted">
                 {updated ? (

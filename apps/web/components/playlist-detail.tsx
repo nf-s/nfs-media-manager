@@ -852,6 +852,7 @@ function PlaylistHeader({
                 filterTracks
                   ? {
                       label: 'Filter tracks',
+                      workspaceHref: playlistTracksHref(playlist.name),
                       onSelect: () => filterTracks(playlist),
                     }
                   : {

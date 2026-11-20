@@ -3,7 +3,9 @@
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
+import { detailLocation } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { Link2, Plus } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -268,6 +270,7 @@ export default function LastfmLinks() {
   ])
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const pathname = usePathname()
   const search = useSearchParams()
   const reasons = lastfmLinkFilterValues(
     search.get('reasons'),
@@ -340,17 +343,16 @@ export default function LastfmLinks() {
     setSelectedIds([])
     setAnchor(null)
   }, [reasonsKey, query, sortBy, sortDirection])
-  function setReasons(value: LastfmLinkFilter[]) {
-    clearSelection()
-    const params = new URLSearchParams(window.location.search)
+  function reasonsHref(value: LastfmLinkFilter[]) {
+    const params = new URLSearchParams(search)
     if (value.length) params.set('reasons', JSON.stringify(value))
     else params.delete('reasons')
     params.delete('reason')
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}?${params}`,
-    )
+    return detailLocation(pathname, params)
+  }
+  function setReasons(value: LastfmLinkFilter[]) {
+    clearSelection()
+    window.history.replaceState(null, '', reasonsHref(value))
   }
   function sort(key: LastfmLinkSort) {
     clearSelection()
@@ -407,24 +409,25 @@ export default function LastfmLinks() {
                   width: 220,
                   fill: true,
                   value: (row) => lastfmLinkReasonLabels[row.reason],
-                  render: (row) => (
-                    <Button
-                      variant="link"
-                      size="xs"
-                      type="button"
-                      disabled={queuePending}
-                      onClick={() =>
-                        setReasons(
-                          reasons.includes(row.reason)
-                            ? reasons.filter((reason) => reason !== row.reason)
-                            : [...reasons, row.reason],
-                        )
-                      }
-                      aria-pressed={reasons.includes(row.reason)}
-                    >
-                      {lastfmLinkReasonLabels[row.reason]}
-                    </Button>
-                  ),
+                  render: (row) => {
+                    const selected = reasons.includes(row.reason)
+                    const next = selected
+                      ? reasons.filter((reason) => reason !== row.reason)
+                      : [...reasons, row.reason]
+                    return (
+                      <Button
+                        {...workspaceTabLinkProps(reasonsHref(next))}
+                        variant="link"
+                        size="xs"
+                        type="button"
+                        disabled={queuePending}
+                        onClick={() => setReasons(next)}
+                        aria-pressed={selected}
+                      >
+                        {lastfmLinkReasonLabels[row.reason]}
+                      </Button>
+                    )
+                  },
                 },
                 {
                   key: 'groups',

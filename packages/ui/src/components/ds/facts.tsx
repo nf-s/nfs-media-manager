@@ -45,6 +45,8 @@ export type StatItem = {
   title?: string
   /** The page the figure comes from. The whole stat opens it in a new tab. */
   href?: string
+  /** Internal destination for the workspace-tab gesture. */
+  workspaceHref?: string
 }
 
 /**
@@ -72,6 +74,9 @@ export function Stats({ items }: { items: readonly StatItem[] }) {
         return item.href ? (
           <a
             key={item.label}
+            data-workspace-href={item.workspaceHref}
+            data-workspace-label={item.workspaceHref ? item.label : undefined}
+            aria-keyshortcuts={item.workspaceHref ? 'Alt+Enter' : undefined}
             className="ds-stat"
             data-tone={item.tone}
             href={item.href}
@@ -85,6 +90,10 @@ export function Stats({ items }: { items: readonly StatItem[] }) {
         ) : (
           <div
             key={item.label}
+            data-workspace-href={item.workspaceHref}
+            data-workspace-label={item.workspaceHref ? item.label : undefined}
+            aria-keyshortcuts={item.workspaceHref ? 'Alt+Enter' : undefined}
+            tabIndex={item.workspaceHref ? 0 : undefined}
             className="ds-stat"
             data-tone={item.tone}
             title={item.title}

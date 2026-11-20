@@ -16,7 +16,11 @@ import { TrackListItemSchema } from '@repo/schemas/tracks'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import { fetchApiData } from '@/utils/api'
-import { formatFieldValue, orderFields } from '@/utils/browse-items'
+import {
+  formatFieldValue,
+  orderFields,
+  type BrowseFilterHref,
+} from '@/utils/browse-items'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import {
   clearCreatorScope,
@@ -57,6 +61,8 @@ export function TrackBrowseSearch({
   queryIdentity,
   onOpenItem,
   onAddFilter,
+  filterHref,
+  searchHref,
   setParams,
   ready = true,
   disabled = false,
@@ -68,6 +74,8 @@ export function TrackBrowseSearch({
   queryIdentity: string
   onOpenItem: (id: string, trigger?: HTMLElement) => void
   onAddFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
+  filterHref?: BrowseFilterHref
+  searchHref?: (value: string) => string
   setParams: (updates: Record<string, string | null>) => void
   ready?: boolean
   disabled?: boolean
@@ -165,6 +173,8 @@ export function TrackBrowseSearch({
         onFocus: facets.activate,
         onValueChange: setDraft,
         onAddFilter,
+        filterHref,
+        searchHref,
         onApplyText: (value) => {
           setParams({ q: value || null })
           setDraft('')
@@ -186,6 +196,7 @@ export function TrackBrowseFilterChips({
   fields,
   limitResults,
   setParams,
+  filterHref,
 }: {
   q: string
   creator?: CreatorBrowseScope
@@ -194,6 +205,7 @@ export function TrackBrowseFilterChips({
   fields: BrowseField[]
   limitResults?: number
   setParams: (updates: Record<string, string | null>) => void
+  filterHref?: BrowseFilterHref
 }) {
   return (
     <>
@@ -214,6 +226,7 @@ export function TrackBrowseFilterChips({
       <BrowseFilterChips
         filters={filters}
         fields={fields}
+        filterHref={filterHref}
         onChange={(next) =>
           setParams({ filters: next.length ? JSON.stringify(next) : null })
         }

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ComponentPropsWithoutRef } from 'react'
 
 /**
  * One vocabulary for every job, sync, connection and freshness state.
@@ -30,14 +30,12 @@ export const statusLabels: Record<StatusState, string> = {
 export function Status({
   state,
   children,
-  title,
-}: {
+  ...props
+}: Omit<ComponentPropsWithoutRef<'span'>, 'className'> & {
   state: StatusState
-  children?: ReactNode
-  title?: string
 }) {
   return (
-    <span className="ds-status" data-status={state} title={title}>
+    <span className="ds-status" data-status={state} {...props}>
       {children ?? statusLabels[state]}
     </span>
   )

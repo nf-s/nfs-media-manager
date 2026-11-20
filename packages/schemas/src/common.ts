@@ -85,6 +85,7 @@ export const CreditSchema = z.object({
 })
 
 export const TagSchema = z.object({
+  id: z.string().min(1).optional(),
   name: z.string(),
   kind: z.string(),
 })

@@ -25,6 +25,7 @@ import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { DetailLink } from './detail-link'
+import { useDetailView } from './detail-inspector-context'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import styles from './metadata-source-control.module.css'
@@ -153,11 +154,17 @@ function TagSources({
 function SourcePopover({
   name,
   inPill = false,
+  workspaceHref,
+  initiallyOpen,
+  onClose,
   children,
 }: {
   name: string
   /** The trigger is an action inside a pill, not a button beside a value. */
   inPill?: boolean
+  workspaceHref?: string
+  initiallyOpen?: boolean
+  onClose?: () => void
   children: ReactNode | ((close: () => void) => ReactNode)
 }) {
   const id = useId()
@@ -165,6 +172,10 @@ function SourcePopover({
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (initiallyOpen && !panel.current?.matches(':popover-open'))
+      panel.current?.showPopover()
+  }, [initiallyOpen])
   useEffect(() => {
     if (!open) return
     panel.current?.focus({ preventScroll: true })
@@ -188,6 +199,9 @@ function SourcePopover({
   }, [open])
   const triggerProps = {
     type: 'button',
+    ...(workspaceHref
+      ? workspaceTabLinkProps(workspaceHref, `Sources for ${name}`)
+      : undefined),
     ref: trigger,
     popoverTarget: id,
     'aria-label': `Sources for ${name}`,
@@ -230,7 +244,10 @@ function SourcePopover({
         tabIndex={-1}
         aria-labelledby={titleId}
         className={`ds-pop data-stack ${styles.panel}`}
-        onToggle={(event) => setOpen(event.newState === 'open')}
+        onToggle={(event) => {
+          setOpen(event.newState === 'open')
+          if (event.newState === 'closed' && initiallyOpen) onClose?.()
+        }}
         onClick={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
@@ -290,6 +307,7 @@ export default function MetadataSourceControl({
   tagId?: string
   onManage?: (id: string) => void
 }) {
+  const view = useDetailView()
   const [managed, setManaged] = useState<{
     id: string
     mediaType: 'album' | 'film'
@@ -338,9 +356,32 @@ export default function MetadataSourceControl({
   }
   if (!resource && ((field !== 'genre' && field !== 'keyword') || !mediaType))
     return null
+  const source = `${field}:${name}`
+  const params = new URLSearchParams(view.params)
+  params.delete('tab')
+  params.set('tagSources', source)
+  const workspaceHref = resource
+    ? detailPageHref(resource, params)
+    : tagId && mediaType
+      ? detailPageHref(
+          { kind: 'tag', id: tagDetailId(mediaType, tagId) },
+          new URLSearchParams({ tab: 'sources' }),
+        )
+      : undefined
   return (
     <>
-      <SourcePopover name={formatTagName(name)} inPill={Boolean(resource)}>
+      <SourcePopover
+        name={formatTagName(name)}
+        inPill={Boolean(resource)}
+        workspaceHref={workspaceHref}
+        initiallyOpen={
+          Boolean(resource) && view.params.get('tagSources') === source
+        }
+        onClose={() => {
+          view.params.delete('tagSources')
+          view.replace(view.params)
+        }}
+      >
         {(close) => (
           <TagSources
             mediaType={mediaType}

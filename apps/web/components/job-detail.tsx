@@ -60,6 +60,7 @@ import {
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
 import { useDetailView } from './detail-inspector-context'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { DetailLink } from './detail-link'
 import JobBulkActions from './job-bulk-actions'
 import { StoredJobData } from './job-data-viewer'
@@ -130,6 +131,12 @@ export function JobDetail({
   const tab =
     tabs.find(({ value }) => value === view.params.get('tab'))?.value ??
     'overview'
+  function tabParams(value: string) {
+    const params = new URLSearchParams(view.params)
+    if (value === 'overview') params.delete('tab')
+    else params.set('tab', value)
+    return params
+  }
   const [actionPending, setActionPending] = useState(false)
   const query = useQuery(jobDetailOptions(apiBaseUrl, id))
   const providers = useQuery(providerListOptions(apiBaseUrl))
@@ -288,15 +295,18 @@ export function JobDetail({
       />
       <Tabs
         value={tab}
-        onValueChange={(value) => {
-          if (value === 'overview') view.params.delete('tab')
-          else view.params.set('tab', value)
-          view.replace(view.params)
-        }}
+        onValueChange={(value) => view.replace(tabParams(value))}
       >
         <TabsList aria-label="Job details">
           {tabs.map(({ value, label }) => (
-            <TabsTrigger key={value} value={value}>
+            <TabsTrigger
+              key={value}
+              value={value}
+              {...workspaceTabLinkProps(
+                view.workspaceHref(tabParams(value)),
+                label,
+              )}
+            >
               {label}
               {value === 'logs' && job.logs.length > 0 && (
                 <span className="ds-muted">{formatCount(job.logs.length)}</span>

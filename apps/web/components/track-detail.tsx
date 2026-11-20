@@ -39,6 +39,8 @@ import {
   trackFilter,
   tracksHref,
 } from '@/utils/track-browse'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import type { BrowseFilterHref } from '@/utils/browse-items'
 import { TrackArtistLinks } from './creator-links'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailLink } from './detail-link'
@@ -70,16 +72,25 @@ const trackTabAliases = {
   history: 'sources',
 } satisfies Record<string, TrackTab>
 
+function albumShortcut(name: string, filterHref: BrowseFilterHref) {
+  return {
+    ...workspaceTabLinkProps(filterHref({ field: 'album', value: name }), name),
+    tabIndex: 0,
+  }
+}
+
 /** Values that filter Tracks: in place inside a browser, otherwise as a link. */
 function FilterValues({
   field,
   values,
   onFilter,
+  filterHref,
   sourcesFor,
 }: {
   field: string
   values: readonly string[]
   onFilter?: OnFilter
+  filterHref: BrowseFilterHref
   /** The track whose tag sources are shown. */
   sourcesFor?: string
 }) {
@@ -106,6 +117,7 @@ function FilterValues({
             mode={mode}
             title={`Filter ${field}: ${label}. Shift-click to keep details open.`}
             onClick={(event) => onFilter(filter, event.shiftKey)}
+            workspaceHref={filterHref(filter)}
             action={action}
           />
         ) : (
@@ -141,13 +153,17 @@ export function TrackSources({
 function TrackOverview({
   item,
   onFilter,
+  filterHref,
   onResolved,
   showSources,
+  sourcesHref,
 }: {
   item: TrackDetail
   onFilter?: OnFilter
+  filterHref: BrowseFilterHref
   onResolved: (id: string) => void
   showSources: () => void
+  sourcesHref: string
 }) {
   const artistTags = musicDisplayTags(item.albumTags, item.artistTags)
     .filter((tag) => tag.source === 'artist')
@@ -201,7 +217,14 @@ function TrackOverview({
                       </DetailLink>
                     </RowTitle>
                   ) : (
-                    <span className="ds-row-title">{item.albumName}</span>
+                    <span
+                      className="ds-row-title"
+                      {...(item.albumName
+                        ? albumShortcut(item.albumName, filterHref)
+                        : undefined)}
+                    >
+                      {item.albumName}
+                    </span>
                   )
                 }
                 by={item.album ? 'Album' : 'Album, not in the library'}
@@ -218,6 +241,7 @@ function TrackOverview({
               field={group.field}
               values={group.values}
               onFilter={onFilter}
+              filterHref={filterHref}
               sourcesFor={item.id}
             />
           </Section>
@@ -225,7 +249,12 @@ function TrackOverview({
         <Section
           title="Details"
           aside={
-            <Button variant="link" size="xs" onClick={showSources}>
+            <Button
+              {...workspaceTabLinkProps(sourcesHref, 'View source details')}
+              variant="link"
+              size="xs"
+              onClick={showSources}
+            >
               View source details
             </Button>
           }
@@ -260,6 +289,7 @@ function TrackOverview({
                       (source) => trackSourceLabels[source],
                     )}
                     onFilter={onFilter}
+                    filterHref={filterHref}
                   />
                 ) : (
                   EMPTY_VALUE
@@ -272,6 +302,7 @@ function TrackOverview({
                     field="spotifyMatch"
                     values={[trackSpotifyMatchLabels[item.spotifyMatch]]}
                     onFilter={onFilter}
+                    filterHref={filterHref}
                   />
                 ),
               },
@@ -286,16 +317,20 @@ function TrackOverview({
 export default function TrackDetailView({
   id,
   onFilter,
+  filterHref = (filter) => tracksHref([filter]),
   onMerged,
 }: {
   id: string
   /** Applies a filter in the surrounding browser; without it values link to /tracks. */
   onFilter?: OnFilter
+  filterHref?: BrowseFilterHref
   /** Opens the retained track after a merge or a source correction. */
   onMerged?: (targetId: string, tab?: 'sources') => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const { tab, setTab } = useDetailTab(trackTabs, { aliases: trackTabAliases })
+  const { tab, setTab, tabHref } = useDetailTab(trackTabs, {
+    aliases: trackTabAliases,
+  })
   const [merging, setMerging] = useState(false)
   const detail = useQuery({
     queryKey: ['track', id],
@@ -345,7 +380,13 @@ export default function TrackDetailView({
           <>
             {item.artists.length > 0 && (
               <>
-                by <TrackArtistLinks track={item} />
+                by{' '}
+                <TrackArtistLinks
+                  track={item}
+                  fallbackHref={(value) =>
+                    filterHref({ field: 'artist', value })
+                  }
+                />
               </>
             )}
             {(item.album || item.albumName) && (
@@ -355,9 +396,11 @@ export default function TrackDetailView({
                   <DetailLink kind="album" id={item.album.id}>
                     {item.album.title}
                   </DetailLink>
-                ) : (
-                  item.albumName
-                )}
+                ) : item.albumName ? (
+                  <span {...albumShortcut(item.albumName, filterHref)}>
+                    {item.albumName}
+                  </span>
+                ) : null}
               </>
             )}
           </>
@@ -414,8 +457,10 @@ export default function TrackDetailView({
           <TrackOverview
             item={item}
             onFilter={onFilter}
+            filterHref={filterHref}
             onResolved={openResolvedTrack}
             showSources={() => setTab('sources')}
+            sourcesHref={tabHref('sources')}
           />
         </TabsContent>
         <TabsContent value="sources">

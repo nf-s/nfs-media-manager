@@ -14,7 +14,12 @@ import { useInspectorPage } from './detail-inspector-context'
  * setting chosen from a named group, the current choice ticked.
  */
 export type DetailMenuItem =
-  | { label: string; onSelect: () => void; disabled?: boolean }
+  | {
+      label: string
+      onSelect: () => void
+      disabled?: boolean
+      workspaceHref?: string
+    }
   | { label: string; href: string; workspaceLabel?: string }
   | {
       group: string
@@ -235,6 +240,9 @@ function MoreMenu({
           ) : (
             <button
               key={item.label}
+              {...(item.workspaceHref
+                ? workspaceTabLinkProps(item.workspaceHref, item.label)
+                : undefined)}
               type="button"
               role="menuitem"
               className="ds-menu-item"

@@ -34,7 +34,9 @@ import {
   replaceWorkspaceUrl,
   useDetailInspector,
 } from '@/components/detail-inspector-context'
-import { tagDetailId } from '@/utils/detail-inspector'
+import { detailPageHref, tagDetailId } from '@/utils/detail-inspector'
+import { browseFilterHref } from '@/utils/browse-items'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import TagActions from '@/components/tag-actions'
 import TagParentActions from '@/components/tag-parent-actions'
 import { useMediaScope } from '@/components/media-scope'
@@ -373,13 +375,38 @@ export default function TagsPageClient({
                     )}
                     {columns.visible('mediaCount') && (
                       <TableCell align="end">
-                        {formatCount(tag.mediaCount)}
+                        <span
+                          {...workspaceTabLinkProps(
+                            browseFilterHref(
+                              tagScope === 'album' ? '/albums' : '/films',
+                              [{ field: 'genre', value: tag.name }],
+                            ),
+                            formatTagName(tag.name),
+                          )}
+                          tabIndex={0}
+                        >
+                          {formatCount(tag.mediaCount)}
+                        </span>
                       </TableCell>
                     )}
                     {columns.visible('sourceCount') && (
                       <TableCell align="end">
                         <span className="ds-actions">
-                          {formatCount(tag.sourceCount)}
+                          <span
+                            {...workspaceTabLinkProps(
+                              detailPageHref(
+                                {
+                                  kind: 'tag',
+                                  id: tagDetailId(tagScope, tag.id),
+                                },
+                                new URLSearchParams({ tab: 'sources' }),
+                              ),
+                              `Sources for ${formatTagName(tag.name)}`,
+                            )}
+                            tabIndex={0}
+                          >
+                            {formatCount(tag.sourceCount)}
+                          </span>
                           <MetadataSourceControl
                             field="genre"
                             name={tag.name}
@@ -419,7 +446,22 @@ export default function TagsPageClient({
                     )}
                     {columns.visible('childCount') && (
                       <TableCell align="end">
-                        {formatCount(tag.childCount)}
+                        {tag.childCount > 0 ? (
+                          <span
+                            {...workspaceTabLinkProps(
+                              detailPageHref({
+                                kind: 'tag',
+                                id: tagDetailId(tagScope, tag.id),
+                              }),
+                              formatTagName(tag.name),
+                            )}
+                            tabIndex={0}
+                          >
+                            {formatCount(tag.childCount)}
+                          </span>
+                        ) : (
+                          formatCount(tag.childCount)
+                        )}
                       </TableCell>
                     )}
                     {columns.visible('mergedNames') && (

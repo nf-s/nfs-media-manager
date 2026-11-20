@@ -116,7 +116,7 @@ test('retained snapshots and diagnostics reuse the bounded JSON tree for any out
       (html.match(/class="ops-disclosure ops-payload"/g) ?? []).length,
       2,
     )
-    assert.doesNotMatch(html, /No response JSON|<pre|href=|results/)
+    assert.doesNotMatch(html, /No response JSON|<pre|<a\b|results/)
   }
 })
 

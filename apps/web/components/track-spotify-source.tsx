@@ -12,6 +12,8 @@ import { Button } from '@repo/ui/components/ui/button'
 import { formatAge, formatDateTime } from '@repo/ui/lib/format'
 import { spotifyTrackUri } from '@/utils/album-links'
 import { providerLogoUrl } from '@/utils/provider-logos'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { invalidateScrobbleLinks } from './lastfm-sync'
 import {
@@ -57,6 +59,13 @@ export function TrackSpotifySource({
 }) {
   const catalog = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
+  const view = useDetailView()
+  const [open, setOpen] = useState(
+    view.params.get('sourceProvider') === 'spotify',
+  )
+  const sourceParams = new URLSearchParams(view.params)
+  sourceParams.set('sourceProvider', 'spotify')
+  sourceParams.set('tab', 'sources')
   const [review, setReview] = useState(false)
   const search = useSavedSpotifyTrackSearch(item.id)
   const job = search.data?.job
@@ -105,6 +114,12 @@ export function TrackSpotifySource({
     <>
       <SourceRow
         name="Spotify"
+        open={open}
+        onToggle={setOpen}
+        summaryProps={workspaceTabLinkProps(
+          view.workspaceHref(sourceParams),
+          'Spotify',
+        )}
         mark={
           <ProviderMark
             name="Spotify"

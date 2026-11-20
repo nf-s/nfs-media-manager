@@ -68,6 +68,8 @@ import {
   withTrackFilter,
 } from '@/utils/track-browse'
 import {
+  browseFilterHref,
+  browseSearchHref,
   columnOrderParam,
   hasCustomColumnOrder,
   formatFieldValue,
@@ -302,6 +304,13 @@ function TrackBrowse({
   function addFilter(filter: BrowseFilter, keepOpen = false) {
     const next = withTrackFilter(filters, filter)
     setParams({ filters: JSON.stringify(next) }, !keepOpen)
+  }
+  const browseHref = host.browseHref ?? `/${collection}?${searchParams}`
+  function filterHref(filter: BrowseFilter) {
+    return browseFilterHref(browseHref, withTrackFilter(filters, filter))
+  }
+  function artistFilterHref(value: string) {
+    return filterHref({ field: 'artist', value })
   }
   function clearFilters() {
     setParams({
@@ -575,7 +584,14 @@ function TrackBrowse({
           )}
         </span>
       )
-    return <TrackBrowseValue track={item} field={field} onFilter={addFilter} />
+    return (
+      <TrackBrowseValue
+        track={item}
+        field={field}
+        onFilter={addFilter}
+        filterHref={filterHref}
+      />
+    )
   }
 
   function renderTrackTableRow(
@@ -637,17 +653,17 @@ function TrackBrowse({
         by={
           child ? (
             item.album || item.albumName ? (
-              <TrackBrowseAlbum track={item} />
+              <TrackBrowseAlbum track={item} filterHref={filterHref} />
             ) : (
               'Release unknown'
             )
           ) : (
             <>
-              <TrackArtistLinks track={item} />
+              <TrackArtistLinks track={item} fallbackHref={artistFilterHref} />
               {(item.album || item.albumName) && (
                 <>
                   {' '}
-                  · <TrackBrowseAlbum track={item} />
+                  · <TrackBrowseAlbum track={item} filterHref={filterHref} />
                 </>
               )}
             </>
@@ -660,7 +676,13 @@ function TrackBrowse({
             playPair(item, index)
           )
         }
-        tags={<TrackBrowseTags track={item} onFilter={addFilter} />}
+        tags={
+          <TrackBrowseTags
+            track={item}
+            onFilter={addFilter}
+            filterHref={filterHref}
+          />
+        }
         meta={
           <>
             <RowValue kind="num">
@@ -728,6 +750,7 @@ function TrackBrowse({
           ranges={ranges}
           fields={fields}
           setParams={setParams}
+          filterHref={(filter) => browseFilterHref(browseHref, [filter])}
         />
         <ListeningFilterPills
           library="track"
@@ -752,6 +775,8 @@ function TrackBrowse({
               queryIdentity={queryKey}
               onOpenItem={openDetail}
               onAddFilter={addFilter}
+              filterHref={filterHref}
+              searchHref={(value) => browseSearchHref(browseHref, { q: value })}
               setParams={setParams}
               ready={ready}
             />
@@ -924,11 +949,20 @@ function TrackBrowse({
                         index,
                         <CardTitle>{trackLink(item)}</CardTitle>,
                       )}
-                      by={<TrackArtistLinks track={item} />}
+                      by={
+                        <TrackArtistLinks
+                          track={item}
+                          fallbackHref={artistFilterHref}
+                        />
+                      }
                       meta={cardMeta(item)}
                       tags={
                         compactCards ? undefined : (
-                          <TrackBrowseTags track={item} onFilter={addFilter} />
+                          <TrackBrowseTags
+                            track={item}
+                            onFilter={addFilter}
+                            filterHref={filterHref}
+                          />
                         )
                       }
                     />
@@ -1082,7 +1116,7 @@ function TrackBrowse({
       </div>
       {!embedded && (
         <DetailInspector
-          track={{ onFilter: addFilter }}
+          track={{ onFilter: addFilter, filterHref }}
           playlist={{
             filterTracks: (playlist) => filterByPlaylist(playlist.name),
           }}

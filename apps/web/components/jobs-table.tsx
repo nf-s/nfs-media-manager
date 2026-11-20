@@ -92,6 +92,7 @@ import {
   replaceWorkspaceUrl,
   useDetailInspector,
 } from './detail-inspector-context'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useConfig } from './providers'
 import JobBulkActions, {
   unfinishedBatchJobs,
@@ -665,6 +666,7 @@ export function JobsTable({ provider }: { provider?: string }) {
                   size="xs"
                   icon
                   aria-expanded={open}
+                  {...workspaceTabLinkProps(href, title)}
                   aria-label={`${open ? 'Hide' : 'Show'} jobs in ${title} · ${target}`}
                   onClick={() => toggleBatch(batch.batchId, index)}
                 >

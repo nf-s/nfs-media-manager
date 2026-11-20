@@ -46,8 +46,11 @@ export function Pill({
   )
 }
 
-export function PillLabel({ children }: { children: ReactNode }) {
-  return <span className="ds-pill-label">{children}</span>
+export function PillLabel({
+  className,
+  ...props
+}: HTMLAttributes<HTMLSpanElement>) {
+  return <span className={cn('ds-pill-label', className)} {...props} />
 }
 
 /**

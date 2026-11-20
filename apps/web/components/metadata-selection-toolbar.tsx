@@ -8,6 +8,7 @@ import {
   type BrowseRange,
 } from '@repo/schemas/browse'
 import type { ListeningFilter } from '@repo/schemas/listening'
+import type { BrowseFilterHref } from '@/utils/browse-items'
 import { formatListeningRule } from '@/utils/listening-filters'
 import {
   Toolbar,
@@ -39,6 +40,7 @@ export default function MetadataSelectionToolbar({
   value,
   onChange,
   onClear,
+  filterHref,
   otherFiltersActive = false,
   providerFilters = [],
   disabled = false,
@@ -53,6 +55,7 @@ export default function MetadataSelectionToolbar({
   value: MetadataSelectionFilters
   onChange: (value: MetadataSelectionFilters) => void
   onClear: () => void
+  filterHref?: BrowseFilterHref
   otherFiltersActive?: boolean
   providerFilters?: { key: string; label: string; remove: () => void }[]
   disabled?: boolean
@@ -89,6 +92,7 @@ export default function MetadataSelectionToolbar({
         <BrowseFilterChips
           filters={value.filters}
           fields={fields}
+          filterHref={filterHref}
           onChange={(filters) => change({ ...value, filters })}
         />
         {value.ranges.map((range) => {

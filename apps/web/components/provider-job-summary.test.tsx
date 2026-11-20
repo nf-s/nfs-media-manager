@@ -15,7 +15,10 @@ test('provider job summary shows the headline counts and opens the provider jobs
     cancelled: 1,
   })
   const html = renderToStaticMarkup(
-    <ProviderJobSummary summary={summary} onOpenJobs={() => {}} />,
+    <ProviderJobSummary
+      summary={summary}
+      jobsHref="/providers/fixture?tab=jobs"
+    />,
   )
   assert.match(
     html,
@@ -34,7 +37,11 @@ test('provider job summary shows the headline counts and opens the provider jobs
       ),
     )
   assert.match(html, /data-tone="danger"><span class="ds-stat-value">2</)
-  assert.match(html, />View jobs</)
+  assert.match(html, /href="\/providers\/fixture\?tab=jobs"[^>]*>View jobs</)
+  assert.match(
+    html,
+    /data-workspace-href="\/jobs\?provider=fixture&amp;status=failed"/,
+  )
 })
 
 test('providers without jobs show zero counts and omit the jobs action', () => {
@@ -49,7 +56,7 @@ test('providers without jobs show zero counts and omit the jobs action', () => {
         failed: 0,
         cancelled: 0,
       }}
-      onOpenJobs={() => {}}
+      jobsHref="/providers/fixture?tab=jobs"
     />,
   )
   assert.match(html, /<span class="ds-muted">0<\/span>/)

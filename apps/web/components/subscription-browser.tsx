@@ -1,6 +1,7 @@
 'use client'
 
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import Link from 'next/link'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -92,6 +93,8 @@ import {
   withSubscriptionFilter,
 } from '@/utils/subscriptions'
 import {
+  browseFilterHref,
+  browseSearchHref,
   columnOrderParam,
   hasCustomColumnOrder,
   formatFieldValue,
@@ -106,7 +109,7 @@ import {
 import { DetailInspector } from './detail-inspector'
 import { DetailLink } from './detail-link'
 import { useDetailInspector } from './detail-inspector-context'
-import { sameDetail } from '@/utils/detail-inspector'
+import { detailPageHref, sameDetail } from '@/utils/detail-inspector'
 import AiSearch from './ai-search'
 import {
   BrowseFilterChips,
@@ -324,6 +327,10 @@ function SubscriptionBrowse({
       { filters: JSON.stringify(withSubscriptionFilter(filters, filter)) },
       true,
     )
+  }
+  const browseHref = host.browseHref ?? `${libraryPath}?${searchParams}`
+  function filterHref(filter: BrowseFilter) {
+    return browseFilterHref(browseHref, withSubscriptionFilter(filters, filter))
   }
   function changeFilters(next: BrowseFilter[]) {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
@@ -549,6 +556,7 @@ function SubscriptionBrowse({
       <BrowseTagBadges
         tags={item.tags}
         onFilter={addFilter}
+        filterHref={filterHref}
         max={2}
         storedNames
       />
@@ -587,6 +595,10 @@ function SubscriptionBrowse({
           {values.map((value) => (
             <Pill asChild key={value}>
               <button
+                {...workspaceTabLinkProps(
+                  filterHref({ field: field.key, value }),
+                  value,
+                )}
                 type="button"
                 title={`Filter ${field.label}: ${value}`}
                 onClick={() => addFilter({ field: field.key, value })}
@@ -635,6 +647,10 @@ function SubscriptionBrowse({
         {sourceFilter && (
           <BrowseFilterPill
             mode="required"
+            destination={{
+              href: detailPageHref({ kind: sourceKind, id: sourceFilter }),
+              label: sourceTitle ?? labels.source,
+            }}
             removeLabel={`Remove ${labels.source.toLowerCase()} filter`}
             onRemove={() => setParams({ sourceId: null })}
           >
@@ -661,6 +677,7 @@ function SubscriptionBrowse({
           filters={filters}
           fields={fields}
           onChange={changeFilters}
+          filterHref={(filter) => browseFilterHref(browseHref, [filter])}
           storedTagNames
         />
         {ranges.map((range) => {
@@ -697,6 +714,9 @@ function SubscriptionBrowse({
     onFocus: facets.activate,
     onValueChange: setDraft,
     onAddFilter: addFilter,
+    filterHref,
+    searchHref: (value: string) =>
+      browseSearchHref(browseHref, { q: value.slice(0, 200) }),
     onApplyText: (value: string) => {
       setParams({ q: value.slice(0, 200) || null }, true)
       setDraft('')
@@ -1063,11 +1083,15 @@ function SubscriptionBrowse({
       </div>
       {embedded ? null : mixes ? (
         <DetailInspector
-          mix={{ initialItem: activeItem, onFilter: addFilter }}
+          mix={{ initialItem: activeItem, onFilter: addFilter, filterHref }}
         />
       ) : (
         <DetailInspector
-          subscription={{ initialItem: activeItem, onFilter: addFilter }}
+          subscription={{
+            initialItem: activeItem,
+            onFilter: addFilter,
+            filterHref,
+          }}
         />
       )}
     </section>

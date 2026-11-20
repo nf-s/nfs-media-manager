@@ -6,26 +6,41 @@ import {
   resolveWorkspaceHref,
 } from '@/utils/workspace-tab-destination'
 
+const itemContainers = '.ds-card, .ds-row, tr'
 const controls =
-  'a, button, input, select, textarea, label, summary, [role="button"], [role="link"], [contenteditable="true"]'
+  '[data-workspace-href], a, button, input, select, textarea, label, summary, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="tab"], [role="option"], [role="menuitem"], [role="checkbox"], [role="switch"], [role="slider"], [role="combobox"], [role="textbox"]'
+const boundary = `${controls}, ${itemContainers}, dialog, [role="dialog"], [popover]`
+
+/** An item owns its passive metadata. Nested controls and popovers own their own gestures. */
+function destinationControl(target: Element) {
+  const nearest = target.closest(boundary)
+  if (!nearest || nearest.matches(controls)) return nearest
+  if (!nearest.matches(itemContainers)) return null
+  const title = nearest.querySelector(
+    ':is(.ds-card-title, .ds-row-title, .ds-cell-title):is(a, [data-workspace-href])',
+  )
+  return title?.closest(itemContainers) === nearest ? title : null
+}
 
 function destination(event: MouseEvent | KeyboardEvent) {
   if (!(event.target instanceof Element)) return null
-  const control = event.target.closest(controls)
-  if (!control || control.matches(':disabled, [aria-disabled="true"]'))
+  const control = destinationControl(event.target)
+  if (!control || control.closest(':disabled, [aria-disabled="true"]'))
     return null
-  if (event.type === 'click' && control.matches('input, select, textarea'))
+  if ('button' in event && control.matches('input, select, textarea'))
     return null
 
+  const explicit = control.getAttribute('data-workspace-href')
   if (
-    control.matches(
-      'a[download], a[rel~="external"], a[target]:not([target=""], [target="_self" i])',
-    )
+    control.matches('a[download]') ||
+    (!explicit &&
+      control.matches(
+        'a[rel~="external"], a[target]:not([target=""], [target="_self" i])',
+      ))
   )
     return null
   const raw =
-    control.getAttribute('data-workspace-href') ??
-    (control.matches('a') ? control.getAttribute('href') : null)
+    explicit ?? (control.matches('a') ? control.getAttribute('href') : null)
   if (!raw) return null
   const href = resolveWorkspaceHref(raw, new URL(window.location.href))
   if (!href) return null
@@ -60,11 +75,21 @@ export function useWorkspaceTabGestures(
       if (!target) return
       event.preventDefault()
       event.stopPropagation()
-      if (!('repeat' in event && event.repeat)) open(target.href, target.label)
+      // Some controls select on press or focus. Wait for the completed click
+      // before opening, so a cancelled press leaves both tabs alone.
+      if (
+        event.type === 'click' ||
+        (event.type === 'keydown' && 'repeat' in event && !event.repeat)
+      )
+        open(target.href, target.label)
     }
+    document.addEventListener('pointerdown', onGesture, true)
+    document.addEventListener('mousedown', onGesture, true)
     document.addEventListener('click', onGesture, true)
     document.addEventListener('keydown', onGesture, true)
     return () => {
+      document.removeEventListener('pointerdown', onGesture, true)
+      document.removeEventListener('mousedown', onGesture, true)
       document.removeEventListener('click', onGesture, true)
       document.removeEventListener('keydown', onGesture, true)
     }

@@ -8,6 +8,7 @@ import {
 } from '@repo/schemas/match-diagnostics'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { useRailSlot } from '@/hooks/useRailSlot'
+import type { BrowseFilterHref } from '@/utils/browse-items'
 import {
   clearCreatorScope,
   type CreatorBrowseScope,
@@ -53,6 +54,9 @@ export default function TrackMatchesToolbar({
   onSort,
   onOpenItem,
   onAddFilter,
+  filterHref,
+  activeFilterHref,
+  searchHref,
   setParams,
   onColumnOrder,
   onResetOrder,
@@ -66,6 +70,9 @@ export default function TrackMatchesToolbar({
   onSort: (key: string) => void
   onOpenItem: (id: string, trigger?: HTMLElement) => void
   onAddFilter: (filter: BrowseFilter) => void
+  filterHref: BrowseFilterHref
+  activeFilterHref: BrowseFilterHref
+  searchHref: (value: string) => string
   setParams: SetParams
   onColumnOrder: (keys: string[]) => void
   onResetOrder?: () => void
@@ -108,6 +115,7 @@ export default function TrackMatchesToolbar({
         fields={fields}
         limitResults={limitResults}
         setParams={setParams}
+        filterHref={activeFilterHref}
       />
     </>
   ) : null
@@ -167,6 +175,8 @@ export default function TrackMatchesToolbar({
             queryIdentity={JSON.stringify(query)}
             onOpenItem={onOpenItem}
             onAddFilter={onAddFilter}
+            filterHref={filterHref}
+            searchHref={searchHref}
             setParams={setParams}
           />
         }

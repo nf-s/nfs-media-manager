@@ -5,7 +5,11 @@ import { Search, Sparkles } from 'lucide-react'
 import { FilterIndicator } from './filter-affordance'
 import type { BrowseFilter } from '@repo/schemas/browse'
 import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
-import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import type { BrowseFilterHref } from '@/utils/browse-items'
+import {
+  isWorkspaceTabGesture,
+  workspaceTabLinkProps,
+} from '@/utils/workspace-tab-destination'
 import {
   browseSuggestions,
   filterSuggestionNote,
@@ -26,6 +30,8 @@ export type BrowseFilterAutocompleteProps = {
   value: string
   onValueChange: (value: string) => void
   onAddFilter: (filter: BrowseFilter) => void
+  filterHref?: BrowseFilterHref
+  searchHref?: (value: string) => string
   onApplyText: (value: string) => void
   onOpenItem: (id: string, trigger: HTMLElement | undefined) => void
   inputActions?: ReactNode
@@ -81,6 +87,8 @@ export default function BrowseFilterAutocomplete({
   value,
   onValueChange,
   onAddFilter,
+  filterHref,
+  searchHref,
   onApplyText,
   onOpenItem,
   inputActions,
@@ -109,9 +117,23 @@ export default function BrowseFilterAutocomplete({
     !disabled &&
     (!textActionsOnly || menuOptions.length > 0)
   function workspaceProps(option: SearchMenuOption | undefined) {
-    if (!itemKind || option?.kind !== 'suggestion') return undefined
+    if (option?.kind === 'text' && searchHref) {
+      const text = value.trim()
+      return workspaceTabLinkProps(searchHref(text), text)
+    }
+    if (option?.kind !== 'suggestion') return undefined
     const suggestion = option.suggestion
-    if (suggestion.kind !== 'item') return undefined
+    if (suggestion.kind === 'filter')
+      return filterHref
+        ? workspaceTabLinkProps(
+            filterHref({
+              field: suggestion.filter.field,
+              value: suggestion.filter.value,
+            }),
+            suggestion.filter.label,
+          )
+        : undefined
+    if (!itemKind) return undefined
     return workspaceTabLinkProps(
       detailPageHref({ kind: itemKind, id: suggestion.item.id }),
       suggestion.item.title,
@@ -160,7 +182,12 @@ export default function BrowseFilterAutocomplete({
       <div className="ds-search" data-actions={inputActions ? '' : undefined}>
         <Search className="ds-i" data-size="sm" aria-hidden />
         <input
-          {...(menuVisible ? workspaceProps(menuOptions[active]) : undefined)}
+          {...(menuVisible
+            ? workspaceProps(
+                menuOptions[active] ??
+                  menuOptions.find((option) => option.kind === 'text'),
+              )
+            : undefined)}
           id={`${id}-input`}
           type="search"
           aria-label="Search and filter library"
@@ -205,6 +232,10 @@ export default function BrowseFilterAutocomplete({
               highlight(Math.max(-1, active - 1))
             }
             if (event.key === 'Enter') {
+              if (isWorkspaceTabGesture(event.nativeEvent)) {
+                event.preventDefault()
+                return
+              }
               event.preventDefault()
               const option = autocompleteEnterOption(menuOptions, activeKey)
               if (menuVisible && option) selectMenuOption(option)

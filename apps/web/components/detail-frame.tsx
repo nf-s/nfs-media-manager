@@ -11,6 +11,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@repo/ui/components/ui/tabs'
 import { formatCount } from '@repo/ui/lib/format'
 import { detailTab } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import {
   ratingDescription,
   ratingScore,
@@ -61,6 +62,19 @@ export type DetailTabItem<Tab extends string> = {
   count?: number
 }
 
+function detailTabParams(
+  params: URLSearchParams,
+  next: string,
+  first: string | undefined,
+  reset: readonly string[],
+) {
+  const view = new URLSearchParams(params)
+  if (next === first) view.delete('tab')
+  else view.set('tab', next)
+  for (const key of reset) view.delete(key)
+  return view
+}
+
 /**
  * The open tab, kept in the detail's URL state. The first tab is the default
  * and is left out of the URL; `aliases` maps older tab values so their links
@@ -78,16 +92,21 @@ export function useDetailTab<Tab extends string>(
 ) {
   const view = useDetailView()
   const tab = detailTab(view.params.get('tab'), tabs, aliases)
+  function paramsForTab(next: string) {
+    return next === tab
+      ? view.params
+      : detailTabParams(view.params, next, tabs[0], reset)
+  }
   function setTab(next: string) {
     const value = tabs.find((item) => item === next)
     if (!value || value === tab) return
-    const params = new URLSearchParams(view.params)
-    if (value === tabs[0]) params.delete('tab')
-    else params.set('tab', value)
-    for (const key of reset) params.delete(key)
-    view.replace(params)
+    view.replace(paramsForTab(value))
   }
-  return { tab, setTab }
+  return {
+    tab,
+    setTab,
+    tabHref: (next: Tab) => view.workspaceHref(paramsForTab(next)),
+  }
 }
 
 /** Underlined tabs below the detail header. Panels are `TabsContent` children. */
@@ -97,18 +116,37 @@ export function DetailTabs<Tab extends string>({
   value,
   onChange,
   children,
+  reset = [],
 }: {
   label: string
   tabs: readonly DetailTabItem<Tab>[]
   value: Tab
   onChange: (value: string) => void
   children: ReactNode
+  reset?: readonly string[]
 }) {
+  const view = useDetailView()
   return (
     <Tabs value={value} onValueChange={onChange} className="dtl-tabs">
       <TabsList aria-label={label}>
         {tabs.map((tab) => (
-          <TabsTrigger key={tab.value} value={tab.value}>
+          <TabsTrigger
+            key={tab.value}
+            value={tab.value}
+            {...workspaceTabLinkProps(
+              view.workspaceHref(
+                tab.value === value
+                  ? view.params
+                  : detailTabParams(
+                      view.params,
+                      tab.value,
+                      tabs[0]?.value,
+                      reset,
+                    ),
+              ),
+              tab.label,
+            )}
+          >
             {tab.label}
             {tab.count !== undefined && <Count>{formatCount(tab.count)}</Count>}
           </TabsTrigger>
@@ -151,6 +189,7 @@ export function FilterPill({
   mode,
   onClick,
   href,
+  workspaceHref,
   action,
 }: {
   label: string
@@ -159,6 +198,7 @@ export function FilterPill({
   mode?: BrowseFilter['mode']
   onClick?: (event: MouseEvent<HTMLButtonElement>) => void
   href?: string
+  workspaceHref?: string
   action?: ReactNode
 }) {
   const className = action ? 'browse-pill-action' : undefined
@@ -167,7 +207,15 @@ export function FilterPill({
       <PillLabel>{label}</PillLabel>
     </Link>
   ) : (
-    <button type="button" title={title} onClick={onClick} className={className}>
+    <button
+      type="button"
+      {...(workspaceHref
+        ? workspaceTabLinkProps(workspaceHref, label)
+        : undefined)}
+      title={title}
+      onClick={onClick}
+      className={className}
+    >
       <PillLabel>{label}</PillLabel>
     </button>
   )
@@ -221,20 +269,26 @@ export function ratingSource(rating: ProviderRating) {
  * A rating as a headline figure. It opens the page that supplied the score; a
  * provider's homepage is not that page, so it is not linked.
  */
-export function ratingStat(rating: ProviderRating): StatItem {
+export function ratingStat(
+  rating: ProviderRating,
+  workspaceHref: string,
+): StatItem {
   return {
     label: ratingSource(rating),
     value: ratingScore(rating),
     title: ratingDescription(rating),
     href: rating.homepageLink ? undefined : safeRatingHref(rating.href),
+    workspaceHref,
   }
 }
 
 /** One small card per rating: score and source, with the vote count on hover. */
 export function RatingCards({
   ratings,
+  ratingHref,
 }: {
   ratings: readonly ProviderRating[]
+  ratingHref: (rating: ProviderRating) => string
 }) {
   const scored = ratings.filter((rating) => rating.score !== undefined)
   if (!scored.length) return null
@@ -242,6 +296,10 @@ export function RatingCards({
     <div className="ds-ratings" role="list" aria-label="Ratings">
       {scored.map((rating) => {
         const href = safeRatingHref(rating.href)
+        const shortcut = workspaceTabLinkProps(
+          ratingHref(rating),
+          ratingSource(rating),
+        )
         const content = (
           <>
             <b>{ratingScore(rating)}</b>
@@ -251,6 +309,7 @@ export function RatingCards({
         return href ? (
           <a
             key={rating.key}
+            {...shortcut}
             role="listitem"
             className="ds-ratingcard"
             href={href}
@@ -263,6 +322,8 @@ export function RatingCards({
         ) : (
           <div
             key={rating.key}
+            {...shortcut}
+            tabIndex={0}
             role="listitem"
             className="ds-ratingcard"
             title={ratingDescription(rating)}

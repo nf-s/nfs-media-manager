@@ -16,13 +16,19 @@ export function useTagDetailParam(mediaType: 'album' | 'film') {
     // One task later the router follows them.
     const timer = window.setTimeout(() => {
       const next = new URLSearchParams(window.location.search)
+      const tab = next.get('tab')
       next.delete('tag')
+      next.delete('tab')
       window.history.replaceState(
         null,
         '',
         `${window.location.pathname}${next.size ? `?${next}` : ''}`,
       )
-      inspector.open({ kind: 'tag', id: tagDetailId(mediaType, selectedTagId) })
+      inspector.open({
+        kind: 'tag',
+        id: tagDetailId(mediaType, selectedTagId),
+        view: tab ? new URLSearchParams({ tab }).toString() : undefined,
+      })
     })
     return () => window.clearTimeout(timer)
   }, [selectedTagId, inspector, mediaType])

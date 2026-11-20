@@ -165,7 +165,11 @@ function mapTags(
       (left, right) =>
         rank(left) - rank(right) || left.tag.name.localeCompare(right.tag.name),
     )
-    .map((item) => ({ name: item.tag.name, kind: item.tag.kind }))
+    .map((item) => ({
+      id: item.tagId,
+      name: item.tag.name,
+      kind: item.tag.kind,
+    }))
 }
 
 /** The tags of each item that have an occurrence matching the condition, by item ID. */
@@ -241,7 +245,7 @@ function mapReferences(
 function mapPlaylists(items: CommonPlaylistItem[]): AlbumListItem['playlists'] {
   return items
     .map((item) => ({
-      ...(item.playlist.kind === 'collection' ? { id: item.playlist.id } : {}),
+      id: item.playlist.id,
       name: item.playlist.name,
       kind: item.playlist.kind,
       position: item.position,

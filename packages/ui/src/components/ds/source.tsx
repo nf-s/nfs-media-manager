@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 
 /**
@@ -16,6 +16,7 @@ export function SourceRow({
   actions,
   open,
   onToggle,
+  summaryProps,
   children,
 }: {
   mark: ReactNode
@@ -27,6 +28,7 @@ export function SourceRow({
   actions?: ReactNode
   open?: boolean
   onToggle?: (open: boolean) => void
+  summaryProps?: ComponentPropsWithoutRef<'summary'>
   children?: ReactNode
 }) {
   return (
@@ -35,7 +37,7 @@ export function SourceRow({
       open={open}
       onToggle={(event) => onToggle?.(event.currentTarget.open)}
     >
-      <summary>
+      <summary {...summaryProps}>
         <ChevronRight className="ds-i" aria-hidden />
         {mark}
         <span className="ds-source-main">

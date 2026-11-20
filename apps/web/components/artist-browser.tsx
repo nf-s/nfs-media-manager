@@ -1,11 +1,16 @@
 'use client'
 
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
 } from './detail-inspector-context'
-import { sameDetail, withoutDetailEntries } from '@/utils/detail-inspector'
+import {
+  detailPageHref,
+  sameDetail,
+  withoutDetailEntries,
+} from '@/utils/detail-inspector'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
@@ -61,6 +66,8 @@ import {
   withArtistFilter,
 } from '@/utils/artist-browse'
 import {
+  browseFilterHref,
+  browseSearchHref,
   columnOrderParam,
   hasCustomColumnOrder,
   formatFieldValue,
@@ -250,6 +257,10 @@ export default function ArtistBrowser() {
   function addFilter(filter: BrowseFilter, keepOpen = false) {
     const next = withArtistFilter(filters, filter)
     setParams({ filters: JSON.stringify(next) }, !keepOpen)
+  }
+  const browseHref = `/${collection}?${searchParams}`
+  function filterHref(filter: BrowseFilter) {
+    return browseFilterHref(browseHref, withArtistFilter(filters, filter))
   }
   function changeFilters(next: BrowseFilter[]) {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
@@ -454,6 +465,7 @@ export default function ArtistBrowser() {
       <BrowseTagBadges
         tags={textValues(getArtistBrowseValues(item).genre)}
         onFilter={addFilter}
+        filterHref={filterHref}
         max={max}
       />
     )
@@ -487,6 +499,10 @@ export default function ArtistBrowser() {
           {values.map((value) => (
             <Pill asChild key={value}>
               <button
+                {...workspaceTabLinkProps(
+                  filterHref({ field: field.key, value }),
+                  value,
+                )}
                 type="button"
                 title={`Filter ${field.label}: ${value}`}
                 onClick={() => addFilter({ field: field.key, value })}
@@ -536,12 +552,24 @@ export default function ArtistBrowser() {
     filters.length +
     ranges.length +
     (listening?.rules.length ?? 0)
+  const singlePlaylistId = playlistIds.length === 1 ? playlistIds[0] : undefined
   const filterPills =
     activeFilterCount > 0 ? (
       <>
         {playlistIds.length > 0 && (
           <BrowseFilterPill
             mode="required"
+            destination={
+              singlePlaylistId
+                ? {
+                    href: detailPageHref({
+                      kind: 'playlist',
+                      id: singlePlaylistId,
+                    }),
+                    label: 'Playlist',
+                  }
+                : undefined
+            }
             removeLabel="Remove playlist filter"
             onRemove={() => setParams({ playlistIds: null })}
           >
@@ -568,6 +596,7 @@ export default function ArtistBrowser() {
           filters={filters}
           fields={fields}
           onChange={changeFilters}
+          filterHref={(filter) => browseFilterHref(browseHref, [filter])}
         />
         {ranges.map((range) => {
           const field = fields.find((field) => field.key === range.field)
@@ -624,6 +653,9 @@ export default function ArtistBrowser() {
                 onFocus: facets.activate,
                 onValueChange: setDraft,
                 onAddFilter: addFilter,
+                filterHref,
+                searchHref: (value) =>
+                  browseSearchHref(browseHref, { q: value }),
                 onApplyText: (value) => {
                   setParams({ q: value || null })
                   setDraft('')

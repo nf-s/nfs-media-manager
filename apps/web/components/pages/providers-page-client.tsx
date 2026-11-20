@@ -30,6 +30,7 @@ import {
   queueStatus,
 } from '@/utils/provider-overview'
 import { useConfig } from '../providers'
+import { detailLocation } from '@/utils/detail-inspector'
 import { ProviderOverviewTable } from '../provider-overview-table'
 
 /** A provider that needs the owner, with the sentence that says why. */
@@ -85,16 +86,12 @@ export default function ProvidersPageClient() {
       connectionNeedsAction(item.connection) || queueBlocked(item.queue),
   )
   const attention = items.filter(providerNeedsAttention).length
-  function selectLibrary(value: string) {
-    const params = new URLSearchParams(window.location.search)
+  function libraryHref(value: string) {
+    const params = new URLSearchParams(search)
     const next = parseProviderLibrary(value)
     if (next) params.set('mediaType', next)
     else params.delete('mediaType')
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}${params.size ? `?${params}` : ''}`,
-    )
+    return detailLocation('/providers', params)
   }
   return (
     <section className="providers-overview" aria-label="Providers">
@@ -106,7 +103,13 @@ export default function ProvidersPageClient() {
         <Select
           aria-label="Library"
           value={library ?? ''}
-          onChange={(event) => selectLibrary(event.target.value)}
+          onChange={(event) =>
+            window.history.replaceState(
+              null,
+              '',
+              libraryHref(event.target.value),
+            )
+          }
         >
           {providerLibraryOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -141,8 +144,10 @@ export default function ProvidersPageClient() {
           <State
             title="No providers for this library"
             action={
-              <Button onClick={() => selectLibrary('')}>
-                Show all libraries
+              <Button asChild>
+                <Link href={libraryHref('')} replace scroll={false}>
+                  Show all libraries
+                </Link>
               </Button>
             }
           />

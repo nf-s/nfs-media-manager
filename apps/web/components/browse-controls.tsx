@@ -32,6 +32,7 @@ import {
 } from '@/utils/media-grid'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 import { formatTagName } from '@repo/schemas/tags'
+import type { BrowseFilterHref } from '@/utils/browse-items'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 
 const views = [
@@ -109,6 +110,7 @@ export function BrowseTagBadges({
   tags,
   artistTags,
   onFilter,
+  filterHref,
   className,
   max = 3,
   storedNames = false,
@@ -117,6 +119,7 @@ export function BrowseTagBadges({
   tags: string[]
   artistTags?: string[]
   onFilter: (filter: BrowseFilter) => void
+  filterHref?: BrowseFilterHref
   className?: string
   max?: number
   storedNames?: boolean
@@ -133,6 +136,10 @@ export function BrowseTagBadges({
     <Pills label="Tags" max={max} className={className}>
       {shown.map(({ name: tag, source }) => {
         const label = storedNames ? tag : formatTagName(tag)
+        const filter = {
+          field: source === 'artist' ? 'artistTag' : field,
+          value: tag,
+        }
         return (
           <Pill
             asChild
@@ -140,14 +147,14 @@ export function BrowseTagBadges({
             tone={source === 'artist' ? 'outline' : undefined}
           >
             <button
+              {...(filterHref
+                ? workspaceTabLinkProps(filterHref(filter), label)
+                : undefined)}
               type="button"
               title={`${source === 'artist' ? 'Artist tag' : 'Tag'}: ${label}`}
               onClick={(event) => {
                 event.stopPropagation()
-                onFilter({
-                  field: source === 'artist' ? 'artistTag' : field,
-                  value: tag,
-                })
+                onFilter(filter)
               }}
             >
               <PillLabel>{label}</PillLabel>
@@ -215,6 +222,13 @@ export function BrowseFilterPill({
           >
             <PillLabel>{children}</PillLabel>
           </button>
+        ) : destination ? (
+          <PillLabel
+            {...workspaceTabLinkProps(destination.href, destination.label)}
+            tabIndex={0}
+          >
+            {children}
+          </PillLabel>
         ) : (
           <PillLabel>{children}</PillLabel>
         )}
@@ -237,11 +251,13 @@ export function BrowseFilterChips({
   filters,
   fields,
   onChange,
+  filterHref,
   storedTagNames = false,
 }: {
   filters: BrowseFilter[]
   fields: BrowseField[]
   onChange: (filters: BrowseFilter[]) => void
+  filterHref?: BrowseFilterHref
   storedTagNames?: boolean
 }) {
   return filters.map((filter, index) => {
@@ -267,6 +283,9 @@ export function BrowseFilterChips({
         key={`${filter.field}:${filter.value}`}
         mode={filterPillMode(filter.mode)}
         title="Cycle Any / Required / Excluded"
+        destination={
+          filterHref ? { href: filterHref(filter), label: value } : undefined
+        }
         onActivate={() =>
           onChange(
             filters.map((item, i) =>

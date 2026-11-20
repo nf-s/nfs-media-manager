@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import {
   useInfiniteQuery,
   useMutation,
@@ -46,6 +46,7 @@ import {
   type SourceMatch,
 } from '@/utils/source-rows'
 import { providerLogoUrl } from '@/utils/provider-logos'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { DetailLink } from './detail-link'
 import { useDetailView } from './detail-inspector-context'
 import { useUnresolvedMatches, type FindMatchContext } from './find-match'
@@ -235,7 +236,16 @@ function SourceHistory({
   row: ProviderSourceRow
 }) {
   const { apiBaseUrl } = useConfig()
-  const [selectedSnapshot, setSelectedSnapshot] = useState<string | null>(null)
+  const view = useDetailView()
+  const selectedSnapshot = view.params.get('sourceSnapshot')
+  function snapshotParams(id: string | null) {
+    const params = new URLSearchParams(view.params)
+    params.set('sourceProvider', row.id)
+    params.set('sourceMode', 'history')
+    if (id) params.set('sourceSnapshot', id)
+    else params.delete('sourceSnapshot')
+    return params
+  }
   const snapshots = useInfiniteQuery({
     queryKey: ['history', scope.id, scope.kind, row.id, 'snapshot-list'],
     initialPageParam: 1,
@@ -321,10 +331,16 @@ function SourceHistory({
       link: (
         <span className="ds-actions">
           <Button
+            {...workspaceTabLinkProps(
+              view.workspaceHref(snapshotParams(snapshot.id)),
+              `${row.label} snapshot`,
+            )}
             size="xs"
             variant="link"
             aria-expanded={open}
-            onClick={() => setSelectedSnapshot(open ? null : snapshot.id)}
+            onClick={() =>
+              view.replace(snapshotParams(open ? null : snapshot.id))
+            }
           >
             {open ? 'Hide data' : 'Data'}
           </Button>
@@ -437,6 +453,7 @@ export function ProviderSources({
         }
       : null
   function setOpened(next: typeof opened) {
+    view.params.delete('sourceSnapshot')
     if (next) {
       view.params.set('sourceProvider', next.provider)
       view.params.set('sourceMode', next.type)
@@ -445,6 +462,17 @@ export function ProviderSources({
       view.params.set('sourceMode', 'closed')
     }
     view.replace(view.params)
+  }
+  function sourceShortcut(
+    row: ProviderSourceRow,
+    mode: 'history' | 'edit' | 'match',
+  ) {
+    const params = new URLSearchParams(view.params)
+    params.set('tab', 'sources')
+    params.set('sourceProvider', row.id)
+    params.set('sourceMode', mode)
+    params.delete('sourceSnapshot')
+    return workspaceTabLinkProps(view.workspaceHref(params), row.label)
   }
   const refreshable = Boolean(scope && rows.some((row) => row.refresh))
   const activeJobs = useQuery({
@@ -716,6 +744,7 @@ export function ProviderSources({
           return (
             <div role="listitem" key={row.id}>
               <SourceRow
+                summaryProps={sourceShortcut(row, 'history')}
                 open={open}
                 onToggle={(next) => {
                   if (next && !open)
@@ -759,6 +788,7 @@ export function ProviderSources({
                   <>
                     {findMatchAction && (
                       <Button
+                        {...sourceShortcut(row, 'match')}
                         size="xs"
                         aria-expanded={matching}
                         onClick={() => toggle(row, 'match')}
@@ -771,6 +801,7 @@ export function ProviderSources({
                         // opened row.
                         !findMatchAction && (
                           <Button
+                            {...sourceShortcut(row, 'edit')}
                             size="xs"
                             aria-expanded={editing}
                             onClick={() => toggle(row, 'edit')}
@@ -780,6 +811,7 @@ export function ProviderSources({
                         )
                       : row.editor && (
                           <Button
+                            {...sourceShortcut(row, 'edit')}
                             size="xs"
                             variant="ghost"
                             icon

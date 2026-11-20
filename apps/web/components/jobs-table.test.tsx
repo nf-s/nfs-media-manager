@@ -239,7 +239,7 @@ test('batches are one row with progress and the provider wait, and expand to the
   assert.match(html, /<tr data-group="">/)
   assert.match(
     html,
-    /aria-expanded="false" aria-label="Show jobs in Batch · 240 albums"/,
+    /aria-expanded="false"[^>]*data-workspace-href="\/jobs\?batchId=batch-1"[^>]*aria-label="Show jobs in Batch · 240 albums"/,
   )
   assert.match(html, /href="\/jobs\?batchId=batch-1"/)
   assert.match(html, /role="progressbar"[^>]*aria-valuenow="98"/)

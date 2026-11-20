@@ -8,6 +8,7 @@ import {
   type PersonDetail,
 } from '@repo/schemas/creators'
 import { fetchApiData } from '@/utils/api'
+import { detailPageHref } from '@/utils/detail-inspector'
 import {
   personRoleLabels,
   type CreatorBrowseScope,
@@ -50,6 +51,13 @@ export function CreatorScopeChip({
   return (
     <BrowseFilterPill
       mode="required"
+      destination={{
+        href: detailPageHref({
+          kind: film ? 'person' : 'artist',
+          id: creatorId,
+        }),
+        label: query.data?.name ?? label,
+      }}
       removeLabel={`Remove ${label.toLowerCase()} filter`}
       onRemove={onRemove}
     >

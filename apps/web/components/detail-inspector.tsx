@@ -77,7 +77,7 @@ const labels = {
 
 type InspectorOptions = {
   media?: Omit<ComponentProps<typeof MediaDetail>, 'id' | 'mediaType'>
-  track?: Pick<ComponentProps<typeof TrackDetail>, 'onFilter'>
+  track?: Pick<ComponentProps<typeof TrackDetail>, 'onFilter' | 'filterHref'>
   playlist?: Pick<ComponentProps<typeof PlaylistDetail>, 'filterTracks'>
   subscription?: Omit<
     ComponentProps<typeof SubscriptionItemDetails>,

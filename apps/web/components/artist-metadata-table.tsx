@@ -45,6 +45,8 @@ import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { fetchApiData } from '@/utils/api'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import { withArtistFilter } from '@/utils/artist-browse'
+import { browseFilterHref, browseSearchHref } from '@/utils/browse-items'
+import { embeddedBrowseHref } from '@/utils/embedded-browse'
 import {
   artistProviderLabel,
   supportsArtistEnrichment,
@@ -470,11 +472,13 @@ export default function ArtistMetadataTable({
     query.sortBy === 'lastScrapedAt'
       ? `provider-${query.provider}`
       : query.sortBy
+  const browseHref = embeddedBrowseHref('artists', {}, view.params)
   return (
     <div className="ops-fill">
       <MetadataSelectionToolbar
         disabled={pending}
         fields={artistBrowseFields}
+        filterHref={(filter) => browseFilterHref(browseHref, [filter])}
         value={{
           q,
           filters: query.filters,
@@ -532,6 +536,12 @@ export default function ArtistMetadataTable({
               value: draft,
               disabled: pending,
               onValueChange: setDraft,
+              filterHref: (filter) =>
+                browseFilterHref(
+                  browseHref,
+                  withArtistFilter(query.filters, filter),
+                ),
+              searchHref: (value) => browseSearchHref(browseHref, { q: value }),
               onAddFilter: (filter) => {
                 setParams({
                   filters: JSON.stringify(

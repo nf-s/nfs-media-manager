@@ -11,7 +11,12 @@ import {
   type CreatorBrowseScope,
 } from '@/utils/creator-browse'
 import { useDetailInspector } from './detail-inspector-context'
-import { sameDetail } from '@/utils/detail-inspector'
+import {
+  detailPageHref,
+  sameDetail,
+  tagDetailId,
+} from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 
 import Link from 'next/link'
 import {
@@ -25,6 +30,7 @@ import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { ListMusic } from 'lucide-react'
+import { normalizeTagName } from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
@@ -146,6 +152,8 @@ import {
   titleSuggestions,
 } from '@/utils/browse-suggestions'
 import {
+  browseFilterHref,
+  browseSearchHref,
   columnOrderParam,
   hasCustomColumnOrder,
   orderColumns,
@@ -522,11 +530,39 @@ function MediaBrowse({
       }
     }, close)
   }
-  function addFilter(filter: BrowseFilter, keepOpen = false) {
-    const next = filters.some((item) => sameBrowseFilter(item, filter))
+  function withFilter(filter: BrowseFilter) {
+    return filters.some((item) => sameBrowseFilter(item, filter))
       ? filters
       : [...filters, filter]
-    setParams({ filters: JSON.stringify(next) }, !keepOpen)
+  }
+  const browseHref = host.browseHref ?? `/${collection}?${searchParams}`
+  function filterHref(filter: BrowseFilter) {
+    return browseFilterHref(browseHref, withFilter(filter))
+  }
+  function itemFilterHref(item: MediaItem, filter: BrowseFilter) {
+    if (filter.field === 'genre' || filter.field === 'albumTag') {
+      const name = normalizeTagName(filter.value)
+      const matches = item.tags.filter(
+        (tag) => normalizeTagName(tag.name) === name,
+      )
+      const id = matches.length === 1 ? matches[0]?.id : undefined
+      if (id)
+        return detailPageHref({
+          kind: 'tag',
+          id: tagDetailId(mediaType, id),
+        })
+    }
+    if (filter.field === 'playlist') {
+      const matches = item.playlists.filter(
+        ({ kind, name }) => kind === 'playlist' && name === filter.value,
+      )
+      const id = matches.length === 1 ? matches[0]?.id : undefined
+      if (id) return detailPageHref({ kind: 'playlist', id })
+    }
+    return filterHref(filter)
+  }
+  function addFilter(filter: BrowseFilter, keepOpen = false) {
+    setParams({ filters: JSON.stringify(withFilter(filter)) }, !keepOpen)
   }
   function changeFilters(next: BrowseFilter[]) {
     setParams({ filters: next.length ? JSON.stringify(next) : null })
@@ -797,23 +833,30 @@ function MediaBrowse({
             ? 84
             : 110)
 
-  function filterValues(field: BrowseField, value: BrowseValues[string]) {
+  function filterValues(
+    item: MediaItem,
+    field: BrowseField,
+    value: BrowseValues[string],
+  ) {
     const values = Array.isArray(value)
       ? value
       : typeof value === 'string'
         ? [value]
         : []
-    if (values.length === 1)
+    const onlyValue = values.length === 1 ? values[0] : undefined
+    if (onlyValue !== undefined)
       return (
         <button
+          {...workspaceTabLinkProps(
+            itemFilterHref(item, { field: field.key, value: onlyValue }),
+            onlyValue,
+          )}
           type="button"
           className="browse-open"
-          onClick={() =>
-            addFilter({ field: field.key, value: values[0] ?? '' })
-          }
-          title={`Filter ${field.label}: ${values[0]}`}
+          onClick={() => addFilter({ field: field.key, value: onlyValue })}
+          title={`Filter ${field.label}: ${onlyValue}`}
         >
-          {values[0]}
+          {onlyValue}
         </button>
       )
     return (
@@ -821,6 +864,10 @@ function MediaBrowse({
         {values.map((value) => (
           <Pill asChild key={value}>
             <button
+              {...workspaceTabLinkProps(
+                itemFilterHref(item, { field: field.key, value }),
+                value,
+              )}
               type="button"
               onClick={() => addFilter({ field: field.key, value })}
               title={`Filter ${field.label}: ${value}`}
@@ -835,7 +882,13 @@ function MediaBrowse({
 
   function renderValue(item: MediaItem, field: BrowseField) {
     if (field.key === 'collection')
-      return <CollectionLinks item={item} mediaType={item.mediaType} />
+      return (
+        <CollectionLinks
+          item={item}
+          mediaType={item.mediaType}
+          filterHref={filterHref}
+        />
+      )
     const values = getBrowseValues(item)
     const value = values[field.key]
     if (['artist', 'director', 'actor', 'writer'].includes(field.key))
@@ -843,6 +896,7 @@ function MediaBrowse({
         <CreatorLinks
           creators={item.credits.filter((credit) => credit.role === field.key)}
           kind={field.key === 'artist' ? 'artist' : 'person'}
+          fallbackHref={(value) => filterHref({ field: field.key, value })}
         />
       ) : (
         <EmptyValue />
@@ -864,6 +918,7 @@ function MediaBrowse({
           tags={tags}
           artistTags={artistTags}
           onFilter={addFilter}
+          filterHref={(filter) => itemFilterHref(item, filter)}
           max={2}
         />
       ) : (
@@ -880,7 +935,7 @@ function MediaBrowse({
       )
     }
     if (field.type === 'text' && field.filterable && field.key !== 'title')
-      return filterValues(field, value)
+      return filterValues(item, field, value)
     if (field.key === 'runtimeMinutes' && typeof value === 'number')
       return formatRuntime(value)
     return formatBrowseValue(field, value)
@@ -967,6 +1022,7 @@ function MediaBrowse({
       <CreatorLinks
         creators={credits}
         kind={item.mediaType === 'album' ? 'artist' : 'person'}
+        fallbackHref={(value) => filterHref({ field: role, value })}
       />
     ) : null
   }
@@ -1106,6 +1162,7 @@ function MediaBrowse({
         filters={filters}
         fields={fields}
         onChange={changeFilters}
+        filterHref={(filter) => browseFilterHref(browseHref, [filter])}
       />
       {ranges.map((range) => {
         const field = fields.find((field) => field.key === range.field)
@@ -1212,6 +1269,9 @@ function MediaBrowse({
                 onFocus: facets.activate,
                 onValueChange: setDraft,
                 onAddFilter: addFilter,
+                filterHref,
+                searchHref: (value) =>
+                  browseSearchHref(browseHref, { q: value }),
                 onApplyText: (value) => {
                   setParams({ q: value || null })
                   setDraft('')
@@ -1588,6 +1648,9 @@ function MediaBrowse({
                                 : undefined
                             }
                             onFilter={addFilter}
+                            filterHref={(filter) =>
+                              itemFilterHref(item, filter)
+                            }
                             max={mediaType === 'film' ? 1 : 2}
                           />
                         ) : undefined
@@ -1672,6 +1735,9 @@ function MediaBrowse({
                                 : undefined
                             }
                             onFilter={addFilter}
+                            filterHref={(filter) =>
+                              itemFilterHref(item, filter)
+                            }
                             max={3}
                           />
                         }
@@ -1816,6 +1882,8 @@ function MediaBrowse({
           media={{
             onFilter:
               inspector?.active?.kind === mediaType ? addFilter : undefined,
+            filterHref:
+              inspector?.active?.kind === mediaType ? filterHref : undefined,
             onFiltersChange:
               inspector?.active?.kind === mediaType ? changeFilters : undefined,
             highlightField:

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TrackPositionsQuerySchema, TrackQuerySchema } from '../src/tracks'
+import { TagSchema } from '../src/common'
 import {
   buildAlbumBrowseFilterLabel,
   buildFilmBrowseFilterLabel,
@@ -11,6 +12,13 @@ import {
 } from '../src/media'
 
 describe('browse filter helpers', () => {
+  it('keeps name-only media tags valid alongside tags with a canonical ID', () => {
+    const legacy = { name: 'Example tag', kind: 'genre' }
+    const stored = { id: 'example-tag', ...legacy }
+    expect(TagSchema.parse(legacy)).toEqual(legacy)
+    expect(TagSchema.parse(stored)).toEqual(stored)
+  })
+
   it('keeps recording grouping opt-in for API and playback queries', () => {
     expect(TrackQuerySchema.parse({}).groupRecordings).toBeUndefined()
     expect(

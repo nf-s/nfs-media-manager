@@ -42,6 +42,7 @@ import {
   subscriptionsHref,
   subscriptionTypeFilter,
 } from '@/utils/subscriptions'
+import type { BrowseFilterHref } from '@/utils/browse-items'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
@@ -55,11 +56,13 @@ export function SubscriptionItemDetails({
   library = 'subscriptions',
   initialItem,
   onFilter,
+  filterHref = (filter) => subscriptionsHref([filter], library),
 }: {
   id: string
   library?: SubscriptionLibrary
   initialItem?: SubscriptionItem
   onFilter?: (filter: BrowseFilter) => void
+  filterHref?: BrowseFilterHref
 }) {
   const { apiBaseUrl } = useConfig()
   const router = useRouter()
@@ -81,6 +84,7 @@ export function SubscriptionItemDetails({
     return (
       <ItemDetails
         item={query.data}
+        filterHref={filterHref}
         onFilter={
           onFilter ??
           ((filter) => router.push(subscriptionsHref([filter], library)))
@@ -137,14 +141,22 @@ function WatchedButton({ item }: { item: SubscriptionItem }) {
 function ItemDetails({
   item,
   onFilter,
+  filterHref,
 }: {
   item: SubscriptionItem
   onFilter: (filter: BrowseFilter) => void
+  filterHref: BrowseFilterHref
 }) {
   const { tab, setTab } = useDetailTab(itemTabs)
   if (item.type !== 'youtube' && item.type !== 'spotify')
     return (
-      <MixDetails item={item} onFilter={onFilter} tab={tab} setTab={setTab} />
+      <MixDetails
+        item={item}
+        onFilter={onFilter}
+        filterHref={filterHref}
+        tab={tab}
+        setTab={setTab}
+      />
     )
   const typeLabel = subscriptionTypeLabels[item.type]
   const provider = item.type === 'youtube' ? 'YouTube' : 'Spotify'
@@ -248,6 +260,7 @@ function ItemDetails({
                   <FilterPill
                     key={tag}
                     label={tag}
+                    workspaceHref={filterHref({ field: 'genre', value: tag })}
                     title={`Filter Tags: ${tag}`}
                     onClick={() => onFilter({ field: 'genre', value: tag })}
                   />
@@ -303,10 +316,12 @@ function MixArtistPill({
   name,
   item,
   onFilter,
+  filterHref,
 }: {
   name: string
   item: MixItem
   onFilter: (filter: BrowseFilter) => void
+  filterHref: BrowseFilterHref
 }) {
   const key = name.toLocaleLowerCase()
   const artist = item.libraryArtists.find(
@@ -324,6 +339,7 @@ function MixArtistPill({
     <FilterPill
       label={name}
       title={`Filter Artist: ${name}`}
+      workspaceHref={filterHref({ field: 'artist', value: name })}
       onClick={() => onFilter({ field: 'artist', value: name })}
     />
   )
@@ -333,11 +349,13 @@ function MixArtistPill({
 function MixDetails({
   item,
   onFilter,
+  filterHref,
   tab,
   setTab,
 }: {
   item: MixItem
   onFilter: (filter: BrowseFilter) => void
+  filterHref: BrowseFilterHref
   tab: ItemTab
   setTab: (tab: string) => void
 }) {
@@ -419,6 +437,7 @@ function MixDetails({
                     name={name}
                     item={item}
                     onFilter={onFilter}
+                    filterHref={filterHref}
                   />
                 ))}
               </span>
@@ -436,6 +455,7 @@ function MixDetails({
                   <FilterPill
                     key={tag}
                     label={tag}
+                    workspaceHref={filterHref({ field: 'genre', value: tag })}
                     title={`Filter Tags: ${tag}`}
                     onClick={() => onFilter({ field: 'genre', value: tag })}
                   />
@@ -454,6 +474,9 @@ function MixDetails({
                   value: (
                     <FilterPill
                       label={station}
+                      workspaceHref={filterHref(
+                        subscriptionTypeFilter(item.type),
+                      )}
                       title={`Filter Station: ${station}`}
                       onClick={() =>
                         onFilter(subscriptionTypeFilter(item.type))

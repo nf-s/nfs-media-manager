@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import type {
   ProviderOverviewItem,
   ProviderSummary,
@@ -228,13 +229,26 @@ function ProviderOverviewRow({
           </span>
         </TableCell>
         <TableCell>
-          <Status state={connection.state} title={connection.title}>
+          <Status
+            state={connection.state}
+            title={connection.title}
+            tabIndex={0}
+            {...workspaceTabLinkProps(
+              providerHref(item.id, 'settings'),
+              item.name,
+            )}
+          >
             {connection.label}
           </Status>
         </TableCell>
         <TableCell>
           <span className="ds-cell-two">
-            <Status state={queue.state} title={queue.title}>
+            <Status
+              state={queue.state}
+              title={queue.title}
+              tabIndex={0}
+              {...workspaceTabLinkProps(providerJobsHref(item.id), item.name)}
+            >
               {queue.label}
             </Status>
             {item.queue.detail && (

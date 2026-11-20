@@ -32,6 +32,8 @@ import {
 } from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { spotifyTrackUri } from '@/utils/album-links'
+import { browseFilterHref, browseSearchHref } from '@/utils/browse-items'
+import { embeddedBrowseHref } from '@/utils/embedded-browse'
 import {
   clearCreatorScope,
   parseCreatorBrowseScope,
@@ -230,6 +232,14 @@ export default function TrackMetadataTable({
   function addFilter(filter: BrowseFilter) {
     setParams({ filters: JSON.stringify(withTrackFilter(filters, filter)) })
   }
+  const browseHref = embeddedBrowseHref(
+    'tracks',
+    { ...creator },
+    new URLSearchParams(params),
+  )
+  function filterHref(filter: BrowseFilter) {
+    return browseFilterHref(browseHref, withTrackFilter(filters, filter))
+  }
   function sort(key: string) {
     setParams({
       sortBy: key,
@@ -282,6 +292,7 @@ export default function TrackMetadataTable({
         disabled={pending}
         fields={fields}
         value={{ q, filters, ranges, limitResults, listening }}
+        filterHref={(filter) => browseFilterHref(browseHref, [filter])}
         providerFilters={filterChips}
         onChange={(next) =>
           setParams({
@@ -317,6 +328,8 @@ export default function TrackMetadataTable({
               inspector?.open({ kind: 'track', id }, trigger)
             }
             onAddFilter={addFilter}
+            filterHref={filterHref}
+            searchHref={(value) => browseSearchHref(browseHref, { q: value })}
             setParams={setParams}
             disabled={pending}
           />
@@ -544,6 +557,7 @@ export default function TrackMetadataTable({
                               track={track}
                               field={field}
                               onFilter={addFilter}
+                              filterHref={filterHref}
                             />
                           )}
                         </TableCell>

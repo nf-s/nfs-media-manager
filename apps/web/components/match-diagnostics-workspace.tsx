@@ -41,6 +41,8 @@ import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { fetchApiData } from '@/utils/api'
 import { defaultColumnWidth } from '@/utils/column-widths'
 import {
+  browseFilterHref,
+  browseSearchHref,
   columnOrderParam,
   formatFieldValue,
   hasCustomColumnOrder,
@@ -661,6 +663,16 @@ export default function MatchDiagnosticsWorkspace({
     const next = withTrackFilter(trackQuery.filters, filter)
     setTrackParams({ filters: JSON.stringify(next) }, !keepOpen)
   }
+  const browseHref = `${path}?${params}`
+  const filteredBrowseHref = browseSearchHref(browseHref, {
+    playability: trackQuery.playability ?? 'all',
+  })
+  function trackFilterHref(filter: BrowseFilter) {
+    return browseFilterHref(
+      filteredBrowseHref,
+      withTrackFilter(trackQuery.filters, filter),
+    )
+  }
 
   function sort(key: string) {
     if (tracks) {
@@ -727,6 +739,7 @@ export default function MatchDiagnosticsWorkspace({
           track={item.track}
           field={column.browseField}
           onFilter={addTrackFilter}
+          filterHref={trackFilterHref}
         />
       )
     if (column.key === 'creator' || column.key === 'artist')
@@ -817,6 +830,11 @@ export default function MatchDiagnosticsWorkspace({
             inspector?.open({ kind: 'track', id }, trigger)
           }
           onAddFilter={addTrackFilter}
+          filterHref={trackFilterHref}
+          activeFilterHref={(filter) =>
+            browseFilterHref(filteredBrowseHref, [filter])
+          }
+          searchHref={(value) => browseSearchHref(browseHref, { q: value })}
           setParams={setTrackParams}
           onColumnOrder={(keys) =>
             setTrackParams({ columnOrder: columnOrderParam(keys, columns) })

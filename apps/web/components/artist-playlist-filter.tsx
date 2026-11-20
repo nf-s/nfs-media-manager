@@ -11,6 +11,8 @@ import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { formatItemCount } from '@repo/ui/lib/format'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
+import { detailPageHref } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useDetailView } from './detail-inspector-context'
 import { useConfig } from './providers'
 import { SecondaryHeaderFilter, SecondaryTableSearch } from './secondary-table'
@@ -140,6 +142,10 @@ function ArtistPlaylistChoices({
             return (
               <Pill asChild mode="required" key={id}>
                 <button
+                  {...workspaceTabLinkProps(
+                    detailPageHref({ kind: 'playlist', id }),
+                    title,
+                  )}
                   type="button"
                   aria-label={`Remove playlist filter: ${title}`}
                   title={title}

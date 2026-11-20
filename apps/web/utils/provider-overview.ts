@@ -1,3 +1,4 @@
+import type { JobStatusFilter } from '@repo/schemas/job'
 import { queryOptions } from '@tanstack/react-query'
 import {
   ProviderLibrarySchema,
@@ -8,6 +9,7 @@ import {
 import type { StatusState } from '@repo/ui/components/ds/status'
 import { formatUntil } from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
+import { detailLocation } from './detail-inspector'
 
 export type ProviderLibrary = ProviderOverviewItem['roles'][number]
 export type ProviderLibraryFilter = Exclude<ProviderLibrary, 'account'>
@@ -62,9 +64,16 @@ export function providerOverviewQuery(
   })
 }
 
-export function providerHref(id: string, tab: ProviderTab = 'overview') {
+export function providerHref(
+  id: string,
+  tab: ProviderTab = 'overview',
+  search = '',
+) {
   const path = `/providers/${encodeURIComponent(id)}`
-  return tab === 'overview' ? path : `${path}?tab=${tab}`
+  const params = new URLSearchParams(search)
+  if (tab === 'overview') params.delete('tab')
+  else params.set('tab', tab)
+  return detailLocation(path, params)
 }
 
 export function parseProviderTab(value: string | null): ProviderTab {
@@ -72,10 +81,7 @@ export function parseProviderTab(value: string | null): ProviderTab {
 }
 
 /** The Jobs page filtered to one provider and, optionally, one status. */
-export function providerJobsHref(
-  id: string,
-  status?: 'queued' | 'running' | 'attention',
-) {
+export function providerJobsHref(id: string, status?: JobStatusFilter) {
   const params = new URLSearchParams({ provider: id })
   if (status) params.set('status', status)
   return `/jobs?${params}`
@@ -107,8 +113,8 @@ export function providerPurpose(item: ProviderOverviewItem) {
   )
 }
 
-export function providerRoleLabels(item: ProviderOverviewItem) {
-  return item.roles.map((role) => roleLabels[role])
+export function providerRoleLabel(role: ProviderLibrary) {
+  return roleLabels[role]
 }
 
 type StatusView = { state: StatusState; label: string; title?: string }

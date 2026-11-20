@@ -3,12 +3,23 @@
 import type { BrowseField, BrowseFilter } from '@repo/schemas/browse'
 import { getTrackBrowseValues, type TrackListItem } from '@repo/schemas/tracks'
 import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
-import { formatFieldValue, textValues } from '@/utils/browse-items'
+import {
+  formatFieldValue,
+  textValues,
+  type BrowseFilterHref,
+} from '@/utils/browse-items'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { BrowseTagBadges } from './browse-controls'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 
-export function TrackBrowseAlbum({ track }: { track: TrackListItem }) {
+export function TrackBrowseAlbum({
+  track,
+  filterHref,
+}: {
+  track: TrackListItem
+  filterHref?: BrowseFilterHref
+}) {
   if (track.album)
     return (
       <DetailLink
@@ -20,7 +31,19 @@ export function TrackBrowseAlbum({ track }: { track: TrackListItem }) {
       </DetailLink>
     )
   return track.albumName ? (
-    <span className="ds-muted" title="Not in the album library">
+    <span
+      {...(filterHref
+        ? {
+            ...workspaceTabLinkProps(
+              filterHref({ field: 'album', value: track.albumName }),
+              track.albumName,
+            ),
+            tabIndex: 0,
+          }
+        : undefined)}
+      className="ds-muted"
+      title="Not in the album library"
+    >
       {track.albumName}
     </span>
   ) : null
@@ -30,10 +53,12 @@ export function TrackBrowseTags({
   track,
   field = 'genre',
   onFilter,
+  filterHref,
 }: {
   track: TrackListItem
   field?: string
   onFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
+  filterHref?: BrowseFilterHref
 }) {
   return (
     <BrowseTagBadges
@@ -41,6 +66,7 @@ export function TrackBrowseTags({
       tags={field === 'artistTag' ? track.artistTags : track.albumTags}
       artistTags={field === 'genre' ? track.artistTags : undefined}
       onFilter={onFilter}
+      filterHref={filterHref}
       max={2}
     />
   )
@@ -50,15 +76,27 @@ export function TrackBrowseValue({
   track,
   field,
   onFilter,
+  filterHref,
 }: {
   track: TrackListItem
   field: BrowseField
   onFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
+  filterHref?: BrowseFilterHref
 }) {
-  if (field.key === 'artist') return <TrackArtistLinks track={track} />
+  if (field.key === 'artist')
+    return (
+      <TrackArtistLinks
+        track={track}
+        fallbackHref={
+          filterHref
+            ? (value) => filterHref({ field: 'artist', value })
+            : undefined
+        }
+      />
+    )
   if (field.key === 'album')
     return track.album || track.albumName ? (
-      <TrackBrowseAlbum track={track} />
+      <TrackBrowseAlbum track={track} filterHref={filterHref} />
     ) : (
       <EmptyValue />
     )
@@ -83,7 +121,12 @@ export function TrackBrowseValue({
   const value = getTrackBrowseValues(track)[field.key]
   if (['genre', 'albumTag', 'artistTag'].includes(field.key))
     return textValues(value).length ? (
-      <TrackBrowseTags track={track} field={field.key} onFilter={onFilter} />
+      <TrackBrowseTags
+        track={track}
+        field={field.key}
+        onFilter={onFilter}
+        filterHref={filterHref}
+      />
     ) : (
       <EmptyValue />
     )
@@ -95,6 +138,12 @@ export function TrackBrowseValue({
         {values.map((value) => (
           <Pill asChild key={value}>
             <button
+              {...(filterHref
+                ? workspaceTabLinkProps(
+                    filterHref({ field: field.key, value }),
+                    value,
+                  )
+                : undefined)}
               type="button"
               title={`Filter ${field.label}: ${value}`}
               onClick={() => onFilter({ field: field.key, value })}

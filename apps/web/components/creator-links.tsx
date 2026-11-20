@@ -3,17 +3,25 @@
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { Fragment } from 'react'
 import { Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { DetailLink } from './detail-link'
 
 export function CreatorLinks({
   creators,
   kind,
   pills = false,
+  fallbackHref,
 }: {
   creators: Array<{ id: string | null; name: string }>
   kind: 'artist' | 'person'
   pills?: boolean
+  fallbackHref?: (name: string) => string
 }) {
+  function fallbackProps(name: string) {
+    return fallbackHref
+      ? { ...workspaceTabLinkProps(fallbackHref(name), name), tabIndex: 0 }
+      : undefined
+  }
   if (pills)
     return (
       <Pills wrap>
@@ -29,7 +37,7 @@ export function CreatorLinks({
               </DetailLink>
             </Pill>
           ) : (
-            <Pill size="md" key={creator.name}>
+            <Pill size="md" key={creator.name} {...fallbackProps(creator.name)}>
               {creator.name}
             </Pill>
           ),
@@ -51,7 +59,7 @@ export function CreatorLinks({
               {creator.name}
             </DetailLink>
           ) : (
-            <span>{creator.name}</span>
+            <span {...fallbackProps(creator.name)}>{creator.name}</span>
           )}
         </Fragment>
       ))}
@@ -62,13 +70,22 @@ export function CreatorLinks({
 export function TrackArtistLinks({
   track,
   pills = false,
+  fallbackHref,
 }: {
   track: Pick<TrackListItem, 'artists' | 'artistCredits'>
   pills?: boolean
+  fallbackHref?: (name: string) => string
 }) {
   const creators = track.artists.map((name) => ({
     id: track.artistCredits.find((credit) => credit.name === name)?.id ?? null,
     name,
   }))
-  return <CreatorLinks creators={creators} kind="artist" pills={pills} />
+  return (
+    <CreatorLinks
+      creators={creators}
+      kind="artist"
+      pills={pills}
+      fallbackHref={fallbackHref}
+    />
+  )
 }

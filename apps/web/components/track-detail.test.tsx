@@ -145,7 +145,17 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
     html,
     /by <span class="inline-values"><a[^>]*href="\/artists\/fixture-artist">Example artist<\/a>/,
   )
-  assert.match(html, /<\/span> · on Recorded album<\/div>/)
+  const recordedAlbum =
+    /<\/span> · on <span data-workspace-href="([^"]+)"[^>]*tabindex="0">Recorded album<\/span><\/div>/.exec(
+      html,
+    )?.[1]
+  assert.ok(recordedAlbum)
+  const albumFilter = new URL(recordedAlbum, 'http://localhost')
+  assert.equal(albumFilter.pathname, '/tracks')
+  assert.deepEqual(
+    JSON.parse(albumFilter.searchParams.get('filters') ?? '[]'),
+    [{ field: 'album', value: 'Recorded album' }],
+  )
   const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],
   )

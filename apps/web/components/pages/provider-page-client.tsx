@@ -34,14 +34,16 @@ import {
   activeCooldownUntil,
   connectionStatus,
   parseProviderTab,
+  providerHref,
   providerJobsHref,
   providerOverviewQuery,
-  providerRoleLabels,
+  providerRoleLabel,
   queueBlocked,
   queueStatus,
   runsOnLabel,
   type ProviderTab,
 } from '@/utils/provider-overview'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { providerLogoUrl } from '@/utils/provider-logos'
 import { useConfig } from '../providers'
 import { JobsTable } from '../jobs-table'
@@ -195,16 +197,11 @@ function ProviderDetail({
     staleTime: 0,
     refetchInterval: 10000,
   })
+  function tabHref(value: ProviderTab) {
+    return providerHref(id, value, search.toString())
+  }
   function openTab(value: string) {
-    const next = parseProviderTab(value)
-    const params = new URLSearchParams(window.location.search)
-    if (next === 'overview') params.delete('tab')
-    else params.set('tab', next)
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}${params.size ? `?${params}` : ''}`,
-    )
+    window.history.replaceState(null, '', tabHref(parseProviderTab(value)))
   }
   const safetyCooldown =
     provider.safety?.cooldownUntil &&
@@ -230,13 +227,29 @@ function ProviderDetail({
         title={provider.displayName}
         facts={[
           queue && (
-            <Status state={queue.state} title={queue.title}>
+            <Status
+              state={queue.state}
+              title={queue.title}
+              tabIndex={0}
+              {...workspaceTabLinkProps(
+                providerJobsHref(provider.id),
+                provider.displayName,
+              )}
+            >
               {queue.label}
             </Status>
           ),
           provider.description,
           connection && (
-            <Status state={connection.state} title={connection.title}>
+            <Status
+              state={connection.state}
+              title={connection.title}
+              tabIndex={0}
+              {...workspaceTabLinkProps(
+                tabHref('settings'),
+                provider.displayName,
+              )}
+            >
               {connection.label}
             </Status>
           ),
@@ -276,11 +289,30 @@ function ProviderDetail({
       />
       <Tabs value={tab} onValueChange={openTab} className="providers-tabs">
         <TabsList aria-label="Provider sections">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="jobs">
+          <TabsTrigger
+            value="overview"
+            {...workspaceTabLinkProps(
+              tabHref('overview'),
+              provider.displayName,
+            )}
+          >
+            Overview
+          </TabsTrigger>
+          <TabsTrigger
+            value="jobs"
+            {...workspaceTabLinkProps(tabHref('jobs'), provider.displayName)}
+          >
             Jobs {active > 0 && <Count>{formatCount(active)}</Count>}
           </TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger
+            value="settings"
+            {...workspaceTabLinkProps(
+              tabHref('settings'),
+              provider.displayName,
+            )}
+          >
+            Settings
+          </TabsTrigger>
         </TabsList>
         <div className="providers-notices">
           {item && (
@@ -289,7 +321,7 @@ function ProviderDetail({
               tab={tab}
               cooldown={cooldown}
               dispatch={dispatch}
-              onOpenSettings={() => openTab('settings')}
+              settingsHref={tabHref('settings')}
             />
           )}
           {provider.safety?.halted &&
@@ -333,7 +365,7 @@ function ProviderDetail({
               {jobs.data && (
                 <ProviderJobSummary
                   summary={jobs.data}
-                  onOpenJobs={() => openTab('jobs')}
+                  jobsHref={tabHref('jobs')}
                 />
               )}
               <ProviderRequests provider={provider} />
@@ -346,13 +378,15 @@ function ProviderDetail({
                 item={item}
                 loading={overviewLoading}
                 dispatch={dispatch}
-                onEdit={() => openTab('settings')}
+                settingsHref={tabHref('settings')}
               />
               <Section
                 title="Credentials"
                 aside={
-                  <Button variant="link" onClick={() => openTab('settings')}>
-                    Edit
+                  <Button variant="link" asChild>
+                    <Link href={tabHref('settings')} replace scroll={false}>
+                      Edit
+                    </Link>
                   </Button>
                 }
               >
@@ -362,6 +396,11 @@ function ProviderDetail({
                       label: field.label,
                       value: (
                         <Status
+                          tabIndex={0}
+                          {...workspaceTabLinkProps(
+                            tabHref('settings'),
+                            provider.displayName,
+                          )}
                           state={
                             field.configured
                               ? 'done'
@@ -384,8 +423,18 @@ function ProviderDetail({
               {item && item.roles.length > 0 && (
                 <Section title="Supplies">
                   <Pills wrap label="Supplies">
-                    {providerRoleLabels(item).map((label) => (
-                      <Pill key={label}>{label}</Pill>
+                    {item.roles.map((role) => (
+                      <Pill
+                        key={role}
+                        tabIndex={0}
+                        {...workspaceTabLinkProps(
+                          role === 'account'
+                            ? '/user'
+                            : `/providers?mediaType=${role}`,
+                        )}
+                      >
+                        {providerRoleLabel(role)}
+                      </Pill>
                     ))}
                   </Pills>
                 </Section>
@@ -453,13 +502,13 @@ function WaitingNotice({
   tab,
   cooldown,
   dispatch,
-  onOpenSettings,
+  settingsHref,
 }: {
   item: ProviderOverviewItem
   tab: ProviderTab
   cooldown: ProviderCooldown
   dispatch: ProviderDispatch
-  onOpenSettings: () => void
+  settingsHref: string
 }) {
   const { queue } = item
   if (
@@ -491,8 +540,10 @@ function WaitingNotice({
         {dispatch.resumeLabel}
       </Button>
     ) : settings && tab !== 'settings' ? (
-      <Button size="xs" onClick={onOpenSettings}>
-        Open settings
+      <Button size="xs" asChild>
+        <Link href={settingsHref} replace scroll={false}>
+          Open settings
+        </Link>
       </Button>
     ) : undefined
   const parts = [
@@ -525,13 +576,13 @@ function QueueSection({
   item,
   loading,
   dispatch,
-  onEdit,
+  settingsHref,
 }: {
   provider: ProviderSummary
   item: ProviderOverviewItem | undefined
   loading: boolean
   dispatch: ProviderDispatch
-  onEdit: () => void
+  settingsHref: string
 }) {
   const queue = item ? queueStatus(item.queue) : null
   const dispatcher = dispatchStateLabel(dispatch)
@@ -540,8 +591,10 @@ function QueueSection({
       title="Queue"
       flush
       aside={
-        <Button variant="link" onClick={onEdit}>
-          Edit limits
+        <Button variant="link" asChild>
+          <Link href={settingsHref} replace scroll={false}>
+            Edit limits
+          </Link>
         </Button>
       }
     >
@@ -555,7 +608,15 @@ function QueueSection({
                   {
                     label: 'State',
                     value: (
-                      <Status state={queue.state} title={queue.title}>
+                      <Status
+                        state={queue.state}
+                        title={queue.title}
+                        tabIndex={0}
+                        {...workspaceTabLinkProps(
+                          providerJobsHref(provider.id),
+                          provider.displayName,
+                        )}
+                      >
                         {queue.label}
                       </Status>
                     ),

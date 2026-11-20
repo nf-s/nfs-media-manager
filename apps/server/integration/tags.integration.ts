@@ -200,6 +200,7 @@ describe('temporary Postgres tag provenance and media-scoped merges', () => {
     await applyTags('hidden-film', [token])
     await applyTags('hidden-album', [token], 'tmdb', 'album')
     const original = await findTag(token.name)
+    const albumTag = await findTag(token.name, token.kind, 'album')
     await databaseClient.insert(schema.tag).values({
       id: 'hidden-cross-kind',
       mediaType: 'film',
@@ -259,7 +260,7 @@ describe('temporary Postgres tag provenance and media-scoped merges', () => {
     ).toEqual(hiddenPage.items)
     expect((await getFilmDetail('hidden-film'))?.tags).toEqual([])
     expect((await getAlbumDetail('hidden-album'))?.tags).toEqual([
-      { name: token.name, kind: token.kind },
+      { id: albumTag.id, name: token.name, kind: token.kind },
     ])
     expect(
       (await listFilms(FilmQuerySchema.parse({ q: 'hidden-film' }))).items.find(
@@ -270,7 +271,7 @@ describe('temporary Postgres tag provenance and media-scoped merges', () => {
       (
         await listAlbums(AlbumQuerySchema.parse({ q: 'hidden-album' }))
       ).items.find((item) => item.id === 'hidden-album')?.tags,
-    ).toEqual([{ name: token.name, kind: token.kind }])
+    ).toEqual([{ id: albumTag.id, name: token.name, kind: token.kind }])
     const mediaTypes: Array<'film' | 'album'> = ['film', 'album']
     for (const mediaType of mediaTypes) {
       expect(

@@ -142,6 +142,7 @@ export function ChannelDetail({
         label="Channel details"
         value={tab}
         onChange={setTab}
+        reset={browseStateKeys}
         tabs={[
           { value: 'overview', label: 'Overview' },
           { value: 'sources', label: 'Sources' },
@@ -238,6 +239,7 @@ function ShowDetail({
         label="Show details"
         value={tab}
         onChange={setTab}
+        reset={browseStateKeys}
         tabs={[
           { value: 'overview', label: 'Overview' },
           { value: 'sources', label: 'Sources' },

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { before, mock, test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import {
+  PathnameContext,
+  SearchParamsContext,
+} from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import {
   AlbumDetailSchema,
   FilmDetailSchema,
@@ -345,20 +348,26 @@ test('album Overview ratings open the page that supplied the score', () => {
             apiBaseUrl: 'https://api.example.test',
           }}
         >
-          <SearchParamsContext.Provider value={new URLSearchParams()}>
-            <MediaDetail mediaType="album" id={album.id} />
-          </SearchParamsContext.Provider>
+          <PathnameContext.Provider value={`/albums/${album.id}`}>
+            <SearchParamsContext.Provider value={new URLSearchParams()}>
+              <MediaDetail mediaType="album" id={album.id} />
+            </SearchParamsContext.Provider>
+          </PathnameContext.Provider>
         </ConfigContext.Provider>
       </QueryClientProvider>,
     )
     assert.match(
       html,
-      /<a class="ds-stat" href="https:\/\/rateyourmusic\.com\/release\/album\/fixture\/" target="_blank" rel="noopener noreferrer" title="RYM rating: 3\.71 out of 5\. 420 votes\." aria-label="RYM rating: 3\.71 out of 5\. 420 votes\. Opens in a new tab\."><span class="ds-stat-value">3\.71<\/span><span class="ds-stat-label">RYM<\/span><\/a>/,
+      /<a[^>]*class="ds-stat" href="https:\/\/rateyourmusic\.com\/release\/album\/fixture\/" target="_blank" rel="noopener noreferrer" title="RYM rating: 3\.71 out of 5\. 420 votes\." aria-label="RYM rating: 3\.71 out of 5\. 420 votes\. Opens in a new tab\."><span class="ds-stat-value">3\.71<\/span><span class="ds-stat-label">RYM<\/span><\/a>/,
+    )
+    assert.match(
+      html,
+      /<a data-workspace-href="\/albums\/album-with-ratings\?fieldsExpanded=true&amp;provenanceField=ratingRymValue"[^>]*class="ds-stat"/,
     )
     // No Discogs page is stored, so its score is not a link.
     assert.match(
       html,
-      /<div class="ds-stat" title="Discogs rating: 4\.4 out of 5\. Vote count unavailable\."><span class="ds-stat-value">4\.4<\/span><span class="ds-stat-label">Discogs<\/span><\/div>/,
+      /<div[^>]*class="ds-stat" title="Discogs rating: 4\.4 out of 5\. Vote count unavailable\."><span class="ds-stat-value">4\.4<\/span><span class="ds-stat-label">Discogs<\/span><\/div>/,
     )
     // Metacritic is not among the headline figures, so its page stays in the header.
     assert.doesNotMatch(html, /<span class="ds-stat-value">81</)

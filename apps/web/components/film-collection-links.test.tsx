@@ -148,9 +148,19 @@ test('film details open the stored collection on top of the current inspector en
   )
   // Where a collection comes from is answered in Sources, not beside the pill.
   assert.ok(!html.includes(`href="${sourceUrl}"`))
-  assert.match(
-    html,
-    /<span class="ds-pill" data-size="md"><span class="ds-pill-label">Name-only collection<\/span><\/span>/,
+  const fallback =
+    /<span class="ds-pill" data-size="md" data-workspace-href="([^"]+)"[^>]*tabindex="0"><span class="ds-pill-label">Name-only collection<\/span><\/span>/.exec(
+      html,
+    )?.[1]
+  assert.ok(fallback)
+  const fallbackUrl = new URL(
+    fallback.replaceAll('&amp;', '&'),
+    'http://localhost',
+  )
+  assert.equal(fallbackUrl.pathname, '/films')
+  assert.deepEqual(
+    JSON.parse(fallbackUrl.searchParams.get('filters') ?? '[]'),
+    [{ field: 'collection', value: legacy.name }],
   )
   assert.match(html, /<h3>Collections<\/h3>/)
 })

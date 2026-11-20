@@ -59,6 +59,8 @@ import MetadataSelectionToolbar, {
 } from './metadata-selection-toolbar'
 import { useFilmSelection } from '@/hooks/useFilmSelection'
 import { mediaAiSearchTarget } from '@/utils/ai-search'
+import { browseFilterHref, browseSearchHref } from '@/utils/browse-items'
+import { embeddedBrowseHref } from '@/utils/embedded-browse'
 import { updateJobSelection } from '@/utils/job-selection'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { fetchApiData } from '@/utils/api'
@@ -417,12 +419,14 @@ function SelectionTable({
   }
   const now = new Date()
   const noun = mediaType === 'album' ? 'Album' : 'Film'
+  const browseHref = embeddedBrowseHref(plural, {}, params)
   return (
     <div className="ops-fill">
       <MetadataSelectionToolbar
         disabled={queue.isPending}
         fields={available}
         value={browseFilters}
+        filterHref={(filter) => browseFilterHref(browseHref, [filter])}
         providerFilters={freshness.map((item) => {
           const value = providerFreshnessValue(item)
           const source = providers.find(({ id }) => id === item.provider)
@@ -466,6 +470,9 @@ function SelectionTable({
               disabled: queue.isPending,
               onFocus: facets.activate,
               onValueChange: setDraft,
+              filterHref: (filter) =>
+                browseFilterHref(browseHref, [...filters, filter]),
+              searchHref: (value) => browseSearchHref(browseHref, { q: value }),
               onAddFilter: (filter) => {
                 changeFilters({
                   ...browseFilters,

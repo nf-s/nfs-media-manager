@@ -14,6 +14,7 @@ import {
   detailCrumbKey,
   detailEntryParams,
   detailLocation,
+  detailPageHref,
   sameDetail,
   withoutDetailEntries,
   type DetailCrumb,
@@ -233,11 +234,17 @@ export const useInspectorPage = () => useContext(InspectorPageContext)
 /** An inspector entry owns its view settings; a standalone detail uses its normal URL. */
 export function useDetailView() {
   const inspector = useContext(InspectorEntryContext)
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   return {
     params: new URLSearchParams(
       inspector ? inspector.active?.view : searchParams,
     ),
+    workspaceHref(params: URLSearchParams) {
+      return inspector?.active
+        ? detailPageHref(inspector.active, params)
+        : detailLocation(pathname, withoutDetailEntries(pathname, params))
+    },
     replace(params: URLSearchParams) {
       if (inspector) inspector.replaceView(params)
       else

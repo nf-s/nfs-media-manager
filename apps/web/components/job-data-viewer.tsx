@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { JsonValue } from '@repo/schemas/common'
 import type { Job } from '@repo/schemas/job'
@@ -9,6 +9,8 @@ import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { jobDataOptions } from '@/utils/job-data'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { useDetailView } from './detail-inspector-context'
 import { useConfig } from './providers'
 import JsonTree from './json-tree'
 import { JobProviderResponses } from './job-provider-responses'
@@ -17,21 +19,29 @@ type DataJob = Pick<Job, 'id' | 'status'>
 
 /** One saved payload: collapsed until opened, with Copy beside its name. */
 function SavedPayload({
+  payloadKey,
   label,
   value,
 }: {
-  label: ReactNode
+  payloadKey: string
+  label: string
   value: JsonValue
 }) {
-  const [open, setOpen] = useState(false)
+  const view = useDetailView()
+  const [open, setOpen] = useState(view.params.get('jobPayload') === payloadKey)
   const [copied, setCopied] = useState(false)
+  const destination = new URLSearchParams(view.params)
+  destination.set('tab', 'data')
+  destination.set('jobPayload', payloadKey)
   return (
     <details
       className="ops-disclosure ops-payload"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
+      <summary
+        {...workspaceTabLinkProps(view.workspaceHref(destination), label)}
+      >
         <span className="ops-payload-label">{label}</span>
         <Button
           size="xs"
@@ -99,6 +109,7 @@ export function StoredJobData({ job }: { job: DataJob }) {
             {data.snapshots.map((snapshot) => (
               <SavedPayload
                 key={snapshot.id}
+                payloadKey={`snapshot:${snapshot.id}`}
                 label={`${snapshot.provider} · ${formatDateTime(snapshot.createdAt)}`}
                 value={snapshot.payload}
               />
@@ -110,6 +121,7 @@ export function StoredJobData({ job }: { job: DataJob }) {
             {data.diagnostics.map((entry) => (
               <SavedPayload
                 key={entry.id}
+                payloadKey={`diagnostic:${entry.id}`}
                 label={formatDateTime(entry.createdAt)}
                 value={entry.data}
               />
@@ -123,6 +135,7 @@ export function StoredJobData({ job }: { job: DataJob }) {
               {data.itemPayloads.map((entry) => (
                 <SavedPayload
                   key={entry.id}
+                  payloadKey={`item:${entry.id}`}
                   label={entry.provider}
                   value={entry.payload}
                 />

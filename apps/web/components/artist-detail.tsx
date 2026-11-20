@@ -40,6 +40,7 @@ import { fetchApiData } from '@/utils/api'
 import { artistBrowseHref, artistTagBrowseHref } from '@/utils/creator-browse'
 import { browseStateKeys } from '@/utils/embedded-browse'
 import { safeRatingHref } from '@/utils/provider-ratings'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import {
   formatSubscriptionDuration,
   formatSubscriptionPublished,
@@ -217,10 +218,12 @@ function ArtistOverview({
   artist,
   path,
   showTab,
+  tabHref,
 }: {
   artist: Artist
   path: string
   showTab: (tab: ArtistTab) => void
+  tabHref: (tab: ArtistTab) => string
 }) {
   const { profile } = artist
   const albums = useOverviewList(
@@ -276,6 +279,7 @@ function ArtistOverview({
           aside={
             <>
               <Button
+                {...workspaceTabLinkProps(tabHref('albums'), 'All albums')}
                 variant="link"
                 size="xs"
                 onClick={() => showTab('albums')}
@@ -353,6 +357,7 @@ function ArtistOverview({
           aside={
             <>
               <Button
+                {...workspaceTabLinkProps(tabHref('tracks'), 'All tracks')}
                 variant="link"
                 size="xs"
                 onClick={() => showTab('tracks')}
@@ -425,7 +430,12 @@ function ArtistOverview({
           title="Latest mixes"
           note={formatCount(artist.mixCount)}
           aside={
-            <Button variant="link" size="xs" onClick={() => showTab('mixes')}>
+            <Button
+              {...workspaceTabLinkProps(tabHref('mixes'), 'All mixes')}
+              variant="link"
+              size="xs"
+              onClick={() => showTab('mixes')}
+            >
               All mixes
             </Button>
           }
@@ -518,7 +528,7 @@ function ArtistOverview({
 
 export function ArtistDetail({ id }: { id: string }) {
   const { apiBaseUrl } = useConfig()
-  const { tab, setTab } = useDetailTab(artistTabs, {
+  const { tab, setTab, tabHref } = useDetailTab(artistTabs, {
     aliases: artistTabAliases,
     // Each tab's list has its own search, filters, sort and view.
     reset: browseStateKeys,
@@ -605,12 +615,14 @@ export function ArtistDetail({ id }: { id: string }) {
         value={shownTab}
         onChange={setTab}
         tabs={tabs}
+        reset={browseStateKeys}
       >
         <TabsContent value="overview">
           <ArtistOverview
             artist={artist}
             path={path}
             showTab={(next) => setTab(next)}
+            tabHref={tabHref}
           />
         </TabsContent>
         <TabsContent value="albums">

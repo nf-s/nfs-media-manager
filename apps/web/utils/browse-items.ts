@@ -2,6 +2,7 @@ import {
   canonicalBrowseKey,
   formatBrowseValue,
   type BrowseField,
+  type BrowseFilter,
   type BrowseValues,
 } from '@repo/schemas/browse'
 import {
@@ -10,6 +11,30 @@ import {
   formatDate,
   formatTrackLength,
 } from '@repo/ui/lib/format'
+import { detailLocation, withoutDetailEntries } from './detail-inspector'
+
+/** Copy a Browse destination, keeping its settings and scope outside the inspector. */
+export function browseSearchHref(
+  href: string,
+  updates: Record<string, string | null>,
+) {
+  const url = new URL(href, 'https://workspace.invalid')
+  const params = withoutDetailEntries(url.pathname, url.searchParams)
+  for (const [key, value] of Object.entries(updates)) {
+    if (value) params.set(key, value)
+    else params.delete(key)
+  }
+  params.delete('page')
+  return detailLocation(url.pathname, params, url.hash)
+}
+
+export function browseFilterHref(href: string, filters: BrowseFilter[]) {
+  return browseSearchHref(href, {
+    filters: filters.length ? JSON.stringify(filters) : null,
+  })
+}
+
+export type BrowseFilterHref = (filter: BrowseFilter) => string
 
 /*
  * Card grid geometry for the virtual scroller. The numbers mirror `.ds-grid`
