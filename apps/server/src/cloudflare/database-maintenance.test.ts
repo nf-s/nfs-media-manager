@@ -12,6 +12,7 @@ vi.mock('@/services/browse', () => ({
   refreshTrackFacetVocabularyForMaintenance: refresh,
 }))
 
+const dailyTick = Date.UTC(2026, 0, 1, 20, 0)
 beforeEach(() => vi.resetAllMocks())
 
 describe('scheduled database monitoring', () => {
@@ -22,7 +23,7 @@ describe('scheduled database monitoring', () => {
     'records a healthy probe and the maintenance result',
     async (published, outcome) => {
       refresh.mockResolvedValue(published)
-      await runDatabaseMaintenance()
+      await runDatabaseMaintenance(dailyTick)
       expect(execute).toHaveBeenCalledOnce()
       expect(log.mock.calls.map(([event]) => event)).toEqual([
         {
@@ -39,10 +40,21 @@ describe('scheduled database monitoring', () => {
     },
   )
 
+  it('runs ordinary maintenance between daily probes without the synthetic query', async () => {
+    await runDatabaseMaintenance(dailyTick + 5 * 60_000)
+    expect(execute).not.toHaveBeenCalled()
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(log).toHaveBeenCalledExactlyOnceWith({
+      event: 'database.facet-maintenance',
+      outcome: 'skipped',
+      durationMs: expect.any(Number),
+    })
+  })
+
   it('records a failed probe without the database error contents', async () => {
     const failure = new Error('fixture connection failure')
     execute.mockRejectedValue(failure)
-    await expect(runDatabaseMaintenance()).rejects.toBe(failure)
+    await expect(runDatabaseMaintenance(dailyTick)).rejects.toBe(failure)
     expect(refresh).not.toHaveBeenCalled()
     expect(log).toHaveBeenCalledExactlyOnceWith({
       event: 'database.probe',
@@ -53,7 +65,7 @@ describe('scheduled database monitoring', () => {
 
   it('distinguishes refresh failure from a successful connection', async () => {
     refresh.mockRejectedValue(new Error('fixture refresh failure'))
-    await expect(runDatabaseMaintenance()).rejects.toThrow(
+    await expect(runDatabaseMaintenance(dailyTick)).rejects.toThrow(
       'fixture refresh failure',
     )
     expect(log).toHaveBeenLastCalledWith({

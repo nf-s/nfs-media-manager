@@ -4,7 +4,7 @@ import { writeRequestLog } from '@/lib/request-log'
 import { refreshTrackFacetVocabularyForMaintenance } from '@/services/browse'
 
 /** One bounded round trip on a fresh invocation pool, even when the library is idle. */
-export async function runDatabaseMaintenance() {
+async function probeDatabase() {
   const start = performance.now()
   let available = false
   try {
@@ -17,7 +17,13 @@ export async function runDatabaseMaintenance() {
       durationMs: performance.now() - start,
     })
   }
+}
 
+export async function runDatabaseMaintenance(scheduledTime: number) {
+  // The existing five-minute maintenance cron also supplies one daily probe.
+  const tick = new Date(scheduledTime)
+  if (tick.getUTCHours() === 20 && tick.getUTCMinutes() === 0)
+    await probeDatabase()
   const refreshStart = performance.now()
   let outcome: 'skipped' | 'published' | 'failed' = 'failed'
   try {
