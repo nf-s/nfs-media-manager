@@ -43,6 +43,7 @@ interface RequestBrowseProfile {
   filtered: boolean
   sort: 'added' | 'title' | 'plays' | 'other'
   playSort?: 'scrobbles' | 'listeningScrobbles'
+  recordingOrderLookup?: 'hit' | 'miss'
 }
 
 interface PhaseMetrics {
@@ -184,6 +185,11 @@ export function setRequestBrowseProfile({
       sort,
       playSort,
     }
+}
+
+export function recordRecordingOrderLookup(outcome: 'hit' | 'miss') {
+  const browse = context.getStore()?.browse
+  if (browse) browse.recordingOrderLookup = outcome
 }
 
 /** Drizzle calls the hook at execution time, including for prepared statements. */

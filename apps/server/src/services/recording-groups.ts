@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
 import { canReadDatabaseWithoutCache } from '@/lib/database-read-cache'
+import { recordRecordingOrderLookup } from '@/lib/request-log'
 
 const RecordingGroupSchema = z.object({
   id: z.string(),
@@ -441,9 +442,12 @@ export async function readRecordingBrowseOrder(rows?: SQL, count?: SQL) {
         ) as can_refresh,
         case when (select total_count from current_order) is not null
           then ${selected} else '[]'::jsonb end as rows`)
-    return RecordingOrderReadSchema.parse(result.rows[0])
+    const order = RecordingOrderReadSchema.parse(result.rows[0])
+    recordRecordingOrderLookup(order.total_count === null ? 'miss' : 'hit')
+    return order
   } catch (error) {
     if (!canReadDatabaseWithoutCache(error)) throw error
+    recordRecordingOrderLookup('miss')
     return undefined
   }
 }

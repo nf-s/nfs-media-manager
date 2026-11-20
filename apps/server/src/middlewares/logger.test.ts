@@ -10,6 +10,7 @@ import { db as nodeDb } from '@/lib/db'
 import {
   logApiRequest,
   measureRequestPhase,
+  recordRecordingOrderLookup,
   setPlaybackLogRole,
   setRequestBrowseProfile,
 } from '@/lib/request-log'
@@ -74,6 +75,7 @@ const RecordSchema = z.object({
       filtered: z.boolean(),
       sort: z.enum(['added', 'title', 'plays', 'other']),
       playSort: z.enum(['scrobbles', 'listeningScrobbles']).optional(),
+      recordingOrderLookup: z.enum(['hit', 'miss']).optional(),
     })
     .optional(),
   phases: z
@@ -135,6 +137,7 @@ it('counts Drizzle executions and phases separately across concurrent requests',
   await Promise.all([
     logApiRequest(request, async () => {
       setRequestBrowseProfile(browse)
+      recordRecordingOrderLookup('hit')
       await Promise.all([
         measureRequestPhase('ids', async () => {
           const prepared = nodeDb
@@ -178,7 +181,7 @@ it('counts Drizzle executions and phases separately across concurrent requests',
   expect(logs).toHaveLength(2)
   expect(logs.find(({ status }) => status === 204)).toMatchObject({
     drizzleStatementCount: 4,
-    browse,
+    browse: { ...browse, recordingOrderLookup: 'hit' },
     phases: {
       ids: { drizzleStatementCount: 3 },
       hydrate: { drizzleStatementCount: 1 },

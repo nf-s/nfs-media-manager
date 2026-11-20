@@ -722,10 +722,72 @@ function groupedTrackBrowse(
       order by g.rank`
   }
 
+  function boundedPresencePage({
+    offset,
+    limit,
+  }: {
+    offset: number
+    limit: number
+  }) {
+    const needed = offset + limit
+    const maximumProbe = 1024
+    if (needed > maximumProbe / 2 || !countedGroupCondition) return
+    // Keep presence tests correlated to one stored rank and its members.
+    const presence = countedListening?.multiRulePresenceCondition(
+      (period) => sql`exists (
+        select 1 from (
+          select g.id as id where g.version_count = 1
+          union all
+          select track_id from recording_browse_order_member
+          where recording_id = g.id and g.version_count > 1
+        ) member
+        join lastfm_track_link listening_link on listening_link.track_media_item_id = member.id
+        join lastfm_scrobble using (username, artist_key, track_key)
+        where ${period}
+        offset 0
+      )`,
+    )
+    if (!presence) return
+
+    const probe = Math.max(256, Math.min(maximumProbe, needed * 5))
+    const prefix = sql`${storedMemberships},
+      eligible_prefix as materialized (
+        select g.*, ${storedRank} as rank
+        from (
+          select g.* from ${storedGroups} g
+          order by ${storedRank} limit ${probe}
+        ) g where ${presence} order by ${storedRank} limit ${needed}
+      ),
+      prefix_filled as materialized (
+        select count(*) = ${needed} as filled from eligible_prefix
+      ),
+      eligible_library as materialized (
+        select g.*, ${storedRank} as rank
+        from ${storedGroups} g ${countedGroupListening}
+        where not (select filled from prefix_filled) and ${countedGroupCondition}
+      )`
+    // Compute the full set only when the prefix has too few matches. Apply
+    // the page limit afterwards to avoid a repeated scan of listening totals.
+    const selected = sql`
+      (select * from eligible_prefix where (select filled from prefix_filled)
+        order by rank limit ${limit} offset ${offset})
+      union all
+      (select * from eligible_library order by rank limit ${limit} offset ${offset})`
+    return listening?.sort
+      ? projectSelectedListening(prefix, selected)
+      : sql`${prefix}
+        select ${recordingGroupProjection}, null::int as listening_scrobbles, g.rank::int
+        from (${selected}) g order by g.rank`
+  }
+
   function storedLifetimeRows(
     page: { offset: number; limit: number } | number[],
   ) {
     const positions = Array.isArray(page)
+    if (!positions) {
+      const bounded = boundedPresencePage(page)
+      if (bounded) return bounded
+    }
     // Dynamic eligibility leaves gaps in published ranks.
     const denseRank = positions && !!lifetimeCondition
     const rank = denseRank

@@ -763,6 +763,14 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
     unfilteredCount: 19_000,
   })
 
+  // Only one recording has an event in this future date range. Its two
+  // editions share the name, so the displayed period count is still one.
+  await pool.query(`
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    values ('fixture-future-tie', 'fixture-listener', '2099-05-01 13:00:00',
+      'Fixture artist', 'Fixture track 18001', 'fixture-artist', 'fixture-track-18001')
+  `)
+  await pool.query('vacuum analyze lastfm_scrobble')
   const deep = { ...twoRules, page: 1100 }
   const cold = await listTrackBrowsePage(deep)
   await pool.query(`
@@ -781,8 +789,46 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
     },
   )
   await checkBudget(
+    'warm first lifetime grouped page with two listening rules',
+    700,
+    1,
+    async () => {
+      const first = await queryBrowsePageIds('track', twoRules)
+      expect(first.ids).toEqual([
+        'track-1009',
+        'track-1110',
+        'track-2120',
+        'track-3130',
+        'track-4140',
+        'track-5150',
+      ])
+      expect(first.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'warm browser-sized first lifetime grouped page with two listening rules',
+    5_000,
+    1,
+    async () => {
+      const first = await queryBrowsePageIds('track', {
+        ...twoRules,
+        size: 100,
+      })
+      expect(first.ids).toHaveLength(100)
+      expect(first.ids.slice(0, 6)).toEqual([
+        'track-1009',
+        'track-1110',
+        'track-2120',
+        'track-3130',
+        'track-4140',
+        'track-5150',
+      ])
+      expect(first.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
     'warm near lifetime grouped page with two listening rules',
-    5_400,
+    900,
     1,
     async () => {
       const near = await queryBrowsePageIds('track', { ...twoRules, page: 3 })
@@ -796,6 +842,55 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
       ])
     },
   )
+  await checkBudget(
+    'warm browser-sized page ten with two listening rules',
+    12_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', {
+        ...twoRules,
+        page: 10,
+        size: 100,
+      })
+      expect(page.ids).toHaveLength(100)
+      expect([page.ids[0], page.ids.at(-1)]).toEqual([
+        'track-6351',
+        'track-6552',
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+  )
+  for (const { label, date, ids } of [
+    { label: 'sparse', date: '2099-05-01', ids: ['track-1'] },
+    { label: 'empty', date: '2099-05-02', ids: [] },
+  ]) {
+    const display = { kind: 'dates', from: date, to: date }
+    const query = TrackQuerySchema.parse({
+      ...twoRules,
+      listening: {
+        match: 'all',
+        rules: [
+          { period: display, min: 1 },
+          { period, min: 1 },
+        ],
+      },
+      listeningSort: display,
+    })
+    await checkBudget(
+      `warm ${label} lifetime grouped page with two listening rules`,
+      10_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', query)
+        expect(page.ids).toEqual(ids)
+        expect([...(page.listeningScrobbles ?? [])]).toEqual(
+          ids.map((id) => [id, 1]),
+        )
+        expect(page.hasMore).toBe(false)
+      },
+      500_000,
+    )
+  }
   await checkBudget(
     'warm lifetime grouped positions with two listening rules',
     5_400,
