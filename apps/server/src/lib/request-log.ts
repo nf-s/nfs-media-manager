@@ -41,6 +41,7 @@ interface RequestBrowseProfile {
   listening: boolean
   filtered: boolean
   sort: 'added' | 'title' | 'plays' | 'other'
+  playSort?: 'scrobbles' | 'listeningScrobbles'
 }
 
 interface PhaseMetrics {
@@ -168,9 +169,11 @@ export function setRequestBrowseProfile({
   listening,
   filtered,
   sort,
+  playSort,
 }: RequestBrowseProfile) {
   const current = context.getStore()
-  if (current) current.browse = { grouped, depth, listening, filtered, sort }
+  if (current)
+    current.browse = { grouped, depth, listening, filtered, sort, playSort }
 }
 
 /** Drizzle calls the hook at execution time, including for prepared statements. */

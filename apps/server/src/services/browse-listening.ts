@@ -204,8 +204,17 @@ export function createBrowseListening(
       : sql`(select distinct m.group_key, l.username, l.artist_key, l.track_key
         from ${members ?? sql`recording_members`} m
         join lastfm_track_link l on l.track_media_item_id = m.id) linked`
-    // Expanding one recording already identifies its members. Read the
-    // scrobbles of those links directly instead of grouping all listened names.
+    // A narrow recording scope can probe each linked name through the event
+    // index. Aggregate inside the probe so an overestimate of the scope does
+    // not make PostgreSQL scan the entire listening history.
+    if (members && !track)
+      return sql`(select ${id} as id, ${nameSums}
+        from ${links} cross join lateral (
+          select ${counts} from lastfm_scrobble s
+          where s.username = linked.username and s.artist_key = linked.artist_key
+            and s.track_key = linked.track_key and ${inPeriods}
+        ) listening_names group by ${id}) listening_counts`
+    // Expanding a recording already identifies its track versions.
     if (members)
       return sql`(select ${id} as id, ${counts}
         from ${links} join lastfm_scrobble using (username, artist_key, track_key)

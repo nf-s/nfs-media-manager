@@ -72,6 +72,7 @@ const RecordSchema = z.object({
       listening: z.boolean(),
       filtered: z.boolean(),
       sort: z.enum(['added', 'title', 'plays', 'other']),
+      playSort: z.enum(['scrobbles', 'listeningScrobbles']).optional(),
     })
     .optional(),
   phases: z
@@ -124,6 +125,7 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     listening: true,
     filtered: false,
     sort: 'plays',
+    playSort: 'listeningScrobbles',
   } satisfies NonNullable<z.infer<typeof RecordSchema>['browse']>
   // Executing without a request, as a background job would, emits no record.
   await expect(nodeDb.execute(statement)).rejects.toThrow()

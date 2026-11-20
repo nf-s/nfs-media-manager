@@ -604,18 +604,32 @@ function groupedTrackBrowse(
     : sql``
   // Resolve release order only for rows that can reach the page. Keep every
   // tie at the boundary so page and position reads use the same total order.
-  function groupRows(bound: number, listeningJoin = groupListening) {
+  function groupRows(
+    bound: number,
+    listeningJoin = groupListening,
+    periodPage = false,
+  ) {
     const columns = groupSort ? sql`` : sql`, ${sort} as primary_value`
     const sortJoins = groupSort
       ? sql``
       : sql`join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns} ${orderRowsJoin}`
+    // A large play-count tie can exceed the estimated size of FETCH WITH TIES.
+    // OFFSET 0 keeps the release lookups keyed by each tied representative.
+    const releaseJoins = periodPage
+      ? sql`join lateral (select * from ${mediaItem} where ${mediaItem.id} = g.id offset 0)
+          ${mediaItem} on true
+        join lateral (select * from ${libraryTrack} where ${libraryTrack.mediaItemId} = g.id offset 0)
+          ${libraryTrack} on true
+        left join lateral (select * from ${mediaItem} where ${mediaItem.id} = ${libraryTrack.albumMediaItemId} offset 0)
+          ${trackSortAlbum} on true`
+      : sql`join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}`
     return sql`from (
       select g.*, ${listeningValue}${columns}
       from recording_stats g
       ${listeningJoin} ${sortJoins} ${groupPredicate}
       order by ${primaryOrdering(groupSort ?? sort)}
       fetch first (${bound}) rows with ties
-    ) g join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}`
+    ) g ${releaseJoins}`
   }
   const offset = (query.page - 1) * query.size
   const useStoredOrder =
@@ -707,21 +721,23 @@ function groupedTrackBrowse(
     }
     // Count the linked names of selective first-page matches. Reuse the title
     // lookup bound to keep name preaggregation for broad filters.
-    const pageListening =
+    const candidatePeriodPage = Boolean(
       offset === 0 &&
       listeningSorted &&
       !query.creatorId &&
       versionId === undefined &&
-      (query.q || query.filters.some((chip) => chip.mode !== 'exclude'))
-        ? groupJoins(
-            listening,
-            sql`recording_members`,
-            sql`(select bounded from recording_title_scope)`,
-          )
-        : groupListening
+      (query.q || query.filters.some((chip) => chip.mode !== 'exclude')),
+    )
+    const pageListening = candidatePeriodPage
+      ? groupJoins(
+          listening,
+          sql`recording_members`,
+          sql`(select bounded from recording_title_scope)`,
+        )
+      : groupListening
     const page = sql`${grouped}
       select ${recordingGroupProjection}, g.listening_scrobbles
-      ${groupRows(offset + limit, pageListening)}
+      ${groupRows(offset + limit, pageListening, candidatePeriodPage)}
       order by ${ordering(rowSort)} limit ${limit} offset ${offset}`
     rows ??= await recordingPageCache(
       checksumJson(dialect.sqlToQuery(page)),
@@ -1243,7 +1259,12 @@ export async function refreshRecordingBrowseOrderForMaintenance() {
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
 
 function recordBrowseShape(query: BrowseQuery) {
+  const playSort =
+    query.sortBy === 'scrobbles' || query.sortBy === 'listeningScrobbles'
+      ? query.sortBy
+      : undefined
   setRequestBrowseProfile({
+    playSort,
     grouped: 'groupRecordings' in query && query.groupRecordings === true,
     depth: query.page === 1 ? 'first' : query.page <= 4 ? 'near' : 'deep',
     listening:
@@ -1257,7 +1278,7 @@ function recordBrowseShape(query: BrowseQuery) {
         ? 'added'
         : query.sortBy === 'title'
           ? 'title'
-          : ['scrobbles', 'listeningScrobbles'].includes(query.sortBy)
+          : playSort
             ? 'plays'
             : 'other',
   })

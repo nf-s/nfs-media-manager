@@ -93,11 +93,17 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
+const ExplainJoinWorkSchema = z.object({
+  'Actual Loops': z.number(),
+  'Rows Removed by Join Filter': z.number().default(0),
+  Plans: z.array(z.unknown()).default([]),
+})
+
 const ExplainSchema = z.tuple([
   z.object({
     'QUERY PLAN': z.tuple([
       z.object({
-        Plan: z.object({
+        Plan: ExplainJoinWorkSchema.extend({
           'Shared Hit Blocks': z.number(),
           'Shared Read Blocks': z.number(),
           'Temp Read Blocks': z.number(),
@@ -109,6 +115,18 @@ const ExplainSchema = z.tuple([
   }),
 ])
 
+function rejectedJoinRows(plan: unknown): number {
+  const parsed = ExplainJoinWorkSchema.parse(plan)
+  // PostgreSQL reports the average number of rejected rows per loop.
+  return (
+    parsed['Rows Removed by Join Filter'] * parsed['Actual Loops'] +
+    parsed.Plans.reduce<number>(
+      (sum, child) => sum + rejectedJoinRows(child),
+      0,
+    )
+  )
+}
+
 // PostgreSQL's root buffer totals include child paths. Hits plus reads
 // measure logical work independently of the warmth of the shared cache.
 async function checkBudget(
@@ -116,6 +134,7 @@ async function checkBudget(
   maxSharedBlocks: number,
   maxStatements: number,
   read: () => Promise<void>,
+  maxRejectedJoinRows?: number,
 ) {
   logQuery.mockClear()
   await read()
@@ -131,6 +150,7 @@ async function checkBudget(
   let sharedBlocks = 0
   let tempBlocks = 0
   let executionMs = 0
+  let rejectedRows = 0
   for (const [query, params] of statements) {
     const result = await pool.query(
       `explain (analyze, buffers, timing off, format json) ${query}`,
@@ -142,6 +162,8 @@ async function checkBudget(
     tempBlocks +=
       explain.Plan['Temp Read Blocks'] + explain.Plan['Temp Written Blocks']
     executionMs += explain['Execution Time']
+    if (maxRejectedJoinRows !== undefined)
+      rejectedRows += rejectedJoinRows(explain.Plan)
   }
   process.stdout.write(
     `${label}: ${sharedBlocks}/${maxSharedBlocks} shared blocks, ${tempBlocks} temp blocks, ${executionMs.toFixed(1)} ms across ${statementCount}/${maxStatements} statements (${statements.length} explained)\n`,
@@ -150,6 +172,14 @@ async function checkBudget(
     maxSharedBlocks,
   )
   expect(tempBlocks, label + ' temp blocks').toBe(0)
+  if (maxRejectedJoinRows !== undefined) {
+    process.stdout.write(
+      `${label}: ${rejectedRows}/${maxRejectedJoinRows} rejected join rows\n`,
+    )
+    expect(rejectedRows, label + ' rejected join rows').toBeLessThanOrEqual(
+      maxRejectedJoinRows,
+    )
+  }
 }
 
 it('bounds selective Track pages and exact counts', async () => {
@@ -375,6 +405,29 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
       ])
       expect(page.hasMore).toBe(true)
     },
+  )
+  await checkBudget(
+    'broad grouped Track page with tied period plays',
+    160_000,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({
+        ...grouped,
+        filters: [],
+        q: 'Fixture track',
+      })
+      expect(
+        page.items.map(({ id, listeningScrobbles }) => [
+          id,
+          listeningScrobbles,
+        ]),
+      ).toEqual([
+        ['track-1', 21],
+        ['track-18982', 20],
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
   )
   await checkBudget('filtered exact Track totals', 1_500, 4, async () => {
     expect(await queryBrowseCounts('track', query)).toEqual({
