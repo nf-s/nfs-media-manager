@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/db', () => ({ db: { execute: mocks.execute } }))
 vi.mock('@/env', () => ({ env: mocks.env }))
-import { createDatabaseReadCache } from './database-read-cache'
+import {
+  canReadDatabaseWithoutCache,
+  createDatabaseReadCache,
+} from './database-read-cache'
 
 const version = {
   version: '100:103:100',
@@ -28,6 +31,16 @@ beforeEach(() => {
 })
 
 describe('database-scoped read cache', () => {
+  it('only allows live fallback for recognized optional cache errors', () => {
+    expect(canReadDatabaseWithoutCache({ code: '42P01' })).toBe(true)
+    expect(
+      canReadDatabaseWithoutCache(
+        new Error('Cache refresh failed', { cause: { code: '40P01' } }),
+      ),
+    ).toBe(true)
+    expect(canReadDatabaseWithoutCache({ code: '42601' })).toBe(false)
+  })
+
   it('uses the Worker-aliased database and reads the full visibility snapshot each time', async () => {
     const cache = createDatabaseReadCache<number>({
       maxEntries: 2,

@@ -336,8 +336,10 @@ describe('artist tag projections', () => {
         }),
       ]),
     )
-    const facets = logQuery.mock.calls.find(([query]) =>
-      query.includes('values_for_field'),
+    const facets = logQuery.mock.calls.find(
+      ([query]) =>
+        query.includes('values_for_field') &&
+        query.includes('browse_artist_facet_keys as materialized'),
     )
     const ExplainRows = z.array(z.object({ 'QUERY PLAN': z.string() }))
     for (const call of [search, facets]) {
@@ -360,5 +362,158 @@ describe('artist tag projections', () => {
           2,
         )
     }
+  })
+
+  it('reads exact shared tag counts from the durable Track vocabulary until source data commits', async () => {
+    const { listBrowseFacets } = await import('@/services/browse')
+    await pool.query(`
+      insert into tag (id, media_type, name) values
+        ('facet-parent', 'album', 'Fixture parent'), ('facet-child', 'album', 'Fixture child');
+      insert into tag_ancestor (media_type, descendant_key, ancestor_key)
+        values ('album', 'fixture child', 'fixture parent');
+      insert into media_item (id, slug, media_type, title)
+        values ('vocabulary-album', 'vocabulary-album', 'album', 'Fixture release'),
+          ('vocabulary-track-1', 'vocabulary-track-1', 'track', 'Fixture recording one'),
+          ('vocabulary-track-2', 'vocabulary-track-2', 'track', 'Fixture recording two');
+      insert into album (media_item_id) values ('vocabulary-album');
+      insert into library_track (media_item_id, album_media_item_id) values
+        ('vocabulary-track-1', 'vocabulary-album'), ('vocabulary-track-2', 'vocabulary-album');
+      insert into media_item_tag (media_item_id, tag_id) values ('vocabulary-album', 'facet-child');
+      insert into artist (id, name) values
+        ('vocabulary-artist-1', 'Fixture contributor one'), ('vocabulary-artist-2', 'Fixture contributor two');
+      insert into media_credit (media_item_id, artist_id, role) values
+        ('vocabulary-track-1', 'vocabulary-artist-1', 'artist'),
+        ('vocabulary-track-1', 'vocabulary-artist-2', 'artist'),
+        ('vocabulary-track-2', 'vocabulary-artist-1', 'artist');
+      insert into artist_provider_snapshot (id, artist_id, provider, normalized_data, payload) values
+        ('vocabulary-profile-1', 'vocabulary-artist-1', 'lastfm', '{"tags":["Fixture child","fixture child"]}', '{}'),
+        ('vocabulary-profile-2', 'vocabulary-artist-2', 'lastfm', '{"tags":["Fixture child"]}', '{}');
+      insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id) values
+        ('vocabulary-artist-1', 'lastfm', 'vocabulary-profile-1'),
+        ('vocabulary-artist-2', 'lastfm', 'vocabulary-profile-2');
+      insert into playlist (id, name, kind, source) values
+        ('vocabulary-playlist-1', 'Vocabulary playlist one', 'playlist', 'spotify'),
+        ('vocabulary-playlist-2', 'Vocabulary playlist two', 'playlist', 'spotify');
+      insert into playlist_item (playlist_id, media_item_id) values
+        ('vocabulary-playlist-1', 'vocabulary-track-2'),
+        ('vocabulary-playlist-2', 'vocabulary-track-2');
+    `)
+    const parentCounts = async (q: string) =>
+      (await listBrowseFacets('track', { q }))
+        .filter(({ value }) => value === 'fixture parent')
+        .map(({ field, count, subtags }) => [field, count, subtags])
+    const rolledUp = (total: number) => [
+      ['albumTag', total, 1],
+      ['artistTag', total, 1],
+      ['genre', total, 1],
+    ]
+    expect(await parentCounts('')).toEqual(rolledUp(2))
+    logQuery.mockClear()
+    expect(await parentCounts('parent')).toEqual(rolledUp(2))
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('ready_track_facet_vocabulary'),
+      ),
+    ).toBe(true)
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('browse_artist_facet_keys'),
+      ),
+    ).toBe(false)
+
+    const writer = await pool.connect()
+    try {
+      await writer.query('begin')
+      await writer.query(`update media_item set metadata = '{"legacyHidden":true}'
+        where id = 'vocabulary-track-1'`)
+      expect(await parentCounts('fixture parent')).toEqual(rolledUp(2))
+      await writer.query('rollback')
+      expect(await parentCounts('parent')).toEqual(rolledUp(2))
+      expect(
+        (await pool.query('select 1 from track_facet_dirty')).rowCount,
+      ).toBe(0)
+
+      await writer.query(`update media_item set metadata = '{"legacyHidden":true}'
+        where id = 'vocabulary-track-1';
+        update track_facet_state set retry_after = 'infinity'`)
+      expect(
+        (await pool.query('select 1 from track_facet_dirty')).rowCount,
+      ).toBe(1)
+      expect(await parentCounts('fixture parent')).toEqual(rolledUp(1))
+    } finally {
+      await writer.query('rollback')
+      writer.release()
+    }
+    logQuery.mockClear()
+    expect(await parentCounts('p')).toEqual(rolledUp(1))
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('insert into track_facet_value'),
+      ),
+    ).toBe(false)
+    expect(
+      logQuery.mock.calls.some(([query]) =>
+        query.includes('browse_artist_facet_keys'),
+      ),
+    ).toBe(true)
+    expect((await pool.query('select 1 from track_facet_dirty')).rowCount).toBe(
+      1,
+    )
+    await pool.query("update track_facet_state set retry_after = '-infinity'")
+    expect(await parentCounts('fi')).toEqual(rolledUp(1))
+    expect((await pool.query('select 1 from track_facet_dirty')).rowCount).toBe(
+      0,
+    )
+
+    expect(await listBrowseFacets('track', { q: 'Source' })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'source',
+          value: 'Spotify playlists',
+          count: 1,
+        }),
+      ]),
+    )
+    await pool.query(`
+      update media_item set title = 'Renamed release' where id = 'vocabulary-album';
+      update artist set name = 'Renamed contributor' where id = 'vocabulary-artist-1';
+      update playlist set name = 'Renamed playlist', source = 'spotify-liked'
+        where id = 'vocabulary-playlist-1';
+    `)
+    await pool.query("update track_facet_state set retry_after = '-infinity'")
+    await listBrowseFacets('track', { q: '' })
+    expect(await listBrowseFacets('track', { q: 'renamed' })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'album',
+          value: 'Renamed release',
+          count: 1,
+        }),
+        expect.objectContaining({
+          field: 'artist',
+          value: 'Renamed contributor',
+          count: 1,
+        }),
+        expect.objectContaining({
+          field: 'playlist',
+          value: 'Renamed playlist',
+          count: 1,
+        }),
+      ]),
+    )
+    expect(await listBrowseFacets('track', { q: 'Source' })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'source',
+          value: 'Spotify playlists',
+          count: 1,
+        }),
+        expect.objectContaining({
+          field: 'source',
+          value: 'Liked Songs',
+          count: 1,
+        }),
+      ]),
+    )
   })
 })

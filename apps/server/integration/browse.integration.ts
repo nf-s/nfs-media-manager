@@ -1093,6 +1093,71 @@ it('keeps track release ties across deep page and position boundaries', async ()
   expect(await queryBrowsePositions('track', listening, [17])).toEqual([
     { id: 'jump-track-20', position: 17, listeningScrobbles: 1 },
   ])
+
+  await pool.query(`
+    insert into artist (id, name) values ('jump-artist', 'Jump Fixture Artist');
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'jump-track-'||n, 'jump-artist', 'artist'
+    from generate_series(1, 30) n where n%2 = 0;
+    insert into artist_provider_snapshot (id, artist_id, provider, normalized_data, payload)
+    values ('jump-profile', 'jump-artist', 'musicbrainz', '{"tags":["Jump Style"]}', '{}');
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    values ('jump-artist', 'musicbrainz', 'jump-profile');
+    insert into tag (id, media_type, name) values ('jump-tag', 'album', 'Jump Album Style');
+    insert into media_item_tag (media_item_id, tag_id) values ('jump-album', 'jump-tag');
+    insert into playlist (id, name, kind) values ('jump-playlist', 'Jump Playlist', 'playlist');
+    insert into playlist_item (playlist_id, media_item_id)
+    select 'jump-playlist', 'jump-track-'||n from generate_series(1, 30) n where n%3 = 0;
+    update library_track lt set duration_sec = case when n%4 <> 0 then 150+n%6 end,
+      scrobble_count = n%4
+    from generate_series(1, 30) n where lt.media_item_id = 'jump-track-'||n;
+  `)
+
+  const sorts = [
+    'artist',
+    'album',
+    'playlist',
+    'genre',
+    'albumTag',
+    'artistTag',
+    'releaseDate',
+    'durationSec',
+    'scrobbles',
+  ]
+  const requested = [15, 17, 24, 31]
+  for (const sortBy of sorts) {
+    for (const direction of ['asc', 'desc']) {
+      const query = TrackQuerySchema.parse({
+        ...filtered,
+        listeningSort: listening.listeningSort,
+        sortBy,
+        direction,
+      })
+      const full = await queryBrowsePageIds('track', { ...query, size: 50 })
+      expect(full.ids).toHaveLength(25)
+      expect(await page(6, query), `${sortBy} ${direction}`).toMatchObject({
+        ids: full.ids.slice(15, 18),
+        hasMore: true,
+      })
+      expect(
+        await queryBrowsePositions('track', query, [...requested].reverse()),
+        `${sortBy} ${direction} positions`,
+      ).toEqual(
+        requested.flatMap((position) => {
+          const id = full.ids[position]
+          return id
+            ? [
+                {
+                  id,
+                  position,
+                  listeningScrobbles: full.listeningScrobbles?.get(id),
+                },
+              ]
+            : []
+        }),
+      )
+    }
+  }
 })
 
 it('returns the stored collection ID in film Browse and detail memberships', async () => {

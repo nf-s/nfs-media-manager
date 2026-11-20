@@ -74,7 +74,7 @@ On a disposable PostgreSQL fixture with 20,000 tracks, 9,000 current artist prof
 | Grouped track page IDs | 330 ms | 27 ms |
 | Exact grouped count    | 306 ms | 27 ms |
 
-The table measures database execution for IDs and counts. Loading full track details separately took 11 ms for 50 tracks (previously 96 ms) and 33 ms for 250 tracks (previously 1.1 seconds), using the median of five warm service calls. HTTP and browser rendering add to those times. A separate 64,000-track fixture took about 1.9 seconds for a broad grouped page sorted by scrobbles.
+The table measures database execution for IDs and counts. Loading full track details separately took 11 ms for 50 tracks (previously 96 ms) and 33 ms for 250 tracks (previously 1.1 seconds), using the median of five warm service calls. HTTP and browser rendering add to those times. The unfiltered grouped play-count measurements below use a separate fixture.
 
 Jobs counts group matching batch IDs without sorting or loading individual job details. The page limits individual jobs before combining them with batch summaries. Subscription and Mixes compatibility pages count narrow rows and load page details within the same SQL statement, including when a page lies beyond the last match. Source directories count stored items through each source's indexed membership. In separate synthetic fixtures, the Jobs first page took 15 ms for 300,000 jobs (previously 229 ms), and a subscription page with its exact total took 32 ms for 250,000 items (previously 306 ms). These are medians of five warm database measurements.
 
@@ -82,11 +82,27 @@ Jobs counts group matching batch IDs without sorting or loading individual job d
 
 Titles are required, so descending title order can scan the title index backwards. On 20,000 synthetic tracks the first 50 IDs took 0.8 ms, down from 192 ms. A one-day Added range on 65,000 tracks counted 25 matches in 0.13 ms, down from 26 ms. Film and Album Released ranges also use the stored timestamp for whole-millisecond bounds. Fractional bounds retain their exact precision. When a result cap is the only filter, one count supplies both the displayed total and the uncapped total.
 
-Tracks and Albums resolve tag labels and their visible ancestors before joining media memberships. On 60,000 tracks, 6,000 albums and 60,000 current artist profiles, a one-character autocomplete request fell from 2.02 to 1.22 seconds for Tracks and from 493 to 328 ms for Albums. A selective search took 333 ms and 113 ms respectively. Exact counts on broad searches still require reading memberships across the library.
+Tracks and Albums resolve tag labels and their visible ancestors before joining media memberships. On 60,000 tracks, 6,000 albums and 60,000 current artist profiles, a one-character autocomplete request fell from 2.02 to 1.22 seconds for Tracks and from 493 to 328 ms for Albums. A selective search took 333 ms and 113 ms respectively. Albums and custom Track scopes still aggregate live memberships. Default Track autocomplete now reads the stored vocabulary described below.
 
 Subscription and Mix autocomplete count scalar values once per item and collapse repeated array labels within each item on broad searches. On a synthetic fixture with 160,000 subscription and mix items, empty autocomplete took 180 ms for Subscriptions and 256 ms for Mixes, down from 584 ms and 683 ms. Artist suggestions collapse repeated profile labels and playlist memberships before counting.
 
-Deep pages still use offsets to support jumping to an arbitrary position. On the same 20,000-track fixture, the first title-ordered page took about 1 ms and page 390 took 239 ms at 50 tracks per page. Rolling listening windows also move between requests. Exact count cache keys include the window boundaries, and concurrent database writes can invalidate cached totals.
+### Grouped play counts
+
+Unfiltered grouped Tracks sorted by lifetime scrobbles share two stored recording orders, one per direction. Each order includes the release tie-breaks. A page, an exact total and an arbitrary position can read the same published ranks. Filtered groups and period-specific listening sorts continue to use their own query predicates.
+
+On a disposable fixture of 64,000 tracks and 252,000 scrobbles, the first descending page took 2.08 seconds including publication, compared with 2.04 seconds for a live read. Further descending pages took 2.2 ms, down from 1.87 seconds. Ascending pages took 1.4 ms, five arbitrary positions took 1.7 ms and a total took 0.7 ms. These timings measure the service before track detail hydration.
+
+### Tracks autocomplete
+
+Default Tracks autocomplete stores the distinct values and exact counts for each of its ten text fields, ranked by count and display value. Suggestions on focus can read the first ranks for each field. Typed suggestions retain exact-value priority, multiword substring matching and per-field limits. A cold selective request can still search indexed live rows. A broad request can build the vocabulary for subsequent searches from any Worker.
+
+On 60,000 synthetic tracks, a fresh application process served empty suggestions in 3 ms with a current vocabulary. One-character, common-word and selective searches took 23 ms, 16 ms and 13 ms of database time, down from 1,143 ms, 629 ms and 373 ms on the same fixture. Building on the first request took 1.22 seconds, compared with 1.18 seconds live. The ranked values and index occupied about 9 MB on this fixture.
+
+Both stored results use transactionally maintained invalidation markers. Relevant source writes mark the cache dirty in the same transaction. Readers use a single snapshot to check freshness and select results. A rebuild publishes atomically and can clear only the committed markers it observed. Reads during rebuilds and cooldowns can use the live query.
+
+### Deep Track pages
+
+Track page jumps and position requests preserve their absolute ranks, including ties that cross either page boundary. For deep sorts by Title, Added, Artist, Album, Playlist, tags, Released, Duration or ascending lifetime scrobbles, PostgreSQL finds the range of primary sort keys containing the requested positions before looking up release credits and track numbers. On the 20,000-track fixture used for the combined-filter measurements, a title jump to page 390 at 50 tracks per page took 86 ms, down from 239 ms. The first page took about 1 ms both ways. On a separate 20,000-track fixture, a deep Released page fell from 101 ms to 37 ms and Duration fell from 99 ms to 28 ms. Early pages keep the direct ordered limit. Large tied groups and the number of primary keys preceding the page still affect the cost. Rolling listening windows also move between requests. Exact count cache keys include the window boundaries.
 
 ## Verification
 
@@ -98,7 +114,7 @@ corepack pnpm --filter @repo/server exec vitest run --config vitest.integration.
 
 On a local synthetic fixture of 20,000 tracks linked to 1,000 albums, a selective title search plus autocomplete took approximately 8.5 seconds before these changes and 83 milliseconds afterwards. This measures the service calls with fixture setup excluded, not browser or network latency. Plan assertions check that a selective search reads album positions only for matching tracks and that default Track ordering can use its Added-date index. Tests do not depend on a machine-specific millisecond threshold.
 
-Uncached broad autocomplete on that fixture took approximately 0.5–0.6 seconds for empty input, one character and match-status labels. Those requests still count values across the library; the selective-search improvement is not a latency guarantee for every filter or library size.
+The live fallback for broad autocomplete on that fixture took approximately 0.5–0.6 seconds for empty input, one character and match-status labels. Those requests still count values across the library; the selective-search improvement is not a latency guarantee for every filter or library size.
 
 ## Upgrading
 
@@ -109,3 +125,5 @@ Migrations `0031_artist_filter_indexes_and_selection` and `0032_artist_browse_na
 Migration `0034_artist_scrobble_count` adds `artist.scrobble_count`, fills it from the stored scrobble links and builds its ordering index. It needs no re-scrape or relink.
 
 Migration `0041_browse_query_indexes` builds the normalized artist-profile tag index and the media-type/normalized-title index, then updates planner statistics. Follow the standard upgrade procedure before starting this version. Existing snapshots and tracks supply all indexed data.
+
+Migrations `0042_grouped_recording_browse_order` and `0043_track_facet_vocabulary` create the derived tables and their invalidation triggers. They populate on demand. A separate reader role can continue to query the live data. A runtime role that builds caches needs read access to the derived tables, insert and delete on the rank and value tables, insert and update on the state tables, and delete and update on the invalidation tables. The source write triggers run with the migration owner's privileges. Existing library data supplies both caches.

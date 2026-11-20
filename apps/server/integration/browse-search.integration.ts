@@ -95,7 +95,12 @@ it('reads album positions only for matching rows in a selective track search', a
   const queries = capturedQueries.filter(
     ({ query }) => !query.includes('pg_current_snapshot'),
   )
-  expect(queries).toHaveLength(3)
+  expect(queries).toHaveLength(4)
+  expect(
+    queries.filter(({ query }) =>
+      query.includes('ready_track_facet_vocabulary'),
+    ),
+  ).toHaveLength(1)
   for (const { query, params } of queries) {
     const result = await pool.query(
       `explain (analyze, format json) ${query}`,

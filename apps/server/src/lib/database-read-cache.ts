@@ -15,6 +15,19 @@ const VersionSchema = z
   )
   .length(1)
 
+const OptionalDatabaseCacheErrorSchema = z.object({
+  code: z.enum(['25006', '40001', '40P01', '42501', '42P01', '55P03', '57014']),
+})
+
+/** A persisted cache is optional when its tables or refresh cannot be used. */
+export function canReadDatabaseWithoutCache(error: unknown) {
+  return (
+    OptionalDatabaseCacheErrorSchema.safeParse(error).success ||
+    (error instanceof Error &&
+      OptionalDatabaseCacheErrorSchema.safeParse(error.cause).success)
+  )
+}
+
 async function readDatabaseVersion() {
   // The full MVCC snapshot includes in-progress writers, unlike xmax alone.
   // Every lookup checks the primary DB, so commits by scripts/other workers

@@ -30,7 +30,10 @@ import { formatTagName } from '@repo/schemas/tags'
 import { rangeCondition, timestampRangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { createDatabaseReadCache } from '@/lib/database-read-cache'
+import {
+  canReadDatabaseWithoutCache,
+  createDatabaseReadCache,
+} from '@/lib/database-read-cache'
 import { checksumJson } from '@/lib/media-utils'
 import {
   mediaItem,
@@ -117,6 +120,18 @@ const TrackRankRowsSchema = z.array(
     listeningScrobbles: z.number().int().nonnegative().nullable(),
   }),
 )
+const trackRankSortFields = new Set([
+  'title',
+  'artist',
+  'album',
+  'playlist',
+  'genre',
+  'albumTag',
+  'artistTag',
+  'releaseDate',
+  'dateAdded',
+  'durationSec',
+])
 
 /** The one-based histogram bar of a count: how many edges are at or below it. */
 function listeningBar(value: SQL, edges: readonly number[]) {
@@ -1016,9 +1031,10 @@ async function browseQueries(
     return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
   }
   const offset = (query.page - 1) * query.size
-  const indexedTrackOrder =
+  const useTrackRanks =
     mediaType === 'track' &&
-    (sortField.key === 'title' || sortField.key === 'dateAdded') &&
+    (trackRankSortFields.has(sortField.key) ||
+      (sortField.key === 'scrobbles' && query.direction === 'asc')) &&
     options.sort?.field.key !== sortField.key
 
   async function readTrackRanks(
@@ -1066,7 +1082,7 @@ async function browseQueries(
   async function readPage(limit: number) {
     // Keep the direct limit for early pages, where there are few ties to skip.
     const rows =
-      indexedTrackOrder && limit > 0 && offset >= 3 * limit
+      useTrackRanks && limit > 0 && offset >= 3 * limit
         ? await readTrackRanks({ first: offset + 1, last: offset + limit })
         : await base()
             .where(pageWhere)
@@ -1092,7 +1108,7 @@ async function browseQueries(
     const ranks = browseRanks(positions, query.limitResults)
     if (!ranks.length) return []
     const deepest = Math.max(...ranks)
-    if (indexedTrackOrder && deepest >= 4 * ranks.length)
+    if (useTrackRanks && deepest >= 4 * ranks.length)
       return (await readTrackRanks(ranks)).map((row) => ({
         id: row.id,
         position: row.rank - 1,
@@ -1542,6 +1558,10 @@ const FacetRowSchema = z.object({
   count: z.coerce.number().int().positive(),
 })
 type FacetRow = z.infer<typeof FacetRowSchema> & { subtags?: number }
+const CachedTrackFacetsSchema = z.object({
+  ready: z.boolean(),
+  rows: z.array(FacetRowSchema),
+})
 const musicTagFacetFields = ['genre', 'albumTag', 'artistTag']
 const tagFacetFields = [...musicTagFacetFields, 'keyword']
 
@@ -1571,6 +1591,14 @@ function musicTagFacetRows(key: string, mediaType: 'album' | 'track') {
     and (${albumId} is null or ${albumId} not in (${albumsWithEnoughTags()}))`
 }
 
+function musicFacetSources(mediaType: 'album' | 'track') {
+  return [
+    sql`browse_artist_facet_keys as materialized (${artistTagFacetKeys(mediaType)})`,
+    sql`browse_release_facet_keys as materialized (${releaseTagFacetKeys})`,
+  ]
+}
+
+const redundantTrackFacetSource = sql`redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds()})`
 export async function listBrowseFacets(
   mediaType: MediaType,
   input: Partial<BrowseFacetQuery> = {},
@@ -1593,17 +1621,7 @@ export async function listBrowseFacets(
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }
 
-export function browseFacetRows(
-  field: BrowseField,
-  source: SQL,
-  query: BrowseFacetQuery,
-  limit: number,
-  visibility = sql``,
-  counting:
-    | 'distinctItems'
-    | 'uniqueRows'
-    | 'deduplicateRows' = 'distinctItems',
-) {
+function facetValueMatches(field: BrowseField, query: BrowseFacetQuery) {
   const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const matches = words
     .filter(
@@ -1612,7 +1630,21 @@ export function browseFacetRows(
         !`${field.label}:`.toLowerCase().includes(word),
     )
     .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
-  const search = matches.length ? sql`and ${and(...matches)}` : sql``
+  return matches.length ? sql`and ${and(...matches)}` : sql``
+}
+
+export function browseFacetRows(
+  field: BrowseField,
+  source: SQL,
+  query: BrowseFacetQuery,
+  limit: number | undefined,
+  visibility = sql``,
+  counting:
+    | 'distinctItems'
+    | 'uniqueRows'
+    | 'deduplicateRows' = 'distinctItems',
+) {
+  const search = facetValueMatches(field, query)
   const values = sql`from (${source}) values_for_field
     where value is not null and value <> '' ${search} ${visibility}`
   // Music tag rows can overlap through several source tags or credits. Let
@@ -1624,36 +1656,33 @@ export function browseFacetRows(
   const count =
     counting === 'distinctItems' ? sql`count(distinct id)` : sql`count(*)`
   // Limit each field independently so common values never crowd out other fields.
+  const order =
+    limit === undefined
+      ? sql``
+      : sql`order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
+      count desc, value asc limit ${limit}`
   return sql`(select ${field.key}::text as field, value, ${count}::int as count
     ${distinctValues}
     group by value
-    order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,
-      count desc, value asc
-    limit ${limit})`
+    ${order})`
 }
 
-async function queryBrowseFacets(
+function browseFacetQuery(
   mediaType: MediaType,
   fields: BrowseField[],
   query: BrowseFacetQuery,
   options: { includeLastfmSourceRows?: boolean },
-): Promise<FacetRow[]> {
-  if (!fields.length) return []
-  const limit = Math.min(
-    query.limitPerField,
-    Math.max(1, Math.floor(1000 / fields.length)),
-  )
+  completeVocabulary = false,
+) {
+  const limit = completeVocabulary
+    ? undefined
+    : facetFieldLimit(query, fields.length)
   const music = mediaType === 'album' || mediaType === 'track'
   const sources: SQL[] = []
   if (music && fields.some((field) => musicTagFacetFields.includes(field.key)))
-    sources.push(
-      sql`browse_artist_facet_keys as materialized (${artistTagFacetKeys(mediaType)})`,
-      sql`browse_release_facet_keys as materialized (${releaseTagFacetKeys})`,
-    )
+    sources.push(...musicFacetSources(mediaType))
   if (mediaType === 'track' && !options.includeLastfmSourceRows)
-    sources.push(
-      sql`redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds()})`,
-    )
+    sources.push(redundantTrackFacetSource)
   const queries = fields.map((field) => {
     const musicTagFacet = music && musicTagFacetFields.includes(field.key)
     const source = musicTagFacet
@@ -1689,11 +1718,131 @@ async function queryBrowseFacets(
           : 'distinctItems',
     )
   })
-  const result = await db.execute(
-    sql`${sources.length ? sql`with ${sql.join(sources, sql`, `)}` : sql``}
-      ${sql.join(queries, sql` union all `)}`,
+  const withSources = sources.length
+    ? sql`with ${sql.join(sources, sql`, `)}`
+    : sql``
+  return sql`${withSources} ${sql.join(queries, sql` union all `)}`
+}
+
+function facetFieldLimit(query: BrowseFacetQuery, fieldCount: number) {
+  return Math.min(
+    query.limitPerField,
+    Math.max(1, Math.floor(1000 / fieldCount)),
   )
-  const rows: FacetRow[] = z.array(FacetRowSchema).parse(result.rows)
+}
+
+/** Store the exact order as a rank so long labels need no B-tree text key. */
+const trackFacetBuildQuery = sql`select field,
+  row_number() over (partition by field order by count desc, value asc) as rank, value, count
+  from (${browseFacetQuery(
+    'track',
+    trackBrowseFields.filter(
+      (field) => field.type === 'text' && field.filterable,
+    ),
+    BrowseFacetQuerySchema.parse({}),
+    {},
+    true,
+  )}) facet`
+// Only readers with the same database role and counting rules share values.
+const trackFacetBuilder = sql`current_user || ':' || ${checksumJson(dialect.sqlToQuery(trackFacetBuildQuery))}::text`
+
+function readTrackFacetQuery(fields: BrowseField[], query: BrowseFacetQuery) {
+  const limit = facetFieldLimit(query, fields.length)
+  const facets = fields.map((field) => {
+    const priority = query.q
+      ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
+      : sql``
+    return sql`(select field, value, count from track_facet_value
+      where field = ${field.key} ${facetValueMatches(field, query)}
+      order by ${priority}rank limit ${limit})`
+  })
+  return sql`with ready_track_facet_vocabulary as materialized (
+      select exists (
+        select 1 from track_facet_state where singleton and ready and builder = ${trackFacetBuilder}
+      ) and not exists (select 1 from track_facet_dirty) as ready
+    )
+    select ready, case when ready
+      then coalesce((select jsonb_agg(facet) from (${sql.join(facets, sql` union all `)}) facet), '[]'::jsonb)
+      else '[]'::jsonb end as rows
+    from ready_track_facet_vocabulary`
+}
+
+async function refreshTrackFacets() {
+  // Keep retrying a large or failed rebuild off the normal request path.
+  const claim = await db.transaction(async (tx) => {
+    await tx.execute(sql`set local lock_timeout = '100ms'`)
+    return tx.execute(sql`insert into track_facet_state (singleton, builder, retry_after)
+      select true, ${trackFacetBuilder}, statement_timestamp() + interval '30 seconds'
+      where not exists (select 1 from track_facet_state
+        where singleton and retry_after > statement_timestamp())
+      on conflict (singleton) do update set retry_after = excluded.retry_after
+      where track_facet_state.retry_after <= statement_timestamp()
+        and (not track_facet_state.ready or track_facet_state.builder <> excluded.builder
+          or exists (select 1 from track_facet_dirty))
+      returning 1`)
+  })
+  if (!claim.rows.length) return
+  return db.transaction(
+    async (tx) => {
+      const guard =
+        await tx.execute(sql`select set_config('statement_timeout', '5000ms', true),
+      set_config('lock_timeout', '100ms', true),
+      set_config('jit', 'off', true),
+      pg_try_advisory_xact_lock(hashtextextended(current_schema() || ':track_facet_vocabulary', 0)) as ready`)
+      if (!z.object({ ready: z.boolean() }).parse(guard.rows[0]).ready) return
+      await tx.execute(sql`delete from track_facet_value`)
+      await tx.execute(sql`insert into track_facet_value (field, rank, value, count)
+        ${trackFacetBuildQuery}`)
+      await tx.execute(sql`update track_facet_state set ready = true,
+        builder = ${trackFacetBuilder}, retry_after = clock_timestamp() + interval '5 seconds'
+        where singleton`)
+      // Markers from commits after this snapshot remain and invalidate this build.
+      await tx.execute(sql`delete from track_facet_dirty where transaction_id in (
+        select transaction_id from track_facet_dirty for update skip locked)`)
+      return true
+    },
+    { isolationLevel: 'repeatable read' },
+  )
+}
+
+async function readTrackFacetsFromVocabulary(query: SQL, broad: boolean) {
+  const read = async () =>
+    CachedTrackFacetsSchema.parse((await db.execute(query)).rows[0])
+  try {
+    const result = await read()
+    if (result.ready) return result.rows
+    // Selective queries can use indexed live rows until a broad query builds the vocabulary.
+    if (broad && (await refreshTrackFacets())) {
+      const refreshed = await read()
+      if (refreshed.ready) return refreshed.rows
+    }
+  } catch (error) {
+    if (!canReadDatabaseWithoutCache(error)) throw error
+  }
+}
+
+async function queryBrowseFacets(
+  mediaType: MediaType,
+  fields: BrowseField[],
+  query: BrowseFacetQuery,
+  options: { includeLastfmSourceRows?: boolean; fields?: BrowseField[] },
+): Promise<FacetRow[]> {
+  if (!fields.length) return []
+  const cached =
+    mediaType === 'track' && !options.includeLastfmSourceRows && !options.fields
+      ? await readTrackFacetsFromVocabulary(
+          readTrackFacetQuery(fields, query),
+          (query.q ?? '').split(/\s+/).every((word) => word.length < 3),
+        )
+      : undefined
+  const rows: FacetRow[] =
+    cached ??
+    z
+      .array(FacetRowSchema)
+      .parse(
+        (await db.execute(browseFacetQuery(mediaType, fields, query, options)))
+          .rows,
+      )
   // A tag with subtags is counted over all of them; say how many there are.
   const subtags = await visibleSubtagCounts(
     mediaType === 'track' ? 'album' : mediaType,

@@ -234,6 +234,30 @@ export const recordingBrowseOrder = pgTable(
   ],
 )
 
+export const trackFacetDirty = pgTable('track_facet_dirty', {
+  transactionId: bigint('transaction_id', { mode: 'bigint' }).primaryKey(),
+})
+
+export const trackFacetState = pgTable('track_facet_state', {
+  singleton: boolean('singleton').primaryKey(),
+  builder: text('builder').notNull(),
+  ready: boolean('ready').default(false).notNull(),
+  retryAfter: timestamp('retry_after', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+export const trackFacetValue = pgTable(
+  'track_facet_value',
+  {
+    field: text('field').notNull(),
+    rank: bigint('rank', { mode: 'bigint' }).notNull(),
+    value: text('value').notNull(),
+    count: integer('count').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.field, table.rank] })],
+)
+
 export const artist = pgTable(
   'artist',
   {

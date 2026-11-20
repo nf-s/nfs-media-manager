@@ -2,6 +2,7 @@ import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
+import { canReadDatabaseWithoutCache } from '@/lib/database-read-cache'
 
 const RecordingGroupSchema = z.object({
   id: z.string(),
@@ -384,18 +385,6 @@ const RecordingOrderReadSchema = z.object({
   rows: RecordingGroupPositionRowsSchema,
 })
 
-const OptionalOrderErrorSchema = z.object({
-  code: z.enum(['25006', '40001', '42501', '42P01', '55P03', '57014']),
-})
-
-function canUseLiveOrder(error: unknown) {
-  return (
-    OptionalOrderErrorSchema.safeParse(error).success ||
-    (error instanceof Error &&
-      OptionalOrderErrorSchema.safeParse(error.cause).success)
-  )
-}
-
 const cleanOrder = sql`not exists (select 1 from recording_browse_order_dirty)`
 // Bump when the unfiltered membership or order changes, including tie-breaks.
 const orderBuilder = sql`current_user || ':v1'`
@@ -419,7 +408,7 @@ export async function readRecordingBrowseOrder(rows?: SQL) {
           then ${selected} else '[]'::jsonb end as rows`)
     return RecordingOrderReadSchema.parse(result.rows[0])
   } catch (error) {
-    if (!canUseLiveOrder(error)) throw error
+    if (!canReadDatabaseWithoutCache(error)) throw error
     return undefined
   }
 }
@@ -496,7 +485,7 @@ export async function refreshRecordingBrowseOrder(
       { isolationLevel: 'repeatable read' },
     )
   } catch (error) {
-    if (error !== expired && !canUseLiveOrder(error)) throw error
+    if (error !== expired && !canReadDatabaseWithoutCache(error)) throw error
     return undefined
   }
 }
