@@ -41,6 +41,7 @@ const spotifyId = (key: string) => key.padEnd(22, '0')
 
 const KEPLER = channelId('kepler')
 const BREAD = channelId('bread')
+const EMPTY = channelId('empty')
 const RETIRED = channelId('retired')
 const ORBIT_TALK = spotifyId('OrbitTalkShow')
 const KITCHEN = spotifyId('QuietKitchenShow')
@@ -85,6 +86,7 @@ const sources: Source[] = [
     handle: '@keplerlab',
   },
   { id: BREAD, type: 'youtube', title: 'Bread Bench' },
+  { id: EMPTY, type: 'youtube', title: 'Empty Channel' },
   {
     id: RETIRED,
     type: 'youtube',
@@ -571,8 +573,11 @@ describe('subscription items', () => {
     ).toBe(0)
     // An unfinished live stream has no duration.
     expect(
-      (await list({ ranges: [{ field: 'durationSec', min: 1200, max: 1800 }] }))
-        .ids,
+      (
+        await list({
+          ranges: [{ field: 'durationSec', min: 1199.5, max: 1800 }],
+        })
+      ).ids,
     ).toEqual([spotifyId('OrbitEpisodeOne'), spotifyId('KitchenEpisode')])
     const short = await list({ ranges: [{ field: 'durationSec', max: 60 }] })
     expect(short.ids).not.toContain(videoId('k2'))
@@ -740,11 +745,12 @@ describe('subscription facets and sources', () => {
     const { items: listed } = await listSubscriptionSources()
     expect(listed.map((source) => source.id)).toEqual([
       BREAD,
+      EMPTY,
       KEPLER,
       ORBIT_TALK,
       KITCHEN,
     ])
-    expect(listed[2]).toEqual({
+    expect(listed[3]).toEqual({
       type: 'spotify',
       id: ORBIT_TALK,
       title: 'Orbit Talk',
@@ -757,6 +763,11 @@ describe('subscription facets and sources', () => {
       itemTotal: 2,
     })
     expect(listed[1]).toMatchObject({
+      id: EMPTY,
+      storedItems: 0,
+      latestItemAt: null,
+    })
+    expect(listed[2]).toMatchObject({
       type: 'youtube',
       handle: '@keplerlab',
       storedItems: 2,

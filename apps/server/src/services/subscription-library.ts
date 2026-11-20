@@ -39,6 +39,7 @@ import {
   type SubscriptionSort,
   type SubscriptionType,
 } from '@repo/schemas/subscriptions'
+import { rangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { ServerError } from '@/lib/error'
@@ -178,7 +179,6 @@ const ItemRowsSchema = z.array(
     url: z.string().nullable(),
     audio_url: z.string().nullable(),
     watched: z.coerce.number().nullable(),
-    total: z.coerce.number().optional(),
   }),
 )
 type SubscriptionItemRow = z.infer<typeof ItemRowsSchema>[number]
@@ -248,37 +248,41 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
     join subscription_source s on s.id = i.source_id
     where ${where}`
   const offset = (search.page - 1) * search.size
-  async function readPage(size: number, withCount = false) {
-    return ItemRowsSchema.parse(
-      (
-        await db.execute(sql`
-        select i.id, i.type, i.source_id, s.title as source_title,
-          s.thumbnail_url as source_thumbnail_url, i.title, i.description,
-          i.tags, extract(epoch from i.published_at)::float8 as published,
-          i.published_precision, i.duration_sec, i.view_count, i.like_count,
-          i.comment_count, i.live, i.artwork_url, i.artists, i.url,
-          i.audio_url, extract(epoch from i.watched_at)::float8 as watched
-          ${withCount ? sql`, count(*) over () as total` : sql``}
-        ${members}
-        order by ${search.order(ranked)}, i.id
-        limit ${size} offset ${offset}`)
-      ).rows,
-    )
+  const columns = sql`i.id, i.type, i.source_id, s.title as source_title,
+    s.thumbnail_url as source_thumbnail_url, i.title, i.description,
+    i.tags, extract(epoch from i.published_at)::float8 as published,
+    i.published_precision, i.duration_sec, i.view_count, i.like_count,
+    i.comment_count, i.live, i.artwork_url, i.artists, i.url,
+    i.audio_url, extract(epoch from i.watched_at)::float8 as watched`
+  const order = sql`order by ${search.order(ranked)}, i.id`
+  const count = sql`select count(*) as total ${members}`
+  async function readPage(size: number) {
+    const result = await db.execute(sql`select ${columns} ${members} ${order}
+      limit ${size} offset ${offset}`)
+    return ItemRowsSchema.parse(result.rows)
+  }
+  async function readPageWithCount() {
+    // Count and page share a snapshot. The count reads no display payload and
+    // still returns a row when the requested page has no matches.
+    const result = await db.execute(sql`with matched_page as materialized (
+        select i.id ${members} ${order} limit ${search.size} offset ${offset}
+      )
+      select ${columns}, totals.total from (${count}) totals
+      left join (
+        matched_page join subscription_item i on i.id = matched_page.id
+        join subscription_source s on s.id = i.source_id
+      ) on true
+      ${order}`)
+    return {
+      rows: ItemRowsSchema.parse(result.rows.filter((row) => row.id !== null)),
+      totalCount: TotalRowsSchema.element.parse(result.rows[0]).total,
+    }
   }
   async function readCount() {
-    const result = await db.execute(sql`select count(*) as total ${members}`)
+    const result = await db.execute(count)
     return TotalRowsSchema.parse(result.rows)[0]?.total ?? 0
   }
-  return { members, offset, readPage, readCount }
-}
-
-async function searchSubscriptionItemRows(search: SubscriptionItemSearch) {
-  const { offset, readPage, readCount } =
-    await subscriptionSearchQueries(search)
-  const rows = await readPage(search.size, true)
-  // A page past the end has no rows to carry the window count.
-  const totalCount = rows[0]?.total ?? (offset === 0 ? 0 : await readCount())
-  return { rows, totalCount }
+  return { members, readPage, readCount, readPageWithCount }
 }
 
 type LibraryArtist = { id: string; name: string }
@@ -376,7 +380,7 @@ function filterMatch(filter: BrowseFilter, library: SubscriptionLibrary) {
 // Durations of zero are unknown: a live stream or premiere that has not finished.
 const rangeColumns: Record<
   z.infer<typeof SubscriptionRangeFieldSchema>,
-  { value: SQL; bound: (value: number) => SQL }
+  { value: SQL; bound?: (value: number) => SQL }
 > = {
   publishedAt: {
     value: sql`i.published_at`,
@@ -386,18 +390,16 @@ const rangeColumns: Record<
   },
   durationSec: {
     value: sql`nullif(i.duration_sec, 0)`,
-    bound: (value) => sql`${value}`,
   },
   watchedAt: {
     value: sql`i.watched_at`,
     bound: (value) =>
       sql`(to_timestamp(${value}::float8 / 1000) at time zone 'UTC')`,
   },
-  viewCount: { value: sql`i.view_count`, bound: (value) => sql`${value}` },
-  likeCount: { value: sql`i.like_count`, bound: (value) => sql`${value}` },
+  viewCount: { value: sql`i.view_count` },
+  likeCount: { value: sql`i.like_count` },
   commentCount: {
     value: sql`i.comment_count`,
-    bound: (value) => sql`${value}`,
   },
 }
 
@@ -453,17 +455,7 @@ function subscriptionBrowseSearch(
         message: 'Unknown numeric filter',
       })
     const { value, bound } = rangeColumns[field.data]
-    const bounds: SQL[] = [sql`${value} is not null`]
-    if (range.min !== undefined)
-      bounds.push(sql`${value} >= ${bound(range.min)}`)
-    if (range.max !== undefined)
-      bounds.push(sql`${value} <= ${bound(range.max)}`)
-    const predicate = sql`(${sql.join(bounds, sql` and `)})`
-    conditions.push(
-      range.includeMissing
-        ? sql`(${predicate} or ${value} is null)`
-        : predicate,
-    )
+    conditions.push(rangeCondition(range, value, bound))
   }
   const sortBy = query.sortBy ?? (query.q ? 'relevance' : 'publishedAt')
   if (!subscriptionLibraryHasSort(library, sortBy))
@@ -482,7 +474,8 @@ function subscriptionBrowseSearch(
 async function subscriptionItemPage(
   search: SubscriptionItemSearch,
 ): Promise<SubscriptionItemPage> {
-  const { rows, totalCount } = await searchSubscriptionItemRows(search)
+  const { readPageWithCount } = await subscriptionSearchQueries(search)
+  const { rows, totalCount } = await readPageWithCount()
   return SubscriptionItemPageSchema.parse({
     items: rows.map((row) => subscriptionItem(row)),
     totalCount,
@@ -711,14 +704,14 @@ async function libraryArtistsNamed(names: string[]) {
  * its billed artists or its show.
  */
 export async function getSubscriptionItem(id: string) {
-  const { rows } = await searchSubscriptionItemRows({
+  const { readPage } = await subscriptionSearchQueries({
     fields: 'all',
     conditions: [sql`i.id = ${id}`],
     order: () => sql`i.published_at desc`,
     page: 1,
     size: 1,
   })
-  const [row] = rows
+  const [row] = await readPage(1)
   if (!row) return null
   return subscriptionItem(
     row,
@@ -785,15 +778,16 @@ async function readSubscriptionSources(input: {
       await db.execute(sql`
         select s.id, s.type, s.title, s.handle, s.description, s.thumbnail_url,
           s.url, s.subscriber_count, s.item_total, s.history_complete,
-          count(i.id) as stored,
-          extract(epoch from max(i.published_at))::float8 as latest
+          stats.stored, extract(epoch from stats.latest)::float8 as latest
         from subscription_source s
-        left join subscription_item i on i.source_id = s.id
+        cross join lateral (
+          select count(*) as stored, max(i.published_at) as latest
+          from subscription_item i where i.source_id = s.id
+        ) stats
         where s.subscribed
           ${input.library ? sql`and ${inSubscriptionLibrary(sql`s.type`, input.library)}` : sql``}
           ${input.type ? sql`and s.type = ${input.type}` : sql``}
           ${input.id === undefined ? sql`` : sql`and s.id = ${input.id}`}
-        group by s.id
         order by lower(s.title), s.id`)
     ).rows,
   )

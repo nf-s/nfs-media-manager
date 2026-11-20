@@ -14,6 +14,7 @@ import {
 } from '@repo/schemas/browse'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
 import {
+  TrackSourceSchema,
   trackAlbumLinkLabels,
   trackSourceLabels,
   type TrackQuery,
@@ -26,6 +27,7 @@ import {
 } from '@repo/schemas/listening'
 import { PersonRoleSchema } from '@repo/schemas/common'
 import { formatTagName } from '@repo/schemas/tags'
+import { rangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
@@ -49,11 +51,12 @@ import {
 import { albumAddedDateExpression } from './album-added-dates'
 import { createBrowseListening, type BrowseListening } from './browse-listening'
 import {
-  albumFirstTagRows,
+  firstMusicTagRows,
   albumsWithEnoughTags,
   artistTagMemberships,
   firstArtistTag,
   firstMusicTag,
+  mediaIdsWithArtistTag,
   matchingTagNames,
   sparseAlbumTags,
 } from './music-tags'
@@ -182,20 +185,10 @@ function trackValueExpression(key: string): SQL | null {
       )
     case 'spotifyMatch':
       return sql`to_jsonb(${trackSpotifyMatchExpression(sql`${libraryTrack.spotifyTrackId}`, sql`${mediaItem.sourceLabel}`, true)})`
-    case 'releaseDate':
-      return sql`to_jsonb(extract(epoch from coalesce(${mediaItem.releaseDate}, (select am.release_date from media_item am where am.id = ${libraryTrack.albumMediaItemId}))) * 1000)`
     case 'album':
       return sql`to_jsonb(coalesce(${libraryTrack.albumName}, (select am.title from media_item am where am.id = ${libraryTrack.albumMediaItemId})))`
     case 'albumLink':
       return sql`to_jsonb(case when ${libraryTrack.albumMediaItemId} is null then ${trackAlbumLinkLabels.unlinked}::text else ${trackAlbumLinkLabels.linked}::text end)`
-    case 'dateAdded':
-      return sql`to_jsonb(extract(epoch from ${libraryTrack.dateAdded}) * 1000)`
-    case 'durationSec':
-      return sql`to_jsonb(coalesce(${libraryTrack.durationSec}, ${albumTrackDurationExpression(sql`${libraryTrack.mediaItemId}`, sql`${libraryTrack.albumMediaItemId}`)}))`
-    case 'scrobbles':
-      return sql`to_jsonb(${libraryTrack.scrobbleCount})`
-    case 'lastListenedAt':
-      return sql`to_jsonb(extract(epoch from ${libraryTrack.lastListenedAt}) * 1000)`
     case 'albumTag':
       return sql`(select jsonb_agg(distinct t.name order by t.name) from media_item_tag mt join tag t on t.id = mt.tag_id where mt.media_item_id = ${libraryTrack.albumMediaItemId} and t.media_type = 'album' and not t.hidden)`
     default:
@@ -213,22 +206,6 @@ function valueExpression(key: string, mediaType: MediaType): SQL {
       return sql`to_jsonb(${mediaItem.title})`
     case 'summary':
       return sql`to_jsonb(${mediaItem.summary})`
-    case 'releaseDate':
-      return sql`to_jsonb(extract(epoch from ${mediaItem.releaseDate}) * 1000)`
-    case 'updatedAt':
-      return sql`to_jsonb(extract(epoch from ${mediaItem.updatedAt}) * 1000)`
-    case 'dateAdded':
-      return sql`to_jsonb(extract(epoch from case when ${mediaItem.mediaType} = 'film' then coalesce(${film.dateAdded}, ${mediaItem.createdAt}) else ${albumAddedDateExpression} end) * 1000)`
-    case 'durationSec':
-      return sql`to_jsonb(${album.durationSec})`
-    case 'trackCount':
-      return sql`to_jsonb(${album.trackCount})`
-    case 'runtimeMinutes':
-      return sql`to_jsonb(${film.runtimeMinutes})`
-    case 'budget':
-      return sql`to_jsonb(${film.budget})`
-    case 'boxOffice':
-      return sql`to_jsonb(${film.boxOffice})`
     case 'source':
       return sql`to_jsonb(coalesce(${mediaItem.sourceLabel}, ${film.sourceKind}))`
     case 'watched':
@@ -272,28 +249,72 @@ function textExpression(key: string, mediaType: MediaType): SQL {
 }
 
 function numericExpression(key: string, mediaType: MediaType): SQL {
+  // Built-in metrics have typed columns. Keep them visible to PostgreSQL for
+  // range scans and evaluate release fallbacks only when their field is used.
+  switch (key) {
+    case 'dateAdded':
+      if (mediaType === 'track')
+        return sql`extract(epoch from ${libraryTrack.dateAdded}) * 1000`
+      if (mediaType === 'film')
+        return sql`extract(epoch from coalesce(${film.dateAdded}, ${mediaItem.createdAt})) * 1000`
+      return sql`extract(epoch from ${albumAddedDateExpression}) * 1000`
+    case 'releaseDate':
+      return mediaType === 'track'
+        ? sql`extract(epoch from coalesce(${mediaItem.releaseDate}, (select am.release_date from media_item am where am.id = ${libraryTrack.albumMediaItemId}))) * 1000`
+        : sql`extract(epoch from ${mediaItem.releaseDate}) * 1000`
+    case 'updatedAt':
+      return sql`extract(epoch from ${mediaItem.updatedAt}) * 1000`
+    case 'durationSec':
+      return mediaType === 'track'
+        ? sql`coalesce(${libraryTrack.durationSec}, ${albumTrackDurationExpression(sql`${libraryTrack.mediaItemId}`, sql`${libraryTrack.albumMediaItemId}`)})`
+        : sql`${album.durationSec}`
+    case 'trackCount':
+      return sql`${album.trackCount}`
+    case 'runtimeMinutes':
+      return sql`${film.runtimeMinutes}`
+    case 'budget':
+      return sql`${film.budget}`
+    case 'boxOffice':
+      return sql`${film.boxOffice}`
+    case 'scrobbles':
+      if (mediaType === 'track') return sql`${libraryTrack.scrobbleCount}`
+      break
+    case 'lastListenedAt':
+      if (mediaType === 'track')
+        return sql`extract(epoch from ${libraryTrack.lastListenedAt}) * 1000`
+      break
+  }
   const value = valueExpression(key, mediaType)
   return sql`case when jsonb_typeof(${value}) = 'number' then (${value} #>> '{}')::numeric else null end`
 }
 
 function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   const match = sql`lower(${value}::text)`
-  if (
-    mediaType === 'track' &&
-    key === 'source' &&
-    value.toLowerCase() === trackSourceLabels.lastfm.toLowerCase()
-  )
-    return sql`exists (select 1 from lastfm_track_source s where s.track_media_item_id = ${mediaItem.id})`
+  if (mediaType === 'track' && key === 'source') {
+    const source = TrackSourceSchema.options.find(
+      (source) =>
+        trackSourceLabels[source].toLowerCase() === value.toLowerCase(),
+    )
+    switch (source) {
+      case 'album':
+        return sql`exists (select 1 from track t where t.track_media_item_id = ${mediaItem.id})`
+      case 'lastfm':
+        return sql`exists (select 1 from lastfm_track_source s where s.track_media_item_id = ${mediaItem.id})`
+      case 'spotify':
+      case 'spotify-liked':
+        return sql`exists (select 1 from playlist_item pi join playlist p on p.id = pi.playlist_id
+          where pi.media_item_id = ${mediaItem.id} and p.source = ${source})`
+      case 'spotify-search':
+        return sql`coalesce(${mediaItem.metadata} ? 'spotifyTrackSearch', false)`
+      case undefined:
+        return sql`false`
+    }
+  }
   if (['artist', 'director', 'actor', 'writer'].includes(key)) {
     return sql`exists (select 1 from media_credit c join artist a on a.id = c.artist_id where c.media_item_id = ${mediaItem.id} and c.role = ${key} and lower(a.name) = ${match})`
   }
-  if ((mediaType === 'album' || mediaType === 'track') && key === 'artistTag') {
-    const names = matchingTagNames(normalizeTagName(value), 'album')
-    return sql`${mediaItem.id} in (
-      select artist_tag.media_item_id from (${artistTagMemberships(mediaType, true)}) artist_tag
-      where artist_tag.name_key in (${names})
-    )`
-  }
+  if ((mediaType === 'album' || mediaType === 'track') && key === 'artistTag')
+    return sql`${mediaType === 'track' ? libraryTrack.mediaItemId : mediaItem.id} in (${mediaIdsWithArtistTag(normalizeTagName(value))})`
   if (key === 'genre' || key === 'keyword' || key === 'albumTag') {
     // Resolve merged names once for this library, not once per media/tag pair.
     const name = normalizeTagName(value)
@@ -357,16 +378,6 @@ function browseFieldConditions(
     )
   }
   return conditions
-}
-
-function rangeCondition(range: BrowseRange, value: SQL) {
-  const bounds: SQL[] = [sql`${value} is not null`]
-  if (range.min !== undefined) bounds.push(sql`${value} >= ${range.min}`)
-  if (range.max !== undefined) bounds.push(sql`${value} <= ${range.max}`)
-  const predicate = sql`(${sql.join(bounds, sql` and `)})`
-  return range.includeMissing
-    ? sql`(${predicate} or ${value} is null)`
-    : predicate
 }
 
 /** Apply ordinary and source-evidence filters as one set of Browse predicates. */
@@ -443,7 +454,9 @@ function groupedTrackBrowse(
   sort: SQL,
   naturalOrder: SQL[],
   sharedArtistTags: boolean,
+  orderRows: SQL | undefined,
   listening: BrowseListening | undefined,
+  countedListening: BrowseListening | undefined,
   versionId?: string,
 ) {
   const matches = db
@@ -473,18 +486,20 @@ function groupedTrackBrowse(
         : sql`extract(epoch from ${value}) * 1000`,
     )
   })
-  const groupConditions = listening?.condition
-    ? [...groupRanges, listening.condition]
-    : groupRanges
-  const groupPredicate = groupConditions.length
-    ? sql`where ${and(...groupConditions)}`
-    : sql``
-  // Group counts for rules, the sort period and row values.
-  const groupListening = listening
-    ? sql`left join ${listening.source('recording')} on listening_counts.id = g.group_key`
-    : sql``
-  // A sort period without rules leaves membership alone.
-  const countedListening = listening?.condition ? groupListening : sql``
+  const groupKey = sql`g.group_key`
+  const groupConditions = (requested?: BrowseListening) =>
+    and(...groupRanges, requested?.condition('recording', groupKey))
+  const groupJoins = (requested?: BrowseListening, members?: SQL) => {
+    const source = requested?.source('recording', members)
+    return source
+      ? sql`left join ${source} on listening_counts.id = ${groupKey}`
+      : sql``
+  }
+  const groupCondition = groupConditions(listening)
+  const groupPredicate = groupCondition ? sql`where ${groupCondition}` : sql``
+  const groupListening = groupJoins(listening)
+  const countedGroupCondition = groupConditions(countedListening)
+  const countedGroupListening = groupJoins(countedListening)
   const listeningValue = sql`${listening?.sort ?? sql`null::int`} as listening_scrobbles`
   // Period counts are added up over every matching track of a group.
   const members = sql`${memberships}, ${recordingVersionMembers}`
@@ -498,16 +513,21 @@ function groupedTrackBrowse(
   const rangeStats = hasListeningRange
     ? groupStats
     : sql`${representatives}, ${recordingDates}`
-  const rangeGroups = hasListeningRange
-    ? sql`recording_stats`
-    : sql`recording_dates`
+  const rangeMemberships = groupRanges.length
+    ? sql`${members}, ${rangeStats}`
+    : members
+  const rangeGroups = groupRanges.length
+    ? hasListeningRange
+      ? sql`recording_stats`
+      : sql`recording_dates`
+    : sql`(select distinct group_key from recording_members)`
   // The period count is a group value too; rows carry it as a column.
   const listeningSorted =
     query.sortBy === 'listeningScrobbles' ? listening?.sort : undefined
   const groupSort = recordingGroupValue(query.sortBy) ?? listeningSorted
   const rowSort = listeningSorted
     ? sql`g.listening_scrobbles`
-    : (groupSort ?? sort)
+    : (groupSort ?? sql`g.primary_value`)
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
   const primaryOrdering = (primary: SQL) =>
     sql`${primary} ${direction} nulls last`
@@ -519,28 +539,30 @@ function groupedTrackBrowse(
   const trackColumns = sql`
     join ${libraryTrack} on ${libraryTrack.mediaItemId} = ${mediaItem.id}
     left join ${mediaItem} as ${trackSortAlbum} on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}`
-  /**
-   * The groups to list, each with its period count. A grouped value can be
-   * ordered before joining release metadata. Keep every tie at the boundary
-   * so the normal release order is unchanged.
-   */
+  const orderRowsJoin = orderRows
+    ? sql`left join (${orderRows}) field_order on field_order.media_item_id = ${mediaItem.id}`
+    : sql``
+  // Resolve release order only for rows that can reach the page. Keep every
+  // tie at the boundary so page and position reads use the same total order.
   function groupRows(bound: number) {
-    const groups = sql`select g.*, ${listeningValue}`
-    const matching = sql`from recording_stats g ${groupListening} ${groupPredicate}`
-    const source = groupSort
-      ? sql`(select ranked.* from (
-        ${groups}, rank() over (order by ${primaryOrdering(groupSort)}) as primary_rank
-        ${matching}
-      ) ranked where ranked.primary_rank <= ${bound})`
-      : sql`(${groups} ${matching})`
-    return sql`from ${source} g join ${mediaItem} on ${mediaItem.id} = g.id
-      ${trackColumns}`
+    const columns = groupSort ? sql`` : sql`, ${sort} as primary_value`
+    const sortJoins = groupSort
+      ? sql``
+      : sql`join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns} ${orderRowsJoin}`
+    return sql`from (
+      select g.*, ${listeningValue}${columns}
+      from recording_stats g
+      ${groupListening} ${sortJoins} ${groupPredicate}
+      order by ${primaryOrdering(groupSort ?? sort)}
+      fetch first (${bound}) rows with ties
+    ) g join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}`
   }
   const offset = (query.page - 1) * query.size
 
   async function readCount() {
-    const counted = groupConditions.length
-      ? sql`${scoped}, ${rangeStats} select count(*)::int as value from ${rangeGroups} g ${countedListening} ${groupPredicate}`
+    const counted = countedGroupCondition
+      ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
+        ${countedGroupListening} where ${countedGroupCondition}`
       : sql`${memberships} ${recordingCount}`
     const total = await countCache(
       checksumJson(dialect.sqlToQuery(counted)),
@@ -598,18 +620,30 @@ function groupedTrackBrowse(
   }
 
   async function readVersions(id: string) {
-    const eligibleGroups = groupConditions.length
-      ? sql`, ${rangeStats}, eligible as (select g.group_key from ${rangeGroups} g ${countedListening} ${groupPredicate})`
+    const targetMembers = sql`target_recording_members`
+    const target = sql`(select group_key from recording_members where id = ${id})`
+    const scopedVersions = sql`${countedGroupCondition ? rangeMemberships : members},
+      target_recording_members as materialized (
+        select id, group_key from recording_members where group_key = ${target}
+      )`
+    const eligibleGroups = countedGroupCondition
+      ? sql`, eligible as (
+          select g.group_key from ${rangeGroups} g
+          ${groupJoins(countedListening, targetMembers)}
+          where g.group_key = ${target} and ${countedGroupCondition}
+        )`
       : sql``
     // Versions are tracks, so they carry and sort by their own counts.
-    const versionListening = listening?.sort
-      ? sql`left join ${listening.source('track')} on listening_counts.id = m.id`
+    const versionSource = listening?.sort
+      ? listening.source('track', targetMembers)
+      : undefined
+    const versionListening = versionSource
+      ? sql`left join ${versionSource} on listening_counts.id = m.id`
       : sql``
-    const { rows } = await db.execute(sql`${members}${eligibleGroups}
-    select m.id, ${listeningValue} from recording_members m
-    join recording_members target on target.group_key = m.group_key and target.id = ${id}
-    ${groupConditions.length ? sql`join eligible on eligible.group_key = m.group_key` : sql``}
-    join ${mediaItem} on ${mediaItem.id} = m.id ${trackColumns} ${versionListening}
+    const { rows } = await db.execute(sql`${scopedVersions}${eligibleGroups}
+    select m.id, ${listeningValue} from ${targetMembers} m
+    ${countedGroupCondition ? sql`join eligible on eligible.group_key = m.group_key` : sql``}
+    join ${mediaItem} on ${mediaItem.id} = m.id ${trackColumns} ${orderRowsJoin} ${versionListening}
     order by ${ordering(sort)} limit ${query.size + 1} offset ${offset}`)
     const versions = z
       .array(
@@ -631,12 +665,8 @@ function groupedTrackBrowse(
 
   /** Recording groups per bar of the sort period's count, in one read. */
   async function readHistogram(value: SQL, edges: readonly number[]) {
-    const groups = groupRanges.length
-      ? sql`, ${rangeStats} select ${listeningBar(value, edges)} as bar,
-          count(*)::int as count from ${rangeGroups} g`
-      : sql` select ${listeningBar(value, edges)} as bar, count(*)::int as count
-          from (select distinct group_key from recording_members) g`
-    const counted = sql`${scoped}${groups} ${groupListening} ${groupPredicate}
+    const counted = sql`${rangeMemberships} select ${listeningBar(value, edges)} as bar,
+      count(*)::int as count from ${rangeGroups} g ${groupListening} ${groupPredicate}
       group by bar`
     return histogramCache(checksumJson(dialect.sqlToQuery(counted)), async () =>
       listeningHistogramCounts(edges, (await db.execute(counted)).rows),
@@ -676,6 +706,7 @@ async function browseQueries(
       statusCode: 422,
       message: 'Listening controls are not available for films',
     })
+  const now = new Date()
   const listening =
     mediaType === 'film'
       ? undefined
@@ -685,7 +716,12 @@ async function browseQueries(
             (query.sortBy === 'listeningScrobbles'
               ? defaultListeningPeriod
               : undefined),
+          now,
         )
+  // Only listening rules affect the total. Keep sort periods out of its read.
+  const countedListening = listening?.sort
+    ? createBrowseListening(listeningFilter, undefined, now)
+    : listening
   if (listening?.sort)
     fields.push({
       key: 'listeningScrobbles',
@@ -703,18 +739,19 @@ async function browseQueries(
       ? query
       : undefined
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
-  if (
+  // A playlist member already has a library identity.
+  const hideRedundant =
     mediaType === 'track' &&
     !options.includeLastfmSourceRows &&
-    !requestsLastfmSource(query)
-  )
-    conditions.push(
-      groupedTrackQuery
-        ? sql`${mediaItem.id} not in (${redundantLastfmTrackIds()})`
-        : sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
-          ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
-        ))`,
+    !requestsLastfmSource(query) &&
+    !query.filters.some(
+      (chip) => chip.field === 'playlist' && chip.mode === 'required',
     )
+  const visibleTrack = hideRedundant
+    ? sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or
+    ${mediaItem.id} not in (${redundantLastfmTrackIds()}))`
+    : undefined
+  if (visibleTrack && groupedTrackQuery) conditions.push(visibleTrack)
   if (query.creatorId) {
     const role = 'creatorRole' in query ? query.creatorRole : undefined
     const roles =
@@ -731,9 +768,6 @@ async function browseQueries(
       )})`,
     )
   }
-  // A recording group's rules apply to the group's count, after grouping.
-  if (listening?.condition && !groupedTrackQuery)
-    conditions.push(listening.condition)
   conditions.push(...(options.conditions ?? []))
   if (!('includeArchived' in query) || query.includeArchived !== 'true')
     conditions.push(
@@ -771,20 +805,17 @@ async function browseQueries(
     )
   }
   const where = and(...conditions)
-  const albumTagOrder =
-    mediaType === 'album' && sortField.key === 'genre'
-      ? albumFirstTagRows()
-      : mediaType === 'album' && sortField.key === 'artistTag'
-        ? sql`select media_item_id, min(name) as name
-        from (${artistTagMemberships('album')}) artist_tags group by media_item_id`
-        : undefined
+  const orderRows =
+    versionId || (mediaType === 'track' && query.creatorId)
+      ? undefined
+      : browseOrderRows(mediaType, sortField.key)
   const sort =
     sortField.key === 'listeningScrobbles' && listening?.sort
       ? listening.sort
       : options.sort?.field.key === sortField.key
         ? options.sort.expression
-        : albumTagOrder
-          ? sql`lower(album_tag_order.name)`
+        : orderRows
+          ? sql`lower(field_order.name)`
           : browseSortExpression(sortField, mediaType)
   const naturalOrder =
     mediaType === 'track' ? trackNaturalOrder(sortField.key) : []
@@ -795,7 +826,9 @@ async function browseQueries(
       sort,
       naturalOrder,
       sharedArtistTags,
+      orderRows,
       listening,
+      countedListening,
       versionId,
     )
   const missing =
@@ -815,6 +848,23 @@ async function browseQueries(
       : sql`false`
   const listeningJoin = sql`listening_counts.id = ${mediaItem.id}`
   const listeningSubject = mediaType === 'track' ? 'track' : 'album'
+  const itemConditions = (requested?: BrowseListening) =>
+    and(where, requested?.condition(listeningSubject, sql`${mediaItem.id}`))
+  // An ordered Added page can stop at its limit. Probe only source records
+  // encountered while walking that index, keeping full-set work for counts.
+  const pageVisibility =
+    hideRedundant &&
+    query.sortBy === 'dateAdded' &&
+    query.direction === 'desc' &&
+    !query.filters.length
+      ? sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
+        ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
+      ))`
+      : visibleTrack
+  const pageWhere = and(itemConditions(listening), pageVisibility)
+  const pageSource = listening?.source(listeningSubject)
+  const countWhere = and(itemConditions(countedListening), visibleTrack)
+  const countSource = countedListening?.source(listeningSubject)
   const base = (rank: SQL<number> = sql<number>`0`) => {
     const query = database
       .select({
@@ -836,26 +886,20 @@ async function browseQueries(
               eq(trackSortAlbum.id, libraryTrack.albumMediaItemId),
             )
         : query.leftJoin(libraryTrack, trackJoin)
-    const sorted = albumTagOrder
+    const sorted = orderRows
       ? tracks.leftJoin(
-          sql`(${albumTagOrder}) album_tag_order`,
-          sql`album_tag_order.media_item_id = ${mediaItem.id}`,
+          sql`(${orderRows}) field_order`,
+          sql`field_order.media_item_id = ${mediaItem.id}`,
         )
       : tracks
-    return listening
-      ? sorted.leftJoin(listening.source(listeningSubject), listeningJoin)
-      : sorted
+    return pageSource ? sorted.leftJoin(pageSource, listeningJoin) : sorted
   }
   // Cache the raw count by the actual predicate, including caller SQL options.
   // Page, ordering and result caps do not change membership; IDs stay uncached.
-  // A listening sort without a listening filter leaves the count alone.
-  const countedListening = listening?.condition ? listening : undefined
   async function readCount() {
     const total = await countCache(
       JSON.stringify(
-        dialect.sqlToQuery(
-          sql`${countedListening?.source(listeningSubject) ?? sql``} ${where}`,
-        ),
+        dialect.sqlToQuery(sql`${countSource ?? sql``} ${countWhere}`),
       ),
       async () => {
         const query = database
@@ -868,13 +912,8 @@ async function browseQueries(
             ? query.innerJoin(libraryTrack, trackJoin)
             : query.leftJoin(libraryTrack, trackJoin)
         const rows = await (
-          countedListening
-            ? tracks.leftJoin(
-                countedListening.source(listeningSubject),
-                listeningJoin,
-              )
-            : tracks
-        ).where(where)
+          countSource ? tracks.leftJoin(countSource, listeningJoin) : tracks
+        ).where(countWhere)
         return rows[0]?.value ?? 0
       },
     )
@@ -884,7 +923,7 @@ async function browseQueries(
 
   async function readPage(limit: number) {
     const rows = await base()
-      .where(where)
+      .where(pageWhere)
       .orderBy(order, ...naturalOrder, mediaItem.id)
       .limit(limit)
       .offset(offset)
@@ -911,7 +950,7 @@ async function browseQueries(
       sql`, `,
     )
     const ranked = base(sql<number>`row_number() over (order by ${ordering})`)
-      .where(where)
+      .where(pageWhere)
       .as('ranked')
     const rows = await database
       .select({
@@ -938,13 +977,11 @@ async function browseQueries(
   }
   /** Items per bar of the sort period's count, in one aggregate read. */
   async function readHistogram(edges: readonly number[]) {
-    const items = base().where(where).as('histogram_items')
+    const items = base().where(pageWhere).as('histogram_items')
     return histogramCache(
       JSON.stringify([
         edges,
-        dialect.sqlToQuery(
-          sql`${listening?.source(listeningSubject) ?? sql``} ${where}`,
-        ),
+        dialect.sqlToQuery(sql`${pageSource ?? sql``} ${pageWhere}`),
       ]),
       async () =>
         listeningHistogramCounts(
@@ -1120,6 +1157,25 @@ export async function queryBrowseCounts(
     totalCount,
     unfilteredCount: scope?.totalCount ?? totalCount,
   }
+}
+
+/** Multi-valued fields sort by their first displayed label. Read memberships once. */
+function browseOrderRows(mediaType: MediaType, key: string): SQL | undefined {
+  if (mediaType !== 'film' && key === 'genre')
+    return firstMusicTagRows(mediaType)
+  if (mediaType !== 'film' && key === 'artistTag')
+    return sql`select media_item_id, min(name) as name
+      from (${artistTagMemberships(mediaType)}) tags group by media_item_id`
+  if (
+    key === 'playlist' ||
+    key === 'collection' ||
+    key === 'albumTag' ||
+    (mediaType === 'film' && (key === 'genre' || key === 'keyword')) ||
+    (mediaType === 'track' && key === 'source')
+  )
+    return sql`select id as media_item_id, min(value) as name from (
+      ${textRows(key, mediaType, { includeArchived: true })}
+    ) memberships group by id`
 }
 
 function directSortExpression(key: string, mediaType: MediaType): SQL | null {

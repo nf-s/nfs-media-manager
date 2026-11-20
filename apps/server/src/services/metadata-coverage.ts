@@ -22,7 +22,7 @@ import {
   providerReference,
 } from '@/schemas/db'
 import { readAlbumMetadataInventory } from './album-metadata-inventory'
-import { artistPlaylistCredits, visiblePlaylist } from './artist-library'
+import { artistPlaylistCredits } from './artist-library'
 import {
   artistFreshnessConditions,
   artistLastScrapedAt,
@@ -303,9 +303,10 @@ export async function getPlaylistArtistCoverage(
         select a.id, lower(coalesce(a.sort_name, a.name)) as sort_key
         from artist a
         where a.id in (
-          select memberships.artist_id from (${artistPlaylistCredits()}) memberships
-          join playlist on playlist.id = memberships.playlist_id
-          where playlist.id = ${id} and ${visiblePlaylist}
+          select artist_id from (${artistPlaylistCredits(
+            undefined,
+            sql`playlist.id = ${id}`,
+          )}) memberships
         )
       ) m`)
   ).rows

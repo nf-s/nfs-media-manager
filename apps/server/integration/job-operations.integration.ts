@@ -17,6 +17,7 @@ import type {
 } from '@repo/media-plugin-sdk'
 import {
   JobEntryPageSchema,
+  JobListQuerySchema,
   JobPageSchema,
   JobSchema,
   type Job,
@@ -554,6 +555,36 @@ describe('job entries', () => {
       await listJobEntries({ sortBy: 'createdAt', direction: 'asc' }),
     )
     expect(keys(byCreated)).toEqual(['batch-a', 'solo', 'plain', 'batch-b'])
+  })
+
+  it('keeps single-job batches in job order and counts entries past the last page', async () => {
+    await seedJob('active-solo', 'fixture-open', 'queued', {
+      batchId: 'solo-batch',
+      finishedAt: base + 5000,
+    })
+    await seedJob('active-batch-member', 'fixture-open', 'queued', {
+      batchId: 'active-batch',
+    })
+    await seedJob('finished-batch-member', 'fixture-open', 'succeeded', {
+      batchId: 'active-batch',
+      finishedAt: base + 6000,
+    })
+    await seedJob('ordinary-job', 'fixture-open', 'succeeded')
+    const { listJobEntries } = await import('@/services/job-entries')
+    const input = JobListQuerySchema.parse({ sortBy: 'finishedAt', size: 2 })
+    const first = JobEntryPageSchema.parse(await listJobEntries(input))
+    expect(keys(first)).toEqual(['active-solo', 'ordinary-job'])
+    const second = JobEntryPageSchema.parse(
+      await listJobEntries({ ...input, page: 2 }),
+    )
+    expect(second.items).toMatchObject([
+      { kind: 'batch', batchId: 'active-batch', total: 2, matching: 2 },
+    ])
+    expect(await listJobEntries({ ...input, page: 3 })).toMatchObject({
+      items: [],
+      totalCount: 3,
+      pageCount: 2,
+    })
   })
 
   it('breaks ties on the entry key across a page boundary', async () => {

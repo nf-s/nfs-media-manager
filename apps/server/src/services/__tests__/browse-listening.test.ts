@@ -1,9 +1,20 @@
+import { sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import {
   createBrowseListening,
   listeningPeriodBounds,
+  type BrowseListening,
+  type ListeningSubject,
 } from '../browse-listening'
+
+const dialect = new PgDialect()
+
+function sourceQuery(query: BrowseListening, subject: ListeningSubject) {
+  const source = query.source(subject)
+  if (!source) throw new Error('Expected an exact listening count')
+  return dialect.sqlToQuery(source).sql
+}
 
 describe('listening query periods', () => {
   it('subtracts calendar months and years with leap-day and month-end clamping', () => {
@@ -52,28 +63,49 @@ describe('listening query periods', () => {
       { kind: 'all' },
     )
     if (!query) throw new Error('Expected a listening query')
-    const dialect = new PgDialect()
     for (const subject of ['album', 'track', 'recording'] as const)
-      expect(
-        dialect.sqlToQuery(query.source(subject)).sql.match(/count\(\*\)/g),
-      ).toHaveLength(1)
+      expect(sourceQuery(query, subject).match(/count\(\*\)/g)).toHaveLength(1)
     expect(createBrowseListening(undefined, undefined)).toBeUndefined()
   })
 
   it('counts tracks and recordings through linked scrobbled names', () => {
     const query = createBrowseListening(undefined, { kind: 'all' })
     if (!query) throw new Error('Expected a listening query')
-    const dialect = new PgDialect()
-    const track = dialect.sqlToQuery(query.source('track')).sql
+    const track = sourceQuery(query, 'track')
     expect(track).toContain('from lastfm_track_link linked')
     expect(track).toContain('group by username, artist_key, track_key')
     expect(track).toContain('group by linked.track_media_item_id')
-    const recording = dialect.sqlToQuery(query.source('recording')).sql
+    const recording = sourceQuery(query, 'recording')
     // Each linked name of a group's members is counted once.
     expect(recording).toContain('select distinct m.group_key')
     expect(recording).toContain('group by linked.group_key')
-    expect(dialect.sqlToQuery(query.source('album')).sql).toContain(
+    expect(sourceQuery(query, 'album')).toContain(
       'group by album_media_item_id',
     )
+  })
+
+  it('uses an existence check for zero-play rules without reading an exact count', () => {
+    const query = createBrowseListening(
+      {
+        match: 'all',
+        rules: [
+          { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 0 },
+        ],
+      },
+      undefined,
+      new Date('2026-03-31T12:00:00Z'),
+    )
+    const condition = query?.condition('recording', sql`g.group_key`)
+    if (!condition) throw new Error('Expected a listening rule')
+    expect(query?.source('recording')).toBeUndefined()
+    const compiled = dialect.sqlToQuery(condition)
+    expect(compiled.sql).toContain(
+      'not (exists (select 1 from recording_members',
+    )
+    expect(compiled.sql).toContain('listening_member.group_key = g.group_key')
+    expect(compiled.params).toEqual([
+      '2025-03-31T12:00:00.000Z',
+      '2026-03-31T12:00:00.000Z',
+    ])
   })
 })

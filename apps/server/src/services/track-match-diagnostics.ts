@@ -345,14 +345,35 @@ export async function listTrackMatchDiagnostics(
   const freshness = metadata && searchFreshness(query.freshness ?? [])
   const sortBy = query.sortBy
   const usesHistory = metadata && (freshness || sortBy === 'spotifyLastSearch')
+  const sortsByListening = sortBy === 'listeningScrobbles'
+  const now = new Date()
   const listening = createBrowseListening(
     query.listening,
-    query.listeningSort ??
-      (sortBy === 'listeningScrobbles' ? defaultListeningPeriod : undefined),
+    sortsByListening
+      ? (query.listeningSort ?? defaultListeningPeriod)
+      : undefined,
+    now,
   )
-  const listeningJoin = listening
+  const listeningSource = listening?.source('track')
+  const listeningCondition = listening?.condition('track', trackId)
+  const listeningJoin = listeningSource
     ? sql`left join period_counts listening_counts on listening_counts.id = ${trackId}`
     : sql``
+  // A displayed count only needs to read the scrobbles of the returned rows.
+  const pageListening = createBrowseListening(
+    undefined,
+    sortsByListening ? undefined : query.listeningSort,
+    now,
+  )
+  const pageListeningSource = pageListening?.source(
+    'track',
+    sql`(select unnest(ids) as id from page_ids)`,
+  )
+  const pageListeningJoin = pageListeningSource
+    ? sql`left join ${pageListeningSource} on listening_counts.id = ${trackId}`
+    : listening?.sort
+      ? listeningJoin
+      : sql``
   const historyJoin = usesHistory
     ? sql`left join search_history on search_history.id = ${trackId}`
     : sql``
@@ -364,7 +385,7 @@ export async function listTrackMatchDiagnostics(
     ? sql`provider_order.value`
     : sortBy === 'spotifyLastSearch' && metadata
       ? sql`search_history.last_success`
-      : sortBy === 'listeningScrobbles' && listening?.sort
+      : listening?.sort
         ? listening.sort
         : sortBy === 'spotifyCoverage'
           ? spotifyCoverageOrder
@@ -446,7 +467,7 @@ export async function listTrackMatchDiagnostics(
   ]
   if (playability) conditions.push(playability)
   if (freshness) conditions.push(freshness)
-  if (listening?.condition) conditions.push(listening.condition)
+  if (listeningCondition) conditions.push(listeningCondition)
   for (const word of words) {
     const pattern = `%${word.replace(/[\\%_]/g, '\\$&')}%`
     conditions.push(sql`media_item.id in (
@@ -467,14 +488,14 @@ export async function listTrackMatchDiagnostics(
     query.limitResults === undefined
       ? query.size
       : Math.max(0, query.limitResults - offset)
-  const count = sql`(select count(*)::int ${trackTables} ${coverageJoin} ${freshness ? historyJoin : sql``} ${listening?.condition ? listeningJoin : sql``} ${where})`
+  const count = sql`(select count(*)::int ${trackTables} ${coverageJoin} ${freshness ? historyJoin : sql``} ${listeningCondition ? listeningJoin : sql``} ${where})`
   const total =
     query.limitResults === undefined
       ? count
       : sql`least(${count}, ${query.limitResults})`
   const reuseEvidence = allEvidenceProviders.size === supportingProviders.size
   const result = await db.execute(sql`
-    with ${listening ? sql`period_counts as materialized (select * from ${listening.source('track')}),` : sql``}
+    with ${listeningSource ? sql`period_counts as materialized (select * from ${listeningSource}),` : sql``}
     ${
       usesHistory
         ? sql`search_history as materialized (${spotifyTrackSearchHistory(userId ?? null)}),`
@@ -512,8 +533,8 @@ export async function listTrackMatchDiagnostics(
       ) as ids
     ),
     page as materialized (
-      ${records}, positions.rank, ${listening?.sort ?? sql`null::int`} as period_plays ${trackTables}
-      ${listening?.sort ? listeningJoin : sql``}
+      ${records}, positions.rank, ${pageListening?.sort ?? listening?.sort ?? sql`null::int`} as period_plays ${trackTables}
+      ${pageListeningJoin}
       join unnest((select ids from page_ids)) with ordinality positions(id, rank)
         on positions.id = media_item.id
     ),

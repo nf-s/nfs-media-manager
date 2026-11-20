@@ -46,7 +46,7 @@ import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
 } from './album-library-tracks'
-import { artistTagsExpression } from './music-tags'
+import { artistTagsForItems } from './music-tags'
 import { getPlaylistSummary, playlistAlbumMembers } from './playlist-directory'
 import { setPlaylistSyncSchedule } from './spotify-playlist-sync'
 
@@ -59,7 +59,6 @@ const TrackRowsSchema = z.array(
     title: z.string(),
     artwork_url: z.string().nullable(),
     release_date: z.string().nullable(),
-    artists: z.array(z.string()),
     artist_credits: z.array(z.object({ id: z.string(), name: z.string() })),
     artist_tags: z.array(z.string()),
     album_name: z.string().nullable(),
@@ -82,19 +81,16 @@ const TrackRowsSchema = z.array(
 
 export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   if (!ids.length) return []
+  const pageIds = sql`any(${sql.param(ids)}::text[])`
   const rows = TrackRowsSchema.parse(
     (
       await db.execute(sql`
         select mi.id, mi.title, coalesce(mi.artwork_url, am.artwork_url) as artwork_url,
           ${isoTimestamp(sql`coalesce(mi.release_date, am.release_date)`)} as release_date,
-          coalesce((
-            select array_agg(a.name order by c.billing_order, a.name)
-            from media_credit c join artist a on a.id = c.artist_id
-            where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists,
           coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name) order by c.billing_order, a.name)
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = mi.id and c.role = 'artist'), '[]'::jsonb) as artist_credits,
-          ${artistTagsExpression(sql`mi.id`)} as artist_tags,
+          coalesce(page_tags.tags, '[]'::jsonb) as artist_tags,
           coalesce(lt.album_name, am.title) as album_name, lt.album_media_item_id as album_id,
           am.title as album_title, lt.album_link_strategy,
           coalesce((
@@ -117,10 +113,8 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         from library_track lt
         join media_item mi on mi.id = lt.media_item_id
         left join media_item am on am.id = lt.album_media_item_id
-        where lt.media_item_id in (${sql.join(
-          ids.map((id) => sql`${id}`),
-          sql`, `,
-        )})`)
+        left join (${artistTagsForItems(pageIds)}) page_tags on page_tags.media_item_id = lt.media_item_id
+        where lt.media_item_id = ${pageIds}`)
     ).rows,
   )
   const byId = new Map(rows.map((row) => [row.id, row]))
@@ -135,7 +129,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         title: row.title,
         artworkUrl: row.artwork_url,
         releaseDate: row.release_date,
-        artists: row.artists,
+        artists: row.artist_credits.map((credit) => credit.name),
         artistCredits: row.artist_credits,
         artistTags: row.artist_tags,
         albumName: row.album_name,

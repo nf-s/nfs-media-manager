@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { z } from 'zod'
 import type { ListeningFilter, ListeningPeriod } from '@repo/schemas/listening'
+import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import {
   TrackPositionsQuerySchema,
@@ -667,6 +668,80 @@ describe('track listening browse queries', () => {
         })
       ).items,
     ).toEqual([])
+  })
+
+  it('checks zero plays across the matching versions of a recording', async () => {
+    const period: ListeningPeriod = {
+      kind: 'dates',
+      from: '2025-07-01',
+      to: '2025-07-01',
+    }
+    const listening: ListeningFilter = {
+      match: 'all',
+      rules: [{ period, max: 0 }],
+    }
+    const input = { q: 'grouped', listening }
+    const { queryBrowseCounts } = await import('@/services/browse')
+    expect((await trackQuery(input)).ids).toEqual(['edition-1'])
+    expect((await trackQuery({ ...input, groupRecordings: true })).ids).toEqual(
+      [],
+    )
+    expect(
+      await queryBrowseCounts(
+        'track',
+        TrackQuerySchema.parse({
+          ...input,
+          groupRecordings: true,
+          listeningSort: { kind: 'all' },
+        }),
+      ),
+    ).toEqual({ totalCount: 0, unfilteredCount: 5 })
+    const positive: ListeningFilter = {
+      match: 'all',
+      rules: [{ period, min: 1 }],
+    }
+    expect(
+      (
+        await trackQuery({
+          ...input,
+          groupRecordings: true,
+          listening: positive,
+        })
+      ).ids,
+    ).toEqual(['edition-1'])
+  })
+
+  it('uses the same zero-play rules in track metadata selection', async () => {
+    const { listTrackMatchDiagnostics } =
+      await import('@/services/track-match-diagnostics')
+    const query = TrackMatchDiagnosticsQuerySchema.parse({
+      view: 'spotify-search-metadata',
+      listening: { match: 'all', rules: [{ period: twoYears, max: 0 }] },
+    })
+    const filtered = await listTrackMatchDiagnostics(query)
+    expect(filtered.items.map(({ id }) => id)).toEqual(['t4', 't3'])
+    expect(filtered.totalCount).toBe(2)
+    const displayed = await listTrackMatchDiagnostics({
+      ...query,
+      listeningSort: { kind: 'all' },
+    })
+    expect(
+      displayed.items.map(({ id, track }) => [id, track?.listeningScrobbles]),
+    ).toEqual([
+      ['t4', 10],
+      ['t3', 0],
+    ])
+    expect(displayed.totalCount).toBe(2)
+    const sorted = await listTrackMatchDiagnostics({
+      ...query,
+      sortBy: 'listeningScrobbles',
+      direction: 'desc',
+      listeningSort: { kind: 'all' },
+    })
+    expect(sorted.items.map(({ track }) => track?.listeningScrobbles)).toEqual([
+      10, 0,
+    ])
+    expect(sorted.totalCount).toBe(2)
   })
 
   it('counts tracks or recording groups per bar without the query listening rules', async () => {

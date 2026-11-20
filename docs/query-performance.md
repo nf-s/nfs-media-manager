@@ -59,6 +59,25 @@ On disposable synthetic fixtures, the artist never-attempted page query fell fro
 
 Filtered artist bulk selection inserts matching IDs directly into an owner-bound, one-hour snapshot. It uses the Browse membership predicate and result cap without fetching profiles or all table pages. Dispatch reads that snapshot in bounded batches, rechecks freshness and active jobs, and preserves provider concurrency and cooldowns.
 
+## Combined filters and large directories
+
+An exact Artist tags chip resolves the requested tag, its visible descendants and the raw labels that can map to them. A GIN index finds matching profile snapshots by normalized label. Only the current snapshot for each artist and provider contributes credits. An explicit hidden tag still matches, and edits to aliases and parent tags take effect on the next read. Track pages load artist tags for their returned IDs together.
+
+A standalone zero-play or at-least-one-play rule uses an existence check. Multiple rules and sorts that need exact counts share one aggregate over the listening history. Grouped Tracks use indexed normalized titles for small candidate sets and check every visible peer of those titles before admitting a recording group. A page resolves the release order of every group tied at its primary sort boundary. Broad grouped reads still process the matching recordings.
+
+On a disposable PostgreSQL fixture with 20,000 tracks, 9,000 current artist profiles and 240,000 recent scrobbles, a required playlist, artist tag and rolling year with zero plays selected 32 tracks. Median database timings from three warm executions follow.
+
+| Query                  | Before | After |
+| ---------------------- | -----: | ----: |
+| Track page IDs         | 331 ms | 16 ms |
+| Exact track count      | 231 ms | 16 ms |
+| Grouped track page IDs | 330 ms | 27 ms |
+| Exact grouped count    | 306 ms | 27 ms |
+
+The table measures database execution for IDs and counts. Loading full track details separately took 11 ms for 50 tracks (previously 96 ms) and 33 ms for 250 tracks (previously 1.1 seconds), using the median of five warm service calls. HTTP and browser rendering add to those times. A separate 64,000-track fixture took about 1.9 seconds for a broad grouped page sorted by scrobbles.
+
+Jobs counts group matching batch IDs without sorting or loading individual job details. The page limits individual jobs before combining them with batch summaries. Subscription and Mixes compatibility pages count narrow rows and load page details within the same SQL statement, including when a page lies beyond the last match. Source directories count stored items through each source's indexed membership. In separate synthetic fixtures, the Jobs first page took 15 ms for 300,000 jobs (previously 229 ms), and a subscription page with its exact total took 32 ms for 250,000 items (previously 306 ms). These are medians of five warm database measurements.
+
 ## Verification
 
 The browse-search and query-indexes integration tests create disposable databases and synthetic libraries. They cover query results, substring escaping, cross-field word matching and PostgreSQL query plans. They do not read or scrape a real library. Run them from the workspace root:
@@ -78,3 +97,5 @@ Migration `0028_library_search_indexes` enables `pg_trgm` and builds the search 
 Migrations `0031_artist_filter_indexes_and_selection` and `0032_artist_browse_name_index` add the artist job lookup indexes, name ordering index and temporary selection tables. Existing tables can have those three indexes built with `CREATE INDEX CONCURRENTLY` before applying the migrations; use the exact definitions, verify `pg_index.indisvalid`, and run each concurrent statement outside a transaction. The migration statements use `IF NOT EXISTS` to accept these prebuilt indexes. Do not treat an existing invalid or differently defined index as ready. Otherwise follow the normal stopped-writer migration procedure. No re-scrape is required.
 
 Migration `0034_artist_scrobble_count` adds `artist.scrobble_count`, fills it from the stored scrobble links and builds its ordering index. It needs no re-scrape or relink.
+
+Migration `0041_browse_query_indexes` builds the normalized artist-profile tag index and the media-type/normalized-title index, then updates planner statistics. Follow the standard upgrade procedure before starting this version. Existing snapshots and tracks supply all indexed data.

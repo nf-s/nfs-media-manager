@@ -34,9 +34,9 @@ const visibleTrack = sql`mi.media_type = 'track'
   and mi.metadata->>'legacyHidden' is distinct from 'true'`
 
 function recordingTracksWithTitles(titles: SQL) {
-  return sql`select mi.id, target.title_key from media_item mi
-    join (${titles}) target on target.title_key = ${exactName(sql`mi.title`)}
-    where ${visibleTrack}`
+  const title = exactName(sql`mi.title`)
+  return sql`select mi.id, ${title} as title_key from media_item mi
+    where ${visibleTrack} and ${title} = any(array(${titles}))`
 }
 
 function recordingVersionTracks(id: string) {
@@ -45,11 +45,12 @@ function recordingVersionTracks(id: string) {
   ), `
 }
 
+const scanRecordingLibrary = sql`(select not bounded from recording_title_scope)`
 const recordingGroupableTracks = sql`
   recording_isrcs as (
     select media_item_id as id, ${normalizedIsrc(sql`isrc`)} as isrc,
       count(*) over (partition by ${normalizedIsrc(sql`isrc`)}) as copies
-    from library_track where isrc is not null
+    from library_track where isrc is not null and ${scanRecordingLibrary}
   ),
   recording_groupable as materialized (
     -- A track needs a shared identifier before its title or credits can
@@ -58,9 +59,33 @@ const recordingGroupableTracks = sql`
     union
     select track_media_item_id as id from (
       select track_media_item_id, count(*) over (partition by username, artist_key, track_key) as copies
-      from lastfm_track_link where strategy = 'exact'
+      from lastfm_track_link where strategy = 'exact' and ${scanRecordingLibrary}
     ) linked where copies > 1
   )`
+
+// A bounded set of exact-title lookups avoids scanning both identity tables
+// for narrow searches. A broad request still benefits from finding shared
+// identities before normalizing titles and checking credits.
+const recordingTitleLookupLimit = 4096
+const recordingTitleTargets = sql`
+    recording_title_targets as materialized (
+      select id from recording_matches limit ${recordingTitleLookupLimit + 1}
+    ),
+    recording_title_scope as (
+      select count(*) <= ${recordingTitleLookupLimit} as bounded from recording_title_targets
+    )`
+// Keep all visible peers of these titles, including tracks excluded by Browse.
+// Their identities and durations can rule out a group.
+const boundedTitles = sql`
+    select distinct ${exactName(sql`mi.title`)} as title_key
+    from recording_title_targets target join media_item mi using (id)
+    where (select bounded from recording_title_scope)`
+
+function recordingIdentities(titledTracks: SQL) {
+  return sql`select v.*, ${validIsrc(normalizedIsrc(sql`lt.isrc`))} as isrc, ${knownDuration} as duration_sec
+    from ${titledTracks} v join library_track lt on lt.media_item_id = v.id
+    where v.title_key <> ''`
+}
 
 function recordingContenders(creatorId?: string) {
   // Every version of a recording shares the track's complete artist credits.
@@ -77,7 +102,11 @@ function recordingContenders(creatorId?: string) {
       join library_track lt on lt.media_item_id = mi.id
       where ${visibleTrack} and mi.id in (select id from recording_groupable)`
   return sql`
-    ${creatorId ? sql`` : sql`${recordingGroupableTracks},`}
+    ${
+      creatorId
+        ? sql``
+        : sql`${recordingTitleTargets}, ${recordingGroupableTracks},`
+    }
     recording_named_contenders as materialized (${source}),
     recording_matching_titles as materialized (
       select distinct named.title_key from recording_named_contenders named
@@ -87,6 +116,11 @@ function recordingContenders(creatorId?: string) {
     recording_contenders as materialized (
       select c.* from recording_named_contenders c
       join recording_matching_titles using (title_key)
+      ${
+        creatorId
+          ? sql``
+          : sql`union all ${recordingIdentities(sql`(${recordingTracksWithTitles(boundedTitles)})`)}`
+      }
     )`
 }
 
@@ -111,33 +145,33 @@ export function recordingMemberships(
           `)})`
         : undefined
   const contenders = titledTracks
-    ? sql`recording_contenders as (
-      select v.*, ${validIsrc(normalizedIsrc(sql`lt.isrc`))} as isrc, ${knownDuration} as duration_sec
-      from ${titledTracks} v join library_track lt on lt.media_item_id = v.id
-      where v.title_key <> ''
-    )`
+    ? sql`recording_contenders as (${recordingIdentities(titledTracks)})`
     : recordingContenders(creatorId)
   return sql`${versionId === undefined ? sql`` : recordingVersionTracks(versionId)}
     recording_matches as materialized (${matches}),
     ${contenders},
+    recording_credits as (
+      select c.id,
+        array_agg(mc.artist_id order by mc.billing_order, mc.artist_id) as artist_ids,
+        array_agg(${exactName(sql`a.name`)}) as artist_keys
+      from recording_contenders c
+      join media_credit mc on mc.media_item_id = c.id and mc.role = 'artist'
+      join artist a on a.id = mc.artist_id
+      group by c.id
+    ),
+    recording_exact_links as (
+      select distinct on (c.id) c.id, array[l.username, l.artist_key, l.track_key] as lastfm_key
+      from recording_contenders c
+      join recording_credits credits using (id)
+      join lastfm_track_link l on l.track_media_item_id = c.id and l.strategy = 'exact'
+        and l.track_key = c.title_key and l.artist_key = any(credits.artist_keys)
+      order by c.id, l.artist_key, l.username
+    ),
     recording_guard as (
       select c.*, credits.artist_ids, exact.lastfm_key
       from recording_contenders c
-      cross join lateral (
-        select array_agg(mc.artist_id order by mc.billing_order, mc.artist_id) as artist_ids,
-          array_agg(${exactName(sql`a.name`)}) as artist_keys
-        from media_credit mc
-        join artist a on a.id = mc.artist_id
-        where mc.media_item_id = c.id and mc.role = 'artist'
-        having count(*) > 0
-      ) credits
-      left join lateral (
-        select array[l.username, l.artist_key, l.track_key] as lastfm_key
-        from lastfm_track_link l
-        where l.track_media_item_id = c.id and l.strategy = 'exact'
-          and l.track_key = title_key and l.artist_key = any(credits.artist_keys)
-        order by l.artist_key, l.username limit 1
-      ) exact on true
+      join recording_credits credits using (id)
+      left join recording_exact_links exact using (id)
     ),
     recording_exact_keys as (
       select *, min(isrc) over shared_name as first_isrc, max(isrc) over shared_name as last_isrc
@@ -155,16 +189,19 @@ export function recordingMemberships(
         end as group_key
       from recording_exact_keys
     ),
+    recording_position_durations as (
+      select c.id, min(t.duration_sec) as shortest, max(t.duration_sec) as longest
+      from recording_contenders c
+      join track t on t.track_media_item_id = c.id and t.duration_sec > 0
+      where c.duration_sec is null
+      group by c.id
+    ),
     recording_durations as (
       select c.id, c.group_key,
         coalesce(c.duration_sec, positions.shortest) as shortest,
         coalesce(c.duration_sec, positions.longest) as longest
       from recording_candidates c
-      cross join lateral (
-        select min(t.duration_sec) as shortest, max(t.duration_sec) as longest
-        from track t
-        where t.track_media_item_id = c.id and c.duration_sec is null and t.duration_sec > 0
-      ) positions
+      left join recording_position_durations positions using (id)
       where c.group_key is not null
     ),
     recording_duration_spans as (

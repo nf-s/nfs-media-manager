@@ -19,7 +19,7 @@ describe('artist listening queries', () => {
       twoYears,
       new Date('2026-03-31T12:00:00Z'),
     )
-    if (!listening) throw new Error('Expected a listening query')
+    if (!listening?.join) throw new Error('Expected an exact listening count')
     const join = dialect.sqlToQuery(listening.join).sql
     expect(join.match(/from lastfm_scrobble/g)).toHaveLength(1)
     expect(join.match(/count\(\*\) filter/g)).toHaveLength(2)
@@ -46,13 +46,29 @@ describe('artist listening queries', () => {
     expect(all?.condition && dialect.sqlToQuery(all.condition).sql).toContain(
       ') and (',
     )
+    expect(all?.join).toBeDefined()
     expect(any?.condition && dialect.sqlToQuery(any.condition).sql).toContain(
       ') or (',
     )
+    expect(any?.join).toBeDefined()
     expect(all?.sort).toBeUndefined()
     expect(
       createArtistBrowseListening(undefined, twoYears)?.condition,
     ).toBeUndefined()
     expect(createArtistBrowseListening(undefined, undefined)).toBeUndefined()
+  })
+
+  it('checks both credit paths for a single zero-play rule without grouping', () => {
+    const listening = createArtistBrowseListening(
+      { match: 'all', rules: [{ period: twoYears, max: 0 }] },
+      undefined,
+    )
+    expect(listening?.join).toBeUndefined()
+    const condition = listening?.condition
+    if (!condition) throw new Error('Expected a listening rule')
+    const query = dialect.sqlToQuery(condition).sql
+    expect(query).toContain('not ((exists')
+    expect(query).toContain('lastfm_scrobble.album_media_item_id')
+    expect(query).toContain('listening_link.track_media_item_id')
   })
 })

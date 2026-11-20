@@ -64,6 +64,10 @@ export const mediaItem = pgTable(
     uniqueIndex('media_item_slug_uidx').on(table.slug),
     index('media_item_type_idx').on(table.mediaType),
     index('media_item_title_idx').on(table.title),
+    index('media_item_recording_title_idx').on(
+      table.mediaType,
+      sql`lower(trim(regexp_replace(${table.title}, '[[:space:]]+', ' ', 'g')))`,
+    ),
     index('media_item_title_search_idx').using(
       'gin',
       table.title.op('gin_trgm_ops'),
@@ -931,6 +935,10 @@ export const artistProviderSnapshot = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
+    index('artist_provider_snapshot_tag_keys_idx').using(
+      'gin',
+      sql`artist_profile_tag_keys(${table.normalizedData}->'tags')`,
+    ),
     index('artist_provider_snapshot_artist_time_idx').on(
       table.artistId,
       table.createdAt.desc(),

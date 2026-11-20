@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { AlbumSelectionQuerySchema } from '@repo/schemas/album-selection'
 import { AlbumQuerySchema } from '@repo/schemas/media'
+import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import { createCatalogEntryFromPlugin } from '@/lib/provider-catalog'
 import * as schema from '@/schemas/db'
@@ -225,8 +226,65 @@ it('expands artist profiles once per album search, tag sort and autocomplete que
   await expectOneProfileExpansion(loggedQuery(isPageSql))
 })
 
+it('finds unplayed playlist tracks through indexed current artist tags', async () => {
+  const { queryBrowsePageIds, queryBrowseCount } =
+    await import('@/services/browse')
+  await pool.query(`
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    values ('retired-profile', 'artist-100', 'spotify', '{}', '{"tags":["Spectralneedle"]}');
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    values ('fixture', 'artist', 'recent', 'track-500', 'exact'),
+           ('fixture', 'artist', 'older', 'track-1000', 'exact');
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, artist_key, track_name, track_key)
+    values ('recent', 'fixture', now() - interval '1 day', 'artist', 'artist', 'recent', 'recent'),
+           ('older', 'fixture', now() - interval '2 years', 'artist', 'artist', 'older', 'older');
+  `)
+  const query = TrackQuerySchema.parse({
+    size: 50,
+    filters: [
+      { field: 'playlist', value: 'Fixture playlist 100', mode: 'required' },
+      { field: 'artistTag', value: 'Spectralneedle' },
+    ],
+    listening: {
+      match: 'all',
+      rules: [
+        { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 0 },
+      ],
+    },
+  })
+  logQuery.mockClear()
+  const page = await queryBrowsePageIds('track', query)
+  const expected = Array.from({ length: 4 }, (_, cycle) =>
+    Array.from({ length: 6 }, (_, n) => cycle * 5000 + (n + 1) * 500),
+  )
+    .flat()
+    .filter((id) => id !== 500)
+    .map((id) => `track-${id}`)
+  expect(page.hasMore).toBe(false)
+  expect(new Set(page.ids)).toEqual(new Set(expected))
+  expect(await queryBrowseCount('track', query)).toEqual({
+    totalCount: expected.length,
+  })
+  const queries = logQuery.mock.calls.filter(([query]) =>
+    query.includes('artist_profile_tag_keys'),
+  )
+  expect(queries).toHaveLength(2)
+  for (const [sql, params] of queries) {
+    const result = await pool.query<{ 'QUERY PLAN': string }>(
+      'explain (analyze, format text) ' + sql,
+      params,
+    )
+    const plan = result.rows.map((row) => row['QUERY PLAN']).join('\n')
+    expect(plan).toContain('artist_provider_snapshot_tag_keys_idx')
+    expect(plan).not.toContain(
+      'Function Scan on jsonb_array_elements_text provider_tag',
+    )
+  }
+})
+
 it('evaluates album freshness against stored job history', async () => {
   const { listAlbumSelection } = await import('@/services/album-selection')
+  logQuery.mockClear()
   for (const { mode, totalCount } of [
     { mode: 'never', totalCount: 1000 },
     { mode: 'failed', totalCount: 1333 },
@@ -240,4 +298,9 @@ it('evaluates album freshness against stored job history', async () => {
     expect(page.totalCount).toBe(totalCount)
     expect(page.items).toHaveLength(50)
   }
+  expect(
+    logQuery.mock.calls.filter(([query]) =>
+      /provider_secret|provider_request_(state|event)/.test(query),
+    ),
+  ).toEqual([])
 })

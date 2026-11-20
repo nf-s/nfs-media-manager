@@ -1,6 +1,27 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { ListeningFilter, ListeningPeriod } from '@repo/schemas/listening'
-import { listeningCounts } from './browse-listening'
+import { linkedTrackScrobbles, listeningCounts } from './browse-listening'
+
+function hasArtistScrobbles(period: SQL) {
+  const creditedScrobbles = (
+    scrobbles: SQL,
+    mediaId: SQL,
+    mediaType: 'album' | 'track',
+  ) => sql`exists (select 1 from ${scrobbles}
+    join media_credit c on c.media_item_id = ${mediaId}
+    join media_item m on m.id = c.media_item_id
+    where c.artist_id = a.id and c.role = 'artist' and m.media_type = ${mediaType}
+      and m.metadata->>'legacyHidden' is distinct from 'true' and ${period})`
+  return sql`(${creditedScrobbles(
+    sql`lastfm_scrobble`,
+    sql`lastfm_scrobble.album_media_item_id`,
+    'album',
+  )} or ${creditedScrobbles(
+    linkedTrackScrobbles,
+    sql`listening_link.track_media_item_id`,
+    'track',
+  )})`
+}
 
 /**
  * Each artist's scrobbles in each period, one column per predicate, in one
@@ -76,9 +97,11 @@ export function createArtistBrowseListening(
   const requested = listeningCounts(filter, sortPeriod, now)
   if (!requested) return undefined
   return {
-    join: sql`left join ${artistListeningCounts(requested.entries)}
-      on listening_counts.artist_id = a.id`,
-    condition: requested.condition,
+    join: requested.entries.length
+      ? sql`left join ${artistListeningCounts(requested.entries)}
+        on listening_counts.artist_id = a.id`
+      : undefined,
+    condition: requested.condition(hasArtistScrobbles),
     sort: requested.sort,
   }
 }

@@ -20,6 +20,7 @@ import {
   listeningHistogramEdges,
   ListeningHistogramSchema,
 } from '@repo/schemas/listening'
+import { rangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import {
@@ -103,17 +104,19 @@ function monthKeys(from: string, now: Date) {
   )
 }
 
-function pattern(value: string) {
-  return `%${value.replace(/[\\%_]/g, '\\$&')}%`
+function pattern(value: string, substring = true) {
+  const escaped = value.replace(/[\\%_]/g, '\\$&')
+  return substring ? `%${escaped}%` : escaped
 }
 
 /** Field sources remain relational so selective names are matched before memberships. */
-function textRows(field: string): SQL {
+function textRows(field: string, playlistFilter?: SQL): SQL {
   if (field === 'name') return sql`select a.id, a.name as value from artist a`
   if (field === 'playlist')
     return sql`select membership.artist_id as id, playlist.name as value
-    from (${artistPlaylistCredits()}) membership
-    join playlist on playlist.id = membership.playlist_id where ${visiblePlaylist}`
+    from (${artistPlaylistCredits(undefined, playlistFilter)}) membership
+    join playlist on playlist.id = membership.playlist_id
+    ${playlistFilter ? sql`` : sql`where ${visiblePlaylist}`}`
   if (field === 'provider')
     return sql`select state.artist_id as id, state.provider as value from artist_provider_current_state state`
   if (field === 'genre')
@@ -125,15 +128,19 @@ function textRows(field: string): SQL {
 }
 
 function textMatch(field: string, value: string, substring = false): SQL {
+  const name = pattern(value, substring)
+  if (field === 'playlist') {
+    return sql`${id} in (select artist_id from (${artistPlaylistCredits(
+      undefined,
+      sql`playlist.name ilike ${name}`,
+    )}) matching_playlists)`
+  }
   const source = textRows(field)
-  const expression =
-    field === 'genre' && !substring ? normalizedTagSql(sql`value`) : sql`value`
-  const condition = substring
-    ? sql`${expression} ilike ${pattern(value)}`
-    : field === 'genre'
+  const condition =
+    field === 'genre' && !substring
       ? // A tag also matches the visible tags beneath it in the album hierarchy.
-        sql`${expression} in (${matchingTagNames(normalizeTagName(value), 'album')})`
-      : sql`${expression} ilike ${value.replace(/[\\%_]/g, '\\$&')}`
+        sql`${normalizedTagSql(sql`value`)} in (${matchingTagNames(normalizeTagName(value), 'album')})`
+      : sql`value ilike ${name}`
   return sql`${id} in (select id from (${source}) matching_values where ${condition})`
 }
 
@@ -191,9 +198,10 @@ function membership(query: Query, listening?: ArtistBrowseListening): SQL {
   const conditions: SQL[] = [visibleArtist]
   if (query.playlistIds.length)
     conditions.push(sql`${id} in (
-    select memberships.artist_id from (${artistPlaylistCredits()}) memberships
-    join playlist on playlist.id = memberships.playlist_id
-    where ${visiblePlaylist} and playlist.id = any(${sql.param(query.playlistIds)}::text[]))`)
+    select artist_id from (${artistPlaylistCredits(
+      undefined,
+      sql`playlist.id = any(${sql.param(query.playlistIds)}::text[])`,
+    )}) memberships)`)
   for (const word of (query.q ?? '').split(/\s+/).filter(Boolean)) {
     const matches = or(
       ...artistBrowseFields
@@ -212,18 +220,8 @@ function membership(query: Query, listening?: ArtistBrowseListening): SQL {
   }
   const anyCondition = or(...any)
   if (anyCondition) conditions.push(anyCondition)
-  for (const range of query.ranges) {
-    const value = numericValue(range.field)
-    const bounds = and(
-      sql`${value} is not null`,
-      range.min === undefined ? undefined : sql`${value} >= ${range.min}`,
-      range.max === undefined ? undefined : sql`${value} <= ${range.max}`,
-    )
-    if (bounds)
-      conditions.push(
-        range.includeMissing ? sql`(${value} is null or (${bounds}))` : bounds,
-      )
-  }
+  for (const range of query.ranges)
+    conditions.push(rangeCondition(range, numericValue(range.field)))
   if ('freshness' in query)
     conditions.push(...artistFreshnessConditions(id, query.freshness))
   if (listening?.condition) conditions.push(listening.condition)
@@ -569,11 +567,13 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
             field.key === 'name' ||
             !`${field.label}:`.toLowerCase().includes(word.toLowerCase()),
         )
-      const matches = and(
-        ...words.map(
-          (word) => sql`values_for_field.value ilike ${pattern(word)}`,
-        ),
-      )
+      const matchWords = (value: SQL) =>
+        and(...words.map((word) => sql`${value} ilike ${pattern(word)}`))
+      const playlistFilter =
+        field.key === 'playlist' ? matchWords(sql`playlist.name`) : undefined
+      const matches = playlistFilter
+        ? undefined
+        : matchWords(sql`values_for_field.value`)
       // Tags are grouped by normalized name; a tag is also counted under
       // each visible album tag above it, as its filter matches them.
       const tags = field.key === 'genre'
@@ -585,7 +585,7 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
           union all
           select artist_tag_keys.id, ancestor.ancestor_key as value from artist_tag_keys
           join (${tagAncestorKeys('album', true)}) ancestor on ancestor.descendant_key = artist_tag_keys.value`
-        : textRows(field.key)
+        : textRows(field.key, playlistFilter)
       return sql`(select ${field.key}::text as field, min(artist_values.value) as value, count(*)::int as count
         from (
           select ${group} as value_key, min(values_for_field.value) as value

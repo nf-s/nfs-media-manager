@@ -1,4 +1,4 @@
-import { and, inArray, sql, type SQL } from 'drizzle-orm'
+import { inArray, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   JobLibrarySchema,
@@ -25,6 +25,7 @@ const batchKey = sql`${scrapeJob.options}->>'batchId'`
 const EntryRowSchema = z.object({
   kind: z.enum(['job', 'batch']),
   key: z.string(),
+  matching: z.number().int().positive(),
 })
 const CountRowSchema = z.object({ count: z.number().int().nonnegative() })
 const epochMs = (value: SQL) =>
@@ -37,7 +38,7 @@ function batchSortValue(
 ) {
   const unfinished = sql`count(*) filter (where ${scrapeJob.status} in ('queued', 'running'))`
   if (sortBy === 'finishedAt')
-    return sql`case when ${unfinished} = 0 then max(${scrapeJob.finishedAt}) end`
+    return sql`case when count(*) = 1 or ${unfinished} = 0 then max(${scrapeJob.finishedAt}) end`
   if (sortBy === 'status')
     return sql`case
       when count(*) filter (where ${scrapeJob.status} = 'running') > 0 then 'running'
@@ -157,30 +158,44 @@ export async function listJobEntries(
   const query = JobListQuerySchema.parse(input)
   const now = Date.now()
   const where = jobListWhere(query)
+  // Each matching batch ID occupies one entry, even if it has only one job.
+  // Counting entries does not require sorting jobs or visiting nonmatches.
+  const count = sql`select coalesce(sum(case when batch_id is null then total else 1 end), 0)::int as count
+    from (select ${batchKey} as batch_id, count(*) as total
+      from ${scrapeJob} where ${where ?? sql`true`} group by 1) matching_groups`
   const field = await jobSortField(query)
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
-  const entries = sql`with matched as (
-      select ${scrapeJob.id} as id, ${batchKey} as batch_id, ${field} as sort_value
-      from ${scrapeJob} where ${where ?? sql`true`}
-    ), batch as (
-      select ${batchKey} as batch_id, count(*) as total,
-        ${batchSortValue(query.sortBy, field)} as sort_value
-      from ${scrapeJob}
-      where ${batchKey} in (select batch_id from matched where batch_id is not null)
+  const offset = (query.page - 1) * query.size
+  const matchingBatches = where
+    ? sql`matching_batches as (
+        select ${batchKey} as batch_id, count(*)::int as matching
+        from ${scrapeJob} where ${batchKey} is not null and (${where}) group by 1
+      ),`
+    : sql``
+  // A nonmatching member still contributes to its batch's size and sort order.
+  // Single jobs without a batch need only compete up to the requested page.
+  const entries = sql`with ${matchingBatches} batch as (
+      select ${batchKey} as batch_id, min(${scrapeJob.id}) as only_job_id,
+        count(*) as total, ${batchSortValue(query.sortBy, field)} as sort_value,
+        ${where ? sql`max(matching_batches.matching)` : sql`count(*)::int`} as matching
+      from ${scrapeJob} ${where ? sql`join matching_batches on matching_batches.batch_id = ${batchKey}` : sql``}
+      where ${batchKey} is not null
       group by 1
     ), entries as (
-      select 'job' as kind, matched.id as key, matched.sort_value
-      from matched left join batch on batch.batch_id = matched.batch_id
-      where coalesce(batch.total, 1) <= 1
+      (select 'job' as kind, ${scrapeJob.id} as key, ${field} as sort_value, 1 as matching
+        from ${scrapeJob} where ${batchKey} is null and (${where ?? sql`true`})
+        order by sort_value ${direction} nulls last, key ${direction}
+        limit ${offset + query.size})
       union all
-      select 'batch' as kind, batch.batch_id as key, batch.sort_value
-      from batch where batch.total > 1
+      select case when total = 1 then 'job' else 'batch' end,
+        case when total = 1 then only_job_id else batch_id end, sort_value, matching
+      from batch
     )`
   const [countResult, pageResult] = await Promise.all([
-    db.execute(sql`${entries} select count(*)::integer as count from entries`),
-    db.execute(sql`${entries} select kind, key from entries
+    db.execute(count),
+    db.execute(sql`${entries} select kind, key, matching from entries
       order by sort_value ${direction} nulls last, key ${direction}, kind ${direction}
-      limit ${query.size} offset ${(query.page - 1) * query.size}`),
+      limit ${query.size} offset ${offset}`),
   ])
   const totalCount =
     z.array(CountRowSchema).parse(countResult.rows)[0]?.count ?? 0
@@ -188,26 +203,13 @@ export async function listJobEntries(
   const batchIds = page.flatMap((row) =>
     row.kind === 'batch' ? [row.key] : [],
   )
-  const [jobs, batches, matching] = await Promise.all([
+  const [jobs, batches] = await Promise.all([
     loadListedJobs(
       page.flatMap((row) => (row.kind === 'job' ? [row.key] : [])),
     ).then(withJobWaiting),
     loadBatches(batchIds, now),
-    batchIds.length
-      ? db
-          .select({
-            batchId: sql<string>`${batchKey}`,
-            count: sql<number>`count(*)::integer`,
-          })
-          .from(scrapeJob)
-          .where(and(where, inArray(batchKey, batchIds)))
-          .groupBy(batchKey)
-      : [],
   ])
   const jobsById = new Map(jobs.map((job) => [job.id, job]))
-  const matchingByBatch = new Map(
-    matching.map((row) => [row.batchId, row.count]),
-  )
   return {
     items: page.flatMap((row): JobEntry[] => {
       if (row.kind === 'job') {
@@ -215,9 +217,7 @@ export async function listJobEntries(
         return job ? [{ kind: 'job', job }] : []
       }
       const batch = batches.get(row.key)
-      return batch
-        ? [{ ...batch, matching: matchingByBatch.get(row.key) ?? 0 }]
-        : []
+      return batch ? [{ ...batch, matching: row.matching }] : []
     }),
     totalCount,
     page: query.page,

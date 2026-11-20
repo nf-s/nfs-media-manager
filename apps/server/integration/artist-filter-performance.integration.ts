@@ -257,6 +257,37 @@ it('counts each visible artist once per suggestion across profiles and playlists
   ).toEqual([])
 })
 
+it('narrows playlist membership reads before matching artist filters and suggestions', async () => {
+  const { countArtistBrowse, listArtistBrowseFacets } =
+    await import('@/services/artist-browse')
+  for (const input of [
+    { playlistIds: ['playlist-100'] },
+    {
+      filters: [
+        { field: 'playlist', value: 'Fixture playlist 100', mode: 'required' },
+      ],
+    },
+  ]) {
+    logQuery.mockClear()
+    expect(
+      await countArtistBrowse(ArtistMetadataQuerySchema.parse(input)),
+    ).toEqual({ totalCount: 50 })
+    const plan = await explainServiceQuery('select count(*)::int as count from')
+    expect(plan).not.toMatch(/Seq Scan on playlist_item.*actual rows=20000/)
+  }
+
+  logQuery.mockClear()
+  const facets = await listArtistBrowseFacets({
+    q: 'Fixture playlist 100',
+    limitPerField: 25,
+  })
+  expect(facets.filter(({ field }) => field === 'playlist')).toMatchObject([
+    { value: 'Fixture playlist 100', count: 50 },
+  ])
+  const plan = await explainServiceQuery('values_for_field')
+  expect(plan).not.toMatch(/Seq Scan on playlist_item.*actual rows=20000/)
+})
+
 it('counts artist listening periods in one grouped read of the scrobbles', async () => {
   await pool.query(`
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)

@@ -10,12 +10,11 @@ import {
 } from '@repo/schemas/film-selection'
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
 import type { CoverageGap, CoverageQuery } from '@repo/schemas/coverage'
-import type { ProviderSummary } from '@repo/schemas/provider'
 import { canIdentifyMedia } from '@repo/schemas/provider-identification'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { listProviderCatalog } from '@/plugins/registry'
 import { mediaItem, providerCurrentState, providerSnapshot } from '@/schemas/db'
-import { listProviders } from './providers'
 import {
   previewMediaRefresh,
   queueMediaEnrichment,
@@ -29,12 +28,13 @@ type SelectionFreshnessQuery = {
   olderThanDays?: number
   freshness: ProviderFreshnessFilter[]
 }
+type SelectionProvider = Parameters<typeof canIdentifyMedia>[0]
 
 export async function listSelectionProviders(
   query: SelectionFreshnessQuery,
   mediaType: 'album' | 'film',
 ) {
-  const providers = (await listProviders()).filter(
+  const providers = (await listProviderCatalog()).filter(
     (provider) =>
       provider.supportsScrape && provider.mediaTypes.includes(mediaType),
   )
@@ -147,7 +147,6 @@ export function selectionBrowseOptions(
     const condition = or(
       ...providerFilters.flatMap((filter) => {
         if (filter.mode === 'all') return []
-        const freshness = freshnessExpression(filter.provider)
         if (filter.mode === 'failed')
           return [
             sql`(
@@ -159,19 +158,23 @@ export function selectionBrowseOptions(
           limit 1
         ) = 'failed'`,
           ]
+        const scraped =
+          filter.mode === 'older'
+            ? sql`s.last_scraped_at >= ${new Date(Date.now() - filter.olderThanDays * 86400000).toISOString()}::timestamp`
+            : sql`s.last_scraped_at is not null`
+        const missingScrape = sql`not exists (
+          select 1 from provider_current_state s
+          where s.media_item_id = ${mediaItem.id} and s.provider = ${filter.provider} and ${scraped}
+        )`
         if (filter.mode === 'never')
           return [
-            sql`${freshness} is null and not exists (
+            sql`${missingScrape} and not exists (
         select 1 from scrape_job_item i
         where i.media_item_id = ${mediaItem.id} and i.provider = ${filter.provider}
           and i.started_at is not null and i.status <> 'queued'
       )`,
           ]
-        return [
-          filter.mode === 'unscraped'
-            ? sql`${freshness} is null`
-            : sql`(${freshness} is null or ${freshness} < ${new Date(Date.now() - filter.olderThanDays * 86400000).toISOString()}::timestamp)`,
-        ]
+        return [missingScrape]
       }),
     )
     return condition ? [condition] : []
@@ -202,7 +205,7 @@ export function selectionBrowseOptions(
 export async function annotateSelection<T extends AlbumListItem | FilmListItem>(
   result: { items: T[]; totalCount: number; pageCount: number },
   query: { provider?: string; page: number; size: number },
-  providers: ProviderSummary[],
+  providers: SelectionProvider[],
 ) {
   const legacyImports = result.items.length
     ? await db

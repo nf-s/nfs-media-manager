@@ -205,7 +205,7 @@ describe('library query index coverage', () => {
       }),
     )
     expect(page.totalCount).toBe(20)
-    const plan = await explainServiceQuery('listening_counts')
+    const plan = await explainServiceQuery('from lastfm_scrobble')
     expectIndex(plan, 'lastfm_scrobble_time_album_idx')
   })
 
@@ -218,7 +218,7 @@ describe('library query index coverage', () => {
       }),
     )
     expect(page.totalCount).toBe(20)
-    const plan = await explainServiceQuery('count(*) over () as total')
+    const plan = await explainServiceQuery('with matched_page as materialized')
     expectIndex(plan, 'subscription_item_duration_value_idx')
   })
 

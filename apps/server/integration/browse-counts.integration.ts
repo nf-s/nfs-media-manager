@@ -483,8 +483,11 @@ it('deduplicates linked listening across editions and applies grouped ranges bef
 })
 
 it('uses conflicting recording evidence from editions excluded by filters', async () => {
-  const { listTrackBrowsePage, listTrackRecordingVersions } =
-    await import('@/services/tracks')
+  const {
+    listTrackBrowsePage,
+    listTrackRecordingVersions,
+    listTracksAtPositions,
+  } = await import('@/services/tracks')
   await pool.query(`
     insert into media_item (id, slug, media_type, title) values
       ('guard-a', 'guard-a', 'track', 'Fixture guard'),
@@ -519,6 +522,26 @@ it('uses conflicting recording evidence from editions excluded by filters', asyn
     ),
   ).toEqual(['guard-a'])
 
+  await pool.query(`
+    insert into track (id, album_media_item_id, track_media_item_id, title, position) values
+      ('guard-position-a', 'album-1', 'guard-a', 'Fixture guard', 2),
+      ('guard-position-b', 'album-1', 'guard-b', 'Fixture guard', 1);
+  `)
+  const titleOrder = TrackQuerySchema.parse({
+    ...query,
+    sortBy: 'title',
+    size: 1,
+  })
+  expect(await listTrackBrowsePage(titleOrder)).toMatchObject({
+    items: [{ id: 'guard-b' }],
+    hasMore: true,
+  })
+  expect(
+    await listTracksAtPositions(
+      TrackPositionsQuerySchema.parse({ ...titleOrder, positions: '0' }),
+    ),
+  ).toMatchObject({ items: [{ position: 0, item: { id: 'guard-b' } }] })
+
   await pool.query(
     `delete from lastfm_track_link where track_media_item_id = 'guard-c'`,
   )
@@ -529,5 +552,5 @@ it('uses conflicting recording evidence from editions excluded by filters', asyn
     (await listTrackRecordingVersions('guard-a', query)).items.map(
       ({ id }) => id,
     ),
-  ).toEqual(['guard-a', 'guard-b'])
+  ).toEqual(['guard-b', 'guard-a'])
 })

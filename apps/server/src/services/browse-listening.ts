@@ -1,5 +1,9 @@
 import { sql, type SQL } from 'drizzle-orm'
-import type { ListeningFilter, ListeningPeriod } from '@repo/schemas/listening'
+import type {
+  ListeningFilter,
+  ListeningPeriod,
+  ListeningRule,
+} from '@repo/schemas/listening'
 
 /** Calendar subtraction preserves UTC time and clamps month ends. */
 export function listeningPeriodBounds(period: ListeningPeriod, now: Date) {
@@ -62,10 +66,17 @@ export function listeningPeriodPredicate(
  */
 export type ListeningSubject = 'album' | 'track' | 'recording'
 
+type ScrobblePresence = (period: SQL) => SQL
+
+function presenceRule(rule: ListeningRule) {
+  if (rule.max === 0) return 'absent'
+  if (rule.min === 1 && rule.max === undefined) return 'present'
+}
+
 /**
- * The count columns a filter and a sort period need, one per distinct period,
- * with the rules and the sort value written against `listening_counts`.
- * Nothing when neither asks for a count.
+ * Share exact counts between rules and sorting. Presence rules can use
+ * semijoins or antijoins when they apply independently, so selective Browse
+ * queries need only look for scrobbles of their matching items.
  */
 export function listeningCounts(
   filter: ListeningFilter | undefined,
@@ -85,22 +96,53 @@ export function listeningCounts(
     }
     return sql<number>`coalesce(${sql.identifier('listening_counts')}.${sql.identifier(entry.alias)}, 0)`
   }
-  const conditions = (filter?.rules ?? []).map((rule) => {
+  const rules = filter?.rules ?? []
+  // A single presence rule can use a semijoin or antijoin. Multiple rules or
+  // a sort period share a grouped read so each period need not scan separately.
+  const usePresence = rules.length === 1 && sortPeriod === undefined
+  const conditions = rules.map((rule) => {
+    const presence = usePresence ? presenceRule(rule) : undefined
+    if (presence) {
+      const period = listeningPeriodPredicate(rule.period, now)
+      return (hasScrobbles: ScrobblePresence) =>
+        presence === 'absent'
+          ? sql`not (${hasScrobbles(period)})`
+          : hasScrobbles(period)
+    }
     const value = count(rule.period)
     const bounds: SQL[] = []
     if (rule.min !== undefined) bounds.push(sql`${value} >= ${rule.min}`)
     if (rule.max !== undefined) bounds.push(sql`${value} <= ${rule.max}`)
-    return sql`(${sql.join(bounds, sql` and `)})`
+    return () => sql`(${sql.join(bounds, sql` and `)})`
   })
   const sort = sortPeriod ? count(sortPeriod) : undefined
-  if (!periods.size) return undefined
+  if (!periods.size && !conditions.length) return undefined
   return {
     entries: [...periods.values()],
-    condition: conditions.length
-      ? sql`(${sql.join(conditions, filter?.match === 'any' ? sql` or ` : sql` and `)})`
-      : undefined,
+    condition(hasScrobbles: ScrobblePresence) {
+      if (!conditions.length) return
+      return sql`(${sql.join(
+        conditions.map((condition) => condition(hasScrobbles)),
+        filter?.match === 'any' ? sql` or ` : sql` and `,
+      )})`
+    },
     sort,
   }
+}
+
+export const linkedTrackScrobbles = sql`lastfm_track_link listening_link
+  join lastfm_scrobble using (username, artist_key, track_key)`
+
+function hasBrowseScrobbles(subject: ListeningSubject, id: SQL, period: SQL) {
+  if (subject === 'album')
+    return sql`exists (select 1 from lastfm_scrobble
+      where album_media_item_id = ${id} and ${period})`
+  if (subject === 'track')
+    return sql`exists (select 1 from ${linkedTrackScrobbles}
+      where listening_link.track_media_item_id = ${id} and ${period})`
+  return sql`exists (select 1 from recording_members listening_member
+    join ${linkedTrackScrobbles} on listening_link.track_media_item_id = listening_member.id
+    where listening_member.group_key = ${id} and ${period})`
 }
 
 /**
@@ -142,23 +184,39 @@ export function createBrowseListening(
     on listening_names.username = linked.username
       and listening_names.artist_key = linked.artist_key
       and listening_names.track_key = linked.track_key`
-  function source(subject: ListeningSubject) {
+  function source(subject: ListeningSubject, members?: SQL) {
+    if (!entries.length) return
     if (subject === 'album')
       return sql`(select album_media_item_id as id, ${counts}
         from lastfm_scrobble
         where album_media_item_id is not null and ${inPeriods}
         group by album_media_item_id) listening_counts`
-    if (subject === 'track')
-      return sql`(select linked.track_media_item_id as id, ${nameSums}
-        ${linkedNames(sql`lastfm_track_link linked`)}
-        group by linked.track_media_item_id) listening_counts`
-    return sql`(select linked.group_key as id, ${nameSums}
-      ${linkedNames(sql`(select distinct m.group_key, l.username, l.artist_key, l.track_key
-        from recording_members m
-        join lastfm_track_link l on l.track_media_item_id = m.id) linked`)}
-      group by linked.group_key) listening_counts`
+    const track = subject === 'track'
+    const id = track ? sql`linked.track_media_item_id` : sql`linked.group_key`
+    const trackLinks = members
+      ? sql`(select l.* from lastfm_track_link l join ${members} m
+          on l.track_media_item_id = m.id) linked`
+      : sql`lastfm_track_link linked`
+    const links = track
+      ? trackLinks
+      : sql`(select distinct m.group_key, l.username, l.artist_key, l.track_key
+        from ${members ?? sql`recording_members`} m
+        join lastfm_track_link l on l.track_media_item_id = m.id) linked`
+    // Expanding one recording already identifies its members. Read the
+    // scrobbles of those links directly instead of grouping all listened names.
+    if (members)
+      return sql`(select ${id} as id, ${counts}
+        from ${links} join lastfm_scrobble using (username, artist_key, track_key)
+        where ${inPeriods} group by ${id}) listening_counts`
+    return sql`(select ${id} as id, ${nameSums}
+      ${linkedNames(links)} group by ${id}) listening_counts`
   }
-  return { source, condition, sort }
+  return {
+    source,
+    condition: (subject: ListeningSubject, id: SQL) =>
+      condition((period) => hasBrowseScrobbles(subject, id, period)),
+    sort,
+  }
 }
 
 export type BrowseListening = NonNullable<

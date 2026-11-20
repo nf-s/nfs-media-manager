@@ -1,4 +1,4 @@
-import { sql, type SQLWrapper } from 'drizzle-orm'
+import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { playlist } from '@/schemas/db'
 
@@ -14,16 +14,25 @@ export const visiblePlaylist = sql`${playlist.kind} = 'playlist' and (
   )
 )`
 
-export function artistPlaylistCredits(artistId?: string | SQLWrapper) {
+export function artistPlaylistCredits(
+  artistId?: string | SQLWrapper,
+  playlistFilter?: SQL,
+) {
   const selectedArtist =
     artistId === undefined ? sql`` : sql`and credit.artist_id = ${artistId}`
+  // Apply selection in each branch so it narrows the membership index reads.
+  const selectedPlaylists = playlistFilter
+    ? sql`and member.playlist_id in (
+      select ${playlist.id} from ${playlist} where ${visiblePlaylist} and (${playlistFilter})
+    )`
+    : sql``
   return sql`
     select credit.artist_id, member.playlist_id, recording.media_item_id, 'track' as kind
     from media_credit credit
     join library_track recording on recording.media_item_id = credit.media_item_id
     join media_item item on item.id = recording.media_item_id
     join playlist_item member on member.media_item_id = recording.media_item_id
-    where credit.role = 'artist' ${selectedArtist}
+    where credit.role = 'artist' ${selectedArtist} ${selectedPlaylists}
       and item.media_type = 'track' and item.metadata->>'legacyHidden' is distinct from 'true'
     union all
     select credit.artist_id, member.playlist_id, release.media_item_id, 'album' as kind
@@ -41,7 +50,7 @@ export function artistPlaylistCredits(artistId?: string | SQLWrapper) {
     ) related on related.album_id = release.media_item_id
     join playlist_item member on member.media_item_id = related.media_item_id
     join media_item linked_item on linked_item.id = member.media_item_id
-    where credit.role = 'artist' ${selectedArtist}
+    where credit.role = 'artist' ${selectedArtist} ${selectedPlaylists}
       and item.media_type = 'album' and item.metadata->>'legacyHidden' is distinct from 'true'
       and linked_item.metadata->>'legacyHidden' is distinct from 'true'`
 }

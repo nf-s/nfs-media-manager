@@ -503,3 +503,63 @@ it('groups a broad listening page and count without rereading shared scrobbles',
     ).toBe(true)
   }
 })
+
+it('reads exact title peers through the recording index for filtered grouping', async () => {
+  const { queryBrowseCount, queryBrowsePageIds, queryTrackRecordingVersions } =
+    await import('@/services/browse')
+  await pool.query(`
+    insert into media_item (id, slug, title, media_type, metadata) values
+      ('paired-edition', 'paired-edition', E'  distinctive\\tneedle  SONG ', 'track', null),
+      ('archived-edition', 'archived-edition', 'Distinctive needle song', 'track', '{"legacyHidden": true}');
+    insert into library_track (media_item_id, isrc, duration_sec) values
+      ('paired-edition', 'AUABC2600001', 181),
+      ('archived-edition', 'AUABC2600001', 400);
+    update library_track set isrc = 'AUABC2600001', duration_sec = 180 where media_item_id = 'song-20000';
+    insert into media_credit (media_item_id, artist_id, role) values
+      ('paired-edition', 'artist', 'artist'), ('archived-edition', 'artist', 'artist');
+    insert into playlist (id, kind, name) values ('fixture-group', 'playlist', 'Fixture group');
+    insert into playlist_item (playlist_id, media_item_id) values
+      ('fixture-group', 'song-20000'), ('fixture-group', 'paired-edition'), ('fixture-group', 'archived-edition');
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data) values
+      ('fixture-group-tags', 'artist', 'musicbrainz', '{}', '{"tags":["Fixture group tag"]}');
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id) values
+      ('artist', 'musicbrainz', 'fixture-group-tags');
+    analyze media_item; analyze library_track; analyze media_credit; analyze playlist_item;
+  `)
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'dateAdded',
+    filters: [
+      { field: 'playlist', value: 'Fixture group', mode: 'required' },
+      { field: 'artistTag', value: 'Fixture group tag', mode: 'required' },
+    ],
+  })
+  capturedQueries.length = 0
+  const page = await queryBrowsePageIds('track', query)
+  expect(page.ids).toEqual(['song-20000'])
+  expect(page.recordingGroups?.get('song-20000')?.version_count).toBe(2)
+  expect(await queryBrowseCount('track', query)).toEqual({ totalCount: 1 })
+  const versions = await queryTrackRecordingVersions('song-20000', query)
+  expect(versions.ids.sort()).toEqual(['paired-edition', 'song-20000'])
+
+  const statements = capturedQueries.filter(({ query }) =>
+    query.includes('recording_contenders'),
+  )
+  expect(statements).toHaveLength(3)
+  for (const { query, params } of statements) {
+    const result = await pool.query(
+      `explain (analyze, format json) ${query}`,
+      params,
+    )
+    const plans = PlanRowsSchema.parse(result.rows).flatMap((row) =>
+      row['QUERY PLAN'].flatMap((plan) => flattenPlan(plan.Plan)),
+    )
+    expect(
+      plans.some(
+        (plan) =>
+          plan['Index Name'] === 'media_item_recording_title_idx' &&
+          plan['Actual Loops'] > 0,
+      ),
+    ).toBe(true)
+  }
+})

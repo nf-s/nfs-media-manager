@@ -288,6 +288,13 @@
       "when": 1795063963548,
       "tag": "0040_playlist_presentation",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795142730686,
+      "tag": "0041_browse_query_indexes",
+      "breakpoints": true
     }
   ]
 }

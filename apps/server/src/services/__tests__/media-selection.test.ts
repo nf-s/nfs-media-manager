@@ -30,7 +30,10 @@ vi.mock('@/lib/db', () => ({
     },
   },
 }))
-vi.mock('../providers', () => ({ listProviders: mocks.providers }))
+vi.mock('@/plugins/registry', async (original) => ({
+  ...(await original<typeof import('@/plugins/registry')>()),
+  listProviderCatalog: mocks.providers,
+}))
 vi.mock('../film-enrichment', async (original) => {
   const actual = await original<typeof import('../film-enrichment')>()
   return {
@@ -256,12 +259,11 @@ describe('unified metadata selection', () => {
     const dialect = new PgDialect()
     const query = dialect.sqlToQuery(predicate)
     expect(query.sql).toContain(' and ')
-    expect(query.sql).toContain('last_scraped_at')
+    expect(query.sql).toContain('s.last_scraped_at >=')
     expect(query.sql).not.toMatch(/updated_at|last_successful_at/)
     expect(query.params).toEqual([
       'one',
       'one',
-      'two',
       'two',
       '2026-01-01T00:00:00.000Z',
     ])

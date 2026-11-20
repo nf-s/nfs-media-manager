@@ -152,7 +152,7 @@ it('shares exact filters, ranges, counts and result caps across browse and metad
     (
       await listArtistBrowsePage(
         ArtistQuerySchema.parse({
-          ranges: [{ field: 'trackCount', min: 4, max: 4 }],
+          ranges: [{ field: 'trackCount', min: 3.5, max: 4 }],
         }),
       )
     ).items.length,
