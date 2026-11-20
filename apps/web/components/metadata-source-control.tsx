@@ -19,6 +19,8 @@ import {
   type TagProvenancePage,
 } from '@repo/schemas/tags'
 import { fetchApiData } from '@/utils/api'
+import { detailPageHref, tagDetailId } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
@@ -129,6 +131,13 @@ function TagSources({
       {canonicalId && scope && (
         <span>
           <Button
+            {...workspaceTabLinkProps(
+              detailPageHref({
+                kind: 'tag',
+                id: tagDetailId(scope, canonicalId),
+              }),
+              formatTagName(name),
+            )}
             size="xs"
             variant="link"
             onClick={() => onManage(canonicalId, scope)}

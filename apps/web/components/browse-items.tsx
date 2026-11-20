@@ -328,6 +328,7 @@ export function ItemArt({
       {(image) => (
         <DetailLink
           {...target}
+          workspaceLabel={title}
           className="bi-art-link"
           data-fit={contain ? 'contain' : undefined}
           aria-label={`Open details for ${title}`}
@@ -357,6 +358,7 @@ export function ItemThumb({
   return (
     <DetailLink
       {...target}
+      workspaceLabel={title}
       className="bi-thumb-link"
       data-fit={contain ? 'contain' : undefined}
       aria-label={`Open details for ${title}`}

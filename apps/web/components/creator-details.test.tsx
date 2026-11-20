@@ -264,7 +264,9 @@ function render(options: RenderOptions) {
 }
 
 function destination(html: string, label: string) {
-  const link = html.match(new RegExp(`href="([^"]+)"[^>]*>${label}</a>`))?.[1]
+  const link = html.match(
+    new RegExp(`<a[^>]* href="([^"]+)"[^>]*>${label}</a>`),
+  )?.[1]
   assert.ok(link, `Expected link ${label}`)
   return new URL(link.replaceAll('&amp;', '&'), 'http://localhost')
 }
@@ -659,7 +661,7 @@ test('configured artist source exposes stored evidence and only opens resolved r
     assert.match(html, /Unresolved artist/)
     assert.doesNotMatch(html, />Unresolved artist<\/a>|>Find match</)
     const href =
-      /href="([^"]+)"[^>]*><span class="ds-pill-label">Resolved artist<\//.exec(
+      /<a[^>]* href="([^"]+)"[^>]*><span class="ds-pill-label">Resolved artist<\//.exec(
         html,
       )?.[1]
     assert.ok(href)
@@ -671,7 +673,7 @@ test('configured artist source exposes stored evidence and only opens resolved r
     if ('relationships' in relationships) {
       assert.match(html, /aria-label="Related albums"/)
       const albumHref =
-        /href="([^"]+)"[^>]*><span class="ds-pill-label">Referenced album<\//.exec(
+        /<a[^>]* href="([^"]+)"[^>]*><span class="ds-pill-label">Referenced album<\//.exec(
           html,
         )?.[1]
       assert.ok(albumHref)

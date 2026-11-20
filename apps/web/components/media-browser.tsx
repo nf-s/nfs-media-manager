@@ -1,5 +1,6 @@
 'use client'
 
+import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { DetailInspector } from './detail-inspector'
 import { CreatorLinks } from './creator-links'
 import { CollectionLinks } from './collection-links'
@@ -387,6 +388,7 @@ function MediaBrowse({
   const playback = usePlayback()
   const { embedded } = host
   const searchParams = host.params
+  const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [ready, setReady] = useState(embedded)
   const [draft, setDraft] = useState('')
   const [adding, setAdding] = useState(false)
@@ -575,8 +577,7 @@ function MediaBrowse({
       const saved = embedded
         ? null
         : restoreSavedBrowse(window.localStorage, collection)
-      if (!window.location.search && saved)
-        window.history.replaceState(null, '', `/${collection}?${saved}`)
+      if (saved) restoreBrowsePreferences(`/${collection}?${saved}`)
       const parsed = WidthsSchema.safeParse(
         JSON.parse(
           window.localStorage.getItem(`widths:${host.storage}`) ?? '{}',
@@ -587,7 +588,7 @@ function MediaBrowse({
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [collection, embedded, host.storage])
+  }, [collection, embedded, host.storage, restoreBrowsePreferences])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -1001,6 +1002,7 @@ function MediaBrowse({
         kind={mediaType}
         id={item.id}
         className="browse-thumb-link"
+        workspaceLabel={item.title}
         tabIndex={-1}
         aria-hidden="true"
       >
@@ -1198,6 +1200,7 @@ function MediaBrowse({
               queryIdentity={queryKey}
               autocomplete={{
                 items: titleItems,
+                itemKind: mediaType,
                 titlesLoading,
                 titlesError:
                   facets.isError ||
@@ -1563,6 +1566,7 @@ function MediaBrowse({
                               kind={mediaType}
                               id={item.id}
                               className="browse-art-link"
+                              workspaceLabel={item.title}
                               tabIndex={-1}
                               aria-hidden="true"
                             >

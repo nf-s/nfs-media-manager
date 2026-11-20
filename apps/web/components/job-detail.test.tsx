@@ -169,7 +169,9 @@ test('retry and item links extend a copied inspector stack while retaining paren
     nested: true,
   })
   const links = [
-    ...html.matchAll(/href="([^"]+)"[^>]*>(View retry|Synthetic film)<\/a>/g),
+    ...html.matchAll(
+      /<a[^>]* href="([^"]+)"[^>]*>(View retry|Synthetic film)<\/a>/g,
+    ),
   ]
   assert.equal(links.length, 2)
   for (const [, href, label] of links) {

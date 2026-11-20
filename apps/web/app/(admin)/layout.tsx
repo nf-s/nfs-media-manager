@@ -8,7 +8,7 @@ export default async function AdminLayout({
 }) {
   return (
     <PageAuthGuard>
-      <AppShell>{children}</AppShell>
+      {(owner) => <AppShell owner={owner}>{children}</AppShell>}
     </PageAuthGuard>
   )
 }

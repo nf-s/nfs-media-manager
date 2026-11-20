@@ -1,5 +1,6 @@
 'use client'
 
+import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { TrackArtistLinks } from './creator-links'
 import {
   clearCreatorScope,
@@ -181,6 +182,7 @@ function TrackBrowse({
   const { apiBaseUrl } = useConfig()
   const { embedded } = host
   const searchParams = host.params
+  const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [ready, setReady] = useState(embedded)
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
@@ -331,13 +333,12 @@ function TrackBrowse({
     if (embedded) return
     try {
       const saved = restoreSavedBrowse(window.localStorage, collection)
-      if (!window.location.search && saved)
-        window.history.replaceState(null, '', `/${collection}?${saved}`)
+      if (saved) restoreBrowsePreferences(`/${collection}?${saved}`)
     } catch {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [embedded])
+  }, [embedded, restoreBrowsePreferences])
   useEffect(() => {
     const element = scroller.current
     if (!element) return

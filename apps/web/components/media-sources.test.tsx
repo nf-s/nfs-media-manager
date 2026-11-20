@@ -373,7 +373,7 @@ test('album Overview ratings open the page that supplied the score', () => {
   }
 })
 
-test('album tags show in one letter case and each offers its sources for that album', () => {
+test('saved and inherited album tags show in display case and offer their sources', () => {
   const album = AlbumDetailSchema.parse({
     ...albumWithCollections,
     id: 'album-with-tags',
@@ -401,9 +401,10 @@ test('album tags show in one letter case and each offers its sources for that al
       html,
       /<span class="ds-pill browse-filter-pill" data-size="md"><button type="button"[^>]*class="browse-pill-action"><span class="ds-pill-label">Dream Pop<\/span><\/button><button type="button"[^>]*aria-label="Sources for Dream Pop"[^>]*class="browse-pill-action">/,
     )
-    // Artist tags are not saved on the album, so they have no sources here.
-    assert.match(html, /<span class="ds-pill-label">Shoegaze<\/span>/)
-    assert.doesNotMatch(html, /Sources for Shoegaze/)
+    assert.match(
+      html,
+      /<span class="ds-pill browse-filter-pill" data-size="md"><button type="button"[^>]*class="browse-pill-action"><span class="ds-pill-label">Shoegaze<\/span><\/button><button type="button"[^>]*aria-label="Sources for Shoegaze"[^>]*class="browse-pill-action">/,
+    )
   } finally {
     client.clear()
     assert.equal(network.mock.callCount(), 0)

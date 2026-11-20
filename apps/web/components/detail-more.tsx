@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import { Check, Ellipsis } from 'lucide-react'
 import { Button, type ButtonSize } from '@repo/ui/components/ui/button'
 import type { DetailCrumb } from '@/utils/detail-inspector'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useInspectorPage } from './detail-inspector-context'
 
 /**
@@ -14,7 +15,7 @@ import { useInspectorPage } from './detail-inspector-context'
  */
 export type DetailMenuItem =
   | { label: string; onSelect: () => void; disabled?: boolean }
-  | { label: string; href: string }
+  | { label: string; href: string; workspaceLabel?: string }
   | {
       group: string
       choices: readonly {
@@ -48,7 +49,9 @@ export function DetailMore({
   }, [setCrumb, title, batchHref])
   const all: DetailMenuItem[] = [
     ...items,
-    ...(page ? [{ label: 'Open page', href: page.pageHref }] : []),
+    ...(page
+      ? [{ label: 'Open page', href: page.pageHref, workspaceLabel: title }]
+      : []),
   ]
   return (
     <>
@@ -218,6 +221,9 @@ function MoreMenu({
           ) : 'href' in item ? (
             <Link
               key={item.label}
+              {...(item.workspaceLabel
+                ? workspaceTabLinkProps(item.href, item.workspaceLabel)
+                : undefined)}
               href={item.href}
               prefetch={false}
               role="menuitem"

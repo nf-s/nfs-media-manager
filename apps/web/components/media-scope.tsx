@@ -41,7 +41,7 @@ const lastLibraryKey = 'media-manager:library'
 const lastLibraryListeners = new Set<() => void>()
 let lastLibrary: Library | null = null
 
-function readLastLibrary(): Library {
+export function readLastLibrary(): Library {
   if (lastLibrary === null) {
     try {
       lastLibrary =
@@ -54,7 +54,7 @@ function readLastLibrary(): Library {
   return lastLibrary
 }
 
-function rememberLibrary(view: Library) {
+export function rememberLibrary(view: Library) {
   if (readLastLibrary() === view) return
   lastLibrary = view
   try {

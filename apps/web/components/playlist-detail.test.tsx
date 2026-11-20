@@ -243,7 +243,9 @@ function drawerOf(html: string) {
 }
 
 function linkTargets(html: string, label: string) {
-  const href = html.match(new RegExp(`href="([^"]+)"[^>]*>${label}</a>`))?.[1]
+  const href = html.match(
+    new RegExp(`<a[^>]* href="([^"]+)"[^>]*>${label}</a>`),
+  )?.[1]
   assert.ok(href)
   const url = new URL(href.replaceAll('&amp;', '&'), 'http://localhost')
   return detailEntries(url.pathname, url.searchParams)

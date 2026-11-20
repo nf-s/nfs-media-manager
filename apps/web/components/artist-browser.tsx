@@ -1,5 +1,6 @@
 'use client'
 
+import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import {
   replaceWorkspaceUrl,
   useDetailInspector,
@@ -124,6 +125,7 @@ const noun = { one: 'artist', other: 'artists' }
 export default function ArtistBrowser() {
   const { apiBaseUrl } = useConfig()
   const searchParams = useSearchParams()
+  const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [ready, setReady] = useState(false)
   const [draft, setDraft] = useState('')
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
@@ -278,13 +280,12 @@ export default function ArtistBrowser() {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(`browse:${collection}`)
-      if (!window.location.search && saved)
-        window.history.replaceState(null, '', `/${collection}?${saved}`)
+      if (saved) restoreBrowsePreferences(`/${collection}?${saved}`)
     } catch {
       /* Ignore unavailable storage or malformed saved preferences. */
     }
     setReady(true)
-  }, [])
+  }, [restoreBrowsePreferences])
   useEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -611,6 +612,7 @@ export default function ArtistBrowser() {
               queryIdentity={queryKey}
               autocomplete={{
                 items: titleItems,
+                itemKind: 'artist',
                 titlesLoading,
                 titlesError:
                   facets.isError ||

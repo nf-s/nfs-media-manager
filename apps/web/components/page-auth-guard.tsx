@@ -4,7 +4,7 @@ import { getUserServerSession } from '@/utils/getUserServerSession'
 export default async function PageAuthGuard({
   children,
 }: {
-  children: React.ReactNode
+  children: (userId: string) => React.ReactNode
 }) {
   const { user, session } = await getUserServerSession()
 
@@ -12,5 +12,5 @@ export default async function PageAuthGuard({
     redirect('/login')
   }
 
-  return children
+  return children(user.id)
 }

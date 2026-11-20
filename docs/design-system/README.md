@@ -38,8 +38,6 @@ Then open `http://127.0.0.1:8080/docs/design-system/index.html`.
 | `assets/gallery.css`                           | Layout of these documentation pages only (`g-*` classes)                                    |
 | `concept-template.html`                        | The page to copy when proposing new interface. `concept-*.html` pages are pending decisions |
 
-Pending navigation concepts include [workspace tabs](concept-workspace-tabs.html) and [browser tabs](concept-browser-tabs.html). Both examples use invented films and open locally.
-
 Mockups labelled **Before** show the interface the system replaced. They explain a decision and are never a reference. Everything else on these pages is the specification.
 
 ## Components
@@ -51,6 +49,7 @@ Import from `@repo/ui/components/ds/<file>` or `@repo/ui/components/ui/<file>`.
 | An action                               | `Button` (`default`, `primary`, `ghost`, `danger`, `link`; `xs`, `sm`, `md`; `icon`)                                               | `ui/button`                          |
 | A form field                            | `Label`, `Input`, `Select`                                                                                                         | `ui/label`, `ui/input`, `ds/toolbar` |
 | Sections of one item                    | `Tabs` (underline)                                                                                                                 | `ui/tabs`                            |
+| Independent workspace views             | `WorkspaceTabs`                                                                                                                    | `ds/workspace-tabs`                  |
 | A view or range switch                  | `Segmented`                                                                                                                        | `ds/segmented`                       |
 | Any table                               | `TableScroll`, `Table`, `TableColumns`, `TableRow`, `TableHead`, `TableCell`, `TableSortButton`, `TableSelectionBar`, `TableState` | `ui/table`                           |
 | A state                                 | `Status`                                                                                                                           | `ds/status`                          |
@@ -79,6 +78,7 @@ The components page states the rules for each one. The ones that matter most:
 - **Pills** are never clipped or scrolled: show what fits and count the rest (`+N`).
 - **Status** uses one vocabulary: Queued, Running, Waiting, Done, Failed, Cancelled, Paused, Never.
 - **Tabs** are for sections of one item; the segmented control is only for views, ranges and grid size.
+- **Workspace tabs** switch between independent views. The strip stays visible with one tab. Each tab has a close button and the strip has an icon-only duplicate button. See [workspace tabs](components.html#workspace-tabs).
 - **One toolbar order:** actions, search, sort picker, direction, view switch, Filters button, count. Grid size and columns are in the Filters drawer.
 - **One chart.** `TrendChart` picks days, weeks, months, quarters or years so each point has enough in it to read as a line.
 - **A filter on a count** is one filter with two views: `Histogram` sets a range by its bars, `Condition` cards state it exactly. It applies on change and is written out as a sentence.
