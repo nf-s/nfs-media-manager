@@ -497,6 +497,17 @@ function browseRanks(positions: number[], limitResults?: number) {
     .map((position) => position + 1)
 }
 
+// OFFSET 0 keeps the release lookups keyed by each tied track when the
+// planner underestimates the size of the primary sort's boundary.
+function trackReleaseLookups(trackId: SQL) {
+  return sql`join lateral (select * from ${mediaItem} where ${mediaItem.id} = ${trackId} offset 0)
+      ${mediaItem} on true
+    join lateral (select * from ${libraryTrack} where ${libraryTrack.mediaItemId} = ${trackId} offset 0)
+      ${libraryTrack} on true
+    left join lateral (select * from ${mediaItem} where ${mediaItem.id} = ${libraryTrack.albumMediaItemId} offset 0)
+      ${trackSortAlbum} on true`
+}
+
 function groupedTrackBrowse(
   query: TrackQuery,
   where: SQL | undefined,
@@ -613,15 +624,8 @@ function groupedTrackBrowse(
     const sortJoins = groupSort
       ? sql``
       : sql`join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns} ${orderRowsJoin}`
-    // A large play-count tie can exceed the estimated size of FETCH WITH TIES.
-    // OFFSET 0 keeps the release lookups keyed by each tied representative.
     const releaseJoins = periodPage
-      ? sql`join lateral (select * from ${mediaItem} where ${mediaItem.id} = g.id offset 0)
-          ${mediaItem} on true
-        join lateral (select * from ${libraryTrack} where ${libraryTrack.mediaItemId} = g.id offset 0)
-          ${libraryTrack} on true
-        left join lateral (select * from ${mediaItem} where ${mediaItem.id} = ${libraryTrack.albumMediaItemId} offset 0)
-          ${trackSortAlbum} on true`
+      ? trackReleaseLookups(sql`g.id`)
       : sql`join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}`
     return sql`from (
       select g.*, ${listeningValue}${columns}
@@ -950,16 +954,9 @@ async function browseQueries(
     filters.push({ field: 'genre', value: query.tag, mode: 'required' })
   if ('sourceKind' in query && query.sourceKind)
     conditions.push(eq(film.sourceKind, query.sourceKind))
-  conditions.push(
-    ...browseFieldConditions(
-      mediaType,
-      filters,
-      groupedTrackQuery
-        ? query.ranges.filter((range) => !recordingGroupValue(range.field))
-        : query.ranges,
-      byKey,
-    ),
-  )
+  const filterRanges = groupedTrackQuery
+    ? query.ranges.filter((range) => !recordingGroupValue(range.field))
+    : query.ranges
   // Every word must appear in at least one text field; words may match
   // different fields.
   const music = mediaType === 'album' || mediaType === 'track'
@@ -970,13 +967,28 @@ async function browseQueries(
         db.$with('browse_artist_tags', {}).as(artistTagMemberships(mediaType)),
       )
     : db
+  const searchConditions: SQL[] = []
   for (const word of words) {
     const search = `%${word.replace(/[\\%_]/g, '\\$&')}%`
-    conditions.push(
+    searchConditions.push(
       sql`${mediaItem.id} in (${browseTextSearchIds(mediaType, fields, search, sharedArtistTags)})`,
     )
   }
-  const where = and(...conditions)
+  const whereWithFilters = (
+    extraMatch?: (filter: BrowseFilter) => SQL | undefined,
+  ) =>
+    and(
+      ...conditions,
+      ...browseFieldConditions(
+        mediaType,
+        filters,
+        filterRanges,
+        byKey,
+        extraMatch,
+      ),
+      ...searchConditions,
+    )
+  const where = whereWithFilters()
   const orderRows =
     versionId || (mediaType === 'track' && query.creatorId)
       ? undefined
@@ -1097,6 +1109,7 @@ async function browseQueries(
 
   async function readTrackRanks(
     ranks: number[] | { first: number; last: number },
+    firstArtistTagWhere?: SQL,
   ) {
     const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
     const requested = Array.isArray(ranks)
@@ -1110,8 +1123,16 @@ async function browseQueries(
       sql<number>`rank() over (order by ${order})`,
       sql<number>`row_number() over (order by ${order})`,
     )
-      .where(and(itemConditions(listening), visibleTrack))
+      .where(
+        firstArtistTagWhere ?? and(itemConditions(listening), visibleTrack),
+      )
       .orderBy(order)
+    const releaseJoins = firstArtistTagWhere
+      ? trackReleaseLookups(sql`p.id`)
+      : sql`join ${mediaItem} on ${mediaItem.id} = p.id
+        join ${libraryTrack} on ${libraryTrack.mediaItemId} = p.id
+        left join ${mediaItem} as ${trackSortAlbum}
+          on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}`
     // Walk the primary order without resolving the release order of skipped
     // rows. Every row tied with a requested rank must be available, including
     // ties before the first requested rank and after the last one.
@@ -1127,10 +1148,7 @@ async function browseQueries(
             order by ${sql.join([...naturalOrder, sql`${mediaItem.id}`], sql`, `)}
           ) - 1 as rank
         from selected_tracks p
-        join ${mediaItem} on ${mediaItem.id} = p.id
-        join ${libraryTrack} on ${libraryTrack.mediaItemId} = p.id
-        left join ${mediaItem} as ${trackSortAlbum}
-          on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}
+        ${releaseJoins}
       )
       select id, listening_scrobbles as "listeningScrobbles", rank::int
       from ranked_tracks where rank ${requested} order by rank`)
@@ -1138,22 +1156,40 @@ async function browseQueries(
   }
 
   async function readPage(limit: number) {
-    // A positive artist tag can leave very few candidates. Check their Last.fm
-    // sources without constructing the suppression set for the entire library.
+    // Keep positive artist tags as a set of keys. A broad tag must not be
+    // nested-loop joined against the date index, and release ordering only
+    // needs to resolve the primary date ties at the page boundary.
     const firstArtistTagPage =
+      mediaType === 'track' &&
       offset === 0 &&
+      query.sortBy === 'dateAdded' &&
+      query.direction === 'desc' &&
+      useTrackRanks &&
       query.filters.some(
         (chip) => chip.field === 'artistTag' && chip.mode !== 'exclude',
       )
-    const directPageWhere = firstArtistTagPage
-      ? and(pageMembership, addedTrackVisibility)
-      : pageWhere
+    const firstArtistTagWhere = firstArtistTagPage
+      ? and(
+          whereWithFilters((chip) =>
+            chip.field === 'artistTag' && chip.mode !== 'exclude'
+              ? sql`${libraryTrack.mediaItemId} = any(array(
+                  ${mediaIdsWithArtistTag(normalizeTagName(chip.value))}
+                ))`
+              : undefined,
+          ),
+          listening?.condition(listeningSubject, sql`${mediaItem.id}`),
+          addedTrackVisibility,
+        )
+      : undefined
     // Keep the direct limit for early pages, where there are few ties to skip.
     const rows =
-      useTrackRanks && limit > 0 && offset >= 3 * limit
-        ? await readTrackRanks({ first: offset + 1, last: offset + limit })
+      useTrackRanks && limit > 0 && (firstArtistTagWhere || offset >= 3 * limit)
+        ? await readTrackRanks(
+            { first: offset + 1, last: offset + limit },
+            firstArtistTagWhere,
+          )
         : await base()
-            .where(directPageWhere)
+            .where(pageWhere)
             .orderBy(order, ...naturalOrder, mediaItem.id)
             .limit(limit)
             .offset(offset)

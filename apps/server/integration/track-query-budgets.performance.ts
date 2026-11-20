@@ -294,7 +294,7 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
       ('fixture-recording-playlist', 'playlist', 'Fixture recording playlist');
     insert into playlist_item (playlist_id, media_item_id)
     select 'fixture-recording-playlist', id from media_item
-    where id in ('track-1', 'track-18001', 'track-19997', 'track-19999', 'track-19996');
+    where id in ('track-1', 'track-2', 'track-18001', 'track-19997', 'track-19999', 'track-19996');
     insert into playlist_item (playlist_id, media_item_id)
     select 'fixture-listening-playlist', 'track-' || n
     from generate_series(19900, 20000) n where n <> 19996;
@@ -404,6 +404,30 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
         ['track-19997', 20, undefined],
       ])
       expect(page.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'filtered grouped Track page sorted by zero period plays',
+    1_500,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage(
+        TrackQuerySchema.parse({
+          ...grouped,
+          direction: 'asc',
+          listening: { match: 'all', rules: [{ period, max: 0 }] },
+        }),
+      )
+      expect(
+        page.items.map(({ id, listeningScrobbles }) => [
+          id,
+          listeningScrobbles,
+        ]),
+      ).toEqual([
+        ['track-19996', 0],
+        ['track-2', 0],
+      ])
+      expect(page.hasMore).toBe(false)
     },
   )
   await checkBudget(
@@ -561,8 +585,9 @@ it('bounds live Track autocomplete on shared artist and album tags', async () =>
   ])
 })
 
-it('bounds first Added page with an artist tag and unrelated Last.fm placeholders', async () => {
-  const { queryBrowsePageIds } = await import('@/services/browse')
+it('bounds first Added pages with artist tags and unrelated Last.fm placeholders', async () => {
+  const { queryBrowsePageIds, queryBrowsePositions } =
+    await import('@/services/browse')
   await pool.query(`
     insert into media_item (id, slug, media_type, title, source_label)
     select 'placeholder-' || n, 'placeholder-' || n, 'track', 'Fixture placeholder ' || n, 'lastfm'
@@ -580,6 +605,10 @@ it('bounds first Added page with an artist tag and unrelated Last.fm placeholder
     select 'fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-visibility-' || n,
       'track-' || n, 'exact'
     from generate_series(1, 12000) n where n <> 11998;
+    update library_track set album_media_item_id = 'album-1' where media_item_id = 'track-20000';
+    update library_track set album_media_item_id = 'album-2',
+      date_added = (select date_added from library_track where media_item_id = 'track-20000')
+      where media_item_id = 'track-19999';
     insert into artist (id, name) values ('visibility-artist', 'Fixture visibility artist');
     insert into media_credit (media_item_id, artist_id, role)
     select id, 'visibility-artist', 'artist'
@@ -617,6 +646,46 @@ it('bounds first Added page with an artist tag and unrelated Last.fm placeholder
     ])
     expect(page.hasMore).toBe(true)
   })
+  // The remaining release tied on Added must occupy the next page and
+  // retain the same natural order when looked up by position.
+  expect(
+    (await queryBrowsePageIds('track', { ...query, page: 2 })).ids,
+  ).toEqual(['track-19999'])
+  expect(await queryBrowsePositions('track', query, [2, 3])).toEqual([
+    { id: 'track-20000', position: 2 },
+    { id: 'track-19999', position: 3 },
+  ])
+  // The date index reaches the newer placeholders before any of the
+  // 20,000 tracks whose artists carry this tag.
+  await pool.query(`
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    select 'broad-visibility-' || id, id, 'discogs', '{}', '{"tags":["Fixture broad visibility tag"]}'
+    from artist where id like 'artist-%';
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    select artist_id, provider, id from artist_provider_snapshot where id like 'broad-visibility-%';
+  `)
+  await pool.query('vacuum analyze artist_provider_snapshot')
+  await pool.query('vacuum analyze artist_provider_current_state')
+  await checkBudget(
+    'broad artist-tag first Added page',
+    140_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', {
+        ...query,
+        filters: [
+          {
+            field: 'artistTag',
+            value: 'Fixture broad visibility tag',
+            mode: 'required',
+          },
+        ],
+      })
+      expect(page.ids).toEqual(['track-20000', 'track-19999', 'track-19998'])
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
 })
 
 it('bounds the Spotify alternate lookup for detail on a common track title', async () => {

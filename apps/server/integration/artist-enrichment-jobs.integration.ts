@@ -1628,10 +1628,8 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
       await expect(
         runProviderReplayCommand([
           'replay',
-          '--job',
-          job.id,
-          '--artist',
-          artistId,
+          `--job=${job.id}`,
+          `--artist=${artistId}`,
           '--attempt',
           '1',
           '--output',
