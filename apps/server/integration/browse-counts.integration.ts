@@ -594,3 +594,223 @@ it('uses conflicting recording evidence from editions excluded by filters', asyn
     ),
   ).toEqual(['guard-b', 'guard-a'])
 })
+
+it('reuses one exact grouped order for opposite sorts, deep pages, positions and totals', async () => {
+  const { queryBrowseCount, queryBrowsePageIds, queryBrowsePositions } =
+    await import('@/services/browse')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'scrobbles',
+    size: 2,
+  })
+  await pool.query(`
+    insert into media_item (id, slug, media_type, title) values
+      ('cached-recording-a', 'cached-recording-a', 'track', 'Fixture cached recording'),
+      ('cached-recording-b', 'cached-recording-b', 'track', 'Fixture cached recording');
+    insert into library_track (media_item_id, album_media_item_id, duration_sec, isrc, scrobble_count, last_listened_at) values
+      ('cached-recording-a', 'album-1', 160, 'USABC2700001', 1, '2026-07-01'),
+      ('cached-recording-b', 'album-2', 161, null, 1, '2026-07-01');
+    insert into media_credit (media_item_id, artist_id, role)
+    select id, 'artist-a', 'artist' from media_item where id like 'cached-recording-%';
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    select 'listener', 'fixture artist a', 'fixture cached recording', id, 'exact'
+    from media_item where id like 'cached-recording-%';
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+      values ('cached-recording-event', 'listener', '2026-07-01', 'Fixture artist A',
+        'Fixture cached recording', 'fixture artist a', 'fixture cached recording');
+    insert into recording_browse_order_state (singleton, builder, retry_after)
+    values (true, current_user, statement_timestamp() + interval '1 minute')
+    on conflict (singleton) do update set retry_after = excluded.retry_after;
+  `)
+  const pagesAndPositions = () =>
+    Promise.all([
+      queryBrowsePageIds('track', query),
+      queryBrowsePageIds('track', { ...query, direction: 'asc', page: 2 }),
+      queryBrowsePageIds('track', { ...query, page: 999 }),
+      queryBrowsePositions('track', query, [0, 1, 3, 999]),
+      queryBrowsePositions(
+        'track',
+        { ...query, direction: 'asc', limitResults: 3 },
+        [2, 4, 0, 0],
+      ),
+      queryBrowseCount('track', query),
+    ])
+  const live = await pagesAndPositions()
+  await pool.query(`
+    update recording_browse_order_state set retry_after = statement_timestamp();
+  `)
+  await queryBrowsePageIds('track', query)
+  logQuery.mockClear()
+  expect(await pagesAndPositions()).toEqual(live)
+  expect(
+    await queryBrowseCount('track', { ...query, limitResults: 1 }),
+  ).toEqual({
+    totalCount: 1,
+  })
+  expect(
+    logQuery.mock.calls.some(([query]) => query.includes('recording_matches')),
+  ).toBe(false)
+  expect(
+    logQuery.mock.calls.some(([query]) =>
+      query.includes('recording_browse_order g'),
+    ),
+  ).toBe(true)
+  expect(
+    await queryBrowseCount('track', query, { conditions: [sql`false`] }),
+  ).toEqual({ totalCount: 0 })
+
+  await pool.query(`
+    update artist set scrobble_count = scrobble_count + 1 where id = 'artist-a'
+  `)
+  logQuery.mockClear()
+  expect(await pagesAndPositions()).toEqual(live)
+  expect(
+    logQuery.mock.calls.some(([query]) => query.includes('recording_matches')),
+  ).toBe(false)
+})
+
+it('publishes grouped ranks atomically around concurrent writes and older snapshots', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'scrobbles',
+    size: 1,
+  })
+  const first = () => queryBrowsePageIds('track', query)
+  await pool.query(`
+    update recording_browse_order_state set retry_after = statement_timestamp()
+  `)
+  const before = await first()
+  const oldReader = await pool.connect()
+  const oldWriter = await pool.connect()
+  const publishLock = await pool.connect()
+  const firstReadyRank = `select (
+    select g.id from recording_browse_order g
+    where descending_rank = 1 and not exists (select 1 from recording_browse_order_dirty)
+  ) as id`
+  try {
+    await oldReader.query('begin isolation level repeatable read')
+    const firstRank = await oldReader.query(firstReadyRank)
+    expect(firstRank.rows).toEqual([{ id: before.ids[0] }])
+
+    await oldWriter.query('begin')
+    await oldWriter.query(
+      `update library_track set scrobble_count = 400 where media_item_id = 'track-1'`,
+    )
+    expect(await first()).toEqual(before)
+    await pool.query(`
+      update recording_browse_order_state set total_count = null, retry_after = statement_timestamp();
+      create function fixture_pause_recording_order() returns trigger language plpgsql as $$
+      begin
+        while not pg_try_advisory_xact_lock(381026193) loop
+          perform pg_sleep(0.005);
+        end loop;
+        return null;
+      end;
+      $$;
+      create trigger fixture_pause_recording_order before insert on recording_browse_order
+      for each statement execute function fixture_pause_recording_order();
+    `)
+    await publishLock.query('select pg_advisory_lock(381026193)')
+    logQuery.mockClear()
+    const build = first()
+    try {
+      await vi.waitFor(() =>
+        expect(
+          logQuery.mock.calls.some(([statement]) =>
+            statement.includes('insert into recording_browse_order\n'),
+          ),
+        ).toBe(true),
+      )
+      await pool.query(`
+        update library_track set scrobble_count = 200 where media_item_id = 'track-2';
+      `)
+    } finally {
+      await publishLock.query('select pg_advisory_unlock(381026193)')
+    }
+    expect(await build).toEqual(before)
+    await oldWriter.query('rollback')
+
+    expect((await oldReader.query(firstReadyRank)).rows).toEqual(firstRank.rows)
+    expect((await pool.query(firstReadyRank)).rows).toEqual([{ id: null }])
+    expect((await first()).ids).toEqual(['track-2'])
+
+    // The legacy INSERT/UPDATE statement path still invalidates a built order.
+    await pool.query(`
+      insert into library_track (media_item_id, scrobble_count) values ('track-1', 300)
+      on conflict (media_item_id) do update set scrobble_count = excluded.scrobble_count
+    `)
+    expect((await pool.query(firstReadyRank)).rows).toEqual([{ id: null }])
+    expect((await first()).ids).toEqual(['track-1'])
+    await pool.query('truncate lastfm_track_source')
+    expect((await pool.query(firstReadyRank)).rows).toEqual([{ id: null }])
+  } finally {
+    await oldWriter.query('rollback')
+    await oldReader.query('rollback')
+    await pool.query(`
+      drop trigger if exists fixture_pause_recording_order on recording_browse_order;
+      drop function if exists fixture_pause_recording_order();
+    `)
+    publishLock.release()
+    oldWriter.release()
+    oldReader.release()
+  }
+})
+
+it('returns exact live rows and backs off after a canceled order publication', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'scrobbles',
+    size: 1,
+  })
+  const first = () => queryBrowsePageIds('track', query)
+  await pool.query(`
+    update recording_browse_order_state set retry_after = statement_timestamp();
+  `)
+  await first()
+  await pool.query(`
+    update library_track set scrobble_count = 999 where media_item_id = 'track-2';
+    update recording_browse_order_state set retry_after = statement_timestamp();
+    create function fixture_cancel_recording_order() returns trigger language plpgsql as $$
+    begin
+      raise exception 'Fixture statement canceled' using errcode = '57014';
+    end;
+    $$;
+    create trigger fixture_cancel_recording_order before insert on recording_browse_order
+    for each statement execute function fixture_cancel_recording_order();
+  `)
+  try {
+    expect((await first()).ids).toEqual(['track-2'])
+    expect(
+      (
+        await pool.query(
+          'select count(*)::int as total from recording_browse_order_dirty',
+        )
+      ).rows,
+    ).toEqual([{ total: 1 }])
+    logQuery.mockClear()
+    expect((await first()).ids).toEqual(['track-2'])
+    expect(
+      logQuery.mock.calls.some(([statement]) =>
+        statement.includes('insert into recording_browse_order_state'),
+      ),
+    ).toBe(false)
+  } finally {
+    await pool.query(`
+      drop trigger fixture_cancel_recording_order on recording_browse_order;
+      drop function fixture_cancel_recording_order();
+    `)
+  }
+  await pool.query(
+    'update recording_browse_order_state set retry_after = statement_timestamp()',
+  )
+  expect((await first()).ids).toEqual(['track-2'])
+  logQuery.mockClear()
+  expect((await first()).ids).toEqual(['track-2'])
+  expect(
+    logQuery.mock.calls.some(([statement]) =>
+      statement.includes('recording_matches'),
+    ),
+  ).toBe(false)
+})

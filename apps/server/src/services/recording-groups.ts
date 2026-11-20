@@ -1,6 +1,7 @@
 import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
+import { db } from '@/lib/db'
 
 const RecordingGroupSchema = z.object({
   id: z.string(),
@@ -376,3 +377,126 @@ export const recordingGroupProjection = sql`
   g.id, g.version_count, g.scrobbles,
   to_char(g.last_listened_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as last_listened_at,
   to_char(g.date_added, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as date_added`
+
+const RecordingOrderReadSchema = z.object({
+  total_count: z.number().int().nonnegative().nullable(),
+  can_refresh: z.boolean(),
+  rows: RecordingGroupPositionRowsSchema,
+})
+
+const OptionalOrderErrorSchema = z.object({
+  code: z.enum(['25006', '40001', '42501', '42P01', '55P03', '57014']),
+})
+
+function canUseLiveOrder(error: unknown) {
+  return (
+    OptionalOrderErrorSchema.safeParse(error).success ||
+    (error instanceof Error &&
+      OptionalOrderErrorSchema.safeParse(error.cause).success)
+  )
+}
+
+const cleanOrder = sql`not exists (select 1 from recording_browse_order_dirty)`
+// Bump when the unfiltered membership or order changes, including tie-breaks.
+const orderBuilder = sql`current_user || ':v1'`
+
+/** Check for committed changes and read ranks within the same snapshot. */
+export async function readRecordingBrowseOrder(rows?: SQL) {
+  const selected = rows
+    ? sql`coalesce((select jsonb_agg(r order by r.rank) from (${rows}) r), '[]'::jsonb)`
+    : sql`'[]'::jsonb`
+  try {
+    const result = await db.execute(sql`
+      with current_order as (
+        select total_count from recording_browse_order_state
+        where singleton and builder = ${orderBuilder} and ${cleanOrder}
+      ) select (select total_count from current_order) as total_count,
+        not exists (
+          select 1 from recording_browse_order_state
+          where singleton and retry_after > statement_timestamp()
+        ) as can_refresh,
+        case when (select total_count from current_order) is not null
+          then ${selected} else '[]'::jsonb end as rows`)
+    return RecordingOrderReadSchema.parse(result.rows[0])
+  } catch (error) {
+    if (!canUseLiveOrder(error)) throw error
+    return undefined
+  }
+}
+
+export function recordingBrowseOrderRows(rank: SQL, condition: SQL) {
+  return sql`select ${recordingGroupProjection}, null::int as listening_scrobbles,
+    ${rank} as rank from recording_browse_order g where ${condition} order by ${rank}`
+}
+
+/** Publish ranks and clear only the dirty markers visible to the builder. */
+export async function refreshRecordingBrowseOrder(
+  order: SQL,
+  selectedRows: SQL,
+) {
+  const deadline = performance.now() + 3500
+  const expired = new Error('Recording order refresh exceeded its budget')
+  try {
+    const claimed = await db.transaction(async (tx) => {
+      await tx.execute(sql`set local lock_timeout = '100ms'`)
+      const claim = await tx.execute(sql`
+        insert into recording_browse_order_state (singleton, builder, retry_after)
+        values (true, ${orderBuilder}, statement_timestamp() + interval '30 seconds')
+        on conflict (singleton) do update set retry_after = excluded.retry_after
+        where recording_browse_order_state.retry_after <= statement_timestamp()
+          and (recording_browse_order_state.total_count is null
+            or recording_browse_order_state.builder <> excluded.builder
+            or not (${cleanOrder}))
+        returning 1`)
+      return claim.rows.length > 0
+    })
+    if (!claimed) return undefined
+
+    return await db.transaction(
+      async (tx) => {
+        await tx.execute(sql`set local lock_timeout = '100ms'`)
+        const guard =
+          await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(
+            current_schema() || ':recording_browse_order', 0
+          )) as ready`)
+        if (!z.object({ ready: z.boolean() }).parse(guard.rows[0]).ready)
+          return undefined
+
+        async function useRemainingBudget() {
+          const remaining = Math.floor(deadline - performance.now())
+          if (remaining <= 0) throw expired
+          await tx.execute(
+            sql`select set_config('statement_timeout', ${`${remaining}ms`}, true)`,
+          )
+        }
+
+        await useRemainingBudget()
+        await tx.execute(sql`
+          delete from recording_browse_order_dirty where transaction_id in (
+            select transaction_id from recording_browse_order_dirty for update skip locked
+          )`)
+        await useRemainingBudget()
+        await tx.execute(sql`delete from recording_browse_order`)
+        await useRemainingBudget()
+        await tx.execute(sql`
+          with inserted as (
+            insert into recording_browse_order
+              (id, version_count, scrobbles, last_listened_at, date_added, ascending_rank, descending_rank)
+            ${order}
+            returning 1
+          ) update recording_browse_order_state set
+            builder = ${orderBuilder},
+            total_count = (select count(*)::int from inserted),
+            retry_after = clock_timestamp() + interval '5 seconds'
+          where singleton`)
+        await useRemainingBudget()
+        const result = await tx.execute(selectedRows)
+        return RecordingGroupPositionRowsSchema.parse(result.rows)
+      },
+      { isolationLevel: 'repeatable read' },
+    )
+  } catch (error) {
+    if (error !== expired && !canUseLiveOrder(error)) throw error
+    return undefined
+  }
+}

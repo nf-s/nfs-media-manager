@@ -196,6 +196,44 @@ export const libraryTrack = pgTable(
   ],
 )
 
+export const recordingBrowseOrderDirty = pgTable(
+  'recording_browse_order_dirty',
+  {
+    transactionId: bigint('transaction_id', { mode: 'bigint' }).primaryKey(),
+  },
+)
+
+export const recordingBrowseOrderState = pgTable(
+  'recording_browse_order_state',
+  {
+    singleton: boolean('singleton').primaryKey(),
+    builder: text('builder').notNull(),
+    totalCount: integer('total_count'),
+    retryAfter: timestamp('retry_after', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+)
+
+export const recordingBrowseOrder = pgTable(
+  'recording_browse_order',
+  {
+    id: text('id').primaryKey(),
+    versionCount: integer('version_count').notNull(),
+    scrobbles: integer('scrobbles').notNull(),
+    lastListenedAt: timestamp('last_listened_at', { mode: 'date' }),
+    dateAdded: timestamp('date_added', { mode: 'date' }),
+    ascendingRank: integer('ascending_rank').notNull(),
+    descendingRank: integer('descending_rank').notNull(),
+  },
+  (table) => [
+    uniqueIndex('recording_browse_order_ascending_idx').on(table.ascendingRank),
+    uniqueIndex('recording_browse_order_descending_idx').on(
+      table.descendingRank,
+    ),
+  ],
+)
+
 export const artist = pgTable(
   'artist',
   {

@@ -500,6 +500,12 @@ it('groups a broad listening page and count without rereading shared scrobbles',
     analyze media_item; analyze library_track; analyze media_credit;
     analyze lastfm_track_link; analyze lastfm_scrobble;
   `)
+  // Exercise the exact live query while a durable order is unavailable.
+  await pool.query(`
+    insert into recording_browse_order_state (singleton, builder, retry_after)
+    values (true, current_user, statement_timestamp() + interval '1 minute')
+    on conflict (singleton) do update set retry_after = excluded.retry_after
+  `)
   capturedQueries.length = 0
   const first = await queryBrowsePageIds('track', query)
   expect(first.ids).toHaveLength(25)
@@ -511,8 +517,8 @@ it('groups a broad listening page and count without rereading shared scrobbles',
   ).toEqual(Array.from({ length: 25 }, () => [2, 40]))
   expect(await queryBrowseCount('track', query)).toEqual(baseline)
 
-  const queries = capturedQueries.filter(
-    ({ query }) => !query.includes('pg_current_snapshot'),
+  const queries = capturedQueries.filter(({ query }) =>
+    query.includes('recording_matches'),
   )
   expect(queries).toHaveLength(2)
   for (const { query, params } of queries) {

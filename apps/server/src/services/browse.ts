@@ -64,6 +64,8 @@ import {
   trackSpotifyMatchExpression,
 } from './track-values'
 import {
+  readRecordingBrowseOrder,
+  recordingBrowseOrderRows,
   recordingCount,
   recordingDates,
   recordingGroupProjection,
@@ -72,6 +74,7 @@ import {
   recordingMemberships,
   recordingRepresentatives,
   recordingVersionMembers,
+  refreshRecordingBrowseOrder,
   RecordingGroupPositionRowsSchema,
   RecordingGroupRowsSchema,
   type RecordingGroup,
@@ -470,6 +473,7 @@ function groupedTrackBrowse(
   orderRows: SQL | undefined,
   listening: BrowseListening | undefined,
   countedListening: BrowseListening | undefined,
+  defaultScope: boolean,
   versionId?: string,
 ) {
   const matches = db
@@ -571,8 +575,65 @@ function groupedTrackBrowse(
     ) g join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}`
   }
   const offset = (query.page - 1) * query.size
+  const useStoredOrder =
+    defaultScope &&
+    query.sortBy === 'scrobbles' &&
+    !query.q &&
+    !query.filters.length &&
+    !query.ranges.length &&
+    !query.creatorId &&
+    !listening &&
+    versionId === undefined
+  const storedRank =
+    query.direction === 'asc' ? sql`g.ascending_rank` : sql`g.descending_rank`
+
+  function completeOrder() {
+    const ties = trackNaturalOrder('scrobbles', {
+      artist: sql`artist_order.name`,
+      position: sql`position_order.position`,
+    })
+    const ascending = sql.join(
+      [sql`g.scrobbles asc nulls last`, ...ties, sql`${mediaItem.id}`],
+      sql`, `,
+    )
+    const descending = sql.join(
+      [sql`g.scrobbles desc nulls last`, ...ties, sql`${mediaItem.id}`],
+      sql`, `,
+    )
+    return sql`${grouped},
+      order_tracks as materialized (
+        select g.*, lt.album_media_item_id, coalesce(lt.album_media_item_id, g.id) as credit_id
+        from recording_stats g join library_track lt on lt.media_item_id = g.id
+      ),
+      artist_order as (
+        select distinct on (c.media_item_id) c.media_item_id, lower(a.name) as name
+        from (select distinct credit_id from order_tracks) release
+        join media_credit c on c.media_item_id = release.credit_id and c.role = 'artist'
+        join artist a on a.id = c.artist_id
+        order by c.media_item_id, c.billing_order, a.name
+      ),
+      position_order as (
+        select g.id, min(t.position) as position from order_tracks g
+        join track t on t.track_media_item_id = g.id and t.album_media_item_id = g.album_media_item_id
+        group by g.id
+      )
+      select g.id, g.version_count, g.scrobbles, g.last_listened_at, g.date_added,
+        row_number() over (order by ${ascending})::int,
+        row_number() over (order by ${descending})::int
+      from order_tracks g join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}
+      left join artist_order on artist_order.media_item_id = g.credit_id
+      left join position_order on position_order.id = g.id`
+  }
 
   async function readCount() {
+    if (useStoredOrder) {
+      const cached = await readRecordingBrowseOrder()
+      if (cached && cached.total_count !== null)
+        return Math.min(
+          cached.total_count,
+          query.limitResults ?? Number.MAX_SAFE_INTEGER,
+        )
+    }
     const counted = countedGroupCondition
       ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
         ${countedGroupListening} where ${countedGroupCondition}`
@@ -590,11 +651,26 @@ function groupedTrackBrowse(
   }
 
   async function readPage(limit: number) {
+    let rows: RecordingGroupRow[] | undefined
+    if (useStoredOrder && limit > 0) {
+      const selected = recordingBrowseOrderRows(
+        storedRank,
+        sql`${storedRank} > ${offset}::bigint and ${storedRank} <= ${offset + limit}::bigint`,
+      )
+      const cached = await readRecordingBrowseOrder(selected)
+      const stored =
+        cached && cached.total_count !== null
+          ? cached.rows
+          : cached?.can_refresh
+            ? await refreshRecordingBrowseOrder(completeOrder(), selected)
+            : undefined
+      if (stored) rows = RecordingGroupRowsSchema.parse(stored)
+    }
     const page = sql`${grouped}
       select ${recordingGroupProjection}, g.listening_scrobbles
       ${groupRows(offset + limit)}
       order by ${ordering(rowSort)} limit ${limit} offset ${offset}`
-    const rows = await recordingPageCache(
+    rows ??= await recordingPageCache(
       checksumJson(dialect.sqlToQuery(page)),
       async () => RecordingGroupRowsSchema.parse((await db.execute(page)).rows),
     )
@@ -613,23 +689,33 @@ function groupedTrackBrowse(
     const ranks = browseRanks(positions, query.limitResults)
     if (!ranks.length) return []
     const deepest = Math.max(...ranks)
-    const { rows } = await db.execute(sql`${grouped}, ranked as (
+    const cached = useStoredOrder
+      ? await readRecordingBrowseOrder(
+          recordingBrowseOrderRows(storedRank, inArray(storedRank, ranks)),
+        )
+      : undefined
+    const rows =
+      cached && cached.total_count !== null
+        ? cached.rows
+        : RecordingGroupPositionRowsSchema.parse(
+            (
+              await db.execute(sql`${grouped}, ranked as (
       select ${recordingGroupProjection}, g.listening_scrobbles,
         row_number() over (order by ${ordering(rowSort)}) as rank
       ${groupRows(deepest)}
     ) select id, version_count, scrobbles, last_listened_at, date_added,
         listening_scrobbles, rank::int
       from ranked where rank <= ${deepest} and ${inArray(sql`rank`, ranks)} order by rank`)
-    return RecordingGroupPositionRowsSchema.parse(rows).map(
-      ({ rank, listening_scrobbles, ...recordingGroup }) => ({
-        id: recordingGroup.id,
-        position: rank - 1,
-        recordingGroup,
-        ...(listening?.sort
-          ? { listeningScrobbles: listening_scrobbles ?? 0 }
-          : {}),
-      }),
-    )
+            ).rows,
+          )
+    return rows.map(({ rank, listening_scrobbles, ...recordingGroup }) => ({
+      id: recordingGroup.id,
+      position: rank - 1,
+      recordingGroup,
+      ...(listening?.sort
+        ? { listeningScrobbles: listening_scrobbles ?? 0 }
+        : {}),
+    }))
   }
 
   async function readVersions(id: string) {
@@ -842,6 +928,9 @@ async function browseQueries(
       orderRows,
       listening,
       countedListening,
+      !options.conditions?.length &&
+        !options.includeLastfmSourceRows &&
+        !options.sort,
       versionId,
     )
   const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
@@ -1309,12 +1398,19 @@ function firstTrackArtist(mediaItemId: SQL) {
 }
 
 /** Keep ties in a release together and in their stored playing order. */
-function trackNaturalOrder(primary: string) {
+function trackNaturalOrder(
+  primary: string,
+  setKeys?: { artist: SQL; position: SQL },
+) {
   const albumId = sql`${libraryTrack.albumMediaItemId}`
-  const artist = firstTrackArtist(sql`coalesce(${albumId}, ${mediaItem.id})`)
+  const artist =
+    setKeys?.artist ??
+    firstTrackArtist(sql`coalesce(${albumId}, ${mediaItem.id})`)
   const albumDate = sql`case when ${albumId} is null then ${mediaItem.releaseDate}
     else ${trackSortAlbum.releaseDate} end`
-  const position = sql`(select min(t.position) from track t
+  const position =
+    setKeys?.position ??
+    sql`(select min(t.position) from track t
     where t.track_media_item_id = ${mediaItem.id} and t.album_media_item_id = ${albumId})`
   const withinAlbum = [
     albumId,
