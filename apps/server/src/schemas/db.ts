@@ -1332,6 +1332,9 @@ export const subscriptionSource = pgTable(
       'gin',
       table.title.op('gin_trgm_ops'),
     ),
+    index('subscription_source_exact_title_idx')
+      .on(sql`lower(btrim(${table.title}))`)
+      .where(sql`${table.subscribed}`),
     index('subscription_source_type_subscribed_idx').on(
       table.type,
       table.subscribed,
@@ -1385,6 +1388,10 @@ export const subscriptionItem = pgTable(
   },
   (table) => [
     index('subscription_item_search_idx').using('gin', table.search),
+    index('subscription_item_artist_name_keys_idx').using(
+      'gin',
+      sql`subscription_artist_name_keys(${table.artists})`,
+    ),
     index('subscription_item_title_search_idx').using(
       'gin',
       table.title.op('gin_trgm_ops'),

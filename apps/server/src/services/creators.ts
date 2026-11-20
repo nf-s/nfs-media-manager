@@ -52,6 +52,7 @@ import { listArtistBrowsePage, countArtistBrowse } from './artist-browse'
 import { listAlbums, listFilms } from './media'
 import { loadTracks } from './tracks'
 import { listArtistIdentifiers } from './artist-provider-evidence'
+import { visibleArtist } from './entity-relationships'
 import {
   artistFreshnessConditions,
   loadArtistMetadata,
@@ -301,18 +302,27 @@ export async function getPerson(id: string) {
   return personSummary(summary)
 }
 
+/** An artist must have at least one visible, current library credit. */
+async function requireLibraryArtist(id: string) {
+  const [row] = await db
+    .select({ name: artist.name })
+    .from(artist)
+    .where(and(eq(artist.id, id), visibleArtist))
+  if (!row)
+    throw new ServerError({ statusCode: 404, message: 'Artist not found' })
+  return row
+}
+
 /** Use the same library visibility for directory membership and related pages. */
 export async function requireCreator(id: string, kind: 'artist' | 'person') {
-  const directory =
-    kind === 'artist'
-      ? artistDirectory(id).as('directory')
-      : personDirectory(undefined, undefined, id).as('directory')
+  if (kind === 'artist') {
+    await requireLibraryArtist(id)
+    return
+  }
+  const directory = personDirectory(undefined, undefined, id).as('directory')
   const [row] = await db.select({ id: directory.id }).from(directory)
   if (!row)
-    throw new ServerError({
-      statusCode: 404,
-      message: kind === 'artist' ? 'Artist not found' : 'Person not found',
-    })
+    throw new ServerError({ statusCode: 404, message: 'Person not found' })
 }
 
 export async function listArtistAlbums(id: string, query: ArtistAlbumQuery) {
@@ -356,14 +366,8 @@ export async function listArtistTracks(id: string, query: ArtistTrackQuery) {
 
 /** Stored station mixes naming the artist; station names are matched, not linked. */
 export async function listArtistMixes(id: string, query: ArtistMixQuery) {
-  await requireCreator(id, 'artist')
-  const [row] = await db
-    .select({ name: artist.name })
-    .from(artist)
-    .where(eq(artist.id, id))
-  if (!row)
-    throw new ServerError({ statusCode: 404, message: 'Artist not found' })
-  return listMixesNamingArtist(row.name, query)
+  const { name } = await requireLibraryArtist(id)
+  return listMixesNamingArtist(name, query)
 }
 
 export async function listArtistPlaylists(

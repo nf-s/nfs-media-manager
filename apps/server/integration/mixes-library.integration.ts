@@ -24,7 +24,8 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const logQuery = vi.fn<(text: string, values: unknown[]) => void>()
+const databaseClient = drizzle(pool, { schema, logger: { logQuery } })
 
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -907,6 +908,12 @@ describe('artist mixes', () => {
         )
       ).items.map((item) => item.id),
     ).toEqual(['nts.night-shift-2'])
+    expect(
+      await listArtistMixes(
+        'artist-dj',
+        ArtistMixQuerySchema.parse({ page: 20, size: 1 }),
+      ),
+    ).toMatchObject({ items: [], totalCount: 2 })
     // The YouTube video bills nobody and its channel is not a show.
     expect(
       (
@@ -916,6 +923,31 @@ describe('artist mixes', () => {
     await expect(
       listArtistMixes('artist-guest', ArtistMixQuerySchema.parse({})),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  })
+
+  it('matches punctuation exactly and counts an item only once', async () => {
+    await pool.query(`
+      insert into subscription_source (id, type, title, subscribed) values
+        ('nts.punctuation-title', 'nts', ' !! ', true),
+        ('nts.punctuation-billed', 'nts', 'Example station', true),
+        ('nts.punctuation-disabled', 'nts', '!!', false);
+      insert into subscription_item (id, source_id, type, title, artists, published_at, search)
+      values
+        ('nts.punctuation-both', 'nts.punctuation-title', 'nts', 'Example', '["!!"," !! "]', '2025-01-03', ''::tsvector),
+        ('nts.punctuation-name', 'nts.punctuation-billed', 'nts', 'Example', '[" !! "]', '2025-01-02', ''::tsvector),
+        ('nts.punctuation-unsubscribed', 'nts.punctuation-disabled', 'nts', 'Example', '["!!"]', '2025-01-01', ''::tsvector);
+    `)
+    const { countMixesNamingArtist, listMixesNamingArtist } = await library()
+    const result = await listMixesNamingArtist(
+      '!!',
+      ArtistMixQuerySchema.parse({}),
+    )
+    expect(result.totalCount).toBe(2)
+    expect(await countMixesNamingArtist('!!')).toBe(result.totalCount)
+    expect(result.items.map(({ id }) => id)).toEqual([
+      'nts.punctuation-both',
+      'nts.punctuation-name',
+    ])
   })
 
   it('narrows the artist lookups with the search index at library scale', async () => {
@@ -937,6 +969,40 @@ describe('artist mixes', () => {
       await pool.query(`vacuum analyze ${table}`)
     const { countMixesNamingArtist } = await library()
     expect(await countMixesNamingArtist('Synthetic DJ')).toBe(2)
+    const { listMixesNamingArtist } = await library()
+    // A common search lexeme matches the whole fixture, but no billed name or
+    // show title matches it exactly. Proving absence must not walk broadcasts.
+    logQuery.mockClear()
+    expect(
+      await listMixesNamingArtist(
+        'Bulk',
+        ArtistMixQuerySchema.parse({ size: 5 }),
+      ),
+    ).toMatchObject({ items: [], totalCount: 0 })
+    const statement = logQuery.mock.calls.find(([text]) =>
+      text.includes('with matching_ids as materialized'),
+    )
+    expect(statement).toBeDefined()
+    if (!statement) return
+    const [text, parameters] = statement
+    const indexed = await pool.query<{
+      'QUERY PLAN': Array<{
+        Plan: { 'Shared Hit Blocks': number; 'Shared Read Blocks': number }
+      }>
+    }>(
+      'explain (analyze, buffers, timing off, format json) ' + text,
+      parameters,
+    )
+    const root = indexed.rows[0]?.['QUERY PLAN'][0]?.Plan
+    expect(root).toBeDefined()
+    if (!root) return
+    expect(root['Shared Hit Blocks'] + root['Shared Read Blocks']).toBeLessThan(
+      120,
+    )
+    const indexedPlan = JSON.stringify(indexed.rows)
+    expect(indexedPlan).toContain('subscription_item_artist_name_keys_idx')
+    expect(indexedPlan).toContain('subscription_source_exact_title_idx')
+
     const plan = await pool.query<{ 'QUERY PLAN': string }>(
       `explain select count(*) from subscription_item i
         join subscription_source s on s.id = i.source_id
