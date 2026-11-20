@@ -140,6 +140,8 @@ test('playlist rows open the drawer and show the sync schedule and last check', 
     /<a class="ds-cell-title" href="\/playlists\/playlist-1"[^>]*>Synthetic mix<\/a>/,
   )
   assert.doesNotMatch(html, /Playlist details/)
+  // The Playlist column names the playlist without its album or track type.
+  assert.doesNotMatch(html, /(Album|Track) playlist/)
 })
 
 test('an empty playlist table links to the import page', () => {
