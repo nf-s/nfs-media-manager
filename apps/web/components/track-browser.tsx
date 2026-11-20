@@ -11,6 +11,7 @@ import {
 import { DetailInspector } from './detail-inspector'
 import { useDetailInspector } from './detail-inspector-context'
 import { sameDetail } from '@/utils/detail-inspector'
+import { fitDetailList } from '@/utils/detail-list-space'
 
 import {
   Fragment,
@@ -366,6 +367,9 @@ function TrackBrowse({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+  useEffect(() => {
+    if (embedded && scroller.current) return fitDetailList(scroller.current)
+  }, [embedded])
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 })
   }, [scrollIdentity])

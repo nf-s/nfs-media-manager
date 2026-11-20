@@ -16,8 +16,8 @@ export type EmbeddedBrowse = {
   sort: { key: string; direction: 'asc' | 'desc' }
 }
 
-/** The height a list inside a detail scrolls within, as for every nested list. */
-export const embeddedScrollClass = 'max-h-[min(420px,50dvh)]'
+/** The scroll area for a Browse list inside a detail. */
+export const embeddedScrollClass = 'dtl-browse-entries'
 
 /**
  * Every setting a Browse list keeps in its URL. A detail removes them when

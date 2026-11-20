@@ -882,7 +882,7 @@ test('Subscriptions inside a detail keep every Browse control and none of the pa
   assert.doesNotMatch(html, /class="media-browser"|class="browse-main"/)
   assert.match(
     html,
-    /class="[^"]*browse-scroll bi-scroll max-h-\[min\(420px,50dvh\)\][^"]*"[^>]*data-inspector-scroll=""/,
+    /class="[^"]*browse-scroll bi-scroll dtl-browse-entries[^"]*"[^>]*data-inspector-scroll=""/,
   )
   // The list starts as a table, newest first, as the old channel list did.
   assert.match(html, /data-view="table"/)
@@ -896,7 +896,10 @@ test('Subscriptions inside a detail keep every Browse control and none of the pa
     await import('./subscription-browser')
   const page = render(<SubscriptionBrowser />, browseData('', 2), '')
   assert.match(page, /class="media-browser"/)
-  assert.doesNotMatch(page, /data-inspector-scroll|Show in Subscriptions/)
+  assert.doesNotMatch(
+    page,
+    /dtl-browse-entries|data-inspector-scroll|Show in Subscriptions/,
+  )
 })
 
 test('Subscriptions inside a detail are held to their source, which is not a filter', async () => {

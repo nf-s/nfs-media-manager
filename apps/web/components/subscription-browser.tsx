@@ -110,6 +110,7 @@ import { DetailInspector } from './detail-inspector'
 import { DetailLink } from './detail-link'
 import { useDetailInspector } from './detail-inspector-context'
 import { detailPageHref, sameDetail } from '@/utils/detail-inspector'
+import { fitDetailList } from '@/utils/detail-list-space'
 import AiSearch from './ai-search'
 import {
   BrowseFilterChips,
@@ -378,6 +379,9 @@ function SubscriptionBrowse({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+  useEffect(() => {
+    if (embedded && scroller.current) return fitDetailList(scroller.current)
+  }, [embedded])
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 })
   }, [scrollIdentity])

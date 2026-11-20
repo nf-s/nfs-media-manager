@@ -298,6 +298,10 @@ export function useVirtualPages<Page extends VirtualPageData>({
   return {
     ...window,
     slots,
+    windowPageItems: window.pages.flatMap((page) => {
+      const items: Page['items'] | undefined = pages.get(page)?.data?.items
+      return items ? [items] : []
+    }),
     total: total ?? loadedEnd,
     firstPage: first.data,
     hasTotal: total !== undefined,

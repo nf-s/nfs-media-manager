@@ -17,6 +17,7 @@ import {
 import { subscriptionGridGeometry } from '@/utils/subscriptions'
 import { browsePageSize, browseWindow } from '@/utils/virtual-browse'
 import { clientQueryDefaults } from '@/utils/query-cache'
+import { fitDetailList } from '@/utils/detail-list-space'
 import { useNestedGridDensity } from './useGridDensity'
 import {
   useVirtualPages,
@@ -46,13 +47,18 @@ type VirtualTableOptions<Page extends VirtualPageData> = Omit<
   VirtualPageOptions<Page>,
   'pageSize'
 > &
-  TableGeometry & { pageSize?: number; viewportKey?: readonly unknown[] }
+  TableGeometry & {
+    pageSize?: number
+    viewportKey?: readonly unknown[]
+    fitDetail?: boolean
+  }
 
 function useTableViewport(
   identity: string,
   tableRows: number,
   tableHeader: number,
   presentation: TableGeometry['presentation'],
+  fitDetail = false,
 ) {
   const [element, scroller] = useState<HTMLDivElement | null>(null)
   const [viewport, setViewport] = useState({ height: 420, width: 480 })
@@ -113,6 +119,9 @@ function useTableViewport(
     return () => observer.disconnect()
   }, [element])
   useLayoutEffect(() => {
+    if (fitDetail && element) return fitDetailList(element)
+  }, [element, fitDetail])
+  useLayoutEffect(() => {
     previousLayout.current = { columns, rowHeight, headerHeight }
     if (element?.isConnected && element.scrollTop !== scrollTop) {
       element.scrollTo({ top: scrollTop })
@@ -158,6 +167,7 @@ export function useVirtualTable<Page extends VirtualPageData>({
   extraRowHeights,
   presentation,
   viewportKey,
+  fitDetail,
   ...request
 }: VirtualTableOptions<Page>) {
   const client = useQueryClient()
@@ -167,6 +177,7 @@ export function useVirtualTable<Page extends VirtualPageData>({
     rowHeight,
     headerHeight,
     presentation,
+    fitDetail,
   )
   const window = useVirtualPages({
     ...request,

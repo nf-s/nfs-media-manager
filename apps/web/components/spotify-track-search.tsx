@@ -173,12 +173,30 @@ export function isActiveSpotifyTrackSearch(
 }
 
 export function useSpotifyTrackSearchStatus(trackIds: readonly string[]) {
-  const { apiBaseUrl } = useConfig()
-  const ids = [...new Set(trackIds)]
-  const chunks = Array.from(
-    { length: Math.ceil(ids.length / 100) },
-    (_, index) => ids.slice(index * 100, (index + 1) * 100),
+  return useSpotifyTrackSearchStatusGroups([trackIds])
+}
+
+export function useSpotifyTrackSearchStatusForPages(
+  pages: readonly (readonly { track?: Pick<TrackListItem, 'id'> | null }[])[],
+) {
+  // Keep each page's batch stable as the visible rows change around it.
+  return useSpotifyTrackSearchStatusGroups(
+    pages.map((items) =>
+      items.flatMap(({ track }) => (track ? [track.id] : [])),
+    ),
   )
+}
+
+function useSpotifyTrackSearchStatusGroups(
+  groups: readonly (readonly string[])[],
+) {
+  const { apiBaseUrl } = useConfig()
+  const chunks = groups.flatMap((group) => {
+    const ids = [...new Set(group)]
+    return Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) =>
+      ids.slice(index * 100, (index + 1) * 100),
+    )
+  })
   const queries = useQueries({
     queries: chunks.map((trackIds) =>
       queryOptions({

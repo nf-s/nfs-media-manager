@@ -226,6 +226,7 @@ export function CollectionEntries({
     queryKey: [...queryKey, sortBy, direction, q, watchedStates],
     rowHeight: 36,
     presentation: { view: presentation, mediaType, density },
+    fitDetail: presentation === 'table',
     enabled: !showSources,
     loadPage: async (page, size, signal) => {
       const result = await fetchApiData(

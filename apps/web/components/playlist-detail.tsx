@@ -347,6 +347,7 @@ function PlaylistEntries({
         ],
     pageSize: ENTRY_PAGE_SIZE,
     presentation: { view: shownView, mediaType: 'album' },
+    fitDetail: true,
     loadPage: async (page, size, signal) => {
       if (filter) {
         const result = await fetchApiData(

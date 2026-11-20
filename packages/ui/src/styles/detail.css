@@ -162,10 +162,21 @@
   overflow-wrap: anywhere;
 }
 
-/* Bounded scroll areas for long tables inside an overview */
+/* Detail lists use spare room and keep their usual limit on short screens. */
 .dtl-entries {
-  max-height: min(calc(var(--ds-row) * 16), 70dvh);
+  max-height: max(
+    min(calc(var(--ds-row) * 16), 70dvh),
+    var(--detail-list-space, 0px)
+  );
 }
+.dtl-browse-entries {
+  max-height: max(
+    min(var(--ds-detail-browse-height), 50dvh),
+    var(--detail-list-space, 0px)
+  );
+}
+
+/* Smaller scroll areas inside detail sections */
 .dtl-bounded {
   max-height: min(calc(var(--ds-row) * 10), 50dvh);
 }
