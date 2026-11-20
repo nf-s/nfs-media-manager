@@ -595,6 +595,19 @@ function groupedTrackBrowse(
   // The period count is a group value too; rows carry it as a column.
   const listeningSorted =
     query.sortBy === 'listeningScrobbles' ? listening?.sort : undefined
+  const dynamicLifetimeOrder = query.sortBy === 'scrobbles' && !!listening
+  // A displayed period total does not affect lifetime order. When filtering
+  // only by presence or absence, use the same exact predicate as the count.
+  const deferPeriodCounts =
+    dynamicLifetimeOrder &&
+    !!listening?.sort &&
+    !countedListening?.source('recording')
+  const lifetimeCondition = deferPeriodCounts
+    ? countedGroupCondition
+    : groupCondition
+  const lifetimePredicate = lifetimeCondition
+    ? sql`where ${lifetimeCondition}`
+    : sql``
   const groupSort = recordingGroupValue(query.sortBy) ?? listeningSorted
   const rowSort = listeningSorted
     ? sql`g.listening_scrobbles`
@@ -635,18 +648,113 @@ function groupedTrackBrowse(
       fetch first (${bound}) rows with ties
     ) g ${releaseJoins}`
   }
+
+  function lifetimeRows(ranks: number[] | { first: number; last: number }) {
+    const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
+    const primary = primaryOrdering(sql`g.scrobbles`)
+    const ordinalRange = Array.isArray(ranks)
+      ? inArray(sql`ordinal`, ranks)
+      : sql`ordinal = ${ranks.first}`
+    const primaryRange = Array.isArray(ranks)
+      ? sql`first_rank in (select first_rank from primary_recordings where ${ordinalRange})`
+      : sql`first_rank >= (select first_rank from primary_recordings where ${ordinalRange})`
+    const requested = Array.isArray(ranks)
+      ? inArray(sql`rank`, ranks)
+      : sql`rank between ${ranks.first} and ${last}`
+    // Only resolve release order in primary tie sets that can overlap the
+    // requested ranks. In particular, a deep page skips earlier tie sets.
+    const ranked = sql`${grouped}, primary_recordings as materialized (
+      select g.*, ${deferPeriodCounts ? sql`null::int as listening_scrobbles` : listeningValue},
+        rank() over (order by ${primary}) as first_rank,
+        row_number() over (order by ${primary}) as ordinal
+      from recording_stats g
+      ${deferPeriodCounts ? sql`` : groupListening} ${lifetimePredicate}
+      order by ${primary} fetch first (${last}) rows with ties
+    ), ranked_recordings as (
+      select g.*, first_rank + row_number() over (
+        partition by first_rank
+        order by ${sql.join([...naturalOrder, sql`${mediaItem.id}`], sql`, `)}
+      ) - 1 as rank
+      from (select * from primary_recordings where ${primaryRange}) g
+      ${trackReleaseLookups(sql`g.id`)}
+    )`
+    if (!deferPeriodCounts)
+      return sql`${ranked}
+        select ${recordingGroupProjection}, g.listening_scrobbles, g.rank::int
+        from ranked_recordings g where ${requested} order by g.rank`
+    return projectSelectedListening(
+      ranked,
+      sql`select * from ranked_recordings where ${requested}`,
+    )
+  }
   const offset = (query.page - 1) * query.size
-  const useStoredOrder =
+  const useStoredScope =
     defaultScope &&
-    query.sortBy === 'scrobbles' &&
     !query.q &&
     !query.filters.length &&
     !query.ranges.length &&
     !query.creatorId &&
-    !listening &&
+    !('tag' in query && query.tag) &&
+    !('includeArchived' in query && query.includeArchived === 'true') &&
     versionId === undefined
+  const useStoredOrder =
+    useStoredScope && query.sortBy === 'scrobbles' && !listening
+  const useStoredMembership = useStoredScope && dynamicLifetimeOrder
   const storedRank =
     query.direction === 'asc' ? sql`g.ascending_rank` : sql`g.descending_rank`
+  // A singleton needs no side row. All listening eligibility still reads
+  // linked events, so rolling windows and partly imported history stay exact.
+  const storedMemberships = sql`with recording_members as not materialized (
+    select id, id as group_key from recording_browse_order where version_count = 1
+    union all
+    select track_id, recording_id from recording_browse_order_member
+  )`
+  const storedGroups = sql`(select o.*, o.id as group_key from recording_browse_order o)`
+
+  function projectSelectedListening(prefix: SQL, selected: SQL) {
+    return sql`${prefix}, selected_recordings as materialized (${selected}),
+      selected_members as materialized (
+        select m.id, m.group_key from recording_members m
+        join selected_recordings s using (group_key)
+      )
+      select ${recordingGroupProjection}, ${listeningValue}, g.rank::int
+      from selected_recordings g ${groupJoins(listening, sql`selected_members`)}
+      order by g.rank`
+  }
+
+  function storedLifetimeRows(
+    page: { offset: number; limit: number } | number[],
+  ) {
+    const positions = Array.isArray(page)
+    // Dynamic eligibility leaves gaps in published ranks.
+    const denseRank = positions && !!lifetimeCondition
+    const rank = denseRank
+      ? sql`row_number() over (order by ${storedRank})`
+      : storedRank
+    const condition =
+      lifetimeCondition ??
+      (positions
+        ? inArray(storedRank, page)
+        : sql`${storedRank} > ${page.offset}::bigint
+          and ${storedRank} <= ${page.offset + page.limit}::bigint`)
+    const limit = !lifetimeCondition
+      ? sql``
+      : positions
+        ? sql`limit ${Math.max(...page)}`
+        : sql`limit ${page.limit} offset ${page.offset}`
+    const ranked = sql`select g.*, ${rank} as rank,
+      ${deferPeriodCounts ? sql`null::int as listening_scrobbles` : listeningValue}
+      from ${storedGroups} g ${deferPeriodCounts ? sql`` : groupListening}
+      where ${condition} order by ${storedRank} ${limit}`
+    const selected = denseRank
+      ? sql`select * from (${ranked}) ranked where ${inArray(sql`rank`, page)}`
+      : ranked
+    if (deferPeriodCounts)
+      return projectSelectedListening(storedMemberships, selected)
+    return sql`${storedMemberships}
+      select ${recordingGroupProjection}, g.listening_scrobbles, g.rank::int
+      from (${selected}) g order by g.rank`
+  }
 
   function completeOrder() {
     const ties = trackNaturalOrder('scrobbles', {
@@ -661,7 +769,14 @@ function groupedTrackBrowse(
       [sql`g.scrobbles desc nulls last`, ...ties, sql`${mediaItem.id}`],
       sql`, `,
     )
-    return sql`${grouped},
+    return {
+      prefix: sql`${grouped},
+      published_members as (
+        insert into recording_browse_order_member (track_id, recording_id)
+        select m.id, r.id from recording_group_members m
+        join recording_group_representatives r using (group_key)
+        where r.version_count > 1
+      ),
       order_tracks as materialized (
         select g.*, lt.album_media_item_id, coalesce(lt.album_media_item_id, g.id) as credit_id
         from recording_stats g join library_track lt on lt.media_item_id = g.id
@@ -677,23 +792,31 @@ function groupedTrackBrowse(
         select g.id, min(t.position) as position from order_tracks g
         join track t on t.track_media_item_id = g.id and t.album_media_item_id = g.album_media_item_id
         group by g.id
-      )
-      select g.id, g.version_count, g.scrobbles, g.last_listened_at, g.date_added,
+      )`,
+      rows: sql`select g.id, g.version_count, g.scrobbles, g.last_listened_at, g.date_added,
         row_number() over (order by ${ascending})::int,
         row_number() over (order by ${descending})::int
       from order_tracks g join ${mediaItem} on ${mediaItem.id} = g.id ${trackColumns}
       left join artist_order on artist_order.media_item_id = g.credit_id
-      left join position_order on position_order.id = g.id`
+      left join position_order on position_order.id = g.id`,
+    }
   }
 
   async function readCount() {
-    if (useStoredOrder) {
-      const cached = await readRecordingBrowseOrder()
-      if (cached && cached.total_count !== null)
-        return Math.min(
-          cached.total_count,
-          query.limitResults ?? Number.MAX_SAFE_INTEGER,
-        )
+    // The frontend strips sort controls from count requests.
+    if (
+      useStoredOrder ||
+      useStoredMembership ||
+      (useStoredScope && countedListening)
+    ) {
+      const predicate = countedGroupCondition
+        ? sql`${storedMemberships} select count(*)::int from ${storedGroups} g
+          ${countedGroupListening} where ${countedGroupCondition}`
+        : undefined
+      const cached = await readRecordingBrowseOrder(undefined, predicate)
+      const total = predicate ? cached?.filtered_count : cached?.total_count
+      if (total != null)
+        return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
     }
     const counted = countedGroupCondition
       ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
@@ -709,11 +832,13 @@ function groupedTrackBrowse(
 
   async function readPage(limit: number) {
     let rows: RecordingGroupRow[] | undefined
-    if (useStoredOrder && limit > 0) {
-      const selected = recordingBrowseOrderRows(
-        storedRank,
-        sql`${storedRank} > ${offset}::bigint and ${storedRank} <= ${offset + limit}::bigint`,
-      )
+    if ((useStoredOrder || useStoredMembership) && limit > 0) {
+      const selected = useStoredMembership
+        ? storedLifetimeRows({ offset, limit })
+        : recordingBrowseOrderRows(
+            storedRank,
+            sql`${storedRank} > ${offset}::bigint and ${storedRank} <= ${offset + limit}::bigint`,
+          )
       const cached = await readRecordingBrowseOrder(selected)
       const stored =
         cached && cached.total_count !== null
@@ -739,14 +864,20 @@ function groupedTrackBrowse(
           sql`(select bounded from recording_title_scope)`,
         )
       : groupListening
-    const page = sql`${grouped}
+    const page = dynamicLifetimeOrder
+      ? lifetimeRows({ first: offset + 1, last: offset + limit })
+      : sql`${grouped}
       select ${recordingGroupProjection}, g.listening_scrobbles
       ${groupRows(offset + limit, pageListening, candidatePeriodPage)}
       order by ${ordering(rowSort)} limit ${limit} offset ${offset}`
-    rows ??= await recordingPageCache(
-      checksumJson(dialect.sqlToQuery(page)),
-      async () => RecordingGroupRowsSchema.parse((await db.execute(page)).rows),
-    )
+    const read = async () =>
+      RecordingGroupRowsSchema.parse((await db.execute(page)).rows)
+    rows ??=
+      dynamicLifetimeOrder &&
+      (query.listening?.rules.some(({ period }) => period.kind === 'rolling') ||
+        query.listeningSort?.kind === 'rolling')
+        ? await read()
+        : await recordingPageCache(checksumJson(dialect.sqlToQuery(page)), read)
     const items = rows.slice(0, query.size)
     return {
       ids: items.map((row) => row.id),
@@ -762,23 +893,33 @@ function groupedTrackBrowse(
     const ranks = browseRanks(positions, query.limitResults)
     if (!ranks.length) return []
     const deepest = Math.max(...ranks)
-    const cached = useStoredOrder
-      ? await readRecordingBrowseOrder(
-          recordingBrowseOrderRows(storedRank, inArray(storedRank, ranks)),
-        )
-      : undefined
+    const cached =
+      useStoredOrder || useStoredMembership
+        ? await readRecordingBrowseOrder(
+            useStoredMembership
+              ? storedLifetimeRows(ranks)
+              : recordingBrowseOrderRows(
+                  storedRank,
+                  inArray(storedRank, ranks),
+                ),
+          )
+        : undefined
     const rows =
       cached && cached.total_count !== null
         ? cached.rows
         : RecordingGroupPositionRowsSchema.parse(
             (
-              await db.execute(sql`${grouped}, ranked as (
+              await db.execute(
+                dynamicLifetimeOrder
+                  ? lifetimeRows(ranks)
+                  : sql`${grouped}, ranked as (
       select ${recordingGroupProjection}, g.listening_scrobbles,
         row_number() over (order by ${ordering(rowSort)}) as rank
       ${groupRows(deepest)}
     ) select id, version_count, scrobbles, last_listened_at, date_added,
         listening_scrobbles, rank::int
-      from ranked where rank <= ${deepest} and ${inArray(sql`rank`, ranks)} order by rank`)
+      from ranked where rank <= ${deepest} and ${inArray(sql`rank`, ranks)} order by rank`,
+              )
             ).rows,
           )
     return rows.map(({ rank, listening_scrobbles, ...recordingGroup }) => ({
@@ -1295,6 +1436,10 @@ export async function refreshRecordingBrowseOrderForMaintenance() {
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
 
 function recordBrowseShape(query: BrowseQuery) {
+  const hasListeningFilter =
+    'listening' in query && query.listening !== undefined
+  const hasListeningColumn =
+    'listeningSort' in query && query.listeningSort !== undefined
   const playSort =
     query.sortBy === 'scrobbles' || query.sortBy === 'listeningScrobbles'
       ? query.sortBy
@@ -1303,9 +1448,14 @@ function recordBrowseShape(query: BrowseQuery) {
     playSort,
     grouped: 'groupRecordings' in query && query.groupRecordings === true,
     depth: query.page === 1 ? 'first' : query.page <= 4 ? 'near' : 'deep',
-    listening:
-      ('listening' in query && query.listening !== undefined) ||
-      ('listeningSort' in query && query.listeningSort !== undefined),
+    listening: hasListeningFilter || hasListeningColumn,
+    listeningUse: hasListeningFilter
+      ? hasListeningColumn
+        ? 'both'
+        : 'filter'
+      : hasListeningColumn
+        ? 'column'
+        : undefined,
     filtered: Boolean(
       query.q || query.filters.length || query.ranges.length || query.creatorId,
     ),

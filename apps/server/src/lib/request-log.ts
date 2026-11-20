@@ -39,6 +39,7 @@ interface RequestBrowseProfile {
   grouped: boolean
   depth: 'first' | 'near' | 'deep'
   listening: boolean
+  listeningUse?: 'filter' | 'column' | 'both'
   filtered: boolean
   sort: 'added' | 'title' | 'plays' | 'other'
   playSort?: 'scrobbles' | 'listeningScrobbles'
@@ -167,13 +168,22 @@ export function setRequestBrowseProfile({
   grouped,
   depth,
   listening,
+  listeningUse,
   filtered,
   sort,
   playSort,
 }: RequestBrowseProfile) {
   const current = context.getStore()
   if (current)
-    current.browse = { grouped, depth, listening, filtered, sort, playSort }
+    current.browse = {
+      grouped,
+      depth,
+      listening,
+      listeningUse,
+      filtered,
+      sort,
+      playSort,
+    }
 }
 
 /** Drizzle calls the hook at execution time, including for prepared statements. */

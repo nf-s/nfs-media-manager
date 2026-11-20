@@ -258,6 +258,18 @@ export const recordingBrowseOrder = pgTable(
   ],
 )
 
+// Published with the matching recording order. Singleton ranks need no rows.
+export const recordingBrowseOrderMember = pgTable(
+  'recording_browse_order_member',
+  {
+    trackId: text('track_id').primaryKey(),
+    recordingId: text('recording_id').notNull(),
+  },
+  (table) => [
+    index('recording_browse_order_member_recording_idx').on(table.recordingId),
+  ],
+)
+
 export const trackFacetDirty = pgTable('track_facet_dirty', {
   transactionId: bigint('transaction_id', { mode: 'bigint' }).primaryKey(),
 })

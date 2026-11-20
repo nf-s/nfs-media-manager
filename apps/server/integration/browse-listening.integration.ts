@@ -786,4 +786,189 @@ describe('track listening browse queries', () => {
       counts: [2, 0, 1, 2, 0, 0, 0, 0],
     })
   })
+
+  it('keeps warm grouped listening order exact across rules, positions and a committed write', async () => {
+    const {
+      queryBrowseCounts,
+      queryBrowsePageIds,
+      refreshRecordingBrowseOrderForMaintenance,
+    } = await import('@/services/browse')
+    const { listTrackBrowsePage, listTracksAtPositions } =
+      await import('@/services/tracks')
+    // The future event counts towards lifetime, but not a rolling period
+    // bounded by the fixed clock at the start of this file.
+    await scrobbleName('grouped song', '2026-04-02T00:00:00Z', 1)
+    await pool.query(`
+      insert into playlist (id, kind, name)
+      values ('fixture-single-edition', 'playlist', 'Fixture single edition');
+      insert into playlist_item (playlist_id, media_item_id)
+      values ('fixture-single-edition', 'edition-2')
+    `)
+    const lifetime = TrackQuerySchema.parse({
+      groupRecordings: true,
+      sortBy: 'scrobbles',
+      direction: 'desc',
+      size: 2,
+    })
+    const all = TrackQuerySchema.parse({
+      ...lifetime,
+      listening: {
+        match: 'all',
+        rules: [
+          { period: twoYears, max: 5 },
+          { period: { kind: 'all' }, min: 1 },
+        ],
+      },
+      listeningSort: twoYears,
+    })
+    const any = TrackQuerySchema.parse({
+      ...lifetime,
+      listening: {
+        match: 'any',
+        rules: [
+          { period: twoYears, max: 0 },
+          { period: { kind: 'all' }, min: 6 },
+        ],
+      },
+      listeningSort: twoYears,
+      limitResults: 3,
+    })
+    const scoped = TrackQuerySchema.parse({ ...all, q: 'grouped' })
+    const singleEdition = TrackQuerySchema.parse({
+      ...all,
+      filters: [
+        {
+          field: 'playlist',
+          value: 'Fixture single edition',
+          mode: 'required',
+        },
+      ],
+    })
+    const future = TrackQuerySchema.parse({
+      ...all,
+      listening: {
+        match: 'all',
+        rules: [
+          {
+            period: { kind: 'dates', from: '2026-04-02', to: '2026-04-02' },
+            min: 1,
+          },
+        ],
+      },
+    })
+    const positionQuery = TrackPositionsQuerySchema.parse({
+      ...any,
+      positions: '0,1,2,4',
+    })
+    const pages = () =>
+      Promise.all([
+        listTrackBrowsePage(all),
+        listTrackBrowsePage({ ...all, page: 2 }),
+        listTrackBrowsePage(any),
+        listTrackBrowsePage(scoped),
+        listTrackBrowsePage(singleEdition),
+        listTrackBrowsePage(future),
+        queryBrowseCounts('track', all),
+        queryBrowseCounts('track', any),
+        queryBrowseCounts('track', scoped),
+        listTracksAtPositions(positionQuery),
+      ])
+    await queryBrowsePageIds('track', lifetime)
+    // Simulate a previously published version, with a maintenance lease
+    // ready for the normal refresher to replace both cache generations.
+    await pool.query(`
+      update recording_browse_order_state
+      set builder = current_user || ':v1',
+        maintenance_only = true,
+        retry_after = statement_timestamp() - interval '1 second'
+    `)
+    const cold = await pages()
+    const [
+      first,
+      second,
+      either,
+      onlyGrouped,
+      onlyEdition,
+      inFuture,
+      allCount,
+      anyCount,
+      scopedCount,
+      positions,
+    ] = cold
+    const view = (page: Awaited<ReturnType<typeof listTrackBrowsePage>>) =>
+      page.items.map(({ id, scrobbles, listeningScrobbles }) => [
+        id,
+        scrobbles,
+        listeningScrobbles,
+      ])
+    expect(view(first)).toEqual([
+      ['t4', 10, 0],
+      ['edition-1', 7, 5],
+    ])
+    expect(view(second)).toEqual([
+      ['t1', 5, 2],
+      ['t2', 5, 5],
+    ])
+    expect(view(either)).toEqual([
+      ['t4', 10, 0],
+      ['edition-1', 7, 5],
+    ])
+    expect(view(onlyGrouped)).toEqual([['edition-1', 7, 5]])
+    expect(view(onlyEdition)).toEqual([['edition-2', 5, 5]])
+    expect(view(inFuture)).toEqual([['edition-1', 7, 5]])
+    expect([allCount, anyCount, scopedCount]).toEqual([
+      { totalCount: 4, unfilteredCount: 5 },
+      { totalCount: 3, unfilteredCount: 5 },
+      { totalCount: 1, unfilteredCount: 5 },
+    ])
+    expect(
+      positions.items.map(({ position, item }) => [
+        position,
+        item.id,
+        item.listeningScrobbles,
+      ]),
+    ).toEqual([
+      [0, 't4', 0],
+      [1, 'edition-1', 5],
+      [2, 't3', 0],
+    ])
+
+    expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
+    expect(await pages()).toEqual(cold)
+
+    const hasDirtyOrder = async () => {
+      const { rows } = await pool.query<{ dirty: boolean }>(
+        'select exists (select 1 from recording_browse_order_dirty) as dirty',
+      )
+      return rows[0]?.dirty
+    }
+    expect(await hasDirtyOrder()).toBe(false)
+    await databaseClient.transaction(async (writer) => {
+      await writer.insert(schema.lastfmScrobble).values({
+        id: 'fixture-late-track-scrobble',
+        username: 'fixture-listener',
+        listenedAt: new Date('2026-03-30T00:00:00Z'),
+        artistName: 'Track artist',
+        trackName: 'Grouped song EP',
+        artistKey: 'track artist',
+        trackKey: 'grouped song ep',
+      })
+      expect(await hasDirtyOrder()).toBe(false)
+      expect(await listTrackBrowsePage(all)).toEqual(first)
+    })
+    expect(await hasDirtyOrder()).toBe(true)
+    expect(view(await listTrackBrowsePage(any))).toEqual([
+      ['t4', 10, 0],
+      ['edition-1', 8, 6],
+    ])
+    expect(view(await listTrackBrowsePage(all))).toEqual([
+      ['t4', 10, 0],
+      ['t1', 5, 2],
+    ])
+    expect(await queryBrowseCounts('track', all)).toEqual({
+      totalCount: 3,
+      unfilteredCount: 5,
+    })
+    expect(view(await listTrackBrowsePage(scoped))).toEqual([])
+  })
 })

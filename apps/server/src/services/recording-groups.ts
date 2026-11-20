@@ -406,13 +406,14 @@ export const recordingGroupProjection = sql`
 
 const RecordingOrderReadSchema = z.object({
   total_count: z.number().int().nonnegative().nullable(),
+  filtered_count: z.number().int().nonnegative().nullable(),
   can_refresh: z.boolean(),
   rows: RecordingGroupPositionRowsSchema,
 })
 
 const cleanOrder = sql`not exists (select 1 from recording_browse_order_dirty)`
 // Bump when the unfiltered membership or order changes, including tie-breaks.
-const orderBuilder = sql`current_user || ':v1'`
+const orderBuilder = sql`current_user || ':v2'`
 const staleOrder = sql`(recording_browse_order_state.total_count is null
   or recording_browse_order_state.builder <> ${orderBuilder}
   or not (${cleanOrder}))`
@@ -421,7 +422,7 @@ const OrderLeaseSchema = z.object({ lease: z.string() })
 const MissingMaintenanceColumn = z.object({ code: z.literal('42703') })
 
 /** Check for committed changes and read ranks within the same snapshot. */
-export async function readRecordingBrowseOrder(rows?: SQL) {
+export async function readRecordingBrowseOrder(rows?: SQL, count?: SQL) {
   const selected = rows
     ? sql`coalesce((select jsonb_agg(r order by r.rank) from (${rows}) r), '[]'::jsonb)`
     : sql`'[]'::jsonb`
@@ -431,6 +432,8 @@ export async function readRecordingBrowseOrder(rows?: SQL) {
         select total_count from recording_browse_order_state
         where singleton and builder = ${orderBuilder} and ${cleanOrder}
       ) select (select total_count from current_order) as total_count,
+        case when (select total_count from current_order) is not null
+          then ${count ? sql`(${count})` : sql`null::int`} end as filtered_count,
         not exists (
           select 1 from recording_browse_order_state s
           where singleton and (retry_after > statement_timestamp()
@@ -478,7 +481,7 @@ async function claimRecordingOrderRefresh(foreground: boolean) {
 
 /** Publish ranks and clear only the dirty markers visible to the builder. */
 export async function refreshRecordingBrowseOrder(
-  order: SQL,
+  order: { prefix: SQL; rows: SQL },
   selectedRows?: SQL,
 ) {
   const foreground = selectedRows !== undefined
@@ -516,13 +519,15 @@ export async function refreshRecordingBrowseOrder(
             select transaction_id from recording_browse_order_dirty for update skip locked
           )`)
         await useRemainingBudget()
-        await tx.execute(sql`delete from recording_browse_order`)
+        await tx.execute(sql`with deleted_members as (
+          delete from recording_browse_order_member
+        ) delete from recording_browse_order`)
         await useRemainingBudget()
         await tx.execute(sql`
-          with inserted as (
+          ${order.prefix}, inserted as (
             insert into recording_browse_order
               (id, version_count, scrobbles, last_listened_at, date_added, ascending_rank, descending_rank)
-            ${order}
+            ${order.rows}
             returning 1
           ) update recording_browse_order_state set
             builder = ${orderBuilder},

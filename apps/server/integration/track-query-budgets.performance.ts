@@ -346,7 +346,12 @@ it('bounds selective live and broad stored Track autocomplete', async () => {
 })
 
 it('bounds hydrated Track pages and exact totals with playlist, current artist tag and rolling listening filters', async () => {
-  const { queryBrowseCounts } = await import('@/services/browse')
+  const {
+    queryBrowseCounts,
+    queryBrowsePageIds,
+    queryBrowsePositions,
+    refreshRecordingBrowseOrderForMaintenance,
+  } = await import('@/services/browse')
   const { listTrackBrowsePage } = await import('@/services/tracks')
   // Keep these tables empty for the other workloads. Include a stale tag,
   // a tagged non-member and both expired and recent linked listening events.
@@ -377,7 +382,9 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
     select 'fixture-listener', 'fixture-artist', 'fixture-track-' || n, 'track-' || n, 'name'
     from generate_series(15001, 20000) n;
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
-    values ('fixture-listener', 'fixture-artist', 'fixture-track-1', 'track-1', 'normalized');
+    values
+      ('fixture-listener', 'fixture-artist', 'fixture-track-1', 'track-1', 'normalized'),
+      ('fixture-listener', 'fixture-artist', 'fixture-track-18001', 'track-1', 'normalized');
     insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
     values ('fixture-event-1', 'fixture-listener', statement_timestamp() - interval '2 days',
       'Fixture artist', 'Fixture track 1', 'fixture-artist', 'fixture-track-1');
@@ -517,12 +524,370 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
     },
     500_000,
   )
+  await pool.query(`
+    insert into recording_browse_order_state (singleton, builder, maintenance_only)
+    values (true, current_user || ':v1', true)
+    on conflict (singleton) do update set maintenance_only = true
+  `)
+  const lifetime = TrackQuerySchema.parse({
+    groupRecordings: true,
+    listening: { match: 'all', rules: [{ period, max: 0 }] },
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    size: 6,
+  })
+  await checkBudget(
+    'near lifetime grouped listening page',
+    7_800,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({ ...lifetime, page: 3 })
+      expect(page.items.map(({ id }) => id)).toEqual([
+        'track-7170',
+        'track-8180',
+        'track-11008',
+        'track-9190',
+        'track-10200',
+        'track-1211',
+      ])
+      expect(page.items.map(({ scrobbles }) => scrobbles)).toEqual(
+        Array(6).fill(100),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'deep lifetime grouped listening page',
+    18_000,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({ ...lifetime, page: 1000 })
+      expect(page.items.map(({ id }) => id)).toEqual([
+        'track-2077',
+        'track-12076',
+        'track-13995',
+        'track-3087',
+        'track-10359',
+        'track-1370',
+      ])
+      expect(page.items.map(({ scrobbles }) => scrobbles)).toEqual(
+        Array(6).fill(57),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'filtered first lifetime grouped listening page',
+    1_500,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({
+        ...lifetime,
+        filters: grouped.filters,
+      })
+      expect(page.items.map(({ id, scrobbles }) => [id, scrobbles])).toEqual([
+        ['track-19996', 99],
+        ['track-2', 2],
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+  )
+  const displayPeriod = TrackQuerySchema.parse({
+    listeningSort: { kind: 'rolling', amount: 3, unit: 'years' },
+  }).listeningSort
+  await checkBudget(
+    'near lifetime grouped listening display',
+    7_400,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({
+        ...lifetime,
+        page: 3,
+        listening: undefined,
+        listeningSort: grouped.listeningSort,
+      })
+      expect(
+        page.items.map(({ id, scrobbles, listeningScrobbles }) => [
+          id,
+          scrobbles,
+          listeningScrobbles,
+        ]),
+      ).toEqual([
+        ['track-15149', 100, 20],
+        ['track-6160', 100, 0],
+        ['track-19997', 100, 20],
+        ['track-16159', 100, 20],
+        ['track-7170', 100, 0],
+        ['track-179', 100, 20],
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'deep lifetime grouped absence and listening display',
+    18_000,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({
+        ...lifetime,
+        page: 1000,
+        listeningSort: grouped.listeningSort,
+      })
+      expect(
+        page.items.map(({ id, listeningScrobbles }) => [
+          id,
+          listeningScrobbles,
+        ]),
+      ).toEqual([
+        ['track-2077', 0],
+        ['track-12076', 0],
+        ['track-13995', 0],
+        ['track-3087', 0],
+        ['track-10359', 0],
+        ['track-1370', 0],
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'filtered first lifetime grouped listening display',
+    1_700,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({
+        ...lifetime,
+        filters: grouped.filters,
+        listening: undefined,
+        listeningSort: grouped.listeningSort,
+      })
+      // Track 1 shares one listening name with its other release and has a second
+      // distinct name. The shared name's events contribute only once.
+      expect(
+        page.items.map(
+          ({ id, scrobbles, listeningScrobbles, recordingGroup }) => [
+            id,
+            scrobbles,
+            listeningScrobbles,
+            recordingGroup?.versionCount,
+          ],
+        ),
+      ).toEqual([
+        ['track-19997', 100, 20, undefined],
+        ['track-19996', 99, 0, undefined],
+        ['track-1', 21, 21, 2],
+        ['track-2', 2, 0, undefined],
+        ['track-19999', 1, 20, undefined],
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+  )
+  await checkBudget(
+    'filtered first lifetime grouped absence and listening display',
+    1_700,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage({
+        ...lifetime,
+        filters: grouped.filters,
+        listeningSort: displayPeriod,
+      })
+      expect(
+        page.items.map(({ id, scrobbles, listeningScrobbles }) => [
+          id,
+          scrobbles,
+          listeningScrobbles,
+        ]),
+      ).toEqual([
+        ['track-19996', 99, 20],
+        ['track-2', 2, 0],
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+  )
+  expect(await queryBrowseCounts('track', lifetime)).toEqual({
+    totalCount: 14_009,
+    unfilteredCount: 19_000,
+  })
   await checkBudget('filtered exact Track totals', 1_500, 4, async () => {
     expect(await queryBrowseCounts('track', query)).toEqual({
       totalCount: 7,
       unfilteredCount: 20_000,
     })
   })
+  // Provide enough expired history to reach a deep page when a second rule
+  // requires lifetime plays. Keep some names below the minimum and some
+  // within the rolling maximum but above zero.
+  await pool.query(`
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    select 'fixture-listener', 'fixture-artist', 'fixture-track-' || n, 'track-' || n, 'normalized'
+    from generate_series(1001, 9000) n;
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    select 'fixture-expired-' || n || '-' || event, 'fixture-listener',
+      case when event > 2 then statement_timestamp() - interval '2 days'
+        else statement_timestamp() - interval '2 years' end - event * interval '1 minute',
+      'Fixture artist', 'Fixture track ' || n, 'fixture-artist', 'fixture-track-' || n
+    from generate_series(1001, 9000) n
+    cross join lateral generate_series(1, case when n % 97 = 0 then 5
+      when n > 7000 then 1 else 2 end) event;
+  `)
+  await pool.query('vacuum analyze lastfm_track_link')
+  await pool.query('vacuum analyze lastfm_scrobble')
+  const twoRules = TrackQuerySchema.parse({
+    ...lifetime,
+    listening: {
+      match: 'all',
+      rules: [
+        { period, max: 0 },
+        { period: { kind: 'all' }, min: 1 },
+      ],
+    },
+  })
+  const boundedRules = TrackQuerySchema.parse({
+    ...twoRules,
+    listening: {
+      match: 'all',
+      rules: [
+        { period, max: 5 },
+        { period: { kind: 'all' }, min: 2 },
+      ],
+    },
+  })
+  for (const { label, query, maxBlocks, lifetimeCount, ids } of [
+    {
+      label: 'first lifetime grouped page with two listening rules',
+      query: twoRules,
+      maxBlocks: 7_800,
+      lifetimeCount: 100,
+      ids: [
+        'track-1009',
+        'track-1110',
+        'track-2120',
+        'track-3130',
+        'track-4140',
+        'track-5150',
+      ],
+    },
+    {
+      label: 'near lifetime grouped page with two listening rules',
+      query: { ...twoRules, page: 3 },
+      maxBlocks: 7_800,
+      lifetimeCount: 100,
+      ids: [
+        'track-3231',
+        'track-4241',
+        'track-5251',
+        'track-6261',
+        'track-7271',
+        'track-8281',
+      ],
+    },
+    {
+      label: 'deep lifetime grouped page with two listening rules',
+      query: { ...twoRules, page: 1100 },
+      maxBlocks: 18_000,
+      lifetimeCount: 16,
+      ids: [
+        'track-4258',
+        'track-5268',
+        'track-1026',
+        'track-6278',
+        'track-7288',
+        'track-7995',
+      ],
+    },
+    {
+      label: 'near lifetime grouped page with bounded listening counts',
+      query: { ...boundedRules, page: 3 },
+      maxBlocks: 7_800,
+      lifetimeCount: 100,
+      ids: [
+        'track-5251',
+        'track-6261',
+        'track-1312',
+        'track-2322',
+        'track-3029',
+        'track-3332',
+      ],
+    },
+  ]) {
+    await checkBudget(label, maxBlocks, 4, async () => {
+      const page = await listTrackBrowsePage(query)
+      expect(page.items.map(({ id, scrobbles }) => [id, scrobbles])).toEqual(
+        ids.map((id) => [id, lifetimeCount]),
+      )
+      expect(page.hasMore).toBe(true)
+    })
+  }
+  expect(await queryBrowseCounts('track', twoRules)).toEqual({
+    totalCount: 7_927,
+    unfilteredCount: 19_000,
+  })
+  expect(await queryBrowseCounts('track', boundedRules)).toEqual({
+    totalCount: 6_029,
+    unfilteredCount: 19_000,
+  })
+
+  const deep = { ...twoRules, page: 1100 }
+  const cold = await listTrackBrowsePage(deep)
+  await pool.query(`
+    update recording_browse_order_state
+    set retry_after = statement_timestamp() - interval '1 second'
+  `)
+  expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
+  await pool.query('vacuum analyze recording_browse_order')
+  await pool.query('vacuum analyze recording_browse_order_member')
+  await checkBudget(
+    'warm deep lifetime grouped page with two listening rules',
+    5_400,
+    2,
+    async () => {
+      expect(await listTrackBrowsePage(deep)).toEqual(cold)
+    },
+  )
+  await checkBudget(
+    'warm near lifetime grouped page with two listening rules',
+    5_400,
+    1,
+    async () => {
+      const near = await queryBrowsePageIds('track', { ...twoRules, page: 3 })
+      expect(near.ids).toEqual([
+        'track-3231',
+        'track-4241',
+        'track-5251',
+        'track-6261',
+        'track-7271',
+        'track-8281',
+      ])
+    },
+  )
+  await checkBudget(
+    'warm lifetime grouped positions with two listening rules',
+    5_400,
+    1,
+    async () => {
+      const positions = await queryBrowsePositions(
+        'track',
+        twoRules,
+        [12, 6_594, 6_599],
+      )
+      expect(positions.map(({ id, position }) => [id, position])).toEqual([
+        ['track-3231', 12],
+        ['track-4258', 6_594],
+        ['track-7995', 6_599],
+      ])
+    },
+  )
+  await checkBudget(
+    'warm exact lifetime grouped total with two listening rules',
+    5_400,
+    2,
+    async () => {
+      expect(await queryBrowseCounts('track', twoRules)).toEqual({
+        totalCount: 7_927,
+        unfilteredCount: 19_000,
+      })
+    },
+  )
 })
 
 it('bounds live Track autocomplete on shared artist and album tags', async () => {
