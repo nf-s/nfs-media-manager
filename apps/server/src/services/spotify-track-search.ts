@@ -273,25 +273,12 @@ export async function runSpotifyTrackSearch(
         ],
       },
       persist: async (tx) => {
-        const { requestedByUserId, jobId } = context
-        if (!requestedByUserId) return
-        if (options.reviewOnly) {
-          await lockLibraryTrackWrites(tx)
-        } else {
-          const match = await reconcileSpotifyTrackSearchInTransaction(tx, {
-            trackId: options.trackId,
-            userId: requestedByUserId,
-            jobId,
-          })
-          if (match.status === 'matched') return
-        }
-        const { persistSpotifyTrackMatchAudit } =
-          await import('./spotify-track-match-audit')
-        await persistSpotifyTrackMatchAudit(
-          tx,
-          options.trackId,
-          requestedByUserId,
-        )
+        if (options.reviewOnly || !context.requestedByUserId) return
+        await reconcileSpotifyTrackSearchInTransaction(tx, {
+          trackId: options.trackId,
+          userId: context.requestedByUserId,
+          jobId: context.jobId,
+        })
       },
     }
   } catch (error) {

@@ -39,7 +39,7 @@
     "verify:legacy": "tsx scripts/verify-legacy.ts",
     "backfill:film-added": "tsx scripts/backfill-film-added.ts",
     "backfill:spotify-track-searches": "tsx scripts/backfill-spotify-track-searches.ts",
-    "audit:spotify-track-matches": "tsx scripts/audit-spotify-track-matches.ts"
+    "review:spotify-tracks": "tsx scripts/local-spotify-review/export.ts"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",

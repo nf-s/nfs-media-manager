@@ -30,6 +30,8 @@ export async function middleware(request: NextRequest) {
   } catch {
     return new NextResponse(null, { status: 404, headers: privateHeaders })
   }
+  if (pathname === '/tracks/spotify-match-audit')
+    return new NextResponse(null, { status: 404, headers: privateHeaders })
   // Legacy libraries are local import inputs, never public application assets.
   if (pathname === '/data' || pathname.startsWith('/data/')) {
     return new NextResponse(null, {

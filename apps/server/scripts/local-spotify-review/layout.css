@@ -1,0 +1,110 @@
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  height: 100vh;
+  height: 100dvh;
+  margin: 0;
+  color: var(--ds-ink);
+  background: var(--ds-page);
+  font: var(--ds-text-md) / var(--ds-leading) var(--ds-font);
+}
+
+button,
+select,
+input,
+textarea {
+  font-family: inherit;
+}
+
+.review-header,
+.review-page,
+.review-fallback {
+  width: 100%;
+  padding: 0;
+  background: var(--ds-surface);
+}
+
+.review-main {
+  min-height: 0;
+  overflow: auto;
+}
+
+.review-page {
+  min-height: 100%;
+}
+
+.review-page > .ds-toolbar {
+  justify-content: space-between;
+}
+
+.review-label,
+.review-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-4);
+}
+
+.review-track {
+  padding: var(--ds-6) var(--ds-gutter);
+  overflow-wrap: anywhere;
+}
+
+.review-controls > .ds-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.review-controls select {
+  width: 100%;
+}
+
+.review-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-6);
+}
+
+.review-track .ds-kv {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.review-track summary {
+  cursor: pointer;
+}
+
+.review-track p {
+  margin-block: var(--ds-3);
+}
+
+.review-footer .ds-selectbar {
+  flex-wrap: wrap;
+  justify-content: center;
+  padding-bottom: max(var(--ds-3), env(safe-area-inset-bottom));
+}
+
+.review-fallback {
+  padding: var(--ds-5) var(--ds-gutter);
+}
+
+.review-fallback textarea {
+  height: auto;
+  padding: var(--ds-4);
+  resize: vertical;
+  font-family: var(--ds-mono);
+}
+
+@media (max-width: 700px) {
+  .review-comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
