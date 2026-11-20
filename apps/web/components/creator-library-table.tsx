@@ -24,6 +24,7 @@ import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { useNestedGridDensity } from '@/hooks/useGridDensity'
 import { fetchApiData } from '@/utils/api'
 import type { DetailTarget } from '@/utils/detail-inspector'
+import { embeddedScrollClass } from '@/utils/embedded-browse'
 import {
   defaultBrowseView,
   parseBrowseView,
@@ -149,6 +150,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
     queryKey: [...queryKey, params.toString()],
     pageSize: 50,
     presentation: card ? { view: presentation, mediaType, density } : undefined,
+    fitDetail: !workspace,
     loadPage: (index, _size, signal) => {
       const page = new URLSearchParams(params)
       page.set('page', String(index))
@@ -257,7 +259,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           view={presentation}
           mediaType={mediaType}
           label={label}
-          className={workspace ? 'min-h-0 flex-1' : 'max-h-[min(420px,50dvh)]'}
+          className={workspace ? 'min-h-0 flex-1' : embeddedScrollClass}
           empty={empty}
           busy={query.isFetching}
           renderItem={(row) => (
@@ -275,7 +277,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           ref={query.scroller}
           onScroll={query.onScroll}
           data-inspector-scroll={!workspace || undefined}
-          className={workspace ? 'min-h-0 flex-1' : 'max-h-[min(420px,50dvh)]'}
+          className={workspace ? 'min-h-0 flex-1' : embeddedScrollClass}
           role="region"
           aria-label={label}
           aria-busy={query.isFetching}

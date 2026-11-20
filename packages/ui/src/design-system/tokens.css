@@ -109,4 +109,5 @@
   --ds-row-media: 48px; /* list row with artwork */
   --ds-head: 28px; /* table header */
   --ds-inspector: 600px;
+  --ds-detail-browse-height: 420px; /* nested Browse viewport when space is limited */
 }

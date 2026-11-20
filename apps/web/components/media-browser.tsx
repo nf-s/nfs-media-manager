@@ -11,6 +11,7 @@ import {
 } from '@/utils/creator-browse'
 import { useDetailInspector } from './detail-inspector-context'
 import { sameDetail } from '@/utils/detail-inspector'
+import { fitDetailList } from '@/utils/detail-list-space'
 
 import Link from 'next/link'
 import {
@@ -601,6 +602,9 @@ function MediaBrowse({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+  useEffect(() => {
+    if (embedded && scroller.current) return fitDetailList(scroller.current)
+  }, [embedded])
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 })
   }, [scrollIdentity])
