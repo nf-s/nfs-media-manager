@@ -5,8 +5,10 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { TrackScrobbleNamesQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
+import { standaloneLastfmTrackId } from '@/lib/track-matching'
 import * as schema from '@/schemas/db'
 
 const database = 'scrobble_match_' + randomUUID().replaceAll('-', '')
@@ -90,6 +92,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   mockFetch.mockClear()
+  await fixture.delete(schema.scrapeJob)
   await fixture.delete(schema.playlist)
   await fixture.delete(schema.lastfmScrobble)
   await fixture.delete(schema.track)
@@ -222,6 +225,202 @@ beforeEach(async () => {
     },
   ])
 })
+
+it.each([
+  {
+    reason: 'another library edition matches the exact name',
+    catalogTitle: 'First Song',
+    recordedArtist: 'Fixture Artist',
+    anotherExactMatch: true,
+  },
+  {
+    reason: 'the recorded name has a different spelling',
+    catalogTitle: 'Fírst Song',
+    recordedArtist: 'Fixture Artist',
+    anotherExactMatch: false,
+  },
+  {
+    reason: 'the recorded artist includes a combined guest credit',
+    catalogTitle: 'First Song',
+    recordedArtist: 'Fixture Artist, Fixture Guest',
+    anotherExactMatch: false,
+  },
+  {
+    reason: 'the name has listens from more than one ordinary release',
+    catalogTitle: 'First Song',
+    recordedArtist: 'Fixture Artist',
+    anotherExactMatch: false,
+    multipleAlbums: true,
+  },
+])(
+  'retains an accepted Spotify recording when $reason',
+  async ({
+    catalogTitle,
+    recordedArtist,
+    anotherExactMatch,
+    multipleAlbums,
+  }) => {
+    const acceptedId = alternate
+    const artistName = 'Fixture Artist'
+    const spotifyTrackId = 'Alternate'.padEnd(22, '0')
+    await fixture
+      .update(schema.mediaItem)
+      .set({ title: catalogTitle })
+      .where(eq(schema.mediaItem.id, acceptedId))
+    if (multipleAlbums)
+      await fixture
+        .update(schema.libraryTrack)
+        .set({ albumName: 'Fixture Album' })
+        .where(eq(schema.libraryTrack.mediaItemId, acceptedId))
+    await fixture.insert(schema.artist).values([
+      { id: 'fixture-search-artist', name: artistName },
+      { id: 'fixture-search-guest', name: 'Fixture Guest' },
+    ])
+    await fixture.insert(schema.mediaCredit).values([
+      {
+        mediaItemId: acceptedId,
+        artistId: 'fixture-search-artist',
+        role: 'artist',
+      },
+      ...(recordedArtist !== artistName
+        ? [
+            {
+              mediaItemId: acceptedId,
+              artistId: 'fixture-search-guest',
+              role: 'artist',
+              billingOrder: 1,
+            },
+          ]
+        : []),
+    ])
+    if (anotherExactMatch) {
+      await fixture
+        .update(schema.mediaItem)
+        .set({ title: 'First Song' })
+        .where(eq(schema.mediaItem.id, original))
+      await fixture
+        .update(schema.mediaCredit)
+        .set({ artistId: 'fixture-search-artist' })
+        .where(eq(schema.mediaCredit.mediaItemId, original))
+    }
+    const recordedArtistKey = recordedArtist.toLowerCase()
+    const sourceId = standaloneLastfmTrackId(account, {
+      artistKey: recordedArtistKey,
+      trackKey,
+    })
+    await fixture
+      .update(schema.lastfmScrobble)
+      .set({
+        artistName: recordedArtist,
+        artistKey: recordedArtistKey,
+        ...(multipleAlbums
+          ? {
+              albumName: 'Fixture Album',
+              albumKey: 'fixture album',
+              albumMediaItemId: albumId,
+            }
+          : {}),
+      })
+      .where(eq(schema.lastfmScrobble.id, 'first-event'))
+    await fixture
+      .update(schema.lastfmTrackSource)
+      .set({
+        artistKey: recordedArtistKey,
+        trackMediaItemId: acceptedId,
+        manuallyMatched: false,
+      })
+      .where(selectName)
+    const otherName = and(
+      eq(schema.lastfmTrackSource.username, account),
+      eq(schema.lastfmTrackSource.artistKey, artistKey),
+      eq(schema.lastfmTrackSource.trackKey, 'second song'),
+    )
+    await fixture
+      .update(schema.lastfmTrackSource)
+      .set({ trackMediaItemId: acceptedId, manuallyMatched: false })
+      .where(otherName)
+    await fixture.insert(schema.scrapeJob).values({
+      id: 'fixture-accepted-search',
+      provider: 'spotify',
+      status: 'succeeded',
+      scope: { mediaType: 'track', mediaItemIds: [sourceId] },
+      options: {
+        task: SPOTIFY_TRACK_SEARCH_TASK,
+        trackId: sourceId,
+        acceptedTrackId: acceptedId,
+        acceptedSpotifyTrackId: spotifyTrackId,
+        matchMethod: 'automatic',
+      },
+    })
+    await fixture.insert(schema.lastfmScrobble).values({
+      id: 'another-listen-to-accepted-name',
+      username: account,
+      artistKey: recordedArtistKey,
+      artistName: recordedArtist,
+      trackKey,
+      trackName: 'First Song',
+      listenedAt: new Date('2024-01-01'),
+      ...(multipleAlbums
+        ? { albumName: 'Fixture Single', albumKey: 'fixture single' }
+        : {}),
+    })
+    await refreshHistory()
+    const originalName = and(
+      eq(schema.lastfmTrackSource.username, account),
+      eq(schema.lastfmTrackSource.artistKey, recordedArtistKey),
+      eq(schema.lastfmTrackSource.trackKey, trackKey),
+    )
+    expect(
+      await fixture.select().from(schema.lastfmTrackSource).where(originalName),
+    ).toMatchObject([{ trackMediaItemId: acceptedId, manuallyMatched: false }])
+    expect(
+      await fixture
+        .select()
+        .from(schema.lastfmTrackLink)
+        .where(
+          and(
+            eq(schema.lastfmTrackLink.username, account),
+            eq(schema.lastfmTrackLink.artistKey, recordedArtistKey),
+            eq(schema.lastfmTrackLink.trackKey, trackKey),
+            eq(schema.lastfmTrackLink.trackMediaItemId, acceptedId),
+          ),
+        ),
+    ).toMatchObject([{ strategy: 'exact' }])
+    expect(
+      await fixture.select().from(schema.lastfmTrackSource).where(otherName),
+    ).toMatchObject([
+      {
+        trackMediaItemId: standaloneLastfmTrackId(account, {
+          artistKey,
+          trackKey: 'second song',
+        }),
+        manuallyMatched: false,
+      },
+    ])
+
+    if (anotherExactMatch) {
+      await fixture
+        .update(schema.lastfmTrackSource)
+        .set({ trackMediaItemId: original })
+        .where(eq(schema.lastfmTrackSource.username, otherAccount))
+      // An explicit reset recomputes the name instead of reusing the job.
+      await expect(
+        removeScrobbleTrackMatch(acceptedId, {
+          artistKey: recordedArtistKey,
+          trackKey,
+          mode: 'automatic',
+        }),
+      ).resolves.toEqual({ targetId: sourceId })
+      await refreshHistory()
+      expect(
+        await fixture
+          .select()
+          .from(schema.lastfmTrackSource)
+          .where(originalName),
+      ).toMatchObject([{ trackMediaItemId: sourceId, manuallyMatched: false }])
+    }
+  },
+)
 
 it('can assign an imported name to a stored track without a Spotify ID', async () => {
   await expect(

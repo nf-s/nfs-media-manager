@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   SpotifyTrackSearchTargetConflictSchema,
@@ -21,9 +21,12 @@ import {
   readSpotifyTrackSearchForAutomaticMatch,
 } from './spotify-track-search'
 import {
+  type RecordingEvidence,
   readSpotifyAlbumFallbackArtistCreditCorrection,
-  spotifySearchConsistentRecording,
-  spotifySearchExactRelease,
+  sameSpotifySearchArtists,
+  spotifySearchMatchesObservedAlbum,
+  spotifySearchMatchesSource,
+  spotifySearchMatchesTitleVersion,
   spotifySearchHasAlternateVersion,
   spotifySearchMatchesDestination,
   spotifySearchRecordingEvidence,
@@ -220,18 +223,63 @@ const AcceptedSchema = z.object({
   acceptedSpotifyTrackId: z.string(),
 })
 
-async function resolveRecordingTarget(
-  tx: Transaction,
+function newRecordingTarget(
   source: { id: string; source: string | null },
   candidate: SpotifyTrackSearchCandidate,
 ) {
-  const resolved = await resolveSpotifyTrackIds(tx, [candidate])
-  return (
-    resolved.get(candidate.spotifyTrackId) ??
-    (source.source === 'lastfm'
-      ? spotifyTrackItemId(candidate.spotifyTrackId)
-      : source.id)
-  )
+  return source.source === 'lastfm'
+    ? spotifyTrackItemId(candidate.spotifyTrackId)
+    : source.id
+}
+
+async function rankSpotifySearchCandidates(
+  tx: Transaction,
+  source: RecordingEvidence,
+  candidates: SpotifyTrackSearchCandidate[],
+) {
+  const targets = await resolveSpotifyTrackIds(tx, candidates, {
+    choosingOneCandidate: true,
+  })
+  const albumIds = [
+    ...new Set(
+      candidates.flatMap(({ spotifyAlbumId }) =>
+        spotifyAlbumId ? [spotifyAlbumId] : [],
+      ),
+    ),
+  ]
+  const libraryReleases = new Set<string>()
+  if (candidates.length > 1 && albumIds.length) {
+    const result = await tx.execute(sql`
+      select r.spotify_id from (${spotifyAlbumReleaseIds()}) r
+      join media_item album on album.id = r.album_id
+      where ${inArray(sql`r.spotify_id`, albumIds)}
+        and album.metadata->>'legacyHidden' is distinct from 'true'
+      group by r.spotify_id having count(distinct r.album_id) = 1`)
+    for (const row of z
+      .array(z.object({ spotify_id: z.string() }))
+      .parse(result.rows))
+      libraryReleases.add(row.spotify_id)
+  }
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      targetId: targets.get(candidate.spotifyTrackId),
+      exactVersion: spotifySearchMatchesTitleVersion(source, candidate),
+      observedAlbum: spotifySearchMatchesObservedAlbum(source, candidate),
+      libraryAlbum:
+        candidate.spotifyAlbumId !== null &&
+        libraryReleases.has(candidate.spotifyAlbumId),
+      exactCredits: sameSpotifySearchArtists(source.artists, candidate.artists),
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.exactVersion) - Number(a.exactVersion) ||
+        Number(b.observedAlbum) - Number(a.observedAlbum) ||
+        Number(b.libraryAlbum) - Number(a.libraryAlbum) ||
+        Number(!!b.targetId) - Number(!!a.targetId) ||
+        Number(b.exactCredits) - Number(a.exactCredits) ||
+        (b.candidate.popularity ?? -1) - (a.candidate.popularity ?? -1),
+    )
 }
 
 async function linkSpotifyRecording(
@@ -309,69 +357,63 @@ export async function reconcileSpotifyTrackSearchInTransaction(
   if (!source || !evidence || source.spotifyId !== null)
     return { status: 'stale' }
 
-  // Different Spotify IDs stay reviewable when the release cannot distinguish them.
-  const exact = new Map(
-    candidates
-      .filter((candidate) =>
-        spotifySearchExactRelease(evidence, candidate, {
-          standaloneSource: true,
-        }),
-      )
-      .map((candidate) => [candidate.spotifyTrackId, candidate]),
+  const eligible = candidates.filter(
+    (candidate) =>
+      spotifySearchMatchesSource(evidence, candidate) &&
+      !spotifySearchHasAlternateVersion(evidence, candidate, candidates),
   )
-  const [candidate] = exact.values()
-  if (
-    exact.size !== 1 ||
-    !candidate ||
-    spotifySearchHasAlternateVersion(evidence, candidate, candidates) ||
-    !spotifySearchConsistentRecording(evidence, candidate)
-  )
-    return { status: 'unmatched' }
-
-  const targetId = await resolveRecordingTarget(tx, source, candidate)
-  let reusedSpotifyTrackId = false
-  let albumFallbackArtistCreditCorrection:
-    | AlbumFallbackArtistCreditCorrection
-    | undefined
-  if (targetId !== source.id) {
-    const target = await libraryRecording(tx, targetId)
-    const targetEvidence =
-      target && (await spotifySearchRecordingEvidence(tx, targetId))
-    if (target && !targetEvidence) return { status: 'unmatched' }
-    if (
-      targetEvidence &&
-      !spotifySearchMatchesDestination(targetEvidence, candidate)
-    ) {
-      albumFallbackArtistCreditCorrection =
-        await readSpotifyAlbumFallbackArtistCreditCorrection(
-          tx,
-          targetId,
-          candidate,
-          targetEvidence,
-        )
-      if (!albumFallbackArtistCreditCorrection) return { status: 'unmatched' }
+  for (const choice of await rankSpotifySearchCandidates(
+    tx,
+    evidence,
+    eligible,
+  )) {
+    const { candidate } = choice
+    const targetId = choice.targetId ?? newRecordingTarget(source, candidate)
+    let reusedSpotifyTrackId = false
+    let albumFallbackArtistCreditCorrection:
+      | AlbumFallbackArtistCreditCorrection
+      | undefined
+    if (targetId !== source.id) {
+      const target = await libraryRecording(tx, targetId)
+      const targetEvidence =
+        target && (await spotifySearchRecordingEvidence(tx, targetId))
+      if (target && !targetEvidence) continue
+      if (
+        targetEvidence &&
+        !spotifySearchMatchesDestination(targetEvidence, candidate)
+      ) {
+        albumFallbackArtistCreditCorrection =
+          await readSpotifyAlbumFallbackArtistCreditCorrection(
+            tx,
+            targetId,
+            candidate,
+            targetEvidence,
+          )
+        if (!albumFallbackArtistCreditCorrection) continue
+      }
+      reusedSpotifyTrackId = target?.spotifyId === candidate.spotifyTrackId
     }
-    reusedSpotifyTrackId = target?.spotifyId === candidate.spotifyTrackId
+    try {
+      await checkRecordingTransfer(tx, source, targetId, candidate)
+    } catch (error) {
+      if (error instanceof ServerError && error.response.statusCode === 409)
+        continue
+      throw error
+    }
+    if (!dryRun)
+      await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic', {
+        reusedSpotifyTrackId,
+        albumFallbackArtistCreditCorrection,
+      })
+    return {
+      status: 'matched',
+      targetId,
+      ...(albumFallbackArtistCreditCorrection
+        ? { albumFallbackArtistCreditCorrection }
+        : {}),
+    }
   }
-  try {
-    await checkRecordingTransfer(tx, source, targetId, candidate)
-  } catch (error) {
-    if (error instanceof ServerError && error.response.statusCode === 409)
-      return { status: 'unmatched' }
-    throw error
-  }
-  if (!dryRun)
-    await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic', {
-      reusedSpotifyTrackId,
-      albumFallbackArtistCreditCorrection,
-    })
-  return {
-    status: 'matched',
-    targetId,
-    ...(albumFallbackArtistCreditCorrection
-      ? { albumFallbackArtistCreditCorrection }
-      : {}),
-  }
+  return { status: 'unmatched' }
 }
 
 /** Apply or preview a past search using its retained results without another Spotify request. */
@@ -429,7 +471,9 @@ export async function acceptSpotifyTrackSearch(input: {
         message:
           'This recording already has a Spotify match. Refresh the track to review it.',
       })
-    const targetId = await resolveRecordingTarget(tx, source, candidate)
+    const targets = await resolveSpotifyTrackIds(tx, [candidate])
+    const targetId =
+      targets.get(spotifyTrackId) ?? newRecordingTarget(source, candidate)
     await checkRecordingTransfer(tx, source, targetId, candidate)
     let albumFallbackArtistCreditCorrection:
       | AlbumFallbackArtistCreditCorrection

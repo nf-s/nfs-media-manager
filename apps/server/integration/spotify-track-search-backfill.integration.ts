@@ -179,15 +179,18 @@ async function storeSearch(
   })
 }
 
-it('previews and links an exact saved search offline and preserves ambiguity and manual choices', async () => {
+it('previews and links the first eligible saved Spotify results offline and preserves manual choices on replay', async () => {
   await lastfmTrack('exact', 'Fixture Recording')
-  await lastfmTrack('ambiguous', 'Fixture Versions')
+  await lastfmTrack('ranked', 'Fixture Versions')
   await lastfmTrack('manual', 'Fixture Split', true)
   const exact = catalogCandidate('Fixture Recording', '1')
+  const firstExact = catalogCandidate('Fixture Versions', '9')
+  const laterExact = catalogCandidate('Fixture Versions', '2')
   await storeSearch('exact', exact.title, [exact])
-  await storeSearch('ambiguous', 'Fixture Versions', [
-    catalogCandidate('Fixture Versions', '2'),
-    catalogCandidate('Fixture Versions', '3'),
+  await storeSearch('ranked', firstExact.title, [
+    catalogCandidate('Fixture Versions (Live)', '3'),
+    firstExact,
+    laterExact,
   ])
   await storeSearch('manual', 'Fixture Split', [
     catalogCandidate('Fixture Split', '4'),
@@ -200,11 +203,11 @@ it('previews and links an exact saved search offline and preserves ambiguity and
   expect(preview).toMatchObject({
     apply: false,
     scanned: 4,
-    wouldMatch: 1,
+    wouldMatch: 2,
     linked: 0,
     stale: 1,
   })
-  expect(preview.unmatched).toBe(2)
+  expect(preview.unmatched).toBe(1)
   const tracksAfterPreview = await fixture.select().from(schema.libraryTrack)
   expect(tracksAfterPreview).toHaveLength(3)
   expect(
@@ -221,7 +224,7 @@ it('previews and links an exact saved search offline and preserves ambiguity and
     ...preview,
     apply: true,
     wouldMatch: 0,
-    linked: 1,
+    linked: 2,
   })
   const [accepted] = await fixture
     .select()
@@ -234,11 +237,29 @@ it('previews and links an exact saved search offline and preserves ambiguity and
     .from(schema.libraryTrack)
     .where(eq(schema.libraryTrack.spotifyTrackId, exact.spotifyTrackId))
   expect(accepted?.options.acceptedTrackId).toBe(linkedTrack?.mediaItemId)
+  const [ranked] = await fixture
+    .select()
+    .from(schema.scrapeJob)
+    .where(eq(schema.scrapeJob.id, 'ranked-search'))
+  const [rankedTrack] = await fixture
+    .select()
+    .from(schema.libraryTrack)
+    .where(eq(schema.libraryTrack.spotifyTrackId, firstExact.spotifyTrackId))
+  expect(ranked?.options).toMatchObject({
+    acceptedSpotifyTrackId: firstExact.spotifyTrackId,
+    acceptedTrackId: rankedTrack?.mediaItemId,
+    matchMethod: 'automatic',
+  })
+  expect(rankedTrack).toBeDefined()
   expect(await fixture.select().from(schema.lastfmTrackSource)).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         trackKey: exact.title.toLowerCase(),
         trackMediaItemId: linkedTrack?.mediaItemId,
+      }),
+      expect.objectContaining({
+        trackKey: firstExact.title.toLowerCase(),
+        trackMediaItemId: rankedTrack?.mediaItemId,
       }),
       expect.objectContaining({
         trackMediaItemId: 'manual',
@@ -247,11 +268,26 @@ it('previews and links an exact saved search offline and preserves ambiguity and
     ]),
   )
 
-  expect(await backfillSpotifyTrackSearches(true)).toMatchObject({
-    scanned: 3,
-    linked: 0,
+  expect(await backfillSpotifyTrackSearches(true)).toEqual({
+    ...preview,
+    apply: true,
+    scanned: 2,
+    wouldMatch: 0,
   })
-  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(4)
+  const jobsAfterReplay = await fixture.select().from(schema.scrapeJob)
+  expect(jobsAfterReplay).toHaveLength(4)
+  expect(jobsAfterReplay.find(({ id }) => id === 'ranked-search')).toEqual(
+    ranked,
+  )
+  const tracksAfterReplay = await fixture.select().from(schema.libraryTrack)
+  expect(tracksAfterReplay.map(({ spotifyTrackId }) => spotifyTrackId)).toEqual(
+    expect.arrayContaining([
+      exact.spotifyTrackId,
+      firstExact.spotifyTrackId,
+      null,
+    ]),
+  )
+  expect(tracksAfterReplay).toHaveLength(3)
   expect(request).not.toHaveBeenCalled()
 })
 

@@ -84,12 +84,15 @@ export function artistNameKey(name: string) {
 const ARTIST_SEPARATOR =
   /\s*(?:,|;|\/|&|\+|\s(?:and|with|x|vs\.?|feat\.?|ft\.?|featuring)\s)\s*/i
 
+export function splitArtistCredit(name: string) {
+  return name.split(ARTIST_SEPARATOR)
+}
+
 /** The whole credit and each collaborator named in it. */
 export function artistKeys(name: string) {
   return [
     artistNameKey(name),
-    ...name
-      .split(ARTIST_SEPARATOR)
+    ...splitArtistCredit(name)
       .map(artistNameKey)
       .filter((key) => key.length > 1),
   ]

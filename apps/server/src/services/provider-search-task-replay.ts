@@ -30,6 +30,10 @@ const UnavailableSpotifyCatalogTrackSchema = z.union([
   z.object({ restrictions: z.object({ reason: z.string().trim().min(1) }) }),
 ])
 
+const SpotifyCatalogTrackPopularitySchema = z.object({
+  popularity: SpotifyTrackSearchCandidateSchema.shape.popularity,
+})
+
 type Request = MediaPluginTestContext['request']
 type SearchInput = z.infer<typeof SearchInputSchema>
 type AlbumSearchInput = z.infer<typeof AlbumSearchInputSchema>
@@ -63,6 +67,7 @@ export async function searchSpotifyCatalogTracks(
     if (!track || seen.has(track.spotifyTrackId)) return []
     const candidate = SpotifyTrackSearchCandidateSchema.safeParse({
       ...track,
+      ...SpotifyCatalogTrackPopularitySchema.safeParse(item).data,
       spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
     })
     if (!candidate.success) return []

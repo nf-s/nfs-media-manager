@@ -482,6 +482,7 @@ export async function resolveSpotifyTrackIds(
     SpotifyLibraryTrack,
     'spotifyTrackId' | 'spotifyAlbumId' | 'title' | 'artists' | 'albumName'
   >[],
+  { choosingOneCandidate = false }: { choosingOneCandidate?: boolean } = {},
 ) {
   if (!tracks.length) return new Map<string, string>()
   const incoming = tracks.map(
@@ -563,8 +564,13 @@ export async function resolveSpotifyTrackIds(
     if (!matches.includes(spotifyId)) matches.push(spotifyId)
     possibleIds.set(recording, matches)
   }
-  for (const [recording, [spotifyId, other]] of possibleIds)
-    if (spotifyId && !other) ids.set(spotifyId, recording)
+  for (const [recording, candidates] of possibleIds) {
+    const [spotifyId, other] = candidates
+    if (choosingOneCandidate) {
+      // Only one edition will be written, so alternatives can safely point to the same position.
+      for (const id of candidates) ids.set(id, recording)
+    } else if (spotifyId && !other) ids.set(spotifyId, recording)
+  }
   return ids
 }
 

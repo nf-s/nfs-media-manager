@@ -6,12 +6,15 @@ import { albumNameKey } from '@/lib/album-import-candidates'
 import {
   hasTrackVersionQualifier,
   hasUnmatchedVersionAlbum,
+  splitScrobbleCredit,
+  titleCredit,
 } from '@/lib/album-track-aliases'
 import type { db } from '@/lib/db'
 import {
   artistKeys,
   artistNameKey,
   plainKey,
+  splitArtistCredit,
 } from '@/lib/lastfm-album-matching'
 import { trackBaseKey, trackVersionKey } from '@/lib/track-matching'
 import {
@@ -53,7 +56,7 @@ const RecordingEvidenceSchema = z.object({
     }),
   ),
 })
-type RecordingEvidence = z.infer<typeof RecordingEvidenceSchema>
+export type RecordingEvidence = z.infer<typeof RecordingEvidenceSchema>
 
 export async function spotifySearchRecordingEvidence(
   tx: Transaction,
@@ -141,18 +144,30 @@ function sameName(value: string | null, name: string) {
   return value !== null && albumNameKey(value) === albumNameKey(name)
 }
 
-export function spotifySearchExactRelease(
+function albumNames(recording: RecordingEvidence) {
+  return [...recording.album_names, ...recording.scrobbled_albums].filter(
+    (name) => albumNameKey(name),
+  )
+}
+
+function spotifySearchReleaseIdsAgree(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  return (
+    recording.track_ids.every((id) => id === candidate.spotifyTrackId) &&
+    recording.album_ids.every((id) => id === candidate.spotifyAlbumId)
+  )
+}
+
+function spotifySearchExactRelease(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
   {
-    standaloneSource = false,
     allowTargetTitleDiacritics = false,
-  }: { standaloneSource?: boolean; allowTargetTitleDiacritics?: boolean } = {},
+  }: { allowTargetTitleDiacritics?: boolean } = {},
 ) {
-  const albums = [
-    ...recording.album_names,
-    ...recording.scrobbled_albums,
-  ].filter((name) => albumNameKey(name))
+  const albums = albumNames(recording)
   const titleKey = allowTargetTitleDiacritics
     ? diacriticInsensitiveTitleKey
     : albumNameKey
@@ -163,12 +178,8 @@ export function spotifySearchExactRelease(
     recording.position_titles.every(
       (title) => candidateTitle === titleKey(title),
     ) &&
-    recording.track_ids.every((id) => id === candidate.spotifyTrackId) &&
-    recording.album_ids.every((id) => id === candidate.spotifyAlbumId) &&
-    (!albums.length ||
-      (standaloneSource && recording.standalone_lastfm
-        ? albums.some((name) => sameName(candidate.albumName, name))
-        : albums.every((name) => sameName(candidate.albumName, name))))
+    spotifySearchReleaseIdsAgree(recording, candidate) &&
+    albums.every((name) => sameName(candidate.albumName, name))
   )
 }
 
@@ -177,12 +188,147 @@ function diacriticInsensitiveTitleKey(title: string) {
   return key.normalize('NFD').replace(/\p{M}/gu, '') || key
 }
 
+function sameSourceName(first: string | null, second: string) {
+  return first !== null && plainKey(first) === plainKey(second)
+}
+
+/** A standalone recording can have several original, unlinked album tags. */
+export function spotifySearchMatchesObservedAlbum(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  return (
+    recording.standalone_lastfm &&
+    albumNames(recording).some((album) =>
+      sameSourceName(candidate.albumName, album),
+    )
+  )
+}
+
+function spotifySearchSourceBillingMatches(
+  artists: string[],
+  candidate: SpotifyTrackSearchCandidate,
+  titleGuest?: string,
+) {
+  const [lead, ...guests] = artists
+  const [candidateLead, ...candidateGuests] = candidate.artists
+  if (!lead || !candidateLead) return false
+
+  const candidateTitleGuest = titleCredit(candidate.title).guest
+  if (
+    titleGuest &&
+    candidateTitleGuest &&
+    !sameSourceName(titleGuest, candidateTitleGuest)
+  )
+    return false
+  const knownGuests = candidateTitleGuest
+    ? [...candidateGuests, candidateTitleGuest]
+    : candidateGuests
+  const guestMatches = (guest: string) =>
+    knownGuests.some((known) => sameSourceName(guest, known)) ||
+    sameSourceName(guest, candidateGuests.join(', ')) ||
+    sameSourceName(guest, candidateGuests.join(' & '))
+
+  if (titleGuest && !guestMatches(titleGuest)) return false
+  if (sameSourceName(lead, candidateLead)) return guests.every(guestMatches)
+  if (!guests.length) {
+    if (sameName(lead, candidate.artists.join(', '))) return true
+    const billing = splitArtistCredit(lead)
+    if (
+      billing.length > 1 &&
+      billing.length === candidate.artists.length &&
+      candidate.artists.every((artist, index) =>
+        sameSourceName(billing[index] ?? null, artist),
+      )
+    )
+      return true
+  }
+  // Treat a compound recorded credit as a lead and named guests when Spotify
+  // bills that lead separately. Keep a full artist name that already matches.
+  const compound = splitScrobbleCredit(lead)
+  return (
+    compound !== undefined &&
+    sameSourceName(compound.primary, candidateLead) &&
+    [compound.guest, ...guests].every(guestMatches)
+  )
+}
+
+const COMPATIBLE_TITLE_SUFFIX =
+  / (?:original (?:mix|version)|(?:\d{4} (?:digital )?remaster(?:ed)?|(?:digital )?remaster(?:ed)?(?: \d{4})?)(?: version)?)$/
+
+function sourceTitleKey(title: string) {
+  return plainKey(titleCredit(title).title)
+}
+
+function sameVersionOrUnlabelled(first: string, second: string) {
+  if (first === second) return true
+  const firstBase = first.replace(COMPATIBLE_TITLE_SUFFIX, '')
+  const secondBase = second.replace(COMPATIBLE_TITLE_SUFFIX, '')
+  return (
+    (first === firstBase || second === secondBase) && firstBase === secondBase
+  )
+}
+
+/** Prefer the source's stated title version when several candidates qualify. */
+export function spotifySearchMatchesTitleVersion(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  return sourceTitleKey(recording.title) === sourceTitleKey(candidate.title)
+}
+
+/** Check the stored source identity before considering where its matches are stored. */
+export function spotifySearchMatchesSource(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const candidateTitle = sourceTitleKey(candidate.title)
+  const labelledTitles = new Set(
+    [
+      recording.title,
+      ...recording.scrobbles.map(({ title }) => title),
+      candidate.title,
+    ]
+      .map(sourceTitleKey)
+      .filter((title) => COMPATIBLE_TITLE_SUFFIX.test(title)),
+  )
+  const allowUnlabelled =
+    recording.standalone_lastfm &&
+    !recording.position_titles.length &&
+    labelledTitles.size <= 1
+  const nameMatches = (title: string, artists: string[]) => {
+    const credit = titleCredit(title)
+    const titleKey = plainKey(credit.title)
+    return (
+      (titleKey === candidateTitle ||
+        (allowUnlabelled &&
+          sameVersionOrUnlabelled(titleKey, candidateTitle))) &&
+      spotifySearchSourceBillingMatches(artists, candidate, credit.guest)
+    )
+  }
+  return (
+    !recording.has_manual_overrides &&
+    spotifySearchReleaseIdsAgree(recording, candidate) &&
+    (recording.standalone_lastfm ||
+      albumNames(recording).every((album) =>
+        sameSourceName(candidate.albumName, album),
+      )) &&
+    [recording.title, ...recording.position_titles].every((title) =>
+      nameMatches(title, recording.artists),
+    ) &&
+    spotifySearchConsistentMetadata(recording, candidate, plainKey, 1) &&
+    recording.scrobbles.every(
+      ({ title, artist, manual }) => !manual && nameMatches(title, [artist]),
+    )
+  )
+}
+
 function haveDifferentVersions(first: string, second: string) {
-  if (trackVersionKey(first) === trackVersionKey(second)) return false
+  const a = sourceTitleKey(first)
+  const b = sourceTitleKey(second)
+  if (sameVersionOrUnlabelled(a, b)) return false
   if (trackBaseKey(first) === trackBaseKey(second)) return true
   // Also catch plain suffixes and colons outside the usual bracket/dash forms.
-  const a = plainKey(first)
-  const b = plainKey(second)
   const [shorter, longer] = a.length < b.length ? [a, b] : [b, a]
   return (
     longer.startsWith(`${shorter} `) &&
@@ -197,15 +343,16 @@ export function spotifySearchHasAlternateVersion(
   candidates: SpotifyTrackSearchCandidate[],
 ) {
   const matchedAlbum = chosen.albumName
-  if (!recording.standalone_lastfm || !matchedAlbum) return false
-  const albums = [...recording.album_names, ...recording.scrobbled_albums]
+  if (!recording.standalone_lastfm) return false
+  const albums = albumNames(recording).filter(
+    (album) => !sameSourceName(matchedAlbum, album),
+  )
   return (
-    hasUnmatchedVersionAlbum(albums, matchedAlbum) ||
+    hasUnmatchedVersionAlbum(albums, matchedAlbum ?? '') ||
     candidates.some(
       (candidate) =>
-        !sameName(candidate.albumName, matchedAlbum) &&
-        albums.some((album) => sameName(candidate.albumName, album)) &&
-        sameSpotifySearchArtists(recording.artists, candidate.artists) &&
+        albums.some((album) => sameSourceName(candidate.albumName, album)) &&
+        spotifySearchSourceBillingMatches(recording.artists, candidate) &&
         haveDifferentVersions(candidate.title, recording.title),
     )
   )
@@ -285,15 +432,14 @@ export function spotifySearchTargetConflicts(
   )
 }
 
-export function spotifySearchConsistentRecording(
+function spotifySearchConsistentMetadata(
   recording: RecordingEvidence,
   candidate: SpotifyTrackSearchCandidate,
-  {
-    allowTargetDurationRounding = false,
-  }: { allowTargetDurationRounding?: boolean } = {},
+  artistKey: (name: string) => string,
+  maximumDurationDifference: number,
 ) {
   const durationTolerance =
-    allowTargetDurationRounding && candidate.durationSec > 0 ? 1 : 0
+    candidate.durationSec > 0 ? maximumDurationDifference : 0
   return (
     (!recording.spotify_url ||
       recording.spotify_url === candidate.spotifyUrl) &&
@@ -302,12 +448,30 @@ export function spotifySearchConsistentRecording(
         normalizedIsrc(recording.isrc) === normalizedIsrc(candidate.isrc))) &&
     recording.artist_credits.every(({ id, name }) =>
       candidate.artistCredits.some(
-        (credit) => credit.id === id && sameName(credit.name, name),
+        (credit) =>
+          credit.id === id && artistKey(credit.name) === artistKey(name),
       ),
     ) &&
     recording.durations.every(
       (duration) =>
         Math.abs(duration - candidate.durationSec) <= durationTolerance,
+    )
+  )
+}
+
+function spotifySearchConsistentRecording(
+  recording: RecordingEvidence,
+  candidate: SpotifyTrackSearchCandidate,
+  {
+    allowTargetDurationRounding = false,
+  }: { allowTargetDurationRounding?: boolean } = {},
+) {
+  return (
+    spotifySearchConsistentMetadata(
+      recording,
+      candidate,
+      albumNameKey,
+      allowTargetDurationRounding ? 1 : 0,
     ) &&
     recording.scrobbles.every(
       ({ title, artist, manual }) =>

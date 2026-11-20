@@ -57,16 +57,27 @@ export const SpotifyTrackSearchMarketSchema = z
     'Spotify market must be a two-letter uppercase country code.',
   )
 
+export const SpotifyTrackSearchQuerySchema = z.string().trim().pipe(id)
+
 export const SpotifyTrackSearchInputSchema =
   SpotifyTrackSearchStatusInputSchema.extend({
     batchId: id.optional(),
+    query: SpotifyTrackSearchQuerySchema.optional(),
     confirmBroadRun: z.boolean().default(false),
     freshness: SpotifyTrackSearchFreshnessSchema.optional(),
     market: SpotifyTrackSearchMarketSchema.optional(),
-  }).refine((input) => input.trackIds.length <= 5 || input.confirmBroadRun, {
-    message: 'Confirm searching more than five tracks',
-    path: ['confirmBroadRun'],
   })
+    .refine((input) => input.trackIds.length <= 5 || input.confirmBroadRun, {
+      message: 'Confirm searching more than five tracks',
+      path: ['confirmBroadRun'],
+    })
+    .refine(
+      (input) => input.query === undefined || input.trackIds.length === 1,
+      {
+        message: 'Choose one track for a custom Spotify search',
+        path: ['trackIds'],
+      },
+    )
 
 export const SpotifyTrackSearchCandidateSchema = z.object({
   spotifyTrackId: spotifyId,
@@ -79,6 +90,7 @@ export const SpotifyTrackSearchCandidateSchema = z.object({
   albumName: name.nullable(),
   spotifyAlbumId: spotifyId.nullable(),
   durationSec: z.number().int().nonnegative(),
+  popularity: z.number().int().min(0).max(100).optional(),
   isrc: z
     .string()
     .max(40)

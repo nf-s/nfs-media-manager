@@ -10,6 +10,7 @@ import {
   SpotifyTrackSearchJobSchema,
   SpotifyTrackSearchMarketSchema,
   SpotifyTrackSearchParamsSchema,
+  SpotifyTrackSearchQuerySchema,
   SpotifyTrackSearchSchema,
   SpotifyTrackSearchStatusInputSchema,
   SpotifyTrackSearchStatusSchema,
@@ -47,7 +48,8 @@ const SearchOptionsSchema = SpotifyTrackSearchParamsSchema.extend({
   trackArtists: z.array(z.string()).optional(),
   groupKey: z.string().min(1),
   market: SpotifyTrackSearchMarketSchema.optional(),
-  query: z.string().min(1).max(200),
+  query: SpotifyTrackSearchQuerySchema,
+  reviewOnly: z.literal(true).optional(),
 })
 const StoredResultSchema = z.object({
   diagnostics: z.array(
@@ -146,9 +148,13 @@ export async function prepareSpotifyTrackSearch(
     SPOTIFY_TRACK_SEARCH_TASK,
     JSON.stringify([userId, trackId]),
   )
+  const reviewQuery =
+    input.reviewOnly === true
+      ? SpotifyTrackSearchQuerySchema.parse(input.query)
+      : undefined
   if (
     (input.groupKey !== undefined && input.groupKey !== groupKey) ||
-    !target.query
+    !(reviewQuery ?? target.query)
   )
     throw new ServerError({
       statusCode: 409,
@@ -160,6 +166,7 @@ export async function prepareSpotifyTrackSearch(
     trackId,
     groupKey,
     ...target,
+    ...(reviewQuery ? { query: reviewQuery, reviewOnly: true } : {}),
     trackTitle: target.trackTitle.slice(0, 500),
     ...(market ? { market } : {}),
   })
@@ -260,6 +267,7 @@ export async function runSpotifyTrackSearch(
         ],
       },
       persist: async (tx) => {
+        if (options.reviewOnly) return
         await reconcileSpotifyTrackSearchInTransaction(tx, {
           trackId: options.trackId,
           userId: context.requestedByUserId,
@@ -282,6 +290,7 @@ export async function queueSpotifyTrackSearches(
     batchId = nanoid(),
     freshness,
     market,
+    query,
   } = SpotifyTrackSearchInputSchema.parse(input)
   const eligible = await listTracksNeedingSpotifyMatch(db, [
     ...new Set(trackIds),
@@ -293,6 +302,7 @@ export async function queueSpotifyTrackSearches(
         taskOptions: {
           trackId,
           batchId,
+          ...(query ? { query, reviewOnly: true } : {}),
           ...(freshness?.length ? { freshness } : {}),
           ...(market ? { market } : {}),
         },
@@ -481,6 +491,7 @@ export async function readSpotifyTrackSearchForAutomaticMatch(
     job.status !== 'succeeded' ||
     job.requestedByUserId !== userId ||
     !userId ||
+    job.options.reviewOnly === true ||
     job.options.acceptedTrackId !== undefined ||
     job.options.acceptedSpotifyTrackId !== undefined
   )

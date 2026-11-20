@@ -33,7 +33,7 @@ export function hasUnmatchedVersionAlbum(
 
 // Only discard an explicit trailing guest credit. A version named anywhere
 // in the suffix must not disappear along with the credit.
-function titleCredit(title: string) {
+export function titleCredit(title: string) {
   const match =
     /^(.*?)\s*(?:\((?:feat\.?|ft\.?|featuring)\s+([^()[\]]+)\)|\[(?:feat\.?|ft\.?|featuring)\s+([^()[\]]+)\]|\s+(?:feat\.?|ft\.?|featuring)\s+([^()[\]]+))$/i.exec(
       title,

@@ -29,6 +29,7 @@ function listSavedSearches(
         eq(scrapeJob.status, 'succeeded'),
         isNotNull(scrapeJob.finishedAt),
         isNotNull(scrapeJob.requestedByUserId),
+        sql`${scrapeJob.options}->>'reviewOnly' is distinct from 'true'`,
         sql`${scrapeJob.options} ? 'resultCount'`,
         sql`not (${scrapeJob.options} ?| array['acceptedTrackId', 'acceptedSpotifyTrackId'])`,
         cursor === undefined ? isNotNull(trackId) : gt(trackId, cursor),
