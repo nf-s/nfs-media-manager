@@ -47,6 +47,17 @@
         justify-content: end;
         flex-wrap: wrap;
       }
+      .example-picker {
+        margin-bottom: var(--ds-5);
+      }
+      .parent-options {
+        display: grid;
+        gap: var(--ds-3);
+      }
+      .parent-options[hidden],
+      .keep-options[hidden] {
+        display: none;
+      }
       .result-actions {
         margin-top: var(--ds-4);
       }
@@ -54,81 +65,40 @@
   </head>
   <body class="ds g" data-page="concept-track-table-merge.html">
     <script src="assets/ds.js"></script>
+    <script src="assets/track-merge-examples.js"></script>
     <script>
       const D = DS
-      const range = (first, last) =>
-        Array.from({ length: last - first + 1 }, (_, i) => first + i)
-      const artist = 'Mira Kestrel'
-      const release = 'Harbour Lights'
-      const samples = [
-        {
-          id: 'lines',
-          title: 'Signal Lines',
-          album: release,
-          spotify: 'lines',
-          seed: 7,
-          plays: range(40, 45),
-        },
-        {
-          id: 'album',
-          title: 'Winter’s Relay',
-          album: release,
-          spotify: 'album',
-          seed: 7,
-          plays: range(1, 24),
-        },
-        {
-          id: 'straight',
-          title: "Winter's Relay",
-          album: release,
-          plays: range(1, 8),
-        },
-        {
-          id: 'plain',
-          title: 'Winters Relay',
-          album: release,
-          plays: range(23, 27),
-        },
-        {
-          id: 'live',
-          title: 'Winter’s Relay (Live)',
-          album: 'Relay Sessions',
-          spotify: 'live',
-          seed: 3,
-          plays: range(50, 61),
-        },
-        {
-          id: 'wires',
-          title: 'Wires at Dawn',
-          album: release,
-          spotify: 'wires',
-          seed: 7,
-          plays: range(70, 73),
-        },
-      ].map((track) => ({
-        ...track,
-        kind: 'track',
-        by: artist,
-        art: track.spotify ? undefined : null,
-        sources: [track.spotify ? 'Album track list' : 'Last.fm'],
-      }))
-      const initialSelection = ['album', 'straight', 'plain']
-      let tracks = [...samples]
-      let selected = new Set(initialSelection)
-      let keptId
+      const model = window.TrackMergeExamples
+      const params = new URLSearchParams(location.search)
+      let example =
+        model.examples.find((item) => item.id === params.get('example'))?.id ??
+        'shared'
+      let state = model.load(example)
+      let selected = new Set(state.selected)
       let lastMerge = ''
+      const scenarioPicker = `<label class="ds-checkrow">Example
+        <select id="example" class="ds-select">${model.examples
+          .map(
+            (item) =>
+              `<option value="${D.esc(item.id)}" ${example === item.id ? 'selected' : ''}>${D.esc(item.label)}</option>`,
+          )
+          .join('')}</select></label>`
       D.page({
         title: 'Merge from the Tracks table',
-        lede: 'Select two or more entries, then choose which track to keep. <a class="g-link" href="concept-track-merge.html">Track Sources mockup</a>',
+        lede: 'Select tracks to review their recording, album and artist credits. <a class="g-link" href="concept-track-merge.html">Track Sources mockup</a>',
         sections: [
           {
             id: 'tracks',
             title: 'Tracks',
             body:
+              '<div class="example-picker">' +
+              scenarioPicker +
+              '</div>' +
               D.g.spec(
                 '<div id="track-table"></div><div id="selection" class="ds-selectbar"></div>',
                 { flush: true },
-              ) + '<div id="result" role="status"></div>',
+              ) +
+              '<div id="result" role="status"></div>',
           },
         ],
       })
@@ -149,14 +119,8 @@
       const bar = document.getElementById('selection')
       const dialog = document.getElementById('merge-review')
       const result = document.getElementById('result')
-      const chosen = () => tracks.filter((t) => selected.has(t.id))
+      const chosen = () => state.tracks.filter((t) => selected.has(t.id))
       const uniquePlays = (rows) => [...new Set(rows.flatMap((t) => t.plays))]
-      const uniqueSources = (rows) => [
-        ...new Set(rows.flatMap((t) => t.sources)),
-      ]
-      const differentRecordings = (rows) =>
-        new Set(rows.map((t) => t.spotify).filter(Boolean)).size > 1
-
       function showTable() {
         const columns = [
           D.checkCol((t) => selected.has(t.id), { sticky: true }),
@@ -179,7 +143,7 @@
         ]
         tableRoot.innerHTML =
           '<div class="ds-table-wrap">' +
-          D.table(columns, tracks, {
+          D.table(columns, state.tracks, {
             layout: 'fixed',
             row: (t) => ({
               'data-id': t.id,
@@ -209,8 +173,9 @@
       }
       function updateSelection() {
         const all = tableRoot.querySelector('thead input')
-        all.checked = selected.size === tracks.length
-        all.indeterminate = selected.size > 0 && selected.size < tracks.length
+        all.checked = selected.size === state.tracks.length
+        all.indeterminate =
+          selected.size > 0 && selected.size < state.tracks.length
         for (const row of tableRoot.querySelectorAll('tbody tr')) {
           const checked = selected.has(row.dataset.id)
           row.setAttribute('aria-selected', String(checked))
@@ -218,7 +183,7 @@
         }
         bar.innerHTML = selected.size
           ? `
-          <span><b>${selected.size} selected</b> <span class="ds-muted">of ${tracks.length}</span></span>
+          <span><b>${selected.size} selected</b> <span class="ds-muted">of ${state.tracks.length}</span></span>
           <span class="ds-actions ds-toolbar-end">
             ${D.btn('Merge…', { variant: 'primary', disabled: selected.size < 2, title: 'Review selected tracks' })}
             ${D.btn('', { icon: 'x', aria: 'Clear selection' })}
@@ -241,69 +206,216 @@
           else selected.delete(row.dataset.id)
         } else
           selected = event.target.checked
-            ? new Set(tracks.map((t) => t.id))
+            ? new Set(state.tracks.map((t) => t.id))
             : new Set()
         updateSelection()
       })
-      function previewCount(rows, kept) {
-        const total = uniquePlays(rows).length
-        const added = total - kept.plays.length
-        const count = added
-          ? `${kept.plays.length} + ${added} new = <b>${total}</b>`
-          : `<b>${total}</b> · all selected plays already counted`
-        const transferred = rows.find((t) => t.spotify)
-        const membership =
-          transferred && !kept.spotify
-            ? ' The album position and Spotify link move here too.'
-            : ''
-        const removed = rows.length - 1
-        return D.section(
-          'After the merge',
-          D.kv([
-            ['Scrobbles', count],
-            ['Library entries', `${rows.length} → 1`],
-          ]) +
-            `<p class="ds-help">Each play counts once. Recorded names from the other ${removed === 1 ? 'entry' : removed + ' entries'} move to this track.${membership}</p>`,
+      const body = dialog.querySelector('.dtl-dialog-body')
+      let relations = []
+      function optionRows(name, label, records, choice) {
+        return `<fieldset class="keep-options" data-options="${name}">
+          <legend class="ds-label">${D.esc(label)}</legend>
+          <div class="ds-list" data-compact>${records
+            .map(
+              (record) =>
+                `<label class="ds-row">
+              <input class="ds-check" type="radio" name="${name}" value="${D.esc(record.id)}" ${record.id === choice ? 'checked' : ''}>
+              <span class="ds-cell-id">${record.thumb ?? ''}<span class="ds-row-main"><span class="ds-row-title">${D.esc(record.name)}</span><span class="ds-row-by">${D.esc(record.detail)}</span></span></span>
+              <span class="ds-muted ds-num">${record.count ?? ''}</span></label>`,
+            )
+            .join('')}</div></fieldset>`
+      }
+      function includeControl(kind, text, checked) {
+        return `<label class="ds-checkrow"><input type="checkbox" class="ds-check" data-include="${kind}" ${checked ? 'checked' : ''}> ${D.esc(text)}</label>`
+      }
+      function trackEvidence(rows) {
+        const titleKey = (value) =>
+          value
+            .toLowerCase()
+            .replace(/[\p{P}\p{S}]/gu, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+        const facts = []
+        if (
+          new Set(rows.map((t) => titleKey(t.title))).size === 1 &&
+          new Set(rows.map((t) => t.title)).size > 1
         )
+          facts.push('The titles match when punctuation is ignored.')
+        const all = uniquePlays(rows)
+        if (
+          all.length &&
+          rows.every((t) => new Set(t.plays).size === all.length)
+        )
+          facts.push(`These entries count the same ${all.length} plays.`)
+        return facts.length ? `<p class="ds-help">${facts.join(' ')}</p>` : ''
+      }
+      function parentReview() {
+        const facts = relations
+          .filter((group) => group.status !== 'candidate')
+          .map((group) => {
+            if (group.status === 'shared')
+              return [
+                group.label,
+                D.esc(group.records.map((record) => record.name).join(', ')) +
+                  ' · shared',
+              ]
+            return [
+              group.label,
+              D.esc(group.summary) +
+                (group.records.length
+                  ? ' · ' +
+                    D.esc(group.records.map((record) => record.name).join(', '))
+                  : ''),
+            ]
+          })
+        const proposals = relations
+          .filter((group) => group.status === 'candidate')
+          .map(
+            (group) =>
+              `<div class="parent-options">
+            ${includeControl(group.kind, 'Merge ' + group.kind + ' entries', false)}
+            <span>${D.esc(group.records.map((record) => record.name).join(' / '))}</span>
+            <span class="ds-muted">${D.esc(group.evidence)}</span>
+            ${group.separateRecords?.length ? '<span class="ds-help">Separate ' + (group.kind === 'artist' ? 'credit' : 'edition') + ' · ' + D.esc(group.separateRecords.map((record) => record.name).join(', ')) + '</span>' : ''}
+            ${optionRows(group.kind, group.label + ' to keep', group.records)}
+          </div>`,
+          )
+          .join('')
+        return D.section(
+          'Related records',
+          (facts.length ? D.kv(facts) : '') + proposals,
+        )
+      }
+      function plan() {
+        const rows = chosen()
+        const trackToggle = body.querySelector('[data-include="track"]')
+        const mergeTracks =
+          !model.trackConflict(rows) && (trackToggle?.checked ?? true)
+        const keptId = mergeTracks
+          ? body.querySelector('input[name="track"]:checked')?.value
+          : null
+        const choices = {}
+        const missing = []
+        if (mergeTracks && !keptId) missing.push('track')
+        for (const group of relations) {
+          if (!body.querySelector(`[data-include="${group.kind}"]`)?.checked)
+            continue
+          const target = body.querySelector(
+            `input[name="${group.kind}"]:checked`,
+          )?.value
+          if (target) choices[group.kind] = target
+          else missing.push(group.kind)
+        }
+        return {
+          rows,
+          keptId,
+          choices,
+          missing,
+          ready:
+            !missing.length && !!(keptId || choices.album || choices.artist),
+        }
+      }
+      function renderImpact() {
+        for (const toggle of body.querySelectorAll('[data-include]')) {
+          body.querySelector(
+            `[data-options="${toggle.dataset.include}"]`,
+          ).hidden = !toggle.checked
+        }
+        const { rows, keptId, choices, ready, missing } = plan()
+        const impact = document.getElementById('impact')
+        const confirm = body.querySelector('[data-confirm] button')
+        confirm.disabled = !ready
+        if (!ready) {
+          impact.innerHTML = missing.length
+            ? D.notice('Choose the ' + missing.join(' and ') + ' to keep.')
+            : ''
+          return
+        }
+        const projected = model.apply(state, rows, keptId, choices)
+        const facts = []
+        const changes = []
+        if (keptId) {
+          const kept = rows.find((t) => t.id === keptId)
+          const merged = projected.state.tracks.find((t) => t.id === keptId)
+          const namesAdded = merged.originalNames.filter(
+            (name) => !kept.originalNames.includes(name),
+          ).length
+          if (namesAdded)
+            changes.push(
+              namesAdded === 1
+                ? 'The Last.fm name moves to the track you keep.'
+                : namesAdded + ' Last.fm names move to the track you keep.',
+            )
+          if (!kept.spotify && merged.spotify)
+            changes.push('The Spotify link moves to the track you keep.')
+          const added = merged.plays.length - kept.plays.length
+          facts.push(
+            ['Tracks', rows.length + ' → 1'],
+            [
+              'Scrobbles',
+              added
+                ? `${kept.plays.length} + ${added} additional = <b>${merged.plays.length}</b>`
+                : `<b>${merged.plays.length}</b> · already counted`,
+            ],
+          )
+        } else facts.push(['Tracks', 'Keep the selected recordings separate'])
+        for (const group of relations) {
+          const keep = group.records.find(
+            (record) => record.id === choices[group.kind],
+          )
+          if (keep)
+            facts.push([
+              group.label + ' entries',
+              group.records.length + ' → 1 · keep ' + D.esc(keep.name),
+            ])
+        }
+        const notes = changes
+          .concat(projected.effects)
+          .map((effect) => `<p class="ds-help">${D.esc(effect)}</p>`)
+          .join('')
+        impact.innerHTML = D.section('After the merge', D.kv(facts) + notes)
       }
       function openReview() {
         const rows = chosen()
         if (rows.length < 2) return
-        document.getElementById('merge-title').textContent =
-          'Merge ' + rows.length + ' tracks'
-        const body = dialog.querySelector('.dtl-dialog-body')
-        if (differentRecordings(rows)) {
-          body.innerHTML =
-            D.notice(
-              'These entries contain different Spotify recordings. Select entries for one recording to merge.',
-              { tone: 'attention' },
+        relations = model.related(state, rows)
+        const candidateParents = relations.some(
+          (group) => group.status === 'candidate',
+        )
+        const conflict = model.trackConflict(rows)
+        const trackOptions = rows.map((t) => ({
+          id: t.id,
+          name: t.title,
+          detail: [t.sources.join(' · '), t.by, t.album].join(' · '),
+          thumb: D.thumb(t),
+          count: t.plays.length + ' plays',
+        }))
+        const trackSection = conflict
+          ? D.notice(D.esc(conflict), { tone: 'attention' })
+          : (candidateParents
+              ? includeControl('track', 'Merge track entries', true)
+              : '') +
+            optionRows(
+              'track',
+              'Track to keep',
+              trackOptions,
+              rows.find((t) => t.spotify)?.id,
             ) +
-            '<div class="ds-actions review-actions">' +
-            D.btn('Edit selection') +
-            '</div>'
-        } else {
-          const suggested = rows.find((t) => t.spotify)
-          keptId = suggested?.id
-          const options = rows
-            .map((t) => {
-              const hint = [t.sources.join(' · '), t.by, t.album].join(' · ')
-              return `<label class="ds-row">
-              <input type="radio" class="ds-check" name="keep-track" value="${t.id}" ${t.id === keptId ? 'checked' : ''}>
-              <span class="ds-cell-id">${D.thumb(t)}<span class="ds-row-main"><span class="ds-row-title">${D.esc(t.title)}</span><span class="ds-row-by">${D.esc(hint)}</span></span></span>
-              <span class="ds-muted ds-num">${t.plays.length} plays</span></label>`
-            })
-            .join('')
-          body.innerHTML = `<fieldset class="keep-options"><legend class="ds-label">Track to keep</legend>
-            <div class="ds-list" data-compact>${options}</div></fieldset>
-            <div id="impact" aria-live="polite">${suggested ? previewCount(rows, suggested) : D.notice('Choose which track to keep.')}</div>
-            <div class="ds-actions review-actions">${D.btn('Cancel', { variant: 'ghost' })}
-              ${D.btn('Confirm merge', { variant: 'primary', disabled: !suggested })}</div>`
-        }
+            trackEvidence(rows)
+        document.getElementById('merge-title').textContent =
+          'Review ' + rows.length + ' selected tracks'
+        body.innerHTML =
+          trackSection +
+          parentReview() +
+          `<div id="impact" aria-live="polite"></div>
+          <div class="ds-actions review-actions">${D.btn('Cancel', { variant: 'ghost' })}
+          <span data-confirm>${D.btn('Confirm merge', { variant: 'primary', disabled: true })}</span></div>`
+        renderImpact()
         dialog.showModal()
-        const focusTarget =
+        const focus =
           body.querySelector('input:checked') ??
           body.querySelector('input, button')
-        focusTarget?.focus()
+        focus?.focus()
       }
       bar.addEventListener('click', (event) => {
         const button = event.target.closest('button')
@@ -314,57 +426,61 @@
           tableRoot.querySelector('tbody .ds-check').focus()
         } else openReview()
       })
-      dialog.addEventListener('change', (event) => {
-        if (!event.target.matches('input[name="keep-track"]')) return
-        const rows = chosen()
-        const kept = rows.find((t) => t.id === event.target.value)
-        if (!kept) return
-        keptId = kept.id
-        document.getElementById('impact').innerHTML = previewCount(rows, kept)
-        dialog.querySelector('[data-variant="primary"]').disabled = false
-      })
+      dialog.addEventListener('change', renderImpact)
       dialog.addEventListener('click', (event) => {
         const button = event.target.closest('button')
         if (!button) return
-        if (button.dataset.variant !== 'primary') {
+        if (!button.closest('[data-confirm]')) {
           dialog.close()
           return
         }
-        const rows = chosen()
-        const kept = rows.find((t) => t.id === keptId)
-        if (!kept || rows.length < 2 || differentRecordings(rows)) return
-        const catalog = rows.find((t) => t.spotify)
-        const merged = {
-          ...kept,
-          plays: uniquePlays(rows),
-          sources: uniqueSources(rows),
-          ...(catalog && {
-            spotify: catalog.spotify,
-            album: catalog.album,
-            seed: catalog.seed,
-            art: catalog.art,
-          }),
+        const { rows, keptId, choices, ready } = plan()
+        if (!ready) return
+        const next = model.apply(state, rows, keptId, choices)
+        state = next.state
+        const kept = state.tracks.find((t) => t.id === keptId)
+        const summary = []
+        if (kept) {
+          summary.push(
+            `Merged ${rows.length} tracks. Kept “${kept.title}” with ${kept.plays.length} scrobbles.`,
+          )
+          selected.clear()
         }
-        tracks = tracks.flatMap((t) =>
-          t.id === kept.id ? [merged] : selected.has(t.id) ? [] : [t],
-        )
-        selected.clear()
-        lastMerge = `Merged ${rows.length} tracks. Kept “${kept.title}” with ${merged.plays.length} scrobbles.`
+        for (const group of relations) {
+          const target = group.records.find(
+            (record) => record.id === choices[group.kind],
+          )
+          if (target)
+            summary.push(`Merged ${group.kind} entries into “${target.name}”.`)
+        }
+        lastMerge = summary.join(' ')
         dialog.close()
         showTable()
         tableRoot
-          .querySelector(`tr[data-id="${kept.id}"] input`)
-          .focus({ preventScroll: true })
+          .querySelector(`tr[data-id="${(kept ?? rows[0]).id}"] input`)
+          ?.focus({ preventScroll: true })
       })
-      result.addEventListener('click', (event) => {
-        if (!event.target.closest('button')) return
-        tracks = [...samples]
-        selected = new Set(initialSelection)
+      function resetExample() {
+        state = model.load(example)
+        selected = new Set(state.selected)
         lastMerge = ''
         showTable()
-        bar.querySelector('button').focus({ preventScroll: true })
+      }
+      result.addEventListener('click', (event) => {
+        if (!event.target.closest('button')) return
+        resetExample()
+        bar.querySelector('button')?.focus({ preventScroll: true })
+      })
+      document.getElementById('example').addEventListener('change', (event) => {
+        example = event.target.value
+        const url = new URL(location.href)
+        url.searchParams.set('example', example)
+        url.searchParams.delete('review')
+        history.replaceState(null, '', url)
+        resetExample()
       })
       showTable()
+      if (params.get('review') === '1') openReview()
     </script>
   </body>
 </html>
