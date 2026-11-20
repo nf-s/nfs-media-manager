@@ -10,7 +10,7 @@ import {
   FilmListItemSchema,
   FilmQuerySchema,
 } from '@repo/schemas/media'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
+import { TrackQuerySchema, trackSourceLabels } from '@repo/schemas/tracks'
 import {
   PluginResultSchema,
   type PluginNormalizedResult,
@@ -989,6 +989,110 @@ it('orders Tracks by artist, album, release and equal listening totals in album 
   expect(await at('scrobbles', 'asc', [1, 6])).toEqual(['1:z', '6:q'])
   expect(await at('releaseDate', 'asc', [0, 4, 5], 5)).toEqual(['0:z', '4:b'])
   expect(await at('artist', 'asc', [])).toEqual([])
+})
+
+it('keeps track release ties across deep page and position boundaries', async () => {
+  const { queryBrowseIds, queryBrowsePageIds, queryBrowsePositions } =
+    await import('@/services/browse')
+  await pool.query(`
+    insert into media_item (id, slug, title, media_type, release_date)
+    values ('jump-album', 'jump-album', 'Jump Album', 'album', '2020-01-01');
+    insert into album (media_item_id) values ('jump-album');
+    insert into media_item (id, slug, title, media_type)
+    select 'jump-track-'||n, 'jump-track-'||n,
+      'Jump fixture '||lpad((case when n between 14 and 17 then 14
+        when n between 18 and 21 then 18 else n end)::text, 2, '0'), 'track'
+      from generate_series(1, 30) n;
+    insert into media_item (id, slug, title, media_type)
+    values ('jump-orphan', 'jump-orphan', 'Jump fixture 14', 'track');
+    insert into library_track (media_item_id, album_media_item_id, date_added)
+    select 'jump-track-'||n, case when n <> 21 then 'jump-album' end,
+      case when n < 28 then timestamp '2025-01-01' + right(title, 2)::int * interval '1 second' end
+    from generate_series(1, 30) n join media_item on id = 'jump-track-'||n;
+    insert into track (id, album_media_item_id, track_media_item_id, title, position)
+    select 'jump-position-'||n, 'jump-album', 'jump-track-'||n, 'Track '||n, 100-n
+    from generate_series(1, 30) n where n <> 21;
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    values ('jump-listener', 'jump artist', 'jump title', 'jump-track-20', 'exact');
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    values ('jump-listen', 'jump-listener', '2025-01-12', 'Jump Artist', 'Jump Title', 'jump artist', 'jump title');
+  `)
+
+  const ids = (numbers: number[]) => numbers.map((id) => `jump-track-${id}`)
+  const query = TrackQuerySchema.parse({
+    q: 'jump fixture',
+    sortBy: 'title',
+    direction: 'asc',
+    size: 3,
+  })
+  const page = (number: number, options = query) =>
+    queryBrowsePageIds('track', { ...options, page: number })
+  expect(await page(5)).toMatchObject({ ids: ids([13, 17, 16]), hasMore: true })
+  expect(await page(6)).toMatchObject({ ids: ids([15, 14, 20]), hasMore: true })
+  expect(await queryBrowseIds('track', { ...query, page: 6 })).toMatchObject({
+    ids: ids([15, 14, 20]),
+    totalCount: 30,
+    pageCount: 10,
+  })
+  expect(await page(7)).toMatchObject({ ids: ids([19, 18, 21]), hasMore: true })
+  expect(await page(6, { ...query, direction: 'desc' })).toMatchObject({
+    ids: ids([15, 14, 13]),
+    hasMore: true,
+  })
+
+  const added = { ...query, sortBy: 'dateAdded' }
+  expect(await page(6, added)).toMatchObject({
+    ids: ids([15, 14, 20]),
+    hasMore: true,
+  })
+  expect(await page(10, added)).toMatchObject({
+    ids: ids([30, 29, 28]),
+    hasMore: false,
+  })
+  expect(await page(11, added)).toMatchObject({ ids: [], hasMore: false })
+  expect(await page(7, { ...added, limitResults: 19 })).toMatchObject({
+    ids: ids([19]),
+    hasMore: false,
+  })
+  const filtered = TrackQuerySchema.parse({
+    ...query,
+    ranges: [{ field: 'dateAdded', min: Date.parse('2025-01-01T00:00:02Z') }],
+    filters: [
+      { field: 'source', value: trackSourceLabels.album, mode: 'required' },
+    ],
+  })
+  expect(await page(6, filtered)).toMatchObject({
+    ids: ids([14, 20, 19]),
+    hasMore: true,
+  })
+  expect(
+    await queryBrowsePositions('track', added, [29, 15, 17, 15, 31]),
+  ).toEqual([
+    { id: 'jump-track-15', position: 15 },
+    { id: 'jump-track-20', position: 17 },
+    { id: 'jump-track-28', position: 29 },
+  ])
+  expect(
+    await queryBrowsePositions(
+      'track',
+      { ...added, limitResults: 19 },
+      [18, 19, 30],
+    ),
+  ).toEqual([{ id: 'jump-track-19', position: 18 }])
+  const listening = TrackQuerySchema.parse({
+    ...added,
+    listeningSort: { kind: 'dates', from: '2025-01-01', to: '2025-01-31' },
+  })
+  expect((await page(6, listening)).listeningScrobbles).toEqual(
+    new Map([
+      ['jump-track-15', 0],
+      ['jump-track-14', 0],
+      ['jump-track-20', 1],
+    ]),
+  )
+  expect(await queryBrowsePositions('track', listening, [17])).toEqual([
+    { id: 'jump-track-20', position: 17, listeningScrobbles: 1 },
+  ])
 })
 
 it('returns the stored collection ID in film Browse and detail memberships', async () => {

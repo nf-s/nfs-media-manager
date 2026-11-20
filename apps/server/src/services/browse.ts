@@ -107,6 +107,14 @@ type BrowsePosition = {
   listeningScrobbles?: number
 }
 
+const TrackRankRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    rank: z.number().int().positive(),
+    listeningScrobbles: z.number().int().nonnegative().nullable(),
+  }),
+)
+
 /** The one-based histogram bar of a count: how many edges are at or below it. */
 function listeningBar(value: SQL, edges: readonly number[]) {
   return sql<number>`width_bucket(${value}, array[${sql.join(
@@ -863,13 +871,14 @@ async function browseQueries(
   const pageSource = listening?.source(listeningSubject)
   const countWhere = and(itemConditions(countedListening), visibleTrack)
   const countSource = countedListening?.source(listeningSubject)
-  const base = (rank: SQL<number> = sql<number>`0`) => {
+  const base = (rank: SQL<number> = sql<number>`0`, ordinal?: SQL<number>) => {
     const query = database
       .select({
         id: mediaItem.id,
         listeningScrobbles: sql<
           number | null
         >`${listening?.sort ?? sql`null`}`.as('listening_scrobbles'),
+        ...(ordinal ? { ordinal: ordinal.as('ordinal') } : {}),
         rank: rank.as('rank'),
       })
       .from(mediaItem)
@@ -918,13 +927,58 @@ async function browseQueries(
     return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
   }
   const offset = (query.page - 1) * query.size
+  const indexedTrackOrder =
+    mediaType === 'track' &&
+    (sortField.key === 'title' || sortField.key === 'dateAdded') &&
+    options.sort?.field.key !== sortField.key
+
+  async function readTrackRanks(ranks: number[]) {
+    const requested = sql`${sql.param(ranks)}::bigint[]`
+    const prefix = base(
+      sql<number>`rank() over (order by ${order})`,
+      sql<number>`row_number() over (order by ${order})`,
+    )
+      .where(and(itemConditions(listening), visibleTrack))
+      .orderBy(order)
+    // Walk the primary order without resolving the release order of skipped
+    // rows. Every row tied with a requested rank must be available, including
+    // ties before the first requested rank and after the last one.
+    const result = await db.execute(sql`with primary_tracks as materialized (
+        ${prefix} fetch first (${Math.max(...ranks)}) rows with ties
+      ), selected_tracks as materialized (
+        select id, listening_scrobbles, rank as first_rank from primary_tracks
+        where rank in (
+          select rank from primary_tracks where ordinal = any(${requested})
+        )
+      ), ranked_tracks as (
+        select p.id, p.listening_scrobbles,
+          p.first_rank + row_number() over (
+            partition by p.first_rank
+            order by ${sql.join([...naturalOrder, sql`${mediaItem.id}`], sql`, `)}
+          ) - 1 as rank
+        from selected_tracks p
+        join ${mediaItem} on ${mediaItem.id} = p.id
+        join ${libraryTrack} on ${libraryTrack.mediaItemId} = p.id
+        left join ${mediaItem} as ${trackSortAlbum}
+          on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}
+      )
+      select id, listening_scrobbles as "listeningScrobbles", rank::int
+      from ranked_tracks where rank = any(${requested}) order by rank`)
+    return TrackRankRowsSchema.parse(result.rows)
+  }
 
   async function readPage(limit: number) {
-    const rows = await base()
-      .where(pageWhere)
-      .orderBy(order, ...naturalOrder, mediaItem.id)
-      .limit(limit)
-      .offset(offset)
+    // Keep the direct limit for early pages, where there are few ties to skip.
+    const rows =
+      indexedTrackOrder && limit > 0 && offset >= 3 * limit
+        ? await readTrackRanks(
+            Array.from({ length: limit }, (_, index) => offset + index + 1),
+          )
+        : await base()
+            .where(pageWhere)
+            .orderBy(order, ...naturalOrder, mediaItem.id)
+            .limit(limit)
+            .offset(offset)
     const items = rows.slice(0, query.size)
     return {
       ids: items.map((row) => row.id),
@@ -943,6 +997,15 @@ async function browseQueries(
   async function readPositions(positions: number[]): Promise<BrowsePosition[]> {
     const ranks = browseRanks(positions, query.limitResults)
     if (!ranks.length) return []
+    const deepest = Math.max(...ranks)
+    if (indexedTrackOrder && deepest >= 4 * ranks.length)
+      return (await readTrackRanks(ranks)).map((row) => ({
+        id: row.id,
+        position: row.rank - 1,
+        ...(listening?.sort
+          ? { listeningScrobbles: row.listeningScrobbles ?? 0 }
+          : {}),
+      }))
     const ordering = sql.join(
       [order, ...naturalOrder, sql`${mediaItem.id}`],
       sql`, `,
@@ -961,7 +1024,7 @@ async function browseQueries(
         and(
           // Compared uncast, the upper bound lets PostgreSQL stop numbering
           // at the deepest rank.
-          lte(ranked.rank, Math.max(...ranks)),
+          lte(ranked.rank, deepest),
           inArray(ranked.rank, ranks),
         ),
       )

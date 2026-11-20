@@ -183,6 +183,20 @@ function expectIndex(plan: string, name: string) {
 describe('library query index coverage', () => {
   // Let PostgreSQL choose each plan after ANALYZE; do not force index scans or
   // impose wall-clock limits that depend on the developer's machine.
+  it('limits deep Track title pages to release ordering of the requested rows', async () => {
+    const { queryBrowsePageIds } = await import('@/services/browse')
+    const page = await queryBrowsePageIds(
+      'track',
+      TrackQuerySchema.parse({ sortBy: 'title', page: 80, size: 50 }),
+    )
+    expect(page.ids).toHaveLength(50)
+    expect(page.hasMore).toBe(true)
+    const plan = await explainServiceQuery(
+      'with primary_tracks as materialized',
+    )
+    expect(plan).toMatch(/CTE selected_tracks\s*\n\s*-> [^\n]*rows=51 loops=1/)
+  })
+
   it('uses the stored timestamp indexes for selective date ranges', async () => {
     const { queryBrowseIds } = await import('@/services/browse')
     const date = Date.parse('2026-01-01')
