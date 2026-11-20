@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from '@tanstack/react-query'
 import { z } from 'zod'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
@@ -71,10 +75,138 @@ test('Browse renders ready rows before the count and reserves the full extent on
     assert.match(
       html,
       new RegExp(
-        `data-height="${(known ? total : 100) * 32}" data-counting="${!known}"`,
+        `data-height="${(known ? total : 101) * 32}" data-counting="${!known}"`,
       ),
     )
     assert.doesNotMatch(html, /Fixture 80/)
+  }
+})
+
+test('Browse follows page lookahead while the exact count is pending or failed', async () => {
+  const pageKey = firstKey.slice(0, -1)
+  const page = (number: number, length: number, hasMore: boolean) => ({
+    items: Array.from(
+      { length },
+      (_, i) => `Row ${(number - 1) * 100 + i + 1}`,
+    ),
+    hasMore,
+  })
+  function View({ top }: { top: number }) {
+    const rows = useVirtualBrowse({
+      apiBaseUrl: 'https://example.test',
+      collection: 'tracks',
+      identity: 'fixture view',
+      params,
+      enabled: true,
+      columns: 1,
+      rowHeight: 32,
+      scrollTop: top,
+      viewportHeight: 96,
+      headerHeight: 0,
+      itemSchema: z.string(),
+    })
+    return (
+      <div
+        data-pages={rows.pages.join(',')}
+        data-total={rows.hasTotal ? rows.total : 'unknown'}
+      >
+        {rows.slots.map((slot) => slot.item).join('|')}
+      </div>
+    )
+  }
+  for (const failed of [false, true]) {
+    const client = new QueryClient()
+    if (failed)
+      await assert.rejects(
+        client.fetchQuery({
+          queryKey: countKey,
+          queryFn: async () => {
+            throw new Error('fixture count unavailable')
+          },
+          retry: false,
+        }),
+      )
+    client.setQueryData(firstKey, page(1, 100, true))
+    const at = (top: number) =>
+      renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <View top={top} />
+        </QueryClientProvider>,
+      )
+    try {
+      assert.match(at(0), /data-pages="1" data-total="unknown"/)
+      assert.match(at(99 * 32), /data-pages="1,2" data-total="unknown"/)
+      client.setQueryData([...pageKey, 2], page(2, 100, true))
+      if (!failed) client.setQueryData(countKey, { totalCount: 120 })
+      assert.match(at(100 * 32), /Row 101/)
+      assert.match(at(199 * 32), /data-pages="2,3" data-total="unknown"/)
+      client.setQueryData([...pageKey, 3], page(3, 3, false))
+      const end = at(202 * 32)
+      assert.match(end, /data-pages="2,3" data-total="203"/)
+      assert.match(end, /Row 203/)
+      assert.doesNotMatch(end, /Row 204/)
+    } finally {
+      client.clear()
+    }
+  }
+})
+
+test('an explicitly requested playback total completes when Browse unmounts', async () => {
+  const client = new QueryClient()
+  const captured: { resolve?: (index: number) => Promise<number> } = {}
+  function Capture() {
+    captured.resolve = useVirtualBrowse({
+      apiBaseUrl: 'https://example.test',
+      collection: 'tracks',
+      identity: 'fixture view',
+      params,
+      enabled: true,
+      columns: 1,
+      rowHeight: 32,
+      scrollTop: 0,
+      viewportHeight: 96,
+      headerHeight: 0,
+      itemSchema: z.string(),
+    }).resolveTotal
+    return null
+  }
+  renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <Capture />
+    </QueryClientProvider>,
+  )
+  assert.ok(captured.resolve)
+  let finish: () => void = () => {
+    throw new Error('Count never started')
+  }
+  const countOptions = {
+    queryKey: countKey,
+    retry: false,
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      new Promise<{ totalCount: number }>((resolve, reject) => {
+        signal.addEventListener('abort', () =>
+          reject(new Error('Count was canceled')),
+        )
+        finish = () => {
+          resolve({ totalCount: 250 })
+        }
+      }),
+  }
+  const leaveBrowse = new QueryObserver(client, countOptions).subscribe(
+    () => undefined,
+  )
+  try {
+    const exactTotal = captured.resolve(5)
+    leaveBrowse()
+    finish()
+    assert.equal(await exactTotal, 250)
+    assert.equal(
+      client.getQueryCache().find({ queryKey: countKey })?.getObserversCount(),
+      0,
+    )
+  } finally {
+    leaveBrowse()
+    client.clear()
   }
 })
 

@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  QueryObserver,
   queryOptions,
   useQueries,
   useQuery,
@@ -69,7 +70,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
         apiBaseUrl,
         `/api/v1/${endpoint}/browse-count?${countParams}`,
         BrowseCountSchema,
-        { signal },
+        { signal, priority: 'low' },
       ),
     ...clientQueryDefaults,
     retry: false,
@@ -137,16 +138,25 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     retryCount: () => void count.refetch({ cancelRefetch: false }),
     resolveTotal: async (index: number) => {
       if (rows.hasTotal && !conflict) return rows.total
-      const fresh = await client.fetchQuery(
-        conflict ? { ...countOptions, staleTime: 0 } : countOptions,
-      )
-      if (
-        fresh.totalCount <= index ||
-        (rows.firstPage?.hasMore &&
-          fresh.totalCount <= rows.firstPage.items.length)
-      )
-        throw new Error('Browse results changed while counting.')
-      return fresh.totalCount
+      // A playing queue still needs its count if the user leaves Browse.
+      const release = new QueryObserver(client, {
+        ...countOptions,
+        enabled: false,
+      }).subscribe(() => undefined)
+      try {
+        const fresh = await client.fetchQuery(
+          conflict ? { ...countOptions, staleTime: 0 } : countOptions,
+        )
+        if (
+          fresh.totalCount <= index ||
+          (rows.firstPage?.hasMore &&
+            fresh.totalCount <= rows.firstPage.items.length)
+        )
+          throw new Error('Browse results changed while counting.')
+        return fresh.totalCount
+      } finally {
+        release()
+      }
     },
   }
 }
@@ -187,6 +197,7 @@ export function useVirtualPages<Page extends VirtualPageData>({
     VirtualBrowseOptions,
     'columns' | 'rowHeight' | 'scrollTop' | 'viewportHeight' | 'headerHeight'
   > & { extraRowHeights?: ReadonlyMap<number, number> }) {
+  const client = useQueryClient()
   function options(page: number) {
     return {
       ...virtualPageOptions(queryKey, page, (number, signal) =>
@@ -203,28 +214,53 @@ export function useVirtualPages<Page extends VirtualPageData>({
   const first = useQuery({
     ...options(1),
   })
-  const loadedCount = first.data?.items.length ?? 0
-  const firstConflict =
-    first.data?.hasMore === true &&
+  // A cached count can end inside a page whose response proves more rows exist.
+  const lastPage = Math.max(1, Math.ceil((totalCount ?? 0) / pageSize))
+  const lastData =
+    lastPage === 1
+      ? first.data
+      : client.getQueryData<Page>([...queryKey, lastPage])
+  const lastEnd = (lastPage - 1) * pageSize + (lastData?.items.length ?? 0)
+  const outgrewCount =
     totalCount !== undefined &&
-    totalCount <= loadedCount
-  const total =
-    first.data?.totalCount ?? (firstConflict ? undefined : totalCount)
+    lastData?.hasMore !== undefined &&
+    (lastEnd > totalCount || (lastEnd === totalCount && lastData.hasMore))
+  const anchorPage = outgrewCount ? lastPage : 1
+  const anchor = outgrewCount ? lastData : first.data
+  let loadedEnd = (anchorPage - 1) * pageSize + (anchor?.items.length ?? 0)
+  let hasMore = anchor?.hasMore === true
+  let total = first.data?.totalCount ?? (outgrewCount ? undefined : totalCount)
+  if (total === undefined && anchor?.hasMore === false) total = loadedEnd
+  // Follow cached pages from the known boundary. The extra slot gives the
+  // viewport a way to request the next page before an exact count arrives.
+  if (total === undefined && hasMore) {
+    for (let page = anchorPage + 1; ; page++) {
+      const data = client.getQueryData<Page>([...queryKey, page])
+      if (!data) break
+      loadedEnd = (page - 1) * pageSize + data.items.length
+      hasMore = data.hasMore === true
+      if (!hasMore) {
+        if (data.hasMore === false) total = loadedEnd
+        break
+      }
+    }
+  }
   const reserved = Math.max(1, Math.ceil(viewportHeight / rowHeight)) * columns
+  const extent = first.data ? loadedEnd + Number(hasMore) : reserved
   const window = browseWindow({
-    total: total ?? Math.max(loadedCount, reserved),
+    total: total ?? extent,
     columns,
     rowHeight,
     scrollTop,
     viewportHeight,
     headerHeight,
     pageSize,
-    extraRowHeights: total === undefined ? undefined : extraRowHeights,
+    extraRowHeights,
   })
   const pageNumbers =
-    total === undefined || !viewportEnabled
-      ? []
-      : window.pages.filter((page) => page !== 1)
+    viewportEnabled && (total !== undefined || hasMore)
+      ? window.pages.filter((page) => page !== 1)
+      : []
   const queries = useQueries({
     queries: pageNumbers.map(options),
   })
@@ -233,8 +269,8 @@ export function useVirtualPages<Page extends VirtualPageData>({
     const query = queries[index]
     if (query) pages.set(page, query)
   })
-  const conflictingPage = firstConflict
-    ? 1
+  const conflictingPage = outgrewCount
+    ? lastPage
     : total === undefined
       ? undefined
       : pageNumbers.find((page) => {
@@ -262,7 +298,7 @@ export function useVirtualPages<Page extends VirtualPageData>({
   return {
     ...window,
     slots,
-    total: total ?? loadedCount,
+    total: total ?? loadedEnd,
     firstPage: first.data,
     hasTotal: total !== undefined,
     conflictingPage,
