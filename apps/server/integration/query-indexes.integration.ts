@@ -194,7 +194,9 @@ describe('library query index coverage', () => {
     const plan = await explainServiceQuery(
       'with primary_tracks as materialized',
     )
-    expect(plan).toMatch(/CTE selected_tracks\s*\n\s*-> [^\n]*rows=51 loops=1/)
+    expect(plan).toMatch(
+      /CTE selected_tracks\s*\n\s*-> [^\n]*rows=51(?:\.0+)? loops=1\b/,
+    )
   })
 
   it('uses the stored timestamp indexes for selective date ranges', async () => {
@@ -300,7 +302,7 @@ describe('library query index coverage', () => {
       }),
     )
     expect(page.totalCount).toBe(20)
-    const plan = await explainServiceQuery('with matched_page as materialized')
+    const plan = await explainServiceQuery('matched_page as materialized')
     expectIndex(plan, 'subscription_item_duration_value_idx')
   })
 

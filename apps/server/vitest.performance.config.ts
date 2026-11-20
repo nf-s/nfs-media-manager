@@ -9,6 +9,7 @@ export default mergeConfig(
       // search term across a full-size synthetic broadcast library.
       include: [
         'integration/**/*.performance.ts',
+        'integration/query-indexes.integration.ts',
         'integration/mixes-library.integration.ts',
       ],
       fileParallelism: false,
