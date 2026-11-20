@@ -123,8 +123,13 @@ test('playlist rows open the drawer and show the sync schedule and last check', 
     },
   })
   const html = render(<PlaylistsWorkspace />, [
-    playlistPage([synced, { ...playlist, id: 'legacy', name: 'Old list' }]),
+    playlistPage([
+      { ...synced, spotifyUrl: 'https://open.spotify.com/playlist/example' },
+      { ...playlist, id: 'legacy', name: 'Old list' },
+    ]),
   ])
+  // The Spotify link belongs to the Source column, which starts hidden.
+  assert.doesNotMatch(html, /open\.spotify\.com/)
   assert.match(
     html,
     /<button[^>]*title="Sort by Schedule"[^>]*>Schedule<\/button>/,

@@ -367,6 +367,13 @@ export default function PlaylistsWorkspace() {
                           </DetailLink>
                         </SecondaryCell>
                         <PlaylistPlayButton playlist={playlist} />
+                      </span>
+                    </TableCell>
+                  )}
+                  {columns.visible('source') && (
+                    <TableCell>
+                      <span className="ds-cell-id">
+                        {playlistSourceLabel(playlist.source)}
                         {playlist.spotifyUrl && (
                           <ServiceIconLinks
                             links={[
@@ -376,14 +383,10 @@ export default function PlaylistsWorkspace() {
                                 url: playlist.spotifyUrl,
                               },
                             ]}
+                            itemTitle={playlist.name}
                           />
                         )}
                       </span>
-                    </TableCell>
-                  )}
-                  {columns.visible('source') && (
-                    <TableCell>
-                      {playlistSourceLabel(playlist.source)}
                     </TableCell>
                   )}
                   {columns.visible('owner') && (
