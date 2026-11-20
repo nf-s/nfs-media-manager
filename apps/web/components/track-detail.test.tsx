@@ -5,7 +5,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
-import type { SpotifyTrackSearchJob } from '@repo/schemas/spotify-track-search'
+import {
+  SpotifyTrackSearchCandidateSchema,
+  SpotifyTrackSearchJobSchema,
+  type SpotifyTrackSearchCandidate,
+  type SpotifyTrackSearchJob,
+} from '@repo/schemas/spotify-track-search'
 import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
@@ -83,6 +88,7 @@ function render(
   filters = '',
   view: 'detail' | 'sources' = 'detail',
   searchJob: SpotifyTrackSearchJob | null = null,
+  searchCandidates: SpotifyTrackSearchCandidate[] = [],
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -91,7 +97,7 @@ function render(
   client.setQueryData(['tracks', 'spotify-track-search', item.id], {
     job: searchJob,
     query: item.title,
-    candidates: [],
+    candidates: searchCandidates,
   })
   try {
     return renderToStaticMarkup(
@@ -164,6 +170,10 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   assert.match(html, /<h3>Appears on<\/h3>/)
   assert.match(html, /No playlist memberships\./)
   assert.match(html, /Match this track to Spotify to add it to a playlist/)
+  assert.match(
+    html,
+    /data-workspace-label="Match to Spotify"[^>]*>Match to Spotify<\/button>/,
+  )
   assert.match(
     html,
     /href="https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track"/,
@@ -257,6 +267,63 @@ test('Sources offers Spotify search on uncovered tracks and opens a verified alt
   assert.match(alternate, /Other Spotify version/)
   assert.match(alternate, /href="\/tracks\/alternate-recording\?tab=sources"/)
   assert.doesNotMatch(alternate, />Search Spotify<\/button>/)
+})
+
+const completedSearch = SpotifyTrackSearchJobSchema.parse({
+  jobId: 'fixture-search',
+  status: 'succeeded',
+  resultCount: null,
+  errorMessage: null,
+  createdAt: '2026-01-03T00:00:00.000Z',
+  startedAt: '2026-01-03T00:00:00.000Z',
+  finishedAt: '2026-01-03T00:00:01.000Z',
+})
+
+const savedCandidate = SpotifyTrackSearchCandidateSchema.parse({
+  spotifyTrackId: '1234567890ABCDEFGHIJKL',
+  title: 'Synthetic track',
+  artists: ['Example artist'],
+  albumName: 'Catalog album',
+  spotifyAlbumId: null,
+  durationSec: 180,
+  isrc: null,
+  artworkUrl: null,
+  spotifyUrl: 'https://open.spotify.com/track/1234567890ABCDEFGHIJKL',
+})
+
+test('unmatched Sources offers Match to Spotify for saved candidates, including legacy searches without a summary count', () => {
+  for (const resultCount of [1, null]) {
+    const html = render(
+      scrobbled,
+      '',
+      'sources',
+      { ...completedSearch, resultCount },
+      [savedCandidate],
+    )
+    assert.match(html, />Unmatched</)
+    assert.match(html, /aria-haspopup="dialog"[^>]*>Match to Spotify<\/button>/)
+  }
+})
+
+test('unmatched Sources opens Spotify search when there are no saved candidates', () => {
+  const empty = render(scrobbled, '', 'sources', {
+    ...completedSearch,
+    resultCount: 0,
+  })
+  assert.match(empty, />No matches</)
+  assert.match(empty, /aria-haspopup="dialog"[^>]*>Search Spotify<\/button>/)
+  assert.doesNotMatch(empty, /Match to Spotify/)
+})
+
+test('unmatched Sources can open the search panel while a lookup runs', () => {
+  const running = render(scrobbled, '', 'sources', {
+    ...completedSearch,
+    status: 'running',
+    finishedAt: null,
+  })
+  assert.match(running, />Running</)
+  assert.match(running, /aria-haspopup="dialog"[^>]*>Search Spotify<\/button>/)
+  assert.doesNotMatch(running, /Match to Spotify/)
 })
 
 test('album-derived Spotify IDs identify the stored track list that supplied them', () => {

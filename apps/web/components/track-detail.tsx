@@ -168,6 +168,10 @@ function TrackOverview({
   const artistTags = musicDisplayTags(item.albumTags, item.artistTags)
     .filter((tag) => tag.source === 'artist')
     .map((tag) => tag.name)
+  const sourcesLabel =
+    item.spotifyMatch === 'unmatched' && !item.spotifyAlternate
+      ? 'Match to Spotify'
+      : 'View source details'
   const tags = [
     {
       label: 'Album tags',
@@ -250,12 +254,12 @@ function TrackOverview({
           title="Details"
           aside={
             <Button
-              {...workspaceTabLinkProps(sourcesHref, 'View source details')}
+              {...workspaceTabLinkProps(sourcesHref, sourcesLabel)}
               variant="link"
               size="xs"
               onClick={showSources}
             >
-              View source details
+              {sourcesLabel}
             </Button>
           }
         >

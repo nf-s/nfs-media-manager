@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import type { SpotifyTrackSearchJob } from '@repo/schemas/spotify-track-search'
 import { trackSpotifyMatchLabels, type TrackDetail } from '@repo/schemas/tracks'
 import { Notice } from '@repo/ui/components/ds/feedback'
@@ -17,14 +17,12 @@ import { useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { invalidateScrobbleLinks } from './lastfm-sync'
 import {
-  invalidateSpotifySearchJobs,
-  isActiveSpotifyTrackSearch,
   SpotifyTrackSearchJobStatus,
   SpotifyTrackSearchResult,
   SpotifyTrackSearchReview,
-  useQueueSpotifyTrackSearch,
   useSavedSpotifyTrackSearch,
 } from './spotify-track-search'
+import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 
 function matchNote(
   item: TrackDetail,
@@ -35,7 +33,7 @@ function matchNote(
   if (!spotifyTrackUri(item.spotifyTrackId))
     return item.spotifyAlternate
       ? 'Another library version of this recording has a Spotify track ID.'
-      : 'Search Spotify by track title and artist.'
+      : 'Search Spotify by track title or artist.'
   if (item.spotifyMatch === 'spotify-search')
     return job?.acceptedTrackId === item.id
       ? 'You confirmed this recording from a Spotify track search.'
@@ -57,7 +55,6 @@ export function TrackSpotifySource({
   item: TrackDetail
   onResolved?: (id: string) => void
 }) {
-  const catalog = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
   const view = useDetailView()
   const [open, setOpen] = useState(
@@ -66,7 +63,9 @@ export function TrackSpotifySource({
   const sourceParams = new URLSearchParams(view.params)
   sourceParams.set('sourceProvider', 'spotify')
   sourceParams.set('tab', 'sources')
-  const [review, setReview] = useState(false)
+  const [matching, setMatching] = useState<
+    'edit-query' | 'review-results' | 'library' | null
+  >(null)
   const search = useSavedSpotifyTrackSearch(item.id)
   const job = search.data?.job
   const observedJob = useRef<SpotifyTrackSearchJob | null | undefined>(
@@ -75,18 +74,11 @@ export function TrackSpotifySource({
   const direct = Boolean(spotifyTrackUri(item.spotifyTrackId))
   const alternate = item.spotifyAlternate
   const needsMatch = !direct && !alternate
-  const queue = useMutation({
-    retry: false,
-    mutationFn: () => catalog.queue({ trackIds: [item.id] }),
-    onSettled: async (result) => {
-      await invalidateSpotifySearchJobs(client)
-      if (result?.skipped)
-        await client.invalidateQueries({
-          queryKey: ['track', item.id],
-          exact: true,
-        })
-    },
-  })
+  const hasCandidates =
+    job?.status === 'succeeded' &&
+    !job.acceptedTrackId &&
+    Boolean(search.data?.candidates.length)
+  const canSearchLibrary = needsMatch && canMergeLastfmTrack(item)
   useEffect(() => {
     if (job === undefined) return
     const previous = observedJob.current
@@ -95,7 +87,8 @@ export function TrackSpotifySource({
     // Follow a new acceptance observed here, never redirect on old history alone.
     if (
       previous === undefined ||
-      !job?.acceptedTrackId ||
+      job?.matchMethod !== 'automatic' ||
+      !job.acceptedTrackId ||
       (previous?.jobId === job.jobId &&
         previous.acceptedTrackId === job.acceptedTrackId)
     )
@@ -146,24 +139,23 @@ export function TrackSpotifySource({
                 Open version
               </DetailLink>
             )}
-            {job && (
-              <SpotifyTrackSearchResult
-                job={job}
-                currentTrackId={item.id}
-                onReview={needsMatch ? () => setReview(true) : undefined}
-                disabled={queue.isPending}
-              />
+            {job && !hasCandidates && (
+              <SpotifyTrackSearchResult job={job} currentTrackId={item.id} />
+            )}
+            {needsMatch && hasCandidates && (
+              <Button
+                size="xs"
+                aria-haspopup="dialog"
+                onClick={() => setMatching('review-results')}
+              >
+                Match to Spotify
+              </Button>
             )}
             {needsMatch && (
               <Button
                 size="xs"
-                disabled={
-                  queue.isPending ||
-                  catalog.invalidMarket ||
-                  !search.data ||
-                  isActiveSpotifyTrackSearch(job)
-                }
-                onClick={() => queue.mutate()}
+                aria-haspopup="dialog"
+                onClick={() => setMatching('edit-query')}
               >
                 Search Spotify
               </Button>
@@ -173,7 +165,6 @@ export function TrackSpotifySource({
       >
         <SourceBlock title="Spotify match">{matchNote(item, job)}</SourceBlock>
       </SourceRow>
-      {needsMatch && catalog.marketField}
       {search.isError && (
         <Notice
           tone="danger"
@@ -186,21 +177,24 @@ export function TrackSpotifySource({
           Could not load the saved Spotify search.
         </Notice>
       )}
-      {catalog.failureMessage && (
-        <Notice tone="danger">{catalog.failureMessage}</Notice>
-      )}
-      {queue.data?.skipped && needsMatch && !isActiveSpotifyTrackSearch(job) ? (
-        <p role="status" className="ds-help">
-          {queue.data.warnings.join(' ')}
-        </p>
-      ) : null}
-      {review && (
+      {(matching === 'edit-query' || matching === 'review-results') && (
         <SpotifyTrackSearchReview
           track={item}
-          onClose={() => setReview(false)}
+          searchMode={matching}
+          onClose={() => setMatching(null)}
+          onSearchLibrary={
+            canSearchLibrary ? () => setMatching('library') : undefined
+          }
           onMatched={(id) => {
             if (id !== item.id) onResolved?.(id)
           }}
+        />
+      )}
+      {matching === 'library' && (
+        <TrackMergePanel
+          track={item}
+          onClose={() => setMatching(null)}
+          onMerged={(id) => onResolved?.(id)}
         />
       )}
     </>

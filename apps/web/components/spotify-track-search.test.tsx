@@ -166,6 +166,52 @@ test('saved Spotify results show enough recording details for review before conf
     /https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL/,
   )
   assert.doesNotMatch(html, /Confirm Spotify match/)
+  assert.doesNotMatch(html, /type="search"/)
+})
+
+test('the Spotify search panel prefills plain text and keeps searching opt-in', () => {
+  const track = {
+    id: 'stored-track',
+    title: 'Stored recording',
+    artists: ['Example artist'],
+    albumName: 'Recorded album',
+    durationSec: 190,
+  }
+  const inactive = () => assert.fail('Rendering must not invoke search actions')
+  for (const status of ['succeeded', 'running']) {
+    const client = new QueryClient()
+    client.setQueryData(
+      ['tracks', 'spotify-track-search', track.id],
+      SpotifyTrackSearchSchema.parse({
+        job: { ...job, status, resultCount: status === 'succeeded' ? 0 : null },
+        query: 'track:Old search',
+        candidates: [],
+      }),
+    )
+    const html = render(
+      <SpotifyTrackSearchReview
+        track={track}
+        searchMode="edit-query"
+        onClose={inactive}
+        onMatched={inactive}
+        onSearchLibrary={inactive}
+      />,
+      client,
+    )
+    assert.match(
+      html,
+      /type="search"[^>]*value="Stored recording Example artist"/,
+    )
+    assert.match(html, />Search library tracks<\/button>/)
+    assert.doesNotMatch(html, /track:Old search/)
+    if (status === 'running') {
+      assert.match(html, /type="submit" disabled=""[^>]*>Search<\/button>/)
+      assert.match(html, />Running</)
+    } else {
+      assert.match(html, /type="submit">Search<\/button>/)
+      assert.match(html, />No matches</)
+    }
+  }
 })
 
 function renderConfirmation(failure: unknown) {

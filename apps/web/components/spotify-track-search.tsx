@@ -19,6 +19,7 @@ import {
   SpotifyTrackSearchAcceptResultSchema,
   SpotifyTrackSearchInputSchema,
   SpotifyTrackSearchMarketSchema,
+  SpotifyTrackSearchQuerySchema,
   SpotifyTrackSearchSchema,
   SpotifyTrackSearchStatusInputSchema,
   SpotifyTrackSearchStatusSchema,
@@ -536,22 +537,38 @@ export function SpotifyTrackSearchReview({
   track,
   onClose,
   onMatched,
+  onSearchLibrary,
+  searchMode,
 }: {
   track: SearchTrack
   onClose: () => void
   onMatched: (targetId: string) => void
+  onSearchLibrary?: () => void
+  searchMode?: 'edit-query' | 'review-results'
 }) {
   const { apiBaseUrl } = useConfig()
+  const catalog = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
   const path = `${spotifySearchPath}/${encodeURIComponent(track.id)}`
   const dialog = useRef<HTMLDialogElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
+  const searchInput = useRef<HTMLInputElement>(null)
   const titleId = useId()
+  const [draft, setDraft] = useState(() =>
+    [track.title, ...track.artists].join(' ').slice(0, 200).trim(),
+  )
   const [chosen, setChosen] = useState<{
     jobId: string
     candidate: SpotifyTrackSearchCandidate
   } | null>(null)
   const search = useSavedSpotifyTrackSearch(track.id)
+  const queue = useMutation({
+    retry: false,
+    mutationFn: (query: string) =>
+      catalog.queue({ trackIds: [track.id], query }),
+    onSuccess: () => setChosen(null),
+    onSettled: () => invalidateSpotifySearchJobs(client),
+  })
   const accept = useMutation({
     retry: false,
     mutationFn: (input: NonNullable<typeof chosen>) =>
@@ -586,19 +603,28 @@ export function SpotifyTrackSearchReview({
     const element = dialog.current
     const previous = document.activeElement
     if (!element?.open) element?.showModal()
-    closeButton.current?.focus()
+    if (searchMode === 'edit-query') searchInput.current?.focus()
+    else closeButton.current?.focus()
     return () => {
       element?.close()
       if (previous instanceof HTMLElement && previous.isConnected)
         previous.focus({ preventScroll: true })
     }
-  }, [])
+  }, [searchMode])
   const job = search.data?.job
   const candidates = search.data?.candidates ?? []
+  const query = SpotifyTrackSearchQuerySchema.safeParse(draft)
+  const canSubmit =
+    query.success &&
+    !catalog.invalidMarket &&
+    !search.isPending &&
+    !queue.isPending &&
+    !accept.isPending &&
+    !isActiveSpotifyTrackSearch(job)
   return (
     <dialog
       ref={dialog}
-      className="dtl-dialog"
+      className={searchMode ? 'sec-drawer' : 'dtl-dialog'}
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
@@ -611,7 +637,7 @@ export function SpotifyTrackSearchReview({
       }}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div className="dtl-dialog-inner">
+      <div className={searchMode ? 'ds-inspector' : 'dtl-dialog-inner'}>
         <div className="ds-inspector-bar">
           <div className="ds-crumbs">
             <b id={titleId}>Spotify track search</b>
@@ -627,10 +653,55 @@ export function SpotifyTrackSearchReview({
             <X className="ds-i" aria-hidden="true" />
           </Button>
         </div>
-        <div className="dtl-dialog-body">
+        <div className={searchMode ? 'ds-inspector-body' : 'dtl-dialog-body'}>
           <Section title="Library track" flush>
             <TrackIdentity track={track} />
           </Section>
+          {searchMode && (
+            <Section>
+              <form
+                className="data-stack"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (canSubmit && query.success) queue.mutate(query.data)
+                }}
+              >
+                <label className="ds-field">
+                  <span className="ds-label">Search Spotify</span>
+                  <Input
+                    ref={searchInput}
+                    type="search"
+                    value={draft}
+                    maxLength={200}
+                    onChange={(event) => setDraft(event.target.value)}
+                  />
+                </label>
+                {catalog.marketField}
+                <div className="ds-actions">
+                  <Button type="submit" disabled={!canSubmit}>
+                    {queue.isPending ? 'Queueing…' : 'Search'}
+                  </Button>
+                  {onSearchLibrary && (
+                    <Button
+                      type="button"
+                      disabled={accept.isPending}
+                      onClick={onSearchLibrary}
+                    >
+                      Search library tracks
+                    </Button>
+                  )}
+                </div>
+              </form>
+              {catalog.failureMessage && (
+                <Notice tone="danger">{catalog.failureMessage}</Notice>
+              )}
+              {queue.data?.skipped ? (
+                <p role="status" className="ds-help">
+                  {queue.data.warnings.join(' ')}
+                </p>
+              ) : null}
+            </Section>
+          )}
           {search.isPending && <Skeleton height={48} />}
           {search.isError && (
             <Notice
@@ -644,7 +715,9 @@ export function SpotifyTrackSearchReview({
               Could not load the saved Spotify search.
             </Notice>
           )}
-          {job?.acceptedTrackId ? (
+          {queue.isPending ? (
+            <Skeleton height={48} />
+          ) : job?.acceptedTrackId ? (
             <SpotifyTrackSearchResult job={job} />
           ) : chosen && chosen.jobId === job?.jobId ? (
             <SpotifyTrackSearchConfirmation
