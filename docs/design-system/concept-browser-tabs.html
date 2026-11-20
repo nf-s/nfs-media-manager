@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser tabs · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <style>
+      .concept-browser-stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-height: calc(var(--ds-row-media) * 6);
+      }
+      .concept-browser-stage:has(.concept-browser-inspector:not([hidden])) {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+      }
+      .concept-browser-list .ds-row:last-child {
+        border-bottom: 0;
+      }
+      .concept-browser-inspector {
+        width: 100%;
+        min-width: 0;
+      }
+      .concept-browser-inspector[hidden] {
+        display: none;
+      }
+      .concept-browser-return {
+        margin-bottom: var(--ds-6);
+      }
+      .concept-browser-destination {
+        margin: var(--ds-6);
+      }
+      @media (max-width: 700px) {
+        .concept-browser-stage:has(.concept-browser-inspector:not([hidden])) {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .concept-browser-stage:has(.concept-browser-inspector:not([hidden]))
+          .concept-browser-list {
+          display: none;
+        }
+        .concept-browser-inspector .ds-inspector-bar .ds-btn {
+          min-height: var(--ds-h-touch);
+        }
+        .concept-browser-inspector .ds-inspector-bar [data-icon] {
+          min-width: var(--ds-h-touch);
+        }
+        .concept-browser-destination {
+          margin: var(--ds-4);
+        }
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-browser-tabs.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, esc, icon, btn } = D
+      const films = D.data.FILMS.slice(0, 4).map((film) => ({
+        ...film,
+        slug: film.title.toLowerCase().replaceAll(' ', '-'),
+      }))
+      const pageName = 'concept-browser-tabs.html'
+      const filmFor = (slug) => films.find((film) => film.slug === slug)
+      const filmUrl = (film) => `${pageName}?film=${film.slug}`
+
+      const filmHead = (film) =>
+        D.detailHead({
+          kind: 'Film',
+          item: film,
+          by: esc(film.by),
+          facts: [esc(film.year), esc(film.runtime)],
+        })
+
+      const filmDetails = (film) =>
+        D.section(
+          'Details',
+          D.facts([
+            ['IMDb', D.mono(film.imdb)],
+            ['Metacritic', D.mono(film.mc)],
+            ['Rotten Tomatoes', D.mono(film.rt)],
+            ['Added', D.mono(film.added)],
+          ]),
+        ) + D.section('Tags', D.pills(film.tags, { pill: { static: true } }))
+
+      const openTab = (film) =>
+        `<a class="ds-btn" href="${filmUrl(film)}" target="_blank" rel="noopener">${icon('external', { size: 'sm' })}Open in browser tab</a>`
+
+      const browse = `
+        <div class="concept-browser-stage" id="browser-tab-stage">
+          <div class="concept-browser-list">
+            <div class="ds-list" data-compact>${films
+              .map((film) =>
+                D.row(film, { by: `${film.by} · ${film.year}` }).replace(
+                  'href="#"',
+                  `href="${filmUrl(film)}" data-inspect="${film.slug}"`,
+                ),
+              )
+              .join('')}</div>
+          </div>
+          <aside class="ds-inspector concept-browser-inspector" aria-label="Film inspector" tabindex="-1" hidden></aside>
+        </div>`
+
+      function showDestination(film) {
+        document.title = `${film.title} · Media Manager`
+        document.body.classList.remove('g')
+        document.body.innerHTML = `
+          <main class="ds-main concept-browser-destination">
+            <div class="ds-page">
+              <div class="concept-browser-return"><a class="ds-btn" href="${pageName}">${icon('chevL', { size: 'sm' })}Browse films</a></div>
+              ${filmHead(film).replace(/<(\/?)h2(?=[ >])/g, '<$1h1')}
+              ${filmDetails(film)}
+            </div>
+          </main>`
+      }
+
+      function showConcept() {
+        D.page({
+          title: 'Browser tabs',
+          lede: 'Inspect a film from Browse, or open its full page in a browser tab. <a class="g-link" href="concept-workspace-tabs.html">Compare with in-app workspace tabs</a>.',
+          sections: [
+            {
+              id: 'browse',
+              title: 'Film Browse',
+              body:
+                g.spec(browse, { flush: true }) +
+                g.rules([
+                  '<b>Mouse.</b> Click a title to inspect it. Cmd-click (Mac), Ctrl-click (Windows and Linux), or middle-click a title to open a browser tab.',
+                  '<b>Keyboard.</b> Tab to a title and press Enter. Tab to <b>Open in browser tab</b> and press Enter. Escape or browser Back returns to Browse.',
+                  '<b>Phone.</b> Tap a title, then tap <b>Open in browser tab</b>. Tap Close to return to Browse.',
+                ]),
+            },
+            {
+              id: 'trade-off',
+              title: 'Trade-off',
+              body: '<p>Each film gets an address you can bookmark or keep beside Browse. Comparing several films means switching between browser tabs, with each film in its own page.</p>',
+            },
+          ],
+        })
+
+        const stage = document.querySelector('#browser-tab-stage')
+        const inspector = stage.querySelector('aside')
+        let currentFilm
+
+        function renderInspector() {
+          const previousFilm = currentFilm
+          currentFilm = filmFor(history.state?.browserTabFilm)
+          inspector.hidden = !currentFilm
+          if (!currentFilm) {
+            inspector.innerHTML = ''
+            if (previousFilm) {
+              stage
+                .querySelector(`[data-inspect="${previousFilm.slug}"]`)
+                .focus()
+            }
+            return
+          }
+
+          inspector.innerHTML = `
+            <div class="ds-inspector-bar">
+              <div class="ds-crumbs"><b>${esc(currentFilm.title)}</b></div>
+              ${openTab(currentFilm)}
+              ${btn('', { icon: 'x', variant: 'ghost', aria: 'Close inspector', title: 'Close' })}
+            </div>
+            <div class="ds-inspector-body">${filmHead(currentFilm)}${filmDetails(currentFilm)}</div>`
+          inspector
+            .querySelector('button')
+            .addEventListener('click', () => history.back())
+          inspector.focus()
+        }
+
+        stage.addEventListener('click', (event) => {
+          if (
+            event.defaultPrevented ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          ) {
+            return
+          }
+          const title = event.target.closest('[data-inspect]')
+          const film = filmFor(title?.dataset.inspect)
+          if (!film) return
+
+          event.preventDefault()
+          const nextState = { browserTabFilm: film.slug }
+          if (currentFilm) {
+            history.replaceState(nextState, '')
+          } else {
+            history.pushState(nextState, '')
+          }
+          renderInspector()
+        })
+
+        stage.addEventListener('keydown', (event) => {
+          if (event.key !== 'Escape' || !currentFilm) return
+          event.preventDefault()
+          history.back()
+        })
+
+        window.addEventListener('popstate', renderInspector)
+        renderInspector()
+      }
+
+      const film = filmFor(new URLSearchParams(location.search).get('film'))
+      if (film) {
+        showDestination(film)
+      } else {
+        showConcept()
+      }
+    </script>
+  </body>
+</html>

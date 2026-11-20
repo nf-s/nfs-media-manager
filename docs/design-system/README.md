@@ -38,6 +38,8 @@ Then open `http://127.0.0.1:8080/docs/design-system/index.html`.
 | `assets/gallery.css`                           | Layout of these documentation pages only (`g-*` classes)                                    |
 | `concept-template.html`                        | The page to copy when proposing new interface. `concept-*.html` pages are pending decisions |
 
+Pending navigation concepts: [optional workspace tabs](concept-workspace-tabs.html) and [browser tabs](concept-browser-tabs.html). Both examples use invented films and open locally.
+
 Mockups labelled **Before** show the interface the system replaced. They explain a decision and are never a reference. Everything else on these pages is the specification.
 
 ## Components

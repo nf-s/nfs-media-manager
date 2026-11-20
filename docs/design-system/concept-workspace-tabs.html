@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workspace tabs · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <style>
+      .sample {
+        max-width: calc(var(--ds-inspector) + var(--ds-rail));
+        background: var(--ds-surface);
+        border-radius: var(--ds-r-lg);
+        box-shadow: var(--ds-shadow-raise);
+      }
+      .tab-tools,
+      .sample-head,
+      .tab-list,
+      .sample-title,
+      .card-line,
+      .picker-label {
+        display: flex;
+        align-items: center;
+        gap: var(--ds-3);
+      }
+      .tab-tools,
+      .sample-head {
+        padding: var(--ds-4) var(--ds-gutter);
+      }
+      .tab-tools {
+        background: var(--ds-sunken);
+        border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
+      }
+      .tab-list {
+        min-width: 0;
+        overflow-x: auto;
+        padding: var(--ds-2);
+      }
+      .tab-list button {
+        flex: none;
+      }
+      .tab-list button[aria-selected='true'] {
+        color: var(--ds-accent-strong);
+        background: var(--ds-surface);
+        border-color: var(--ds-line);
+        box-shadow: var(--ds-shadow-raise);
+      }
+      .picker-label {
+        display: none;
+        min-width: 0;
+      }
+      .picker-label select {
+        min-width: 0;
+        width: 100%;
+      }
+      .sample-title {
+        margin: 0 auto 0 0;
+        font-size: var(--ds-text-lg);
+      }
+      .sample-head .ds-search {
+        flex: 0 1 auto;
+        min-width: 0;
+      }
+      .sample-head .ds-search input {
+        width: 100%;
+      }
+      .sample-stage {
+        position: relative;
+      }
+      .sample-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      .card-line .ds-card-title {
+        flex: 1;
+      }
+      .card-line {
+        justify-content: space-between;
+      }
+      .card-menu {
+        position: relative;
+      }
+      .card-menu summary {
+        display: flex;
+        list-style: none;
+      }
+      .card-menu summary::-webkit-details-marker {
+        display: none;
+      }
+      .card-menu .ds-pop {
+        position: absolute;
+        inset: auto 0 auto auto;
+        z-index: 1;
+        min-width: max-content;
+      }
+      .sample-grid .card-menu {
+        position: static;
+      }
+      .sample-grid .ds-pop {
+        inset-inline: 0;
+        min-width: 0;
+      }
+      .sample-grid .ds-menu-item {
+        height: auto;
+        min-height: var(--ds-h-sm);
+      }
+      .sample-detail {
+        padding: var(--ds-6);
+      }
+      .sample-drawer {
+        position: absolute;
+        inset: 0 0 0 auto;
+        width: min(100%, var(--ds-inspector));
+        z-index: 2;
+      }
+      .sample-drawer .ds-inspector-bar {
+        justify-content: space-between;
+      }
+      .sample-empty {
+        padding: var(--ds-gutter);
+      }
+      .sample [hidden] {
+        display: none;
+      }
+      .feedback {
+        position: absolute;
+        width: var(--ds-1);
+        height: var(--ds-1);
+        clip-path: inset(50%);
+        overflow: hidden;
+      }
+      @media (max-width: 700px) {
+        .tab-list {
+          display: none;
+        }
+        .picker-label {
+          display: flex;
+          flex: 1;
+        }
+        .sample .ds-btn,
+        .sample .ds-menu-item,
+        .sample .ds-select {
+          min-height: var(--ds-h-touch);
+        }
+        .sample-head {
+          flex-wrap: wrap;
+        }
+        .sample-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .sample .ds-btn[data-icon] {
+          min-width: var(--ds-h-touch);
+        }
+        .sample-drawer {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-workspace-tabs.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const { g, icon, esc } = DS
+      const films = DS.data.FILMS.slice(0, 4)
+      const shortcut = /Mac|iPhone|iPad/.test(navigator.platform)
+        ? 'Option + Return'
+        : 'Alt + Enter'
+      const browserDesign = 'concept-browser-tabs.html'
+      const filmHref = (film) =>
+        browserDesign +
+        '?film=' +
+        encodeURIComponent(film.title.toLowerCase().replaceAll(' ', '-'))
+      const sample = (id) =>
+        `<div class="sample" id="${id}"><div class="tab-tools" hidden></div><div class="sample-panels"></div><div class="feedback" role="status"></div></div>`
+      DS.page({
+        title: 'Optional workspace tabs',
+        lede: 'Keep browsing in one workspace until you choose a second destination. <a class="g-link" href="concept-browser-tabs.html">Compare the browser tabs design</a>.',
+        sections: [
+          {
+            id: 'single',
+            title: 'Open a film alongside Browse',
+            body:
+              '<p>Try opening a title normally, then use its <b>More (…)</b> menu and choose <b>Open in workspace tab</b>. With the title focused, <b>' +
+              shortcut +
+              '</b> does the same thing.</p>' +
+              sample('single-demo'),
+          },
+          {
+            id: 'multiple',
+            title: 'Switch between open destinations',
+            body:
+              '<p>This example starts after you have opened a film and switched to it. Return to Films, try a search, then switch back. On a phone, the Tabs picker lists the same destinations.</p>' +
+              sample('multiple-demo'),
+          },
+          {
+            id: 'behavior',
+            title: 'Navigation behavior',
+            body: g.rules([
+              'Opening a destination in the background keeps focus, search, scroll position and any open inspector in the source tab. Selecting the new tab opens the destination as a page.',
+              'Use <b>New browse tab</b> in the page menu to start a fresh search. Once two tabs are open, the plus button does the same thing and places the cursor in search.',
+              'In the desktop strip, Left and Right move focus, Enter or Space selects a tab, and Delete closes the focused tab. Closing the active tab selects its neighbour. The strip disappears when one tab remains.',
+              'Apply the shortcut to internal links and buttons with a destination. Play, Queue, Save and other commands keep their existing behavior. Browser link gestures remain available.',
+              'For the app, each workspace tab would keep its URL, filters, view, scroll position and inspector history for the browser session. Back should retrace navigation within the active tab. The player stays shared.',
+            ]),
+          },
+          {
+            id: 'decision',
+            title: 'Recommendation',
+            body: '<p>Use the on-demand strip for comparing films or keeping a filtered list open while working elsewhere in Media Manager. It costs one row only while multiple destinations are open. The app would need to restore each tab’s state.</p><p><a class="g-link" href="concept-browser-tabs.html">Try browser tabs</a> for occasional side trips. The browser already manages switching, closing and history. Each destination appears among your other browser tabs.</p>',
+          },
+        ],
+      })
+
+      function filmDetails(film, actions) {
+        return (
+          DS.detailHead({
+            kind: 'Film',
+            item: film,
+            by: esc(film.by),
+            actions,
+            facts: [film.year, film.runtime],
+          }) +
+          DS.section(
+            'Ratings',
+            DS.facts([
+              ['IMDb', film.imdb],
+              ['Metacritic', film.mc],
+              ['Rotten Tomatoes', film.rt],
+              ['Letterboxd', film.lb],
+            ]),
+          ) +
+          DS.section('Tags', DS.pills(film.tags, { pill: { static: true } }))
+        )
+      }
+
+      function more(label, items) {
+        return `<details class="card-menu"><summary class="ds-btn" data-variant="ghost" data-icon aria-label="${esc(label)}" title="${esc(label)}">${icon('more')}</summary><div class="ds-pop">${items}</div></details>`
+      }
+
+      function openAction(i) {
+        return `<button type="button" class="ds-menu-item" data-open="${i}">${icon('layers')}Open in workspace tab</button>`
+      }
+
+      function filmCards() {
+        return films
+          .map((film, i) => {
+            const destination = `href="${filmHref(film)}" data-destination="${i}" aria-keyshortcuts="Alt+Enter"`
+            return `<article class="ds-card" data-card="${i}">
+            <a ${destination} aria-label="Inspect ${esc(film.title)}">${DS.artBox(film)}</a>
+            <div class="card-line"><a class="ds-card-title" ${destination}>${esc(film.title)}</a>${more('More actions for ' + film.title, openAction(i))}</div>
+            <span class="ds-card-by">${esc(film.by)}</span><div class="ds-card-meta"><span>${film.year}</span><span>${film.runtime}</span></div>
+          </article>`
+          })
+          .join('')
+      }
+
+      function workspace(root, previewFilm) {
+        const tools = root.querySelector('.tab-tools')
+        const panels = root.querySelector('.sample-panels')
+        const status = root.querySelector('[role="status"]')
+        const narrow = matchMedia('(max-width: 700px)')
+        const tabs = []
+        let active
+        let serial = 0
+        const newBrowse =
+          '<button type="button" class="ds-menu-item" data-new>' +
+          icon('plus') +
+          'New browse tab</button>'
+        const title = (tab) =>
+          tab.film
+            ? tab.film.title
+            : tab.query
+              ? 'Films · ' + tab.query
+              : 'Films'
+        const findTab = (id) => tabs.find((tab) => tab.id === id)
+
+        function drawTools() {
+          tools.hidden = tabs.length === 1
+          tools.innerHTML = `<div class="tab-list" role="tablist" aria-label="Workspace tabs">${tabs.map((tab) => `<button type="button" class="ds-btn" data-variant="ghost" role="tab" aria-controls="${tab.id}" aria-selected="${tab === active}" tabindex="${tab === active ? 0 : -1}" data-select="${tab.id}">${icon(tab.film ? 'film' : 'grid')}${esc(title(tab))}</button>`).join('')}</div>
+            <label class="picker-label">Tabs ${DS.count(tabs.length)}<select class="ds-select" aria-label="Workspace tabs">${tabs.map((tab) => `<option value="${tab.id}" ${tab === active ? 'selected' : ''}>${esc(title(tab))}</option>`).join('')}</select></label>
+            <button type="button" class="ds-btn" data-icon data-variant="ghost" data-new aria-label="New browse tab" title="New browse tab">${icon('plus')}</button>
+            <button type="button" class="ds-btn ds-toolbar-end" data-icon data-variant="ghost" data-close aria-label="Close ${esc(title(active))} tab" title="Close current tab">${icon('x')}</button>`
+          for (const tab of tabs) {
+            tab.panel.hidden = tab !== active
+            tab.panel.setAttribute(
+              'role',
+              tabs.length > 1 && !narrow.matches ? 'tabpanel' : 'region',
+            )
+            tab.panel.setAttribute('aria-label', title(tab))
+          }
+        }
+
+        function focusActive() {
+          const control = tools.hidden
+            ? active.panel.querySelector('input, [data-new-menu] summary')
+            : tools.querySelector(
+                narrow.matches ? 'select' : '[aria-selected="true"]',
+              )
+          control?.focus()
+        }
+
+        function renderPage(panel, film) {
+          const pageMenu =
+            '<span data-new-menu>' + more('Page actions', newBrowse) + '</span>'
+          panel.innerHTML = film
+            ? '<div class="sample-detail">' +
+              filmDetails(film, '<span class="ds-spacer"></span>' + pageMenu) +
+              '</div>'
+            : `<header class="sample-head"><h3 class="sample-title">${icon('grid', { size: 'sm' })}Films</h3>
+                <label class="ds-search">${icon('search')}<input type="search" placeholder="Search films" aria-label="Search films"></label>${pageMenu}</header>
+                <div class="ds-grid sample-grid">${filmCards()}</div><p class="sample-empty" hidden>No films match this search.</p>`
+        }
+
+        function create(film, foreground) {
+          const panel = document.createElement('div')
+          panel.id = root.id + '-panel-' + ++serial
+          panel.className = 'sample-stage'
+          renderPage(panel, film)
+          panels.append(panel)
+          const tab = { panel, id: panel.id, film, query: '' }
+          tabs.push(tab)
+          if (foreground) active = tab
+          drawTools()
+          return tab
+        }
+
+        function openFilm(i) {
+          const film = films[i]
+          if (!film) return
+          create(film, false)
+          status.textContent =
+            film.title +
+            ' opened in a workspace tab. ' +
+            tabs.length +
+            ' tabs open.'
+        }
+
+        function dismissDrawer(drawer) {
+          const origin = drawer.parentElement.querySelector(
+            '.ds-card-title[data-destination="' + drawer.dataset.film + '"]',
+          )
+          for (const sibling of drawer.parentElement.children)
+            sibling.inert = false
+          drawer.remove()
+          origin?.focus()
+        }
+
+        function inspect(i) {
+          const film = films[i]
+          if (!film) return
+          for (const child of active.panel.children) child.inert = true
+          const drawer = document.createElement('aside')
+          drawer.className = 'ds-inspector sample-drawer'
+          drawer.dataset.film = i
+          drawer.setAttribute('role', 'dialog')
+          drawer.setAttribute('aria-label', film.title)
+          drawer.innerHTML = `<div class="ds-inspector-bar"><div class="ds-crumbs">Films ${icon('chevR')}<b>${esc(film.title)}</b></div>
+            <a class="ds-btn" href="${filmHref(film)}" data-page-link data-destination="${i}" aria-keyshortcuts="Alt+Enter">${icon('expand')}Open page</a>
+            <button type="button" class="ds-btn" data-icon data-variant="ghost" data-dismiss aria-label="Close inspector">${icon('x')}</button></div>
+            <div class="ds-inspector-body">${filmDetails(film, `<button type="button" class="ds-btn" data-open="${i}">${icon('layers')}Open in workspace tab</button>`)}</div>`
+          active.panel.append(drawer)
+          drawer.querySelector('[data-dismiss]').focus()
+        }
+
+        function closeTab(tab) {
+          if (tabs.length < 2) return
+          const index = tabs.indexOf(tab)
+          tabs.splice(index, 1)
+          tab.panel.remove()
+          if (tab === active) active = tabs[Math.min(index, tabs.length - 1)]
+          drawTools()
+          if (tools.hidden && active.panel.querySelector('[data-dismiss]'))
+            active.panel.querySelector('[data-dismiss]').focus()
+          else focusActive()
+          status.textContent = title(tab) + ' tab closed.'
+        }
+
+        root.addEventListener('input', (event) => {
+          if (!event.target.matches('input[type="search"]')) return
+          active.query = event.target.value
+          const query = active.query.trim().toLowerCase()
+          let found = false
+          for (const card of active.panel.querySelectorAll('[data-card]')) {
+            const film = films[Number(card.dataset.card)]
+            card.hidden = ![film.title, film.by].some((field) =>
+              field.toLowerCase().includes(query),
+            )
+            if (!card.hidden) found = true
+          }
+          active.panel.querySelector('.sample-empty').hidden = found
+          drawTools()
+        })
+
+        root.addEventListener('change', (event) => {
+          if (event.target.matches('.picker-label select')) {
+            active = findTab(event.target.value)
+            drawTools()
+            focusActive()
+          }
+        })
+
+        root.addEventListener('click', (event) => {
+          const button = event.target.closest('a,button,summary')
+          if (!button) return
+          const menu = button.closest('details')
+          if (menu && !button.matches('summary')) {
+            menu.open = false
+            menu.querySelector('summary').focus()
+          }
+          if (button.hasAttribute('data-open'))
+            openFilm(Number(button.dataset.open))
+          if (button.hasAttribute('data-new')) {
+            create(null, true).panel.querySelector('input').focus()
+          }
+          if (button.hasAttribute('data-select')) {
+            active = findTab(button.dataset.select)
+            drawTools()
+            focusActive()
+          }
+          if (button.hasAttribute('data-close')) closeTab(active)
+          if (button.hasAttribute('data-dismiss'))
+            dismissDrawer(button.closest('aside'))
+          if (
+            button.hasAttribute('data-destination') &&
+            event.button === 0 &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.shiftKey &&
+            !event.altKey
+          ) {
+            event.preventDefault()
+            const i = Number(button.dataset.destination)
+            if (button.hasAttribute('data-page-link')) {
+              active.film = films[i]
+              active.query = ''
+              renderPage(active.panel, active.film)
+              drawTools()
+              active.panel.querySelector('summary').focus()
+            } else inspect(i)
+          }
+        })
+
+        root.addEventListener('keydown', (event) => {
+          const destination = event.target.closest('[data-destination]')
+          if (
+            event.key === 'Enter' &&
+            event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.shiftKey &&
+            destination
+          ) {
+            event.preventDefault()
+            if (!event.repeat) openFilm(Number(destination.dataset.destination))
+            return
+          }
+          if (event.key === 'Escape') {
+            const menu = event.target.closest('details[open]')
+            if (menu) {
+              menu.open = false
+              menu.querySelector('summary').focus()
+            } else if (event.target.closest('.sample-drawer'))
+              dismissDrawer(event.target.closest('.sample-drawer'))
+            return
+          }
+          const tab = event.target.closest('[role="tab"]')
+          if (!tab) return
+          const position = tabs.indexOf(findTab(tab.dataset.select))
+          const keys = {
+            ArrowLeft: (position - 1 + tabs.length) % tabs.length,
+            ArrowRight: (position + 1) % tabs.length,
+            Home: 0,
+            End: tabs.length - 1,
+          }
+          if (Object.hasOwn(keys, event.key)) {
+            event.preventDefault()
+            tools.querySelectorAll('[role="tab"]')[keys[event.key]].focus()
+          }
+          if (event.key === 'Delete') {
+            event.preventDefault()
+            closeTab(tabs[position])
+          }
+        })
+        create(null, true)
+        if (previewFilm) create(films[0], true)
+        narrow.addEventListener('change', drawTools)
+      }
+
+      workspace(document.querySelector('#single-demo'), false)
+      workspace(document.querySelector('#multiple-demo'), true)
+      document.addEventListener('click', (event) => {
+        for (const menu of document.querySelectorAll('.sample details[open]')) {
+          if (!menu.contains(event.target)) menu.open = false
+        }
+      })
+    </script>
+  </body>
+</html>
