@@ -4,6 +4,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { trackBrowseFields } from '@repo/schemas/browse'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -335,4 +336,128 @@ it('bounds a hydrated Track page and exact total with playlist, current artist t
       unfilteredCount: 20_000,
     })
   })
+})
+
+it('bounds live Track autocomplete on shared artist and album tags', async () => {
+  const { listBrowseFacets } = await import('@/services/browse')
+  await pool.query(`
+    update library_track
+    set album_media_item_id = 'album-' || ((substring(media_item_id from 7)::int - 1) % 1000 + 1);
+
+    insert into tag (id, media_type, name, kind)
+    select 'tag-rich-' || n, 'album', 'Fixture Genre ' || lpad(n::text, 2, '0'), 'genre'
+    from generate_series(1, 64) n;
+    insert into tag (id, media_type, name, kind, hidden) values
+      ('tag-rich-parent', 'album', 'Fixture Parent', 'genre', false),
+      ('tag-rich-alias', 'album', 'Original Fixture Label', 'genre', true),
+      ('tag-rich-hidden', 'album', 'Hidden Fixture Label', 'genre', true);
+    insert into tag_alias (source_tag_id, target_tag_id) values ('tag-rich-alias', 'tag-rich-1');
+    insert into tag_identity (media_type, normalized_name, kind, tag_id)
+    values ('album', 'original fixture label', 'genre', 'tag-rich-1');
+    insert into tag_parent (media_type, child_key, parent_key)
+    values ('album', 'fixture genre 01', 'fixture parent');
+    insert into tag_ancestor (media_type, descendant_key, ancestor_key)
+    values ('album', 'fixture genre 01', 'fixture parent');
+    insert into media_item_tag (media_item_id, tag_id)
+    select 'album-' || n, 'tag-rich-' || label
+    from generate_series(1, 1000) n
+    cross join lateral generate_series(1, case when n % 2 = 0 then 32 else 1 end) label;
+    insert into media_item_tag (media_item_id, tag_id)
+    values ('album-1', 'tag-rich-hidden');
+
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    select 'facet-profile-' || n, 'artist-' || n, 'lastfm', '{}',
+      jsonb_build_object('tags', (select jsonb_agg('Fixture Genre ' || lpad(label::text, 2, '0'))
+        from generate_series(2, 48) label)
+        || jsonb_build_array(
+          case when n % 2 = 1 then 'Original Fixture Label' else 'Fixture Genre 01' end,
+          'Hidden Fixture Label'
+        ))
+    from generate_series(1, 1000) n;
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    select 'artist-' || n, 'lastfm', 'facet-profile-' || n
+    from generate_series(1, 1000) n;
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'track-' || n, 'artist-' || (n % 1000 + 1), 'artist'
+    from generate_series(1, 20000) n where n % 2 = 0;
+
+    insert into media_item (id, slug, media_type, title, source_label, metadata) values
+      ('retained-facet-source', 'retained-facet-source', 'track', 'Fixture Retained', 'lastfm', '{}'),
+      ('archived-facet-track', 'archived-facet-track', 'track', 'Fixture Archived', null, '{"legacyHidden":true}');
+    insert into library_track (media_item_id) values ('retained-facet-source'), ('archived-facet-track');
+    update library_track set spotify_track_id = 'fixture-spotify-track' where media_item_id = 'track-1';
+    insert into media_credit (media_item_id, artist_id, role) values
+      ('retained-facet-source', 'artist-1', 'artist'), ('archived-facet-track', 'artist-1', 'artist');
+    insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id)
+    values ('fixture-listener', 'retained-artist', 'retained-recording', 'retained-facet-source');
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    values ('fixture-listener', 'retained-artist', 'retained-recording', 'track-1', 'exact');
+
+    insert into track_facet_state (singleton, builder, maintenance_only)
+    values (true, current_user, true)
+    on conflict (singleton) do update set maintenance_only = true;
+  `)
+  for (const table of [
+    'library_track',
+    'media_credit',
+    'tag',
+    'media_item_tag',
+    'artist_provider_snapshot',
+    'artist_provider_current_state',
+  ]) {
+    await pool.query(`vacuum analyze ${table}`)
+  }
+
+  await checkBudget(
+    'tag-rich broad live Track autocomplete',
+    8_000,
+    9,
+    async () => {
+      const facets = await listBrowseFacets('track', {
+        q: 'e',
+        limitPerField: 50,
+      })
+      const count = (field: string, value: string) =>
+        facets.find((row) => row.field === field && row.value === value)?.count
+      expect(count('albumTag', 'fixture genre 01')).toBe(20_000)
+      expect(count('albumTag', 'fixture genre 02')).toBe(10_000)
+      expect(count('artistTag', 'fixture genre 01')).toBe(20_000)
+      expect(count('artistTag', 'fixture genre 48')).toBe(20_000)
+      expect(count('genre', 'fixture genre 02')).toBe(20_000)
+      expect(count('genre', 'fixture genre 48')).toBe(10_000)
+      expect(count('genre', 'fixture parent')).toBe(20_000)
+      expect(count('artistTag', 'original fixture label')).toBeUndefined()
+      expect(count('artistTag', 'hidden fixture label')).toBeUndefined()
+    },
+  )
+  await checkBudget(
+    'tag-rich selective live Track autocomplete',
+    4_500,
+    5,
+    async () => {
+      const facets = await listBrowseFacets('track', { q: 'Genre 48' })
+      expect(
+        facets.map(({ field, value, count }) => ({ field, value, count })),
+      ).toEqual([
+        { field: 'artistTag', value: 'fixture genre 48', count: 20_000 },
+        { field: 'genre', value: 'fixture genre 48', count: 10_000 },
+      ])
+    },
+  )
+  const retainedFacets = await listBrowseFacets(
+    'track',
+    { q: 'Genre 48' },
+    {
+      includeLastfmSourceRows: true,
+      fields: trackBrowseFields.filter(
+        ({ key }) => key === 'artistTag' || key === 'genre',
+      ),
+    },
+  )
+  expect(
+    retainedFacets.map(({ field, value, count }) => ({ field, value, count })),
+  ).toEqual([
+    { field: 'artistTag', value: 'fixture genre 48', count: 20_001 },
+    { field: 'genre', value: 'fixture genre 48', count: 10_001 },
+  ])
 })

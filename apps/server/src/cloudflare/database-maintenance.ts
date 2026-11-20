@@ -1,7 +1,10 @@
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { writeRequestLog } from '@/lib/request-log'
-import { refreshTrackFacetVocabularyForMaintenance } from '@/services/browse'
+import {
+  refreshRecordingBrowseOrderForMaintenance,
+  refreshTrackFacetVocabularyForMaintenance,
+} from '@/services/browse'
 
 /** One bounded round trip on a fresh invocation pool, even when the library is idle. */
 async function probeDatabase() {
@@ -19,22 +22,38 @@ async function probeDatabase() {
   }
 }
 
+async function refreshCache(
+  event: 'database.facet-maintenance' | 'database.recording-order-maintenance',
+  refresh: () => Promise<boolean>,
+) {
+  const refreshStart = performance.now()
+  let outcome: 'skipped' | 'published' | 'failed' = 'failed'
+  try {
+    outcome = (await refresh()) ? 'published' : 'skipped'
+  } finally {
+    writeRequestLog({
+      event,
+      outcome,
+      durationMs: performance.now() - refreshStart,
+    })
+  }
+}
+
 export async function runDatabaseMaintenance(scheduledTime: number) {
   // The existing five-minute maintenance cron also supplies one daily probe.
   const tick = new Date(scheduledTime)
   if (tick.getUTCHours() === 20 && tick.getUTCMinutes() === 0)
     await probeDatabase()
-  const refreshStart = performance.now()
-  let outcome: 'skipped' | 'published' | 'failed' = 'failed'
-  try {
-    outcome = (await refreshTrackFacetVocabularyForMaintenance())
-      ? 'published'
-      : 'skipped'
-  } finally {
-    writeRequestLog({
-      event: 'database.facet-maintenance',
-      outcome,
-      durationMs: performance.now() - refreshStart,
-    })
-  }
+  const outcomes = await Promise.allSettled([
+    refreshCache(
+      'database.facet-maintenance',
+      refreshTrackFacetVocabularyForMaintenance,
+    ),
+    refreshCache(
+      'database.recording-order-maintenance',
+      refreshRecordingBrowseOrderForMaintenance,
+    ),
+  ])
+  for (const outcome of outcomes)
+    if (outcome.status === 'rejected') throw outcome.reason
 }

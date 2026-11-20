@@ -21,7 +21,7 @@ interface RequestLogDetails {
 }
 
 type RequestPhase =
-  | 'auth'
+  | 'accessCheck'
   | 'ids'
   | 'hydrate'
   | 'count'
@@ -59,7 +59,9 @@ interface SonosDispatch {
 type RequestEvent =
   | { event: 'database.probe'; outcome: 'ok' | 'failed'; durationMs: number }
   | {
-      event: 'database.facet-maintenance'
+      event:
+        | 'database.facet-maintenance'
+        | 'database.recording-order-maintenance'
       outcome: 'published' | 'skipped' | 'failed'
       durationMs: number
     }

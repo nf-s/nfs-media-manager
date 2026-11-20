@@ -388,6 +388,12 @@ const RecordingOrderReadSchema = z.object({
 const cleanOrder = sql`not exists (select 1 from recording_browse_order_dirty)`
 // Bump when the unfiltered membership or order changes, including tie-breaks.
 const orderBuilder = sql`current_user || ':v1'`
+const staleOrder = sql`(recording_browse_order_state.total_count is null
+  or recording_browse_order_state.builder <> ${orderBuilder}
+  or not (${cleanOrder}))`
+const foregroundOrderBudget = 3500
+const OrderLeaseSchema = z.object({ lease: z.string() })
+const MissingMaintenanceColumn = z.object({ code: z.literal('42703') })
 
 /** Check for committed changes and read ranks within the same snapshot. */
 export async function readRecordingBrowseOrder(rows?: SQL) {
@@ -401,8 +407,9 @@ export async function readRecordingBrowseOrder(rows?: SQL) {
         where singleton and builder = ${orderBuilder} and ${cleanOrder}
       ) select (select total_count from current_order) as total_count,
         not exists (
-          select 1 from recording_browse_order_state
-          where singleton and retry_after > statement_timestamp()
+          select 1 from recording_browse_order_state s
+          where singleton and (retry_after > statement_timestamp()
+            or to_jsonb(s)->>'maintenance_only' is distinct from 'false')
         ) as can_refresh,
         case when (select total_count from current_order) is not null
           then ${selected} else '[]'::jsonb end as rows`)
@@ -418,36 +425,55 @@ export function recordingBrowseOrderRows(rank: SQL, condition: SQL) {
     ${rank} as rank from recording_browse_order g where ${condition} order by ${rank}`
 }
 
+async function claimRecordingOrderRefresh(foreground: boolean) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`set local lock_timeout = '100ms'`)
+    const result = await tx.execute(
+      foreground
+        ? // An interrupted foreground build keeps the request path disabled.
+          sql`insert into recording_browse_order_state
+            (singleton, builder, maintenance_only, retry_after)
+          select true, ${orderBuilder}, true, statement_timestamp() + interval '30 seconds'
+          where not exists (select 1 from recording_browse_order_state
+            where singleton and (maintenance_only or retry_after > statement_timestamp()))
+          on conflict (singleton) do update set maintenance_only = true, retry_after = excluded.retry_after
+          where not recording_browse_order_state.maintenance_only
+            and recording_browse_order_state.retry_after <= statement_timestamp()
+            and ${staleOrder}
+          returning retry_after::text as lease`
+        : sql`update recording_browse_order_state
+          set retry_after = statement_timestamp() + interval '120 seconds'
+          where singleton and retry_after <= statement_timestamp() and ${staleOrder}
+          returning retry_after::text as lease, maintenance_only`,
+    )
+    const row = result.rows[0]
+    return row ? OrderLeaseSchema.parse(row).lease : undefined
+  })
+}
+
 /** Publish ranks and clear only the dirty markers visible to the builder. */
 export async function refreshRecordingBrowseOrder(
   order: SQL,
-  selectedRows: SQL,
+  selectedRows?: SQL,
 ) {
-  const deadline = performance.now() + 3500
+  const foreground = selectedRows !== undefined
+  const started = performance.now()
+  const deadline = started + (foreground ? foregroundOrderBudget : 60_000)
   const expired = new Error('Recording order refresh exceeded its budget')
+  let lease: string | undefined
   try {
-    const claimed = await db.transaction(async (tx) => {
-      await tx.execute(sql`set local lock_timeout = '100ms'`)
-      const claim = await tx.execute(sql`
-        insert into recording_browse_order_state (singleton, builder, retry_after)
-        values (true, ${orderBuilder}, statement_timestamp() + interval '30 seconds')
-        on conflict (singleton) do update set retry_after = excluded.retry_after
-        where recording_browse_order_state.retry_after <= statement_timestamp()
-          and (recording_browse_order_state.total_count is null
-            or recording_browse_order_state.builder <> excluded.builder
-            or not (${cleanOrder}))
-        returning 1`)
-      return claim.rows.length > 0
-    })
-    if (!claimed) return undefined
+    lease = await claimRecordingOrderRefresh(foreground)
+    if (!lease) return undefined
+    const claimed = sql`singleton and retry_after = ${lease}::timestamptz`
 
     return await db.transaction(
       async (tx) => {
-        await tx.execute(sql`set local lock_timeout = '100ms'`)
         const guard =
-          await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(
+          await tx.execute(sql`select set_config('lock_timeout', '100ms', true),
+          set_config('jit', 'off', true),
+          pg_try_advisory_xact_lock(hashtextextended(
             current_schema() || ':recording_browse_order', 0
-          )) as ready`)
+          )) and exists (select 1 from recording_browse_order_state where ${claimed}) as ready`)
         if (!z.object({ ready: z.boolean() }).parse(guard.rows[0]).ready)
           return undefined
 
@@ -476,8 +502,17 @@ export async function refreshRecordingBrowseOrder(
           ) update recording_browse_order_state set
             builder = ${orderBuilder},
             total_count = (select count(*)::int from inserted),
+            maintenance_only = ${foreground ? sql`false` : sql`maintenance_only`},
             retry_after = clock_timestamp() + interval '5 seconds'
-          where singleton`)
+          where ${claimed}`)
+        if (!selectedRows) {
+          if (performance.now() - started >= foregroundOrderBudget) {
+            await useRemainingBudget()
+            await tx.execute(sql`update recording_browse_order_state
+              set maintenance_only = true where singleton and not maintenance_only`)
+          }
+          return []
+        }
         await useRemainingBudget()
         const result = await tx.execute(selectedRows)
         return RecordingGroupPositionRowsSchema.parse(result.rows)
@@ -485,7 +520,13 @@ export async function refreshRecordingBrowseOrder(
       { isolationLevel: 'repeatable read' },
     )
   } catch (error) {
-    if (error !== expired && !canReadDatabaseWithoutCache(error)) throw error
+    const cause = error instanceof Error ? (error.cause ?? error) : error
+    if (
+      error !== expired &&
+      !(!lease && MissingMaintenanceColumn.safeParse(cause).success) &&
+      !canReadDatabaseWithoutCache(error)
+    )
+      throw error
     return undefined
   }
 }

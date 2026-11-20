@@ -337,6 +337,13 @@
       "when": 1795171229108,
       "tag": "0047_scope_artist_profile_facet_invalidation",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1795171679744,
+      "tag": "0048_grouped_recording_order_maintenance",
+      "breakpoints": true
     }
   ]
 }

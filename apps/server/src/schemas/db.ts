@@ -209,6 +209,7 @@ export const recordingBrowseOrderState = pgTable(
     singleton: boolean('singleton').primaryKey(),
     builder: text('builder').notNull(),
     totalCount: integer('total_count'),
+    maintenanceOnly: boolean('maintenance_only').default(false).notNull(),
     retryAfter: timestamp('retry_after', { withTimezone: true })
       .defaultNow()
       .notNull(),

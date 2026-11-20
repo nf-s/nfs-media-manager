@@ -25,9 +25,10 @@ const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database: name })
 const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
 const database = drizzle(pool, { schema, logger: { logQuery } })
+let requestDatabase = database
 vi.mock('@/lib/db', () => ({
   get db() {
-    return database
+    return requestDatabase
   },
 }))
 vi.mock('@/plugins/registry', () => ({
@@ -613,13 +614,19 @@ it('uses conflicting recording evidence from editions excluded by filters', asyn
 })
 
 it('reuses one exact grouped order for opposite sorts, deep pages, positions and totals', async () => {
-  const { queryBrowseCount, queryBrowsePageIds, queryBrowsePositions } =
-    await import('@/services/browse')
+  const {
+    queryBrowseCount,
+    queryBrowsePageIds,
+    queryBrowsePositions,
+    refreshRecordingBrowseOrderForMaintenance,
+  } = await import('@/services/browse')
   const query = TrackQuerySchema.parse({
     groupRecordings: true,
     sortBy: 'scrobbles',
     size: 2,
   })
+  await pool.query('delete from recording_browse_order_state')
+  expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(false)
   await pool.query(`
     insert into media_item (id, slug, media_type, title) values
       ('cached-recording-a', 'cached-recording-a', 'track', 'Fixture cached recording'),
@@ -657,6 +664,10 @@ it('reuses one exact grouped order for opposite sorts, deep pages, positions and
     update recording_browse_order_state set retry_after = statement_timestamp();
   `)
   await queryBrowsePageIds('track', query)
+  await pool.query(
+    'update recording_browse_order_state set retry_after = statement_timestamp()',
+  )
+  expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(false)
   logQuery.mockClear()
   expect(await pagesAndPositions()).toEqual(live)
   expect(
@@ -687,7 +698,8 @@ it('reuses one exact grouped order for opposite sorts, deep pages, positions and
 })
 
 it('publishes grouped ranks atomically around concurrent writes and older snapshots', async () => {
-  const { queryBrowsePageIds } = await import('@/services/browse')
+  const { queryBrowsePageIds, refreshRecordingBrowseOrderForMaintenance } =
+    await import('@/services/browse')
   const query = TrackQuerySchema.parse({
     groupRecordings: true,
     sortBy: 'scrobbles',
@@ -739,6 +751,7 @@ it('publishes grouped ranks atomically around concurrent writes and older snapsh
           ),
         ).toBe(true),
       )
+      expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(false)
       await pool.query(`
         update library_track set scrobble_count = 200 where media_item_id = 'track-2';
       `)
@@ -774,60 +787,156 @@ it('publishes grouped ranks atomically around concurrent writes and older snapsh
   }
 })
 
-it('returns exact live rows and backs off after a canceled order publication', async () => {
-  const { queryBrowsePageIds } = await import('@/services/browse')
+it.each(['canceled', 'timed-out'])(
+  'keeps exact live rows and schedules maintenance after a %s order publication',
+  async (outcome) => {
+    const { queryBrowsePageIds, refreshRecordingBrowseOrderForMaintenance } =
+      await import('@/services/browse')
+    const query = TrackQuerySchema.parse({
+      groupRecordings: true,
+      sortBy: 'scrobbles',
+      size: 1,
+    })
+    const first = () => queryBrowsePageIds('track', query)
+    await pool.query(`
+      update recording_browse_order_state set
+        maintenance_only = false, retry_after = statement_timestamp();
+    `)
+    await first()
+    const failure =
+      outcome === 'canceled'
+        ? "raise exception 'Fixture statement canceled' using errcode = '57014';"
+        : 'perform pg_sleep(4);'
+    const scrobbles = outcome === 'canceled' ? 998 : 999
+    await pool.query(`
+      update library_track set scrobble_count = ${scrobbles} where media_item_id = 'track-2';
+      update recording_browse_order_state set retry_after = statement_timestamp();
+      create function fixture_slow_recording_order() returns trigger language plpgsql as $$
+      begin
+        ${failure}
+        return null;
+      end;
+      $$;
+      create trigger fixture_slow_recording_order before insert on recording_browse_order
+      for each statement execute function fixture_slow_recording_order();
+    `)
+    try {
+      expect((await first()).ids).toEqual(['track-2'])
+      expect(
+        (
+          await pool.query(
+            'select maintenance_only from recording_browse_order_state',
+          )
+        ).rows,
+      ).toEqual([{ maintenance_only: true }])
+      expect(
+        (
+          await pool.query(
+            'select count(*)::int as total from recording_browse_order_dirty',
+          )
+        ).rows,
+      ).toEqual([{ total: 1 }])
+      await pool.query(
+        'update recording_browse_order_state set retry_after = statement_timestamp()',
+      )
+      logQuery.mockClear()
+      expect((await first()).ids).toEqual(['track-2'])
+      expect(
+        logQuery.mock.calls.some(([statement]) =>
+          statement.includes('insert into recording_browse_order_state'),
+        ),
+      ).toBe(false)
+
+      // A genuine four-second publication only fits in the maintenance budget.
+      expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(
+        outcome === 'timed-out',
+      )
+    } finally {
+      await pool.query(`
+        drop trigger fixture_slow_recording_order on recording_browse_order;
+        drop function fixture_slow_recording_order();
+      `)
+    }
+    if (outcome === 'canceled') {
+      await pool.query(
+        'update recording_browse_order_state set retry_after = statement_timestamp()',
+      )
+      expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
+    }
+    logQuery.mockClear()
+    expect((await first()).ids).toEqual(['track-2'])
+    expect(
+      logQuery.mock.calls.some(([statement]) =>
+        statement.includes('recording_matches'),
+      ),
+    ).toBe(false)
+    expect(
+      (
+        await pool.query(
+          'select maintenance_only from recording_browse_order_state',
+        )
+      ).rows,
+    ).toEqual([{ maintenance_only: true }])
+  },
+)
+
+it('keeps grouped Browse exact before the rank-maintenance migration', async () => {
+  const { queryBrowsePageIds, refreshRecordingBrowseOrderForMaintenance } =
+    await import('@/services/browse')
   const query = TrackQuerySchema.parse({
     groupRecordings: true,
     sortBy: 'scrobbles',
     size: 1,
   })
-  const first = () => queryBrowsePageIds('track', query)
   await pool.query(`
     update recording_browse_order_state set retry_after = statement_timestamp();
   `)
-  await first()
-  await pool.query(`
-    update library_track set scrobble_count = 999 where media_item_id = 'track-2';
-    update recording_browse_order_state set retry_after = statement_timestamp();
-    create function fixture_cancel_recording_order() returns trigger language plpgsql as $$
-    begin
-      raise exception 'Fixture statement canceled' using errcode = '57014';
-    end;
-    $$;
-    create trigger fixture_cancel_recording_order before insert on recording_browse_order
-    for each statement execute function fixture_cancel_recording_order();
-  `)
+  const before = await queryBrowsePageIds('track', query)
+  await pool.query(
+    'alter table recording_browse_order_state drop column maintenance_only',
+  )
   try {
-    expect((await first()).ids).toEqual(['track-2'])
-    expect(
-      (
-        await pool.query(
-          'select count(*)::int as total from recording_browse_order_dirty',
-        )
-      ).rows,
-    ).toEqual([{ total: 1 }])
-    logQuery.mockClear()
-    expect((await first()).ids).toEqual(['track-2'])
-    expect(
-      logQuery.mock.calls.some(([statement]) =>
-        statement.includes('insert into recording_browse_order_state'),
-      ),
-    ).toBe(false)
+    expect(await queryBrowsePageIds('track', query)).toEqual(before)
+    await pool.query(`
+      delete from recording_browse_order_state;
+      update library_track set scrobble_count = 1001 where media_item_id = 'track-1';
+    `)
+    expect((await queryBrowsePageIds('track', query)).ids).toEqual(['track-1'])
+    expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(false)
   } finally {
     await pool.query(`
-      drop trigger fixture_cancel_recording_order on recording_browse_order;
-      drop function fixture_cancel_recording_order();
+      alter table recording_browse_order_state add column maintenance_only boolean not null default false
     `)
   }
-  await pool.query(
-    'update recording_browse_order_state set retry_after = statement_timestamp()',
-  )
-  expect((await first()).ids).toEqual(['track-2'])
-  logQuery.mockClear()
-  expect((await first()).ids).toEqual(['track-2'])
-  expect(
-    logQuery.mock.calls.some(([statement]) =>
-      statement.includes('recording_matches'),
-    ),
-  ).toBe(false)
+})
+
+it('falls back to live grouped rows over a read-only connection', async () => {
+  const { queryBrowsePageIds, refreshRecordingBrowseOrderForMaintenance } =
+    await import('@/services/browse')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'scrobbles',
+    size: 1,
+  })
+  await pool.query(`
+    insert into recording_browse_order_state
+      (singleton, builder, retry_after)
+    values (true, current_user, '-infinity')
+    on conflict (singleton) do update set
+      builder = excluded.builder, maintenance_only = false, retry_after = excluded.retry_after;
+    update library_track set scrobble_count = 1002 where media_item_id = 'track-2';
+  `)
+  const readerPool = new pg.Pool({
+    ...connection,
+    database: name,
+    options: '-c default_transaction_read_only=on',
+  })
+  requestDatabase = drizzle(readerPool, { schema, logger: { logQuery } })
+  try {
+    expect((await queryBrowsePageIds('track', query)).ids).toEqual(['track-2'])
+    expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(false)
+  } finally {
+    requestDatabase = database
+    await readerPool.end()
+  }
 })

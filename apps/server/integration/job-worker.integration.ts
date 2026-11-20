@@ -347,13 +347,16 @@ describe('exclusive worker lifecycle', () => {
     }
   })
 
-  it('warms a previously requested Tracks vocabulary on the scheduled check', async () => {
+  it('warms previously requested Tracks caches on the scheduled check', async () => {
     await pool.query(`
       insert into media_item (id, slug, media_type, title)
         values ('scheduled-track', 'scheduled-track', 'track', 'Scheduled Track');
       insert into library_track (media_item_id) values ('scheduled-track');
       insert into track_facet_state (singleton, builder, retry_after)
         values (true, 'fixture', '-infinity');
+      insert into recording_browse_order_state
+        (singleton, builder, maintenance_only, retry_after)
+        values (true, 'fixture', true, '-infinity');
     `)
     const worker = await start(20)
     try {
@@ -362,11 +365,17 @@ describe('exclusive worker lifecycle', () => {
           select count from track_facet_value
           where field = 'title' and value = 'Scheduled Track'`)
         expect(vocabulary.rows).toEqual([{ count: 1 }])
+        const order = await pool.query(`
+          select id from recording_browse_order where descending_rank = 1`)
+        expect(order.rows).toEqual([{ id: 'scheduled-track' }])
       })
       expect(fatal).not.toHaveBeenCalled()
     } finally {
       await worker.stop()
-      await pool.query('delete from track_facet_state')
+      await pool.query(`
+        delete from track_facet_state;
+        delete from recording_browse_order_state;
+      `)
     }
   })
 

@@ -1,0 +1,1 @@
+ALTER TABLE "recording_browse_order_state" ADD COLUMN "maintenance_only" boolean DEFAULT false NOT NULL;

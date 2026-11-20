@@ -78,7 +78,7 @@ export function authMiddleware({ sessionOnly = false } = {}) {
   return createMiddleware<{ Variables: AuthType }>(async (c, next) => {
     c.header('Cache-Control', 'no-store')
     if (c.get('session') === undefined)
-      await measureRequestPhase('auth', () => resolveCredentials(c))
+      await measureRequestPhase('accessCheck', () => resolveCredentials(c))
     requireOwnerUser(c)
     if (sessionOnly) requireBrowserSession(c)
     await next()

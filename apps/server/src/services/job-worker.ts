@@ -5,7 +5,10 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
-import { refreshTrackFacetVocabularyForMaintenance } from '@/services/browse'
+import {
+  refreshRecordingBrowseOrderForMaintenance,
+  refreshTrackFacetVocabularyForMaintenance,
+} from '@/services/browse'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -40,7 +43,7 @@ export async function startJobWorker({
   let released = false
   let timer: ReturnType<typeof setInterval> | undefined = undefined
   let processing: Promise<void> | undefined
-  let maintenance: Promise<boolean> | undefined
+  let maintenance: Promise<[boolean, boolean]> | undefined
   let checking: Promise<void> | undefined
   let stopPromise: Promise<void> | undefined
   let nextScheduleCheck = 0
@@ -189,14 +192,18 @@ export async function startJobWorker({
       await queueDueMixStationSync()
       await queueDueSpotifyPlaylistSyncs()
       if (!maintenance) {
-        maintenance = refreshTrackFacetVocabularyForMaintenance()
-          .catch(() => {
+        maintenance = Promise.all([
+          refreshTrackFacetVocabularyForMaintenance().catch(() => {
             console.error('Tracks autocomplete maintenance failed.')
             return false
-          })
-          .finally(() => {
-            maintenance = undefined
-          })
+          }),
+          refreshRecordingBrowseOrderForMaintenance().catch(() => {
+            console.error('Grouped Tracks order maintenance failed.')
+            return false
+          }),
+        ]).finally(() => {
+          maintenance = undefined
+        })
       }
     }
     processing = processQueuedJobs(() => !stopping)
