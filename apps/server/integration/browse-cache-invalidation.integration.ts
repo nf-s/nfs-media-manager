@@ -33,7 +33,8 @@ beforeAll(async () => {
   await pool.query(`create role ${writerRole}`)
   roleCreated = true
   await pool.query(
-    `grant update (title), select (id) on media_item to ${writerRole}`,
+    `grant update (title), select (id) on media_item to ${writerRole};
+      grant update (latest_snapshot_id) on artist_provider_current_state to ${writerRole};`,
   )
 })
 
@@ -222,6 +223,153 @@ describe('stored Track Browse invalidation', () => {
       `update media_item set metadata = '{"legacyHidden":true}' where id = 'film'`,
     )
     await expectMarkers(1)
+  })
+
+  it('preserves the vocabulary when tagged history is saved without publication', async () => {
+    await pool.query(`
+      insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('historic', 'artist', 'fixture', '{}', '{"tags":["Fixture tag"]}');
+    `)
+    await expectMarkers(0)
+  })
+
+  it('preserves the vocabulary when a profile publishes no usable tags', async () => {
+    await pool.query(`
+      insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('empty', 'artist', 'fixture', '{}', '{"tags":[" ",null]}');
+      insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+      values ('artist', 'fixture', 'empty');
+    `)
+    await expectMarkers(0)
+  })
+
+  it('preserves equivalent tag sets when replacing and editing the current profile', async () => {
+    await pool.query(`
+      insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('before', 'artist', 'fixture', '{}', '{"tags":["One","Two"]}'),
+             ('equivalent', 'artist', 'fixture', '{}', '{"tags":[" two ","ONE","One",""],"url":"https://example.com/"}');
+      insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+      values ('artist', 'fixture', 'before');
+    `)
+    await expectMarkers(1, 0)
+    await clearMarkers()
+    await pool.query(`
+      update artist_provider_current_state set latest_snapshot_id = 'equivalent';
+      update artist_provider_snapshot set normalized_data = '{"tags":["one","two"],"bio":"Fixture"}'
+      where id = 'equivalent';
+    `)
+    await expectMarkers(0)
+  })
+
+  it.each([
+    "update artist_provider_current_state set latest_snapshot_id = 'tagged'",
+    `update artist_provider_snapshot set normalized_data = '{"tags":["replacement"]}' where id = 'first'`,
+    "update artist_provider_current_state set artist_id = 'actor'",
+    "update artist_provider_current_state set latest_snapshot_id = 'empty'",
+    'delete from artist_provider_current_state',
+    "delete from artist_provider_snapshot where id = 'first'",
+    'truncate artist_provider_snapshot cascade',
+  ])('marks facets for artist tag changes through %s', async (statement) => {
+    await pool.query(`
+      insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('first', 'artist', 'fixture', '{}', '{"tags":["first"]}'),
+             ('tagged', 'artist', 'fixture', '{}', '{"tags":["tagged"]}'),
+             ('empty', 'artist', 'fixture', '{}', '{}');
+      insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+      values ('artist', 'fixture', 'first');
+    `)
+    await clearMarkers()
+    await pool.query(statement)
+    await expectMarkers(1, 0)
+  })
+
+  it('lets a restricted writer publish tags and rolls the marker back with the publication', async () => {
+    await pool.query(`
+      insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('empty', 'artist', 'fixture', '{}', '{}'),
+             ('tagged', 'artist', 'fixture', '{}', '{"tags":["tagged"]}');
+      insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+      values ('artist', 'fixture', 'empty');
+    `)
+    const client = await pool.connect()
+    try {
+      await client.query('begin')
+      await client.query(`set local role ${writerRole}`)
+      await client.query(`
+        create temporary table old_rows (unrelated integer) on commit drop;
+        create temporary table new_rows (unrelated integer) on commit drop;
+        create temporary table artist_provider_snapshot (unrelated integer) on commit drop;
+        update public.artist_provider_current_state set latest_snapshot_id = 'tagged';
+      `)
+      await expectMarkers(0)
+      await client.query('rollback')
+      await expectMarkers(0)
+      await client.query('begin')
+      await client.query(`set local role ${writerRole}`)
+      await client.query(
+        "update artist_provider_current_state set latest_snapshot_id = 'tagged'",
+      )
+      await client.query('commit')
+      await expectMarkers(1, 0)
+    } finally {
+      await client.query('rollback')
+      client.release()
+    }
+  })
+
+  it('checks the latest snapshot tags after a concurrent edit commits', async () => {
+    await pool.query(`
+      insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('first', 'artist', 'fixture', '{}', '{"tags":["equivalent"]}'),
+             ('next', 'artist', 'fixture', '{}', '{"tags":["equivalent"]}');
+      insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+      values ('artist', 'fixture', 'first');
+    `)
+    await clearMarkers()
+    const editor = await pool.connect()
+    const publisher = await pool.connect()
+    try {
+      const { rows } = await publisher.query(
+        'select pg_backend_pid() as publisher_pid',
+      )
+      const pid = rows[0]?.publisher_pid
+      await editor.query('begin')
+      await editor.query(`
+        update artist_provider_snapshot set normalized_data = '{"tags":["changed"]}'
+        where id = 'next'
+      `)
+      await publisher.query('begin')
+      const { rows: writer } = await publisher.query(
+        'select txid_current() as transaction_id',
+      )
+      const publication = publisher.query(
+        "update artist_provider_current_state set latest_snapshot_id = 'next'",
+      )
+      try {
+        await expect
+          .poll(async () => {
+            const { rows } = await admin.query(
+              'select cardinality(pg_blocking_pids($1)) as blockers',
+              [pid],
+            )
+            return rows[0]?.blockers
+          })
+          .toBe(1)
+      } finally {
+        await editor.query('commit')
+        await publication
+      }
+      await publisher.query('commit')
+      const { rows: markers } = await publisher.query(`
+        select transaction_id from track_facet_dirty order by transaction_id
+      `)
+      expect(markers).toEqual(writer)
+    } finally {
+      await editor.query('rollback')
+      await publisher.query('rollback')
+      editor.release()
+      publisher.release()
+    }
   })
 
   it('allows a restricted writer to mark dirty and publishes only after commit', async () => {
