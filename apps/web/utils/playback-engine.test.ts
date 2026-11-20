@@ -127,6 +127,8 @@ type SpotifyWorld = {
   snapshot: PlaybackSnapshot | null
   devices: PlaybackDevice[]
   failures: Error[]
+  contextTracks?: string[]
+  nativeQueue?: string[]
   /** The account's play history; null when it may not be read. */
   history?: PlayedTrack[] | null
 }
@@ -204,6 +206,26 @@ function harness(
     const failure = remote.failures.shift()
     if (failure) throw failure
   }
+  function spotifyQueue() {
+    const snapshot = remote.snapshot
+    const current = snapshot?.trackUri
+      ? { uri: snapshot.trackUri, linkedFromUri: snapshot.linkedFromUri }
+      : null
+    const uri = current?.linkedFromUri ?? current?.uri
+    const context = remote.contextTracks ?? []
+    const native = remote.nativeQueue ?? []
+    const contextIndex = uri ? context.indexOf(uri) : -1
+    const nativeIndex = uri ? native.indexOf(uri) : -1
+    if (contextIndex > 0) remote.contextTracks = context.slice(contextIndex)
+    if (nativeIndex >= 0) remote.nativeQueue = native.slice(nativeIndex + 1)
+    return {
+      current,
+      upcoming: [
+        ...(remote.nativeQueue ?? []),
+        ...(remote.contextTracks ?? []).slice(1),
+      ].map((uri) => ({ uri, linkedFromUri: null })),
+    }
+  }
   const api: PlayerApi = {
     async devices() {
       await command('devices')
@@ -217,7 +239,26 @@ function harness(
         snapshot: remote.snapshot && { ...remote.snapshot, at: clock },
       }
     },
-    play: (device, body) => command(`play ${device} ${JSON.stringify(body)}`),
+    async play(device, body) {
+      await command(`play ${device} ${JSON.stringify(body)}`)
+      remote.contextTracks =
+        body &&
+        typeof body === 'object' &&
+        'uris' in body &&
+        Array.isArray(body.uris)
+          ? body.uris.filter((uri): uri is string => typeof uri === 'string')
+          : []
+      remote.nativeQueue = []
+    },
+    async enqueue(device, uri) {
+      await command(`enqueue ${device} ${uri}`)
+      spotifyQueue()
+      remote.nativeQueue = [...(remote.nativeQueue ?? []), uri]
+    },
+    async queue() {
+      await command('queue')
+      return spotifyQueue()
+    },
     transfer: (device, play) => command(`transfer ${device} ${play}`),
     resume: (device) => command(`resume ${device}`),
     pause: (device) => command(`pause ${device}`),
@@ -2365,9 +2406,15 @@ test('a device that moves on to the next sent track is followed without another 
   // The edit reaches Spotify before the current track ends.
   setup.engine.enqueue(track)
   await advance(700)
-  const revised =
-    'play speaker {"uris":["spotify:track:source-1","spotify:track:single","spotify:track:source-2","spotify:track:source-3","spotify:track:source-4"],"position_ms":500}'
-  assert.deepEqual(setup.sent('play').slice(1), [revised])
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+  ])
+  const staged = await setup.api.queue()
+  assert.deepEqual(
+    staged.upcoming.map((item) => item.uri),
+    [track.uri, ...[2, 3, 4].map((index) => sourceTrack(index).uri)],
+  )
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(1).uri)
   assert.equal(setup.engine.getState().queue[0]?.item.uri, track.uri)
 
@@ -2382,7 +2429,106 @@ test('a device that moves on to the next sent track is followed without another 
   setup.remote.snapshot = playing(2, 500)
   await advance(3_000)
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(2).uri)
-  assert.equal(setup.sent('play').length, 2)
+  assert.equal(setup.sent('play').length, 1)
+  setup.engine.dispose()
+})
+
+test('queueing on Spotify Web Player does not restart the current track', async () => {
+  const setup = harness()
+  const device = { ...speaker, id: 'web-player', type: 'computer' }
+  const play = setup.api.play
+  setup.api.play = async (target, body) => {
+    await play(target, body)
+    setup.remote.snapshot = playing(0, 0)
+  }
+  await setup.engine.selectDevice({ kind: 'remote', device })
+  const source = fixtureSource(3)
+  setup.engine.play(sourceTrack(0), source)
+  await settle()
+  setup.remote.device = device
+  setup.remote.snapshot = playing(0, 14_000)
+  await advance(700)
+
+  setup.engine.enqueue(track)
+  await advance(700)
+  assert.equal(setup.sent('play').length, 1)
+  assert.equal(setup.remote.snapshot?.positionMs, 14_000)
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue web-player spotify:track:single',
+  ])
+  assert.equal((await setup.api.queue()).upcoming[0]?.uri, track.uri)
+  setup.engine.dispose()
+})
+
+test('Next skips to a track already accepted into the native Connect queue', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(3))
+  setup.remote.snapshot = playing(0, 14_000)
+  await advance(700)
+  setup.engine.enqueue(track)
+  await advance(700)
+  setup.engine.next()
+  await settle()
+  assert.deepEqual(setup.sent('next'), ['next speaker'])
+  assert.equal(setup.sent('play').length, 1)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: track.uri,
+    contextUri: null,
+  })
+  await advance(700)
+  assert.equal(setup.engine.getState().current?.uri, track.uri)
+  assert.deepEqual(setup.engine.getState().queue, [])
+  setup.engine.dispose()
+})
+
+test('clearing the last native entry stops at the boundary without replaying the current track', async () => {
+  const setup = harness()
+  await setup.engine.selectDevice({ kind: 'remote', device: speaker })
+  setup.remote.device = speaker
+  setup.engine.play(sourceTrack(0))
+  await settle()
+  setup.remote.snapshot = playing(0, 14_000)
+  await advance(700)
+  setup.engine.enqueue(track)
+  await advance(700)
+  setup.engine.clearQueue()
+  await advance(700)
+  assert.deepEqual(setup.sent('pause'), [])
+  assert.equal(setup.sent('play').length, 1)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: track.uri,
+    contextUri: null,
+  })
+  await advance(3_000)
+  assert.deepEqual(setup.sent('pause'), ['pause speaker'])
+  assert.equal(setup.engine.getState().current, null)
+  setup.engine.dispose()
+})
+
+test('a lost append response does not restart the queued track when Spotify plays it', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(3))
+  setup.remote.snapshot = playing(0, 14_000)
+  await advance(700)
+  const enqueue = setup.api.enqueue
+  setup.api.enqueue = async (device, uri) => {
+    await enqueue(device, uri)
+    throw new TypeError('Response unavailable')
+  }
+  setup.engine.enqueue(track)
+  await advance(700)
+  setup.remote.snapshot = playing(0, 198_000)
+  await advance(3_000)
+  setup.remote.snapshot = remoteSnapshot({
+    trackUri: track.uri,
+    contextUri: null,
+    positionMs: 250,
+  })
+  await advance(3_000)
+  assert.equal(setup.engine.getState().current?.uri, track.uri)
+  assert.equal(setup.sent('enqueue').length, 1)
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.engine.getState().queue, [])
   setup.engine.dispose()
 })
 
@@ -2397,33 +2543,37 @@ test('a refused Connect queue update keeps the last sent list and corrects the n
     [0, 1, 2].map((index) => sourceTrack(index).uri),
   )
 
-  const play = setup.api.play
-  setup.api.play = (device, body) => {
+  const enqueue = setup.api.enqueue
+  setup.api.enqueue = (device, uri) => {
     setup.remote.failures.push(new PlaybackApiError(403, null))
-    setup.api.play = play
-    return play(device, body)
+    setup.api.enqueue = enqueue
+    return enqueue(device, uri)
   }
   setup.engine.enqueue(track)
   await advance(700)
-  assert.equal(setup.sent('play').length, 2)
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+  ])
   assert.deepEqual(setup.engine.saved()?.session?.sent, sent)
   assert.equal(setup.engine.getState().queue[0]?.item.uri, track.uri)
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(0).uri)
 
   setup.remote.snapshot = playing(0, 198_000)
   await advance(3_000)
-  assert.equal(setup.sent('play').length, 2)
+  assert.equal(setup.sent('play').length, 1)
+  assert.equal(setup.sent('enqueue').length, 1)
   setup.remote.snapshot = playing(1, 500)
   await advance(3_000)
   assert.equal(setup.engine.getState().current?.uri, track.uri)
   assert.equal(setup.engine.getState().queue.length, 0)
-  assert.deepEqual(setup.sent('play').slice(2), [
+  assert.deepEqual(setup.sent('play').slice(1), [
     'play speaker {"uris":["spotify:track:single","spotify:track:source-1","spotify:track:source-2"]}',
   ])
   setup.engine.dispose()
 })
 
-test('a paused Connect queue edit takes effect when Play resumes at the saved position', async () => {
+test('a paused Connect queue edit uses plain resume and preserves the position', async () => {
   const setup = harness()
   await playSource(setup, fixtureSource(3))
   setup.remote.snapshot = playing(0, 14_000)
@@ -2440,22 +2590,26 @@ test('a paused Connect queue edit takes effect when Play resumes at the saved po
 
   setup.engine.toggle()
   await settle()
-  assert.deepEqual(setup.sent('play').slice(1), [
-    'play speaker {"uris":["spotify:track:source-0","spotify:track:single","spotify:track:source-1","spotify:track:source-2"],"position_ms":15000}',
+  setup.remote.snapshot = playing(0, 15_000)
+  await advance(700)
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('resume'), ['resume speaker'])
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
   ])
-  assert.deepEqual(setup.sent('resume'), [])
+  assert.equal((await setup.api.queue()).upcoming[0]?.uri, track.uri)
+  assert.equal(setup.engine.getState().snapshot?.positionMs, 15_000)
   assert.equal(setup.engine.getState().queue[0]?.item.uri, track.uri)
   setup.engine.dispose()
 })
 
-test('Connect stages the final order after queue edits made together', async () => {
+test('Connect appends coalesced edits and corrects a cleared native queue at the boundary', async () => {
   const setup = harness()
   await playSource(setup, fixtureSource(3))
   setup.remote.snapshot = playing(0, 14_000)
   await advance(700)
 
   setup.engine.enqueue(track)
-  await advance(100)
   setup.engine.enqueue(sourceTrack(10))
   setup.engine.enqueue(sourceTrack(11))
   const removed = setup.engine.getState().queue[2]
@@ -2463,23 +2617,33 @@ test('Connect stages the final order after queue edits made together', async () 
   setup.engine.removeFromQueue(removed.key)
   setup.engine.moveInQueue(1, 0)
   await advance(700)
-  assert.deepEqual(setup.sent('play').slice(1), [
-    'play speaker {"uris":["spotify:track:source-0","spotify:track:source-10","spotify:track:single","spotify:track:source-1","spotify:track:source-2"],"position_ms":14000}',
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue speaker spotify:track:source-10',
+    'enqueue speaker spotify:track:single',
   ])
+  assert.deepEqual(
+    (await setup.api.queue()).upcoming.map((item) => item.uri),
+    [sourceTrack(10).uri, track.uri, sourceTrack(1).uri, sourceTrack(2).uri],
+  )
 
   setup.remote.snapshot = playing(0, 16_000)
   setup.engine.clearQueue()
   setup.engine.enqueue(sourceTrack(12))
   await advance(700)
-  assert.deepEqual(setup.sent('play').slice(2), [
-    'play speaker {"uris":["spotify:track:source-0","spotify:track:source-12","spotify:track:source-1","spotify:track:source-2"],"position_ms":16000}',
-  ])
+  assert.equal(setup.sent('play').length, 1)
+  assert.equal(setup.sent('enqueue').length, 2)
+  assert.equal((await setup.api.queue()).upcoming[0]?.uri, sourceTrack(10).uri)
 
-  setup.remote.snapshot = playing(12, 500)
+  setup.remote.snapshot = playing(0, 198_000)
+  await advance(3_000)
+  setup.remote.snapshot = playing(10, 500)
   await advance(3_000)
   assert.equal(setup.engine.getState().current?.uri, sourceTrack(12).uri)
   assert.equal(setup.engine.getState().queue.length, 0)
-  assert.equal(setup.sent('play').length, 3)
+  assert.deepEqual(setup.sent('play').slice(1), [
+    'play speaker {"uris":["spotify:track:source-12","spotify:track:source-1","spotify:track:source-2"]}',
+  ])
   setup.engine.dispose()
 })
 
@@ -2491,6 +2655,7 @@ test('a last-moment Connect edit is checked at the track boundary', async () => 
   setup.engine.enqueue(track)
   await advance(100)
   assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('enqueue'), [])
 
   setup.remote.snapshot = playing(1, 100)
   await advance(400)
@@ -2501,33 +2666,62 @@ test('a last-moment Connect edit is checked at the track boundary', async () => 
   setup.engine.dispose()
 })
 
-test('a newer Connect queue edit follows an in-flight replacement', async () => {
+test('Connect leaves an unknown native queue entry alone', async () => {
+  const setup = harness()
+  await playSource(setup, fixtureSource(3))
+  setup.remote.snapshot = playing(0, 12_000)
+  await advance(700)
+  setup.remote.nativeQueue = ['spotify:track:external']
+  const reads = setup.sent('queue').length
+
+  setup.engine.enqueue(track)
+  await advance(700)
+  assert.ok(setup.sent('queue').length > reads)
+  assert.deepEqual(setup.sent('enqueue'), [])
+  assert.equal(setup.sent('play').length, 1)
+  assert.equal(setup.engine.getState().queue[0]?.item.uri, track.uri)
+  assert.equal(
+    (await setup.api.queue()).upcoming[0]?.uri,
+    'spotify:track:external',
+  )
+  setup.engine.dispose()
+})
+
+test('a newer Connect queue append waits for the in-flight append', async () => {
   const setup = harness()
   await playSource(setup, fixtureSource(3))
   setup.remote.snapshot = playing(0, 10_000)
   await advance(700)
-  const play = setup.api.play
-  let accept = () => {}
-  setup.api.play = async (device, body) => {
-    await play(device, body)
+  const enqueue = setup.api.enqueue
+  let accept: () => void = () => undefined
+  setup.api.enqueue = async (device, uri) => {
+    await enqueue(device, uri)
     await new Promise<void>((resolve) => {
       accept = resolve
     })
   }
   setup.engine.enqueue(track)
-  await advance(300)
+  await advance(700)
   setup.engine.enqueue(sourceTrack(9))
-  setup.engine.moveInQueue(1, 0)
-  await advance(100)
-  assert.equal(setup.sent('play').length, 2)
+  await advance(700)
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+  ])
   assert.equal(setup.engine.saved()?.session?.sent[1]?.uri, sourceTrack(1).uri)
 
-  setup.api.play = play
+  setup.api.enqueue = enqueue
   accept()
-  await advance(700)
-  assert.deepEqual(setup.sent('play').slice(2), [
-    'play speaker {"uris":["spotify:track:source-0","spotify:track:source-9","spotify:track:single","spotify:track:source-1","spotify:track:source-2"],"position_ms":10000}',
+  await advance(3_000)
+  assert.equal(setup.sent('play').length, 1)
+  assert.deepEqual(setup.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+    'enqueue speaker spotify:track:source-9',
   ])
+  assert.deepEqual(
+    (await setup.api.queue()).upcoming.map((item) => item.uri),
+    [track.uri, sourceTrack(9).uri, sourceTrack(1).uri, sourceTrack(2).uri],
+  )
   setup.engine.dispose()
 })
 
@@ -3468,10 +3662,12 @@ test('a saved session is picked up on another page from the track the device has
   first.engine.dispose()
 
   // The device played on with nothing open and is two tracks further.
-  const second = harness(undefined, undefined, {
-    browserId: 'page-two',
-    restoreSource,
-  })
+  const second = harness(
+    undefined,
+    undefined,
+    { browserId: 'page-two', restoreSource },
+    first.remote,
+  )
   second.remote.device = { ...speaker, active: true }
   second.remote.snapshot = playing(2, 5_000)
   await second.engine.restore(saved)
@@ -3490,13 +3686,18 @@ test('a saved session is picked up on another page from the track the device has
   // Nothing was sent to the device: it kept playing what it had.
   assert.deepEqual(second.sent('play'), [])
   assert.deepEqual(second.sent('transfer'), [])
+  assert.deepEqual(second.sent('enqueue'), [])
 
   // After rejoining, a fresh read delivers the edit saved just before close.
   second.remote.snapshot = playing(2, 25_000)
   await advance(3_000)
-  assert.match(
-    second.sent('play')[0] ?? '',
-    /^play speaker \{"uris":\["spotify:track:source-2","spotify:track:single","spotify:track:source-3"/,
+  assert.deepEqual(second.sent('play'), [])
+  assert.deepEqual(second.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+  ])
+  assert.deepEqual(
+    (await second.api.queue()).upcoming.slice(0, 2).map((item) => item.uri),
+    [track.uri, sourceTrack(3).uri],
   )
   second.remote.snapshot = remoteSnapshot({
     trackUri: track.uri,
@@ -3504,7 +3705,7 @@ test('a saved session is picked up on another page from the track the device has
   })
   await advance(3_000)
   assert.equal(second.engine.getState().current?.uri, track.uri)
-  assert.equal(second.sent('play').length, 1)
+  assert.deepEqual(second.sent('play'), [])
   second.engine.dispose()
 })
 
@@ -4025,10 +4226,11 @@ test('a queue change on a follower moves the session to that page', async () => 
     [track.uri],
   )
   assert.equal(taken.upcoming[0]?.item.uri, sourceTrack(1).uri)
-  // The new driver stages its edit at the current position.
-  assert.equal(two.sent('play').length, 1)
-  assert.equal(two.engine.saved()?.session?.sent[1]?.uri, track.uri)
-  assert.match(two.sent('play')[0] ?? '', /"position_ms":1000\}$/)
+  assert.deepEqual(two.sent('play'), [])
+  assert.deepEqual(two.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+  ])
+  assert.equal((await two.api.queue()).upcoming[0]?.uri, track.uri)
 
   // The first page finds out with its next exchange and shows the same queue.
   await advance(4_000)
@@ -4055,7 +4257,7 @@ test('a queue change on a follower moves the session to that page', async () => 
   await advance(3_000)
   assert.equal(two.sync.getState().current?.uri, track.uri)
   assert.equal(one.sent('play').length, played)
-  assert.equal(two.sent('play').length, 1)
+  assert.deepEqual(two.sent('play'), [])
   one.close()
   two.close()
 })
@@ -4090,13 +4292,11 @@ test('the upcoming tracks rearranged on one page are the same on the other', asy
     [sourceTrack(2).uri],
   )
   assert.deepEqual(upcomingNumbers(taken), [3, 1, 4, 6, 7])
-  assert.equal(two.sent('play').length, 2)
+  assert.deepEqual(two.sent('play'), [])
+  assert.deepEqual(two.sent('enqueue'), [])
   assert.deepEqual(
-    two.engine
-      .saved()
-      ?.session?.sent.slice(1, 7)
-      .map((item) => item.uri),
-    [2, 3, 1, 4, 6, 7].map((index) => sourceTrack(index).uri),
+    (await two.api.queue()).upcoming.slice(0, 5).map((item) => item.uri),
+    [1, 2, 3, 4, 5].map((index) => sourceTrack(index).uri),
   )
 
   await advance(4_000)
@@ -4650,27 +4850,68 @@ test('a Spotify device that played on with every page closed is rejoined where i
   again.close()
 })
 
-test('reopening follows a track from an unconfirmed Spotify queue replacement', async () => {
+test('reopening can queue another track after an already accepted Spotify addition', async () => {
+  const one = harness()
+  await playSource(one, savedFixtureSource(4))
+  one.remote.snapshot = playing(0, 5_000)
+  await advance(700)
+  one.engine.enqueue(track)
+  await advance(700)
+  const saved = transferred(one.engine.saved())
+  assert.equal(saved.session?.queuedThrough, 1)
+  one.engine.dispose()
+
+  const again = harness(undefined, undefined, { restoreSource }, one.remote)
+  await again.engine.restore(saved)
+  again.engine.enqueue(sourceTrack(12))
+  await advance(700)
+  assert.deepEqual(again.sent('enqueue'), [
+    'enqueue speaker spotify:track:source-12',
+  ])
+  assert.deepEqual(again.sent('play'), [])
+  assert.deepEqual(
+    (await again.api.queue()).upcoming.map((item) => item.uri),
+    [
+      track.uri,
+      sourceTrack(12).uri,
+      ...[1, 2, 3].map((i) => sourceTrack(i).uri),
+    ],
+  )
+  again.engine.dispose()
+})
+
+test('reopening follows a track from an in-flight Spotify queue append', async () => {
   const sessions = fakeSessions()
   const one = page('Chrome on Mac', sessions)
   await driveSource(one)
-  const play = one.api.play
+  const enqueue = one.api.enqueue
   let accept: () => void = () => undefined
   const accepted = new Promise<void>((resolve) => {
     accept = resolve
   })
-  one.api.play = async (device, request) => {
-    await play(device, request)
+  one.api.enqueue = async (device, uri) => {
+    await enqueue(device, uri)
     await accepted
   }
   one.sync.enqueue(track)
   await advance(5_000)
+  assert.deepEqual(one.sent('enqueue'), [
+    'enqueue speaker spotify:track:single',
+  ])
+  assert.equal((await one.api.queue()).upcoming[0]?.uri, track.uri)
+  assert.equal(one.sent('play').length, 1)
   one.sync.close()
   one.close()
   accept()
   const saved = transferred(sessions.record.state)
-  assert.equal(saved.session?.sent[1]?.uri, sourceTrack(1).uri)
-  assert.equal(saved.session?.pendingSent?.[1]?.uri, track.uri)
+  assert.equal(
+    saved.session?.sent.some((item) => item.uri === track.uri),
+    false,
+  )
+  assert.equal(
+    saved.session?.pendingSent?.some((item) => item.uri === track.uri),
+    true,
+  )
   sessions.record.state = saved
 
   clock += 20 * 60_000
@@ -4689,6 +4930,7 @@ test('reopening follows a track from an unconfirmed Spotify queue replacement', 
   assert.deepEqual(shown.queue, [])
   assert.equal(shown.upcoming[0]?.item.uri, sourceTrack(1).uri)
   assert.deepEqual(again.sent('play'), [])
+  assert.deepEqual(again.sent('enqueue'), [])
   again.close()
 })
 

@@ -209,9 +209,11 @@ export type PlaybackSession = {
   startedAt: number
   /** For a track item, the URI Spotify actually played for it. */
   anchorUri: string | null
-  /** The tracks Spotify was given in one request; `item` is `sent[index]`. */
+  /** The device's sequence of tracks; `item` is `sent[index]`. */
   sent: PlayableItem[]
   index: number
+  /** Last index queued ahead of the Spotify playback context, if any remain. */
+  queuedThrough?: number
   /** The track the device was on when another item's start was requested. */
   replacedUri?: string | null
   /**

@@ -471,15 +471,16 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let quietAt: number | null = null
   let pollErrors = 0
   let run = 0
-  // Spotify starts a new URI list to change what follows a Connect track.
-  // Transport commands must not overtake that write, or an old list can win.
+  // Serialize native queue writes and transport commands for the device.
   let remoteCommand: Promise<void> | null = null
   let remoteCommandRevision = 0
   let pendingRemoteQueue: {
     active: PlaybackSession
     sent: PlayableItem[]
+    queuedThrough: number
   } | null = null
-  let remoteQueueEdited = false
+  let queueReadForbidden = false
+  let remoteQueueCheckAt = 0
   let remoteSourceUnavailable = false
   let rejectedRemoteTrack: PlayableItem | null = null
   let sequence = 0
@@ -1366,8 +1367,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** Read the device promptly after an edit, coalescing changes made together. */
   function refreshDeviceQueue() {
     if (state.target.kind === 'remote' && session) {
-      remoteQueueEdited = true
-      rejectedRemoteTrack = null
+      remoteQueueCheckAt = 0
       schedule(REMOTE_QUEUE_DEBOUNCE_MS)
     } else if (
       holdsSonosLease() &&
@@ -1379,81 +1379,140 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
 
   /**
-   * Give Connect the edited order while it still plays the current track.
-   * A normal source refill can wait until the device reaches its last sent
-   * track. An explicit edit also sends additions to the end of the list.
+   * Spotify appends after its native queue and before the playback context.
+   * A previous app start may already have put manual tracks in the context.
+   * Only insert at the place Spotify can actually give the new entry.
    */
-  function updateRemoteQueue(
+  function nextNativeEntry(active: PlaybackSession) {
+    const tail = active.sent.slice(active.index + 1)
+    const queued = Math.max(0, (active.queuedThrough ?? 0) - active.index)
+    if (queued >= FOLLOWING_LIMIT || queued > tail.length) return null
+    for (let i = 0; i < queued; i += 1) {
+      if (state.queue[i]?.item.uri !== tail[i]?.uri) return null
+    }
+    const entry = state.queue[queued]
+    if (
+      !entry ||
+      entry.item.kind !== 'track' ||
+      active.sent
+        .slice(active.index)
+        .some((item) => item.uri === entry.item.uri)
+    )
+      return null
+    return { entry, tail, queued }
+  }
+
+  /** Stage manual additions without starting, seeking or resuming the current track. */
+  async function updateRemoteQueue(
     deviceId: string,
     snapshot: PlaybackSnapshot,
-    resuming = false,
-  ): Promise<void> | null {
+  ) {
     const active = session
     if (
       !active ||
       active.phase !== 'playing' ||
       active.item.kind !== 'track' ||
       remoteSourceUnavailable ||
-      rejectedRemoteTrack === active.item ||
+      queueReadForbidden ||
       remoteCommand ||
-      snapshot.trackUri !== active.anchorUri ||
+      now() < remoteQueueCheckAt ||
+      rejectedRemoteTrack === active.item ||
       !snapshot.trackUri ||
+      snapshot.trackUri !== active.anchorUri ||
       snapshot.contextUri?.startsWith('spotify:playlist:') ||
-      (snapshot.paused && !resuming) ||
-      rejoining !== null ||
-      (source?.filling && !source.upcoming.length && !state.queue.length)
+      rejoining !== null
     )
-      return null
-    const following = followingFor(active.item)
-    const tail = active.sent.slice(active.index + 1)
-    const extend =
-      remoteQueueEdited || !tail.length || state.queue.length > tail.length
-    remoteQueueEdited = false
-    if (
-      tail.every((item, at) => following[at]?.uri === item.uri) &&
-      (!extend || tail.length === following.length)
-    )
-      return null
-    const position = positionAt(snapshot, now())
-    // A report at the very end can already describe the previous track.
-    if (
-      !resuming &&
-      snapshot.durationMs > 0 &&
-      position >= snapshot.durationMs - FOLLOW_UP_MS
-    )
-      return null
+      return
+    const addition = nextNativeEntry(active)
+    if (!addition) return
+    const { entry, queued, tail } = addition
+    const revision = remoteCommandRevision
     const current = () =>
       !disposed &&
       session === active &&
       state.target.kind === 'remote' &&
       state.target.device.id === deviceId
-    const pending = { active, sent: [active.item, ...following] }
-    pendingRemoteQueue = pending
-    // Let the shared session save both possibilities while the write is in flight.
-    set({})
-    return sendRemote(() =>
-      api.play(deviceId, playRequest(active.item, following, position)),
+    const matches = (
+      reported: { uri: string; linkedFromUri: string | null },
+      uri: string,
+    ) => reported.uri === uri || reported.linkedFromUri === uri
+    let observed: Awaited<ReturnType<PlayerApi['queue']>>
+    try {
+      observed = await api.queue()
+    } catch (error) {
+      if (error instanceof PlaybackApiError && error.status === 403)
+        queueReadForbidden = true
+      if (current()) rejectedRemoteTrack = active.item
+      return
+    }
+    if (
+      !current() ||
+      revision !== remoteCommandRevision ||
+      nextNativeEntry(active)?.entry !== entry ||
+      !observed.current ||
+      !matches(observed.current, snapshot.trackUri)
     )
-      .then(
-        () => {
-          if (!current()) return
-          session = { ...active, sent: pending.sent, index: 0 }
-          // A save (including the page-close save) now describes the list the
-          // device actually accepted, even if no visible field changed.
-          set({ failure: null })
-        },
-        (error: unknown) => {
-          if (!current()) return
-          if (!remoteQueueEdited) rejectedRemoteTrack = active.item
-          if (resuming) expect({ paused: true })
-          fail(error)
-        },
-      )
-      .finally(() => {
-        if (pendingRemoteQueue !== pending) return
-        pendingRemoteQueue = null
-        if (remoteQueueEdited && !disposed) schedule(0)
+      return
+    const prefixMatches = (expected: PlayableItem[], required: number) =>
+      observed.upcoming.length >= Math.min(expected.length, required) &&
+      observed.upcoming.slice(0, expected.length).every((item, i) => {
+        const expectedItem = expected[i]
+        return expectedItem !== undefined && matches(item, expectedItem.uri)
       })
+    const revised = [
+      ...tail.slice(0, queued),
+      entry.item,
+      ...tail.slice(queued),
+    ]
+    const sent = [active.item, ...revised]
+    // A previous append may have arrived even if its reply was lost. Follow
+    // what is already there without assuming Spotify put it in its native queue.
+    if (prefixMatches(revised, queued + 1)) {
+      session = { ...active, sent, index: 0, queuedThrough: queued }
+      set({})
+      return
+    }
+    // The account queue can also have entries added elsewhere. Recheck
+    // later when its reported insertion point differs from the app's plan.
+    if (
+      !prefixMatches(tail, queued + 1) ||
+      (!tail.length && observed.upcoming.length) ||
+      observed.upcoming.some((item) => matches(item, entry.item.uri))
+    ) {
+      remoteQueueCheckAt = now() + IDLE_POLL_MS
+      return
+    }
+    if (
+      !snapshot.paused &&
+      snapshot.durationMs > 0 &&
+      positionAt(snapshot, now()) >= snapshot.durationMs - FOLLOW_UP_MS
+    )
+      return
+
+    const pending = { active, sent, queuedThrough: queued + 1 }
+    pendingRemoteQueue = pending
+    set({})
+    try {
+      await sendRemote(() => api.enqueue(deviceId, entry.item.uri))
+      if (!current()) return
+      session = {
+        ...active,
+        sent,
+        index: 0,
+        queuedThrough: pending.queuedThrough,
+      }
+      set({ failure: null })
+      pendingRemoteQueue = null
+      if (nextNativeEntry(session)) schedule(REMOTE_QUEUE_DEBOUNCE_MS)
+    } catch (error) {
+      if (!current()) return
+      // A lost response may still have queued the track. Never retry this
+      // non-idempotent write while the same track is on the device.
+      rejectedRemoteTrack = active.item
+      if (error instanceof PlaybackApiError && error.status < 500)
+        pendingRemoteQueue = null
+      fail(error)
+    }
   }
 
   /**
@@ -1477,7 +1536,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
     run += 1
     const started = run
-    remoteQueueEdited = false
+    pendingRemoteQueue = null
+    remoteQueueCheckAt = 0
     remoteSourceUnavailable = false
     rejectedRemoteTrack = null
     resume = null
@@ -1637,10 +1697,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (startable(state.target) && index > active.index && !inStep) {
       if (startNext()) return 'restarted'
       const target = state.target
-      if (target.kind === 'room' && at < 0) {
-        // Nothing is due, and the group moved on to a track that was taken
-        // off the queue after it had been added to the group.
-        sonosSend(target.room.id, { action: 'pause' })
+      const removedNative =
+        target.kind === 'remote' &&
+        index <= (active.queuedThrough ?? 0) &&
+        !after.contextUri?.startsWith('spotify:playlist:') &&
+        (item.uri === after.trackUri || item.uri === after.linkedFromUri)
+      if (at < 0 && (target.kind === 'room' || removedNative)) {
+        // Nothing is due and a removed entry has just started on the device.
+        if (target.kind === 'room')
+          sonosSend(target.room.id, { action: 'pause' })
+        else if (!after.paused) {
+          guard(sendRemote(() => api.pause(target.device.id)))
+          expect({ paused: true })
+        }
         detach()
         set({ current: null })
         return 'restarted'
@@ -1730,6 +1799,24 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       // Something else plays now, so the kept item is no longer current.
       resume = null
       set({ current: null })
+    }
+    const pending = pendingRemoteQueue
+    const appended = pending?.sent[pending.queuedThrough]
+    if (
+      pending &&
+      pending.active === session &&
+      appended &&
+      state.target.kind === 'remote' &&
+      !after.contextUri?.startsWith('spotify:playlist:') &&
+      (after.trackUri === appended.uri || after.linkedFromUri === appended.uri)
+    ) {
+      session = {
+        ...pending.active,
+        sent: pending.sent,
+        index: 0,
+        queuedThrough: pending.queuedThrough,
+      }
+      pendingRemoteQueue = null
     }
     if (session) {
       const active = session
@@ -2804,7 +2891,20 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const at = now()
     const from = active && active.sent.length > SAVED_SENT ? active.index : 0
     const pending =
-      pendingRemoteQueue?.active === active ? pendingRemoteQueue.sent : null
+      pendingRemoteQueue?.active === active ? pendingRemoteQueue : null
+    const sent = active?.sent.slice(from, from + SAVED_SENT) ?? []
+    const index = active ? active.index - from : 0
+    const queuedThrough = remainingQueuedThrough(
+      (active?.queuedThrough ?? 0) - from,
+      index,
+      sent.length,
+    )
+    const pendingSent = pending?.sent.slice(0, SAVED_SENT)
+    const pendingQueuedThrough = remainingQueuedThrough(
+      pending?.queuedThrough,
+      0,
+      pendingSent?.length ?? 0,
+    )
     return {
       version: 1,
       savedAt: at,
@@ -2815,10 +2915,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       session: active
         ? {
             item: active.item,
-            sent: active.sent.slice(from, from + SAVED_SENT),
-            index: active.index - from,
+            sent,
+            index,
             anchorUri: active.anchorUri,
-            ...(pending ? { pendingSent: pending.slice(0, SAVED_SENT) } : {}),
+            ...(queuedThrough ? { queuedThrough } : {}),
+            ...(pendingSent ? { pendingSent } : {}),
+            ...(pendingQueuedThrough ? { pendingQueuedThrough } : {}),
           }
         : null,
       snapshot: latest
@@ -2861,18 +2963,37 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     return index
   }
 
+  function remainingQueuedThrough(
+    queuedThrough: number | undefined,
+    index: number,
+    length: number,
+  ) {
+    const end = Math.min(queuedThrough ?? 0, length - 1)
+    return end > index ? end : undefined
+  }
+
   /** A track can confirm a pending replacement only by its recording URI. */
   function observedReplacement(
     confirmed: PlaybackSession | null,
-    sent: PlayableItem[] | undefined,
+    pending: SavedPlayback['session'] | undefined,
     before: PlaybackSnapshot | null,
     after: PlaybackSnapshot | null,
   ) {
+    const sent = pending?.pendingSent
     if (!confirmed || !sent || !after?.trackUri) return null
     const matches = (item: PlayableItem) =>
       item.uri === after.trackUri || item.uri === after.linkedFromUri
     if (sent.filter(matches).length !== 1) return null
-    const replacement = { ...confirmed, sent, index: 0 }
+    const replacement: PlaybackSession = {
+      ...confirmed,
+      sent,
+      index: 0,
+      queuedThrough: remainingQueuedThrough(
+        pending?.pendingQueuedThrough,
+        0,
+        sent.length,
+      ),
+    }
     const verdict = rejoinVerdict(replacement, before, after, false)
     if (verdict.verdict !== 'rejoined' || verdict.index === 0) return null
     return {
@@ -2968,13 +3089,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       /** The saved device's name, for a device that has gone since. */
       device: string | null
     } | null,
-    pendingSent?: PlayableItem[],
+    candidate?: SavedPlayback['session'],
   ) {
     rejoining = null
     resume = null
     const pending = observedReplacement(
       session,
-      pendingSent,
+      candidate,
       saved.snapshot,
       after,
     )
@@ -3009,7 +3130,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           : undefined
         const reached = pass(active, index, alsoReached)
         if (reached) currentFromSource = reached.from === 'source'
-        session = { ...active, item, index, anchorUri: after.trackUri }
+        session = {
+          ...active,
+          item,
+          index,
+          anchorUri: after.trackUri,
+          queuedThrough: remainingQueuedThrough(
+            active.queuedThrough,
+            index,
+            active.sent.length,
+          ),
+        }
         set({ current: item })
       }
       latest = after
@@ -3141,7 +3272,6 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     // Without its source, the app cannot reconstruct the list the device has.
     remoteSourceUnavailable =
       !active && (kept !== null || restored.currentFromSource)
-    remoteQueueEdited = false
     rejectedRemoteTrack = null
     currentFromSource = active !== null && restored.currentFromSource
     sequence = Math.max(sequence, restored.sequence)
@@ -3166,6 +3296,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           sent: storedSession.sent,
           index: storedSession.index,
           anchorUri: storedSession.anchorUri,
+          queuedThrough: remainingQueuedThrough(
+            storedSession.queuedThrough,
+            storedSession.index,
+            storedSession.sent.length,
+          ),
           phase: 'playing',
           startedAt: now(),
         }
@@ -3258,7 +3393,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       found,
       claimed ? null : { idle, unreadable, announce, device: savedName },
       restored.target.kind === 'spotify' && restored.target.browser === null
-        ? storedSession?.pendingSent
+        ? storedSession
         : undefined,
     )
     if (!timer && pollDelay() !== null) schedule(FOLLOW_UP_MS)
@@ -3579,19 +3714,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'local') guard(player?.togglePlay())
       else {
         const paused = latest.paused
-        const updated =
-          paused && target.kind === 'remote'
-            ? updateRemoteQueue(target.device.id, latest, true)
-            : null
         expect({ paused: !paused })
         if (target.kind === 'remote')
           guard(
-            updated ??
-              sendRemote(() =>
-                paused
-                  ? api.resume(target.device.id)
-                  : api.pause(target.device.id),
-              ),
+            sendRemote(() =>
+              paused
+                ? api.resume(target.device.id)
+                : api.pause(target.device.id),
+            ),
           )
         else sonosSend(groupId(target), { action: paused ? 'play' : 'pause' })
       }
@@ -3640,7 +3770,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         if (inStep && queued) expectRoomTrack(queued, 0, paused)
         return
       }
-      if (itemEnds && startNext()) return
+      const skipNative =
+        target.kind === 'remote' &&
+        inStep &&
+        latest &&
+        !latest.paused &&
+        session &&
+        (session.queuedThrough ?? 0) > session.index
+      if (!skipNative && itemEnds && startNext()) return
       if (!latest) return
       skippedAt = now()
       set({ failure: null })

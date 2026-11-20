@@ -37,6 +37,19 @@ const StateSchema = z.object({
   is_playing: z.boolean(),
   item: z.unknown(),
 })
+const QueueItemSchema = z
+  .object({
+    uri: z.string().min(1),
+    linked_from: z.object({ uri: z.string().min(1).nullish() }).nullish(),
+  })
+  .transform(({ uri, linked_from }) => ({
+    uri,
+    linkedFromUri: linked_from?.uri ?? null,
+  }))
+const QueueSchema = z.object({
+  currently_playing: QueueItemSchema.nullable(),
+  queue: z.array(QueueItemSchema),
+})
 const AlbumTracksSchema = z.object({
   items: z.array(
     z.object({
@@ -263,6 +276,16 @@ export function createPlayerApi(
     },
     async play(deviceId: string, body: unknown) {
       await send('PUT', '/play', { device_id: deviceId }, body)
+    },
+    async enqueue(deviceId: string, trackUri: string) {
+      await send('POST', '/queue', { device_id: deviceId, uri: trackUri })
+    },
+    async queue() {
+      const response = await send('GET', '/queue')
+      const { currently_playing: current, queue: upcoming } = QueueSchema.parse(
+        await response.json(),
+      )
+      return { current, upcoming }
     },
     async transfer(deviceId: string, play: boolean) {
       await send('PUT', '', {}, { device_ids: [deviceId], play })

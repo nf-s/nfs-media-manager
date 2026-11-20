@@ -58,6 +58,72 @@ test('starts playback on the named device with the request body', async () => {
   assert.equal(call.body, '{"context_uri":"spotify:album:fixture"}')
 })
 
+test('adds a track to the playback queue on the named device', async () => {
+  const { api, calls } = client([new Response(null, { status: 204 })])
+  await api.enqueue('fixture+speaker&room=2', 'spotify:track:fixture')
+  assert.equal(calls.length, 1)
+  const [call] = calls
+  assert.ok(call)
+  assert.equal(call.method, 'POST')
+  assert.equal(
+    call.url.href,
+    'https://api.spotify.com/v1/me/player/queue?device_id=fixture%2Bspeaker%26room%3D2&uri=spotify%3Atrack%3Afixture',
+  )
+  assert.equal(call.body, null)
+})
+
+test('reports a rejected queue request without retrying it', async () => {
+  const { api, calls } = client([
+    Response.json({ error: { reason: 'NO_ACTIVE_DEVICE' } }, { status: 404 }),
+  ])
+  await assert.rejects(
+    api.enqueue('speaker', 'spotify:track:fixture'),
+    (error) => {
+      assert.ok(error instanceof PlaybackApiError)
+      assert.equal(error.status, 404)
+      assert.equal(error.reason, 'NO_ACTIVE_DEVICE')
+      return true
+    },
+  )
+  assert.equal(calls.length, 1)
+})
+
+test('reads the current and upcoming items in the Spotify playback queue', async () => {
+  const { api, calls } = client([
+    Response.json({
+      currently_playing: {
+        uri: 'spotify:track:relinked',
+        linked_from: { uri: 'spotify:track:original' },
+      },
+      queue: [
+        { uri: 'spotify:episode:fixture' },
+        { uri: 'spotify:track:next', linked_from: null },
+      ],
+    }),
+    Response.json({ currently_playing: null, queue: [] }),
+  ])
+  assert.deepEqual(await api.queue(), {
+    current: {
+      uri: 'spotify:track:relinked',
+      linkedFromUri: 'spotify:track:original',
+    },
+    upcoming: [
+      { uri: 'spotify:episode:fixture', linkedFromUri: null },
+      { uri: 'spotify:track:next', linkedFromUri: null },
+    ],
+  })
+  assert.equal(calls[0]?.method, 'GET')
+  assert.equal(calls[0]?.url.href, 'https://api.spotify.com/v1/me/player/queue')
+  assert.deepEqual(await api.queue(), { current: null, upcoming: [] })
+})
+
+test('rejects a playback queue containing a malformed item', async () => {
+  const { api } = client([
+    Response.json({ currently_playing: null, queue: [{ uri: 123 }] }),
+  ])
+  await assert.rejects(api.queue(), { name: 'ZodError' })
+})
+
 test('sends transport commands with bounded values', async () => {
   const ok = () => new Response(null, { status: 204 })
   const { api, calls } = client([ok(), ok(), ok(), ok(), ok(), ok(), ok()])
