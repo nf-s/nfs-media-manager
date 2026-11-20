@@ -932,8 +932,17 @@ async function browseQueries(
     (sortField.key === 'title' || sortField.key === 'dateAdded') &&
     options.sort?.field.key !== sortField.key
 
-  async function readTrackRanks(ranks: number[]) {
-    const requested = sql`${sql.param(ranks)}::bigint[]`
+  async function readTrackRanks(
+    ranks: number[] | { first: number; last: number },
+  ) {
+    const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
+    const requested = Array.isArray(ranks)
+      ? sql`= any(${sql.param(ranks)}::bigint[])`
+      : sql`between ${ranks.first}::bigint and ${last}::bigint`
+    const primaryRanks = Array.isArray(ranks)
+      ? sql`in (select rank from primary_tracks where ordinal ${requested})`
+      : sql`between (select rank from primary_tracks where ordinal = ${ranks.first}::bigint)
+          and ${last}::bigint`
     const prefix = base(
       sql<number>`rank() over (order by ${order})`,
       sql<number>`row_number() over (order by ${order})`,
@@ -944,12 +953,10 @@ async function browseQueries(
     // rows. Every row tied with a requested rank must be available, including
     // ties before the first requested rank and after the last one.
     const result = await db.execute(sql`with primary_tracks as materialized (
-        ${prefix} fetch first (${Math.max(...ranks)}) rows with ties
+        ${prefix} fetch first (${last}) rows with ties
       ), selected_tracks as materialized (
         select id, listening_scrobbles, rank as first_rank from primary_tracks
-        where rank in (
-          select rank from primary_tracks where ordinal = any(${requested})
-        )
+        where rank ${primaryRanks}
       ), ranked_tracks as (
         select p.id, p.listening_scrobbles,
           p.first_rank + row_number() over (
@@ -963,7 +970,7 @@ async function browseQueries(
           on ${trackSortAlbum.id} = ${libraryTrack.albumMediaItemId}
       )
       select id, listening_scrobbles as "listeningScrobbles", rank::int
-      from ranked_tracks where rank = any(${requested}) order by rank`)
+      from ranked_tracks where rank ${requested} order by rank`)
     return TrackRankRowsSchema.parse(result.rows)
   }
 
@@ -971,9 +978,7 @@ async function browseQueries(
     // Keep the direct limit for early pages, where there are few ties to skip.
     const rows =
       indexedTrackOrder && limit > 0 && offset >= 3 * limit
-        ? await readTrackRanks(
-            Array.from({ length: limit }, (_, index) => offset + index + 1),
-          )
+        ? await readTrackRanks({ first: offset + 1, last: offset + limit })
         : await base()
             .where(pageWhere)
             .orderBy(order, ...naturalOrder, mediaItem.id)
