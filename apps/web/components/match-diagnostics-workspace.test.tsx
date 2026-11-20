@@ -113,6 +113,9 @@ test('diagnostics request a bounded page from the selected library with server-s
       sortBy: 'lastfm',
       direction: 'desc',
       q: 'Release & Mix',
+      ...(url.pathname === '/api/v1/albums/match-diagnostics'
+        ? { longRym: '1' }
+        : {}),
     })
 })
 
@@ -668,5 +671,6 @@ test('the rejection request preserves the exact source and history requests a bo
   assert.deepEqual(Object.fromEntries(requests[1]?.url.searchParams ?? []), {
     page: '2',
     size: '10',
+    longRym: '1',
   })
 })
