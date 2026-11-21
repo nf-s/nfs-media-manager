@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from 'drizzle-orm/logger'
+import {
+  albumBrowseFields,
+  filmBrowseFields,
+  trackBrowseFields,
+} from '@repo/schemas/browse'
 import type { BrowserBrowseTiming } from '@repo/schemas/performance'
 import {
   SONOS_PAGE_HEADER,
@@ -41,8 +46,14 @@ interface RequestBrowseProfile {
   listening: boolean
   listeningUse?: 'filter' | 'column' | 'both'
   filtered: boolean
+  searchTerms?: 'one' | 'multiple'
+  creatorScoped?: boolean
   sort: 'added' | 'title' | 'plays' | 'other'
+  sortField?: string
+  filterFields?: string[]
+  rangeFields?: string[]
   playSort?: 'scrobbles' | 'listeningScrobbles'
+  recordingOrderLookup?: 'hit' | 'miss'
 }
 
 interface PhaseMetrics {
@@ -55,6 +66,7 @@ interface RequestLogContext {
   drizzleStatementCount: number
   phases: Partial<Record<RequestPhase, PhaseMetrics>>
   browse?: RequestBrowseProfile
+  recordingOrderRefreshDue?: boolean
 }
 
 interface SonosDispatch {
@@ -70,6 +82,7 @@ type RequestEvent =
       event:
         | 'database.facet-maintenance'
         | 'database.recording-order-maintenance'
+      source?: 'scheduled' | 'browse'
       outcome: 'published' | 'skipped' | 'failed'
       durationMs: number
     }
@@ -164,13 +177,34 @@ export function setPlaybackLogRole(role: 'driver' | 'follower') {
   if (current) current.playbackRole = role
 }
 
+// Plugin and caller-defined fields can contain installation-specific names.
+const publicBrowseFields = new Set([
+  ...[...albumBrowseFields, ...filmBrowseFields, ...trackBrowseFields].map(
+    (field) => field.key,
+  ),
+  'listeningScrobbles',
+])
+
+function logBrowseField(key: string) {
+  return publicBrowseFields.has(key) ? key : 'other'
+}
+
+function logBrowseFields(fields?: string[]) {
+  if (fields?.length) return [...new Set(fields.map(logBrowseField))].sort()
+}
+
 export function setRequestBrowseProfile({
   grouped,
   depth,
   listening,
   listeningUse,
   filtered,
+  searchTerms,
+  creatorScoped,
   sort,
+  sortField,
+  filterFields,
+  rangeFields,
   playSort,
 }: RequestBrowseProfile) {
   const current = context.getStore()
@@ -181,9 +215,24 @@ export function setRequestBrowseProfile({
       listening,
       listeningUse,
       filtered,
+      searchTerms,
+      creatorScoped,
       sort,
+      sortField: sortField && logBrowseField(sortField),
+      filterFields: logBrowseFields(filterFields),
+      rangeFields: logBrowseFields(rangeFields),
       playSort,
     }
+}
+
+export function recordRecordingOrderLookup(
+  outcome: 'hit' | 'miss',
+  canRefreshAfterBrowse = false,
+) {
+  const current = context.getStore()
+  if (!current?.browse) return
+  current.browse.recordingOrderLookup = outcome
+  current.recordingOrderRefreshDue = outcome === 'miss' && canRefreshAfterBrowse
 }
 
 /** Drizzle calls the hook at execution time, including for prepared statements. */
@@ -219,16 +268,17 @@ export async function measureRequestPhase<T>(
 }
 
 /** Owns one access record at the HTTP entry point, including early responses. */
-export function logApiRequest(
+export async function logApiRequest(
   request: Request,
   respond: () => Response | Promise<Response>,
+  requestRecordingOrderRefresh?: () => void,
 ) {
   const current: RequestLogContext = {
     details: { requestId: randomUUID(), route: 'unmatched' },
     drizzleStatementCount: 0,
     phases: {},
   }
-  return context.run(current, async () => {
+  const response = await context.run(current, async () => {
     const start = performance.now()
     let status = 500
     try {
@@ -249,4 +299,18 @@ export function logApiRequest(
       })
     }
   })
+  if (
+    response.ok &&
+    request.method === 'GET' &&
+    current.recordingOrderRefreshDue &&
+    (current.details.route === '/api/v1/tracks/browse-page' ||
+      current.details.route === '/api/v1/tracks/browse-count')
+  ) {
+    try {
+      requestRecordingOrderRefresh?.()
+    } catch {
+      // A best-effort maintenance registration must not change the response.
+    }
+  }
+  return response
 }

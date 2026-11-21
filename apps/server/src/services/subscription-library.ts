@@ -193,6 +193,8 @@ type SubscriptionItemSearch = {
   fields: 'title' | 'all'
   /** Further conditions over `i` and `s`. */
   conditions: SQL[]
+  /** Exact item IDs to check before applying the ordinary search filters. */
+  candidateIds?: SQL
   /** The ordering before the ID tie-breaker; `ranked` is null without a ranked search. */
   order: (ranked: SQL | null) => SQL
   page: number
@@ -244,9 +246,21 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
     ],
     sql` and `,
   )
-  const members = sql`from subscription_item i
-    join subscription_source s on s.id = i.source_id
-    where ${where}`
+  const candidateIds = search.candidateIds
+  // Anchor exact lookups on the narrow candidate set rather than walking
+  // broadcast order until PostgreSQL can prove that no more candidates match.
+  const candidateItems = candidateIds
+    ? sql`lateral (select * from subscription_item where id = candidate.id offset 0) i`
+    : sql`subscription_item i`
+  const membership = candidateIds
+    ? sql`from (${candidateIds}) candidate join ${candidateItems} on true`
+    : sql`from ${candidateItems}`
+  const source = sql`join subscription_source s on s.id = i.source_id`
+  const members = sql`${membership} ${source} where ${where}`
+  const matchingIds = sql`matching_ids as materialized (select i.id ${members})`
+  const pageMembers = candidateIds
+    ? sql`from matching_ids candidate join ${candidateItems} on true ${source}`
+    : members
   const offset = (search.page - 1) * search.size
   const columns = sql`i.id, i.type, i.source_id, s.title as source_title,
     s.thumbnail_url as source_thumbnail_url, i.title, i.description,
@@ -255,17 +269,21 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
     i.comment_count, i.live, i.artwork_url, i.artists, i.url,
     i.audio_url, extract(epoch from i.watched_at)::float8 as watched`
   const order = sql`order by ${search.order(ranked)}, i.id`
-  const count = sql`select count(*) as total ${members}`
+  const count = sql`select count(*) as total ${candidateIds ? sql`from matching_ids` : members}`
   async function readPage(size: number) {
-    const result = await db.execute(sql`select ${columns} ${members} ${order}
+    const prefix = candidateIds ? sql`with ${matchingIds}` : sql``
+    const result =
+      await db.execute(sql`${prefix} select ${columns} ${pageMembers} ${order}
       limit ${size} offset ${offset}`)
     return ItemRowsSchema.parse(result.rows)
   }
   async function readPageWithCount() {
     // Count and page share a snapshot. The count reads no display payload and
     // still returns a row when the requested page has no matches.
-    const result = await db.execute(sql`with matched_page as materialized (
-        select i.id ${members} ${order} limit ${search.size} offset ${offset}
+    const prefix = candidateIds ? sql`${matchingIds},` : sql``
+    const result =
+      await db.execute(sql`with ${prefix} matched_page as materialized (
+        select i.id ${pageMembers} ${order} limit ${search.size} offset ${offset}
       )
       select ${columns}, totals.total from (${count}) totals
       left join (
@@ -279,7 +297,8 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
     }
   }
   async function readCount() {
-    const result = await db.execute(count)
+    const prefix = candidateIds ? sql`with ${matchingIds}` : sql``
+    const result = await db.execute(sql`${prefix} ${count}`)
     return TotalRowsSchema.parse(result.rows)[0]?.total ?? 0
   }
   return { members, readPage, readCount, readPageWithCount }
@@ -492,16 +511,11 @@ export async function listSubscriptionItems(
 }
 
 /**
- * Mixes billing the name, or on a show of that name, ignoring case and
- * surrounding spaces. The search text holds both, so its index narrows the
- * rows before the exact comparison; a name without letters or digits has no
- * words to look up and is compared on every mix.
+ * Match billed artists and show titles by exact normalized name. Keep the
+ * original search-vector condition for names with searchable words.
  */
 function artistMixes(name: string, query: ArtistMixQuery) {
   const key = nameKey(sql`${name}::text`)
-  const named = sql`(${nameKey(sql`s.title`)} = ${key} or exists (
-    select 1 from jsonb_array_elements_text(i.artists) billed(value)
-    where ${nameKey(sql`billed.value`)} = ${key}))`
   const search = subscriptionBrowseSearch({
     library: 'mixes',
     q: query.q,
@@ -513,12 +527,16 @@ function artistMixes(name: string, query: ArtistMixQuery) {
     page: query.page,
     size: query.size,
   })
-  search.conditions.push(
-    name.match(WORD_PARTS)
-      ? sql`i.search @@ plainto_tsquery('simple', ${name}) and ${named}`
-      : named,
-  )
-  return search
+  const candidateIds = sql`
+    select i.id from subscription_item i
+    where subscription_artist_name_keys(i.artists) @> array[${key}]
+    union
+    select i.id from subscription_source s
+    join subscription_item i on i.source_id = s.id
+    where s.subscribed and ${nameKey(sql`s.title`)} = ${key}`
+  if (name.match(WORD_PARTS))
+    search.conditions.push(sql`i.search @@ plainto_tsquery('simple', ${name})`)
+  return { ...search, candidateIds }
 }
 
 /** A page of the mixes that bill a library artist's name or are on its show. */

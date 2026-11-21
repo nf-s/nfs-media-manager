@@ -5,6 +5,7 @@ import {
   refreshRecordingBrowseOrderForMaintenance,
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
+import type { RecordingOrderMaintenanceSource } from '@/services/recording-groups'
 
 /** One bounded round trip on a fresh invocation pool, even when the library is idle. */
 async function probeDatabase() {
@@ -23,7 +24,12 @@ async function probeDatabase() {
 }
 
 async function refreshCache(
-  event: 'database.facet-maintenance' | 'database.recording-order-maintenance',
+  event:
+    | { event: 'database.facet-maintenance' }
+    | {
+        event: 'database.recording-order-maintenance'
+        source: RecordingOrderMaintenanceSource
+      },
   refresh: () => Promise<boolean>,
 ) {
   const refreshStart = performance.now()
@@ -32,11 +38,20 @@ async function refreshCache(
     outcome = (await refresh()) ? 'published' : 'skipped'
   } finally {
     writeRequestLog({
-      event,
+      ...event,
       outcome,
       durationMs: performance.now() - refreshStart,
     })
   }
+}
+
+export function runRecordingOrderMaintenance(
+  source: RecordingOrderMaintenanceSource,
+) {
+  return refreshCache(
+    { event: 'database.recording-order-maintenance', source },
+    () => refreshRecordingBrowseOrderForMaintenance(source),
+  )
 }
 
 export async function runDatabaseMaintenance(scheduledTime: number) {
@@ -46,13 +61,10 @@ export async function runDatabaseMaintenance(scheduledTime: number) {
     await probeDatabase()
   const outcomes = await Promise.allSettled([
     refreshCache(
-      'database.facet-maintenance',
+      { event: 'database.facet-maintenance' },
       refreshTrackFacetVocabularyForMaintenance,
     ),
-    refreshCache(
-      'database.recording-order-maintenance',
-      refreshRecordingBrowseOrderForMaintenance,
-    ),
+    runRecordingOrderMaintenance('scheduled'),
   ])
   for (const outcome of outcomes)
     if (outcome.status === 'rejected') throw outcome.reason

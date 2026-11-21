@@ -58,6 +58,14 @@ jobs:
         run: |
           pnpm --filter @repo/server typecheck
           pnpm --filter web typecheck
+      - name: Build and start the API Worker locally
+        env:
+          NODE_ENV: production
+          CLOUDFLARE_ACCOUNT_ID: '00000000000000000000000000000000'
+          CLOUDFLARE_APP_URL: https://app.example.invalid
+          CLOUD_OWNER_EMAIL: owner@example.invalid
+          WRANGLER_SEND_METRICS: 'false'
+        run: pnpm --filter @repo/server build:cloudflare
       - name: Schema unit tests
         run: pnpm --filter @repo/schemas test:unit
       - name: Server unit tests

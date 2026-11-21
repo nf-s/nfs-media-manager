@@ -1,4 +1,13 @@
-import { and, eq, inArray, lte, or, sql, type SQL } from 'drizzle-orm'
+import {
+  and,
+  eq,
+  inArray,
+  lte,
+  or,
+  sql,
+  type SQL,
+  type SQLWrapper,
+} from 'drizzle-orm'
 import { alias, PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
@@ -18,6 +27,7 @@ import {
   TrackSourceSchema,
   trackAlbumLinkLabels,
   trackSourceLabels,
+  trackSpotifyMatchLabels,
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import {
@@ -55,6 +65,7 @@ import {
   firstMusicTagRows,
   albumsWithEnoughTags,
   artistTagFacetKeys,
+  artistTagLabels,
   artistTagMemberships,
   firstArtistTag,
   firstMusicTag,
@@ -84,6 +95,7 @@ import {
   RecordingGroupRowsSchema,
   type RecordingGroup,
   type RecordingGroupRow,
+  type RecordingOrderMaintenanceSource,
 } from './recording-groups'
 
 type MediaType = 'album' | 'film' | 'track'
@@ -122,7 +134,20 @@ function readBrowseTotal(
 }
 
 const trackSortAlbum = alias(mediaItem, 'track_sort_album')
-const trackSortAlbumName = sql`lower(coalesce(nullif(trim(${trackSortAlbum.title}), ''), nullif(trim(${libraryTrack.albumName}), '')))`
+const trackReleaseColumns = {
+  id: mediaItem.id,
+  title: mediaItem.title,
+  releaseDate: mediaItem.releaseDate,
+  albumId: libraryTrack.albumMediaItemId,
+  albumName: libraryTrack.albumName,
+  spotifyAlbumId: libraryTrack.spotifyAlbumId,
+}
+
+function trackAlbumSortName(albumName: SQLWrapper) {
+  return sql`lower(coalesce(nullif(trim(${trackSortAlbum.title}), ''), nullif(trim(${albumName}), '')))`
+}
+
+const trackSortAlbumName = trackAlbumSortName(libraryTrack.albumName)
 
 type BrowsePosition = {
   id: string
@@ -131,12 +156,13 @@ type BrowsePosition = {
   listeningScrobbles?: number
 }
 
+const TrackPageRowSchema = z.object({
+  id: z.string(),
+  listeningScrobbles: z.number().int().nonnegative().nullable(),
+})
+const TrackPageRowsSchema = z.array(TrackPageRowSchema)
 const TrackRankRowsSchema = z.array(
-  z.object({
-    id: z.string(),
-    rank: z.number().int().positive(),
-    listeningScrobbles: z.number().int().nonnegative().nullable(),
-  }),
+  TrackPageRowSchema.extend({ rank: z.number().int().positive() }),
 )
 const trackRankSortFields = new Set([
   'title',
@@ -150,6 +176,13 @@ const trackRankSortFields = new Set([
   'dateAdded',
   'durationSec',
 ])
+const boundedTrackPageSortFields = new Set([
+  'artist',
+  'album',
+  'releaseDate',
+  'durationSec',
+])
+const trackArtistProbeLimit = 1024
 
 /** The one-based histogram bar of a count: how many edges are at or below it. */
 function listeningBar(value: SQL, edges: readonly number[]) {
@@ -445,6 +478,10 @@ export function trackBrowseFieldConditions(
   )
 }
 
+function browseSearchWords(query: BrowseQuery) {
+  return new Set(query.q?.split(/\s+/).filter(Boolean))
+}
+
 function browseTextSearchIds(
   mediaType: MediaType,
   fields: BrowseField[],
@@ -461,11 +498,30 @@ function browseTextSearchIds(
           field.key === 'genre'
         ),
     )
-    .map(
-      (field) => sql`select id from (
-      ${textRows(field.key, mediaType, { includeArchived: true, sharedArtistTags })}
-    ) searchable_values where value ilike ${search}`,
-    )
+    .map((field) => {
+      if (field.key === 'artistTag' && mediaType !== 'film') {
+        // Match the canonical display labels before expanding media credits.
+        const labels = sharedArtistTags
+          ? sql`select artist_id, name from browse_artist_tag_labels`
+          : artistTagLabels()
+        return sql`select c.media_item_id as id from media_credit c
+          join media_item m on m.id = c.media_item_id
+          where m.media_type = ${mediaType} and c.role = 'artist'
+            and c.artist_id in (
+              select artist_id from (${labels}) search_labels where name ilike ${search}
+            )`
+      }
+      const rows = sql`select id from (
+        ${textRows(field.key, mediaType, { includeArchived: true })}
+      ) searchable_values where value ilike ${search}`
+      if (mediaType !== 'track' || field.key !== 'spotifyMatch') return rows
+      // Source and album-link rows use literal labels that PostgreSQL can
+      // check once. Guard the Spotify match CASE with the same fixed labels.
+      const labels = Object.values(trackSpotifyMatchLabels).map(
+        (label) => sql`${label}::text ilike ${search}`,
+      )
+      return sql`${rows} and (${sql.join(labels, sql` or `)})`
+    })
   return sql.join(expressions, sql` union all `)
 }
 
@@ -534,7 +590,7 @@ function groupedTrackBrowse(
     )
   const memberships = sql`with ${
     sharedArtistTags
-      ? sql`browse_artist_tags as (${artistTagMemberships('track')}), `
+      ? sql`browse_artist_tag_labels as (${artistTagLabels()}), `
       : sql``
   }${recordingMemberships(matches, { creatorId: query.creatorId, versionId })}`
   const groupRanges = query.ranges.flatMap((range) => {
@@ -722,10 +778,72 @@ function groupedTrackBrowse(
       order by g.rank`
   }
 
+  function boundedPresencePage({
+    offset,
+    limit,
+  }: {
+    offset: number
+    limit: number
+  }) {
+    const needed = offset + limit
+    const maximumProbe = 1024
+    if (needed > maximumProbe / 2 || !countedGroupCondition) return
+    // Keep presence tests correlated to one stored rank and its members.
+    const presence = countedListening?.multiRulePresenceCondition(
+      (period) => sql`exists (
+        select 1 from (
+          select g.id as id where g.version_count = 1
+          union all
+          select track_id from recording_browse_order_member
+          where recording_id = g.id and g.version_count > 1
+        ) member
+        join lastfm_track_link listening_link on listening_link.track_media_item_id = member.id
+        join lastfm_scrobble using (username, artist_key, track_key)
+        where ${period}
+        offset 0
+      )`,
+    )
+    if (!presence) return
+
+    const probe = Math.max(256, Math.min(maximumProbe, needed * 5))
+    const prefix = sql`${storedMemberships},
+      eligible_prefix as materialized (
+        select g.*, ${storedRank} as rank
+        from (
+          select g.* from ${storedGroups} g
+          order by ${storedRank} limit ${probe}
+        ) g where ${presence} order by ${storedRank} limit ${needed}
+      ),
+      prefix_filled as materialized (
+        select count(*) = ${needed} as filled from eligible_prefix
+      ),
+      eligible_library as materialized (
+        select g.*, ${storedRank} as rank
+        from ${storedGroups} g ${countedGroupListening}
+        where not (select filled from prefix_filled) and ${countedGroupCondition}
+      )`
+    // Compute the full set only when the prefix has too few matches. Apply
+    // the page limit afterwards to avoid a repeated scan of listening totals.
+    const selected = sql`
+      (select * from eligible_prefix where (select filled from prefix_filled)
+        order by rank limit ${limit} offset ${offset})
+      union all
+      (select * from eligible_library order by rank limit ${limit} offset ${offset})`
+    return listening?.sort
+      ? projectSelectedListening(prefix, selected)
+      : sql`${prefix}
+        select ${recordingGroupProjection}, null::int as listening_scrobbles, g.rank::int
+        from (${selected}) g order by g.rank`
+  }
+
   function storedLifetimeRows(
     page: { offset: number; limit: number } | number[],
   ) {
     const positions = Array.isArray(page)
+    if (!positions) {
+      const bounded = boundedPresencePage(page)
+      if (bounded) return bounded
+    }
     // Dynamic eligibility leaves gaps in published ranks.
     const denseRank = positions && !!lifetimeCondition
     const rank = denseRank
@@ -782,11 +900,7 @@ function groupedTrackBrowse(
         from recording_stats g join library_track lt on lt.media_item_id = g.id
       ),
       artist_order as (
-        select distinct on (c.media_item_id) c.media_item_id, lower(a.name) as name
-        from (select distinct credit_id from order_tracks) release
-        join media_credit c on c.media_item_id = release.credit_id and c.role = 'artist'
-        join artist a on a.id = c.artist_id
-        order by c.media_item_id, c.billing_order, a.name
+        ${firstTrackArtistRows(sql`select distinct credit_id from order_tracks`)}
       ),
       position_order as (
         select g.id, min(t.position) as position from order_tracks g
@@ -994,8 +1108,12 @@ function groupedTrackBrowse(
     readPositions,
     readVersions,
     refreshStoredOrder: useStoredOrder
-      ? async () =>
-          (await refreshRecordingBrowseOrder(completeOrder())) !== undefined
+      ? async (source: RecordingOrderMaintenanceSource) =>
+          (await refreshRecordingBrowseOrder(
+            completeOrder(),
+            undefined,
+            source,
+          )) !== undefined
       : undefined,
     readHistogram: listeningSort
       ? (edges: readonly number[]) => readHistogram(listeningSort, edges)
@@ -1069,6 +1187,7 @@ async function browseQueries(
     ${mediaItem.id} not in (${redundantLastfmTrackIds()}))`
     : undefined
   if (visibleTrack && groupedTrackQuery) conditions.push(visibleTrack)
+  let creatorCredit: SQL | undefined
   if (query.creatorId) {
     const role = 'creatorRole' in query ? query.creatorRole : undefined
     const roles =
@@ -1077,13 +1196,12 @@ async function browseQueries(
           ? [role]
           : PersonRoleSchema.options
         : ['artist']
-    conditions.push(
-      sql`exists (select 1 from ${mediaCredit} where ${and(
-        eq(mediaCredit.mediaItemId, mediaItem.id),
-        eq(mediaCredit.artistId, query.creatorId),
-        inArray(mediaCredit.role, roles),
-      )})`,
-    )
+    creatorCredit = sql`exists (select 1 from ${mediaCredit} where ${and(
+      eq(mediaCredit.mediaItemId, mediaItem.id),
+      eq(mediaCredit.artistId, query.creatorId),
+      inArray(mediaCredit.role, roles),
+    )})`
+    conditions.push(creatorCredit)
   }
   conditions.push(...(options.conditions ?? []))
   if (!('includeArchived' in query) || query.includeArchived !== 'true')
@@ -1101,12 +1219,10 @@ async function browseQueries(
   // Every word must appear in at least one text field; words may match
   // different fields.
   const music = mediaType === 'album' || mediaType === 'track'
-  const words = new Set(query.q?.split(/\s+/).filter(Boolean))
+  const words = browseSearchWords(query)
   const sharedArtistTags = music && words.size > 1
   const database = sharedArtistTags
-    ? db.with(
-        db.$with('browse_artist_tags', {}).as(artistTagMemberships(mediaType)),
-      )
+    ? db.with(db.$with('browse_artist_tag_labels', {}).as(artistTagLabels()))
     : db
   const searchConditions: SQL[] = []
   for (const word of words) {
@@ -1171,30 +1287,57 @@ async function browseQueries(
   const listeningSubject = mediaType === 'track' ? 'track' : 'album'
   const itemConditions = (requested?: BrowseListening) =>
     and(where, requested?.condition(listeningSubject, sql`${mediaItem.id}`))
-  // An ordered Added page can stop at its limit. Probe only source records
-  // encountered while walking that index, keeping full-set work for counts.
+  // An ordered Added page can stop at its limit. For creator scopes, keep
+  // the cheap indexed credit test before probes of redundant Last.fm rows.
+  // PostgreSQL can otherwise test those probes before joining artist credits.
+  const creatorTrackScope = mediaType === 'track' && !!creatorCredit
+  const nonredundantTrack = sql`not exists (
+    ${redundantLastfmTrackIds(sql`${mediaItem.id}`)})`
+  const scopedTrackVisibility = hideRedundant
+    ? creatorTrackScope
+      ? sql`case when ${mediaItem.sourceLabel} is distinct from 'lastfm' then true
+          when ${creatorCredit} then ${nonredundantTrack}
+          else false end`
+      : sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or ${nonredundantTrack})`
+    : undefined
   const addedTrackVisibility =
-    hideRedundant && query.sortBy === 'dateAdded' && query.direction === 'desc'
-      ? sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or not exists (
-        ${redundantLastfmTrackIds(sql`${mediaItem.id}`)}
-      ))`
+    query.sortBy === 'dateAdded' && query.direction === 'desc'
+      ? scopedTrackVisibility
       : visibleTrack
   const pageMembership = itemConditions(listening)
   const pageWhere = and(
     pageMembership,
-    query.filters.length ? visibleTrack : addedTrackVisibility,
+    creatorTrackScope
+      ? scopedTrackVisibility
+      : query.filters.length
+        ? visibleTrack
+        : addedTrackVisibility,
   )
   const pageSource = listening?.source(listeningSubject)
-  const countWhere = and(itemConditions(countedListening), visibleTrack)
+  const countWhere = and(
+    itemConditions(countedListening),
+    creatorTrackScope ? scopedTrackVisibility : visibleTrack,
+  )
   const countSource = countedListening?.source(listeningSubject)
-  const base = (rank: SQL<number> = sql<number>`0`, ordinal?: SQL<number>) => {
+  const base = ({
+    rank = sql<number>`0`,
+    ordinal,
+    primary,
+    releaseColumns = false,
+  }: {
+    rank?: SQL<number>
+    ordinal?: SQL<number>
+    primary?: SQL
+    releaseColumns?: boolean
+  } = {}) => {
     const query = database
       .select({
-        id: mediaItem.id,
+        ...(releaseColumns ? trackReleaseColumns : { id: mediaItem.id }),
         listeningScrobbles: sql<
           number | null
         >`${listening?.sort ?? sql`null`}`.as('listening_scrobbles'),
         ...(ordinal ? { ordinal: ordinal.as('ordinal') } : {}),
+        ...(primary ? { primary: primary.as('primary_value') } : {}),
         rank: rank.as('rank'),
       })
       .from(mediaItem)
@@ -1251,6 +1394,7 @@ async function browseQueries(
   async function readTrackRanks(
     ranks: number[] | { first: number; last: number },
     firstArtistTagWhere?: SQL,
+    rankVisibility = visibleTrack,
   ) {
     const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
     const requested = Array.isArray(ranks)
@@ -1260,12 +1404,12 @@ async function browseQueries(
       ? sql`in (select rank from primary_tracks where ordinal ${requested})`
       : sql`between (select rank from primary_tracks where ordinal = ${ranks.first}::bigint)
           and ${last}::bigint`
-    const prefix = base(
-      sql<number>`rank() over (order by ${order})`,
-      sql<number>`row_number() over (order by ${order})`,
-    )
+    const prefix = base({
+      rank: sql<number>`rank() over (order by ${order})`,
+      ordinal: sql<number>`row_number() over (order by ${order})`,
+    })
       .where(
-        firstArtistTagWhere ?? and(itemConditions(listening), visibleTrack),
+        firstArtistTagWhere ?? and(itemConditions(listening), rankVisibility),
       )
       .orderBy(order)
     const releaseJoins = firstArtistTagWhere
@@ -1296,6 +1440,62 @@ async function browseQueries(
     return TrackRankRowsSchema.parse(result.rows)
   }
 
+  async function readFirstTrackFieldPage(limit: number) {
+    // Bound release-order lookups by the primary page and include every row
+    // tied at its boundary before resolving the stable natural order.
+    const primaryOrder = (value: SQL) =>
+      fieldOrder(value, query.sortBy, query.direction)
+    const primary = primaryOrder(sql`primary_value`)
+    const artistMatches =
+      query.sortBy === 'artist'
+        ? base({ releaseColumns: true }).where(pageWhere)
+        : undefined
+    // Probe credits for a small result. Join them as a set for broad matches.
+    const boundedArtistProbes = sql`(select bounded from artist_sort_scope)`
+    const prefix = artistMatches
+      ? sql`select * from (
+          select p.*, ${firstTrackArtist(sql`p.id`)} as primary_value
+          from matching_tracks p where ${boundedArtistProbes}
+          union all
+          select p.*, a.name as primary_value
+          from matching_tracks p
+          left join (${firstTrackArtistRows(sql`select id as credit_id from matching_tracks`)}) a
+            on a.media_item_id = p.id
+          where not ${boundedArtistProbes}
+        ) artist_matches order by ${primary}`
+      : base({ primary: sort, releaseColumns: true })
+          .where(pageWhere)
+          .orderBy(primary)
+    const releaseOrder = trackNaturalOrder(query.sortBy, undefined, {
+      id: sql`p.id`,
+      title: sql`p.title`,
+      releaseDate: sql`p.release_date`,
+      albumId: sql`p.album_media_item_id`,
+      albumName: sql`p.album_name`,
+      spotifyAlbumId: sql`p.spotify_album_id`,
+    })
+    const ordering = sql.join(
+      [primaryOrder(sql`p.primary_value`), ...releaseOrder, sql`p.id`],
+      sql`, `,
+    )
+    const matches = artistMatches
+      ? sql`matching_tracks as materialized (${artistMatches}), artist_sort_scope as materialized (
+          select count(*) <= ${trackArtistProbeLimit} as bounded
+          from (select 1 from matching_tracks limit ${trackArtistProbeLimit + 1}) probe
+        ), `
+      : sql``
+    const result =
+      await db.execute(sql`with ${matches}page_tracks as materialized (
+        ${prefix} fetch first (${limit}) rows with ties
+      )
+      select p.id, p.listening_scrobbles as "listeningScrobbles"
+      from page_tracks p
+      left join ${mediaItem} as ${trackSortAlbum}
+        on ${trackSortAlbum.id} = p.album_media_item_id
+      order by ${ordering} limit ${limit}`)
+    return TrackPageRowsSchema.parse(result.rows)
+  }
+
   async function readPage(limit: number) {
     // Keep positive artist tags as a set of keys. A broad tag must not be
     // nested-loop joined against the date index, and release ordering only
@@ -1322,18 +1522,29 @@ async function browseQueries(
           addedTrackVisibility,
         )
       : undefined
-    // Keep the direct limit for early pages, where there are few ties to skip.
+    // Keep index order and categorical sorts with potentially library-wide
+    // ties on the direct limit path.
+    const firstFilteredFieldPage =
+      mediaType === 'track' &&
+      offset === 0 &&
+      !creatorTrackScope &&
+      options.sort?.field.key !== query.sortBy &&
+      (query.q || query.filters.length || query.ranges.length) &&
+      boundedTrackPageSortFields.has(query.sortBy)
     const rows =
       useTrackRanks && limit > 0 && (firstArtistTagWhere || offset >= 3 * limit)
         ? await readTrackRanks(
             { first: offset + 1, last: offset + limit },
             firstArtistTagWhere,
+            creatorTrackScope ? scopedTrackVisibility : visibleTrack,
           )
-        : await base()
-            .where(pageWhere)
-            .orderBy(order, ...naturalOrder, mediaItem.id)
-            .limit(limit)
-            .offset(offset)
+        : firstFilteredFieldPage && limit > 0
+          ? await readFirstTrackFieldPage(limit)
+          : await base()
+              .where(pageWhere)
+              .orderBy(order, ...naturalOrder, mediaItem.id)
+              .limit(limit)
+              .offset(offset)
     const items = rows.slice(0, query.size)
     return {
       ids: items.map((row) => row.id),
@@ -1365,7 +1576,9 @@ async function browseQueries(
       [order, ...naturalOrder, sql`${mediaItem.id}`],
       sql`, `,
     )
-    const ranked = base(sql<number>`row_number() over (order by ${ordering})`)
+    const ranked = base({
+      rank: sql<number>`row_number() over (order by ${ordering})`,
+    })
       .where(pageWhere)
       .as('ranked')
     const rows = await database
@@ -1425,12 +1638,14 @@ async function browseQueries(
 }
 
 /** Warm only an order that a Browse page has previously requested. */
-export async function refreshRecordingBrowseOrderForMaintenance() {
+export async function refreshRecordingBrowseOrderForMaintenance(
+  source: RecordingOrderMaintenanceSource = 'scheduled',
+) {
   const grouped = await browseQueries(
     'track',
     TrackQuerySchema.parse({ groupRecordings: true, sortBy: 'scrobbles' }),
   )
-  return (await grouped.refreshStoredOrder?.()) ?? false
+  return (await grouped.refreshStoredOrder?.(source)) ?? false
 }
 
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
@@ -1444,7 +1659,10 @@ function recordBrowseShape(query: BrowseQuery) {
     query.sortBy === 'scrobbles' || query.sortBy === 'listeningScrobbles'
       ? query.sortBy
       : undefined
+  const termCount = browseSearchWords(query).size
   setRequestBrowseProfile({
+    searchTerms:
+      termCount === 0 ? undefined : termCount === 1 ? 'one' : 'multiple',
     playSort,
     grouped: 'groupRecordings' in query && query.groupRecordings === true,
     depth: query.page === 1 ? 'first' : query.page <= 4 ? 'near' : 'deep',
@@ -1459,6 +1677,10 @@ function recordBrowseShape(query: BrowseQuery) {
     filtered: Boolean(
       query.q || query.filters.length || query.ranges.length || query.creatorId,
     ),
+    creatorScoped: Boolean(query.creatorId),
+    sortField: query.sortBy,
+    filterFields: query.filters.map((chip) => chip.field),
+    rangeFields: query.ranges.map((range) => range.field),
     sort:
       query.sortBy === 'dateAdded'
         ? 'added'
@@ -1707,36 +1929,48 @@ function firstTrackArtist(mediaItemId: SQL) {
     order by c.billing_order, a.name limit 1)`
 }
 
+function firstTrackArtistRows(creditIds: SQL) {
+  return sql`select distinct on (c.media_item_id) c.media_item_id, lower(a.name) as name
+    from (${creditIds}) subjects
+    join media_credit c on c.media_item_id = subjects.credit_id and c.role = 'artist'
+    join artist a on a.id = c.artist_id
+    order by c.media_item_id, c.billing_order, a.name`
+}
+
 /** Keep ties in a release together and in their stored playing order. */
 function trackNaturalOrder(
   primary: string,
   setKeys?: { artist: SQL; position: SQL },
+  columns: Record<
+    keyof typeof trackReleaseColumns,
+    SQLWrapper
+  > = trackReleaseColumns,
 ) {
-  const albumId = sql`${libraryTrack.albumMediaItemId}`
+  const { id, title, releaseDate, albumId, albumName, spotifyAlbumId } = columns
+  const sortedAlbumName = trackAlbumSortName(albumName)
   const artist =
-    setKeys?.artist ??
-    firstTrackArtist(sql`coalesce(${albumId}, ${mediaItem.id})`)
-  const albumDate = sql`case when ${albumId} is null then ${mediaItem.releaseDate}
+    setKeys?.artist ?? firstTrackArtist(sql`coalesce(${albumId}, ${id})`)
+  const albumDate = sql`case when ${albumId} is null then ${releaseDate}
     else ${trackSortAlbum.releaseDate} end`
   const position =
     setKeys?.position ??
     sql`(select min(t.position) from track t
-    where t.track_media_item_id = ${mediaItem.id} and t.album_media_item_id = ${albumId})`
+    where t.track_media_item_id = ${id} and t.album_media_item_id = ${albumId})`
   const withinAlbum = [
     albumId,
-    sql`case when ${albumId} is null then ${libraryTrack.spotifyAlbumId} end`,
+    sql`case when ${albumId} is null then ${spotifyAlbumId} end`,
     position,
-    sql`lower(${mediaItem.title})`,
+    sql`lower(${title})`,
   ]
   const year = sql`extract(year from ${albumDate})`
   const grouped =
     primary === 'artist'
-      ? [year, trackSortAlbumName]
+      ? [year, sortedAlbumName]
       : primary === 'album'
         ? [albumDate]
         : primary === 'releaseDate'
-          ? [artist, trackSortAlbumName]
-          : [artist, year, trackSortAlbumName]
+          ? [artist, sortedAlbumName]
+          : [artist, year, sortedAlbumName]
   return [...grouped, ...withinAlbum].map((key) => sql`${key} asc nulls last`)
 }
 
@@ -1747,7 +1981,6 @@ function textRows(
   options: {
     includeArchived?: boolean
     normalizeTags?: boolean
-    sharedArtistTags?: boolean
     // Facets also list each tag's parents, counted over all their subtags.
     rollUpTags?: boolean
   } = {},
@@ -1797,9 +2030,7 @@ function textRows(
       mediaType === 'track'
         ? sql`join library_track lt on lt.media_item_id = media_item.id`
         : sql``
-    const membership = options.sharedArtistTags
-      ? sql`select media_item_id, name, name_key from browse_artist_tags`
-      : artistTagMemberships(mediaType)
+    const membership = artistTagMemberships(mediaType)
     const artistRows = sql`select media_item.id, artist_tag.name as value
       from (${membership}) artist_tag
       join media_item on media_item.id = artist_tag.media_item_id ${trackJoin}

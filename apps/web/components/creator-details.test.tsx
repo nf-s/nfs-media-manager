@@ -1144,3 +1144,48 @@ test('an artist without mixes has no Mixes tab or list', () => {
   // An old Mixes link opens the Overview instead of an empty tab.
   assert.match(html, /role="tab" aria-selected="true"[^>]*>Overview/)
 })
+
+test('the Artist Overview only enables queries for sections it displays', (t) => {
+  const sparseArtist = ArtistDetailSchema.parse({
+    ...artist,
+    albumCount: 0,
+    trackCount: 0,
+    playlistCount: 0,
+    mixCount: 1,
+  })
+  for (const { fixture, visibleQueries } of [
+    { fixture: sparseArtist, visibleQueries: ['mixes'] },
+    { fixture: artist, visibleQueries: ['albums', 'tracks', 'playlists'] },
+  ]) {
+    const cache: RenderOptions['cache'] = [[['artist', artist.id], fixture]]
+    const client = seededClient(cache)
+    const options = t.mock.method(client, 'defaultQueryOptions')
+    try {
+      markup(client, {
+        pathname: `/artists/${artist.id}`,
+        children: <ArtistDetail id={artist.id} />,
+        cache,
+      })
+      const enabled = new Set(
+        options.mock.calls.flatMap(({ arguments: [option] }) =>
+          option.queryKey?.[0] === 'artist-overview' && option.enabled !== false
+            ? [option.queryKey[2]]
+            : [],
+        ),
+      )
+      assert.deepEqual([...enabled], visibleQueries)
+      assert.equal(
+        options.mock.calls.some(
+          ({ arguments: [option] }) =>
+            option.queryKey?.[0] === 'tracks' &&
+            (option.queryKey[1] === 'browse' ||
+              option.queryKey[1] === 'browse-count'),
+        ),
+        false,
+        'The Tracks tab does not schedule Browse requests from the Overview',
+      )
+    } finally {
+      client.clear()
+    }
+  }
+})

@@ -46,6 +46,7 @@ beforeEach(async () => {
       ('untagged-film', 'untagged-film', 'film', 'Fixture untagged film'),
       ('release', 'release', 'album', 'Fixture album'),
       ('track', 'track', 'track', 'Fixture track'),
+      ('entry-track', 'entry-track', 'track', 'Fixture album track'),
       ('peer', 'peer', 'track', 'Fixture peer');
     insert into album (media_item_id) values ('release');
     insert into tag (id, media_type, name, kind) values
@@ -58,7 +59,9 @@ beforeEach(async () => {
     insert into media_credit (media_item_id, artist_id, role)
     values ('film', 'actor', 'actor'), ('release', 'artist', 'artist');
     insert into library_track (media_item_id, album_media_item_id)
-    values ('track', 'release'), ('peer', null);
+    values ('track', 'release'), ('entry-track', 'release'), ('peer', null);
+    insert into track (id, album_media_item_id, track_media_item_id, title, position)
+    values ('entry', 'release', 'entry-track', 'Fixture album track', 1);
     insert into playlist (id, name, kind) values
       ('list', 'Fixture playlist', 'playlist'), ('other', 'Fixture other playlist', 'playlist');
     insert into playlist_item (playlist_id, media_item_id) values ('list', 'track');
@@ -66,6 +69,8 @@ beforeEach(async () => {
     values ('fixture-listener', 'artist', 'title', 'track', 'exact');
     insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id)
     values ('fixture-listener', 'artist', 'title', 'track');
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    values ('listen', 'fixture-listener', timestamp '2025-01-01', 'Fixture artist', 'Fixture track', 'artist', 'title');
   `)
   await clearMarkers()
 })
@@ -115,9 +120,41 @@ describe('stored Track Browse invalidation', () => {
     "insert into media_credit (media_item_id, artist_id, role) values ('film', 'artist', 'director')",
     "update media_credit set role = 'director' where media_item_id = 'film'",
     "update media_credit set billing_order = billing_order where media_item_id = 'release'",
+    "update artist set name = name where id = 'artist'",
+    "update artist set sort_name = 'Alternate spelling' where id = 'artist'",
+    "delete from artist where id = 'missing'",
+    "delete from track where id = 'missing'",
+    "update track set position = position where id = 'entry'",
+    "update track set title = 'Alternate track-list title' where id = 'entry'",
+    "delete from lastfm_scrobble where id = 'missing'",
+    "update lastfm_scrobble set listened_at = listened_at where id = 'listen'",
+    "update lastfm_scrobble set album_media_item_id = 'release' where id = 'listen'",
   ])('preserves the cache for %s', async (statement) => {
     await pool.query(statement)
     await expectMarkers(0)
+  })
+
+  it('preserves both caches when a film provider reapplies an existing actor', async () => {
+    await pool.query(`
+      delete from media_credit where media_item_id = 'film' and role = 'actor';
+      insert into artist (id, name, sort_name) values ('actor', 'Fixture actor', 'Fixture actor')
+      on conflict do nothing;
+      insert into media_credit (media_item_id, artist_id, role)
+      values ('film', 'actor', 'actor');
+    `)
+    await expectMarkers(0)
+  })
+
+  it('marks only recording order when an overlapping Last.fm page adds a play', async () => {
+    const insert = `insert into lastfm_scrobble
+      (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+      values ('listen', 'fixture-listener', timestamp '2025-01-01', 'Fixture artist', 'Fixture track', 'artist', 'title')`
+    await pool.query(`${insert} on conflict do nothing`)
+    await expectMarkers(0)
+    await pool.query(`${insert},
+      ('new-listen', 'fixture-listener', timestamp '2025-01-02', 'Fixture artist', 'Fixture track', 'artist', 'title')
+      on conflict do nothing`)
+    await expectMarkers(0, 1)
   })
 
   it.each([
@@ -133,10 +170,29 @@ describe('stored Track Browse invalidation', () => {
     "update lastfm_track_link set strategy = 'manual' where track_media_item_id = 'track'",
     "update lastfm_track_source set manually_matched = true where track_media_item_id = 'track'",
     "delete from media_item where id = 'track'",
+    "insert into artist (id, name) values ('artist', 'Fixture artist'), ('new-artist', 'New artist') on conflict do nothing",
+    "update artist set name = 'Updated artist' where id = 'artist'",
+    "insert into track (id, album_media_item_id, track_media_item_id, title, position) values ('new-entry', 'release', 'peer', 'Fixture track', 2)",
+    "update track set track_media_item_id = 'peer' where id = 'entry'",
+    "delete from track where id = 'entry'",
+    'truncate track',
+    'truncate artist cascade',
     'truncate lastfm_track_source',
   ])('marks both caches for %s', async (statement) => {
     await pool.query(statement)
     await expectMarkers(1)
+  })
+
+  it.each([
+    "update track set position = position + 1 where id = 'entry'",
+    "update track set duration_sec = 120 where id = 'entry'",
+    "update lastfm_scrobble set listened_at = listened_at + interval '1 second' where id = 'listen'",
+    "update lastfm_scrobble set track_key = 'another title' where id = 'listen'",
+    "delete from lastfm_scrobble where id = 'listen'",
+    'truncate lastfm_scrobble',
+  ])('marks only recording order for %s', async (statement) => {
+    await pool.query(statement)
+    await expectMarkers(0, 1)
   })
 
   it('marks only facets for a new Spotify search source', async () => {

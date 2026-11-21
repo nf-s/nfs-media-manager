@@ -10,8 +10,10 @@ import { db as nodeDb } from '@/lib/db'
 import {
   logApiRequest,
   measureRequestPhase,
+  recordRecordingOrderLookup,
   setPlaybackLogRole,
   setRequestBrowseProfile,
+  setRequestLogRoute,
 } from '@/lib/request-log'
 import { createSonosRequestFetch } from '@/lib/sonos-request-log'
 import { logger } from './logger'
@@ -72,8 +74,14 @@ const RecordSchema = z.object({
       listening: z.boolean(),
       listeningUse: z.enum(['filter', 'column', 'both']).optional(),
       filtered: z.boolean(),
+      searchTerms: z.enum(['one', 'multiple']).optional(),
+      creatorScoped: z.boolean().optional(),
       sort: z.enum(['added', 'title', 'plays', 'other']),
+      sortField: z.string().optional(),
+      filterFields: z.array(z.string()).optional(),
+      rangeFields: z.array(z.string()).optional(),
       playSort: z.enum(['scrobbles', 'listeningScrobbles']).optional(),
+      recordingOrderLookup: z.enum(['hit', 'miss']).optional(),
     })
     .optional(),
   phases: z
@@ -126,15 +134,24 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     listening: true,
     listeningUse: 'both',
     filtered: false,
+    creatorScoped: false,
+    searchTerms: 'multiple',
     sort: 'plays',
     playSort: 'listeningScrobbles',
+    sortField: 'listeningScrobbles',
+    filterFields: ['artistTag', 'other'],
+    rangeFields: ['durationSec'],
   } satisfies NonNullable<z.infer<typeof RecordSchema>['browse']>
   // Executing without a request, as a background job would, emits no record.
   await expect(nodeDb.execute(statement)).rejects.toThrow()
 
   await Promise.all([
     logApiRequest(request, async () => {
-      setRequestBrowseProfile(browse)
+      setRequestBrowseProfile({
+        ...browse,
+        filterFields: ['fixture-private-field', 'artistTag', 'artistTag'],
+      })
+      recordRecordingOrderLookup('hit')
       await Promise.all([
         measureRequestPhase('ids', async () => {
           const prepared = nodeDb
@@ -178,7 +195,7 @@ it('counts Drizzle executions and phases separately across concurrent requests',
   expect(logs).toHaveLength(2)
   expect(logs.find(({ status }) => status === 204)).toMatchObject({
     drizzleStatementCount: 4,
-    browse,
+    browse: { ...browse, recordingOrderLookup: 'hit' },
     phases: {
       ids: { drizzleStatementCount: 3 },
       hydrate: { drizzleStatementCount: 1 },
@@ -193,6 +210,27 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     Object.keys(logs.find(({ status }) => status === 200)?.phases ?? {}),
   ).toEqual(['count'])
   expect(JSON.stringify(info.mock.calls)).not.toMatch(/fixture[_-]/)
+})
+
+it('records only built-in sort and range fields', async () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  await logApiRequest(new Request('https://fixture.invalid'), () => {
+    setRequestBrowseProfile({
+      grouped: false,
+      depth: 'first',
+      listening: false,
+      filtered: true,
+      sort: 'other',
+      sortField: 'fixture-extension',
+      rangeFields: ['fixture-extension'],
+    })
+    return new Response()
+  })
+  const [line] = info.mock.calls[0] ?? []
+  const { browse } = RecordSchema.parse(JSON.parse(line))
+  expect(browse?.sortField).toBe('other')
+  expect(browse?.rangeFields).toEqual(['other'])
+  expect(JSON.stringify(info.mock.calls)).not.toContain('fixture-extension')
 })
 
 it('preserves the request result and thrown error when log delivery fails', async () => {
@@ -300,4 +338,73 @@ it('omits unrecognized paths and untrusted correlation headers', async () => {
     status: 404,
     drizzleStatementCount: 0,
   })
+})
+
+it.each([
+  ['/api/v1/tracks/browse-page', 200, true, true],
+  ['/api/v1/tracks/browse-count', 200, true, true],
+  ['/api/v1/tracks/browse-page', 200, false, false],
+  ['/api/v1/tracks/browse-page', 401, true, false],
+  ['/api/v1/tracks/positions', 200, true, false],
+])(
+  'requests only due foreground recording maintenance for %s',
+  async (route, status, due, requested) => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const request = new Request('https://fixture.invalid')
+    const requestRefresh = vi.fn(() => {
+      expect(info).toHaveBeenCalledOnce()
+      expect(() => cloudDb.execute(sql`select 1`)).toThrow(
+        'outside a Worker invocation',
+      )
+    })
+
+    const response = await logApiRequest(
+      request,
+      () =>
+        withCloudDatabase(async () => {
+          setRequestLogRoute(route, request.headers)
+          setRequestBrowseProfile({
+            grouped: true,
+            depth: 'first',
+            listening: false,
+            filtered: false,
+            sort: 'plays',
+          })
+          recordRecordingOrderLookup('miss', due)
+          return new Response(null, { status })
+        }),
+      requestRefresh,
+    )
+
+    expect(response.status).toBe(status)
+    expect(requestRefresh).toHaveBeenCalledTimes(Number(requested))
+  },
+)
+
+it('returns the completed response when maintenance registration throws', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => {})
+  const request = new Request('https://fixture.invalid')
+  const refresh = vi.fn(() => {
+    throw new Error('fixture registration failure')
+  })
+  const response = new Response(null, { status: 200 })
+  expect(
+    await logApiRequest(
+      request,
+      () => {
+        setRequestLogRoute('/api/v1/tracks/browse-page', request.headers)
+        setRequestBrowseProfile({
+          grouped: true,
+          depth: 'first',
+          listening: false,
+          filtered: false,
+          sort: 'plays',
+        })
+        recordRecordingOrderLookup('miss', true)
+        return response
+      },
+      refresh,
+    ),
+  ).toBe(response)
+  expect(refresh).toHaveBeenCalledOnce()
 })

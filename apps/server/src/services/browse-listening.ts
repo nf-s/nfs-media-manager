@@ -82,6 +82,7 @@ export function listeningCounts(
   filter: ListeningFilter | undefined,
   sortPeriod: ListeningPeriod | undefined,
   now = new Date(),
+  independentPresence = false,
 ) {
   const periods = new Map<string, { predicate: SQL; alias: string }>()
   function count(period: ListeningPeriod): SQL<number> {
@@ -99,7 +100,8 @@ export function listeningCounts(
   const rules = filter?.rules ?? []
   // A single presence rule can use a semijoin or antijoin. Multiple rules or
   // a sort period share a grouped read so each period need not scan separately.
-  const usePresence = rules.length === 1 && sortPeriod === undefined
+  const usePresence =
+    sortPeriod === undefined && (rules.length === 1 || independentPresence)
   const conditions = rules.map((rule) => {
     const presence = usePresence ? presenceRule(rule) : undefined
     if (presence) {
@@ -226,6 +228,17 @@ export function createBrowseListening(
     source,
     condition: (subject: ListeningSubject, id: SQL) =>
       condition((period) => hasBrowseScrobbles(subject, id, period)),
+    multiRulePresenceCondition(hasScrobbles: ScrobblePresence) {
+      if (
+        !filter ||
+        filter.rules.length < 2 ||
+        !filter.rules.every(presenceRule)
+      )
+        return undefined
+      return listeningCounts(filter, undefined, now, true)?.condition(
+        hasScrobbles,
+      )
+    },
     sort,
   }
 }

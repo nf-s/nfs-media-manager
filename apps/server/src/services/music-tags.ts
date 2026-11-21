@@ -125,9 +125,13 @@ function artistTagRows(mediaId: SQL): SQL {
   group by name_key`
 }
 
+export function artistTagLabels(): SQL {
+  return projectedArtistTags(currentArtistProfiles)
+}
+
 export function artistTagMemberships(mediaType: 'album' | 'track'): SQL {
   return sql`select c.media_item_id, artist_tag.name, artist_tag.name_key
-    from (${projectedArtistTags(currentArtistProfiles)}) artist_tag
+    from (${artistTagLabels()}) artist_tag
     join media_credit c on c.artist_id = artist_tag.artist_id and c.role = 'artist'
     join media_item m on m.id = c.media_item_id and m.media_type = ${mediaType}`
 }

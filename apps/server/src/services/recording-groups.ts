@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
 import { canReadDatabaseWithoutCache } from '@/lib/database-read-cache'
+import { recordRecordingOrderLookup } from '@/lib/request-log'
 
 const RecordingGroupSchema = z.object({
   id: z.string(),
@@ -408,6 +409,7 @@ const RecordingOrderReadSchema = z.object({
   total_count: z.number().int().nonnegative().nullable(),
   filtered_count: z.number().int().nonnegative().nullable(),
   can_refresh: z.boolean(),
+  can_refresh_after_browse: z.boolean(),
   rows: RecordingGroupPositionRowsSchema,
 })
 
@@ -418,6 +420,9 @@ const staleOrder = sql`(recording_browse_order_state.total_count is null
   or recording_browse_order_state.builder <> ${orderBuilder}
   or not (${cleanOrder}))`
 const foregroundOrderBudget = 3500
+// Leave time for rollback and pool teardown inside Cloudflare's 30s waitUntil.
+const browseOrderBudget = 15_000
+export type RecordingOrderMaintenanceSource = 'scheduled' | 'browse'
 const OrderLeaseSchema = z.object({ lease: z.string() })
 const MissingMaintenanceColumn = z.object({ code: z.literal('42703') })
 
@@ -439,11 +444,22 @@ export async function readRecordingBrowseOrder(rows?: SQL, count?: SQL) {
           where singleton and (retry_after > statement_timestamp()
             or to_jsonb(s)->>'maintenance_only' is distinct from 'false')
         ) as can_refresh,
+        exists (
+          select 1 from recording_browse_order_state s where singleton
+            and retry_after <= statement_timestamp()
+            and to_jsonb(s)->>'maintenance_only' = 'true'
+        ) as can_refresh_after_browse,
         case when (select total_count from current_order) is not null
           then ${selected} else '[]'::jsonb end as rows`)
-    return RecordingOrderReadSchema.parse(result.rows[0])
+    const order = RecordingOrderReadSchema.parse(result.rows[0])
+    recordRecordingOrderLookup(
+      order.total_count === null ? 'miss' : 'hit',
+      order.can_refresh_after_browse,
+    )
+    return order
   } catch (error) {
     if (!canReadDatabaseWithoutCache(error)) throw error
+    recordRecordingOrderLookup('miss')
     return undefined
   }
 }
@@ -453,7 +469,10 @@ export function recordingBrowseOrderRows(rank: SQL, condition: SQL) {
     ${rank} as rank from recording_browse_order g where ${condition} order by ${rank}`
 }
 
-async function claimRecordingOrderRefresh(foreground: boolean) {
+async function claimRecordingOrderRefresh(
+  foreground: boolean,
+  source: RecordingOrderMaintenanceSource,
+) {
   return db.transaction(async (tx) => {
     await tx.execute(sql`set local lock_timeout = '100ms'`)
     const result = await tx.execute(
@@ -472,6 +491,7 @@ async function claimRecordingOrderRefresh(foreground: boolean) {
         : sql`update recording_browse_order_state
           set retry_after = statement_timestamp() + interval '120 seconds'
           where singleton and retry_after <= statement_timestamp() and ${staleOrder}
+            ${source === 'browse' ? sql`and maintenance_only` : sql``}
           returning retry_after::text as lease, maintenance_only`,
     )
     const row = result.rows[0]
@@ -483,15 +503,23 @@ async function claimRecordingOrderRefresh(foreground: boolean) {
 export async function refreshRecordingBrowseOrder(
   order: { prefix: SQL; rows: SQL },
   selectedRows?: SQL,
+  source: RecordingOrderMaintenanceSource = 'scheduled',
 ) {
   const foreground = selectedRows !== undefined
   const started = performance.now()
-  const deadline = started + (foreground ? foregroundOrderBudget : 60_000)
+  const deadline =
+    started +
+    (foreground
+      ? foregroundOrderBudget
+      : source === 'browse'
+        ? browseOrderBudget
+        : 60_000)
   const expired = new Error('Recording order refresh exceeded its budget')
   let lease: string | undefined
   try {
-    lease = await claimRecordingOrderRefresh(foreground)
+    lease = await claimRecordingOrderRefresh(foreground, source)
     if (!lease) return undefined
+    if (source === 'browse' && performance.now() >= deadline) throw expired
     const claimed = sql`singleton and retry_after = ${lease}::timestamptz`
 
     return await db.transaction(
@@ -533,7 +561,7 @@ export async function refreshRecordingBrowseOrder(
             builder = ${orderBuilder},
             total_count = (select count(*)::int from inserted),
             maintenance_only = ${foreground ? sql`false` : sql`maintenance_only`},
-            retry_after = clock_timestamp() + interval '5 seconds'
+            retry_after = clock_timestamp() + ${source === 'browse' ? 60 : 5} * interval '1 second'
           where ${claimed}`)
         if (!selectedRows) {
           if (performance.now() - started >= foregroundOrderBudget) {

@@ -354,8 +354,8 @@ it('pages over latest owner jobs and lets newer queued, failed or accepted searc
 })
 
 it('audits distinct saved candidates across all searches without changing the library', async () => {
-  const { rebuildSpotifyTrackMatchAudit } =
-    await import('@/services/spotify-track-match-audit')
+  const { readLocalSpotifyReview } =
+    await import('../scripts/local-spotify-review/read')
   const trackId = 'fixture-audit'
   const title = 'Fixture Audit Recording'
   await lastfmTrack(trackId, title)
@@ -410,28 +410,22 @@ it('audits distinct saved candidates across all searches without changing the li
       ],
     },
   })
-  expect(await rebuildSpotifyTrackMatchAudit()).toMatchObject({
-    tracks: 2,
-    candidates: 3,
-    likely: 1,
-    unlikely: 1,
-  })
-  expect(await rebuildSpotifyTrackMatchAudit()).toMatchObject({
-    tracks: 2,
-    candidates: 3,
-  })
-  const [owner] = await fixture
-    .select()
-    .from(schema.spotifyTrackMatchAudit)
-    .where(eq(schema.spotifyTrackMatchAudit.ownerId, userId))
-  expect(owner?.report.candidates).toHaveLength(2)
-  expect(owner?.report.candidates[0]).toMatchObject({
+  await expect(readLocalSpotifyReview()).rejects.toThrow(
+    'Choose one search owner',
+  )
+  const [owner] = await readLocalSpotifyReview(userId)
+  const [other] = await readLocalSpotifyReview(otherUserId)
+  expect(
+    other?.candidates.map((candidate) => candidate.spotifyTrackId),
+  ).toEqual([unique.spotifyTrackId])
+  expect(owner?.candidates).toHaveLength(2)
+  expect(owner?.candidates[0]).toMatchObject({
     spotifyTrackId: exact.spotifyTrackId,
     historical: true,
     assessment: 'likely',
     reasons: [{ code: 'historical-search' }],
   })
-  expect(owner?.report.candidates[1]?.reasons.map((r) => r.code)).toEqual(
+  expect(owner?.candidates[1]?.reasons.map((r) => r.code)).toEqual(
     expect.arrayContaining(['source-title', 'source-artist-credit']),
   )
   const [track] = await fixture
@@ -443,8 +437,8 @@ it('audits distinct saved candidates across all searches without changing the li
 })
 
 it('explains a release mismatch by album name and Spotify release ID', async () => {
-  const { rebuildSpotifyTrackMatchAudit } =
-    await import('@/services/spotify-track-match-audit')
+  const { readLocalSpotifyReview } =
+    await import('../scripts/local-spotify-review/read')
   const title = 'Fixture Recording From Two Releases'
   await lastfmTrack('release-comparison', title)
   const storedRelease = 'originalrelease'.padEnd(22, '1')
@@ -454,12 +448,8 @@ it('explains a release mismatch by album name and Spotify release ID', async () 
     .where(eq(schema.libraryTrack.mediaItemId, 'release-comparison'))
   const result = catalogCandidate(title, '2')
   await storeSearch('release-comparison', title, [result])
-  await rebuildSpotifyTrackMatchAudit()
-  const [audit] = await fixture
-    .select()
-    .from(schema.spotifyTrackMatchAudit)
-    .where(eq(schema.spotifyTrackMatchAudit.trackId, 'release-comparison'))
-  expect(audit?.report).toMatchObject({
+  const [audit] = await readLocalSpotifyReview()
+  expect(audit).toMatchObject({
     assessment: 'likely',
     albums: ['Library Edition'],
     candidates: [

@@ -1,8 +1,9 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import {
   SpotifyTrackAuditItemSchema,
+  type SpotifyTrackAuditItem,
   type SpotifyTrackAuditReason,
   type SpotifyTrackAuditAssessment,
   type SpotifyTrackSearchCandidate,
@@ -10,27 +11,27 @@ import {
 import { db } from '@/lib/db'
 import { artistKeys } from '@/lib/lastfm-album-matching'
 import { trackBaseKey } from '@/lib/track-matching'
-import { libraryTrack, spotifyTrackMatchAudit } from '@/schemas/db'
-import { spotifyAlbumReleaseIds } from './album-library-tracks'
-import { playableSpotifyId } from './recording-groups'
-import { resolveSpotifyTrackIds } from './spotify-playlists'
+import { libraryTrack } from '@/schemas/db'
+import { spotifyAlbumReleaseIds } from '@/services/album-library-tracks'
+import { playableSpotifyId } from '@/services/recording-groups'
+import { resolveSpotifyTrackIds } from '@/services/spotify-playlists'
 import {
   readSpotifyTrackSearchForAutomaticMatch,
   readSpotifySearchHistory,
-} from './spotify-track-search'
+} from '@/services/spotify-track-search'
 import {
   checkSpotifySearchDestination,
   libraryRecording,
   newRecordingTarget,
   spotifyRecordingTransferConflict,
-} from './spotify-track-search-acceptance'
+} from '@/services/spotify-track-search-acceptance'
 import {
   type RecordingEvidence,
   spotifySearchRecordingEvidence,
   spotifySearchDestinationReasons,
   spotifySearchSourceReasons,
-} from './spotify-track-search-evidence'
-import { listTracksNeedingSpotifyMatch } from './track-match-diagnostics'
+} from '@/services/spotify-track-search-evidence'
+import { listTracksNeedingSpotifyMatch } from '@/services/track-match-diagnostics'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 const assessmentOrder = { likely: 0, review: 1, unlikely: 2 }
@@ -101,7 +102,7 @@ async function savedCandidates(
     ownerId,
   )
   const items = []
-  for (const { job, candidates, peers } of searches) {
+  for (const { job, query, candidates, peers } of searches) {
     const historical = job.id !== latest?.id
     const reasons: SpotifyTrackAuditReason[] = []
     if (historical) reasons.push(latestSearchReason)
@@ -143,6 +144,7 @@ async function savedCandidates(
       items.push({
         candidate,
         peers,
+        query,
         reasons,
         historical,
         searchedAt: (job.finishedAt ?? job.createdAt).toISOString(),
@@ -172,25 +174,8 @@ async function albumLabels(tx: Transaction, trackId: string, ids: string[]) {
 }
 
 /** Reassess the owner's retained catalog results using the current library evidence. */
-export async function persistSpotifyTrackMatchAudit(
-  tx: Transaction,
-  trackId: string,
-  ownerId: string,
-) {
-  const [existing] = await tx
-    .select({ id: libraryTrack.mediaItemId })
-    .from(libraryTrack)
-    .where(eq(libraryTrack.mediaItemId, trackId))
-    .for('key share')
-  if (!existing) return null
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(['spotify-match-audit', ownerId, trackId])},0))`,
-  )
+async function reviewTrack(tx: Transaction, trackId: string, ownerId: string) {
   const subject = await libraryRecording(tx, trackId)
-  const matchesOwnerTrack = and(
-    eq(spotifyTrackMatchAudit.trackId, trackId),
-    eq(spotifyTrackMatchAudit.ownerId, ownerId),
-  )
   const saved =
     subject &&
     !subject.hidden &&
@@ -200,10 +185,7 @@ export async function persistSpotifyTrackMatchAudit(
   const source = saved.length
     ? await spotifySearchRecordingEvidence(tx, trackId)
     : undefined
-  if (!subject || !source) {
-    await tx.delete(spotifyTrackMatchAudit).where(matchesOwnerTrack)
-    return null
-  }
+  if (!subject || !source) return null
 
   const covered = !(await listTracksNeedingSpotifyMatch(tx, [trackId])).length
   const comparisons = saved.map((item) => ({
@@ -225,6 +207,7 @@ export async function persistSpotifyTrackMatchAudit(
     candidate,
     sourceReasons,
     reasons: jobReasons,
+    query,
     searchedAt,
     historical,
   } of comparisons) {
@@ -293,6 +276,7 @@ export async function persistSpotifyTrackMatchAudit(
     const assessment = assessRecording(source, candidate, reasons)
     candidates.push({
       ...candidate,
+      query,
       searchedAt,
       historical,
       assessment,
@@ -334,7 +318,7 @@ export async function persistSpotifyTrackMatchAudit(
       reason.library = libraryNames.join(' / ') + ' · ' + reason.library
     if (spotifyName) reason.spotify = spotifyName + ' · ' + reason.spotify
   }
-  const report = SpotifyTrackAuditItemSchema.parse({
+  return SpotifyTrackAuditItemSchema.parse({
     trackId,
     title: source.title,
     artists: source.artists,
@@ -344,71 +328,34 @@ export async function persistSpotifyTrackMatchAudit(
     summary: first.summary,
     candidates,
   })
-  const searchText = [
-    report.title,
-    ...report.artists,
-    ...albums,
-    ...report.candidates.flatMap((c) => [
-      c.title,
-      ...c.artists,
-      c.albumName ?? '',
-    ]),
-  ]
-    .join(' ')
-    .toLowerCase()
-  const fields = {
-    report,
-    candidateCount: candidates.length,
-    assessment: first.assessment,
-    assessedAt: new Date(),
-    searchText,
-  }
-  await tx
-    .insert(spotifyTrackMatchAudit)
-    .values({ ownerId, trackId, ...fields })
-    .onConflictDoUpdate({
-      target: [spotifyTrackMatchAudit.ownerId, spotifyTrackMatchAudit.trackId],
-      set: fields,
-    })
-  return report
 }
 
 const SubjectSchema = z.object({ track_id: z.string(), owner_id: z.string() })
-/** Walk all result-bearing searches, including those followed by an empty or failed attempt. */
-export async function rebuildSpotifyTrackMatchAudit() {
-  const counts = { tracks: 0, candidates: 0, likely: 0, review: 0, unlikely: 0 }
-  let cursor: z.infer<typeof SubjectSchema> | undefined
-  for (;;) {
-    const rows =
-      await db.execute(sql`select distinct j.requested_by_user_id as owner_id, t.media_item_id as track_id
+
+/** Keep the selected search history and library evidence in one read-only snapshot. */
+export function readLocalSpotifyReview(ownerId?: string) {
+  return db.transaction(
+    async (tx) => {
+      const rows =
+        await tx.execute(sql`select distinct j.requested_by_user_id as owner_id, t.media_item_id as track_id
       from scrape_job j join library_track t on t.media_item_id in (j.options->>'trackId',j.options->>'acceptedTrackId')
       join media_item m on m.id=t.media_item_id
       where j.provider='spotify' and j.options->>'task'='spotify-track-search' and j.status='succeeded'
-        and j.requested_by_user_id is not null and m.metadata->>'legacyHidden' is distinct from 'true'
+        and j.requested_by_user_id is not null and m.media_type='track' and m.metadata->>'legacyHidden' is distinct from 'true'
         and not ${playableSpotifyId(sql`t.spotify_track_id`)}
+        ${ownerId === undefined ? sql`` : sql`and j.requested_by_user_id=${ownerId}`}
         and exists (select 1 from scrape_job_log l where l.job_id=j.id and jsonb_path_exists(l.metadata, '$.diagnostics[*] ? (@.kind == "spotify-track-search").candidates[0]'))
-        ${cursor ? sql`and (j.requested_by_user_id,t.media_item_id)>(${cursor.owner_id},${cursor.track_id})` : sql``}
-      order by owner_id,track_id limit 50`)
-    const subjects = SubjectSchema.array().parse(rows.rows)
-    if (!subjects.length) return counts
-    // Each subject uses an independent transaction so interrupted runs can be replayed.
-    for (let start = 0; start < subjects.length; start += 4) {
-      const reports = await Promise.all(
-        subjects
-          .slice(start, start + 4)
-          .map((s) =>
-            db.transaction((tx) =>
-              persistSpotifyTrackMatchAudit(tx, s.track_id, s.owner_id),
-            ),
-          ),
-      )
-      for (const report of reports)
-        if (report) {
-          counts.tracks++
-          counts.candidates += report.candidates.length
-          counts[report.assessment]++
-        }
-    }
-    cursor = subjects.at(-1)
-  }
+      order by track_id`)
+      const subjects = SubjectSchema.array().parse(rows.rows)
+      if (new Set(subjects.map((row) => row.owner_id)).size > 1)
+        throw new Error('Choose one search owner with --owner-id.')
+      const items: SpotifyTrackAuditItem[] = []
+      for (const subject of subjects) {
+        const item = await reviewTrack(tx, subject.track_id, subject.owner_id)
+        if (item) items.push(item)
+      }
+      return items
+    },
+    { accessMode: 'read only', isolationLevel: 'repeatable read' },
+  )
 }

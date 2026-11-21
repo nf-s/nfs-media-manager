@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { runDatabaseMaintenance } from './database-maintenance'
+import {
+  runDatabaseMaintenance,
+  runRecordingOrderMaintenance,
+} from './database-maintenance'
 
 const { execute, log, refreshFacets, refreshOrder } = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -41,6 +44,7 @@ describe('scheduled database monitoring', () => {
         },
         {
           event: 'database.recording-order-maintenance',
+          source: 'scheduled',
           outcome,
           durationMs: expect.any(Number),
         },
@@ -61,6 +65,7 @@ describe('scheduled database monitoring', () => {
       },
       {
         event: 'database.recording-order-maintenance',
+        source: 'scheduled',
         outcome: 'skipped',
         durationMs: expect.any(Number),
       },
@@ -93,8 +98,23 @@ describe('scheduled database monitoring', () => {
     })
     expect(log).toHaveBeenCalledWith({
       event: 'database.recording-order-maintenance',
+      source: 'scheduled',
       outcome: 'published',
       durationMs: expect.any(Number),
     })
+  })
+})
+
+it('refreshes only recording order for a Browse request', async () => {
+  refreshOrder.mockResolvedValue(true)
+  await runRecordingOrderMaintenance('browse')
+  expect(execute).not.toHaveBeenCalled()
+  expect(refreshFacets).not.toHaveBeenCalled()
+  expect(refreshOrder).toHaveBeenCalledExactlyOnceWith('browse')
+  expect(log).toHaveBeenCalledExactlyOnceWith({
+    event: 'database.recording-order-maintenance',
+    source: 'browse',
+    outcome: 'published',
+    durationMs: expect.any(Number),
   })
 })

@@ -5,7 +5,6 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { trackBrowseFields } from '@repo/schemas/browse'
-import { SpotifyTrackAuditQuerySchema } from '@repo/schemas/spotify-track-search'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -183,69 +182,6 @@ async function checkBudget(
   }
 }
 
-it('bounds broad, selective, empty and deep Spotify match audit pages', async () => {
-  const { listSpotifyTrackMatchAudit } =
-    await import('@/services/spotify-track-match-audit-list')
-  const ownerId = 'audit-budget-owner'
-  await pool.query(`
-    insert into "user" (id, name, email) values
-      ('audit-budget-owner', 'Fixture owner', 'audit-owner@example.test'),
-      ('audit-budget-other', 'Fixture other owner', 'audit-other@example.test');
-    insert into spotify_track_match_audit
-      (owner_id, track_id, assessment, candidate_count, search_text, report)
-    select a.owner_id, mi.id, a.assessment, 1, lower(mi.title) ||
-        case when n = 250 then ' quartz-window' else '' end,
-      jsonb_build_object('trackId', mi.id, 'title', mi.title, 'artists', jsonb_build_array('Fixture artist'),
-        'albums', '[]'::jsonb, 'durations', '[174]'::jsonb, 'assessment', a.assessment, 'summary', 'Fixture audit',
-        'candidates', jsonb_build_array(jsonb_build_object(
-          'spotifyTrackId', repeat('1', 22), 'title', mi.title, 'artists', jsonb_build_array('Fixture artist'),
-          'albumName', 'Fixture album', 'durationSec', 174, 'assessment', a.assessment,
-          'spotifyUrl', 'https://open.spotify.com/track/' || repeat('1', 22),
-          'summary', 'Fixture candidate', 'reasons', '[]'::jsonb,
-          'searchedAt', '2026-01-01T00:00:00.000Z', 'historical', false)))
-    from generate_series(1, 3200) n join media_item mi on mi.id = 'track-' || n
-    cross join lateral (select
-      case when n <= 1200 then 'audit-budget-owner' else 'audit-budget-other' end as owner_id,
-      case when n % 20 = 0 then 'likely' when n % 5 = 0 then 'review' else 'unlikely' end as assessment
-    ) a
-  `)
-  await pool.query('vacuum analyze spotify_track_match_audit')
-  const queries = [
-    { label: 'first', parameters: {}, expected: 'track-20', count: 1200 },
-    {
-      label: 'selective',
-      parameters: { q: 'QUARTZ-WINDOW', assessment: 'review' },
-      expected: 'track-250',
-      count: 1,
-    },
-    {
-      label: 'miss',
-      parameters: { q: 'missing fixture term' },
-      expected: undefined,
-      count: 0,
-    },
-    {
-      label: 'deep',
-      parameters: { page: 47, sort: 'title' },
-      expected: 'track-1151',
-      count: 1200,
-    },
-  ]
-  for (const { label, parameters, expected, count } of queries) {
-    await checkBudget('Spotify match audit ' + label, 12_000, 1, async () => {
-      const page = await listSpotifyTrackMatchAudit(
-        ownerId,
-        SpotifyTrackAuditQuerySchema.parse(parameters),
-      )
-      expect(page.totalTracks).toBe(1200)
-      expect(page.totalCandidates).toBe(1200)
-      expect(page.counts).toEqual({ likely: 60, review: 180, unlikely: 960 })
-      expect(page.totalCount).toBe(count)
-      expect(page.items[0]?.trackId).toBe(expected)
-    })
-  }
-})
-
 it('bounds selective Track pages and exact counts', async () => {
   const { queryBrowsePageIds, queryBrowseCount } =
     await import('@/services/browse')
@@ -286,6 +222,255 @@ it('bounds unfiltered Track pages and deep positions', async () => {
       { id: 'track-18251', position: 19_499 },
     ])
   })
+})
+
+it('bounds first Track pages sorted by unindexed fields after filtering', async () => {
+  const { queryBrowsePageIds, queryBrowsePositions } =
+    await import('@/services/browse')
+  const tables = [
+    'artist',
+    'artist_provider_current_state',
+    'artist_provider_snapshot',
+    'media_item',
+    'library_track',
+    'media_credit',
+    'track',
+    'playlist',
+    'playlist_item',
+  ]
+  try {
+    await pool.query(`
+    insert into artist (id, name) values
+      ('sort-artist-a', 'Fixture sort Alpha'),
+      ('sort-artist-z', 'Fixture sort Zulu'),
+      ('sort-artist-primary', 'Zulu fixture regular'),
+      ('sort-artist-top', 'Zulu fixture top'),
+      ('sort-artist-secondary', 'Zulu fixture zz'),
+      ('sort-artist-search', 'Alpha fixture');
+    insert into media_item (id, slug, media_type, title, release_date) values
+      ('sort-album-a', 'sort-album-a', 'album', 'Zulu fixture regular', '2080-01-01'),
+      ('sort-album-z', 'sort-album-z', 'album', 'Zulu fixture regular', '2080-01-01'),
+      ('sort-album-top', 'sort-album-top', 'album', 'Zulu fixture top', '2080-01-02');
+    insert into album (media_item_id) values ('sort-album-a'), ('sort-album-z'), ('sort-album-top');
+    insert into media_credit (media_item_id, artist_id, role) values
+      ('sort-album-a', 'sort-artist-a', 'artist'),
+      ('sort-album-z', 'sort-artist-z', 'artist');
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'album-' || n, 'sort-artist-a', 'artist' from generate_series(1, 1000) n;
+    insert into track (id, track_media_item_id, album_media_item_id, title, position)
+    select 'fixture-sort-release-' || n, lt.media_item_id, lt.album_media_item_id,
+      mi.title, 10000 + n
+    from generate_series(1, 20000) n
+    join library_track lt on lt.media_item_id = 'track-' || n
+    join media_item mi on mi.id = lt.media_item_id;
+
+    insert into media_item (id, slug, media_type, title, metadata)
+    select id, id, 'track', title, metadata
+    from (values ('sort-track-1', 'Fixture first title', null::jsonb),
+      ('sort-track-2', 'Fixture second title', null),
+      ('sort-track-3', 'Fixture third title', null),
+      ('sort-track-4', 'Fixture fourth title', null),
+      ('sort-track-top', 'Fixture top title', null),
+      ('sort-track-search', 'Track matchedneedle', null),
+      ('sort-track-without-artist', 'Fixture no artist', null),
+      ('sort-track-archived', 'Fixture archived title', '{"legacyHidden":true}')) rows(id, title, metadata);
+    insert into library_track (media_item_id, album_media_item_id, duration_sec) values
+      ('sort-track-1', 'sort-album-z', 180),
+      ('sort-track-2', 'sort-album-a', 180),
+      ('sort-track-3', 'sort-album-z', null),
+      ('sort-track-4', 'sort-album-z', 180),
+      ('sort-track-top', 'sort-album-top', 181),
+      ('sort-track-search', null, 149),
+      ('sort-track-without-artist', null, 180),
+      ('sort-track-archived', 'sort-album-top', 182);
+    insert into media_credit (media_item_id, artist_id, role, billing_order)
+    select id, 'sort-artist-primary', 'artist', 0 from media_item where id in
+      ('sort-track-1', 'sort-track-2', 'sort-track-3', 'sort-track-4')
+    union all
+    select id, 'sort-artist-top', 'artist', 0 from media_item where id in
+      ('sort-track-top', 'sort-track-archived');
+    insert into media_credit (media_item_id, artist_id, role, billing_order) values
+      ('sort-track-1', 'sort-artist-secondary', 'artist', 0),
+      ('sort-track-2', 'sort-artist-secondary', 'artist', 1),
+      ('sort-track-search', 'sort-artist-search', 'artist', 0);
+    insert into track (id, track_media_item_id, album_media_item_id, title, position, duration_sec) values
+      ('sort-release-1', 'sort-track-1', 'sort-album-z', 'Fixture first title', 3, 180),
+      ('sort-release-3', 'sort-track-3', 'sort-album-z', 'Fixture third title', 1, 180),
+      ('sort-release-4', 'sort-track-4', 'sort-album-z', 'Fixture fourth title', 2, 180);
+
+    insert into playlist (id, name, kind) values
+      ('sort-playlist-top', 'Zulu fixture top', 'playlist'),
+      ('sort-playlist-regular', 'Zulu fixture regular', 'playlist');
+    insert into playlist_item (playlist_id, media_item_id)
+    select 'sort-playlist-regular', id from media_item where id in
+      ('sort-track-1', 'sort-track-2', 'sort-track-3', 'sort-track-4')
+    union all
+    select 'sort-playlist-top', id from media_item where id in
+      ('sort-track-top', 'sort-track-archived');
+
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    select 'fixture-sort-snapshot-' || n, 'artist-' || n, 'musicbrainz', '{}',
+      jsonb_build_object('tags', jsonb_build_array('Fixture search tag', 'Fixture style ' || n))
+    from generate_series(1, 1000) n;
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    select artist_id, provider, id from artist_provider_snapshot where id like 'fixture-sort-snapshot-%';
+  `)
+    for (const table of tables) await pool.query(`vacuum analyze ${table}`)
+
+    const query = TrackQuerySchema.parse({
+      groupRecordings: false,
+      sortBy: 'durationSec',
+      direction: 'desc',
+      ranges: [{ field: 'durationSec', min: 150, max: 182 }],
+      size: 3,
+    })
+    const firstFive = [
+      'sort-track-top',
+      'sort-track-2',
+      'sort-track-3',
+      'sort-track-4',
+      'sort-track-1',
+    ]
+    const budgets = {
+      durationSec: 12_000,
+      artist: 15_000,
+      album: 80_000,
+      releaseDate: 80_000,
+      playlist: 225_000,
+    }
+    for (const [sortBy, maxBlocks] of Object.entries(budgets)) {
+      await checkBudget(
+        `broad filtered Track ${sortBy} page`,
+        maxBlocks,
+        1,
+        async () => {
+          const page = await queryBrowsePageIds('track', {
+            ...query,
+            sortBy,
+            size: 100,
+          })
+          expect(page.ids).toHaveLength(100)
+          expect(page.ids.slice(0, 5)).toEqual(firstFive)
+          expect(page.hasMore).toBe(true)
+        },
+      )
+    }
+
+    // The first page ends inside a primary tie. Artist and track-list order
+    // decide which tied tracks appear, including one that inherits its duration.
+    expect((await queryBrowsePageIds('track', query)).ids).toEqual(
+      firstFive.slice(0, 3),
+    )
+    expect(
+      (await queryBrowsePageIds('track', { ...query, page: 2 })).ids.slice(
+        0,
+        2,
+      ),
+    ).toEqual(['sort-track-4', 'sort-track-1'])
+    expect(await queryBrowsePositions('track', query, [2, 3, 4])).toEqual([
+      { id: 'sort-track-3', position: 2 },
+      { id: 'sort-track-4', position: 3 },
+      { id: 'sort-track-1', position: 4 },
+    ])
+    const narrowQuery = TrackQuerySchema.parse({
+      ...query,
+      ranges: [{ field: 'durationSec', min: 180, max: 182 }],
+    })
+    const capped = await queryBrowsePageIds('track', {
+      ...narrowQuery,
+      limitResults: 2,
+    })
+    expect(capped.ids).toEqual(['sort-track-top', 'sort-track-2'])
+    expect(capped.hasMore).toBe(false)
+    const last = await queryBrowsePageIds('track', { ...narrowQuery, page: 2 })
+    expect(last.ids).toEqual([
+      'sort-track-4',
+      'sort-track-1',
+      'sort-track-without-artist',
+    ])
+    expect(last.hasMore).toBe(false)
+    // Equal billing orders use the artist's name. Tracks with no artist sort last.
+    await checkBudget(
+      'sparse filtered Track artist page',
+      7_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', {
+          ...narrowQuery,
+          sortBy: 'artist',
+          direction: 'asc',
+          size: 100,
+        })
+        expect(page.ids).toEqual([
+          ...firstFive.slice(1),
+          'sort-track-top',
+          'sort-track-without-artist',
+        ])
+        expect(page.hasMore).toBe(false)
+      },
+    )
+    const missing = await queryBrowsePageIds('track', {
+      ...query,
+      ranges: [{ field: 'durationSec', min: 182 }],
+    })
+    expect(missing.ids).toEqual([])
+    expect(missing.hasMore).toBe(false)
+
+    const textQuery = TrackQuerySchema.parse({
+      q: 'fixture track',
+      sortBy: 'artist',
+      direction: 'asc',
+      size: 100,
+    })
+    await checkBudget(
+      'broad multiword Track artist page',
+      90_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', textQuery)
+        expect(page.ids).toHaveLength(100)
+        expect(page.ids[0]).toBe('sort-track-search')
+        expect(page.hasMore).toBe(true)
+      },
+    )
+    await checkBudget(
+      'sparse multiword Track artist page',
+      85_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', {
+          ...textQuery,
+          q: 'fixture matchedneedle',
+        })
+        expect(page.ids).toEqual(['sort-track-search'])
+        expect(page.hasMore).toBe(false)
+      },
+    )
+    await checkBudget(
+      'empty multiword Track artist page',
+      1_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', {
+          ...textQuery,
+          q: 'fixture unmatchedneedle',
+        })
+        expect(page.ids).toEqual([])
+        expect(page.hasMore).toBe(false)
+      },
+    )
+  } finally {
+    await pool.query(`
+      delete from artist_provider_current_state where latest_snapshot_id like 'fixture-sort-snapshot-%';
+      delete from artist_provider_snapshot where id like 'fixture-sort-snapshot-%';
+      delete from track where id like 'fixture-sort-release-%' or id like 'sort-release-%';
+      delete from playlist where id like 'sort-playlist-%';
+      delete from media_item where id like 'sort-track-%';
+      delete from media_item where id like 'sort-album-%';
+      delete from artist where id like 'sort-artist-%';
+    `)
+    for (const table of tables) await pool.query(`vacuum analyze ${table}`)
+  }
 })
 
 it('bounds grouped Track pages and exact counts', async () => {
@@ -827,6 +1012,14 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
     unfilteredCount: 19_000,
   })
 
+  // Only one recording has an event in this future date range. Its two
+  // editions share the name, so the displayed period count is still one.
+  await pool.query(`
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    values ('fixture-future-tie', 'fixture-listener', '2099-05-01 13:00:00',
+      'Fixture artist', 'Fixture track 18001', 'fixture-artist', 'fixture-track-18001')
+  `)
+  await pool.query('vacuum analyze lastfm_scrobble')
   const deep = { ...twoRules, page: 1100 }
   const cold = await listTrackBrowsePage(deep)
   await pool.query(`
@@ -845,8 +1038,46 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
     },
   )
   await checkBudget(
+    'warm first lifetime grouped page with two listening rules',
+    700,
+    1,
+    async () => {
+      const first = await queryBrowsePageIds('track', twoRules)
+      expect(first.ids).toEqual([
+        'track-1009',
+        'track-1110',
+        'track-2120',
+        'track-3130',
+        'track-4140',
+        'track-5150',
+      ])
+      expect(first.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
+    'warm browser-sized first lifetime grouped page with two listening rules',
+    5_000,
+    1,
+    async () => {
+      const first = await queryBrowsePageIds('track', {
+        ...twoRules,
+        size: 100,
+      })
+      expect(first.ids).toHaveLength(100)
+      expect(first.ids.slice(0, 6)).toEqual([
+        'track-1009',
+        'track-1110',
+        'track-2120',
+        'track-3130',
+        'track-4140',
+        'track-5150',
+      ])
+      expect(first.hasMore).toBe(true)
+    },
+  )
+  await checkBudget(
     'warm near lifetime grouped page with two listening rules',
-    5_400,
+    900,
     1,
     async () => {
       const near = await queryBrowsePageIds('track', { ...twoRules, page: 3 })
@@ -860,6 +1091,55 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
       ])
     },
   )
+  await checkBudget(
+    'warm browser-sized page ten with two listening rules',
+    12_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', {
+        ...twoRules,
+        page: 10,
+        size: 100,
+      })
+      expect(page.ids).toHaveLength(100)
+      expect([page.ids[0], page.ids.at(-1)]).toEqual([
+        'track-6351',
+        'track-6552',
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+  )
+  for (const { label, date, ids } of [
+    { label: 'sparse', date: '2099-05-01', ids: ['track-1'] },
+    { label: 'empty', date: '2099-05-02', ids: [] },
+  ]) {
+    const display = { kind: 'dates', from: date, to: date }
+    const query = TrackQuerySchema.parse({
+      ...twoRules,
+      listening: {
+        match: 'all',
+        rules: [
+          { period: display, min: 1 },
+          { period, min: 1 },
+        ],
+      },
+      listeningSort: display,
+    })
+    await checkBudget(
+      `warm ${label} lifetime grouped page with two listening rules`,
+      10_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', query)
+        expect(page.ids).toEqual(ids)
+        expect([...(page.listeningScrobbles ?? [])]).toEqual(
+          ids.map((id) => [id, 1]),
+        )
+        expect(page.hasMore).toBe(false)
+      },
+      500_000,
+    )
+  }
   await checkBudget(
     'warm lifetime grouped positions with two listening rules',
     5_400,
@@ -1015,7 +1295,7 @@ it('bounds live Track autocomplete on shared artist and album tags', async () =>
 })
 
 it('bounds first Added pages with artist tags and unrelated Last.fm placeholders', async () => {
-  const { queryBrowsePageIds, queryBrowsePositions } =
+  const { queryBrowseCount, queryBrowsePageIds, queryBrowsePositions } =
     await import('@/services/browse')
   await pool.query(`
     insert into media_item (id, slug, media_type, title, source_label)
@@ -1111,6 +1391,207 @@ it('bounds first Added pages with artist tags and unrelated Last.fm placeholders
         ],
       })
       expect(page.ids).toEqual(['track-20000', 'track-19999', 'track-19998'])
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+
+  await pool.query(`
+    insert into media_credit (media_item_id, artist_id, role)
+    values ('track-19997', 'visibility-artist', 'artist');
+    update media_item set metadata = '{"legacyHidden":true}' where id = 'track-19997';
+  `)
+  const sparseCreator = TrackQuerySchema.parse({
+    creatorId: 'visibility-artist',
+    groupRecordings: false,
+    sortBy: 'title',
+    direction: 'asc',
+    size: 100,
+  })
+  await checkBudget(
+    'sparse creator Track title page',
+    800,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', sparseCreator)
+      expect(page.ids).toEqual([
+        'placeholder-11998',
+        'placeholder-12000',
+        'track-19999',
+        'track-20000',
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+    500_000,
+  )
+  await checkBudget(
+    'sparse creator Track exact count',
+    800,
+    3,
+    async () => {
+      expect(await queryBrowseCount('track', sparseCreator)).toEqual({
+        totalCount: 4,
+      })
+    },
+    500_000,
+  )
+
+  await checkBudget(
+    'sparse creator Track plays page',
+    800,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', {
+        ...sparseCreator,
+        sortBy: 'scrobbles',
+        direction: 'desc',
+        size: 5,
+      })
+      expect(page.ids).toEqual([
+        'track-20000',
+        'track-19999',
+        'placeholder-11998',
+        'placeholder-12000',
+      ])
+      expect(page.hasMore).toBe(false)
+    },
+    500_000,
+  )
+  const sourceRows = TrackQuerySchema.parse({
+    ...sparseCreator,
+    filters: [{ field: 'source', value: 'Last.fm', mode: 'required' }],
+  })
+  expect((await queryBrowsePageIds('track', sourceRows)).ids).toEqual([
+    'placeholder-11998',
+    'placeholder-11999',
+    'placeholder-12000',
+  ])
+  expect(await queryBrowseCount('track', sourceRows)).toEqual({ totalCount: 3 })
+  // Include two equal titles across the page boundary. Natural release
+  // order places the higher ID first, so truncating on ID would skip it.
+  await pool.query(`
+    insert into artist (id, name) values ('fixture-populous-creator', 'Fixture populous creator');
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'track-' || n, 'fixture-populous-creator', 'artist' from generate_series(4001, 8000) n;
+    update media_item set title = 'Fixture track 04100' where id = 'track-4101';
+    update library_track set album_media_item_id = 'album-999' where media_item_id = 'track-4100';
+    update library_track set album_media_item_id = 'album-1' where media_item_id = 'track-4101';
+  `)
+  await pool.query('vacuum analyze media_credit')
+  await pool.query('vacuum analyze media_item')
+  await pool.query('vacuum analyze library_track')
+  const populousCreator = {
+    ...sparseCreator,
+    creatorId: 'fixture-populous-creator',
+  }
+  await checkBudget(
+    'populous creator Track title page',
+    24_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', populousCreator)
+      expect(page.ids).toEqual([
+        ...Array.from({ length: 99 }, (_, index) => `track-${4001 + index}`),
+        'track-4101',
+      ])
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+  expect(await queryBrowseCount('track', populousCreator)).toEqual({
+    totalCount: 4_000,
+  })
+
+  // Exercise global duplicate visibility through a first title page. A
+  // placeholder remains visible if any of its source names must be retained.
+  await pool.query(`
+    insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id, manually_matched) values
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-manual-extra', 'placeholder-11997', true),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-uncovered-extra', 'placeholder-11996', false),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-covered-extra', 'placeholder-11995', false);
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-manual-extra', 'track-11997', 'exact'),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-visibility-11995', 'track-13000', 'exact'),
+      ('fixture-visibility-listener', 'fixture-visibility-artist', 'fixture-covered-extra', 'track-11995', 'exact');
+    update library_track set spotify_track_id = 'fixture-hidden-peer' where media_item_id = 'track-13000';
+    update media_item set metadata = '{"legacyHidden":true}' where id in ('track-11994', 'track-13000');
+    update lastfm_track_link set strategy = 'normalized' where track_media_item_id = 'track-11993';
+  `)
+  for (const table of [
+    'library_track',
+    'lastfm_track_link',
+    'lastfm_track_source',
+    'media_item',
+  ])
+    await pool.query(`vacuum analyze ${table}`)
+  const titlePage = TrackQuerySchema.parse({
+    groupRecordings: false,
+    sortBy: 'title',
+    direction: 'asc',
+    size: 100,
+  })
+  const retained = [11993, 11994, 11996, 11997, 11998, 12000]
+  await checkBudget(
+    'global Track title page with dense duplicate matches',
+    320_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', titlePage)
+      expect(page.ids).toHaveLength(100)
+      expect(page.ids.filter((id) => id.startsWith('placeholder-'))).toEqual(
+        retained.map((index) => `placeholder-${index}`),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+
+  await pool.query(`
+    update library_track set album_name = 'Fixture existing album label'
+    where media_item_id in (select 'placeholder-' || n from generate_series(129, 12000) n)
+  `)
+  await pool.query('vacuum analyze library_track')
+  const higherPlaceholderIds = Array.from(
+    { length: 11_872 },
+    (_, index) => 129 + index,
+  )
+  await checkBudget(
+    'global Track title page with sparse eligible source names',
+    8_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', titlePage)
+      expect(page.ids).toEqual(
+        higherPlaceholderIds
+          .map((index) => `placeholder-${index}`)
+          .sort()
+          .slice(0, 100),
+      )
+      expect(page.hasMore).toBe(true)
+    },
+    500_000,
+  )
+
+  await pool.query(`
+    update library_track set album_name = null where media_item_id like 'placeholder-%';
+    update lastfm_track_link set strategy = 'normalized'
+    where track_media_item_id in (select 'track-' || n from generate_series(129, 11989) n)
+  `)
+  await pool.query('vacuum analyze library_track')
+  await pool.query('vacuum analyze lastfm_track_link')
+  await checkBudget(
+    'global Track title page with sparse exact peers',
+    240_000,
+    1,
+    async () => {
+      const page = await queryBrowsePageIds('track', titlePage)
+      expect(page.ids).toEqual(
+        higherPlaceholderIds
+          .filter((index) => index < 11990 || retained.includes(index))
+          .map((index) => `placeholder-${index}`)
+          .sort()
+          .slice(0, 100),
+      )
       expect(page.hasMore).toBe(true)
     },
     500_000,

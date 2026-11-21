@@ -12,8 +12,6 @@ import {
 import { AlbumImportPreviewSchema } from '@repo/schemas/album-imports'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
-  SpotifyTrackAuditPageSchema,
-  SpotifyTrackAuditQuerySchema,
   SpotifyTrackSearchInputSchema,
   SpotifyTrackSearchParamsSchema,
   SpotifyTrackSearchSchema,
@@ -59,7 +57,6 @@ import {
   getSpotifyPlaylists,
   queueSpotifyPlaylistListing,
 } from '@/services/spotify-playlist-listing'
-import { listSpotifyTrackMatchAudit } from '@/services/spotify-track-match-audit-list'
 import {
   getSpotifyTrackSearch,
   listSpotifyTrackSearchStatuses,
@@ -543,37 +540,6 @@ app.openapi(
       await getSpotifyTrackSearch(
         c.req.valid('param').trackId,
         requireOwnerUser(c).id,
-      ),
-      200,
-    ),
-)
-
-app.openapi(
-  createRoute({
-    method: 'get',
-    path: '/tracks/match-audit',
-    middleware: [authMiddleware()],
-    request: { query: SpotifyTrackAuditQuerySchema },
-    responses: {
-      200: {
-        description:
-          'Saved Spotify match audit for tracks without a direct match',
-        content: {
-          'application/json': {
-            schema: createResponseSchema(SpotifyTrackAuditPageSchema),
-          },
-        },
-      },
-      401: jsonErrorResponse('Unauthorized'),
-      422: validationErrorResponse,
-    },
-  }),
-  async (c) =>
-    generateJsonResponse(
-      c,
-      await listSpotifyTrackMatchAudit(
-        requireOwnerUser(c).id,
-        c.req.valid('query'),
       ),
       200,
     ),

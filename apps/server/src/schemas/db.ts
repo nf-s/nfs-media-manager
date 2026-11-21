@@ -15,7 +15,6 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import type { JsonValue } from '@repo/media-plugin-sdk'
-import type { SpotifyTrackAuditItem } from '@repo/schemas/spotify-track-search'
 import type { ProviderResponseBody } from '@repo/schemas/provider-response'
 import type {
   ArtistProfile,
@@ -195,28 +194,6 @@ export const libraryTrack = pgTable(
       table.mediaItemId,
     ),
   ],
-)
-
-export const spotifyTrackMatchAudit = pgTable(
-  'spotify_track_match_audit',
-  {
-    ownerId: text('owner_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    trackId: text('track_id')
-      .notNull()
-      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
-    assessedAt: timestamp('assessed_at', { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    assessment: text('assessment')
-      .$type<SpotifyTrackAuditItem['assessment']>()
-      .notNull(),
-    candidateCount: integer('candidate_count').notNull(),
-    searchText: text('search_text').notNull(),
-    report: jsonb('report').$type<SpotifyTrackAuditItem>().notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.ownerId, table.trackId] })],
 )
 
 export const recordingBrowseOrderDirty = pgTable(
@@ -1355,6 +1332,9 @@ export const subscriptionSource = pgTable(
       'gin',
       table.title.op('gin_trgm_ops'),
     ),
+    index('subscription_source_exact_title_idx')
+      .on(sql`lower(btrim(${table.title}))`)
+      .where(sql`${table.subscribed}`),
     index('subscription_source_type_subscribed_idx').on(
       table.type,
       table.subscribed,
@@ -1408,6 +1388,10 @@ export const subscriptionItem = pgTable(
   },
   (table) => [
     index('subscription_item_search_idx').using('gin', table.search),
+    index('subscription_item_artist_name_keys_idx').using(
+      'gin',
+      sql`subscription_artist_name_keys(${table.artists})`,
+    ),
     index('subscription_item_title_search_idx').using(
       'gin',
       table.title.op('gin_trgm_ops'),

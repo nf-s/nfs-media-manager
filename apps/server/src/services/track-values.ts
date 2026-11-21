@@ -4,28 +4,75 @@ import {
   trackSpotifyMatchLabels,
 } from '@repo/schemas/tracks'
 
+const lastfmPlaceholderSources = sql`from lastfm_track_source s
+  join library_track placeholder on placeholder.media_item_id = s.track_media_item_id
+  join media_item mi on mi.id = s.track_media_item_id`
+
+const lastfmPlaceholderOnly = sql`mi.source_label = 'lastfm' and placeholder.spotify_track_id is null
+  and placeholder.album_media_item_id is null and nullif(trim(placeholder.album_name), '') is null
+  and not exists (select 1 from track t where t.track_media_item_id = mi.id)
+  and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)`
+
+const linkedTrackIsPlayable = sql`pm.metadata->>'legacyHidden' is distinct from 'true'
+  and (peer.spotify_track_id is not null or exists (
+    select 1 from track t where t.track_media_item_id = peer.media_item_id))`
+
+const exactPlayableTrackLinks = sql`from lastfm_track_link l
+  join library_track peer on peer.media_item_id = l.track_media_item_id
+  join media_item pm on pm.id = peer.media_item_id`
+
 /** Source rows retained for match review whose history already appears in Browse. */
 export function redundantLastfmTrackIds(id?: SQL) {
-  return sql`
-  select s.track_media_item_id as id
-  from lastfm_track_source s
-  join library_track placeholder on placeholder.media_item_id = s.track_media_item_id
-  join media_item mi on mi.id = s.track_media_item_id
-  left join (
-    select ${id ? sql`` : sql`distinct`} l.username, l.artist_key, l.track_key from lastfm_track_link l
-    join library_track peer on peer.media_item_id = l.track_media_item_id
-    join media_item pm on pm.id = peer.media_item_id
-    where l.strategy = 'exact' and pm.metadata->>'legacyHidden' is distinct from 'true'
-      and (peer.spotify_track_id is not null or exists (
-        select 1 from track t where t.track_media_item_id = peer.media_item_id))
-  ) matched using (username, artist_key, track_key)
-  where mi.source_label = 'lastfm' and placeholder.spotify_track_id is null
-    ${id ? sql`and s.track_media_item_id = ${id}` : sql``}
-    and placeholder.album_media_item_id is null and nullif(trim(placeholder.album_name), '') is null
-    and not exists (select 1 from track t where t.track_media_item_id = mi.id)
-    and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)
-  group by s.track_media_item_id
-  having bool_and(not s.manually_matched and matched.track_key is not null)`
+  if (id)
+    return sql`
+      select s.track_media_item_id as id
+      ${lastfmPlaceholderSources}
+      left join (
+        select l.username, l.artist_key, l.track_key ${exactPlayableTrackLinks}
+        where l.strategy = 'exact' and ${linkedTrackIsPlayable}
+      ) matched using (username, artist_key, track_key)
+      where s.track_media_item_id = ${id} and ${lastfmPlaceholderOnly}
+      group by s.track_media_item_id
+      having bool_and(not s.manually_matched and matched.track_key is not null)`
+
+  // The source primary key makes each listener/artist/track name unique.
+  // Sparse scopes can stop at the first playable peer; dense scopes check
+  // matching links together after restricting them to eligible names.
+  return sql`with placeholder_sources as materialized (
+      select s.track_media_item_id, s.username, s.artist_key, s.track_key, s.manually_matched
+      ${lastfmPlaceholderSources} where ${lastfmPlaceholderOnly}
+    ),
+    probe_names as materialized (
+      select count(*) <= 1024 as bounded from placeholder_sources
+    ),
+    wanted_links as materialized (
+      select l.username, l.artist_key, l.track_key, l.track_media_item_id
+      from placeholder_sources s
+      join lastfm_track_link l using (username, artist_key, track_key)
+      where not (select bounded from probe_names) and not s.manually_matched
+        and l.strategy = 'exact'
+    ),
+    matched_names as (
+      select distinct l.username, l.artist_key, l.track_key
+      from wanted_links l
+      join library_track peer on peer.media_item_id = l.track_media_item_id
+      join media_item pm on pm.id = peer.media_item_id
+      where ${linkedTrackIsPlayable}
+    )
+    select s.track_media_item_id as id from placeholder_sources s
+    group by s.track_media_item_id
+    having bool_and(case
+      when s.manually_matched then false
+      when (select bounded from probe_names) then exists (
+        select 1 ${exactPlayableTrackLinks}
+        where l.username = s.username and l.artist_key = s.artist_key and l.track_key = s.track_key
+          and l.strategy = 'exact' and ${linkedTrackIsPlayable}
+        offset 0
+      )
+      else (s.username, s.artist_key, s.track_key) in (
+        select username, artist_key, track_key from matched_names
+      )
+    end)`
 }
 
 /** Current library membership, independent of a recording's listening matches. */

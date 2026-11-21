@@ -358,6 +358,27 @@
       "when": 1795180412335,
       "tag": "0050_grouped_recording_order_members",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795181507987,
+      "tag": "0051_remove_hosted_spotify_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795182031563,
+      "tag": "0052_scope_recording_source_invalidation",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795182828779,
+      "tag": "0053_artist_mix_exact_names",
+      "breakpoints": true
     }
   ]
 }

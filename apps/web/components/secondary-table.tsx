@@ -5,6 +5,7 @@ import {
   forwardRef,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentProps,
@@ -200,7 +201,7 @@ export function SecondaryCellDetails({
     }, 150)
   }
   useEffect(() => () => cancelClose(), [])
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
     function onEscape(event: KeyboardEvent) {
       if (event.defaultPrevented || event.key !== 'Escape') return
@@ -291,7 +292,9 @@ export function SecondaryCellDetails({
         role="dialog"
         aria-label={label}
         className="secondary-cell-popover"
+        style={{ visibility: open ? undefined : 'hidden' }}
         onToggle={(event) => {
+          if (event.target !== event.currentTarget) return
           const visible = event.newState === 'open'
           setOpen(visible)
           if (!visible) pinned.current = false

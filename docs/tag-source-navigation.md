@@ -52,6 +52,12 @@ Native popovers use the top layer inside media dialogs, keep source content scro
 
 Offline verification covers source URL validation, template encoding, opaque IDs, existing payload readers, tag merge attribution and pagination in temporary Postgres, authenticated route validation, and source-list rendering. Browser acceptance: open a collection label from an album or film, return with the inspector's Back button, and confirm the film and underlying browse position remain intact. Independently verify the collection's Sources tab and explicit Filter films action. Expand a multi-origin tag, press Escape, then Shift-click its label; tag filters and media panel state must stay correct.
 
+For track tag sources, check the standalone track and the Browse inspector with a synthetic track that has a provider link and a saved job.
+
+- Open a tag’s sources, hover over a row’s info button, then move onto the provider link in the row. The row details should close while the sources table stays open. Follow the provider link in a new tab.
+- Focus the info button with the keyboard. Press Escape once to dismiss the row details and again to close sources. Focus should return to the tag’s sources button and the track should stay open.
+- At phone width, tap the info button and follow **View job** inside the row details. Both popovers should first appear next to their triggers and stay within the viewport.
+
 ## Query Performance
 
 Migration `0013_tag_membership_lookup.sql` adds a covering `(tag_id, media_item_id)` membership index. The original primary key begins with media item ID and cannot efficiently serve tag-table item counts. The migration is additive and preserves all tag data and provenance.

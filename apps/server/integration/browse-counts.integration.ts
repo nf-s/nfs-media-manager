@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
+import { z } from 'zod'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { ArtistQuerySchema } from '@repo/schemas/creators'
 import { AlbumQuerySchema } from '@repo/schemas/media'
@@ -938,5 +939,169 @@ it('falls back to live grouped rows over a read-only connection', async () => {
   } finally {
     requestDatabase = database
     await readerPool.end()
+  }
+})
+
+it('refreshes a dirty grouped order on demand without racing maintenance or writes', async () => {
+  const { queryBrowsePageIds, refreshRecordingBrowseOrderForMaintenance } =
+    await import('@/services/browse')
+  const { logApiRequest, setRequestLogRoute } =
+    await import('@/lib/request-log')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    sortBy: 'scrobbles',
+    size: 1,
+    listening: {
+      match: 'all',
+      rules: [
+        { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 100 },
+      ],
+    },
+  })
+  const expireLease = () =>
+    pool.query(
+      'update recording_browse_order_state set retry_after = statement_timestamp()',
+    )
+  const read = () => queryBrowsePageIds('track', query)
+  const readAsHttp = async () => {
+    const route = '/api/v1/tracks/browse-page'
+    const request = new Request('http://fixture.test' + route)
+    let publication: Promise<boolean> | undefined
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      const response = await logApiRequest(
+        request,
+        async () => {
+          setRequestLogRoute(route, request.headers)
+          return Response.json((await read()).ids)
+        },
+        () => {
+          publication = refreshRecordingBrowseOrderForMaintenance('browse')
+        },
+      )
+      return {
+        ids: z.array(z.string()).parse(await response.json()),
+        publication,
+      }
+    } finally {
+      log.mockRestore()
+    }
+  }
+  const ready = async () => {
+    const { rows } = await pool.query<{ id: string | null }>(`
+      select (select id from recording_browse_order where descending_rank = 1
+        and not exists (select 1 from recording_browse_order_dirty)) as id
+    `)
+    return rows[0]?.id
+  }
+  await pool.query(`
+    update library_track set scrobble_count = 50000 where media_item_id = 'track-1';
+    insert into recording_browse_order_state (singleton, builder, maintenance_only, retry_after)
+    values (true, current_user, true, statement_timestamp())
+    on conflict (singleton) do update set maintenance_only = true, retry_after = excluded.retry_after
+  `)
+  expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
+  expect(await ready()).toBe('track-1')
+  const warm = await read()
+  expect(warm.ids).toEqual(['track-1'])
+
+  // A genuine write changes the first result immediately. Without an
+  // invocation to publish, repeated eligible reads keep taking the live path.
+  await pool.query(
+    `update library_track set scrobble_count = 60000 where media_item_id = 'track-2'`,
+  )
+  await expireLease()
+  logQuery.mockClear()
+  const afterWrite = await read()
+  expect(afterWrite.ids).toEqual(['track-2'])
+  expect(await read()).toEqual(afterWrite)
+  expect(await ready()).toBeNull()
+  expect(
+    logQuery.mock.calls.filter(([statement]) =>
+      statement.includes('recording_matches'),
+    ),
+  ).toHaveLength(2)
+
+  const miss = await readAsHttp()
+  expect(miss.ids).toEqual(afterWrite.ids)
+  expect(await miss.publication).toBe(true)
+  expect(await ready()).toBe('track-2')
+  logQuery.mockClear()
+  expect(await readAsHttp()).toEqual({
+    ids: afterWrite.ids,
+    publication: undefined,
+  })
+  expect(
+    logQuery.mock.calls.some(([statement]) =>
+      statement.includes('recording_matches'),
+    ),
+  ).toBe(false)
+  expect(
+    (
+      await pool.query(`
+    select retry_after >= statement_timestamp() + interval '50 seconds' as cooling_down
+    from recording_browse_order_state
+  `)
+    ).rows,
+  ).toEqual([{ cooling_down: true }])
+
+  await pool.query(`
+    update library_track set scrobble_count = 70000 where media_item_id = 'track-1';
+    create function fixture_pause_browse_publication() returns trigger language plpgsql as $$
+    begin
+      while not pg_try_advisory_xact_lock(431641031) loop
+        perform pg_sleep(0.005);
+      end loop;
+      return null;
+    end;
+    $$;
+    create trigger fixture_pause_browse_publication before insert on recording_browse_order
+    for each statement execute function fixture_pause_browse_publication();
+  `)
+  expect(await refreshRecordingBrowseOrderForMaintenance('browse')).toBe(false)
+  await expireLease()
+  const publishLock = await pool.connect()
+  try {
+    await publishLock.query('select pg_advisory_lock(431641031)')
+    logQuery.mockClear()
+    let build: Promise<boolean> | undefined
+    try {
+      const blocked = await readAsHttp()
+      build = blocked.publication
+      expect(blocked.ids).toEqual(['track-1'])
+      expect(build).toBeDefined()
+      await vi.waitFor(() =>
+        expect(
+          logQuery.mock.calls.some(([statement]) =>
+            statement.includes('insert into recording_browse_order\n'),
+          ),
+        ).toBe(true),
+      )
+      expect(await readAsHttp()).toEqual({
+        ids: ['track-1'],
+        publication: undefined,
+      })
+      expect(
+        await Promise.all([
+          refreshRecordingBrowseOrderForMaintenance('browse'),
+          refreshRecordingBrowseOrderForMaintenance(),
+        ]),
+      ).toEqual([false, false])
+      await pool.query(
+        `update library_track set scrobble_count = 80000 where media_item_id = 'track-2'`,
+      )
+      expect((await read()).ids).toEqual(['track-2'])
+    } finally {
+      await publishLock.query('select pg_advisory_unlock(431641031)')
+      expect(await build).toBe(true)
+    }
+    expect(await ready()).toBeNull()
+    expect((await read()).ids).toEqual(['track-2'])
+  } finally {
+    publishLock.release()
+    await pool.query(`
+      drop trigger fixture_pause_browse_publication on recording_browse_order;
+      drop function fixture_pause_browse_publication();
+    `)
   }
 })
