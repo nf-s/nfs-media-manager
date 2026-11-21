@@ -54,10 +54,18 @@ function listSavedSearches(
 
 /** Reconcile saved results only. Each successful link can be skipped on a restart. */
 export async function backfillSpotifyTrackSearches(apply = false) {
-  const [{ db }, { reconcileSavedSpotifyTrackSearch }] = await Promise.all([
+  const [
+    { db },
+    { reconcileSavedSpotifyTrackSearch },
+    { closeChangeBatch, openChangeBatch },
+  ] = await Promise.all([
     import('@/lib/db'),
     import('@/services/spotify-track-search-acceptance'),
+    import('@/services/library-changes'),
   ])
+  const batchId = apply
+    ? await db.transaction((tx) => openChangeBatch(tx, 'backfill'))
+    : null
   const counts = {
     scanned: 0,
     wouldMatch: 0,
@@ -74,12 +82,14 @@ export async function backfillSpotifyTrackSearches(apply = false) {
       counts.scanned++
       const result = await reconcileSavedSpotifyTrackSearch(search, {
         dryRun: !apply,
+        batchId,
       })
       if (result.status === 'matched') counts[apply ? 'linked' : 'wouldMatch']++
       else counts[result.status]++
     }
     cursor = last.trackId
   }
+  if (batchId) await closeChangeBatch(db, batchId)
   return { apply, ...counts }
 }
 

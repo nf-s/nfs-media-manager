@@ -435,37 +435,69 @@ export function useMerge<Plan>(
     ) : null,
     /** The finished change for a selection bar, with Undo or Redo and Dismiss. */
     result: change ? (
-      <>
-        <TableSelectionResult
-          icon={
-            change.undoneAt ? (
-              <History className="ds-i" data-size="sm" aria-hidden="true" />
-            ) : (
-              <Check className="ds-i" data-size="sm" aria-hidden="true" />
-            )
-          }
-        >
-          {change.undoneAt ? 'Undone: ' : ''}
-          {adapter.describe(change)}
-          {error ? ` · ${error}` : ''}
-        </TableSelectionResult>
-        <span className="ds-actions ds-toolbar-end">
-          <LibraryChangeUndo
-            change={change}
-            redoVariant="default"
-            onChanged={(next) => {
-              setError(null)
-              setChange(next)
-            }}
-            onError={setError}
-          />
-          <Button icon aria-label="Dismiss" onClick={dismiss}>
-            <X className="ds-i" aria-hidden="true" />
-          </Button>
-        </span>
-      </>
+      <LibraryChangeResult
+        change={change}
+        describe={adapter.describe}
+        error={error}
+        onChanged={(next) => {
+          setError(null)
+          setChange(next)
+        }}
+        onError={setError}
+        onDismiss={dismiss}
+      />
     ) : null,
   }
+}
+
+/**
+ * A finished change in a selection bar: one line saying what changed, then
+ * Undo or Redo and Dismiss.
+ */
+export function LibraryChangeResult({
+  change,
+  describe,
+  error,
+  onChanged,
+  onError,
+  onDismiss,
+}: {
+  change: LibraryChange
+  describe: (change: LibraryChange) => string
+  /** Why the last Undo or Redo failed. */
+  error: string | null
+  onChanged: (change: LibraryChange) => void
+  onError: (message: string) => void
+  onDismiss: () => void
+}) {
+  return (
+    <>
+      <TableSelectionResult
+        icon={
+          change.undoneAt ? (
+            <History className="ds-i" data-size="sm" aria-hidden="true" />
+          ) : (
+            <Check className="ds-i" data-size="sm" aria-hidden="true" />
+          )
+        }
+      >
+        {change.undoneAt ? 'Undone: ' : ''}
+        {describe(change)}
+        {error ? ` · ${error}` : ''}
+      </TableSelectionResult>
+      <span className="ds-actions ds-toolbar-end">
+        <LibraryChangeUndo
+          change={change}
+          redoVariant="default"
+          onChanged={onChanged}
+          onError={onError}
+        />
+        <Button icon aria-label="Dismiss" onClick={onDismiss}>
+          <X className="ds-i" aria-hidden="true" />
+        </Button>
+      </span>
+    </>
+  )
 }
 
 /**

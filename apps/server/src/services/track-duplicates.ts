@@ -77,7 +77,8 @@ async function readGroups(where: SQL): Promise<TrackDuplicateGroup[]> {
 
 /**
  * The number on the Possible duplicates button, read from the stored groups.
- * With `creatorId`, the groups with a track credited to that artist.
+ * With `creatorId`, the groups with a track credited to that artist, or to
+ * the artist it was merged into.
  */
 export async function countTrackDuplicateGroups({
   creatorId,
@@ -92,7 +93,9 @@ export async function countTrackDuplicateGroups({
               ? sql`(select count(distinct m.group_id)::int
                   from track_duplicate_member m
                   join media_credit c on c.media_item_id = m.track_id
-                  where c.artist_id = ${creatorId} and c.role = 'artist')`
+                  where c.role = 'artist' and c.artist_id = (
+                    select coalesce(a.merged_into_id, a.id) from artist a
+                    where a.id = ${creatorId}))`
               : sql`null::int`
           } as artist_count`)
     ).rows[0],

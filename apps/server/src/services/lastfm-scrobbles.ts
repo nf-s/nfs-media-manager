@@ -510,7 +510,7 @@ async function storePage(
 async function completeRun(account: string, token: string, run: SyncRow) {
   await linkScrobblesToAlbums(account)
   await refreshAlbumListeningFields()
-  await refreshTrackLinks(account)
+  await refreshTrackLinks(account, 'lastfm-sync')
   await db
     .update(lastfmSync)
     .set({
@@ -534,7 +534,7 @@ export async function relinkLastfmScrobbles() {
   if (configured) {
     await linkScrobblesToAlbums(configured.account)
     await refreshAlbumListeningFields()
-    await refreshTrackLinks(configured.account)
+    await refreshTrackLinks(configured.account, 'relink')
   }
   return getLastfmSyncStatus()
 }

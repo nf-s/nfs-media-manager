@@ -1,16 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import type {
-  AlbumMergeFollow,
-  AlbumMergeUnmatched,
-  AlbumNameRef,
-} from '@repo/schemas/album-merges'
 import type { LastfmLinkUpdate } from '@repo/schemas/lastfm'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { albumNameKey } from '@/lib/album-import-candidates'
-import { createAlbumTrackAliasMatcher } from '@/lib/album-track-aliases'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import {
   albumNameEffect,
@@ -36,8 +29,22 @@ import {
   recordChange,
   type TrackChangeDraft,
 } from './library-changes'
+import {
+  readAlbumNames,
+  type AlbumNameState,
+  type FollowPlan,
+} from './merge-follows'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { removeEmptyTracks } from './track-archive'
+
+export {
+  albumNameKeys,
+  readAlbumNames,
+  readFollowPlan,
+  type AlbumNameState,
+  type FollowedName,
+  type FollowPlan,
+} from './merge-follows'
 
 const NO_SCROBBLES = 'No scrobbles have this artist and album name.'
 
@@ -50,209 +57,6 @@ const keysInput = (keys: AlbumNameKey[]) =>
   sql`jsonb_to_recordset(${JSON.stringify(
     keys.map(({ artistKey, albumKey }) => ({ artistKey, albumKey })),
   )}::jsonb) as k("artistKey" text, "albumKey" text)`
-
-/** The keys a scrobbled artist and album name is stored under. */
-export const albumNameKeys = (name: AlbumNameRef): AlbumNameKey => ({
-  artistKey: albumNameKey(name.artistName),
-  albumKey: albumNameKey(name.albumName),
-})
-
-const NameRowsSchema = z.array(
-  z.object({
-    artistKey: z.string(),
-    albumKey: z.string(),
-    artistName: z.string(),
-    albumName: z.string(),
-    scrobbles: z.number().int().nonnegative(),
-    albumId: z.string().nullable(),
-  }),
-)
-/** A scrobbled album name of the account, with the album it is linked to. */
-export type AlbumNameState = z.infer<typeof NameRowsSchema>[number]
-
-/**
- * The given scrobbled album names of the account, in the given order, with
- * their scrobbles and linked album. A name without scrobbles is not found.
- */
-export async function readAlbumNames(
-  reader: ChangeReader,
-  account: string,
-  names: AlbumNameRef[],
-): Promise<AlbumNameState[]> {
-  if (!names.length) return []
-  const keys = names.map(albumNameKeys)
-  const rows = new Map(
-    NameRowsSchema.parse(
-      (
-        await reader.execute(sql`
-          select s.artist_key as "artistKey", s.album_key as "albumKey",
-            max(s.artist_name) as "artistName", max(s.album_name) as "albumName",
-            count(*)::int as scrobbles,
-            (select l.album_media_item_id from lastfm_album_link l
-              where l.username = s.username and l.artist_key = s.artist_key
-                and l.album_key = s.album_key) as "albumId"
-          from lastfm_scrobble s join ${keysInput(keys)}
-            on s.artist_key = k."artistKey" and s.album_key = k."albumKey"
-          where s.username = ${account}
-          group by s.username, s.artist_key, s.album_key`)
-      ).rows,
-    ).map((row) => [nameId(row), row]),
-  )
-  return [...new Set(keys.map(nameId))].map((id) => {
-    const row = rows.get(id)
-    if (!row) throw new ServerError({ statusCode: 404, message: NO_SCROBBLES })
-    return row
-  })
-}
-
-const FollowRowsSchema = z.array(
-  z.object({
-    artist_key: z.string(),
-    track_key: z.string(),
-    artist_name: z.string(),
-    track_name: z.string(),
-    scrobbles: z.number().int().nonnegative(),
-    owner_id: z.string(),
-    manual: z.boolean(),
-    owner_albums: z.array(z.object({ id: z.string(), title: z.string() })),
-  }),
-)
-const RecordingRowsSchema = z.array(
-  z.object({
-    id: z.string(),
-    title: z.string(),
-    artists: z.array(z.string()),
-    positions: z.array(
-      z.object({
-        albumId: z.string(),
-        title: z.string(),
-        position: z.number().int(),
-      }),
-    ),
-  }),
-)
-
-/** A track name that follows its album name, with its stored keys. */
-export type FollowedName = AlbumMergeFollow & {
-  artistKey: string
-  trackKey: string
-}
-
-/** What following the album names onto an album's tracks would move. */
-export type FollowPlan = {
-  also: FollowedName[]
-  unmatched: AlbumMergeUnmatched[]
-  /** Followed names now on a track of an album outside the record. */
-  elsewhere: { artistName: string; trackName: string; albumTitle: string }[]
-}
-
-/**
- * The track names scrobbled under the album names, matched to the album's
- * track list with the album track alias matcher. A name already on its
- * matching track neither follows nor stays. `recordIds` are the albums of
- * the record once the change is made.
- */
-export async function readFollowPlan(
-  reader: ChangeReader,
-  account: string,
-  keys: AlbumNameKey[],
-  albumId: string,
-  recordIds: string[],
-): Promise<FollowPlan> {
-  if (!keys.length) return { also: [], unmatched: [], elsewhere: [] }
-  const names = FollowRowsSchema.parse(
-    (
-      await reader.execute(sql`
-        with named as (
-          select distinct s.artist_key, s.track_key
-          from lastfm_scrobble s join ${keysInput(keys)}
-            on s.artist_key = k."artistKey" and s.album_key = k."albumKey"
-          where s.username = ${account})
-        select n.artist_key, n.track_key, max(e.artist_name) as artist_name,
-          max(e.track_name) as track_name, count(*)::int as scrobbles,
-          o.track_media_item_id as owner_id, o.manually_matched as manual,
-          coalesce((
-            select jsonb_agg(distinct jsonb_build_object('id', t.album_media_item_id,
-              'title', am.title))
-            from track t join media_item am on am.id = t.album_media_item_id
-            where t.track_media_item_id = o.track_media_item_id), '[]'::jsonb)
-            as owner_albums
-        from named n
-        join lastfm_track_source o on o.username = ${account}
-          and o.artist_key = n.artist_key and o.track_key = n.track_key
-        join lastfm_scrobble e on e.username = o.username
-          and e.artist_key = n.artist_key and e.track_key = n.track_key
-        group by n.artist_key, n.track_key, o.track_media_item_id,
-          o.manually_matched
-        order by count(*) desc, max(e.track_name), max(e.artist_name)`)
-    ).rows,
-  )
-  const recordings = RecordingRowsSchema.parse(
-    (
-      await reader.execute(sql`
-        select lt.media_item_id as id, mi.title,
-          coalesce((
-            select array_agg(a.name order by c.billing_order, a.id)
-            from media_credit c join artist a on a.id = c.artist_id
-            where c.media_item_id = lt.media_item_id and c.role = 'artist'),
-            '{}') as artists,
-          jsonb_agg(jsonb_build_object('albumId', t.album_media_item_id,
-            'title', t.title, 'position', t.position)) as positions
-        from track t
-        join library_track lt on lt.media_item_id = t.track_media_item_id
-        join media_item mi on mi.id = lt.media_item_id
-        where t.album_media_item_id = ${albumId}
-        group by lt.media_item_id, mi.title`)
-    ).rows,
-  )
-  const scrobbled = names.map((name) => ({
-    artist_key: name.artist_key,
-    track_key: name.track_key,
-    album_ids: [albumId],
-    has_unlinked_album: false,
-  }))
-  const match = createAlbumTrackAliasMatcher(
-    recordings,
-    scrobbled,
-    new Map(
-      names
-        .filter((name) => name.manual)
-        .map((name) => [JSON.stringify([name.artist_key, name.track_key]), '']),
-    ),
-  )
-  const record = new Set(recordIds)
-  const plan: FollowPlan = { also: [], unmatched: [], elsewhere: [] }
-  names.forEach((name, index) => {
-    const scrobbledName = scrobbled[index]
-    const target = scrobbledName ? match(scrobbledName) : undefined
-    const shown = {
-      artistName: name.artist_name,
-      trackName: name.track_name,
-      scrobbles: name.scrobbles,
-    }
-    if (!target) {
-      plan.unmatched.push({ ...shown, trackId: name.owner_id })
-      return
-    }
-    if (target.id === name.owner_id) return
-    plan.also.push({
-      ...shown,
-      artistKey: name.artist_key,
-      trackKey: name.track_key,
-      fromTrackId: name.owner_id,
-      toTrackId: target.id,
-      toTitle: target.title,
-    })
-    const other = name.owner_albums.find((album) => !record.has(album.id))
-    if (other)
-      plan.elsewhere.push({
-        artistName: name.artist_name,
-        trackName: name.track_name,
-        albumTitle: other.title,
-      })
-  })
-  return plan
-}
 
 export type AlbumNameMove = {
   draft: TrackChangeDraft

@@ -12,6 +12,8 @@ import {
   lockLibraryTrackWrites,
   reconcileSpotifyAlbumRecordings,
 } from './album-library-tracks'
+import { closeChangeBatch, openChangeBatch } from './library-changes'
+import { readRejectionTest } from './library-match-rejections'
 import { spotifyAlbumId } from '@/lib/spotify-api'
 import {
   createScrobbleTrackMatcher,
@@ -90,10 +92,10 @@ async function libraryTracks(database: Transaction) {
  * titles, credited artists and track lists. Albums added later pick up their
  * tracks; a track whose album left the library is unlinked.
  */
-export async function linkTracksToAlbums() {
+export async function linkTracksToAlbums(batchId: string | null = null) {
   await db.transaction(async (tx) => {
     await lockLibraryTrackWrites(tx)
-    await reconcileSpotifyAlbumRecordings(tx)
+    await reconcileSpotifyAlbumRecordings(tx, undefined, batchId)
     const tracks = await libraryTracks(tx)
     if (!tracks.length) return
     const albums = AlbumRowsSchema.parse(
@@ -265,6 +267,8 @@ export async function writeScrobbleTrackLinks(
       .filter((source) => source.strategy === 'manual')
       .map((source) => JSON.stringify([source.artist_key, source.track_key])),
   )
+  // A match the owner undid or separated credits no plays.
+  const rejected = await readRejectionTest(tx, account)
   const wanted = new Map(
     scrobbled.flatMap((row) => {
       if (manualNames.has(JSON.stringify([row.artist_key, row.track_key])))
@@ -274,15 +278,17 @@ export async function writeScrobbleTrackLinks(
         trackName: row.track_name,
         albumIds: row.album_ids,
       })
-      return (result?.trackIds ?? []).map((trackId) => {
-        const link = {
-          artist_key: row.artist_key,
-          track_key: row.track_key,
-          track_id: trackId,
-          strategy: result?.strategy ?? 'exact',
-        }
-        return [linkKey(link), link]
-      })
+      return (result?.trackIds ?? [])
+        .filter((trackId) => !rejected(row.artist_key, row.track_key, trackId))
+        .map((trackId) => {
+          const link = {
+            artist_key: row.artist_key,
+            track_key: row.track_key,
+            track_id: trackId,
+            strategy: result?.strategy ?? 'exact',
+          }
+          return [linkKey(link), link]
+        })
     }),
   )
   // Imported Last.fm identities always retain their own history, even when
@@ -302,7 +308,11 @@ export async function writeScrobbleTrackLinks(
     ).rows,
   )
   for (const record of records)
-    if (!wanted.has(linkKey(record))) wanted.set(linkKey(record), record)
+    if (
+      !wanted.has(linkKey(record)) &&
+      !rejected(record.artist_key, record.track_key, record.track_id)
+    )
+      wanted.set(linkKey(record), record)
   const stored = LinkRowsSchema.parse(
     (
       await tx.execute(sql`
@@ -421,13 +431,18 @@ export async function refreshTrackListeningTotals(
  * Relinks tracks to albums, then scrobbles to tracks, then recounts each
  * artist's scrobbles from the links and credits as they now stand. `account`
  * is the configured Last.fm account, or null to leave track listening
- * untouched.
+ * untouched. The automatic changes are recorded as one run of `trigger`.
  */
-export async function refreshTrackLinks(account: string | null) {
-  await linkTracksToAlbums()
+export async function refreshTrackLinks(
+  account: string | null,
+  trigger = 'relink',
+) {
+  const batchId = await db.transaction((tx) => openChangeBatch(tx, trigger))
+  await linkTracksToAlbums(batchId)
   if (account) {
-    await importLastfmLibraryTracks(account)
+    await importLastfmLibraryTracks(account, batchId)
     await linkScrobblesToTracks(account)
   }
   await refreshArtistListeningTotals(db)
+  await closeChangeBatch(db, batchId)
 }

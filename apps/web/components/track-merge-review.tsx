@@ -1,12 +1,14 @@
 'use client'
 
-import type { TrackMergePlan } from '@repo/schemas/library-changes'
+import type {
+  TrackMergeOutcome,
+  TrackMergePlan,
+} from '@repo/schemas/library-changes'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
 import { Select } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
@@ -14,11 +16,15 @@ import {
   TableHeader,
   TableRow,
 } from '@repo/ui/components/ui/table'
-import { formatCount, formatTrackLength } from '@repo/ui/lib/format'
+import {
+  formatCount,
+  formatItemCount,
+  formatTrackLength,
+} from '@repo/ui/lib/format'
 import {
   describeLibraryChange,
+  describeLibraryChangeNote,
   describeMergeCaution,
-  mergeBlockLabels,
   mergeTracks,
   planTrackMerge,
 } from '@/utils/library-changes'
@@ -32,59 +38,73 @@ import {
 
 const reviewColumns = [
   { key: 'track', label: 'Track', width: 200, fill: true },
+  { key: 'outcome', label: 'Becomes', width: 96 },
   { key: 'album', label: 'Album', width: 130 },
   { key: 'length', label: 'Length', width: 68 },
   { key: 'scrobbles', label: 'Scrobbles', width: 84 },
 ]
 
-/** Shown only when something speaks against the merge, or part of it cannot be made. */
+/** What a selected track becomes: the version shown, a version, or merged in. */
+const outcomeLabels: Record<TrackMergeOutcome, string> = {
+  keep: 'Shown',
+  version: 'Version',
+  merge: 'Merged',
+}
+
+const quoted = (title: string) => `“${title}”`
+
+/**
+ * What follows the merge, in sentences: the album names the merged titles
+ * were scrobbled under, and the other titles under those album names.
+ */
+export function describeTrackMergeFollows({
+  albumNames,
+  titles,
+}: TrackMergePlan['also']) {
+  const names = titles.length
+    ? formatItemCount(titles.length, { one: 'name', other: 'names' })
+    : null
+  const albums = albumNames.map(
+    (name) =>
+      `Album name ${quoted(name.albumName)} into ${quoted(name.toAlbumTitle)}`,
+  )
+  const [album] = albums
+  const lines =
+    albums.length === 1 && album && names
+      ? [`${album}, with ${names} scrobbled under it`]
+      : [
+          ...albums,
+          ...(names
+            ? [
+                `${names} scrobbled under ${albums.length ? 'them' : 'the same album name'}`,
+              ]
+            : []),
+        ]
+  return lines.map((line) => `${line}.`).join(' ')
+}
+
+/** Shown only when something speaks against the merge. */
 function TrackMergePlanReview({
   plan,
   pending,
   replan,
+  follow,
+  setFollow,
   error,
 }: MergeReviewProps<TrackMergePlan>) {
   const widths = useTableWidths('track-merge-review', reviewColumns)
   const layout = widths.layout(reviewColumns.map((column) => column.key))
   const trackIds = plan.tracks.map((track) => track.id)
-  const kept = plan.tracks.find((track) => track.id === plan.targetId)
-  const blocked = plan.tracks.filter((track) => track.blocked)
-  const mergeable = plan.tracks.filter((track) => !track.blocked)
-  // Any track made only of scrobbled names can be the one that is kept.
-  const choosable = plan.tracks.every((track) => track.identity === null)
   const { target, added, total } = plan.scrobbles
+  const follows = plan.also.albumNames.length > 0 || plan.also.titles.length > 0
   return (
     <>
       {plan.cautions.length > 0 && (
         <Notice tone="attention">
           Check before merging.{' '}
-          {plan.cautions.map(describeMergeCaution).join(' ')}
-        </Notice>
-      )}
-      {blocked.length > 0 && (
-        <Notice
-          tone="attention"
-          action={
-            mergeable.length > 1 ? (
-              <Button
-                size="xs"
-                disabled={pending}
-                onClick={() =>
-                  replan({
-                    ids: mergeable.map((track) => track.id),
-                    keepId: plan.targetId,
-                  })
-                }
-              >
-                Leave {blocked.length === 1 ? 'it' : 'them'} out
-              </Button>
-            ) : undefined
-          }
-        >
-          {blocked.length === 1
-            ? '1 track stays a track of its own.'
-            : `${formatCount(blocked.length)} tracks stay tracks of their own.`}{' '}
-          Only a track made of scrobbled names can be merged into another.
+          {plan.cautions
+            .map((caution) => describeMergeCaution(caution, plan.tracks))
+            .join(' ')}
         </Notice>
       )}
       {error}
@@ -92,10 +112,10 @@ function TrackMergePlanReview({
         <KeyValues
           items={[
             {
-              label: 'Kept',
-              value: choosable ? (
+              label: 'Shown as',
+              value: (
                 <Select
-                  aria-label="Track to keep"
+                  aria-label="Shown as"
                   value={plan.targetId}
                   disabled={pending}
                   onChange={(event) =>
@@ -105,12 +125,11 @@ function TrackMergePlanReview({
                   {plan.tracks.map((track) => (
                     <option key={track.id} value={track.id}>
                       {track.title}
+                      {track.albumTitle ? ` · ${track.albumTitle}` : ''}
                       {track.by ? ` · ${track.by}` : ''}
                     </option>
                   ))}
                 </Select>
-              ) : (
-                <b>{kept?.title}</b>
               ),
             },
             {
@@ -150,6 +169,9 @@ function TrackMergePlanReview({
             <TableHeader>
               <TableRow>
                 <TableHead resizer={widths.resizer('track')}>Track</TableHead>
+                <TableHead resizer={widths.resizer('outcome')}>
+                  Becomes
+                </TableHead>
                 <TableHead resizer={widths.resizer('album')}>Album</TableHead>
                 <TableHead align="end" resizer={widths.resizer('length')}>
                   Length
@@ -168,17 +190,16 @@ function TrackMergePlanReview({
                         {track.title}
                       </span>
                       <span className="ds-cell-sub">
-                        {track.id === plan.targetId ? (
-                          <Status state="done">Kept</Status>
-                        ) : track.blocked ? (
-                          <Status state="attention">
-                            {mergeBlockLabels[track.blocked]}
-                          </Status>
-                        ) : (
-                          track.by || <EmptyValue />
-                        )}
+                        {track.by || <EmptyValue />}
                       </span>
                     </span>
+                  </TableCell>
+                  <TableCell>
+                    {track.outcome === 'keep' ? (
+                      <Status state="done">{outcomeLabels.keep}</Status>
+                    ) : (
+                      outcomeLabels[track.outcome]
+                    )}
                   </TableCell>
                   <TableCell>
                     {track.albumTitle ? (
@@ -203,6 +224,20 @@ function TrackMergePlanReview({
           </table>
         </SecondaryTableScroll>
       </Section>
+      {follows && (
+        <Section title="Also merged">
+          <label className="ds-checkrow">
+            <input
+              type="checkbox"
+              className="ds-check"
+              checked={follow}
+              disabled={pending}
+              onChange={(event) => setFollow(event.target.checked)}
+            />
+            <span>{describeTrackMergeFollows(plan.also)}</span>
+          </label>
+        </Section>
+      )}
     </>
   )
 }
@@ -211,8 +246,13 @@ function TrackMergePlanReview({
 export const trackMergeAdapter: MergeAdapter<TrackMergePlan> = {
   plan: (apiBaseUrl, { ids, keepId }) =>
     planTrackMerge(apiBaseUrl, { trackIds: ids, targetId: keepId }),
-  merge: (apiBaseUrl, { ids, keepId, reviewed }) =>
-    mergeTracks(apiBaseUrl, { trackIds: ids, targetId: keepId, reviewed }),
+  merge: (apiBaseUrl, { ids, keepId, reviewed, follow }) =>
+    mergeTracks(apiBaseUrl, {
+      trackIds: ids,
+      targetId: keepId,
+      reviewed,
+      follow,
+    }),
   request: (plan) => ({
     ids: plan.tracks.map((track) => track.id),
     keepId: plan.targetId,
@@ -221,16 +261,17 @@ export const trackMergeAdapter: MergeAdapter<TrackMergePlan> = {
   blocked: (plan) => plan.blocked,
   Review: TrackMergePlanReview,
   wording: {
-    title: (plan) => {
-      const mergeable = plan.tracks.filter((track) => !track.blocked).length
-      return mergeable > 1
-        ? `Merge ${formatCount(mergeable)} tracks`
-        : 'Merge tracks'
-    },
+    title: (plan) =>
+      plan.tracks.length > 1
+        ? `Merge ${formatCount(plan.tracks.length)} tracks`
+        : 'Merge tracks',
     selectMore: 'Select two or more tracks to merge',
     failed: 'The tracks could not be merged.',
   },
-  describe: describeLibraryChange,
+  describe: (change) =>
+    [describeLibraryChange(change), describeLibraryChangeNote(change)]
+      .filter(Boolean)
+      .join('. '),
   invalidate: (client, change) =>
     invalidateScrobbleLinks(
       client,

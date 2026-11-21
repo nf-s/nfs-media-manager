@@ -3,7 +3,6 @@ import { z } from 'zod'
 import type {
   LibraryChange,
   LibraryChangeDetails,
-  LibraryChangePart,
   TrackMergeRequest,
 } from '@repo/schemas/library-changes'
 import {
@@ -23,13 +22,19 @@ import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
 } from './album-library-tracks'
+import { moveAlbumNames, type AlbumNameMove } from './album-names'
 import { refreshArtistListeningTotals } from './artist-listening'
+import { membershipDetails } from './automatic-match-effects'
 import {
   refreshTrackListeningTotals,
   relinkTrackRecords,
   writeScrobbleTrackLinks,
 } from './track-links'
 import { importLastfmTrackSources } from './lastfm-library-tracks'
+import {
+  clearRejections,
+  storeSeparatedMatches,
+} from './library-match-rejections'
 import { clearKeptSeparate } from './keep-separate-effects'
 import type { ChangeEffectEntry } from './library-change-effect'
 import {
@@ -37,8 +42,11 @@ import {
   getLibraryChange,
   readChangeRecords,
   recordTrackChange,
+  type TrackChangeDraft,
 } from './library-changes'
-import { readTrackMergePlan } from './track-merge-plan'
+import type { TrackFollow } from './merge-follows'
+import { refreshTrackDuplicates } from './track-duplicate-refresh'
+import { readTrackMerge, type TrackMergeSelection } from './track-merge-plan'
 import { moveTrackMemberships } from './track-version-effects'
 import { joinTrackVersions } from './track-versions'
 
@@ -323,11 +331,16 @@ export async function removeScrobbleTrackMatch(
         },
       ],
     })
-    if (mode === 'automatic')
+    const effects: ChangeEffectEntry[] = []
+    if (mode === 'automatic') {
       await tx
         .update(lastfmTrackSource)
         .set({ manuallyMatched: false })
         .where(membership)
+      // Automatic matching may make the matches the owner undid again.
+      const forgotten = await clearRejections(tx, source.username, [name])
+      if (forgotten) effects.push(forgotten)
+    }
     await importLastfmTrackSources(tx, source.username, {
       name,
       separate: mode === 'separate',
@@ -344,10 +357,25 @@ export async function removeScrobbleTrackMatch(
         statusCode: 409,
         message: 'That Last.fm name is no longer available.',
       })
+    // Separating a name from a track an automatic rule gave it is remembered.
+    const [owner] = draft.before
+    const separated =
+      mode === 'separate' && owner && !owner.manual
+        ? await storeSeparatedMatches(tx, {
+            username: source.username,
+            ...name,
+            recordIds: [
+              ...(source.standalone ? [] : [source.recording_id]),
+              ...(displayedId === source.recording_id ? [] : [displayedId]),
+            ].filter((id) => id !== result.targetId),
+          })
+        : null
+    if (separated) effects.push(separated)
     return withChange(
       await trackMatchResult(tx, displayedId, result.targetId),
       await recordTrackChange(tx, draft, {
         action: mode === 'separate' ? 'separate' : 'rematch',
+        effects,
       }),
     )
   })
@@ -367,29 +395,13 @@ export async function transferTrackMemberships(
   return moveTrackMemberships(tx, sourceId, targetId, moveAlbumPositions)
 }
 
-const EffectSizeSchema = z.object({
-  positionIds: z.array(z.unknown()).optional(),
-  entries: z.array(z.unknown()).optional(),
-})
-
 /** What a merge moved besides scrobbled names, for the list of changes. */
 function mergeDetails(
   effects: ChangeEffectEntry[],
   versionTitles: string[],
 ): LibraryChangeDetails {
-  const moved = (type: string, key: 'positionIds' | 'entries') =>
-    effects
-      .filter((effect) => effect.type === type)
-      .reduce((total, effect) => {
-        const payload = EffectSizeSchema.safeParse(effect.payload)
-        return total + (payload.success ? (payload.data[key]?.length ?? 0) : 0)
-      }, 0)
-  const counts: Partial<Record<LibraryChangePart, number>> = {}
-  const position = moved('track-position-move', 'positionIds')
-  const entries = moved('track-playlist-entry-move', 'entries')
+  const counts = { ...membershipDetails(effects)?.counts }
   if (versionTitles.length) counts.version = versionTitles.length
-  if (position) counts.position = position
-  if (entries) counts['playlist-entry'] = entries
   return { counts, labels: versionTitles.slice(0, 5) }
 }
 
@@ -495,20 +507,57 @@ export async function mergeLastfmTrack(
   })
 }
 
+/** One draft of the names that moved, from the drafts of each step. */
+function joinTrackDrafts(drafts: TrackChangeDraft[]): TrackChangeDraft {
+  const once = <Item extends { id: string }>(items: Item[]) => [
+    ...new Map(items.map((item) => [item.id, item])).values(),
+  ]
+  return {
+    before: drafts.flatMap((draft) => draft.before),
+    records: once(drafts.flatMap((draft) => draft.records)),
+    archived: once(drafts.flatMap((draft) => draft.archived)),
+  }
+}
+
+/** Says what followed the merged titles, for the list of changes. */
+function followDetails(
+  details: LibraryChangeDetails,
+  follows: TrackFollow[],
+  moved: AlbumNameMove[],
+): LibraryChangeDetails {
+  const albumNames = moved.reduce((total, move) => total + move.albumNames, 0)
+  const titles = moved.reduce((total, move) => total + move.titles, 0)
+  const counts = { ...details.counts }
+  if (albumNames) counts['album-name'] = albumNames
+  if (titles) counts.title = titles
+  return {
+    counts,
+    labels: [
+      ...follows.flatMap((follow) =>
+        follow.names.map((name) => name.albumName),
+      ),
+      ...(details.labels ?? []),
+    ].slice(0, 5),
+  }
+}
+
 /**
  * Merges the selected tracks into one record and records the change. A track
  * with its own Spotify track, or without names to move, stays as a version;
  * the others give their names, album positions and playlist entries to the
- * track to keep and are removed. A plan with cautions must have been
- * reviewed.
+ * track to keep and are removed. With `follow`, the album names the merged
+ * titles were scrobbled under move to the album of the track to keep, with
+ * the other titles under them that match its tracks, in the same change. A
+ * plan with cautions must have been reviewed.
  */
 export async function mergeTracks({
   reviewed,
   ...selection
-}: TrackMergeRequest): Promise<LibraryChange> {
+}: TrackMergeSelection &
+  Pick<TrackMergeRequest, 'reviewed'>): Promise<LibraryChange> {
   return db.transaction(async (tx) => {
     await lockLibraryTrackWrites(tx)
-    const plan = await readTrackMergePlan(tx, selection, true)
+    const { plan, follows } = await readTrackMerge(tx, selection, true)
     if (plan.cautions.length && !reviewed)
       throw new ServerError({
         statusCode: 409,
@@ -550,22 +599,45 @@ export async function mergeTracks({
       true,
     )
     await relinkTrackRecords(tx, [targetId, ...joined.trackIds])
+    const moved: AlbumNameMove[] = []
+    for (const { account, albumId, names, follow } of follows)
+      moved.push(await moveAlbumNames(tx, account, names, albumId, follow))
+    for (const move of moved) effects.push(...move.effects)
     const forgotten = await clearKeptSeparate(
       tx,
       'track',
       plan.tracks.map((track) => track.id),
     )
     if (forgotten) effects.push(forgotten)
-    const changeId = await recordTrackChange(tx, draft, {
-      action: 'merge',
-      target: records.find((record) => record.id === targetId) ?? null,
-      sources: records.filter((record) => record.id !== targetId),
-      details: mergeDetails(
-        effects,
-        joined.effect ? versions.map((track) => track.title) : [],
-      ),
-      effects,
+    await refreshTrackDuplicates(tx, {
+      trackIds: [
+        ...new Set([
+          ...plan.tracks.map((track) => track.id),
+          ...plan.also.titles.flatMap((name) => [
+            name.fromTrackId,
+            name.toTrackId,
+          ]),
+        ]),
+      ],
     })
+    const changeId = await recordTrackChange(
+      tx,
+      joinTrackDrafts([draft, ...moved.map((move) => move.draft)]),
+      {
+        action: 'merge',
+        target: records.find((record) => record.id === targetId) ?? null,
+        sources: records.filter((record) => record.id !== targetId),
+        details: followDetails(
+          mergeDetails(
+            effects,
+            joined.effect ? versions.map((track) => track.title) : [],
+          ),
+          follows,
+          moved,
+        ),
+        effects,
+      },
+    )
     if (!changeId)
       throw new ServerError({
         statusCode: 409,

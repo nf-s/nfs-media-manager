@@ -128,7 +128,8 @@ TableBody.displayName = 'TableBody'
  */
 export const TableRow = React.forwardRef<
   HTMLTableRowElement,
-  React.HTMLAttributes<HTMLTableRowElement> & {
+  // The HTML `part` attribute gives way to the part row.
+  Omit<React.HTMLAttributes<HTMLTableRowElement>, 'part'> & {
     selected?: boolean
     group?: boolean
     child?: boolean

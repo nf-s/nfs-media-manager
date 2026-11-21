@@ -184,7 +184,7 @@ test('Artists Table pins the name, right-aligns counts and sorts through the sha
   assert.match(table, /<table class="ds-table" data-layout="fixed"/)
   assert.match(
     table,
-    /<th scope="col" data-sticky="edge" style="--ds-sticky-left:0px"><button type="button" class="ds-th-sort" title="Sort by Artist">Artist<\/button>/,
+    /<th scope="col" data-sticky="edge" style="--ds-sticky-left:36px"><button type="button" class="ds-th-sort" title="Sort by Artist">Artist<\/button>/,
   )
   assert.match(
     table,
@@ -215,6 +215,43 @@ test('Artists Table pins the name, right-aligns counts and sorts through the sha
     /aria-label="Resize Scrobbles"/,
     'Scrobbles is sortable and resizable like the other counts',
   )
+})
+
+test('Artists Table rows can be ticked for a merge; Grid and List cannot', async () => {
+  const html = await render('view=table')
+  // The selection column comes first, pinned, without a sort button or width handle.
+  assert.match(
+    html,
+    /<colgroup><col style="width:min\(36px, var\(--ds-col-max, 36px\)\)"\/>/,
+  )
+  assert.match(
+    html,
+    /<thead><tr><th scope="col" data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select loaded artists"\/><\/th><th /,
+  )
+  assert.match(
+    html,
+    /<tr data-item-index="0" aria-rowindex="2"><td data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select Example Artist"\/><\/td><td data-sticky="edge" style="--ds-sticky-left:36px"/,
+  )
+  assert.doesNotMatch(html, /<th [^>]*data-sticky="edge"[^>]*left:0px/)
+  // Unloaded rows keep the selection column empty.
+  assert.match(
+    html,
+    /<tr aria-hidden="true" data-placeholder=""><td><\/td><td><div class="ds-skel"/,
+  )
+  // The Merge bar is attached under the scroll area and hidden until a row is ticked.
+  assert.match(
+    html,
+    /<\/table><\/div><div class="ds-selectbar sec-selectbar"><\/div>/,
+  )
+  for (const view of ['grid', 'list']) {
+    const other = await render(`view=${view}`)
+    assert.doesNotMatch(
+      other,
+      /Select loaded artists|Select Example Artist/,
+      view,
+    )
+    assert.doesNotMatch(other, /ds-selectbar/, view)
+  }
 })
 
 test('Artists Table shows the chosen column order with the name pinned first', async () => {

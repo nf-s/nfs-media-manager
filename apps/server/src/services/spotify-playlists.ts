@@ -780,7 +780,7 @@ export async function runSpotifyPlaylistImport(
       fetched.entries,
       context.jobId,
     )
-    await refreshTrackLinks(await getLastfmAccount())
+    await refreshTrackLinks(await getLastfmAccount(), 'playlist-import')
     const name =
       fetched.target.source === 'spotify'
         ? fetched.target.name

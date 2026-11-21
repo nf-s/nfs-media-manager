@@ -454,7 +454,9 @@ export async function listTrackMatchDiagnostics(
   ]
   if (query.creatorId)
     scope.push(sql`exists (select 1 from media_credit c where c.media_item_id = media_item.id
-        and c.role = 'artist' and c.artist_id = ${query.creatorId})`)
+        and c.role = 'artist' and c.artist_id = (
+          select coalesce(a.merged_into_id, a.id) from artist a
+          where a.id = ${query.creatorId}))`)
   const visibleScope = sql.join(scope, sql` and `)
   const conditions = [
     visibleScope,

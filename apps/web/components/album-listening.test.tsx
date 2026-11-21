@@ -230,3 +230,18 @@ test('album Listening keeps cached data after a failed refresh and offers Retry 
   assert.match(loading, /aria-busy="true"/)
   assert.match(loading, /class="ds-skel"/)
 })
+
+test('Link merges the album name with Undo; nothing is reviewed or reported before it is pressed', () => {
+  const html = render(
+    [
+      [seriesKey, series],
+      [listeningKey, listening],
+    ],
+    <AlbumListening albumId="one" />,
+  )
+  assert.match(
+    html,
+    /<button class="ds-btn" data-size="xs" aria-label="Link Artist fixture — Album fixture \(Deluxe\)">Link<\/button>/,
+  )
+  assert.doesNotMatch(html, /<dialog|ds-notice|>Undo</)
+})

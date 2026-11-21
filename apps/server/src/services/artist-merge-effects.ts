@@ -8,6 +8,7 @@ import {
   type ChangeReader,
   type ChangeTransaction,
 } from './library-change-effect'
+import { refreshTrackDuplicates } from './track-duplicate-refresh'
 
 const CreditKeySchema = z.object({
   mediaItemId: z.string(),
@@ -319,5 +320,26 @@ export async function mergeArtistInto(
   }
 }
 
+/*
+ * Titles that followed an artist merge move as the change's scrobbled names;
+ * this effect works out the possible duplicates around their tracks again
+ * once they have moved back or again.
+ */
+const titleFollow = defineChangeEffect({
+  type: 'artist-title-follow',
+  payload: z.object({ trackIds: z.array(z.string()) }),
+  blocker: () => Promise.resolve(null),
+  apply: (tx, { trackIds }) =>
+    Promise.resolve(async () => refreshTrackDuplicates(tx, { trackIds })),
+})
+
+/** The effect of titles that followed an artist merge, from and to tracks. */
+export function artistTitleFollowEffect(trackIds: string[]): ChangeEffectEntry {
+  return titleFollow.entry({ trackIds }, trackIds)
+}
+
 /** Merging artist names and moving their credits. */
-export const artistMergeEffects: ChangeEffectHandler[] = [artistMerge.handler]
+export const artistMergeEffects: ChangeEffectHandler[] = [
+  artistMerge.handler,
+  titleFollow.handler,
+]

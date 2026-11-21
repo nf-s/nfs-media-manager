@@ -35,6 +35,7 @@ import {
   prepareSpotifyCatalogTrackSearch,
   searchSpotifyTrackCandidates,
 } from './manual-add'
+import { closeChangeBatch, openChangeBatch } from './library-changes'
 import { reconcileSpotifyTrackSearchInTransaction } from './spotify-track-search-acceptance'
 import {
   sameSpotifySearchArtists,
@@ -274,11 +275,18 @@ export async function runSpotifyTrackSearch(
       },
       persist: async (tx) => {
         if (options.reviewOnly || !context.requestedByUserId) return
-        await reconcileSpotifyTrackSearchInTransaction(tx, {
-          trackId: options.trackId,
-          userId: context.requestedByUserId,
-          jobId: context.jobId,
-        })
+        const batchId = await openChangeBatch(tx, 'spotify-search')
+        await reconcileSpotifyTrackSearchInTransaction(
+          tx,
+          {
+            trackId: options.trackId,
+            userId: context.requestedByUserId,
+            jobId: context.jobId,
+          },
+          false,
+          batchId,
+        )
+        await closeChangeBatch(tx, batchId)
       },
     }
   } catch (error) {

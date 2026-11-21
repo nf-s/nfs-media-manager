@@ -265,6 +265,13 @@ export async function openChangeBatch(tx: Transaction, trigger: string) {
   return id
 }
 
+/** Ends a run: a run that recorded no change is not kept. */
+export async function closeChangeBatch(tx: Reader, batchId: string) {
+  await tx.execute(sql`
+    delete from library_change_batch
+    where id = ${batchId} and change_count = 0`)
+}
+
 /**
  * Records one change: the scrobbled track names that moved since `draft` was
  * read, and the effects the caller made besides. Call it in the transaction
@@ -444,6 +451,7 @@ export async function recordNameMoves(
     batchId = null,
     archived = [],
     effects,
+    details,
   }: {
     moves: RecordedNameMove[]
     rule: string | null
@@ -456,6 +464,11 @@ export async function recordNameMoves(
     archived?: ArchivedTrack[]
     /** The effects to keep with the change of one track's names. */
     effects?: (toId: string, moves: RecordedNameMove[]) => ChangeEffectEntry[]
+    /** What the change of one track's names moved besides them. */
+    details?: (
+      toId: string,
+      moves: RecordedNameMove[],
+    ) => LibraryChangeDetails | null
   },
 ): Promise<string[]> {
   const changed = moves.filter(
@@ -560,6 +573,7 @@ export async function recordNameMoves(
       target: records.get(toId) ?? null,
       sources: sourceIds.flatMap((sourceId) => records.get(sourceId) ?? []),
       scrobbles: total,
+      details: details?.(toId, group) ?? null,
       reversible: true,
     })
     for (const [position, effect] of (effects?.(toId, group) ?? []).entries())
@@ -600,6 +614,63 @@ export async function recordNameMoves(
       })
       .where(eq(libraryChangeBatch.id, batchId))
   return changes.map((change) => change.id)
+}
+
+/**
+ * Records tracks a run removed that it cannot put back, with their archives,
+ * so nothing is lost and History lists them. Call it after the removal, in its
+ * transaction, with the tracks read with `archiveTracks` before. Returns the
+ * change's ID, or null when none of the tracks was removed.
+ */
+export async function recordRemovedTracks(
+  tx: Transaction,
+  {
+    archived,
+    rule,
+    actor = 'automatic',
+    batchId = null,
+    details = null,
+  }: {
+    archived: ArchivedTrack[]
+    rule: string | null
+    actor?: LibraryChangeActor
+    batchId?: string | null
+    details?: LibraryChangeDetails | null
+  },
+): Promise<string | null> {
+  const present = await existingTrackIds(
+    tx,
+    archived.map((track) => track.id),
+  )
+  const removed = archived.filter((track) => !present.has(track.id))
+  if (!removed.length) return null
+  const id = nanoid()
+  await tx.insert(libraryChange).values({
+    id,
+    kind: 'track',
+    action: 'remove',
+    actor,
+    rule,
+    batchId,
+    target: null,
+    sources: removed.flatMap(archivedRecord),
+    details,
+    reversible: false,
+  })
+  for (const batch of batches(removed, 50))
+    await tx.insert(libraryChangeRemoval).values(
+      batch.map((track) => ({
+        changeId: id,
+        recordId: track.id,
+        snapshot: track.snapshot,
+      })),
+    )
+  if (batchId)
+    await tx
+      .update(libraryChangeBatch)
+      .set({ changeCount: sql`${libraryChangeBatch.changeCount} + 1` })
+      .where(eq(libraryChangeBatch.id, batchId))
+  return id
 }
 
 const NAMES_MOVED = 'A later change moved these names. Undo that change first.'
@@ -920,6 +991,8 @@ async function applyChange(id: string, direction: ChangeDirection) {
     if ((await existingTrackIds(tx, lost)).size < lost.length)
       throw new ServerError({ statusCode: 409, message: TRACK_GONE })
 
+    // Before relinking, so the plays of an undone match are not counted there.
+    await rememberUndoneMatches(tx, change, direction, steps)
     if (steps.length) {
       await tx.execute(sql`
         update lastfm_track_source s
@@ -948,7 +1021,6 @@ async function applyChange(id: string, direction: ChangeDirection) {
             })),
         )
     }
-    await rememberUndoneMatches(tx, change, direction, steps)
     for (const later of afterNames) await later()
 
     const originIds = [

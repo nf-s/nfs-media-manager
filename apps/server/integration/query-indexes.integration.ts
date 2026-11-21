@@ -324,6 +324,61 @@ describe('library query index coverage', () => {
     expectIndex(chronological, 'scrape_job_created_id_idx')
   })
 
+  it('uses indexes for History by actor, by run and for remembered matches', async () => {
+    await pool.query(`
+      insert into library_change_batch (id, trigger)
+      select 'run-' || n, 'lastfm-sync' from generate_series(1, 200) n;
+      insert into library_change (id, kind, action, actor, batch_id, created_at)
+      select 'change-' || n, 'track', 'move',
+        case when n % 50 = 0 then 'owner' else 'automatic' end,
+        'run-' || (n % 200 + 1), timestamp '2026-01-01' + n * interval '1 second'
+      from generate_series(1, 20000) n;
+      insert into library_match_rejection (username, artist_key, track_key, record_id, reason)
+      select 'listener-' || (n % 500), 'fixture artist', 'fixture track ' || n,
+        'track-' || (n % 5000 + 1), 'undo'
+      from generate_series(1, 20000) n;
+    `)
+    for (const table of [
+      'library_change_batch',
+      'library_change',
+      'library_match_rejection',
+    ])
+      await pool.query(`vacuum analyze ${table}`)
+    const { LibraryChangeListQuerySchema } =
+      await import('@repo/schemas/library-changes')
+    const { listLibraryChanges } = await import('@/services/library-changes')
+    const { readRejectionTest } =
+      await import('@/services/library-match-rejections')
+    const page = '"library_change"."created_at" desc'
+    // Newest first reads the ascending indexes backwards.
+    const expectPageIndex = (plan: string, name: string) => {
+      expect(plan).toMatch(new RegExp(`Index Scan (?:Backward )?using ${name}`))
+      expect(plan).not.toMatch(/Seq Scan on library_change\b/)
+    }
+
+    await listLibraryChanges(
+      LibraryChangeListQuerySchema.parse({ actor: 'owner' }),
+    )
+    expectPageIndex(
+      await explainServiceQuery(page),
+      'library_change_kind_actor_created_idx',
+    )
+    logQuery.mockClear()
+    const run = await listLibraryChanges(
+      LibraryChangeListQuerySchema.parse({ batchId: 'run-7' }),
+    )
+    expect(run.totalCount).toBe(100)
+    expectPageIndex(await explainServiceQuery(page), 'library_change_batch_idx')
+    logQuery.mockClear()
+    const rejected = await readRejectionTest(database, 'listener-7')
+    expect(rejected('fixture artist', 'fixture track 7', 'track-8')).toBe(true)
+    // The primary key, its name cut to PostgreSQL's 63 characters.
+    expectIndex(
+      await explainServiceQuery('from library_match_rejection'),
+      'library_match_rejection_username_artist_key_track_key_record_id',
+    )
+  })
+
   it('uses an index for selective job batch lookups', async () => {
     const batch = await explain(
       `select id from scrape_job where options->>'batchId' = $1`,

@@ -8,6 +8,7 @@ import {
   type AlbumListening as AlbumListeningData,
   type ListeningSource,
 } from '@repo/schemas/lastfm'
+import type { LibraryChange } from '@repo/schemas/library-changes'
 import { Section, Stats } from '@repo/ui/components/ds/facts'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { Meter } from '@repo/ui/components/ds/meter'
@@ -32,12 +33,15 @@ import {
   useLastfmLinkUpdate,
 } from './lastfm-link-controls'
 import { errorMessage } from './lastfm-sync'
+import { AlbumChangeNotice, albumNameMoveAdapter } from './album-merge-review'
+import { useMerge } from './merge-bar'
 import {
   ListeningDate,
   ListeningSkeleton,
   useListeningSeries,
 } from './listening-trend'
 import { fetchApiData } from '@/utils/api'
+import { albumNameKey } from '@/utils/album-merges'
 import {
   albumListeningPath,
   busiestMonth,
@@ -96,18 +100,30 @@ export function ListeningSources({
 }) {
   const update = useLastfmLinkUpdate()
   const [adding, setAdding] = useState(false)
+  // The last name merged here, with Undo; kept apart so Undo can update it.
+  const [moved, setMoved] = useState<LibraryChange | null>(null)
+  const move = useMerge(albumNameMoveAdapter, { onMerge: setMoved })
+  const pending = update.isPending || move.pending
   const widths = useTableWidths('album-scrobble-names', nameColumns)
   const layout = widths.layout([
     ...nameColumns.map((column) => column.key),
     nameActionsWidth,
   ])
-  const link = (name: { artistName: string; albumName: string }) =>
+  // Linking a name merges it into this album, as a change that can be undone.
+  const link = (name: { artistName: string; albumName: string }) => {
+    setMoved(null)
+    update.reset()
+    void move.merge([albumNameKey(name)], albumId)
+  }
+  const unlink = (name: { artistName: string; albumName: string }) => {
+    setMoved(null)
+    move.clearError()
     update.mutate({
-      action: 'link',
+      action: 'unlink',
       artistName: name.artistName,
       albumName: name.albumName,
-      albumId,
     })
+  }
   const names: ScrobbleName[] = [
     ...data.sources.map((source) => ({ ...source, linked: true })),
     ...data.similarUnlinked.map((source) => ({ ...source, linked: false })),
@@ -160,17 +176,9 @@ export function ListeningSources({
                     <Button
                       size="xs"
                       variant={name.linked ? 'ghost' : 'default'}
-                      disabled={update.isPending}
+                      disabled={pending}
                       aria-label={`${name.linked ? 'Unlink' : 'Link'} ${label}`}
-                      onClick={() =>
-                        name.linked
-                          ? update.mutate({
-                              action: 'unlink',
-                              artistName: name.artistName,
-                              albumName: name.albumName,
-                            })
-                          : link(name)
-                      }
+                      onClick={() => (name.linked ? unlink(name) : link(name))}
                     >
                       {name.linked ? 'Unlink' : 'Link'}
                     </Button>
@@ -195,14 +203,23 @@ export function ListeningSources({
           </Link>
         </Button>
       </div>
-      {adding && (
-        <ScrobbledNamePicker disabled={update.isPending} onPick={link} />
+      {adding && <ScrobbledNamePicker disabled={pending} onPick={link} />}
+      {moved && (
+        <AlbumChangeNotice
+          change={moved}
+          onChange={setMoved}
+          onDismiss={() => setMoved(null)}
+        />
+      )}
+      {move.error && !move.review && (
+        <Notice tone="danger">{move.error}</Notice>
       )}
       {update.isError && (
         <Notice tone="danger">
           {errorMessage(update.error, 'Could not update the link.')}
         </Notice>
       )}
+      {move.dialog}
     </div>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { DetailInspector } from './detail-inspector'
+import { DetailListFrame } from './detail-list-frame'
 import { CreatorLinks } from './creator-links'
 import { CollectionLinks } from './collection-links'
 import { CreatorScopeChip } from './creator-scope-chip'
@@ -36,6 +37,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableColumns,
@@ -162,6 +164,14 @@ import {
   parseColumnOrder,
 } from '@/utils/browse-items'
 import { ColumnChoices } from './browse-items'
+import {
+  MergeBar,
+  RowSelectAll,
+  RowSelectRow,
+  rowSelectionWidth,
+  useRowSelection,
+} from './merge-bar'
+import { albumMergeAdapter } from './album-merge-review'
 
 type MediaItem = AlbumListItem | FilmListItem
 
@@ -328,6 +338,18 @@ function columnLabel(field: BrowseField) {
   return field.rating ? ratingSource(field.rating, field.label) : field.label
 }
 
+/** What an album's row stands for: its other editions, or that it is an edition. */
+function AlbumRecordNote({ album }: { album: AlbumListItem }) {
+  if (album.editionOfId) return <span className="ds-muted">Edition</span>
+  const count = album.editionCount ?? 0
+  if (!count) return null
+  return (
+    <span className="ds-muted ds-num">
+      +{formatItemCount(count, { one: 'edition', other: 'editions' })}
+    </span>
+  )
+}
+
 export default function MediaBrowser({
   mediaType,
 }: {
@@ -411,6 +433,7 @@ function MediaBrowse({
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
   const [widths, setWidths] = useState<Record<string, number>>({})
   const scroller = useRef<HTMLDivElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
   const browser = useRef<HTMLElement>(null)
   const inspector = useDetailInspector()
   const pageRail = useRailSlot()
@@ -430,6 +453,9 @@ function MediaBrowse({
   const listeningPeriod = listeningSort ?? defaultListeningPeriod
   const q = searchParams.get('q') ?? ''
   const includeArchived = searchParams.get('includeArchived') === 'true'
+  // Editions are listed under their first album unless they are asked for as rows.
+  const editions =
+    mediaType === 'album' && searchParams.get('editions') === 'true'
   const limitResults = searchParams.get('limitResults')
   const savedViews = useQuery({
     queryKey: ['saved-views'],
@@ -505,6 +531,7 @@ function MediaBrowse({
     limitResults,
     listening,
     listeningSort: requestedListeningPeriod,
+    ...(editions ? { editions } : {}),
     ...creator,
   })
   // A compact card is too narrow for tags or a value beside the year.
@@ -640,7 +667,9 @@ function MediaBrowse({
     return () => observer.disconnect()
   }, [])
   useEffect(() => {
-    if (embedded && scroller.current) return fitDetailList(scroller.current)
+    // The frame holds the list and its selection bar when it has one.
+    const list = frame.current ?? scroller.current
+    if (embedded && list) return fitDetailList(list)
   }, [embedded])
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 })
@@ -695,6 +724,7 @@ function MediaBrowse({
     ...creator,
   })
   if (includeArchived) params.set('includeArchived', 'true')
+  if (editions) params.set('editions', 'true')
   if (limitResults) params.set('limitResults', limitResults)
   if (listening) params.set('listening', JSON.stringify(listening))
   if (requestedListeningPeriod)
@@ -722,6 +752,17 @@ function MediaBrowse({
           : tableHeaderHeight,
   })
   const { total, slots, padTop, padBottom } = query
+  // Albums Table rows can be ticked for a merge.
+  const selectable = mediaType === 'album'
+  const loadedIds = slots.flatMap(({ item }) => (item ? [item.id] : []))
+  const selection = useRowSelection(loadedIds)
+  // Another search, filter, sort, scope or view lists other albums.
+  const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
+  if (selectionIdentity !== scrollIdentity) {
+    setSelectionIdentity(scrollIdentity)
+    selection.clear()
+  }
+  const selectionColumns = selectable ? 1 : 0
   const selectedItem = slots.find(({ item }) => item?.id === selectedId)?.item
   const selectedListeningCount =
     selectedItem?.mediaType === 'album'
@@ -1341,6 +1382,21 @@ function MediaBrowse({
                 />
                 Include archived imports
               </label>
+              {mediaType === 'album' && (
+                <label className="ds-checkrow">
+                  <input
+                    type="checkbox"
+                    className="ds-check"
+                    checked={editions}
+                    onChange={(event) =>
+                      setParams({
+                        editions: event.target.checked ? 'true' : null,
+                      })
+                    }
+                  />
+                  Show editions as rows
+                </label>
+              )}
             </>
           }
           filters={
@@ -1536,344 +1592,406 @@ function MediaBrowse({
                 {activeFilters}
               </div>
             )}
-        <div
-          className={`browse-scroller${embedded ? ` ${embeddedScrollClass}` : ''}`}
-          data-view={view}
-          data-touch={grid.mobile ? '' : undefined}
-          data-inspector-scroll={embedded ? '' : undefined}
-          ref={scroller}
-          role="region"
-          aria-label={`${collection} ${view}`}
-          tabIndex={0}
-          onScroll={(event) => {
-            setScroll({
-              identity: scrollIdentity,
-              top: event.currentTarget.scrollTop,
-            })
-            const sideways = event.currentTarget.scrollLeft > 0
-            if (sideways !== scrolledSideways) setScrolledSideways(sideways)
-          }}
-        >
-          {query.isError && (
-            <div className="browse-notice">
-              <Notice
-                tone="danger"
-                action={
-                  <Button type="button" size="xs" onClick={query.retry}>
-                    Retry
-                  </Button>
-                }
-              >
-                Could not load {collection}.
-              </Notice>
-            </div>
-          )}
-          <span className="sr-only" role="status">
-            {query.isFetching ? 'Loading items' : ''}
-          </span>
-          {emptyState}
-          {view === 'grid' ? (
-            <div
-              className="browse-extent"
-              style={{
-                height:
-                  query.height > 0 ? query.height - grid.gap + grid.padding : 0,
-              }}
-            >
-              <CardGrid
-                className="browse-slots"
-                data-density={density}
+        <DetailListFrame framed={embedded && selectable} frame={frame}>
+          <div
+            className={`browse-scroller${embedded ? ` ${embeddedScrollClass}` : ''}`}
+            data-view={view}
+            data-touch={grid.mobile ? '' : undefined}
+            data-inspector-scroll={embedded ? '' : undefined}
+            ref={scroller}
+            role="region"
+            aria-label={`${collection} ${view}`}
+            tabIndex={0}
+            onScroll={(event) => {
+              setScroll({
+                identity: scrollIdentity,
+                top: event.currentTarget.scrollTop,
+              })
+              const sideways = event.currentTarget.scrollLeft > 0
+              if (sideways !== scrolledSideways) setScrolledSideways(sideways)
+            }}
+          >
+            {query.isError && (
+              <div className="browse-notice">
+                <Notice
+                  tone="danger"
+                  action={
+                    <Button type="button" size="xs" onClick={query.retry}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  Could not load {collection}.
+                </Notice>
+              </div>
+            )}
+            <span className="sr-only" role="status">
+              {query.isFetching ? 'Loading items' : ''}
+            </span>
+            {emptyState}
+            {view === 'grid' ? (
+              <div
+                className="browse-extent"
                 style={{
-                  top: padTop,
-                  gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
-                  gridAutoRows: grid.cardHeight,
+                  height:
+                    query.height > 0
+                      ? query.height - grid.gap + grid.padding
+                      : 0,
                 }}
               >
-                {slots.map(({ item, index }) => {
-                  if (!item)
+                <CardGrid
+                  className="browse-slots"
+                  data-density={density}
+                  style={{
+                    top: padTop,
+                    gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
+                    gridAutoRows: grid.cardHeight,
+                  }}
+                >
+                  {slots.map(({ item, index }) => {
+                    if (!item)
+                      return (
+                        <div
+                          key={`slot-${index}`}
+                          className="ds-card"
+                          aria-hidden="true"
+                        >
+                          <span
+                            className="ds-art"
+                            data-ratio={
+                              mediaType === 'film' ? 'poster' : undefined
+                            }
+                          >
+                            <Skeleton width="100%" height="100%" />
+                          </span>
+                          <Skeleton height={12} width="80%" />
+                          <Skeleton height={10} width="55%" />
+                        </div>
+                      )
                     return (
-                      <div
-                        key={`slot-${index}`}
-                        className="ds-card"
-                        aria-hidden="true"
-                      >
-                        <span
-                          className="ds-art"
-                          data-ratio={
-                            mediaType === 'film' ? 'poster' : undefined
-                          }
-                        >
-                          <Skeleton width="100%" height="100%" />
-                        </span>
-                        <Skeleton height={12} width="80%" />
-                        <Skeleton height={10} width="55%" />
-                      </div>
-                    )
-                  return (
-                    <Card
-                      key={item.id}
-                      data-item-index={index}
-                      data-selected={item.id === selectedId}
-                      selected={item.id === selectedId}
-                      playing={isPlaying(item)}
-                      art={
-                        <MediaArt
-                          kind={mediaType}
-                          src={item.artworkUrl}
-                          badge={needsId(item) ? 'Needs ID' : undefined}
-                          overlay={
-                            item.mediaType === 'album' ? (
-                              <TilePlayControls
-                                album={item}
-                                source={() => albumPlaybackSource(item, index)}
-                              />
-                            ) : undefined
-                          }
-                        >
-                          {(image) => (
-                            <DetailLink
-                              kind={mediaType}
-                              id={item.id}
-                              className="browse-art-link"
-                              workspaceLabel={item.title}
-                              tabIndex={-1}
-                              aria-hidden="true"
-                            >
-                              {image}
-                            </DetailLink>
-                          )}
-                        </MediaArt>
-                      }
-                      title={<CardTitle>{titleLink(item)}</CardTitle>}
-                      by={creators(item) ?? <EmptyValue />}
-                      meta={cardMeta(item)}
-                      tags={
-                        showTags ? (
-                          <BrowseTagBadges
-                            tags={item.tags.map((tag) => tag.name)}
-                            artistTags={
-                              item.mediaType === 'album'
-                                ? item.artistTags
-                                : undefined
-                            }
-                            onFilter={addFilter}
-                            filterHref={(filter) =>
-                              itemFilterHref(item, filter)
-                            }
-                            max={mediaType === 'film' ? 1 : 2}
-                          />
-                        ) : undefined
-                      }
-                    />
-                  )
-                })}
-              </CardGrid>
-            </div>
-          ) : view === 'list' ? (
-            <List compact={grid.mobile}>
-              {!grid.mobile && (
-                <ListHead
-                  title={mediaType === 'album' ? 'Album' : 'Film'}
-                  tags="Tags"
-                  playWidth={mediaType === 'album' ? 50 : 0}
-                  meta={
-                    <>
-                      <RowValue kind="rating">
-                        {listRatingField?.rating
-                          ? ratingSource(
-                              listRatingField.rating,
-                              listRatingField.label,
-                            )
-                          : ''}
-                      </RowValue>
-                      <RowValue kind="num">{listNumberField?.label}</RowValue>
-                      <RowValue kind="date">{listDateField?.label}</RowValue>
-                    </>
-                  }
-                />
-              )}
-              <div className="browse-extent" style={{ height: query.height }}>
-                <div className="browse-slots" style={{ top: padTop }}>
-                  {slots.map(({ item, index }) =>
-                    item ? (
-                      <ListRow
+                      <Card
                         key={item.id}
                         data-item-index={index}
                         data-selected={item.id === selectedId}
                         selected={item.id === selectedId}
                         playing={isPlaying(item)}
-                        thumb={thumbLink(item, 40)}
-                        title={<RowTitle>{titleLink(item)}</RowTitle>}
-                        by={
-                          <>
-                            {creators(item)}
-                            {item.credits.some(
-                              (credit) =>
-                                credit.role ===
-                                (mediaType === 'album' ? 'artist' : 'director'),
-                            ) && item.releaseDate
-                              ? ' · '
-                              : ''}
-                            {item.releaseDate?.slice(0, 4)}
-                            {sortField?.type === 'text' &&
-                              !sortsShownOnCard.has(sortBy) && (
-                                <> · {sortedValue(item)}</>
-                              )}
-                            {needsId(item) && (
-                              <>
-                                {' '}
-                                <Pill tone="attention">Needs ID</Pill>
-                              </>
-                            )}
-                          </>
-                        }
-                        play={
-                          item.mediaType === 'album' ? (
-                            <AlbumInlinePlayButton
-                              album={item}
-                              source={() => albumPlaybackSource(item, index)}
-                            />
-                          ) : undefined
-                        }
-                        tags={
-                          <BrowseTagBadges
-                            tags={item.tags.map((tag) => tag.name)}
-                            artistTags={
-                              item.mediaType === 'album'
-                                ? item.artistTags
-                                : undefined
-                            }
-                            onFilter={addFilter}
-                            filterHref={(filter) =>
-                              itemFilterHref(item, filter)
-                            }
-                            max={3}
-                          />
-                        }
-                        meta={listMeta(item)}
-                      />
-                    ) : (
-                      <div
-                        key={`slot-${index}`}
-                        className="ds-row"
-                        aria-hidden="true"
-                      >
-                        <Skeleton width={40} height={40} />
-                        <div className="ds-row-main">
-                          <Skeleton height={12} width="60%" />
-                          <Skeleton height={10} width="40%" />
-                        </div>
-                      </div>
-                    ),
-                  )}
-                </div>
-              </div>
-            </List>
-          ) : (
-            <table
-              className="ds-table"
-              data-layout="fixed"
-              data-scrolled={scrolledSideways ? '' : undefined}
-              aria-rowcount={query.hasTotal ? total + 1 : undefined}
-              style={{
-                minWidth: columnsWidth(columns.map((field) => widthFor(field))),
-              }}
-            >
-              <TableColumns
-                widths={columns.map((field, column) =>
-                  column === columns.length - 1 &&
-                  pillColumns.has(field.key) &&
-                  widths[field.key] === undefined
-                    ? undefined
-                    : widthFor(field),
-                )}
-              />
-              <TableHeader>
-                <TableRow>
-                  {columns.map((field, column) => (
-                    <BrowseSortHead
-                      key={field.key}
-                      label={columnLabel(field)}
-                      active={sortBy === field.key}
-                      direction={direction}
-                      onSort={() => sort(field.key)}
-                      width={widthFor(field)}
-                      onWidthChange={(width) =>
-                        setWidths({ ...widths, [field.key]: width })
-                      }
-                      onWidthCommit={(width) =>
-                        saveWidths({ ...widths, [field.key]: width })
-                      }
-                      align={field.type === 'text' ? undefined : 'end'}
-                      sticky={column === 0 ? 0 : undefined}
-                      stickyEdge={column === 0}
-                    />
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <BrowseSpacerRow columns={columns.length} height={padTop} />
-                {slots.map(({ item, index }) =>
-                  item ? (
-                    <TableRow
-                      key={item.id}
-                      data-item-index={index}
-                      data-selected={item.id === selectedId}
-                      selected={item.id === selectedId}
-                      data-state={isPlaying(item) ? 'playing' : undefined}
-                      aria-rowindex={index + 2}
-                    >
-                      {columns.map((field, column) =>
-                        field.key === 'title' ? (
-                          <TableCell
-                            key={field.key}
-                            sticky={column === 0 ? 0 : undefined}
-                            stickyEdge={column === 0}
-                          >
-                            <span className="ds-cell-id">
-                              {thumbLink(item)}
-                              {titleLink(item, 'ds-cell-title')}
-                              {needsId(item) && (
-                                <Pill tone="attention">Needs ID</Pill>
-                              )}
-                              {item.mediaType === 'album' && (
-                                <AlbumInlinePlayButton
+                        art={
+                          <MediaArt
+                            kind={mediaType}
+                            src={item.artworkUrl}
+                            badge={needsId(item) ? 'Needs ID' : undefined}
+                            overlay={
+                              item.mediaType === 'album' ? (
+                                <TilePlayControls
                                   album={item}
                                   source={() =>
                                     albumPlaybackSource(item, index)
                                   }
                                 />
-                              )}
-                            </span>
-                          </TableCell>
-                        ) : (
-                          <TableCell
-                            key={field.key}
-                            align={field.type === 'text' ? undefined : 'end'}
-                            title={
-                              field.key === 'dateAdded'
-                                ? item.dateAddedSource
-                                : undefined
+                              ) : undefined
                             }
                           >
-                            {renderValue(item, field)}
-                          </TableCell>
-                        ),
-                      )}
-                    </TableRow>
-                  ) : (
-                    <BrowsePlaceholderRow
-                      key={`slot-${index}`}
-                      columns={columns.length}
-                      sticky
-                    />
-                  ),
+                            {(image) => (
+                              <DetailLink
+                                kind={mediaType}
+                                id={item.id}
+                                className="browse-art-link"
+                                workspaceLabel={item.title}
+                                tabIndex={-1}
+                                aria-hidden="true"
+                              >
+                                {image}
+                              </DetailLink>
+                            )}
+                          </MediaArt>
+                        }
+                        title={<CardTitle>{titleLink(item)}</CardTitle>}
+                        by={creators(item) ?? <EmptyValue />}
+                        meta={cardMeta(item)}
+                        tags={
+                          showTags ? (
+                            <BrowseTagBadges
+                              tags={item.tags.map((tag) => tag.name)}
+                              artistTags={
+                                item.mediaType === 'album'
+                                  ? item.artistTags
+                                  : undefined
+                              }
+                              onFilter={addFilter}
+                              filterHref={(filter) =>
+                                itemFilterHref(item, filter)
+                              }
+                              max={mediaType === 'film' ? 1 : 2}
+                            />
+                          ) : undefined
+                        }
+                      />
+                    )
+                  })}
+                </CardGrid>
+              </div>
+            ) : view === 'list' ? (
+              <List compact={grid.mobile}>
+                {!grid.mobile && (
+                  <ListHead
+                    title={mediaType === 'album' ? 'Album' : 'Film'}
+                    tags="Tags"
+                    playWidth={mediaType === 'album' ? 50 : 0}
+                    meta={
+                      <>
+                        <RowValue kind="rating">
+                          {listRatingField?.rating
+                            ? ratingSource(
+                                listRatingField.rating,
+                                listRatingField.label,
+                              )
+                            : ''}
+                        </RowValue>
+                        <RowValue kind="num">{listNumberField?.label}</RowValue>
+                        <RowValue kind="date">{listDateField?.label}</RowValue>
+                      </>
+                    }
+                  />
                 )}
-                <BrowseSpacerRow columns={columns.length} height={padBottom} />
-              </TableBody>
-            </table>
+                <div className="browse-extent" style={{ height: query.height }}>
+                  <div className="browse-slots" style={{ top: padTop }}>
+                    {slots.map(({ item, index }) =>
+                      item ? (
+                        <ListRow
+                          key={item.id}
+                          data-item-index={index}
+                          data-selected={item.id === selectedId}
+                          selected={item.id === selectedId}
+                          playing={isPlaying(item)}
+                          thumb={thumbLink(item, 40)}
+                          title={<RowTitle>{titleLink(item)}</RowTitle>}
+                          by={
+                            <>
+                              {creators(item)}
+                              {item.credits.some(
+                                (credit) =>
+                                  credit.role ===
+                                  (mediaType === 'album'
+                                    ? 'artist'
+                                    : 'director'),
+                              ) && item.releaseDate
+                                ? ' · '
+                                : ''}
+                              {item.releaseDate?.slice(0, 4)}
+                              {sortField?.type === 'text' &&
+                                !sortsShownOnCard.has(sortBy) && (
+                                  <> · {sortedValue(item)}</>
+                                )}
+                              {needsId(item) && (
+                                <>
+                                  {' '}
+                                  <Pill tone="attention">Needs ID</Pill>
+                                </>
+                              )}
+                            </>
+                          }
+                          play={
+                            item.mediaType === 'album' ? (
+                              <AlbumInlinePlayButton
+                                album={item}
+                                source={() => albumPlaybackSource(item, index)}
+                              />
+                            ) : undefined
+                          }
+                          tags={
+                            <BrowseTagBadges
+                              tags={item.tags.map((tag) => tag.name)}
+                              artistTags={
+                                item.mediaType === 'album'
+                                  ? item.artistTags
+                                  : undefined
+                              }
+                              onFilter={addFilter}
+                              filterHref={(filter) =>
+                                itemFilterHref(item, filter)
+                              }
+                              max={3}
+                            />
+                          }
+                          meta={listMeta(item)}
+                        />
+                      ) : (
+                        <div
+                          key={`slot-${index}`}
+                          className="ds-row"
+                          aria-hidden="true"
+                        >
+                          <Skeleton width={40} height={40} />
+                          <div className="ds-row-main">
+                            <Skeleton height={12} width="60%" />
+                            <Skeleton height={10} width="40%" />
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+              </List>
+            ) : (
+              <table
+                className="ds-table"
+                data-layout="fixed"
+                data-scrolled={scrolledSideways ? '' : undefined}
+                aria-rowcount={query.hasTotal ? total + 1 : undefined}
+                style={{
+                  minWidth: columnsWidth([
+                    ...(selectable ? [rowSelectionWidth] : []),
+                    ...columns.map((field) => widthFor(field)),
+                  ]),
+                }}
+              >
+                <TableColumns
+                  widths={[
+                    ...(selectable ? [rowSelectionWidth] : []),
+                    ...columns.map((field, column) =>
+                      column === columns.length - 1 &&
+                      pillColumns.has(field.key) &&
+                      widths[field.key] === undefined
+                        ? undefined
+                        : widthFor(field),
+                    ),
+                  ]}
+                />
+                <TableHeader>
+                  <TableRow>
+                    {selectable && (
+                      <TableHead sticky={0}>
+                        <RowSelectAll
+                          selection={selection}
+                          label="Select loaded albums"
+                          disabled={!loadedIds.length}
+                        />
+                      </TableHead>
+                    )}
+                    {columns.map((field, column) => (
+                      <BrowseSortHead
+                        key={field.key}
+                        label={columnLabel(field)}
+                        active={sortBy === field.key}
+                        direction={direction}
+                        onSort={() => sort(field.key)}
+                        width={widthFor(field)}
+                        onWidthChange={(width) =>
+                          setWidths({ ...widths, [field.key]: width })
+                        }
+                        onWidthCommit={(width) =>
+                          saveWidths({ ...widths, [field.key]: width })
+                        }
+                        align={field.type === 'text' ? undefined : 'end'}
+                        sticky={
+                          column === 0
+                            ? selectable
+                              ? rowSelectionWidth
+                              : 0
+                            : undefined
+                        }
+                        stickyEdge={column === 0}
+                      />
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <BrowseSpacerRow
+                    columns={selectionColumns + columns.length}
+                    height={padTop}
+                  />
+                  {slots.map(({ item, index }) =>
+                    item ? (
+                      <TableRow
+                        key={item.id}
+                        data-item-index={index}
+                        data-selected={item.id === selectedId}
+                        selected={
+                          item.id === selectedId || selection.has(item.id)
+                        }
+                        data-state={isPlaying(item) ? 'playing' : undefined}
+                        aria-rowindex={index + 2}
+                      >
+                        {selectable && (
+                          <TableCell sticky={0}>
+                            <RowSelectRow
+                              selection={selection}
+                              id={item.id}
+                              title={item.title}
+                            />
+                          </TableCell>
+                        )}
+                        {columns.map((field, column) =>
+                          field.key === 'title' ? (
+                            <TableCell
+                              key={field.key}
+                              sticky={
+                                column === 0
+                                  ? selectable
+                                    ? rowSelectionWidth
+                                    : 0
+                                  : undefined
+                              }
+                              stickyEdge={column === 0}
+                            >
+                              <span className="ds-cell-id">
+                                {thumbLink(item)}
+                                {titleLink(item, 'ds-cell-title')}
+                                {needsId(item) && (
+                                  <Pill tone="attention">Needs ID</Pill>
+                                )}
+                                {item.mediaType === 'album' && (
+                                  <AlbumRecordNote album={item} />
+                                )}
+                                {item.mediaType === 'album' && (
+                                  <AlbumInlinePlayButton
+                                    album={item}
+                                    source={() =>
+                                      albumPlaybackSource(item, index)
+                                    }
+                                  />
+                                )}
+                              </span>
+                            </TableCell>
+                          ) : (
+                            <TableCell
+                              key={field.key}
+                              align={field.type === 'text' ? undefined : 'end'}
+                              title={
+                                field.key === 'dateAdded'
+                                  ? item.dateAddedSource
+                                  : undefined
+                              }
+                            >
+                              {renderValue(item, field)}
+                            </TableCell>
+                          ),
+                        )}
+                      </TableRow>
+                    ) : (
+                      <BrowsePlaceholderRow
+                        key={`slot-${index}`}
+                        columns={selectionColumns + columns.length}
+                        sticky
+                      />
+                    ),
+                  )}
+                  <BrowseSpacerRow
+                    columns={selectionColumns + columns.length}
+                    height={padBottom}
+                  />
+                </TableBody>
+              </table>
+            )}
+          </div>
+          {selectable && view === 'table' && (
+            <MergeBar
+              selection={selection}
+              total={query.hasTotal ? total : undefined}
+              adapter={albumMergeAdapter}
+            />
           )}
-        </div>
+        </DetailListFrame>
       </div>
       {adding && (
         <ManualMediaAdd

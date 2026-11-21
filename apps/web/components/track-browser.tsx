@@ -9,6 +9,7 @@ import {
 } from '@/utils/creator-browse'
 
 import { DetailInspector } from './detail-inspector'
+import { DetailListFrame } from './detail-list-frame'
 import { useDetailInspector } from './detail-inspector-context'
 import { sameDetail } from '@/utils/detail-inspector'
 import { fitDetailList } from '@/utils/detail-list-space'
@@ -20,21 +21,26 @@ import {
   useRef,
   useState,
   type ReactNode,
-  type Ref,
 } from 'react'
 import Link from 'next/link'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Layers } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
+  TablePartSlot,
+  TablePartTitle,
+  TablePartToggle,
   TableRow,
   TableScroll,
   columnWidth,
 } from '@repo/ui/components/ui/table'
 import { Card, CardTitle } from '@repo/ui/components/ds/card'
+import { ProviderMark } from '@repo/ui/components/ds/pill'
+import { ToolbarToggle } from '@repo/ui/components/ds/toolbar'
 import {
   List,
   ListHead,
@@ -42,7 +48,7 @@ import {
   RowTitle,
   RowValue,
 } from '@repo/ui/components/ds/list-row'
-import { Skeleton } from '@repo/ui/components/ds/feedback'
+import { Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import {
   BrowseRangesParamSchema,
@@ -120,7 +126,21 @@ import {
   rowSelectionWidth,
   useRowSelection,
 } from './merge-bar'
-import { TrackMergeBar } from './track-merge-bar'
+import {
+  TrackDuplicateGroupRow,
+  TrackDuplicateMergeBar,
+  useTrackDuplicateActions,
+} from './track-duplicate-group'
+import {
+  addRowHeights,
+  loadTrackDuplicateCount,
+  loadTrackDuplicateLayout,
+  trackDuplicateCountKey,
+  trackDuplicateLayoutKey,
+  trackDuplicateRows,
+} from '@/utils/track-duplicates'
+import { providerLogoUrl } from '@/utils/provider-logos'
+import { clientQueryDefaults } from '@/utils/query-cache'
 import {
   createBrowsePlaybackSource,
   createPendingTrackBrowseSource,
@@ -157,7 +177,57 @@ const collection = 'tracks'
 const headerHeight = 28
 const listRowHeight = 48
 const tableRowHeight = 32
+/** A group row of the Possible duplicates view is as tall as the header (--ds-head). */
+const groupRowHeight = headerHeight
 const noun = { one: 'track', other: 'tracks' }
+
+/** The provider whose mark stands before a version's title. */
+function versionMark(item: TrackListItem) {
+  const provider =
+    item.spotifyTrackId !== null
+      ? { id: 'spotify', name: 'Spotify' }
+      : item.sources.includes('lastfm')
+        ? { id: 'lastfm', name: 'Last.fm' }
+        : null
+  return provider ? (
+    <ProviderMark
+      name={provider.name}
+      src={providerLogoUrl(provider.id)}
+      hidden
+    />
+  ) : (
+    <ProviderMark name="Library" hidden />
+  )
+}
+
+/**
+ * The identity cell of a version's part row: the provider mark, the title,
+ * Shown on the version the record's row is shown as, then the play pair.
+ */
+export function TrackVersionTitle({
+  track,
+  shown,
+}: {
+  track: TrackListItem
+  shown: boolean
+}) {
+  return (
+    <span className="ds-cell-id">
+      <TablePartTitle mark={versionMark(track)}>
+        <DetailLink kind="track" id={track.id} title={track.title}>
+          {track.title}
+        </DetailLink>
+        {shown && (
+          <>
+            {' '}
+            <span className="ds-cell-sub">Shown</span>
+          </>
+        )}
+      </TablePartTitle>
+      <LibraryTrackPlayButton track={track} />
+    </span>
+  )
+}
 
 export default function TrackBrowser() {
   return <TrackBrowse host={usePageBrowse(collection)} />
@@ -188,25 +258,6 @@ export function EmbeddedTrackBrowser({
   return <TrackBrowse host={host} scope={creator} />
 }
 
-/** Inside a detail, the rows and the selection bar under them share the list's room. */
-function DetailListFrame({
-  embedded,
-  frame,
-  children,
-}: {
-  embedded: boolean
-  frame: Ref<HTMLDivElement>
-  children: ReactNode
-}) {
-  return embedded ? (
-    <div ref={frame} className="dtl-browse-frame">
-      {children}
-    </div>
-  ) : (
-    <>{children}</>
-  )
-}
-
 function TrackBrowse({
   host,
   scope,
@@ -233,10 +284,11 @@ function TrackBrowse({
   const pageRail = useRailSlot()
   // Inside a detail the active filters sit in a row above the results.
   const railSlot = embedded ? null : pageRail
-  const view = parseBrowseView(
-    searchParams.get('view'),
-    defaultBrowseView('track'),
-  )
+  // Possible duplicates is a view of the Table: on, it shows the Table view.
+  const duplicates = searchParams.get('duplicates') === 'true'
+  const view = duplicates
+    ? 'table'
+    : parseBrowseView(searchParams.get('view'), defaultBrowseView('track'))
   const density = useGridDensity(searchParams.get('density'))
   const filters = parseTrackFilters(searchParams.get('filters'))
   const creator = scope ?? parseCreatorBrowseScope(searchParams, 'track')
@@ -247,10 +299,10 @@ function TrackBrowse({
   const q = searchParams.get('q') ?? ''
   const sortBy = canonicalBrowseKey(searchParams.get('sortBy') ?? 'dateAdded')
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
-  const groupRecordings = trackGroupingEnabled(
-    sortBy,
-    searchParams.get('groupRecordings'),
-  )
+  // The server does not group recordings in the Possible duplicates view.
+  const groupRecordings =
+    !duplicates &&
+    trackGroupingEnabled(sortBy, searchParams.get('groupRecordings'))
   // One drawer at a time: the playlist drawer covers the track drawer.
   const selectedId =
     !embedded && inspector?.root?.kind === 'track' ? inspector.root.id : null
@@ -302,6 +354,7 @@ function TrackBrowse({
     listening,
     listeningSort: requestedListeningPeriod,
     ...(groupRecordings ? { groupRecordings } : {}),
+    ...(duplicates ? { duplicates } : {}),
     ...creator,
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
@@ -448,22 +501,48 @@ function TrackBrowse({
     ...creator,
   })
   if (groupRecordings) params.set('groupRecordings', 'true')
+  if (duplicates) params.set('duplicates', 'true')
   if (listening) params.set('listening', JSON.stringify(listening))
   if (requestedListeningPeriod)
     params.set('listeningSort', JSON.stringify(requestedListeningPeriod))
+  const duplicateCount = useQuery({
+    queryKey: trackDuplicateCountKey(creator?.creatorId),
+    queryFn: ({ signal }) =>
+      loadTrackDuplicateCount(apiBaseUrl, creator?.creatorId, signal),
+    enabled: ready,
+    ...clientQueryDefaults,
+    retry: false,
+  })
+  // The group rows, read with the same request as the rows they stand above.
+  const duplicateLayout = useQuery({
+    queryKey: trackDuplicateLayoutKey(queryKey),
+    queryFn: ({ signal }) =>
+      loadTrackDuplicateLayout(apiBaseUrl, params, signal),
+    enabled: ready && duplicates,
+    ...clientQueryDefaults,
+    retry: false,
+  })
+  const groupRows = trackDuplicateRows(
+    duplicates ? (duplicateLayout.data?.groups ?? []) : [],
+    groupRowHeight,
+  )
+  const duplicateActions = useTrackDuplicateActions()
   const versions = useTrackRecordingVersions(apiBaseUrl, queryKey, params)
   const expanded = versions.expanded
   const gridRow = expanded ? Math.floor(expanded.index / grid.columns) : -1
   const versionsHeight =
     versions.rowCount * (view === 'table' ? tableRowHeight : listRowHeight)
-  const extraRowHeights = expanded
-    ? new Map([
-        [
-          view === 'grid' ? gridRow : expanded.index,
-          versionsHeight + (view === 'grid' ? gridRowGap : 0),
-        ],
-      ])
-    : undefined
+  const extraRowHeights = addRowHeights(
+    expanded
+      ? new Map([
+          [
+            view === 'grid' ? gridRow : expanded.index,
+            versionsHeight + (view === 'grid' ? gridRowGap : 0),
+          ],
+        ])
+      : undefined,
+    groupRows.heights,
+  )
   const queryClient = useQueryClient()
   const query = useVirtualBrowse({
     performanceScreen: embedded ? undefined : 'tracks',
@@ -478,7 +557,9 @@ function TrackBrowse({
     viewportHeight: viewport.height,
     extraRowHeights,
     headerHeight:
-      view === 'table' || (view === 'list' && !mobile) ? headerHeight : 0,
+      view === 'table' || (view === 'list' && !mobile)
+        ? headerHeight + groupRows.leadingHeight
+        : 0,
     itemSchema: TrackListItemSchema,
   })
   const { total, slots, padTop, padBottom } = query
@@ -635,31 +716,42 @@ function TrackBrowse({
     )
   }
 
+  /** The chevron that opens a grouped row's versions, or its space. */
+  function versionsPartToggle(item: TrackListItem, index: number) {
+    const group = item.recordingGroup
+    if (!group) return <TablePartSlot />
+    const open = expanded?.id === item.id
+    const label = `${open ? 'Hide' : 'Show'} ${group.versionCount} release versions for ${item.title}`
+    return (
+      <TablePartToggle
+        open={open}
+        label={label}
+        title={label}
+        onOpenChange={() => versions.toggle(item.id, index)}
+      />
+    )
+  }
+
   function renderValue(
     item: TrackListItem,
     field: BrowseField,
     index: number,
-    child: boolean,
+    part: boolean,
   ) {
+    if (field.key === 'title' && part)
+      return <TrackVersionTitle track={item} shown={item.id === expanded?.id} />
     if (field.key === 'title')
       return (
         <span className="ds-cell-id">
+          {groupRecordings && versionsPartToggle(item, index)}
           <ItemThumb
             kind="track"
             src={item.artworkUrl}
             title={item.title}
             target={{ kind: 'track', id: item.id }}
           />
-          {titleWithVersions(
-            item,
-            child ? undefined : index,
-            trackLink(item, 'ds-cell-title'),
-          )}
-          {child ? (
-            <LibraryTrackPlayButton track={item} />
-          ) : (
-            playPair(item, index)
-          )}
+          {trackLink(item, 'ds-cell-title')}
+          {playPair(item, index)}
         </span>
       )
     return (
@@ -676,17 +768,17 @@ function TrackBrowse({
     item: TrackListItem,
     index: number,
     rowIndex: number,
-    child = false,
+    part = false,
   ) {
-    const open = item.id === selectedId && (!child || expanded?.id !== item.id)
+    const open = item.id === selectedId && (!part || expanded?.id !== item.id)
     return (
       <TableRow
         key={item.id}
-        data-item-index={child ? undefined : index}
+        data-item-index={part ? undefined : index}
         data-open={open ? '' : undefined}
         selected={open || selection.has(item.id)}
         aria-rowindex={rowIndex}
-        child={child}
+        part={part}
       >
         <TableCell sticky={0}>
           <RowSelectRow selection={selection} id={item.id} title={item.title} />
@@ -702,11 +794,35 @@ function TrackBrowse({
               getTrackBrowseValues(item)[field.key],
             )}
           >
-            {renderValue(item, field, index, child)}
+            {renderValue(item, field, index, part)}
           </TableCell>
         ))}
       </TableRow>
     )
+  }
+
+  /** The aria-rowindex of the track row at `index`, after the header, group rows and open versions above it. */
+  function trackRowIndex(index: number) {
+    return (
+      index +
+      2 +
+      groupRows.through(index) +
+      (expanded && index > expanded.index ? versions.rowCount : 0)
+    )
+  }
+
+  /** The group row above the track row at `index`, when a group starts there. */
+  function renderGroupRow(index: number) {
+    const group = groupRows.above(index)
+    return group ? (
+      <TrackDuplicateGroupRow
+        key={`group-${group.id}`}
+        group={group}
+        colSpan={tableWidths.length}
+        rowIndex={trackRowIndex(index) - 1}
+        actions={duplicateActions}
+      />
+    ) : null
   }
 
   function renderTrackListRow(item: TrackListItem, index?: number) {
@@ -848,6 +964,22 @@ function TrackBrowse({
     >
       <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
+          actions={
+            <ToolbarToggle
+              pressed={duplicates}
+              onPressedChange={(pressed) =>
+                setParams({ duplicates: pressed ? 'true' : null })
+              }
+              icon={<Layers className="ds-i" data-size="sm" aria-hidden />}
+              count={
+                duplicateCount.data?.ready
+                  ? duplicateCount.data.count
+                  : undefined
+              }
+            >
+              Possible duplicates
+            </ToolbarToggle>
+          }
           search={
             <TrackBrowseSearch
               fields={fields}
@@ -876,6 +1008,7 @@ function TrackBrowse({
                 type="checkbox"
                 className="ds-check"
                 checked={groupRecordings}
+                disabled={duplicates}
                 onChange={(event) =>
                   setParams({
                     groupRecordings: String(event.currentTarget.checked),
@@ -947,7 +1080,13 @@ function TrackBrowse({
             </>
           }
           view={view}
-          onViewChange={(next) => setParams({ view: next })}
+          onViewChange={(next) =>
+            setParams({
+              view: next,
+              // Possible duplicates is drawn in the Table view only.
+              ...(next === 'table' ? {} : { duplicates: null }),
+            })
+          }
           density={{
             value: density,
             onChange: (next) => setParams({ density: next }),
@@ -987,8 +1126,11 @@ function TrackBrowse({
           noun="tracks"
           filtered={activeFilterCount > 0}
           onClear={clearFilters}
+          empty={
+            duplicates ? <State title="No possible duplicates" /> : undefined
+          }
         />
-        <DetailListFrame embedded={embedded} frame={detailList}>
+        <DetailListFrame framed={embedded} frame={detailList}>
           <TableScroll
             className={`browse-scroll bi-scroll${embedded ? ` ${embeddedScrollClass}` : ''}`}
             data-view={view}
@@ -1094,7 +1236,10 @@ function TrackBrowse({
                 aria-label="Tracks"
                 aria-rowcount={
                   query.hasTotal
-                    ? total + 1 + (expanded ? versions.rowCount : 0)
+                    ? total +
+                      1 +
+                      groupRows.count +
+                      (expanded ? versions.rowCount : 0)
                     : undefined
                 }
                 style={{ width: `calc(${tableWidths.join(' + ')})` }}
@@ -1132,6 +1277,7 @@ function TrackBrowse({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {groupRows.leading && renderGroupRow(0)}
                   {padTop > 0 && (
                     <tr className="bi-spacer" aria-hidden="true">
                       <td
@@ -1141,27 +1287,23 @@ function TrackBrowse({
                     </tr>
                   )}
                   {slots.map(({ item, index }) => {
+                    // The group row of the next group follows this row.
+                    const nextGroup = renderGroupRow(index + 1)
                     if (!item)
                       return (
-                        <TableRow
-                          key={`slot-${index}`}
-                          aria-hidden="true"
-                          data-placeholder=""
-                        >
-                          <TableCell />
-                          {columns.map((field) => (
-                            <TableCell key={field.key}>
-                              <Skeleton height={10} width="70%" />
-                            </TableCell>
-                          ))}
-                        </TableRow>
+                        <Fragment key={`slot-${index}`}>
+                          <TableRow aria-hidden="true" data-placeholder="">
+                            <TableCell />
+                            {columns.map((field) => (
+                              <TableCell key={field.key}>
+                                <Skeleton height={10} width="70%" />
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                          {nextGroup}
+                        </Fragment>
                       )
-                    const rowIndex =
-                      index +
-                      2 +
-                      (expanded && index > expanded.index
-                        ? versions.rowCount
-                        : 0)
+                    const rowIndex = trackRowIndex(index)
                     return (
                       <Fragment key={item.id}>
                         {renderTrackTableRow(item, index, rowIndex)}
@@ -1195,6 +1337,7 @@ function TrackBrowse({
                             </TableCell>
                           </TableRow>
                         )}
+                        {nextGroup}
                       </Fragment>
                     )
                   })}
@@ -1211,11 +1354,13 @@ function TrackBrowse({
             )}
           </TableScroll>
           {view === 'table' && (
-            <TrackMergeBar
+            <TrackDuplicateMergeBar
+              actions={duplicateActions}
               selection={selection}
               total={query.hasTotal ? total : undefined}
             />
           )}
+          {duplicateActions.dialog}
         </DetailListFrame>
       </div>
       {!embedded && (

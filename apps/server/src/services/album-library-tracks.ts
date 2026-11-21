@@ -13,9 +13,27 @@ import {
   track,
 } from '@/schemas/db'
 import { writeArtistCredits } from './artist-names'
+import {
+  membershipDetails,
+  removedTracksEntry,
+} from './automatic-match-effects'
+import { readKeptSeparateTest } from './keep-separate-effects'
 import { reconcileLastfmAlbumTrackAliases } from './lastfm-library-tracks'
+import type { ChangeEffectEntry } from './library-change-effect'
+import {
+  closeChangeBatch,
+  openChangeBatch,
+  readChangeRecords,
+  recordChange,
+  recordNameMoves,
+  recordRemovedTracks,
+  type RecordedNameMove,
+} from './library-changes'
+import { readRejectionTest } from './library-match-rejections'
 import { refreshTrackAddedDates } from './spotify-playlists'
+import { archiveTracks } from './track-archive'
 import { refreshTrackListeningTotals } from './track-links'
+import { moveTrackMemberships } from './track-version-effects'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 const WRITE_BATCH = 500
@@ -32,6 +50,28 @@ const DuplicateTracksSchema = z.array(
   }),
 )
 const SpotifyReleaseIdsSchema = z.array(z.object({ spotify_id: z.string() }))
+const HistoryPairsSchema = z.array(
+  z.object({ source_id: z.string(), target_id: z.string() }),
+)
+const OwnedNamesSchema = z.array(
+  z.object({
+    username: z.string(),
+    artist_key: z.string(),
+    track_key: z.string(),
+    track_id: z.string(),
+  }),
+)
+const MovedNamesSchema = z.array(
+  z.object({
+    username: z.string(),
+    artist_key: z.string(),
+    track_key: z.string(),
+    manual: z.boolean(),
+  }),
+)
+const PairNamesSchema = z.array(
+  MovedNamesSchema.element.extend({ from_id: z.string(), to_id: z.string() }),
+)
 
 export function isCompilationFallbackArtist(name: string) {
   return albumNameKey(name) === 'various artists'
@@ -53,7 +93,10 @@ export async function lockLibraryTrackWrites(database: Transaction) {
   await database.execute(sql`select pg_advisory_xact_lock(614106)`)
 }
 
-/** Replaces a complete list while retaining any matching library recordings. */
+/**
+ * Replaces a complete list while retaining any matching library recordings.
+ * The merges it makes are recorded as one automatic run.
+ */
 export async function replaceAlbumTracks(
   database: Transaction,
   albumId: string,
@@ -61,6 +104,7 @@ export async function replaceAlbumTracks(
 ) {
   if (!tracks.length) return
   await lockLibraryTrackWrites(database)
+  const batchId = await openChangeBatch(database, 'album-refresh')
 
   const entries = tracks.map((item) => ({
     id: createStableId(
@@ -172,9 +216,9 @@ export async function replaceAlbumTracks(
     }
   }
 
-  await database.execute(sql`select merge_album_track_history(${albumId})`)
-  await reconcileSpotifyAlbumRecordings(database, albumId)
-  await reconcileLastfmAlbumTrackAliases(database, { albumId })
+  await mergeAlbumTrackHistory(database, albumId, batchId)
+  await reconcileSpotifyAlbumRecordings(database, albumId, batchId)
+  await reconcileLastfmAlbumTrackAliases(database, { albumId, batchId })
 
   if (previous.length) {
     const previousIds = sql.join(
@@ -197,16 +241,172 @@ export async function replaceAlbumTracks(
         and lt.album_link_strategy = 'album-track-list'
         and not exists (select 1 from track t
           where t.track_media_item_id = lt.media_item_id and t.album_media_item_id = ${albumId})`)
-    await removeOrphanTracks(
-      database,
-      previous.map((row) => row.id),
-    )
+    // A recording that lost its last position is removed; keep its archive.
+    const recordingIds = [...new Set(previous.map((row) => row.id))]
+    const archived = await archiveTracks(database, recordingIds)
+    await removeOrphanTracks(database, recordingIds)
+    await recordRemovedTracks(database, {
+      archived,
+      rule: 'album-track-list',
+      batchId,
+    })
   }
 
   await database
     .update(album)
     .set({ trackCount: entries.length, updatedAt: new Date() })
     .where(eq(album.mediaItemId, albumId))
+  await closeChangeBatch(database, batchId)
+}
+
+/**
+ * The pairs an automatic merge may join: not kept separate by the owner, and
+ * not giving a source's name to a target the owner undid or separated it from.
+ */
+async function allowedMerges<
+  Pair extends { source_id: string; target_id: string },
+>(database: Transaction, pairs: Pair[]) {
+  if (!pairs.length) return []
+  const owned = OwnedNamesSchema.parse(
+    (
+      await database.execute(sql`
+        select username, artist_key, track_key, track_media_item_id as track_id
+        from lastfm_track_source
+        where ${inArray(
+          sql`track_media_item_id`,
+          pairs.map((pair) => pair.source_id),
+        )}`)
+    ).rows,
+  )
+  const rejected = new Map<
+    string,
+    Awaited<ReturnType<typeof readRejectionTest>>
+  >()
+  for (const username of new Set(owned.map((name) => name.username)))
+    rejected.set(username, await readRejectionTest(database, username))
+  const kept = await readKeptSeparateTest(
+    database,
+    'track',
+    pairs.flatMap((pair) => [pair.source_id, pair.target_id]),
+  )
+  return pairs.filter(
+    (pair) =>
+      !kept(pair.source_id, pair.target_id) &&
+      !owned.some(
+        (name) =>
+          name.track_id === pair.source_id &&
+          rejected.get(name.username)?.(
+            name.artist_key,
+            name.track_key,
+            pair.target_id,
+          ),
+      ),
+  )
+}
+
+/**
+ * Gives the scrobbled names and playlist entries of a Last.fm-only track
+ * linked to the album to the one listed recording with its title and artist,
+ * then removes it. A pair whose names the owner rejected, or that the owner
+ * keeps separate, is left alone. Recorded as automatic changes.
+ */
+export async function mergeAlbumTrackHistory(
+  database: Transaction,
+  albumId: string,
+  batchId: string | null = null,
+) {
+  // A pre-existing Last.fm row may duplicate an exact Spotify match. Keep
+  // all evidence when the scrobble group and the list select one recording.
+  const pairs = HistoryPairsSchema.parse(
+    (
+      await database.execute(sql`
+        select source.media_item_id as source_id, min(t.track_media_item_id) as target_id
+        from library_track source
+        join media_item source_item on source_item.id = source.media_item_id
+        join track t on t.album_media_item_id = ${albumId}
+          and lower(regexp_replace(trim(t.title), '[[:space:]]+', ' ', 'g'))
+            = lower(regexp_replace(trim(source_item.title), '[[:space:]]+', ' ', 'g'))
+        where source.album_media_item_id = ${albumId} and source.spotify_track_id is null
+          and source_item.source_label = 'lastfm'
+          and not exists (select 1 from track listed where listed.track_media_item_id = source.media_item_id)
+          and exists (select 1 from lastfm_track_source s where s.track_media_item_id = source.media_item_id)
+          and not exists (select 1 from lastfm_track_source s
+            where s.track_media_item_id = source.media_item_id and s.manually_matched)
+          and not exists (select 1 from library_track conflicting
+            join media_item m on m.id = conflicting.media_item_id
+            where conflicting.album_media_item_id = ${albumId} and conflicting.spotify_track_id is not null
+              and conflicting.media_item_id <> t.track_media_item_id
+              and lower(regexp_replace(trim(m.title), '[[:space:]]+', ' ', 'g'))
+                = lower(regexp_replace(trim(source_item.title), '[[:space:]]+', ' ', 'g')))
+        group by source.media_item_id
+        having count(distinct t.track_media_item_id) = 1
+          and bool_or(exists (select 1 from media_credit sc
+            join media_credit tc on tc.artist_id = sc.artist_id
+            where sc.media_item_id = source.media_item_id and tc.media_item_id = t.track_media_item_id
+              and sc.role = 'artist' and tc.role = 'artist'))`)
+    ).rows,
+  )
+  if (!pairs.length) return
+  const allowed = await allowedMerges(database, pairs)
+  if (!allowed.length) return
+
+  const archived = await archiveTracks(
+    database,
+    allowed.map((pair) => pair.source_id),
+  )
+  const effects = new Map<string, ChangeEffectEntry[]>()
+  const moves: RecordedNameMove[] = []
+  for (const { source_id, target_id } of allowed) {
+    effects.set(target_id, [
+      ...(effects.get(target_id) ?? []),
+      ...(await moveTrackMemberships(database, source_id, target_id, false)),
+    ])
+    const moved = MovedNamesSchema.parse(
+      (
+        await database.execute(sql`
+          update lastfm_track_source s set track_media_item_id = ${target_id}
+          where s.track_media_item_id = ${source_id}
+          returning s.username, s.artist_key, s.track_key,
+            s.manually_matched as manual`)
+      ).rows,
+    )
+    moves.push(
+      ...moved.map((name) => ({
+        username: name.username,
+        artistKey: name.artist_key,
+        trackKey: name.track_key,
+        fromId: source_id,
+        fromManual: name.manual,
+        toId: target_id,
+        toManual: name.manual,
+      })),
+    )
+    await database.execute(sql`
+      insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+      select username, artist_key, track_key, ${target_id}, strategy
+      from lastfm_track_link where track_media_item_id = ${source_id}
+      on conflict do nothing`)
+    await database.execute(sql`
+      update library_track target
+      set date_added = least(target.date_added, source.date_added),
+        scrobble_count = stats.total, last_listened_at = stats.last
+      from library_track source, (
+        select count(*)::int as total, max(s.listened_at) as last
+        from lastfm_track_link l
+        join lastfm_scrobble s using (username, artist_key, track_key)
+        where l.track_media_item_id = ${target_id}
+      ) stats
+      where target.media_item_id = ${target_id} and source.media_item_id = ${source_id}`)
+    await database.execute(sql`delete from media_item where id = ${source_id}`)
+  }
+  await recordNameMoves(database, {
+    moves,
+    rule: 'album-history',
+    batchId,
+    archived,
+    effects: (toId) => effects.get(toId) ?? [],
+    details: (toId) => membershipDetails(effects.get(toId) ?? []),
+  })
 }
 
 export function spotifyAlbumReleaseIds(albumId?: string) {
@@ -243,6 +443,7 @@ export function independentTrackData(id: SQL) {
 export async function reconcileSpotifyAlbumRecordings(
   database: Transaction,
   albumId?: string,
+  batchId: string | null = null,
 ) {
   let pairs = DuplicateTracksSchema.parse(
     (
@@ -323,39 +524,63 @@ export async function reconcileSpotifyAlbumRecordings(
     const verifiedIds = new Set(unique.map((release) => release.spotify_id))
     pairs = pairs.filter((pair) => verifiedIds.has(pair.spotify_id))
   }
+  pairs = await allowedMerges(database, pairs)
 
   for (let start = 0; start < pairs.length; start += WRITE_BATCH) {
     await mergeSpotifyAlbumRecordings(
       database,
       pairs.slice(start, start + WRITE_BATCH),
+      batchId,
     )
   }
 }
 
+/**
+ * Gives a generated album recording's positions, playlist entries and names
+ * to the imported Spotify track of the same release, then removes it.
+ * Recorded as one automatic change for each pair.
+ */
 async function mergeSpotifyAlbumRecordings(
   database: Transaction,
   pairs: z.infer<typeof DuplicateTracksSchema>,
+  batchId: string | null,
 ) {
+  const records = new Map(
+    (
+      await readChangeRecords(
+        database,
+        'track',
+        pairs.flatMap((pair) => [pair.source_id, pair.target_id]),
+      )
+    ).map((record) => [record.id, record]),
+  )
+  const archived = await archiveTracks(
+    database,
+    pairs.map((pair) => pair.source_id),
+  )
+  const effects = new Map<string, ChangeEffectEntry[]>()
+  for (const pair of pairs)
+    effects.set(
+      pair.target_id,
+      await moveTrackMemberships(
+        database,
+        pair.source_id,
+        pair.target_id,
+        true,
+      ),
+    )
   const rows = sql`jsonb_to_recordset(${JSON.stringify(pairs)}::jsonb)
     as pair(source_id text, target_id text, album_id text)`
-  await database.execute(sql`
-    update track t set track_media_item_id = pair.target_id
-    from ${rows} where t.track_media_item_id = pair.source_id`)
-  await database.execute(sql`
-    update library_track lt set album_media_item_id = pair.album_id, album_link_strategy = 'album-track-list'
-    from ${rows} where lt.media_item_id = pair.target_id`)
-  await database.execute(sql`
-    insert into playlist_item (playlist_id, media_item_id, position, added_at)
-    select p.playlist_id, pair.target_id, p.position, p.added_at
-    from playlist_item p join ${rows} on p.media_item_id = pair.source_id
-    on conflict (playlist_id, media_item_id) do update
-      set position = least(playlist_item.position, excluded.position),
-        added_at = least(playlist_item.added_at, excluded.added_at)`)
-  await database.execute(sql`
-    delete from playlist_item p using ${rows} where p.media_item_id = pair.source_id`)
-  await database.execute(sql`
-    update lastfm_track_source s set track_media_item_id = pair.target_id
-    from ${rows} where s.track_media_item_id = pair.source_id`)
+  const moved = PairNamesSchema.parse(
+    (
+      await database.execute(sql`
+          update lastfm_track_source s set track_media_item_id = pair.target_id
+          from ${rows} where s.track_media_item_id = pair.source_id
+          returning s.username, s.artist_key, s.track_key,
+            s.manually_matched as manual, pair.source_id as from_id,
+            pair.target_id as to_id`)
+    ).rows,
+  )
   await database.execute(sql`
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
     select l.username, l.artist_key, l.track_key, pair.target_id, l.strategy
@@ -368,6 +593,56 @@ async function mergeSpotifyAlbumRecordings(
   const targetIds = pairs.map((pair) => pair.target_id)
   await refreshTrackAddedDates(database, targetIds)
   await refreshTrackListeningTotals(database, targetIds)
+
+  const rule = 'spotify-album-recording'
+  await recordNameMoves(database, {
+    moves: moved.map((name) => ({
+      username: name.username,
+      artistKey: name.artist_key,
+      trackKey: name.track_key,
+      fromId: name.from_id,
+      fromManual: name.manual,
+      toId: name.to_id,
+      toManual: name.manual,
+    })),
+    rule,
+    batchId,
+    archived,
+    effects: (toId) => effects.get(toId) ?? [],
+    details: (toId) => membershipDetails(effects.get(toId) ?? []),
+  })
+  // A recording without names is put back by its own effect.
+  const named = new Set(moved.map((name) => name.from_id))
+  for (const pair of pairs) {
+    if (named.has(pair.source_id)) continue
+    const moves = effects.get(pair.target_id) ?? []
+    const source = records.get(pair.source_id)
+    await recordChange(
+      database,
+      {
+        kind: 'track',
+        action: 'merge',
+        actor: 'automatic',
+        rule,
+        batchId,
+        target: records.get(pair.target_id) ?? null,
+        sources: source ? [source] : [],
+        details: membershipDetails(moves),
+      },
+      {
+        draft: {
+          before: [],
+          records: [],
+          archived: archived.filter((track) => track.id === pair.source_id),
+        },
+        // Undoing it keeps the two separate, so it is not made again.
+        effects: [
+          ...moves,
+          removedTracksEntry([pair.source_id], pair.target_id),
+        ],
+      },
+    )
+  }
 }
 
 /** A recording explicitly kept from catalog search survives removal of its final membership. */

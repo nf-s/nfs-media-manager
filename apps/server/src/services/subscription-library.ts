@@ -514,8 +514,12 @@ export async function listSubscriptionItems(
  * Match billed artists and show titles by exact normalized name. Keep the
  * original search-vector condition for names with searchable words.
  */
-function artistMixes(name: string, query: ArtistMixQuery) {
-  const key = nameKey(sql`${name}::text`)
+/** Mixes naming any of the names: an artist's own and the names it keeps. */
+function artistMixes(names: string[], query: ArtistMixQuery) {
+  const keys = sql.join(
+    names.map((name) => nameKey(sql`${name}::text`)),
+    sql`, `,
+  )
   const search = subscriptionBrowseSearch({
     library: 'mixes',
     q: query.q,
@@ -529,27 +533,41 @@ function artistMixes(name: string, query: ArtistMixQuery) {
   })
   const candidateIds = sql`
     select i.id from subscription_item i
-    where subscription_artist_name_keys(i.artists) @> array[${key}]
+    where subscription_artist_name_keys(i.artists) && array[${keys}]
     union
     select i.id from subscription_source s
     join subscription_item i on i.source_id = s.id
-    where s.subscribed and ${nameKey(sql`s.title`)} = ${key}`
-  if (name.match(WORD_PARTS))
-    search.conditions.push(sql`i.search @@ plainto_tsquery('simple', ${name})`)
+    where s.subscribed and ${nameKey(sql`s.title`)} in (${keys})`
+  if (names.every((name) => name.match(WORD_PARTS)))
+    search.conditions.push(
+      sql`(${sql.join(
+        names.map(
+          (name) => sql`i.search @@ plainto_tsquery('simple', ${name})`,
+        ),
+        sql` or `,
+      )})`,
+    )
   return { ...search, candidateIds }
 }
 
-/** A page of the mixes that bill a library artist's name or are on its show. */
+/**
+ * A page of the mixes that bill a library artist's name, or a name it keeps,
+ * or are on its show.
+ */
 export async function listMixesNamingArtist(
   name: string,
   query: ArtistMixQuery,
+  keptNames: string[] = [],
 ) {
-  return subscriptionItemPage(artistMixes(name, query))
+  return subscriptionItemPage(artistMixes([name, ...keptNames], query))
 }
 
-export async function countMixesNamingArtist(name: string) {
+export async function countMixesNamingArtist(
+  name: string,
+  keptNames: string[] = [],
+) {
   const { readCount } = await subscriptionSearchQueries(
-    artistMixes(name, {
+    artistMixes([name, ...keptNames], {
       page: 1,
       size: 1,
       sortBy: 'publishedAt',

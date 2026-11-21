@@ -81,11 +81,14 @@ import AlbumListening from './album-listening'
 import { ListeningStats } from './listening-stats'
 import AlbumPlaylists from './album-playlists'
 import AlbumTracksTable from './album-tracks-table'
+import AlbumEditions from './album-editions'
+import { LibraryRecordChanges } from './library-changes'
+import { DetailLink } from './detail-link'
 import { FieldProvenance } from './field-provenance'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { AlbumHeaderPlay } from './detail-play'
 import { DetailMore } from './detail-more'
-import { useDetailView } from './detail-inspector-context'
+import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { WatchedToggle } from './watched-button'
 import {
   DetailArt,
@@ -513,6 +516,7 @@ export default function MediaDetail({
   const filmTab = useDetailTab(filmTabs, { aliases: tabAliases })
   const { tab, setTab, tabHref } = mediaType === 'album' ? albumTab : filmTab
   const view = useDetailView()
+  const inspector = useDetailInspector()
   const [saved, setSaved] = useState(false)
   const detail = useQuery({
     queryKey: [mediaType, id],
@@ -719,6 +723,20 @@ export default function MediaDetail({
             : null,
         item.mediaType === 'film' && country
           ? metadataValue('country', country)
+          : null,
+        item.mediaType === 'album' && item.editionOf ? (
+          <>
+            Edition of{' '}
+            <DetailLink kind="album" id={item.editionOf.id}>
+              {item.editionOf.title}
+            </DetailLink>
+          </>
+        ) : null,
+        item.mediaType === 'album' && item.editions?.length
+          ? formatItemCount(item.editions.length, {
+              one: 'edition',
+              other: 'editions',
+            })
           : null,
         needsId ? (
           <span
@@ -1134,6 +1152,9 @@ export default function MediaDetail({
           </TabsContent>
         )}
         <TabsContent value="sources">
+          {item.mediaType === 'album' && (
+            <AlbumEditions key={`editions-${item.id}`} album={item} />
+          )}
           <MediaSources
             key={item.id}
             item={item}
@@ -1141,6 +1162,20 @@ export default function MediaDetail({
               await invalidateMediaItem(queryClient, mediaType, id)
             }}
           />
+          {item.mediaType === 'album' && (
+            <LibraryRecordChanges
+              key={`changes-${item.id}`}
+              kind="album"
+              recordId={item.id}
+              onResolved={(albumId) => {
+                if (inspector) inspector.replace({ kind: 'album', id: albumId })
+                else
+                  window.location.assign(
+                    detailPageHref({ kind: 'album', id: albumId }),
+                  )
+              }}
+            />
+          )}
         </TabsContent>
         <TabsContent value="edit" onInputCapture={() => setSaved(false)}>
           <EditMedia key={item.updatedAt} item={item} onSaved={onSaved} />

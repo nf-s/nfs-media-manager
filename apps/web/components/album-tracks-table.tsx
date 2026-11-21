@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { AlbumDetail } from '@repo/schemas/media'
 import type { PlaylistEntry } from '@repo/schemas/tracks'
+import type { AlbumUnlistedName } from '@repo/schemas/track-versions'
 import {
   Table,
   TableBody,
@@ -13,6 +15,7 @@ import {
   TableSortButton,
   TableState,
 } from '@repo/ui/components/ui/table'
+import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatCount, formatTrackLength } from '@repo/ui/lib/format'
 import { tableHeaderHeight, tableRowHeight } from '@/hooks/useVirtualTable'
@@ -23,12 +26,25 @@ import {
   createAlbumPlaybackSource,
 } from '@/utils/playback-source'
 import type { PlaybackSource } from '@/utils/playback'
+import {
+  albumUnlistedNamesKey,
+  loadAlbumUnlistedNames,
+} from '@/utils/track-versions'
 import { useDetailView } from './detail-inspector-context'
 import { useTableWidths } from './secondary-table'
 import { DetailLink } from './detail-link'
 import { TrackArtistLinks } from './creator-links'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
+import {
+  RowSelectAll,
+  RowSelectRow,
+  rowSelectionWidth,
+  useRowSelection,
+  type RowSelection,
+} from './merge-bar'
+import { useConfig } from './providers'
 import { trackEntryValue, type TrackEntryColumn } from './track-entries-table'
+import { TrackMergeBar } from './track-merge-bar'
 
 type TrackEntry = Extract<PlaylistEntry, { kind: 'track' }>
 type Column = {
@@ -73,15 +89,23 @@ function AlbumTrackRow({
   entry,
   columns,
   source,
+  selection,
 }: {
   entry: TrackEntry
   columns: readonly Column[]
   source: () => PlaybackSource
+  selection: RowSelection
 }) {
   const { track } = entry
   const playback = useTrackPlayback(track)
   return (
-    <TableRow data-state={playback.playing ? 'playing' : undefined}>
+    <TableRow
+      data-state={playback.playing ? 'playing' : undefined}
+      selected={selection.has(track.id)}
+    >
+      <TableCell>
+        <RowSelectRow selection={selection} id={track.id} title={track.title} />
+      </TableCell>
       {columns.map((column) => (
         <TableCell
           key={column.key}
@@ -113,11 +137,59 @@ function AlbumTrackRow({
 }
 
 /**
+ * A name scrobbled under the album whose track is not on its track list.
+ * Selecting it selects the track that owns it.
+ */
+function UnlistedNameRow({
+  name,
+  columns,
+  selection,
+}: {
+  name: AlbumUnlistedName
+  columns: readonly Column[]
+  selection: RowSelection
+}) {
+  const title = `${name.trackName} by ${name.artistName}`
+  return (
+    <TableRow selected={selection.has(name.trackId)}>
+      <TableCell>
+        <RowSelectRow selection={selection} id={name.trackId} title={title} />
+      </TableCell>
+      {columns.map((column) => (
+        <TableCell key={column.key} align={column.end ? 'end' : undefined}>
+          {column.key === 'title' ? (
+            <span className="ds-cell-id">
+              <DetailLink
+                className="ds-cell-title"
+                kind="track"
+                id={name.trackId}
+                title={title}
+              >
+                {name.trackName}
+              </DetailLink>
+            </span>
+          ) : column.key === 'artists' ? (
+            name.artistName
+          ) : column.key === 'scrobbles' ? (
+            formatCount(name.scrobbles)
+          ) : column.key === 'duration' ? (
+            <EmptyValue />
+          ) : null}
+        </TableCell>
+      ))}
+    </TableRow>
+  )
+}
+
+/**
  * An album's tracks in its Overview: number, title with the play pair,
  * duration and scrobbles, plus Artists on a compilation. Sorting stays in the
- * detail URL so a playback source returns to the same order.
+ * detail URL so a playback source returns to the same order. Once the whole
+ * list shows, the names scrobbled under the album that are not on its track
+ * list follow under a group row. Rows are selected to merge them.
  */
 export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
+  const { apiBaseUrl } = useConfig()
   const detail = useDetailView()
   const [expanded, setExpanded] = useState(false)
   const view = albumTrackView(detail.params.get('albumTrackView'), album.id)
@@ -130,7 +202,10 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
     { key: 'scrobbles', label: 'Scrobbles', width: 90, end: true },
   ]
   const widths = useTableWidths('album-overview-tracks', columns)
-  const layout = widths.layout(columns.map((column) => column.key))
+  const layout = widths.layout([
+    rowSelectionWidth,
+    ...columns.map((column) => column.key),
+  ])
   const ordered = useMemo(
     () =>
       sortTableRows<TrackEntry, TrackEntryColumn>(
@@ -157,6 +232,21 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
     [longAlbum],
   )
   const shown = expanded ? ordered : ordered.slice(0, previewLimit)
+  const unlisted = useQuery({
+    queryKey: albumUnlistedNamesKey(album.id),
+    queryFn: ({ signal }) =>
+      loadAlbumUnlistedNames(apiBaseUrl, album.id, signal),
+  })
+  const loose =
+    shown.length === ordered.length ? (unlisted.data?.names ?? []) : []
+  const rowIds = [
+    ...new Set([
+      ...shown.map((entry) => entry.track.id),
+      ...loose.map((name) => name.trackId),
+    ]),
+  ]
+  const selection = useRowSelection(rowIds)
+  const colSpan = columns.length + 1
 
   function viewParams(next: Partial<typeof view>) {
     const params = new URLSearchParams(detail.params)
@@ -178,6 +268,13 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
         {layout.colgroup}
         <TableHeader>
           <TableRow>
+            <TableHead>
+              <RowSelectAll
+                selection={selection}
+                label="Select album tracks"
+                disabled={!rowIds.length}
+              />
+            </TableHead>
             {columns.map((column) => {
               const active = view.sortBy === column.key
               return (
@@ -209,15 +306,14 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
         </TableHeader>
         <TableBody>
           {ordered.length === 0 && (
-            <TableState colSpan={columns.length}>
-              No imported tracks.
-            </TableState>
+            <TableState colSpan={colSpan}>No imported tracks.</TableState>
           )}
           {shown.map((entry) => (
             <AlbumTrackRow
               key={`${entry.position}:${entry.track.id}`}
               entry={entry}
               columns={columns}
+              selection={selection}
               source={() =>
                 createAlbumPlaybackSource(
                   album,
@@ -227,8 +323,24 @@ export default function AlbumTracksTable({ album }: { album: AlbumDetail }) {
               }
             />
           ))}
+          {loose.length > 0 && (
+            <TableRow group>
+              <TableCell colSpan={colSpan}>
+                Scrobbled under this album, not on its track list
+              </TableCell>
+            </TableRow>
+          )}
+          {loose.map((name) => (
+            <UnlistedNameRow
+              key={JSON.stringify([name.artistKey, name.trackKey])}
+              name={name}
+              columns={columns}
+              selection={selection}
+            />
+          ))}
         </TableBody>
       </Table>
+      <TrackMergeBar selection={selection} total={rowIds.length} />
       {ordered.length > previewLimit && (
         <div>
           <Button

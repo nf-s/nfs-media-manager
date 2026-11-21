@@ -9,8 +9,20 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { artistKeys } from '@/lib/lastfm-album-matching'
 import { readKeptSeparate } from './keep-separate-effects'
+import { readArtistFollows, type ArtistFollowedName } from './merge-follows'
 
 type Reader = Pick<typeof db, 'execute'>
+
+/** A plan request. Without `follow`, nothing follows. */
+export type ArtistMergeSelection = Omit<ArtistMergePlanRequest, 'follow'> & {
+  follow?: boolean
+}
+
+/** What an artist merge would do, with the names that follow, for `mergeArtists`. */
+export type ArtistMergeReading = {
+  plan: ArtistMergePlan
+  follows: ArtistFollowedName[]
+}
 
 // Last.fm keys an artist profile by its name, so two spellings always differ.
 const NAME_KEYED_PROVIDERS = new Set(['lastfm'])
@@ -122,15 +134,16 @@ async function readCurrentIds(reader: Reader, ids: string[]) {
 }
 
 /**
- * What merging the selected artists would do. A selected name that was merged
- * before counts as the artist it was merged into. `lock` holds the artists
- * for the rest of the caller's transaction.
+ * What merging the selected artists would do, and with `follow`, the titles
+ * that follow. A selected name that was merged before counts as the artist it
+ * was merged into. `lock` holds the artists for the rest of the caller's
+ * transaction.
  */
-export async function readArtistMergePlan(
+export async function readArtistMerge(
   reader: Reader,
-  { artistIds, targetId }: ArtistMergePlanRequest,
+  { artistIds, targetId, follow = false }: ArtistMergeSelection,
   lock = false,
-): Promise<ArtistMergePlan> {
+): Promise<ArtistMergeReading> {
   const current = await readCurrentIds(reader, artistIds)
   const ids = [...new Set(artistIds.map((id) => current.get(id) ?? id))]
   if (ids.length < 2)
@@ -235,6 +248,9 @@ export async function readArtistMergePlan(
     target.name,
     sources.map((artist) => artist.name),
   )
+  const follows = follow
+    ? await readArtistFollows(reader, { targetId: target.id, sourceIds })
+    : []
   const cautions: ArtistMergeCaution[] = []
   if (providers.length) cautions.push({ code: 'profiles', providers })
   if (moves?.together)
@@ -242,7 +258,7 @@ export async function readArtistMergePlan(
   if (unlike.length) cautions.push({ code: 'names', names: unlike })
   if (separateNames.length > 1)
     cautions.push({ code: 'separate', names: separateNames })
-  return {
+  const plan: ArtistMergePlan = {
     targetId: target.id,
     artists: ordered.map((artist) => ({
       id: artist.id,
@@ -269,10 +285,27 @@ export async function readArtistMergePlan(
       ],
     },
     scrobbles: { target: target.scrobbles, total: moves?.total ?? 0 },
-    also: [],
+    also: follows.map((name) => ({
+      artistName: name.artistName,
+      trackName: name.trackName,
+      scrobbles: name.scrobbles,
+      fromTrackId: name.fromTrackId,
+      toTrackId: name.toTrackId,
+      toTitle: name.toTitle,
+    })),
     cautions,
     blocked: ordered.some((artist) => artist.film_count > 0),
   }
+  return { plan, follows }
+}
+
+/** What merging the selected artists would do. See `readArtistMerge`. */
+export async function readArtistMergePlan(
+  reader: Reader,
+  selection: ArtistMergeSelection,
+  lock = false,
+): Promise<ArtistMergePlan> {
+  return (await readArtistMerge(reader, selection, lock)).plan
 }
 
 /** The plan the Merge button reads before it merges or opens a review. */

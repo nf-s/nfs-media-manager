@@ -8,31 +8,31 @@ import {
   splitScrobbleCredit,
 } from '@/lib/album-track-aliases'
 import { albumNameKey } from '@/lib/album-import-candidates'
-import { slugifyParts } from '@/lib/media-utils'
 import { standaloneLastfmTrackId } from '@/lib/track-matching'
-import { lastfmTrackSource, libraryTrack, mediaItem } from '@/schemas/db'
+import { lastfmTrackSource } from '@/schemas/db'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { refreshArtistListeningTotals } from './artist-listening'
-import { writeArtistCredits } from './artist-names'
 import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
 } from './album-library-tracks'
+import { standaloneTracksEntry } from './automatic-match-effects'
+import { readKeptSeparateTest } from './keep-separate-effects'
+import {
+  ScrobbledRowsSchema,
+  scrobbledAlbumId,
+  scrobbledColumns,
+  writeStandaloneTracks,
+  type ScrobbledName,
+} from './lastfm-standalone-tracks'
+import { recordNameMoves, type RecordedNameMove } from './library-changes'
+import { readRejectionTest } from './library-match-rejections'
 import { refreshTrackListeningTotals } from './track-links'
+import { archiveTracks, type ArchivedTrack } from './track-archive'
 
 const WRITE_BATCH = 500
+const ARCHIVE_BATCH = 5000
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
-const ScrobbledRowsSchema = z.array(
-  z.object({
-    artist_key: z.string(),
-    track_key: z.string(),
-    artist_name: z.string(),
-    track_name: z.string(),
-    album_names: z.array(z.string()),
-    album_ids: z.array(z.string()),
-    has_unlinked_album: z.boolean(),
-  }),
-)
 const CandidateRowsSchema = z.array(
   z.object({
     id: z.string(),
@@ -76,15 +76,23 @@ const AlbumScrobbledNamesSchema = z.array(
   }),
 )
 const ArtistIdsSchema = z.array(z.object({ artist_id: z.string() }))
-const scrobbledColumns = sql`
-  max(s.artist_name) as artist_name, max(s.track_name) as track_name,
-  coalesce(array_agg(distinct s.album_name order by s.album_name)
-    filter (where nullif(trim(s.album_name), '') is not null), '{}') as album_names,
-  bool_or(nullif(trim(s.album_name), '') is not null and s.album_media_item_id is null) as has_unlinked_album,
-  coalesce(array_agg(distinct s.album_media_item_id)
-    filter (where s.album_media_item_id is not null), '{}') as album_ids`
-
-type ScrobbledName = z.infer<typeof ScrobbledRowsSchema>[number]
+const MovedNamesSchema = z.array(
+  z.object({
+    username: z.string(),
+    artist_key: z.string(),
+    track_key: z.string(),
+    from_id: z.string(),
+    to_id: z.string(),
+  }),
+)
+const OwnerRowsSchema = z.array(
+  z.object({
+    artist_key: z.string(),
+    track_key: z.string(),
+    track_id: z.string(),
+    manual: z.boolean(),
+  }),
+)
 type Recording = z.infer<typeof CandidateRowsSchema>[number]
 
 async function readCandidates(tx: Transaction, filter: SQL = sql``) {
@@ -140,15 +148,56 @@ function findExactMatches(candidates: Recording[]) {
   }
 }
 
-/** Imports stored history only; uncertain recording identities remain separate. */
-export async function importLastfmLibraryTracks(account: string) {
-  await db.transaction((tx) => importLastfmTrackSources(tx, account))
+/**
+ * Imports stored history only; uncertain recording identities remain
+ * separate. The matches it makes are recorded as automatic changes of the run.
+ */
+export async function importLastfmLibraryTracks(
+  account: string,
+  batchId: string | null = null,
+) {
+  await db.transaction((tx) =>
+    importLastfmTrackSources(tx, account, undefined, { batchId }),
+  )
+}
+
+/** The archives of the given tracks, read in batches. */
+async function archiveTracksInBatches(tx: Transaction, ids: string[]) {
+  const archived: ArchivedTrack[] = []
+  for (let start = 0; start < ids.length; start += ARCHIVE_BATCH)
+    archived.push(
+      ...(await archiveTracks(tx, ids.slice(start, start + ARCHIVE_BATCH))),
+    )
+  return archived
+}
+
+/**
+ * Whether two tracks are kept separate, from one read per batch of moves: an
+ * automatic rule never merges them.
+ */
+async function readKeptSeparateMoves(
+  tx: Transaction,
+  pairs: { fromId: string; toId: string }[],
+) {
+  const tests: ((left: string, right: string) => boolean)[] = []
+  for (let start = 0; start < pairs.length; start += ARCHIVE_BATCH / 2) {
+    const ids = pairs
+      .slice(start, start + ARCHIVE_BATCH / 2)
+      .flatMap((pair) => [pair.fromId, pair.toId])
+    tests.push(await readKeptSeparateTest(tx, 'track', ids))
+  }
+  return (left: string, right: string) =>
+    tests.some((kept) => kept(left, right))
 }
 
 /** Reconciles safe Last.fm aliases when an album's actual positions are available. */
 export async function reconcileLastfmAlbumTrackAliases(
   tx: Transaction,
-  { albumId, dryRun = false }: { albumId?: string; dryRun?: boolean } = {},
+  {
+    albumId,
+    dryRun = false,
+    batchId = null,
+  }: { albumId?: string; dryRun?: boolean; batchId?: string | null } = {},
 ) {
   if (!dryRun) await lockLibraryTrackWrites(tx)
   const pending = PendingAlbumSourcesSchema.parse(
@@ -278,8 +327,30 @@ export async function reconcileLastfmAlbumTrackAliases(
     where named.media_type = 'track')`,
     ),
   )
+  // A match the owner undid or separated, or a pair kept separate, is left alone.
+  const rejected = new Map<
+    string,
+    Awaited<ReturnType<typeof readRejectionTest>>
+  >()
+  for (const username of albums.keys())
+    rejected.set(username, await readRejectionTest(tx, username))
+  const kept = await readKeptSeparateMoves(
+    tx,
+    proposed.map(({ source, target }) => ({
+      fromId: source.source_id,
+      toId: target.id,
+    })),
+  )
   const moves = proposed.flatMap(({ source, target, name }) =>
-    exact(name).length ? [] : [{ ...source, target_id: target.id }],
+    exact(name).length ||
+    rejected.get(source.username)?.(
+      source.artist_key,
+      source.track_key,
+      target.id,
+    ) ||
+    kept(source.source_id, target.id)
+      ? []
+      : [{ ...source, target_id: target.id }],
   )
   if (dryRun || !moves.length) return moves.length
 
@@ -293,29 +364,59 @@ export async function reconcileLastfmAlbumTrackAliases(
     where role = 'artist' and ${inArray(sql`media_item_id`, affectedIds)}`)
     ).rows,
   )
+  const archived = await archiveTracksInBatches(tx, [
+    ...new Set(moves.map((move) => move.source_id)),
+  ])
+  const recorded: RecordedNameMove[] = []
   for (let start = 0; start < moves.length; start += WRITE_BATCH) {
     const batch = moves.slice(start, start + WRITE_BATCH)
     const rows = sql`jsonb_to_recordset(${JSON.stringify(batch)}::jsonb)
       as alias(username text, artist_key text, track_key text, source_id text, target_id text)`
-    await tx.execute(sql`
+    const moved = MovedNamesSchema.parse(
+      (
+        await tx.execute(sql`
       with moved as (
         update lastfm_track_source s set track_media_item_id = alias.target_id
         from ${rows}
         where s.username = alias.username and s.artist_key = alias.artist_key
           and s.track_key = alias.track_key and s.track_media_item_id = alias.source_id
           and not s.manually_matched
-        returning s.username, s.artist_key, s.track_key, s.track_media_item_id
+        returning s.username, s.artist_key, s.track_key, s.track_media_item_id,
+          alias.source_id
+      ), linked as (
+        insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+          select username, artist_key, track_key, track_media_item_id, 'exact' from moved
+        on conflict (username, artist_key, track_key, track_media_item_id) do update
+          set strategy = excluded.strategy
+          where lastfm_track_link.strategy is distinct from excluded.strategy
       )
-      insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
-        select username, artist_key, track_key, track_media_item_id, 'exact' from moved
-      on conflict (username, artist_key, track_key, track_media_item_id) do update
-        set strategy = excluded.strategy
-        where lastfm_track_link.strategy is distinct from excluded.strategy`)
+      select username, artist_key, track_key, source_id as from_id,
+        track_media_item_id as to_id
+      from moved`)
+      ).rows,
+    )
+    recorded.push(
+      ...moved.map((name) => ({
+        username: name.username,
+        artistKey: name.artist_key,
+        trackKey: name.track_key,
+        fromId: name.from_id,
+        fromManual: false,
+        toId: name.to_id,
+        toManual: false,
+      })),
+    )
     await removeOrphanTracks(
       tx,
       batch.map((move) => move.source_id),
     )
   }
+  await recordNameMoves(tx, {
+    moves: recorded,
+    rule: 'album-alias',
+    batchId,
+    archived,
+  })
   const targets = [...new Set(moves.map((move) => move.target_id))]
   await refreshTrackAddedDates(tx, targets)
   await refreshTrackListeningTotals(tx, targets)
@@ -326,10 +427,24 @@ export async function reconcileLastfmAlbumTrackAliases(
   return moves.length
 }
 
+/** The automatic rule that chose a name's track, as History names it. */
+type ImportRule =
+  | 'lastfm-accepted-search'
+  | 'lastfm-exact-name'
+  | 'lastfm-album-alias'
+
+/**
+ * Gives every scrobbled name of the account its track: the owner's choice,
+ * then an accepted search, an exact name or an album alias, otherwise its own
+ * Last.fm-only track. A match the owner undid or separated is not made again,
+ * and a name does not move between tracks the owner keeps separate. A full run
+ * records each name it placed on another track as an automatic change.
+ */
 export async function importLastfmTrackSources(
   tx: Transaction,
   account: string,
   scope?: { name: TrackScrobbleNameKey; separate?: boolean },
+  { batchId = null }: { batchId?: string | null } = {},
 ) {
   // Share the playlist writer's lock so cleanup cannot remove new memberships.
   await lockLibraryTrackWrites(tx)
@@ -342,15 +457,16 @@ export async function importLastfmTrackSources(
   const relatedNames = scope
     ? sql`and ((artist_key = ${scope.name.artistKey} and track_key = ${scope.name.trackKey}) or artist_key = ${relatedArtist})`
     : sql``
-  const previous = scope
-    ? ManualRowsSchema.parse(
-        (
-          await tx.execute(sql`
-          select artist_key, track_key, track_media_item_id as track_id
+  const owners = new Map(
+    OwnerRowsSchema.parse(
+      (
+        await tx.execute(sql`
+          select artist_key, track_key, track_media_item_id as track_id,
+            manually_matched as manual
           from lastfm_track_source where username = ${account} ${nameFilter}`)
-        ).rows,
-      )[0]
-    : undefined
+      ).rows,
+    ).map((row) => [JSON.stringify([row.artist_key, row.track_key]), row]),
+  )
   const groups = ScrobbledRowsSchema.parse(
     (
       await tx.execute(sql`
@@ -411,6 +527,7 @@ export async function importLastfmTrackSources(
   )
   const exactMatches = findExactMatches(candidates)
   const albumAlias = createAlbumTrackAliasMatcher(candidates, groups, manual)
+  const rejected = await readRejectionTest(tx, account)
   const selected = scope
     ? groups.filter(
         (group) =>
@@ -418,88 +535,130 @@ export async function importLastfmTrackSources(
           group.track_key === scope.name.trackKey,
       )
     : groups
-  const records = selected.map((group) => {
+  const chosen = selected.map((group) => {
     const nameKey = JSON.stringify([group.artist_key, group.track_key])
-    const matches = exactMatches(group)
+    const allowed = (id: string | undefined) =>
+      id !== undefined && !rejected(group.artist_key, group.track_key, id)
+    // A track the owner undid or separated the name from is no candidate.
+    const matches = exactMatches(group).filter((candidate) =>
+      allowed(candidate.id),
+    )
     const matched = matches.length
       ? matches.length === 1
         ? matches[0]
         : undefined
       : albumAlias(group)
     const manualId = manual.get(nameKey)
+    const catalogId = previousCatalogMatches.get(nameKey)
     const standaloneId = standaloneLastfmTrackId(account, {
       artistKey: group.artist_key,
       trackKey: group.track_key,
     })
-    const chosenId = scope?.separate
-      ? undefined
-      : (manualId ?? previousCatalogMatches.get(nameKey) ?? matched?.id)
+    const choice: { id: string; rule: ImportRule } | undefined =
+      scope?.separate || manualId !== undefined
+        ? undefined
+        : allowed(catalogId) && catalogId !== undefined
+          ? { id: catalogId, rule: 'lastfm-accepted-search' }
+          : allowed(matched?.id) && matched
+            ? {
+                id: matched.id,
+                rule: matches.length
+                  ? 'lastfm-exact-name'
+                  : 'lastfm-album-alias',
+              }
+            : undefined
     return {
       group,
-      albumId:
-        !group.has_unlinked_album && group.album_ids.length === 1
-          ? group.album_ids[0]
-          : null,
-      matched: chosenId !== undefined,
-      id: chosenId ?? standaloneId,
-      manuallyMatched: scope?.separate === true || manualId !== undefined,
+      standaloneId,
+      manualId,
+      choice,
+      owner: owners.get(nameKey),
     }
   })
+  const kept = await readKeptSeparateMoves(
+    tx,
+    chosen.flatMap(({ owner, choice }) =>
+      owner && choice && owner.track_id !== choice.id
+        ? [{ fromId: owner.track_id, toId: choice.id }]
+        : [],
+    ),
+  )
+  const records = chosen.map(
+    ({ group, standaloneId, manualId, choice, owner }) => {
+      const albumId = scrobbledAlbumId(group)
+      if (scope?.separate || manualId !== undefined)
+        return {
+          group,
+          owner,
+          standaloneId,
+          albumId,
+          matched: !scope?.separate,
+          id: scope?.separate ? standaloneId : (manualId ?? standaloneId),
+          manuallyMatched: true,
+          rule: null,
+        }
+      // A name stays where it is rather than move between tracks the owner
+      // keeps separate, or back to its own track after that was undone.
+      const stays =
+        owner &&
+        (choice
+          ? owner.track_id !== choice.id && kept(owner.track_id, choice.id)
+          : owner.track_id !== standaloneId &&
+            rejected(group.artist_key, group.track_key, standaloneId))
+      const id = stays ? owner.track_id : (choice?.id ?? standaloneId)
+      return {
+        group,
+        owner,
+        standaloneId,
+        albumId,
+        matched: id !== standaloneId || (!stays && choice !== undefined),
+        id,
+        manuallyMatched: false,
+        rule: stays ? null : (choice?.rule ?? null),
+      }
+    },
+  )
+  const moves = scope
+    ? []
+    : records.flatMap(
+        ({ group, owner, standaloneId, id, manuallyMatched, rule }) => {
+          // A new name on its own track is where every name starts.
+          if (!owner && id === standaloneId) return []
+          if (
+            owner &&
+            owner.track_id === id &&
+            owner.manual === manuallyMatched
+          )
+            return []
+          return [
+            {
+              rule,
+              created: !owner,
+              move: {
+                username: account,
+                artistKey: group.artist_key,
+                trackKey: group.track_key,
+                fromId: owner?.track_id ?? standaloneId,
+                fromManual: owner?.manual ?? false,
+                toId: id,
+                toManual: manuallyMatched,
+              },
+            },
+          ]
+        },
+      )
+  // The tracks names leave can be removed below; keep what an undo needs.
+  const archived = await archiveTracksInBatches(tx, [
+    ...new Set(
+      moves.flatMap(({ created, move }) => (created ? [] : [move.fromId])),
+    ),
+  ])
   for (let start = 0; start < records.length; start += WRITE_BATCH) {
     const batch = records.slice(start, start + WRITE_BATCH)
-    const standalone = batch.filter((record) => !record.matched)
-    if (standalone.length) {
-      const items: Array<typeof mediaItem.$inferInsert> = standalone.map(
-        ({ id, group }) => ({
-          id,
-          mediaType: 'track',
-          slug: slugifyParts(group.track_name, id),
-          title: group.track_name,
-          sourceLabel: 'lastfm',
-        }),
-      )
-      await tx
-        .insert(mediaItem)
-        .values(items)
-        .onConflictDoUpdate({
-          target: mediaItem.id,
-          set: { title: sql`excluded.title` },
-        })
-      await tx
-        .insert(libraryTrack)
-        .values(
-          standalone.map(({ id, group, albumId }) => ({
-            mediaItemId: id,
-            albumName:
-              group.album_names.length === 1 ? group.album_names[0] : null,
-            albumMediaItemId: albumId,
-            albumLinkStrategy: albumId ? 'lastfm' : null,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: libraryTrack.mediaItemId,
-          set: {
-            albumName: sql`excluded.album_name`,
-            albumMediaItemId: sql`excluded.album_media_item_id`,
-            albumLinkStrategy: sql`excluded.album_link_strategy`,
-          },
-        })
-      await tx.execute(
-        sql`delete from media_credit where role = 'artist' and media_item_id in (${sql.join(
-          standalone.map(({ id }) => sql`${id}`),
-          sql`, `,
-        )})`,
-      )
-      await writeArtistCredits(
-        tx,
-        standalone.map(({ id, group }) => ({
-          mediaItemId: id,
-          name: group.artist_name,
-          role: 'artist',
-          billingOrder: 0,
-        })),
-      )
-    }
+    await writeStandaloneTracks(
+      tx,
+      batch.filter((record) => !record.matched),
+    )
     await tx
       .insert(lastfmTrackSource)
       .values(
@@ -529,9 +688,13 @@ export async function importLastfmTrackSources(
   if (!scope) {
     await removeOrphanTracks(tx)
     await refreshTrackAddedDates(tx)
+    await recordImportMoves(tx, account, moves, archived, batchId)
     return
   }
   const standaloneId = standaloneLastfmTrackId(account, scope.name)
+  const previous = owners.get(
+    JSON.stringify([scope.name.artistKey, scope.name.trackKey]),
+  )
   await removeOrphanTracks(tx, [standaloneId])
   await refreshTrackAddedDates(tx, [
     ...new Set([
@@ -539,4 +702,56 @@ export async function importLastfmTrackSources(
       ...(previous ? [previous.track_id] : []),
     ]),
   ])
+}
+
+/**
+ * Records a full import's moves by rule: one change for each track names went
+ * to. A name matched before it had a track of its own gets that track back on
+ * Undo; a name that went back to its own track is a separation.
+ */
+async function recordImportMoves(
+  tx: Transaction,
+  account: string,
+  moves: {
+    rule: ImportRule | null
+    created: boolean
+    move: RecordedNameMove
+  }[],
+  archived: ArchivedTrack[],
+  batchId: string | null,
+) {
+  const created = new Set(
+    moves.flatMap(({ created, move }) =>
+      created ? [JSON.stringify([move.artistKey, move.trackKey])] : [],
+    ),
+  )
+  const effects = (toId: string, group: RecordedNameMove[]) => {
+    const names = group
+      .filter((move) =>
+        created.has(JSON.stringify([move.artistKey, move.trackKey])),
+      )
+      .map(({ artistKey, trackKey }) => ({ artistKey, trackKey }))
+    return names.length ? [standaloneTracksEntry(account, names, [toId])] : []
+  }
+  for (const rule of [
+    'lastfm-accepted-search',
+    'lastfm-exact-name',
+    'lastfm-album-alias',
+  ] satisfies ImportRule[])
+    await recordNameMoves(tx, {
+      moves: moves.flatMap((entry) =>
+        entry.rule === rule ? [entry.move] : [],
+      ),
+      rule,
+      batchId,
+      archived,
+      effects,
+    })
+  await recordNameMoves(tx, {
+    moves: moves.flatMap((entry) => (entry.rule === null ? [entry.move] : [])),
+    rule: 'lastfm-unmatched',
+    action: 'separate',
+    batchId,
+    archived,
+  })
 }

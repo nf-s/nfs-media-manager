@@ -20,6 +20,7 @@ export const LibraryChangeActionSchema = z.enum([
   'rematch',
   'show',
   'keep-separate',
+  'remove',
 ])
 export type LibraryChangeAction = z.infer<typeof LibraryChangeActionSchema>
 
@@ -243,6 +244,31 @@ export const TrackMergeCautionSchema = z.discriminatedUnion('code', [
   z.object({
     code: z.literal('separate'),
     trackIds: z.array(z.string()).min(2),
+  }),
+  /** Titles that would follow are now on a track of another album. */
+  z.object({
+    code: z.literal('elsewhere'),
+    count: z.number().int().positive(),
+    names: z
+      .array(
+        z.object({
+          artistName: z.string(),
+          trackName: z.string(),
+          albumTitle: z.string(),
+        }),
+      )
+      .max(5),
+  }),
+  /**
+   * Titles scrobbled under the album name that match more than one track of
+   * the album. They stay where they are.
+   */
+  z.object({
+    code: z.literal('ambiguous'),
+    count: z.number().int().positive(),
+    names: z
+      .array(z.object({ artistName: z.string(), trackName: z.string() }))
+      .max(5),
   }),
 ])
 export type TrackMergeCaution = z.infer<typeof TrackMergeCautionSchema>

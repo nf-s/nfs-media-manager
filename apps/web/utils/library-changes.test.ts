@@ -74,6 +74,30 @@ test('a change is described by its action, the names it moved and its records', 
     describeLibraryChange({ ...change, action: 'rematch' }),
     'Returned “Nite Drive” to automatic matching',
   )
+  const removed: LibraryChange = {
+    ...change,
+    action: 'remove',
+    actor: 'automatic',
+    rule: 'album-track-list',
+    target: null,
+    names: [],
+    nameCount: 0,
+    reversible: false,
+    canUndo: false,
+    blocked: 'This change cannot be undone.',
+  }
+  assert.equal(describeLibraryChange(removed), 'Removed “Nite Drive”')
+  assert.equal(
+    describeLibraryChange({
+      ...removed,
+      sources: [record('a', 'Nite Drive'), record('b', 'Night Drive (Demo)')],
+    }),
+    'Removed 2 tracks',
+  )
+  assert.equal(
+    describeLibraryChangeNote(removed),
+    'No longer on the album’s track list. This change cannot be undone',
+  )
 })
 
 test('album and artist changes name their records by kind', () => {
@@ -214,6 +238,8 @@ test('each automatic rule has a label, and an unknown code is shown as it is', (
     'spotify-search',
     'album-alias',
     'album-history',
+    'spotify-album-recording',
+    'album-track-list',
   ])
     assert.ok(libraryChangeRuleLabels.get(code), code)
   assert.equal(libraryChangeRule('lastfm-exact-name'), 'Same title and artist')
@@ -424,5 +450,49 @@ test('each caution reads as one sentence', () => {
       names: ['Fixture Artist', 'Other Band'],
     }),
     'The artists differ: Fixture Artist, Other Band.',
+  )
+  assert.equal(
+    describeMergeCaution({ code: 'same-album', albums: ['Fixture Album'] }),
+    'Two tracks are different positions on “Fixture Album”.',
+  )
+  const tracks = [
+    { id: 'track-1', title: 'Night Drive' },
+    { id: 'track-2', title: 'Night Drive (Live)' },
+  ]
+  assert.equal(
+    describeMergeCaution(
+      { code: 'separate', trackIds: ['track-1', 'track-2'] },
+      tracks,
+    ),
+    '“Night Drive” and “Night Drive (Live)” were kept separate.',
+  )
+  assert.equal(
+    describeMergeCaution({
+      code: 'separate',
+      trackIds: ['track-1', 'track-3'],
+    }),
+    'Some of these tracks were kept separate.',
+  )
+  assert.equal(
+    describeMergeCaution({
+      code: 'elsewhere',
+      count: 3,
+      names: [
+        {
+          artistName: 'Fixture Artist',
+          trackName: 'Intro',
+          albumTitle: 'Other Album',
+        },
+      ],
+    }),
+    '3 names that would follow are on another album: “Intro” on “Other Album” and 2 more.',
+  )
+  assert.equal(
+    describeMergeCaution({
+      code: 'ambiguous',
+      count: 1,
+      names: [{ artistName: 'Fixture Artist', trackName: 'Reprise' }],
+    }),
+    '1 name matches more than one track of the album and stays where it is: “Reprise”.',
   )
 })

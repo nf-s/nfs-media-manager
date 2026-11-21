@@ -12,9 +12,15 @@ import { ServerError } from '@/lib/error'
 import { artistKeys, plainKey } from '@/lib/lastfm-album-matching'
 import { trackVersionQualifiers } from '@/lib/track-matching'
 import { readKeptSeparate } from './keep-separate-effects'
+import { readTrackFollows, type TrackFollow } from './merge-follows'
 import { albumTrackDurationExpression } from './track-values'
 
 type Reader = Pick<typeof db, 'execute'>
+
+/** A plan request. Without `follow`, nothing follows. */
+export type TrackMergeSelection = Omit<TrackMergePlanRequest, 'follow'> & {
+  follow?: boolean
+}
 
 // Known lengths further apart than this are treated as different recordings.
 const DURATION_TOLERANCE_SEC = 10
@@ -163,15 +169,47 @@ async function separateCaution(
   return kept.length ? [{ code: 'separate', trackIds: kept }] : []
 }
 
+const shownName = (name: { artistName: string; trackName: string }) => ({
+  artistName: name.artistName,
+  trackName: name.trackName,
+})
+
+/** Titles that would follow from another album, or match more than one track. */
+function followCautions(follows: TrackFollow[]): TrackMergeCaution[] {
+  const elsewhere = follows.flatMap(({ follow }) => follow.elsewhere)
+  const ambiguous = follows.flatMap(({ follow }) => follow.ambiguous)
+  const cautions: TrackMergeCaution[] = []
+  if (elsewhere.length)
+    cautions.push({
+      code: 'elsewhere',
+      count: elsewhere.length,
+      names: elsewhere.slice(0, 5),
+    })
+  if (ambiguous.length)
+    cautions.push({
+      code: 'ambiguous',
+      count: ambiguous.length,
+      names: ambiguous.slice(0, 5).map(shownName),
+    })
+  return cautions
+}
+
+/** What a track merge would do, with what follows it, for `mergeTracks`. */
+export type TrackMergeReading = {
+  plan: TrackMergePlan
+  follows: TrackFollow[]
+}
+
 /**
- * What merging the selected tracks would do. `lock` holds the tracks for the
- * rest of the caller's transaction.
+ * What merging the selected tracks would do, and with `follow`, the album
+ * names and titles that follow. `lock` holds the tracks for the rest of the
+ * caller's transaction.
  */
-export async function readTrackMergePlan(
+export async function readTrackMerge(
   reader: Reader,
-  { trackIds, targetId }: TrackMergePlanRequest,
+  { trackIds, targetId, follow = false }: TrackMergeSelection,
   lock = false,
-): Promise<TrackMergePlan> {
+): Promise<TrackMergeReading> {
   const tracks = PlanTracksSchema.parse(
     (
       await reader.execute(sql`
@@ -231,13 +269,22 @@ export async function readTrackMergePlan(
         track.id === name.track_id && outcomeOf(track, target) === 'merge',
     ),
   )
+  const follows = follow
+    ? await readTrackFollows(reader, {
+        targetId: target.id,
+        mergedIds: sources
+          .filter((track) => outcomeOf(track, target) === 'merge')
+          .map((track) => track.id),
+        selectedIds: trackIds,
+      })
+    : []
   // Names a new version keeps also count for the record.
   const added = names.reduce(
     (total, name) =>
       total + (name.track_id === target.id || name.counted ? 0 : name.count),
     0,
   )
-  return {
+  const plan: TrackMergePlan = {
     targetId: target.id,
     tracks: ordered.map((track) => ({
       id: track.id,
@@ -264,16 +311,46 @@ export async function readTrackMergePlan(
       added,
       total: target.scrobbles + added,
     },
-    also: { albumNames: [], titles: [] },
+    also: {
+      albumNames: follows.flatMap(({ albumId, albumTitle, names }) =>
+        names.map((name) => ({
+          artistName: name.artistName,
+          albumName: name.albumName,
+          scrobbles: name.scrobbles,
+          toAlbumId: albumId,
+          toAlbumTitle: albumTitle,
+        })),
+      ),
+      titles: follows.flatMap(({ follow: { also } }) =>
+        also.map((name) => ({
+          ...shownName(name),
+          scrobbles: name.scrobbles,
+          fromTrackId: name.fromTrackId,
+          toTrackId: name.toTrackId,
+          toTitle: name.toTitle,
+        })),
+      ),
+    },
     cautions: [
       ...versionCaution(ordered),
       ...durationCaution(ordered),
       ...artistCaution(target, sources),
       ...(await sameAlbumCaution(reader, trackIds)),
       ...(await separateCaution(reader, trackIds)),
+      ...followCautions(follows),
     ],
     blocked: false,
   }
+  return { plan, follows }
+}
+
+/** What merging the selected tracks would do. See `readTrackMerge`. */
+export async function readTrackMergePlan(
+  reader: Reader,
+  selection: TrackMergeSelection,
+  lock = false,
+): Promise<TrackMergePlan> {
+  return (await readTrackMerge(reader, selection, lock)).plan
 }
 
 /** The plan the Merge button reads before it merges or opens a review. */

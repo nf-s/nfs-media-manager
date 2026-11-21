@@ -60,6 +60,7 @@ import { albumMatchRejectionField } from './album-match-rejections'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { tagAncestorRows, visibleSubtagCounts } from './tag-hierarchy'
 import { albumAddedDateExpression } from './album-added-dates'
+import { currentArtistId } from './artist-names'
 import { createBrowseListening, type BrowseListening } from './browse-listening'
 import {
   firstMusicTagRows,
@@ -1128,10 +1129,14 @@ function groupedTrackBrowse(
 
 async function browseQueries(
   mediaType: MediaType,
-  query: AlbumQuery | FilmQuery | TrackQuery,
+  input: AlbumQuery | FilmQuery | TrackQuery,
   options: BrowseQueryOptions = {},
   versionId?: string,
 ) {
+  // A merged artist name reads as the artist it was merged into.
+  const query = input.creatorId
+    ? { ...input, creatorId: await currentArtistId(db, input.creatorId) }
+    : input
   const fields = await listBrowseFields(mediaType)
   const listeningFilter = 'listening' in query ? query.listening : undefined
   const listeningPeriod =

@@ -57,9 +57,11 @@ import { ListeningStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
+import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
 import { LibraryRecordChanges } from './library-changes'
 import { TrackLastfmSources } from './track-lastfm-sources'
+import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
 import { TrackSpotifySource } from './track-spotify-source'
 import TrackAppearsOn from './track-playlist-additions'
@@ -451,6 +453,11 @@ export default function TrackDetailView({
           onMerged={(targetId) => openResolvedTrack(targetId)}
         />
       )}
+      <TrackDuplicateNotice
+        key={`duplicates-${item.id}`}
+        trackId={item.id}
+        onResolved={(targetId) => openResolvedTrack(targetId)}
+      />
       <DetailTabs
         label="Track details"
         value={tab}
@@ -471,6 +478,11 @@ export default function TrackDetailView({
           />
         </TabsContent>
         <TabsContent value="sources">
+          <TrackRecordParts
+            key={`parts-${item.id}`}
+            item={item}
+            onResolved={(targetId) => openResolvedTrack(targetId, 'sources')}
+          />
           <TrackSources
             key={item.id}
             item={item}

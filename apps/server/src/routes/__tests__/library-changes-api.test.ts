@@ -173,6 +173,7 @@ describe('library changes API', () => {
     expect(mergeTracks).toHaveBeenCalledWith({
       trackIds: ['merged', 'kept'],
       targetId: 'kept',
+      follow: true,
       reviewed: false,
     })
   })

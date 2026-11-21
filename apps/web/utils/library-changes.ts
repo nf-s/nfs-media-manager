@@ -8,7 +8,6 @@ import {
   type LibraryChangeActor,
   type LibraryChangeKind,
   type LibraryChangePart,
-  type TrackMergeBlock,
   type TrackMergeCaution,
 } from '@repo/schemas/library-changes'
 import {
@@ -41,9 +40,13 @@ export function planTrackMerge(
   )
 }
 
+/**
+ * Merges the tracks. `follow` also merges what follows them; the server does
+ * when it is omitted.
+ */
 export function mergeTracks(
   apiBaseUrl: string,
-  request: TrackMergeSelection & { reviewed: boolean },
+  request: TrackMergeSelection & { reviewed: boolean; follow?: boolean },
 ) {
   return fetchApiData(
     apiBaseUrl,
@@ -199,6 +202,12 @@ export function describeLibraryChange(change: LibraryChange): string {
         : `Changed the ${shownNouns[change.kind]} shown`
     case 'rematch':
       return `Returned ${movedNames(change)} to automatic matching`
+    case 'remove':
+      return `Removed ${
+        change.sources.length === 1 && source
+          ? quoted(source.title)
+          : formatItemCount(change.sources.length, noun)
+      }`
   }
 }
 
@@ -211,6 +220,8 @@ export const libraryChangeRuleLabels: ReadonlyMap<string, string> = new Map([
   ['spotify-search', 'Spotify track search'],
   ['album-alias', 'Album track list'],
   ['album-history', 'Album listening history'],
+  ['spotify-album-recording', 'Same Spotify track on the album'],
+  ['album-track-list', 'No longer on the album’s track list'],
 ])
 
 /** The automatic rule that made a change, or its code when it has no label. */
@@ -322,22 +333,54 @@ export async function invalidateLibraryRecords(
   })
 }
 
-/** One sentence of evidence against a merge. */
-export function describeMergeCaution(caution: TrackMergeCaution): string {
-  if (caution.code === 'version')
-    return `${listed.format(caution.words.map(quoted))} ${caution.words.length === 1 ? 'is' : 'are'} in some titles only.`
-  if (caution.code === 'duration')
-    return `Lengths differ by ${formatTrackLength(caution.seconds * 1000)}.`
-  if (caution.code === 'same-album')
-    return `Two tracks are different positions on ${listed.format(caution.albums.map(quoted))}.`
-  if (caution.code === 'separate')
-    return 'Some of these tracks were kept separate.'
-  return `The artists differ: ${caution.names.join(', ')}.`
+const nameNoun: Noun = { one: 'name', other: 'names' }
+
+/** Up to five quoted names of `count`, with how many more there are. */
+function someNames(count: number, names: readonly string[]) {
+  const more = count - names.length
+  return listed.format([
+    ...names,
+    ...(more > 0 ? [`${formatCount(more)} more`] : []),
+  ])
 }
 
-/** Why a selected track stays a track of its own. */
-export const mergeBlockLabels: Record<TrackMergeBlock, string> = {
-  spotify: 'Has its own Spotify track',
-  album: 'Is on an album track list',
-  playlist: 'Is in a playlist',
+/**
+ * One sentence of evidence against a merge. `tracks` are the plan's tracks,
+ * to name the ones the owner kept separate.
+ */
+export function describeMergeCaution(
+  caution: TrackMergeCaution,
+  tracks: readonly { id: string; title: string }[] = [],
+): string {
+  switch (caution.code) {
+    case 'version':
+      return `${listed.format(caution.words.map(quoted))} ${caution.words.length === 1 ? 'is' : 'are'} in some titles only.`
+    case 'duration':
+      return `Lengths differ by ${formatTrackLength(caution.seconds * 1000)}.`
+    case 'artists':
+      return `The artists differ: ${caution.names.join(', ')}.`
+    case 'same-album':
+      return `Two tracks are different positions on ${listed.format(caution.albums.map(quoted))}.`
+    case 'separate': {
+      const titles = caution.trackIds.flatMap((id) => {
+        const track = tracks.find((item) => item.id === id)
+        return track ? [quoted(track.title)] : []
+      })
+      return titles.length === caution.trackIds.length
+        ? `${listed.format(titles)} were kept separate.`
+        : 'Some of these tracks were kept separate.'
+    }
+    case 'elsewhere':
+      return `${formatItemCount(caution.count, nameNoun)} that would follow ${caution.count === 1 ? 'is' : 'are'} on another album: ${someNames(
+        caution.count,
+        caution.names.map(
+          (name) => `${quoted(name.trackName)} on ${quoted(name.albumTitle)}`,
+        ),
+      )}.`
+    case 'ambiguous':
+      return `${formatItemCount(caution.count, nameNoun)} ${caution.count === 1 ? 'matches' : 'match'} more than one track of the album and ${caution.count === 1 ? 'stays' : 'stay'} where ${caution.count === 1 ? 'it is' : 'they are'}: ${someNames(
+        caution.count,
+        caution.names.map((name) => quoted(name.trackName)),
+      )}.`
+  }
 }

@@ -11,6 +11,7 @@ import { ConfigContext } from './providers'
 import { PlaybackViewContext } from './playback-provider'
 import { idlePlaybackState } from '@/utils/playback-engine'
 import { albumTrackView } from '@/utils/playback-source'
+import { albumUnlistedNamesKey } from '@/utils/track-versions'
 
 // Detail components import CSS modules; class names are not under test.
 require.extensions['.css'] = (module) => {
@@ -202,4 +203,82 @@ test('long albums initially show twenty tracks and compilations add Artists', as
   assert.match(html, />Track 20</)
   assert.doesNotMatch(html, />Track 21</)
   assert.match(html, /aria-expanded="false">Show all 21</)
+})
+
+function renderWithUnlisted(
+  names: Array<{ trackId: string; trackName: string; scrobbles: number }>,
+  subject = album,
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(albumUnlistedNamesKey(subject.id), {
+    names: names.map((name) => ({
+      ...name,
+      artistKey: 'fixture artist',
+      trackKey: name.trackName.toLowerCase(),
+      artistName: 'Fixture artist',
+    })),
+  })
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{ appUrl: 'http://localhost', apiBaseUrl: 'http://localhost' }}
+        >
+          <SearchParamsContext.Provider value={new URLSearchParams()}>
+            <AlbumTracksTable album={subject} />
+          </SearchParamsContext.Provider>
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+  } finally {
+    client.clear()
+    assert.equal(network.mock.callCount(), 0)
+  }
+}
+
+test('album tracks and the names scrobbled under the album can be selected to merge', () => {
+  const html = renderWithUnlisted([
+    { trackId: 'lastfm-song-a', trackName: 'Song A (Live)', scrobbles: 12 },
+    { trackId: 'lastfm-song-b', trackName: 'Song B', scrobbles: 4 },
+  ])
+  assert.match(
+    html,
+    /<th scope="col"><input type="checkbox" class="ds-check" aria-label="Select album tracks"\/><\/th>/,
+  )
+  assert.match(html, /aria-label="Select Song A"/)
+  assert.match(html, /aria-label="Select Instrumental"/)
+  assert.match(
+    html,
+    /<tr data-group=""><td colSpan="5">Scrobbled under this album, not on its track list<\/td><\/tr>/,
+  )
+  const group = html.indexOf('Scrobbled under this album')
+  assert.ok(html.indexOf('Play Instrumental') < group)
+  assert.ok(group < html.indexOf('Select Song A (Live) by Fixture artist'))
+  assert.ok(
+    html.indexOf('Select Song A (Live) by Fixture artist') <
+      html.indexOf('Select Song B by Fixture artist'),
+  )
+  assert.match(html, /href="\/tracks\/lastfm-song-a"[^>]*>Song A \(Live\)</)
+  assert.match(html, /<td data-align="end">12<\/td>/)
+  // The selection bar is hidden until a row is selected.
+  assert.match(html, /<div class="ds-selectbar sec-selectbar"><\/div>/)
+})
+
+test('a name scrobbled under the album is listed once its whole track list shows', () => {
+  const tracks = Array.from({ length: 21 }, (_, index) =>
+    albumTrack(index + 1, `Track ${index + 1}`, null, 100),
+  )
+  const long = AlbumDetailSchema.parse({ ...album, tracks })
+  const html = renderWithUnlisted(
+    [{ trackId: 'lastfm-track', trackName: 'Bonus', scrobbles: 2 }],
+    long,
+  )
+  assert.doesNotMatch(html, /Scrobbled under this album|Bonus/)
+  assert.match(html, />Show all 21</)
+  assert.doesNotMatch(
+    renderWithUnlisted([]),
+    /Scrobbled under this album, not on its track list/,
+  )
 })

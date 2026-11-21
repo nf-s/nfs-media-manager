@@ -19,6 +19,7 @@ import { z } from 'zod'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableScroll,
@@ -106,6 +107,14 @@ import {
 import { useGridDensity } from '@/hooks/useGridDensity'
 import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { DetailLink } from './detail-link'
+import { artistMergeAdapter } from './artist-merge-review'
+import {
+  MergeBar,
+  RowSelectAll,
+  RowSelectRow,
+  rowSelectionWidth,
+  useRowSelection,
+} from './merge-bar'
 import {
   ActiveFiltersSection,
   BrowseItemsCount,
@@ -376,6 +385,18 @@ export default function ArtistBrowser() {
     itemSchema: ArtistSummarySchema,
   })
   const { total, slots, padTop, padBottom } = query
+  const loadedIds = slots.flatMap(({ item }) => (item ? [item.id] : []))
+  const selection = useRowSelection(loadedIds)
+  // Another search, filter, sort or view lists other artists.
+  const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
+  if (selectionIdentity !== scrollIdentity) {
+    setSelectionIdentity(scrollIdentity)
+    selection.clear()
+  }
+  const tableWidths = [
+    rowSelectionWidth,
+    ...columns.map((field) => widths.widthFor(field)),
+  ]
   const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
   const titleFilters = matchingTitleFilters(
     facets.data ?? [],
@@ -882,22 +903,24 @@ export default function ArtistBrowser() {
               data-layout="fixed"
               aria-label="Artists"
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
-              style={{
-                width: columnsWidth(
-                  columns.map((field) => widths.widthFor(field)),
-                ),
-              }}
+              style={{ width: columnsWidth(tableWidths) }}
             >
-              <TableColumns
-                widths={columns.map((field) => widths.widthFor(field))}
-              />
+              <TableColumns widths={tableWidths} />
               <TableHeader>
                 <TableRow>
+                  <TableHead sticky={0}>
+                    <RowSelectAll
+                      selection={selection}
+                      label="Select loaded artists"
+                      disabled={!loadedIds.length}
+                    />
+                  </TableHead>
                   {columns.map((field) => (
                     <BrowseItemsHead
                       key={field.key}
                       field={field}
                       identity={field.key === 'name'}
+                      sticky={rowSelectionWidth}
                       sortBy={sortBy}
                       direction={direction}
                       onSort={sort}
@@ -909,7 +932,10 @@ export default function ArtistBrowser() {
               <TableBody>
                 {padTop > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
-                    <td colSpan={columns.length} style={{ height: padTop }} />
+                    <td
+                      colSpan={tableWidths.length}
+                      style={{ height: padTop }}
+                    />
                   </tr>
                 )}
                 {slots.map(({ item, index }) =>
@@ -917,14 +943,25 @@ export default function ArtistBrowser() {
                     <TableRow
                       key={item.id}
                       data-item-index={index}
-                      selected={item.id === selectedId}
+                      selected={
+                        item.id === selectedId || selection.has(item.id)
+                      }
                       aria-rowindex={index + 2}
                     >
+                      <TableCell sticky={0}>
+                        <RowSelectRow
+                          selection={selection}
+                          id={item.id}
+                          title={item.name}
+                        />
+                      </TableCell>
                       {columns.map((field) => (
                         <TableCell
                           key={field.key}
                           align={field.type === 'number' ? 'end' : undefined}
-                          sticky={field.key === 'name' ? 0 : undefined}
+                          sticky={
+                            field.key === 'name' ? rowSelectionWidth : undefined
+                          }
                           stickyEdge={field.key === 'name'}
                           title={formatFieldValue(
                             field,
@@ -941,6 +978,7 @@ export default function ArtistBrowser() {
                       aria-hidden="true"
                       data-placeholder=""
                     >
+                      <TableCell />
                       {columns.map((field) => (
                         <TableCell key={field.key}>
                           <Skeleton height={10} width="70%" />
@@ -952,7 +990,7 @@ export default function ArtistBrowser() {
                 {padBottom > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
                     <td
-                      colSpan={columns.length}
+                      colSpan={tableWidths.length}
                       style={{ height: padBottom }}
                     />
                   </tr>
@@ -961,6 +999,13 @@ export default function ArtistBrowser() {
             </table>
           )}
         </TableScroll>
+        {view === 'table' && (
+          <MergeBar
+            selection={selection}
+            total={query.hasTotal ? total : undefined}
+            adapter={artistMergeAdapter}
+          />
+        )}
       </div>
     </section>
   )

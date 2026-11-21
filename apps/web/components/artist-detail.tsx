@@ -1,9 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import type { ReactNode } from 'react'
+import { useContext, useEffect, useState, type ReactNode } from 'react'
 import { useDetailPerformance } from '@/hooks/useDetailPerformance'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { z } from 'zod'
 import { Disc3, UserRound } from 'lucide-react'
 import {
@@ -39,6 +39,7 @@ import { TabsContent } from '@repo/ui/components/ui/tabs'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { artistBrowseHref, artistTagBrowseHref } from '@/utils/creator-browse'
+import { detailPageHref } from '@/utils/detail-inspector'
 import { browseStateKeys } from '@/utils/embedded-browse'
 import { safeRatingHref } from '@/utils/provider-ratings'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
@@ -52,6 +53,10 @@ import {
   ArtistProfileSources,
 } from './artist-profile-sources'
 import { CreatorDetailState } from './creator-detail-state'
+import {
+  InspectorEntryContext,
+  useDetailInspector,
+} from './detail-inspector-context'
 import { DetailMore } from './detail-more'
 import {
   CreatorLibraryTable,
@@ -71,6 +76,7 @@ import { AlbumPlay, TrackRowPlay } from './detail-play'
 import { ScrobbleStats } from './listening-stats'
 import { EmbeddedTrackBrowser } from './track-browser'
 import { ListeningTrend } from './listening-trend'
+import { LibraryRecordChanges } from './library-changes'
 import { EmbeddedMediaBrowser } from './media-browser'
 import { MetadataCoverage } from './metadata-coverage'
 import MetadataSourceControl from './metadata-source-control'
@@ -537,13 +543,29 @@ function ArtistOverview({
   )
 }
 
-export function ArtistDetail({ id }: { id: string }) {
+/** The page of the artist a merged name was merged into, keeping the page's view. */
+export function keptArtistHref(
+  keptId: string,
+  location: { search: string; hash: string },
+) {
+  return `${detailPageHref({ kind: 'artist', id: keptId }, new URLSearchParams(location.search))}${location.hash}`
+}
+
+export function ArtistDetail({ id: requestedId }: { id: string }) {
   const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  const drawer = useContext(InspectorEntryContext)
+  const navigation = useDetailInspector()
   const { tab, setTab, tabHref } = useDetailTab(artistTabs, {
     aliases: artistTabAliases,
     // Each tab's list has its own search, filters, sort and view.
     reset: browseStateKeys,
   })
+  // A merged name answers with the artist it was merged into, which the page then shows.
+  const [shown, setShown] = useState({ requestedId, id: requestedId })
+  if (shown.requestedId !== requestedId)
+    setShown({ requestedId, id: requestedId })
+  const id = shown.requestedId === requestedId ? shown.id : requestedId
   const path = `/api/v1/artists/${encodeURIComponent(id)}`
   const query = useQuery({
     queryKey: ['artist', id],
@@ -556,6 +578,29 @@ export function ArtistDetail({ id }: { id: string }) {
       ),
   })
   useDetailPerformance('artists', id, query)
+  /** Shows another artist in place of this one, replacing the URL. */
+  function showArtist(nextId: string) {
+    if (drawer && navigation) {
+      navigation.replace({
+        kind: 'artist',
+        id: nextId,
+        view: drawer.active?.view,
+      })
+      return
+    }
+    setShown({ requestedId, id: nextId })
+    window.history.replaceState(
+      null,
+      '',
+      keptArtistHref(nextId, window.location),
+    )
+  }
+  const loaded = query.data
+  useEffect(() => {
+    if (!loaded || loaded.id === id) return
+    client.setQueryData(['artist', loaded.id], loaded)
+    showArtist(loaded.id)
+  })
   if (!query.data)
     return (
       <CreatorDetailState
@@ -608,6 +653,9 @@ export function ArtistDetail({ id }: { id: string }) {
           profile.type,
           `${formatCount(artist.albumCount)} ${artist.albumCount === 1 ? 'album' : 'albums'}`,
           `${formatCount(artist.trackCount)} ${artist.trackCount === 1 ? 'track' : 'tracks'}`,
+          artist.keptNames.length
+            ? `Also known as ${artist.keptNames.map(({ name }) => `“${name}”`).join(', ')}`
+            : undefined,
         ]}
         links={
           <ArtistProfileLinks
@@ -678,9 +726,15 @@ export function ArtistDetail({ id }: { id: string }) {
         </TabsContent>
         <TabsContent value="sources">
           <ArtistProfileSources
-            id={id}
+            id={artist.id}
             snapshots={artist.providers}
             identifiers={artist.identifiers}
+          />
+          <LibraryRecordChanges
+            key={`changes-${artist.id}`}
+            kind="artist"
+            recordId={artist.id}
+            onResolved={showArtist}
           />
         </TabsContent>
       </DetailTabs>

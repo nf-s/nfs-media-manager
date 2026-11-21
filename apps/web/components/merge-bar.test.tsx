@@ -166,7 +166,7 @@ test('the track review shows the evidence, the track to keep and the error after
   )
   assert.match(html, /Check before merging\. Lengths differ by 0:30\./)
   assert.match(html, /<\/div><p>Example error<\/p>/)
-  assert.match(html, /aria-label="Track to keep"/)
+  assert.match(html, /aria-label="Shown as"/)
   assert.match(html, /aria-label="Tracks to merge"/)
   assert.equal(trackMergeAdapter.wording.title(cautionPlan), 'Merge 2 tracks')
   assert.equal(trackMergeAdapter.needsReview(cleanPlan), false)

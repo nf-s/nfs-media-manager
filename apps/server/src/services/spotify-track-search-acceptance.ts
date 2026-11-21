@@ -17,6 +17,23 @@ import {
   type AlbumFallbackArtistCreditCorrection,
 } from './album-library-tracks'
 import {
+  createdTracksEntry,
+  membershipDetails,
+  readJobOptions,
+  readTrackRowImage,
+  removedTracksEntry,
+  searchAcceptanceEntry,
+  trackRowStateEntry,
+} from './automatic-match-effects'
+import { readKeptSeparateTest } from './keep-separate-effects'
+import type { ChangeEffectEntry } from './library-change-effect'
+import {
+  beginTrackChange,
+  readChangeRecords,
+  recordTrackChange,
+} from './library-changes'
+import { readRejectionTest } from './library-match-rejections'
+import {
   readSpotifyTrackSearchCandidate,
   readSpotifyTrackSearchForAutomaticMatch,
 } from './spotify-track-search'
@@ -37,6 +54,7 @@ import {
   resolveSpotifyTrackIds,
   spotifyTrackItemId,
 } from './spotify-playlists'
+import { archiveTracks } from './track-archive'
 import { listTracksNeedingSpotifyMatch } from './track-match-diagnostics'
 import {
   moveTrackScrobbleNames,
@@ -273,6 +291,20 @@ async function rankSpotifySearchCandidates(
     )
 }
 
+/** The options a confirmed search writes on its job. */
+const ACCEPTANCE_KEYS = [
+  'acceptedTrackId',
+  'acceptedSpotifyTrackId',
+  'matchMethod',
+  'albumFallbackArtistCreditCorrection',
+  'matchedExistingSpotifyTrackId',
+]
+
+/**
+ * Gives the searched track's names, album positions and playlist entries to
+ * the confirmed Spotify recording and records the change: automatic for a
+ * search the app matched, the owner's for an accepted one.
+ */
 async function linkSpotifyRecording(
   tx: Transaction,
   { trackId, jobId }: SearchScope,
@@ -282,11 +314,24 @@ async function linkSpotifyRecording(
   {
     reusedSpotifyTrackId = false,
     albumFallbackArtistCreditCorrection,
+    batchId = null,
   }: {
     reusedSpotifyTrackId?: boolean
     albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection
+    batchId?: string | null
   } = {},
 ) {
+  const automatic = matchMethod === 'automatic'
+  const merged = targetId !== trackId
+  const draft = await beginTrackChange(tx, { trackIds: [trackId] })
+  const sources = merged ? await readChangeRecords(tx, 'track', [trackId]) : []
+  // A source without names is put back by its own effect, not with names.
+  const unnamed =
+    merged && !draft.before.length ? await archiveTracks(tx, [trackId]) : []
+  const before = await readTrackRowImage(tx, targetId)
+  const jobBefore = automatic
+    ? {}
+    : await readJobOptions(tx, jobId, ACCEPTANCE_KEYS)
   await storeConfirmedRecording(
     tx,
     targetId,
@@ -295,8 +340,28 @@ async function linkSpotifyRecording(
     matchMethod,
     albumFallbackArtistCreditCorrection,
   )
-  if (targetId !== trackId)
-    await transferTrackMemberships(tx, trackId, targetId, true)
+  const effects: ChangeEffectEntry[] = []
+  const after = before && (await readTrackRowImage(tx, targetId))
+  const changed = before && after && trackRowStateEntry(targetId, before, after)
+  if (!before) effects.push(createdTracksEntry([targetId]))
+  else if (changed) effects.push(changed)
+  // A track the change made takes the album of the positions it receives
+  // with it, so Redo makes it again as the move left it.
+  if (merged && !before)
+    await tx.execute(sql`
+      update library_track target
+      set album_media_item_id = source.album_media_item_id,
+        album_link_strategy = 'album-track-list'
+      from library_track source
+      where target.media_item_id = ${targetId} and source.media_item_id = ${trackId}
+        and (target.album_media_item_id is null
+          or target.album_media_item_id = source.album_media_item_id)
+        and exists (select 1 from track t where t.track_media_item_id = ${trackId}
+          and t.album_media_item_id = source.album_media_item_id)`)
+  if (merged)
+    effects.push(
+      ...(await transferTrackMemberships(tx, trackId, targetId, true)),
+    )
   await moveTrackScrobbleNames(
     tx,
     trackId,
@@ -305,7 +370,8 @@ async function linkSpotifyRecording(
     trackId !== targetId,
     matchMethod === 'manual' ? 'manual' : 'exact',
   )
-  if (targetId !== trackId) await removeOrphanTracks(tx, [trackId])
+  if (merged) await removeOrphanTracks(tx, [trackId])
+  if (unnamed.length) effects.push(removedTracksEntry([trackId]))
   await tx
     .update(scrapeJob)
     .set({
@@ -326,6 +392,33 @@ async function linkSpotifyRecording(
       })}::jsonb`,
     })
     .where(eq(scrapeJob.id, jobId))
+  // An undone automatic match leaves its search marked as used, so the same
+  // search is not applied again.
+  if (!automatic)
+    effects.push(
+      searchAcceptanceEntry(
+        jobId,
+        ACCEPTANCE_KEYS,
+        jobBefore,
+        await readJobOptions(tx, jobId, ACCEPTANCE_KEYS),
+        [trackId, targetId],
+      ),
+    )
+  const [target] = await readChangeRecords(tx, 'track', [targetId])
+  await recordTrackChange(
+    tx,
+    { ...draft, archived: [...draft.archived, ...unnamed] },
+    {
+      action: merged ? 'merge' : 'move',
+      actor: automatic ? 'automatic' : 'owner',
+      rule: automatic ? 'spotify-search' : null,
+      batchId,
+      target: target ?? null,
+      sources,
+      details: membershipDetails(effects),
+      effects,
+    },
+  )
 }
 
 /** Resolve the same retained-recording checks for automatic matches and their explanations. */
@@ -357,11 +450,55 @@ export async function checkSpotifySearchDestination(
   }
 }
 
+const NameRowsSchema = z.array(
+  z.object({
+    username: z.string(),
+    artist_key: z.string(),
+    track_key: z.string(),
+  }),
+)
+
+/**
+ * Whether an automatic match must not give the source's names to a target:
+ * the owner undid or separated that match, or keeps the two tracks separate.
+ */
+async function readForbiddenTargets(
+  tx: Transaction,
+  sourceId: string,
+  targetIds: string[],
+) {
+  const names = NameRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        select username, artist_key, track_key from lastfm_track_source
+        where track_media_item_id = ${sourceId}`)
+    ).rows,
+  )
+  const rejected = new Map<
+    string,
+    Awaited<ReturnType<typeof readRejectionTest>>
+  >()
+  for (const username of new Set(names.map((name) => name.username)))
+    rejected.set(username, await readRejectionTest(tx, username))
+  const kept = await readKeptSeparateTest(tx, 'track', [sourceId, ...targetIds])
+  return (targetId: string) =>
+    targetId !== sourceId &&
+    (kept(sourceId, targetId) ||
+      names.some((name) =>
+        rejected.get(name.username)?.(
+          name.artist_key,
+          name.track_key,
+          targetId,
+        ),
+      ))
+}
+
 /** The worker calls this after saving the candidates, within its cancellation fence. */
 export async function reconcileSpotifyTrackSearchInTransaction(
   tx: Transaction,
   input: SearchScope,
   dryRun = false,
+  batchId: string | null = null,
 ): Promise<ReconciliationResult> {
   await lockLibraryTrackWrites(tx)
   const candidates = await readSpotifyTrackSearchForAutomaticMatch(tx, input)
@@ -382,13 +519,19 @@ export async function reconcileSpotifyTrackSearchInTransaction(
       spotifySearchMatchesSource(evidence, candidate) &&
       !spotifySearchHasAlternateVersion(evidence, candidate, candidates),
   )
-  for (const choice of await rankSpotifySearchCandidates(
+  const ranked = await rankSpotifySearchCandidates(tx, evidence, eligible)
+  const forbidden = await readForbiddenTargets(
     tx,
-    evidence,
-    eligible,
-  )) {
+    source.id,
+    ranked.map(
+      (choice) =>
+        choice.targetId ?? newRecordingTarget(source, choice.candidate),
+    ),
+  )
+  for (const choice of ranked) {
     const { candidate } = choice
     const targetId = choice.targetId ?? newRecordingTarget(source, candidate)
+    if (forbidden(targetId)) continue
     const destination = await checkSpotifySearchDestination(
       tx,
       source.id,
@@ -404,6 +547,7 @@ export async function reconcileSpotifyTrackSearchInTransaction(
       await linkSpotifyRecording(tx, input, targetId, candidate, 'automatic', {
         reusedSpotifyTrackId,
         albumFallbackArtistCreditCorrection,
+        batchId,
       })
     return {
       status: 'matched',
@@ -419,10 +563,13 @@ export async function reconcileSpotifyTrackSearchInTransaction(
 /** Apply or preview a past search using its retained results without another Spotify request. */
 export function reconcileSavedSpotifyTrackSearch(
   input: SearchScope,
-  { dryRun = false }: { dryRun?: boolean } = {},
+  {
+    dryRun = false,
+    batchId = null,
+  }: { dryRun?: boolean; batchId?: string | null } = {},
 ) {
   return db.transaction((tx) =>
-    reconcileSpotifyTrackSearchInTransaction(tx, input, dryRun),
+    reconcileSpotifyTrackSearchInTransaction(tx, input, dryRun, batchId),
   )
 }
 

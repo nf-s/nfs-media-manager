@@ -229,11 +229,17 @@ export async function getArtist(
     .from(directory)
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })
+  const kept = listKeptArtistNames(db, id)
   const [providers, history, mixCount, keptNames] = await Promise.all([
     listCurrentArtistProfiles(id),
     query.includeHistory === 'false' ? [] : listArtistProfileHistory(id, 20),
-    countMixesNamingArtist(summary.name),
-    listKeptArtistNames(db, id),
+    kept.then((names) =>
+      countMixesNamingArtist(
+        summary.name,
+        names.map(({ name }) => name),
+      ),
+    ),
+    kept,
   ])
   return ArtistDetailSchema.parse({
     ...summary,
@@ -401,8 +407,13 @@ export async function listArtistTracks(
 
 /** Stored station mixes naming the artist; station names are matched, not linked. */
 export async function listArtistMixes(id: string, query: ArtistMixQuery) {
-  const { name } = await requireLibraryArtist(id)
-  return listMixesNamingArtist(name, query)
+  const { id: artistId, name } = await requireLibraryArtist(id)
+  const kept = await listKeptArtistNames(db, artistId)
+  return listMixesNamingArtist(
+    name,
+    query,
+    kept.map((keptName) => keptName.name),
+  )
 }
 
 export async function listArtistPlaylists(

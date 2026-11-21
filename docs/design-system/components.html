@@ -449,6 +449,10 @@
                     '<label class="ds-checkrow"><input type="checkbox" class="ds-check" checked /> Only missing</label>',
                     'checkbox',
                   ),
+                  g.item(
+                    '<label class="ds-checkrow"><input type="radio" class="ds-check" name="spec-shown" checked /> Shown</label>',
+                    'radio',
+                  ),
                 ]),
               ) +
               g.spec(
@@ -501,6 +505,7 @@
               g.rules([
                 '<b>One toolbar order</b> on every Browse page and every Browse list inside a detail: actions, search, sort picker, direction, view switch, Filters button, count. Grid size and columns are in the Filters drawer, not in the row. Tables without a view switch drop the sort picker and view switch and keep their Columns button.',
                 '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons; the sort picker uses the select’s box.',
+                '<b>A radio</b> is the checkbox’s box on <code>input type="radio"</code> (<code>ds-check</code>). It picks one row of a table, in a column of its own, such as the version a track is shown as.',
                 '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered. A Browse list inside a detail puts it on the filter line instead.',
                 '<b>On a phone</b> the toolbar wraps: the search takes the first line; the sort picker, direction, view switch and Filters button share the second, the sort picker taking the room the others leave, and the count follows where it fits. The Filters button is short on every phone toolbar.',
                 '<b>A view of the same rows</b> is a toolbar button that stays pressed while it is on (<code>ToolbarToggle</code>): an icon, the label and the count the view holds, such as Possible duplicates. Pressing it again returns to every row. It changes which rows show and how they are grouped, not how they are drawn: Grid, List and Table stay in the view switch.',
@@ -831,11 +836,11 @@
                 '<b>On a phone no column stays in place.</b> Up to 700px the selection and identity columns scroll sideways with the rest, so the first column never covers the others; the header still stays at the top. No column is wider than two thirds of the screen (<code>--ds-col-max: 66vw</code>; <code>columnWidth</code> writes each width as <code>min(width, var(--ds-col-max))</code>), so part of the next column always shows.',
                 '<b>Nothing is clipped by the scrollbar.</b> The scroll area reserves its gutter and the last column keeps the 12px inset. When the table is wider than the panel the identity column stays in place and the rest scrolls beneath a soft edge; on a phone the whole table scrolls.',
                 '<b>Child rows nest to any depth.</b> Each level indents the first cell by one more step (<code>TableRow depth</code>; <code>child</code> is depth 1). A row that has child rows carries a ghost icon button with a chevron before its title that shows or hides them; a row without children keeps an empty space of the same width so titles line up.',
-                '<b>Grouped tracks</b> place the release versions button immediately after the title link in the pinned identity cell.',
+                '<b>Grouped tracks</b> open their versions as part rows in a table, from the chevron before the thumbnail. In List and Grid the release versions button follows the title link.',
                 "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
                 '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
                 '<b>A change made from the bar reports itself there.</b> When the selection is gone the bar holds one line saying what changed (<code>TableSelectionResult</code>, <code>ds-selectbar-result</code>), then Undo and Dismiss. After Undo the line starts with <code>Undone:</code> and the button is Redo. Undo and Redo are disabled, with the reason as their title, when a later change stands in the way. The line is cut with an ellipsis; the buttons are never pushed out.',
-                '<b>Merge in a table of tracks</b> (<code>TrackMergeBar</code>) is the primary action of the bar and needs two or more rows. It is made at once. A review opens first only when something speaks against it: a version word such as Live or Demo in some titles only, lengths more than ten seconds apart, different artists, or a track that cannot be merged into another.',
+                '<b>Merge in a table of tracks</b> (<code>TrackMergeBar</code>) is the primary action of the bar and needs two or more rows. It is made at once. A review opens first only when something speaks against it: a version word such as Live or Demo in some titles only, lengths more than ten seconds apart, different artists, two positions on one album, or tracks that were kept separate.',
                 '<b>What a record is made of shows under its row.</b> A ghost chevron before the thumbnail (<code>TablePartToggle</code>, <code>ds-part-toggle</code>) opens one row per part (<code>TableRow part</code>): a provider’s mark and the part’s title in the secondary ink, indented past the chevron (<code>TablePartTitle</code>, <code>ds-part-title</code>). A record with one part keeps the chevron’s space (<code>TablePartSlot</code>) so titles line up. A part row’s other cells hold that part’s own values or nothing.',
                 '<b>A group row can carry actions</b> for the rows under it (<code>TableGroupActions</code>, <code>ds-group-actions</code>): small buttons, a default one first, such as Merge and Keep separate, then on the same line the evidence that put the rows together. The evidence is cut with an ellipsis and shows in full on hover; the buttons are never pushed out.',
               ]) +
