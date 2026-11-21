@@ -190,12 +190,6 @@ export function firstMusicTagRows(mediaType: 'album' | 'track'): SQL {
     ) tags group by media_item_id`
 }
 
-export function sparseAlbumTags(albumId: SQL): SQL {
-  return sql`(select count(*) from (
-    ${releaseTagMemberships(albumId)} limit ${artistTagFallbackThreshold}
-  ) release_tags) < ${artistTagFallbackThreshold}`
-}
-
 export function firstMusicTag(mediaId: SQL, albumId: SQL): SQL {
   return sql`(with release_tags as materialized (${releaseTagMemberships(albumId)})
     select min(t.name) from (

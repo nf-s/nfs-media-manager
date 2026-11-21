@@ -71,7 +71,6 @@ import {
   firstMusicTag,
   mediaIdsWithArtistTag,
   matchingTagNames,
-  sparseAlbumTags,
 } from './music-tags'
 import {
   albumTrackDurationExpression,
@@ -405,7 +404,8 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
       )
     ), false)`
     if (key !== 'albumTag' && (mediaType === 'album' || mediaType === 'track'))
-      return sql`(${releaseMatch} or (${sparseAlbumTags(tagged)} and ${matchesValue('artistTag', value, mediaType)}))`
+      return sql`(${releaseMatch} or (${matchesValue('artistTag', value, mediaType)}
+        and (${tagged} is null or ${tagged} not in (${albumsWithEnoughTags()}))))`
     return releaseMatch
   }
   if (mediaType === 'album' && key === 'playlist')
