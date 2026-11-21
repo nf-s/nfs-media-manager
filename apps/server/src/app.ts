@@ -1,3 +1,5 @@
+// Install OpenAPI support before shared modules construct Zod schemas.
+import { createRoute, z } from '@hono/zod-openapi'
 import { Scalar } from '@scalar/hono-api-reference'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
@@ -39,8 +41,6 @@ import manualAdd from '@/routes/manual-add'
 import findMatch from '@/routes/find-match'
 import ai from '@/routes/ai'
 import user from '@/routes/user'
-import { z } from '@hono/zod-openapi'
-import { createRoute } from '@hono/zod-openapi'
 
 const app = createOpenAPIApp({
   strict: false,
