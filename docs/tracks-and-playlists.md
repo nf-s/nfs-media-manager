@@ -232,7 +232,7 @@ Each group starts with a row holding **Merge**, **Keep separate** and the eviden
 
 A track in a group shows a notice above its tabs naming the other tracks, with Merge and Keep separate.
 
-Groups are worked out in the background, so a new group can take a few minutes to appear after an import. Until the first grouping has run, the toggle shows no count and the view is empty. A group holds at most 12 tracks.
+Groups are worked out in the background, so a new group can take a few minutes to appear after an import. Until the first grouping has run, the toggle shows no count and the view is empty. A large library is grouped over several runs, five minutes apart, starting with the most-played tracks; the count grows until all groups are listed. A group holds at most 12 tracks.
 
 ### Albums and editions
 

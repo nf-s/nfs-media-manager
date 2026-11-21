@@ -24,6 +24,12 @@ export const trackDuplicateBuilder = sql`current_user || ':track-duplicates-' ||
 // Larger buckets of one artist and title are joined in a chain from the most
 // played track, not pair by pair.
 const PAIRWISE_BUCKET_LIMIT = 24
+/**
+ * The most new groups one rebuild of the whole library plans a merge for.
+ * Each plan is several statements, and the rebuild runs inside one scheduled
+ * invocation. The groups left over are planned by the rebuilds that follow.
+ */
+export const TRACK_DUPLICATE_PLAN_LIMIT = 400
 const WRITE_BATCH = 500
 const EVIDENCE_LIMIT = 3
 
@@ -399,11 +405,17 @@ async function planGroup(tx: ChangeTransaction, members: string[]) {
   }
 }
 
+/**
+ * The groups to publish, and how many clusters wait for a later rebuild
+ * because `planLimit` new plans were already worked out. The clusters with
+ * the most scrobbles are planned first.
+ */
 async function buildGroups(
   tx: ChangeTransaction,
   candidates: Candidate[],
   links: { owner_id: string; linked_id: string }[],
   stored: z.infer<typeof StoredGroupsSchema>,
+  planLimit = Number.POSITIVE_INFINITY,
 ) {
   const known = new Set(candidates.map((track) => track.id))
   const linkEdges: Edge[] = links
@@ -431,28 +443,48 @@ async function buildGroups(
   })
   const byId = new Map(candidates.map((track) => [track.id, track]))
   const previous = new Map(stored.map((group) => [group.id, group]))
-  const groups: GroupDraft[] = []
-  for (const cluster of clusters) {
-    const id = createStableId(
-      'track-duplicate',
-      JSON.stringify([...cluster].sort()),
-    )
-    const members = cluster.flatMap((trackId) => {
-      const track = byId.get(trackId)
-      return track ? [track] : []
+  const drafts = clusters
+    .map((cluster) => {
+      const members = cluster.flatMap((trackId) => {
+        const track = byId.get(trackId)
+        return track ? [track] : []
+      })
+      return {
+        id: createStableId(
+          'track-duplicate',
+          JSON.stringify([...cluster].sort()),
+        ),
+        cluster,
+        members,
+        scrobbles: Math.max(...members.map((track) => track.scrobbles)),
+      }
     })
+    .sort(
+      (left, right) =>
+        right.scrobbles - left.scrobbles || left.id.localeCompare(right.id),
+    )
+  const groups: GroupDraft[] = []
+  let planned = 0
+  let waiting = 0
+  for (const { id, cluster, members, scrobbles } of drafts) {
     // A group whose tracks are unchanged keeps the plan worked out for it.
-    const plan = previous.get(id) ?? (await planGroup(tx, cluster))
+    const kept = previous.get(id)
+    if (!kept && planned >= planLimit) {
+      waiting += 1
+      continue
+    }
+    if (!kept) planned += 1
+    const plan = kept ?? (await planGroup(tx, cluster))
     if (!plan) continue
     groups.push({
       id,
       ...describeGroup(members, edges),
       cautions: plan.cautions,
       members: plan.members,
-      scrobbles: Math.max(...members.map((track) => track.scrobbles)),
+      scrobbles,
     })
   }
-  return groups
+  return { groups, waiting }
 }
 
 async function publishGroups(
@@ -503,21 +535,25 @@ async function publishGroups(
     where r.id = g.id and g.rank <> r.rank`)
 }
 
-/** Every group, worked out again from the whole library. */
+/**
+ * Every group, worked out again from the whole library. Returns the number
+ * published and the number that wait for the next rebuild.
+ */
 async function rebuildAll(tx: ChangeTransaction) {
   await tx.execute(sql`
     delete from track_match_key k using media_item mi
     where mi.id = k.track_id and (mi.media_type <> 'track'
       or mi.metadata->>'legacyHidden' is not distinct from 'true')`)
   const candidates = await readCandidates(tx)
-  const groups = await buildGroups(
+  const { groups, waiting } = await buildGroups(
     tx,
     candidates,
     await readLinkEdges(tx),
     await readStoredGroups(tx),
+    TRACK_DUPLICATE_PLAN_LIMIT,
   )
   await publishGroups(tx, groups, 'all')
-  return groups.length
+  return { published: groups.length, waiting }
 }
 
 /**
@@ -549,7 +585,7 @@ async function rebuildAround(tx: ChangeTransaction, trackIds: string[]) {
   const links = (await readLinkEdges(tx, scope)).filter(
     (row) => inScope.has(row.owner_id) && inScope.has(row.linked_id),
   )
-  const groups = await buildGroups(tx, candidates, links, stored)
+  const { groups } = await buildGroups(tx, candidates, links, stored)
   await publishGroups(
     tx,
     groups,
@@ -564,7 +600,8 @@ async function rebuildAround(tx: ChangeTransaction, trackIds: string[]) {
 /**
  * Works out the possible duplicates again in the caller's transaction. With
  * `trackIds`, only the groups around those tracks, as an owner's change
- * needs before its request returns; without, every group.
+ * needs before its request returns; without, every group. A rebuild of every
+ * group that left some unplanned asks for the next one with a marker.
  */
 export async function refreshTrackDuplicates(
   tx: ChangeTransaction,
@@ -575,10 +612,14 @@ export async function refreshTrackDuplicates(
     if (scope.trackIds.length) await rebuildAround(tx, scope.trackIds)
     return
   }
-  const groupCount = await rebuildAll(tx)
+  const { published, waiting } = await rebuildAll(tx)
   await tx.execute(sql`
     insert into track_duplicate_state (singleton, builder, group_count)
-    values (true, ${trackDuplicateBuilder}, ${groupCount})
+    values (true, ${trackDuplicateBuilder}, ${published})
     on conflict (singleton) do update set builder = excluded.builder,
       group_count = excluded.group_count`)
+  if (waiting > 0)
+    await tx.execute(sql`
+      insert into track_duplicate_dirty (transaction_id)
+      values (txid_current()) on conflict do nothing`)
 }

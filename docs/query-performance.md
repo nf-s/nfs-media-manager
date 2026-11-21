@@ -242,7 +242,7 @@ Migration `0047` limits Track vocabulary invalidation from artist enrichment to 
 
 Migration `0048` stores the background-only refresh decision for slow grouped recording orders. Existing published ranks remain readable.
 
-Migration `0056` rebuilds the stored recording order triggers so stored versions invalidate it, and `0057` adds the possible-duplicates groups' invalidation triggers and redefines `mark_browse_cache_dirty()`. The scheduled maintenance of the Worker and of the Node job worker rebuilds the groups; the rebuild has no workload in the performance suite yet. See [releasing the merge stages](library-merge-handover.md#releasing).
+Migration `0056` rebuilds the stored recording order triggers so stored versions invalidate it, and `0057` adds the possible-duplicates groups' invalidation triggers and redefines `mark_browse_cache_dirty()`. The scheduled maintenance of the Worker and of the Node job worker rebuilds the groups. A merge plan is four statements for each new group, so one rebuild plans at most 400 new groups (about 1,650 statements on a library of 81,000 tracks) and the next runs plan the rest. The rebuild has no workload in the performance suite yet. See [releasing the merge stages](library-merge-handover.md#releasing).
 
 ### Trigger functions and transition tables
 

@@ -35,6 +35,7 @@ import {
   redoLibraryChange,
   undoLibraryChange,
 } from '@/services/library-changes'
+import { TRACK_DUPLICATE_PLAN_LIMIT } from '@/services/track-duplicate-refresh'
 import { linkScrobblesToTracks } from '@/services/track-links'
 import { mergeTracks } from '@/services/track-merges'
 import {
@@ -418,4 +419,50 @@ it('rebuilds on the maintenance tick only after a change', async () => {
   expect((await groupOf(harbour.id))?.memberIds.sort()).toEqual(
     [harbour.id, withFriend.id].sort(),
   )
+})
+
+it('plans a bounded number of new groups in one rebuild and the rest in the next', async () => {
+  const before = (await countTrackDuplicateGroups({})).count
+  // Each pair is two Spotify tracks with one title: one new group.
+  const pairCount = TRACK_DUPLICATE_PLAN_LIMIT + 10
+  const pairs = Array.from({ length: pairCount }, (_, pair) =>
+    ['a', 'b'].map((side) => ({
+      id: `tidewater-${pair}-${side}`,
+      title: `Tidewater ${pair}`,
+    })),
+  ).flat()
+  await fixture.insert(schema.mediaItem).values(
+    pairs.map(({ id, title }) => ({
+      id,
+      slug: id,
+      title,
+      mediaType: 'track',
+      sourceLabel: 'spotify',
+    })),
+  )
+  await fixture.insert(schema.libraryTrack).values(
+    pairs.map(({ id }) => ({
+      mediaItemId: id,
+      spotifyTrackId: id.padEnd(22, '0'),
+      durationSec: 200,
+    })),
+  )
+  await fixture
+    .insert(schema.mediaCredit)
+    .values(
+      pairs.map(({ id }) => ({ mediaItemId: id, artistId, role: 'artist' })),
+    )
+
+  expect(await rebuild()).toBe(true)
+  expect(await countTrackDuplicateGroups({})).toEqual({
+    count: before + TRACK_DUPLICATE_PLAN_LIMIT,
+    ready: true,
+  })
+  // The groups already planned keep their plans; the rest are planned now.
+  expect(await rebuild()).toBe(true)
+  expect(await countTrackDuplicateGroups({})).toEqual({
+    count: before + pairCount,
+    ready: true,
+  })
+  expect(await rebuild()).toBe(false)
 })
