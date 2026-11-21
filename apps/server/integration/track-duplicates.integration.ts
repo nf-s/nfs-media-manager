@@ -5,7 +5,10 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { LibraryChangeListQuerySchema } from '@repo/schemas/library-changes'
+import {
+  LibraryChangeListQuerySchema,
+  type TrackMergeCaution,
+} from '@repo/schemas/library-changes'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
@@ -37,6 +40,7 @@ import {
 } from '@/services/library-changes'
 import { TRACK_DUPLICATE_PLAN_LIMIT } from '@/services/track-duplicate-refresh'
 import { linkScrobblesToTracks } from '@/services/track-links'
+import { readTrackMergePlan } from '@/services/track-merge-plan'
 import { mergeTracks } from '@/services/track-merges'
 import {
   countTrackDuplicateGroups,
@@ -465,4 +469,52 @@ it('plans a bounded number of new groups in one rebuild and the rest in the next
     ready: true,
   })
   expect(await rebuild()).toBe(false)
+})
+
+it('stores for each group the kept track and the cautions of its merge plan', async () => {
+  // Two tracks of one group become positions on one album.
+  const albumId = 'fixture-album'
+  await fixture.insert(schema.mediaItem).values({
+    id: albumId,
+    slug: albumId,
+    title: 'Low Lanterns',
+    mediaType: 'album',
+  })
+  await fixture.insert(schema.album).values({ mediaItemId: albumId })
+  await fixture.insert(schema.track).values(
+    [liveDash, livePlain].map(({ id, title }, index) => ({
+      id: `fixture-position-${index}`,
+      albumMediaItemId: albumId,
+      trackMediaItemId: id,
+      title,
+      position: index + 1,
+    })),
+  )
+  // Every group is planned again.
+  await fixture.delete(schema.trackDuplicateGroup)
+  await fixture.execute(
+    sql`update track_duplicate_state set group_count = null`,
+  )
+  expect(await rebuild()).toBe(true)
+
+  // The words of a version caution follow the order the tracks are read in.
+  const comparable = (cautions: TrackMergeCaution[]) =>
+    cautions.map((caution) =>
+      caution.code === 'version'
+        ? { ...caution, words: [...caution.words].sort() }
+        : caution,
+    )
+  const { groups } = await readTrackDuplicateLayout(browse())
+  expect(groups.length).toBeGreaterThan(3)
+  for (const group of groups) {
+    const plan = await readTrackMergePlan(fixture, {
+      trackIds: group.memberIds,
+    })
+    expect(group.memberIds[0]).toBe(plan.targetId)
+    expect(comparable(group.cautions)).toEqual(comparable(plan.cautions))
+  }
+  expect((await groupOf(liveDash.id))?.cautions).toContainEqual({
+    code: 'same-album',
+    albums: ['Low Lanterns'],
+  })
 })

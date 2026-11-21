@@ -5,13 +5,12 @@ import {
   type TrackMergeCaution,
 } from '@repo/schemas/library-changes'
 import type { TrackDuplicateRule } from '@repo/schemas/track-duplicates'
-import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
 import { trackMatchKeys } from '@/lib/track-matching'
 import { mediaItem } from '@/schemas/db'
 import { readKeptSeparate } from './keep-separate-effects'
 import type { ChangeTransaction } from './library-change-effect'
-import { readTrackMergePlan } from './track-merge-plan'
+import { readTrackMergeOutlines } from './track-merge-plan'
 
 /** The most tracks one group can hold. Larger clusters are split. */
 const TRACK_DUPLICATE_GROUP_LIMIT = 12
@@ -25,12 +24,13 @@ export const trackDuplicateBuilder = sql`current_user || ':track-duplicates-' ||
 // played track, not pair by pair.
 const PAIRWISE_BUCKET_LIMIT = 24
 /**
- * The most new groups one rebuild of the whole library plans a merge for.
- * Each plan is several statements, and the rebuild runs inside one scheduled
- * invocation. The groups left over are planned by the rebuilds that follow.
+ * The most new groups one rebuild of the whole library plans a merge for, so
+ * that the work of one scheduled invocation is bounded. The groups left over
+ * are planned by the rebuilds that follow.
  */
-export const TRACK_DUPLICATE_PLAN_LIMIT = 400
-const WRITE_BATCH = 500
+export const TRACK_DUPLICATE_PLAN_LIMIT = 2000
+// Rows in one statement. Each statement is a round trip from the Worker.
+const WRITE_BATCH = 2000
 const EVIDENCE_LIMIT = 3
 
 /** Holds the published groups while one transaction rewrites them. */
@@ -387,24 +387,6 @@ async function readStoredGroups(tx: ChangeTransaction, ids?: string[]) {
   )
 }
 
-/** The plan's cautions and its order, the track to keep first. */
-async function planGroup(tx: ChangeTransaction, members: string[]) {
-  try {
-    const plan = await readTrackMergePlan(tx, {
-      trackIds: members,
-      follow: false,
-    })
-    return {
-      cautions: plan.cautions,
-      members: plan.tracks.map((track) => track.id),
-    }
-  } catch (error) {
-    // A track the plan cannot read is not offered for a merge.
-    if (error instanceof ServerError) return null
-    throw error
-  }
-}
-
 /**
  * The groups to publish, and how many clusters wait for a later rebuild
  * because `planLimit` new plans were already worked out. The clusters with
@@ -463,18 +445,22 @@ async function buildGroups(
       (left, right) =>
         right.scrobbles - left.scrobbles || left.id.localeCompare(right.id),
     )
+  // A group whose tracks are unchanged keeps the plan worked out for it.
+  const unplanned = drafts.filter((draft) => !previous.has(draft.id))
+  const planning = unplanned.slice(0, planLimit)
+  const outlines = await readTrackMergeOutlines(
+    tx,
+    planning.map((draft) => draft.cluster),
+  )
+  const planned = new Map(
+    planning.map((draft, index) => [draft.id, outlines[index] ?? null]),
+  )
   const groups: GroupDraft[] = []
-  let planned = 0
-  let waiting = 0
-  for (const { id, cluster, members, scrobbles } of drafts) {
-    // A group whose tracks are unchanged keeps the plan worked out for it.
+  for (const { id, members, scrobbles } of drafts) {
     const kept = previous.get(id)
-    if (!kept && planned >= planLimit) {
-      waiting += 1
-      continue
-    }
-    if (!kept) planned += 1
-    const plan = kept ?? (await planGroup(tx, cluster))
+    const outline = planned.get(id)
+    // A track the plan cannot read is not offered for a merge.
+    const plan = kept ?? (outline && { ...outline, members: outline.trackIds })
     if (!plan) continue
     groups.push({
       id,
@@ -484,7 +470,7 @@ async function buildGroups(
       scrobbles,
     })
   }
-  return { groups, waiting }
+  return { groups, waiting: unplanned.length - planning.length }
 }
 
 async function publishGroups(

@@ -138,6 +138,43 @@ function artistCaution(
     : []
 }
 
+/** The tracks of the given IDs that a merge can read. */
+async function readPlanTracks(
+  reader: Reader,
+  trackIds: string[],
+  lock = false,
+) {
+  return PlanTracksSchema.parse(
+    (
+      await reader.execute(sql`
+        select lt.media_item_id as id, mi.title,
+          coalesce((
+            select array_agg(a.name order by c.billing_order, a.id)
+            from media_credit c join artist a on a.id = c.artist_id
+            where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists,
+          coalesce(am.title, lt.album_name) as album_title,
+          nullif(greatest(coalesce(lt.duration_sec, ${albumTrackDurationExpression(
+            sql`lt.media_item_id`,
+            sql`lt.album_media_item_id`,
+          )}), 0), 0) as duration_sec,
+          lt.scrobble_count as scrobbles,
+          lt.spotify_track_id is not null as spotify,
+          exists (select 1 from track t
+            where t.track_media_item_id = lt.media_item_id) as on_album,
+          exists (select 1 from playlist_item pi
+            where pi.media_item_id = lt.media_item_id) as on_playlist,
+          (select count(*)::int from lastfm_track_source s
+            where s.track_media_item_id = lt.media_item_id) as name_count
+        from library_track lt join media_item mi on mi.id = lt.media_item_id
+        left join media_item am on am.id = lt.album_media_item_id
+        where lt.media_item_id in (${idList(trackIds)})
+          and mi.media_type = 'track'
+          and mi.metadata->>'legacyHidden' is distinct from 'true'
+        ${lock ? sql`for update of lt` : sql``}`)
+    ).rows,
+  )
+}
+
 /** Albums on which two of the tracks are different positions. */
 async function sameAlbumCaution(
   reader: Reader,
@@ -210,35 +247,7 @@ export async function readTrackMerge(
   { trackIds, targetId, follow = false }: TrackMergeSelection,
   lock = false,
 ): Promise<TrackMergeReading> {
-  const tracks = PlanTracksSchema.parse(
-    (
-      await reader.execute(sql`
-        select lt.media_item_id as id, mi.title,
-          coalesce((
-            select array_agg(a.name order by c.billing_order, a.id)
-            from media_credit c join artist a on a.id = c.artist_id
-            where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists,
-          coalesce(am.title, lt.album_name) as album_title,
-          nullif(greatest(coalesce(lt.duration_sec, ${albumTrackDurationExpression(
-            sql`lt.media_item_id`,
-            sql`lt.album_media_item_id`,
-          )}), 0), 0) as duration_sec,
-          lt.scrobble_count as scrobbles,
-          lt.spotify_track_id is not null as spotify,
-          exists (select 1 from track t
-            where t.track_media_item_id = lt.media_item_id) as on_album,
-          exists (select 1 from playlist_item pi
-            where pi.media_item_id = lt.media_item_id) as on_playlist,
-          (select count(*)::int from lastfm_track_source s
-            where s.track_media_item_id = lt.media_item_id) as name_count
-        from library_track lt join media_item mi on mi.id = lt.media_item_id
-        left join media_item am on am.id = lt.album_media_item_id
-        where lt.media_item_id in (${idList(trackIds)})
-          and mi.media_type = 'track'
-          and mi.metadata->>'legacyHidden' is distinct from 'true'
-        ${lock ? sql`for update of lt` : sql``}`)
-    ).rows,
-  )
+  const tracks = await readPlanTracks(reader, trackIds, lock)
   const target = chooseTarget(tracks, targetId)
   if (!target || tracks.length !== trackIds.length)
     throw new ServerError({ statusCode: 404, message: 'Track not found.' })
@@ -342,6 +351,106 @@ export async function readTrackMerge(
     blocked: false,
   }
   return { plan, follows }
+}
+
+/** What a list of suggested merges stores of each: the order and the cautions. */
+export type TrackMergeOutline = {
+  /** The tracks, the one to keep first. */
+  trackIds: string[]
+  cautions: TrackMergeCaution[]
+}
+
+// The most track IDs one outline statement is given.
+const OUTLINE_BATCH = 2000
+
+const GroupAlbumsSchema = z.array(
+  z.object({ group_index: z.number().int(), title: z.string() }),
+)
+
+/**
+ * For each group of tracks, the kept track and the cautions that
+ * `readTrackMergePlan` answers without `follow`, or null where it would not
+ * find a track. Three statements read up to `OUTLINE_BATCH` tracks, whatever
+ * the number of groups. A track is in one group at most.
+ */
+export async function readTrackMergeOutlines(
+  reader: Reader,
+  groups: string[][],
+): Promise<(TrackMergeOutline | null)[]> {
+  const outlines: (TrackMergeOutline | null)[] = []
+  for (let start = 0; start < groups.length; ) {
+    let end = start
+    let size = 0
+    do {
+      size += groups[end]?.length ?? 0
+      end += 1
+    } while (
+      end < groups.length &&
+      size + (groups[end]?.length ?? 0) <= OUTLINE_BATCH
+    )
+    const batch = groups.slice(start, end)
+    start = end
+    const trackIds = batch.flat()
+    if (!trackIds.length) {
+      outlines.push(...batch.map(() => null))
+      continue
+    }
+    const tracks = new Map(
+      (await readPlanTracks(reader, trackIds)).map((track) => [
+        track.id,
+        track,
+      ]),
+    )
+    const albums = GroupAlbumsSchema.parse(
+      (
+        await reader.execute(sql`
+          select g.group_index, mi.title
+          from jsonb_to_recordset(${JSON.stringify(
+            batch.flatMap((ids, index) =>
+              ids.map((id) => ({ group_index: index, track_id: id })),
+            ),
+          )}::jsonb) as g(group_index int, track_id text)
+          join track t on t.track_media_item_id = g.track_id
+          join media_item mi on mi.id = t.album_media_item_id
+          group by g.group_index, mi.id, mi.title
+          having count(distinct t.track_media_item_id) > 1
+          order by g.group_index, mi.title, mi.id`)
+      ).rows,
+    )
+    const separate = await readKeptSeparate(reader, 'track', trackIds)
+    batch.forEach((ids, index) => {
+      const found = ids.flatMap((id) => {
+        const track = tracks.get(id)
+        return track ? [track] : []
+      })
+      const target = chooseTarget(found)
+      if (!target || found.length !== ids.length) {
+        outlines.push(null)
+        return
+      }
+      const ordered = [target, ...found.filter((track) => track !== target)]
+      const shared = albums
+        .filter((album) => album.group_index === index)
+        .map((album) => album.title)
+      const own = new Set(ids)
+      const kept = [
+        ...new Set(
+          separate
+            .filter(({ lowId, highId }) => own.has(lowId) && own.has(highId))
+            .flatMap(({ lowId, highId }) => [lowId, highId]),
+        ),
+      ]
+      const cautions: TrackMergeCaution[] = [
+        ...versionCaution(ordered),
+        ...durationCaution(ordered),
+        ...artistCaution(target, ordered.slice(1)),
+      ]
+      if (shared.length) cautions.push({ code: 'same-album', albums: shared })
+      if (kept.length) cautions.push({ code: 'separate', trackIds: kept })
+      outlines.push({ trackIds: ordered.map((track) => track.id), cautions })
+    })
+  }
+  return outlines
 }
 
 /** What merging the selected tracks would do. See `readTrackMerge`. */
