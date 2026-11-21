@@ -18,7 +18,9 @@ Use **Change match** beside a single Last.fm name or in the cell's additional id
 
 Track **Sources** also lets you search for and add an imported scrobbled name, keep one separate, or restore automatic matching. **Merge Last.fm names** moves all the recorded names together. The destination can be another Last.fm-only track.
 
-Use **Merge** when a separate Last.fm record and an imported Spotify track should be one library entry. The review identifies the source and the track to keep. A confirmed merge carries over the source's recorded names and playlist memberships. The manual choice is used on subsequent syncs. Standalone Last.fm rows hidden from ordinary Browse remain available in Matches.
+Use **Merge** when a separate Last.fm record and an imported Spotify track should be one library entry. The review identifies the source and the track to keep. A confirmed merge carries over the source's recorded names and playlist memberships. The manual choice is used on subsequent syncs. Standalone Last.fm rows hidden from ordinary Browse remain available in Matches. Each of these changes is listed in **Tracks → History** with Undo; see [History and Undo](tracks-and-playlists.md#history-and-undo).
+
+An artist filter on a merged artist reads as the artist it was merged into.
 
 ## Albums, artists and films
 

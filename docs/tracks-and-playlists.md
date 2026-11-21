@@ -133,7 +133,7 @@ Tracks Browse hides a standalone Last.fm entry with no album, playlist or Spotif
 
 Find **Group recordings** under **Filters → View**. It is on when sorting by **Scrobbles** or **Last listened**. Other sorts, including **Artist** and **Album**, start with each release version visible. Toggle grouping for the current sort. Its setting survives a reload and changing the sort field applies the new sort’s default.
 
-Use the arrow immediately after a grouped track’s title in Grid, List or Table to see the matching library tracks and open or play a specific release version. Groups use the full track title, billed artists and recording evidence from a shared ISRC or an exact Last.fm match. Version qualifiers such as “Radio Edit” and “Remix” distinguish recordings. Conflicting ISRCs or substantially different known durations keep ambiguous versions apart.
+In Table, the chevron before a grouped track’s thumbnail opens its versions as rows under it, each with its provider mark; **Shown** marks the version the row is shown as. In Grid and List, use the arrow immediately after the title. Either way you can open or play a specific release version. Groups hold the [versions](#versions) a merge stored, and otherwise use the full track title, billed artists and recording evidence from a shared ISRC or an exact Last.fm match. Version qualifiers such as “Radio Edit” and “Remix” distinguish recordings. Conflicting ISRCs or substantially different known durations keep ambiguous versions apart. With **Group recordings** off, every version is its own row.
 
 The grouped row counts each linked listen once, shows the latest listen and uses the earliest known Added date among the included versions. Album, playlist and other release filters narrow those versions before grouping. Listening and Added ranges apply to the grouped values. Album track lists and the Matches table continue to show individual entries.
 
@@ -162,37 +162,6 @@ A track's detail shows its sources, playlists (each opens the playlist drawer), 
 
 **Spotify match** is available as a table column and an include/exclude filter. **Spotify playlist / Liked Songs** means a playlist or Liked Songs import supplied the ID. **Spotify track search** means a catalog search supplied the ID through an automatic or confirmed match. **Album track list** means the stored album track list supplied it. **Unmatched** means no stored Spotify ID is available. Counts, filters and playback use the same ID. The drawer explains the method and shows the original artist, track and album names recorded by Last.fm, independently of the broader listening matches below them. Spotify playback uses stored metadata.
 
-### Reviewing duplicates
-
-In **Track → Sources**, **Add scrobbled name** searches stored Last.fm names across the library. **Change match** assigns one recorded name and its plays to a library track. **Remove** keeps the name on its own Last.fm entry. **Use automatic match** lets the import rules decide again. Manual choices survive subsequent imports.
-
-**Merge Last.fm names** moves all recorded names from the displayed track to a library track you choose. Both Last.fm-only and Spotify-backed tracks are valid destinations. The original scrobbles, album track lists and playlist positions are preserved. **Tracks → Matches** also offers **Change match** beside individual recorded names.
-
-On a Last.fm-backed track without an imported Spotify identity, **Merge with Spotify track** searches existing imported library tracks. Select the recording to keep, compare its artist, title, album and Spotify link, then confirm. Nothing is selected or merged automatically. The merge retains the chosen Spotify track, transfers Last.fm source memberships and playlist memberships, and preserves listening history. If the original recording is still listed on an album with its own Spotify ID, that position keeps its recording. A saved manual source association prevents later Last.fm refreshes from recreating the duplicate, including when recorded album names differ. These source associations are labelled **Manually matched** in track details.
-
-This action does not merge two different imported Spotify identities or search Spotify's remote catalogue. Different releases and versions may legitimately be separate; the retained recording is an explicit choice.
-
-### Merging from a table
-
-In the **Tracks** table, and in the Tracks table of an artist, tick two or more rows and choose **Merge** in the bar under the table. The scrobbled names of the selected tracks move to one track, and a track left with nothing is removed. The track that is kept is the one with an album position, a playlist entry or its own Spotify track; among tracks made only of scrobbled names it is the one with the most scrobbles. The header checkbox selects the rows loaded so far, and Shift selects a range. The selection is cleared when the search, a filter, the sort or the view changes.
-
-The merge is made at once and the bar reports it with **Undo**. A review opens first only when something speaks against the merge:
-
-- a version word such as Live, Demo or Remix is in some of the titles only;
-- known lengths are more than ten seconds apart;
-- the tracks have no artist in common;
-- a selected track cannot be merged into another. A track with its own Spotify track, an album position or a playlist entry stays a track of its own, so two such tracks cannot be joined yet. **Leave it out** drops those tracks from the merge.
-
-The review shows the track that is kept, the scrobbles before and after, and how many names move. When every selected track is made only of scrobbled names, **Kept** chooses which one survives. Scrobbles the kept track already counts are not added twice.
-
-### History and Undo
-
-Every move of a scrobbled name by hand is recorded: a merge from a table, **Change match**, **Add scrobbled name**, **Remove**, **Use automatic match**, **Merge Last.fm names** and **Merge with Spotify track**. **Tracks → History** lists the changes, newest first, with who made them and the scrobbles moved. A track's **Sources** tab lists its own latest changes under **Changes**.
-
-**Undo** returns each name to the track it came from. A track the change removed comes back as it was: its title and dates, artist credits, tags and their sources, provider references and identifiers, links, stored provider data and edits made by hand; stored provider responses and job history point at it again. **Redo** makes the change again.
-
-Undo is offered while every name is still where the change put it. When a later change moved one of the names, undo that change first; the button says so. A **Merge with Spotify track** that also moved album positions or playlist entries is listed but cannot be undone. Matches made by an import, by the automatic rules or by an accepted Spotify search are not recorded yet.
-
 Play controls are visible beside tracks, albums and playlists. Connect [Spotify playback](spotify-playback.md) to enable them where the library has a playable recording. Play is always followed by Add to queue. In Grid the pair appears on the artwork on hover, focus or touch; in List and Table it follows the title. In album and playlist track tables the row number sits before the pair. Playing a row captures the current table order for subsequent tracks. The playlist heading's **Play** starts at the first recorded entry that can play. Spotify opens from the link at the end of the detail header.
 
 ### Spotify matching and playback
@@ -202,6 +171,114 @@ Last.fm can reuse a library recording when its artist, title and album evidence 
 Last.fm's [`user.getRecentTracks`](https://www.last.fm/api/show/user.getRecentTracks) supplies names and optional MusicBrainz IDs, not Spotify IDs, ISRCs or track durations. Some recordings can therefore be identified from existing library metadata, but the stored history cannot guarantee a Spotify match for every track.
 
 For a recording still missing a playable version, **Search Spotify** opens the editable catalog search. Submit your text, choose a recording and confirm the match. The [Last.fm track import](#lastfm-tracks) describes how results link to library tracks and how to review the remaining candidates. To apply the same rules to saved searches that still have unconfirmed results, run `pnpm --filter @repo/server backfill:spotify-track-searches` to preview, then add `--apply` to save the eligible matches. Both commands use the stored results. Once a track ID is linked, the existing player can use it. Spotify [playback requires Premium](https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback) and the playback connection described above.
+
+## Merging and history
+
+A track is a record made of scrobbled names and versions. A scrobbled name is an artist and title as Last.fm recorded them; its scrobbles belong to it. A version is a library track with its own Spotify track, album position or playlist entry. **Merge** puts tracks under one record, **Separate** takes a version out again and **Keep separate** records that tracks are different. Albums have [editions](#albums-and-editions) in place of versions, and an artist keeps the names it was [merged with](artists-and-people.md#merging-artists). Every change is listed in [History](#history-and-undo) and can be undone.
+
+### Merging from a table
+
+In the **Tracks** table, the Tracks table of an artist and [an album's track list](#merging-in-an-albums-track-list), tick two or more rows and choose **Merge** in the bar under the table. The header checkbox selects the rows loaded so far, and Shift selects a range. The selection is cleared when the search, a filter, the sort or the view changes.
+
+The track that is kept is the one with its own Spotify track, then one with an album position or a playlist entry, then the most played. Each other track:
+
+- becomes a **version** of the kept track when it has its own Spotify track or no scrobbled names. It keeps its names, album positions and playlist entries, and counts the record's scrobbles.
+- is otherwise **merged**: its scrobbled names, album positions and playlist entries move to the kept track and it is removed.
+
+Scrobbles the kept track already counts are not added twice.
+
+The merge is made at once and the bar reports it with **Undo**. A review opens first only when something speaks against the merge:
+
+- a version word such as Live, Demo or Remix is in some of the titles only;
+- known lengths are more than ten seconds apart;
+- the tracks have no artist in common;
+- two of the tracks are different positions on the same album;
+- some of the tracks were kept separate;
+- names that would follow the merge are on a track of another album, or match more than one track of the album and stay where they are.
+
+In the review, **Shown as** picks the track that is kept and the row is shown as. It also shows the scrobbles before and after, how many names move and, under **Becomes**, whether each track is shown, becomes a version or is merged. **Also merged** lists what [follows the merge](#what-follows-a-merge), with a checkbox to leave it out.
+
+### What follows a merge
+
+Names follow the record above them:
+
+- Merging tracks also merges the album names the merged titles were scrobbled under into the album of the kept track, when those names are linked to no album, with the other titles scrobbled under them that match a track on that album.
+- Merging artists moves the names of a merged artist's Last.fm-only track, with no album position or playlist entry, to the kept artist's track of the same title when exactly one record matches.
+- [Moving a scrobbled album name](#albums-and-editions) onto an album brings the titles scrobbled under it that match a track of the album. Merging albums moves no album names by itself.
+
+A name never follows onto a track it was kept separate from, or onto a track an undone or separated automatic match rules out. An album name linked to an album, or linked or unlinked by hand, stays where it is. What follows is listed in the review but does not open it, and a merge made without a review brings it too. One Undo puts the merge and everything that followed back.
+
+### Versions
+
+A track's **Sources** tab starts with **Made of**: the versions, the shown one first, then the scrobbled names. Each row has its type (Spotify version, Album version, Last.fm version or Scrobbled name, with Manually matched for a name linked by hand), its album and its scrobbles.
+
+- **Shown** picks the version the record's row takes its title, artist and album from. It changes nothing else.
+- **Separate** gives a version its own row again, with the names it owns.
+- **Merge with…** searches the library's tracks and merges the chosen one with this track, opening the review when something speaks against it. If the open track is the one removed, the kept track opens.
+
+Each change shows a notice with Undo and is listed under **Changes**. In Tracks, versions share one row only while **Group recordings** is on; see [browsing tracks](#browsing-tracks).
+
+### Merging in an album's track list
+
+An album's track list has the same selection column and bar. Under it, **Scrobbled under this album, not on its track list** lists the names scrobbled under the album that match no track on it, most played first. Tick one with the track it belongs to and choose **Merge**. On an album of more than 20 tracks they appear after **Show all**. Names owned by the same track are ticked together.
+
+### Possible duplicates and Keep separate
+
+**Possible duplicates** in the Tracks toolbar, and in an artist's Tracks list, shows only the tracks that look like the same track, in groups, the most played group first. Its count is the number of groups, for an artist those with its tracks. The view uses the Table: choosing Grid or List turns it off, and **Group recordings** is off while it is on.
+
+Each group starts with a row holding **Merge**, **Keep separate** and the evidence, such as Same title and artist, or Scrobbles of “Night Drive” count towards both. **Merge** merges the whole group as above; a caution opens the review. To merge part of a group, tick those rows and use the bar. With a search or filter a group shows only its matching tracks, but Merge and Keep separate still act on the whole group.
+
+**Keep separate** is remembered: the group is not suggested again, merging those tracks later opens the review, and automatic matching never joins them. Both actions report in the bar with Undo.
+
+A track in a group shows a notice above its tabs naming the other tracks, with Merge and Keep separate.
+
+Groups are worked out in the background, so a new group can take a few minutes to appear after an import. Until the first grouping has run, the toggle shows no count and the view is empty. A group holds at most 12 tracks.
+
+### Albums and editions
+
+In the **Albums** table, in Table view, tick two or more albums and choose **Merge**. Nothing is deleted: the other albums become **editions** of the kept one, which is the album with a Spotify album, then the one with the most tracks, then the earliest added. **Album to keep** in the review picks another. A review opens first when a version word such as Deluxe is in some titles only, the artists differ, the track lists share fewer than half their titles, or some of the albums were kept separate. Albums removed from the library, and albums that are already one record, cannot be merged.
+
+The kept album's scrobbles count all its editions. In the table its title shows “+2 editions”, and edition rows appear only with **Filters → View → Show editions as rows**. An album's header says “Edition of …” or how many editions it has. Its **Sources** tab lists the editions, each with **Separate**, and an edition shows **Edition of** with Separate. **Separate** makes an edition an album of its own again.
+
+To move a scrobbled album name onto an album, choose **Link** on the name in the album's **Listening** tab or in **Sources → Last.fm**. The name moves at once with a notice and Undo. When track names scrobbled under it would follow onto tracks of the album, the review opens first, listing them and the names that match no track and stay. **Link**, **Change**, **Unlink** and **Automatic** on the [Last.fm page](lastfm-scrobbles.md#manual-links) are recorded in History as well; no track names follow them.
+
+### Scrobbled names in Sources
+
+Below **Made of**, a track's Sources keeps the controls for single names. **Add scrobbled name** searches stored Last.fm names across the library. **Change match** assigns one recorded name and its plays to a library track. **Remove** keeps the name on its own Last.fm entry; when an automatic rule had placed it, the rules do not match it to that track again. **Use automatic match** lets the import rules decide again and forgets those decisions. Manual choices survive subsequent imports.
+
+**Merge Last.fm names** moves all recorded names from the displayed track to a library track you choose. Both Last.fm-only and Spotify-backed tracks are valid destinations. The original scrobbles, album track lists and playlist positions are preserved. **Tracks → Matches** also offers **Change match** beside individual recorded names.
+
+On a Last.fm-backed track without an imported Spotify identity, **Merge with Spotify track** searches existing imported library tracks. Select the recording to keep, compare its artist, title, album and Spotify link, then confirm. The merge retains the chosen Spotify track, transfers Last.fm source memberships and playlist memberships, and preserves listening history. If the original recording is still listed on an album with its own Spotify ID, that position keeps its recording. A saved manual source association prevents later Last.fm refreshes from recreating the duplicate, including when recorded album names differ. These source associations are labelled **Manually matched** in track details. To join two Spotify tracks as versions of one record, use **Merge** or **Merge with…**.
+
+### History and Undo
+
+**Tracks → History**, **Albums → History** and **Artists → History** list the changes of each library, newest first: when, what changed, who made it (You or Automatic) and the scrobbles moved. **Changed by** narrows the list to your changes or the automatic ones. The line under a change names the scrobbled names, the rule and what else moved, such as “Also merged 2 album positions and 1 playlist entry”. A track's, album's or artist's **Sources** tab lists its own latest changes under **Changes**.
+
+Recorded are every merge, move and separation of scrobbled names by hand (a merge from a table, **Change match**, **Add scrobbled name**, **Remove**, **Use automatic match**, **Merge Last.fm names**, **Merge with Spotify track**), **Shown**, **Separate**, **Keep separate**, album and artist merges, album name moves, and the [automatic matches](#automatic-matches-in-history).
+
+**Undo** puts every part back where it was, including what followed: names, versions, album positions, playlist entries, editions, album names and credits. A track the change removed comes back as it was: its title and dates, artist credits, tags and their sources, provider references and identifiers, links, stored provider data and edits made by hand; stored provider responses and job history point at it again. **Redo** makes the change again. An undone change stays in the list as Undone.
+
+Undo is offered while everything is still where the change put it. When a later change moved one of the parts, undo that change first; the button says so. A change that cannot be undone says so: tracks removed by an album track-list refresh, and merges recorded by an earlier version of the app that moved album positions or playlist entries.
+
+### Automatic matches in History
+
+Matches made by imports and the automatic rules are listed as Automatic, one by one, with their rule:
+
+| Rule                                | Change                                                                                                                       |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Same title and artist               | A Last.fm import puts a scrobbled name on the library track with the same artist and title.                                  |
+| Same title on the album             | A Last.fm import puts a name on the track of its scrobbled album with a matching title.                                      |
+| Accepted search result              | A Last.fm import puts a name on the track of a Spotify search result you accepted.                                           |
+| No longer matched                   | A Last.fm import returns a name to its own Last.fm track.                                                                    |
+| Spotify track search                | An automatic Spotify track search links a track to its single compatible result.                                             |
+| Album track list                    | The names of a Last.fm track linked to an album move to the track of the album's track list with a matching title.           |
+| Album listening history             | A Last.fm-only track linked to an album gives its names and playlist entries to the listed track with its title and artist.  |
+| Same Spotify track on the album     | An album recording gives its positions, playlist entries and names to the imported Spotify track of the same release.        |
+| No longer on the album’s track list | An album track-list refresh removes recordings nothing else holds. History reads Removed “Night Drive”; it cannot be undone. |
+
+A first full Last.fm import records every name it places, so History can hold many automatic changes after it.
+
+Undoing an automatic match puts the names back, and the rule does not make that match again: the line reads “Will not be merged automatically again”. An undone Spotify track search is not applied again either. A search that gave an album recording the Spotify ID itself can be undone, but a later search can make it again. Undoing a search result you accepted also clears the acceptance.
 
 ## Albums and playlists
 
@@ -243,7 +320,8 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `spotify_playlist_listing` holds the account's last playlist list as one JSON array per user, with its listing time.
 - `lastfm_track_source` maps each imported account, artist name and track name to one library track. It supplies Last.fm source membership, retention after playlist removal and the scrobble contribution to Added. Its `manually_matched` flag preserves confirmed recording choices; migration `0027_manual_track_matches` is required before deploying this merge workflow.
 - `lastfm_track_link` separately records which scrobbled artist and track names count towards which library tracks, and by which listening-attribution rule. A name can contribute listening counts to several Spotify editions without giving them all Last.fm membership.
-- `library_change` is the journal of merges, moves and separations of scrobbled names: the action, who made it, the kept record and the records the names left as they were named then, and when it was undone. `library_change_move` holds each name the change moved with the track it left and the track it reached, and whether each match was made by hand. `library_change_removal` holds the archive of every track the change removed, which an undo restores and then deletes. Migration `0054_library_change_journal` creates the three tables. `GET /api/v1/library-changes` lists changes (`actor`, `recordId`), `POST /api/v1/library-changes/track-merges/plan` previews a merge, `POST /api/v1/library-changes/track-merges` makes it and refuses a plan with cautions until `reviewed` is sent, and `POST /api/v1/library-changes/{id}/undo` and `/redo` reverse a change.
+- `library_change` is the journal of changes to tracks, albums and artists: the kind and action, who made it and by which rule, the kept record and the records the names left as they were named then, what else it moved, and when it was undone. `library_change_move` holds each name the change moved with the track it left and the track it reached, and whether each match was made by hand. `library_change_removal` holds the archive of every track the change removed, which an undo restores and then deletes. `library_change_effect` holds the change's other effects, such as versions, album positions, playlist entries, editions and credits, and `library_change_batch` groups the changes of one automatic run. Migration `0054_library_change_journal` creates the first three tables and `0055_library_merge_stages` the rest. `GET /api/v1/library-changes` lists changes (`kind`, `actor`, `recordId`, `batchId`), `POST /api/v1/library-changes/track-merges/plan` previews a merge, `POST /api/v1/library-changes/track-merges` makes it and refuses a plan with cautions until `reviewed` is sent, and `POST /api/v1/library-changes/{id}/undo` and `/redo` reverse a change. The other merge endpoints are listed in the [library merge handover](library-merge-handover.md#how-it-is-put-together).
+- `library_track.version_group_id` and `version_shown` store the versions of a record and the one it is shown as. `library_keep_separate` holds Keep separate decisions, `library_match_rejection` the matches automatic rules may not make again, and `track_duplicate_group` and `track_duplicate_member` the possible duplicates. `album.edition_of_id` points an edition at the first album of its record, and `artist.merged_into_id` points a merged artist at the kept one.
 - Imports run as the `spotify-playlist-import` task job, listings as `spotify-playlist-listing`, album additions as `spotify-playlist-add-album` and track additions as `spotify-playlist-add-track`, all with provider `spotify`.
 
 ## Verification
@@ -253,5 +331,7 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `apps/server/integration/spotify-playlists.integration.ts`: the listing job, import, progress, re-import, schedule, playlist pages, album additions with batches and a retried failure, refusals, removal, limits, filters, album membership and scrobble counts against a disposable database with mocked Spotify responses.
 - `apps/server/integration/lastfm-tracks.integration.ts`: stored-history import, identity ambiguity, source filters, playlist removal, account history and playback metadata against a disposable database without provider requests.
 - `apps/server/integration/library-changes.integration.ts` and `apps/server/src/routes/__tests__/library-changes-api.test.ts`: the merge plan and its cautions, a merge with undo and redo, a removed track restored with its provider data, links and edits, blocked tracks, later changes that stand in the way of an undo, and the endpoints, against a disposable database without provider requests.
+- `apps/server/integration/track-versions.integration.ts`, `track-duplicates.integration.ts`, `album-merges.integration.ts`, `artist-merges.integration.ts`, `merge-follows.integration.ts` and `library-changes-automatic.integration.ts`: versions, Separate and Shown, possible duplicates and Keep separate, album and artist merges, what follows a merge, and automatic matches, each with the state after the change, after Undo and after Redo, and each reason Undo is refused, against a disposable database without provider requests.
 - `apps/web/components/track-browser.test.tsx`, `apps/web/components/library-changes.test.tsx` and `apps/web/utils/library-changes.test.ts`: the selection column and Merge bar in the Tracks table, History rows and the wording of changes and cautions.
+- `apps/web/components/track-record-parts.test.tsx`, `track-merge-review.test.tsx`, `track-duplicate-group.test.tsx`, `album-tracks-table.test.tsx`, `album-merge-review.test.tsx`, `album-editions.test.tsx`, `artist-merge-review.test.tsx` and `artist-detail.test.tsx`: Made of, the reviews, the duplicate group rows, the album track list selection, editions, kept names and the redirect from a merged artist.
 - `apps/web/components/playlist-detail.test.tsx`, `apps/web/components/playlists.test.tsx`, `apps/web/components/play-controls.test.tsx`, `apps/web/utils/playlist-sync.test.ts` and `apps/web/utils/playlist-links.test.ts`: the playlist drawer, its deep link, sync labels and the track play controls.

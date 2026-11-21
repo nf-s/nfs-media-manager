@@ -77,7 +77,7 @@ Choose a release and add it to the library; that scrobbled name is then linked t
 
 Scrobble names for an album are matched in Sources, in the Last.fm row: one table of linked names and similar unlinked names, each with its scrobble count and **Unlink** or **Link**, plus **Add scrobbled name** to search every scrobbled name and **Review scrobble links**. Album Listening points there with **Open Sources** (and lists the same table itself where Sources cannot be opened).
 
-A manual link, and a name kept unlinked, are stored and survive every later sync and relink. **Automatic** on the page returns a name to automatic matching. A manual link is removed when its album is deleted.
+A manual link, and a name kept unlinked, are stored and survive every later sync and relink. **Automatic** on the page returns a name to automatic matching. A manual link is removed when its album is deleted. Each link, unlink and return to automatic matching is listed in **Albums → History** with Undo. **Link** in an album's Listening tab or Sources also brings the track names scrobbled under the name that match the album's tracks; see [albums and editions](tracks-and-playlists.md#albums-and-editions).
 
 ### Link report
 
@@ -112,7 +112,7 @@ Album **Listening → By track** combines scrobbled names that resolve to one re
 - **Browse** gains three album fields, recomputed at the end of every sync:
   - `Last listened`: date of the most recent linked scrobble.
   - `Scrobbles, last year` and `Scrobbles, last 5 years`: linked scrobbles in a rolling window ending at the last sync.
-- Artists Browse's `Scrobbles` is stored on the artist: every scrobble linked to a library album or track credited to the artist, counted once, as in the artist's listening series. It is recounted at the end of every sync, relink, manual link change, playlist import and track merge. Between those, a change to an item's credited artists or a removed album is not reflected in the stored count; the listening series always reads current links.
+- Artists Browse's `Scrobbles` is stored on the artist: every scrobble linked to a library album or track credited to the artist, counted once, as in the artist's listening series. It is recounted at the end of every sync, relink, manual link change, playlist import, track merge and artist merge. Between those, a change to an item's credited artists or a removed album is not reflected in the stored count; the listening series always reads current links.
 - `Scrobbles` is set to the linked scrobble count for albums that have linked scrobbles. Other albums keep the count reported by the Last.fm album provider. A later Last.fm album metadata job writes Last.fm's own album count again until the next sync.
 
 ### Custom listening filters and sorting
