@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArtistDetailSchema,
@@ -19,10 +20,13 @@ import { useConfig } from './providers'
 export function CreatorScopeChip({
   scope,
   film = false,
+  onMoved,
   onRemove,
 }: {
   scope: CreatorBrowseScope
   film?: boolean
+  /** The scope names an artist that was merged into another: the kept artist's ID. */
+  onMoved: (creatorId: string) => void
   onRemove: () => void
 }) {
   const { apiBaseUrl } = useConfig()
@@ -43,6 +47,10 @@ export function CreatorScopeChip({
           )
     },
   })
+  const currentId = query.data?.id
+  useEffect(() => {
+    if (currentId !== undefined && currentId !== creatorId) onMoved(currentId)
+  }, [creatorId, currentId, onMoved])
   const label = creatorRole
     ? personRoleLabels[creatorRole]
     : film

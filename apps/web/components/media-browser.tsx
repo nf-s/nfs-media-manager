@@ -1189,6 +1189,7 @@ function MediaBrowse({
         <CreatorScopeChip
           scope={creatorFilter}
           film={mediaType === 'film'}
+          onMoved={(creatorId) => setParams({ creatorId })}
           onRemove={() => setParams(clearCreatorScope)}
         />
       )}

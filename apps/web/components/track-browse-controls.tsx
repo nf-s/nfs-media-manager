@@ -172,6 +172,7 @@ export function TrackBrowseFilterChips({
       {creator && (
         <CreatorScopeChip
           scope={creator}
+          onMoved={(creatorId) => setParams({ creatorId })}
           onRemove={() => setParams(clearCreatorScope)}
         />
       )}
