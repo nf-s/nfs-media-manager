@@ -269,6 +269,7 @@ export async function readArtistMergePlan(
       ],
     },
     scrobbles: { target: target.scrobbles, total: moves?.total ?? 0 },
+    also: [],
     cautions,
     blocked: ordered.some((artist) => artist.film_count > 0),
   }

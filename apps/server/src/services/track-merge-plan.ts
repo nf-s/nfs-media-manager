@@ -264,6 +264,7 @@ export async function readTrackMergePlan(
       added,
       total: target.scrobbles + added,
     },
+    also: { albumNames: [], titles: [] },
     cautions: [
       ...versionCaution(ordered),
       ...durationCaution(ordered),

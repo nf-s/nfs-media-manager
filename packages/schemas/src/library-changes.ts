@@ -119,10 +119,44 @@ export type LibraryChangeListQuery = z.infer<
 export const LibraryChangePageSchema = PaginatedDataSchema(LibraryChangeSchema)
 export type LibraryChangePage = z.infer<typeof LibraryChangePageSchema>
 
+/**
+ * A scrobbled track name that follows the album name or artist name it was
+ * scrobbled under onto a matching track.
+ */
+export const MergeFollowedTitleSchema = z.object({
+  artistName: z.string(),
+  trackName: z.string(),
+  scrobbles: z.number().int().nonnegative(),
+  /** The track the name belongs to now. */
+  fromTrackId: z.string(),
+  /** The track the name moves to. */
+  toTrackId: z.string(),
+  toTitle: z.string(),
+})
+export type MergeFollowedTitle = z.infer<typeof MergeFollowedTitleSchema>
+
+/** A scrobbled album name that is merged with a title scrobbled under it. */
+export const MergeFollowedAlbumNameSchema = z.object({
+  artistName: z.string(),
+  albumName: z.string(),
+  scrobbles: z.number().int().nonnegative(),
+  /** The album the name moves to: the album of the track to keep. */
+  toAlbumId: z.string(),
+  toAlbumTitle: z.string(),
+})
+export type MergeFollowedAlbumName = z.infer<
+  typeof MergeFollowedAlbumNameSchema
+>
+
 const TrackMergeSelectionSchema = z.object({
   trackIds: z.array(TrackMatchIdSchema).min(2).max(50),
   /** The track to keep. Chosen by the server when omitted. */
   targetId: TrackMatchIdSchema.optional(),
+  /**
+   * Also merge the album names the merged titles were scrobbled under, and
+   * the other titles under those album names that match a track on the album.
+   */
+  follow: z.boolean().default(true),
 })
 type TrackMergeSelection = z.infer<typeof TrackMergeSelectionSchema>
 const selectedOnce = ({ trackIds }: TrackMergeSelection) =>
@@ -226,6 +260,15 @@ export const TrackMergePlanSchema = z.object({
      */
     added: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
+  }),
+  /**
+   * What follows the merged titles when the request says `follow`: the album
+   * names they were scrobbled under, and the other titles under those album
+   * names that match a track on the album of the track to keep.
+   */
+  also: z.object({
+    albumNames: z.array(MergeFollowedAlbumNameSchema),
+    titles: z.array(MergeFollowedTitleSchema),
   }),
   cautions: z.array(TrackMergeCautionSchema),
   /** Always false: no selected track is refused. */

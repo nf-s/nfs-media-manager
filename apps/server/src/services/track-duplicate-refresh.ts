@@ -384,7 +384,10 @@ async function readStoredGroups(tx: ChangeTransaction, ids?: string[]) {
 /** The plan's cautions and its order, the track to keep first. */
 async function planGroup(tx: ChangeTransaction, members: string[]) {
   try {
-    const plan = await readTrackMergePlan(tx, { trackIds: members })
+    const plan = await readTrackMergePlan(tx, {
+      trackIds: members,
+      follow: false,
+    })
     return {
       cautions: plan.cautions,
       members: plan.tracks.map((track) => track.id),

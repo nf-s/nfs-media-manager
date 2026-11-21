@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { CreatorIdSchema } from './common'
+import { MergeFollowedTitleSchema } from './library-changes'
 
 const CountSchema = z.number().int().nonnegative()
 
@@ -7,6 +8,11 @@ const ArtistMergeSelectionSchema = z.object({
   artistIds: z.array(CreatorIdSchema).min(2).max(50),
   /** The artist to keep. Chosen by the server when omitted. */
   targetId: CreatorIdSchema.optional(),
+  /**
+   * Also merge the titles scrobbled under the merged names that match a
+   * track of the artist to keep.
+   */
+  follow: z.boolean().default(true),
 })
 type ArtistMergeSelection = z.infer<typeof ArtistMergeSelectionSchema>
 const selectedOnce = ({ artistIds }: ArtistMergeSelection) =>
@@ -93,6 +99,11 @@ export const ArtistMergePlanSchema = z.object({
     /** Scrobbles of every selected artist, counted once. */
     total: CountSchema,
   }),
+  /**
+   * The titles scrobbled under the merged names that follow onto a matching
+   * track of the artist to keep, when the request says `follow`.
+   */
+  also: z.array(MergeFollowedTitleSchema),
   cautions: z.array(ArtistMergeCautionSchema),
   blocked: z.boolean(),
 })
