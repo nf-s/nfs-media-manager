@@ -1717,3 +1717,25 @@ it('bounds the Spotify alternate lookup for detail on a common track title', asy
     expect(detail?.spotifyAlternate?.identifier).toBe('ZZZFixture000000000001')
   })
 })
+
+it('plans the duplicate group trigger for the rows of each track write', async () => {
+  // The trigger function once kept the plan of the session's first write, so a
+  // bulk update after a one-row update compared every old row with every new
+  // row. That took over twenty seconds here; the limit stops it at five.
+  const session = new pg.Client({
+    ...connection,
+    database: name,
+    statement_timeout: 5_000,
+  })
+  await session.connect()
+  try {
+    await session.query(`update library_track set scrobble_count = scrobble_count
+      where media_item_id = 'track-1'`)
+    const bulk =
+      await session.query(`update library_track set scrobble_count = scrobble_count
+      where media_item_id in (select 'track-' || n from generate_series(1, 12000) n)`)
+    expect(bulk.rowCount).toBe(12000)
+  } finally {
+    await session.end()
+  }
+})

@@ -243,3 +243,9 @@ Migration `0047` limits Track vocabulary invalidation from artist enrichment to 
 Migration `0048` stores the background-only refresh decision for slow grouped recording orders. Existing published ranks remain readable.
 
 Migration `0056` rebuilds the stored recording order triggers so stored versions invalidate it, and `0057` adds the possible-duplicates groups' invalidation triggers and redefines `mark_browse_cache_dirty()`. The scheduled maintenance of the Worker and of the Node job worker rebuilds the groups; the rebuild has no workload in the performance suite yet. See [releasing the merge stages](library-merge-handover.md#releasing).
+
+### Trigger functions and transition tables
+
+A statement written directly in a PL/pgSQL trigger function is planned once per connection and the plan is kept, whatever the transition tables hold on later writes. In `0057`, `drop_track_duplicate_groups()` joined `old_rows` to `new_rows` this way. Planned for a one-row update, the join compared every old row with every new row of a later bulk update on the same connection: 12,000 rows took over twenty seconds instead of a fraction of one. Migration `0059` runs the function's statements with `EXECUTE`, which plans each for the rows of its own write, as `mark_browse_cache_dirty()` does.
+
+A trigger function that joins transition tables to each other must use `EXECUTE`. `forget_match_rejections()` reads one transition table against a primary key and was measured unaffected. The performance suite runs a bulk track update after a one-row update on one connection under a five-second limit.
