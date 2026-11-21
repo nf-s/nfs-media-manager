@@ -25,6 +25,7 @@ import { ColumnOrderList } from './column-order'
 export function BrowseItemsHead({
   field,
   identity = false,
+  sticky = 0,
   sortable = true,
   sortBy,
   direction,
@@ -33,6 +34,8 @@ export function BrowseItemsHead({
 }: {
   field: BrowseField
   identity?: boolean
+  /** Where the identity column pins: the width of a selection column before it. */
+  sticky?: number
   sortable?: boolean
   sortBy: string
   direction?: 'asc' | 'desc'
@@ -43,7 +46,7 @@ export function BrowseItemsHead({
   return (
     <TableHead
       align={field.type === 'number' ? 'end' : undefined}
-      sticky={identity ? 0 : undefined}
+      sticky={identity ? sticky : undefined}
       stickyEdge={identity}
       aria-sort={
         active ? (direction === 'asc' ? 'ascending' : 'descending') : undefined

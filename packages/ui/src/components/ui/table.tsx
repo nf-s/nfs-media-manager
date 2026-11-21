@@ -236,6 +236,22 @@ export function TableSelectionBar({
   return <div className={cn('ds-selectbar', className)} {...props} />
 }
 
+/** What the last action from the selection bar changed, shown in the bar. */
+export function TableSelectionResult({
+  icon,
+  children,
+}: {
+  icon: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <span className="ds-selectbar-result" role="status">
+      {icon}
+      <span>{children}</span>
+    </span>
+  )
+}
+
 export function TableState({
   colSpan,
   children,

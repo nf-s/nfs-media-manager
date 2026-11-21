@@ -23,17 +23,25 @@ import {
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
+import { Timeline } from '@repo/ui/components/ds/source'
 import { Button } from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import {
   EMPTY_VALUE,
   formatCount,
   formatDate,
+  formatDateTime,
   formatTrackLength,
 } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import {
+  describeLibraryChange,
+  libraryChangesKey,
+  loadLibraryChanges,
+} from '@/utils/library-changes'
 import { trackServiceLinks } from '@/utils/track-links'
 import {
   parseTrackFilters,
@@ -58,6 +66,8 @@ import { ListeningTrend } from './listening-trend'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { DetailMore } from './detail-more'
+import { LibraryChangeBy } from './library-changes'
+import { LibraryChangeUndo } from './track-merge-bar'
 import { TrackLastfmSources } from './track-lastfm-sources'
 import MetadataSourceControl from './metadata-source-control'
 import { TrackSpotifySource } from './track-spotify-source'
@@ -148,6 +158,85 @@ export function TrackSources({
       <TrackSpotifySource key={item.id} item={item} onResolved={onResolved} />
       <TrackLastfmSources item={item} onResolved={onResolved} />
     </>
+  )
+}
+
+/**
+ * The latest changes that moved a name into or out of the track, each with
+ * Undo or Redo. Hidden while loading and when there are none.
+ */
+function TrackChanges({
+  track,
+  onResolved,
+}: {
+  track: TrackDetail
+  /** Opens the other track when an undo or redo removes this one. */
+  onResolved: (id: string) => void
+}) {
+  const { apiBaseUrl } = useConfig()
+  const [error, setError] = useState<string | null>(null)
+  const query = { recordId: track.id, size: 10 }
+  const changes = useQuery({
+    queryKey: libraryChangesKey(query),
+    queryFn: ({ signal }) => loadLibraryChanges(apiBaseUrl, query, signal),
+  })
+  if (changes.isError && !changes.data)
+    return (
+      <Section title="Changes">
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => changes.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load changes.
+        </Notice>
+      </Section>
+    )
+  const items = changes.data?.items ?? []
+  if (!items.length) return null
+  return (
+    <Section title="Changes">
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Timeline
+        wrap
+        items={items.map((change) => {
+          const text = describeLibraryChange(change)
+          return {
+            key: change.id,
+            when: formatDateTime(change.createdAt),
+            status: <LibraryChangeBy change={change} />,
+            text: <span title={text}>{text}</span>,
+            link: (
+              <LibraryChangeUndo
+                change={change}
+                size="xs"
+                onChanged={(next) => {
+                  setError(null)
+                  const records = [
+                    ...next.sources,
+                    ...(next.target ? [next.target] : []),
+                  ]
+                  if (
+                    !records.some(
+                      (record) => record.id === track.id && !record.exists,
+                    )
+                  )
+                    return
+                  const other = records.find(
+                    (record) => record.id !== track.id && record.exists,
+                  )
+                  if (other) onResolved(other.id)
+                }}
+                onError={setError}
+              />
+            ),
+          }
+        })}
+      />
+    </Section>
   )
 }
 
@@ -473,6 +562,11 @@ export default function TrackDetailView({
           <TrackSources
             key={item.id}
             item={item}
+            onResolved={(targetId) => openResolvedTrack(targetId, 'sources')}
+          />
+          <TrackChanges
+            key={`changes-${item.id}`}
+            track={item}
             onResolved={(targetId) => openResolvedTrack(targetId, 'sources')}
           />
         </TabsContent>

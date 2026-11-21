@@ -254,7 +254,7 @@ test('Tracks Table: drawn default columns, pinned title with thumbnail and play 
   assert.doesNotMatch(html, /Artwork and playback/)
   assert.match(
     html,
-    /<td data-sticky="edge" style="--ds-sticky-left:0px" title="Example Song"><span class="ds-cell-id"><a[^>]* class="bi-thumb-link"[^>]*><span class="ds-thumb">.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><span class="ds-play" data-place="row">/,
+    /<td data-sticky="edge" style="--ds-sticky-left:36px" title="Example Song"><span class="ds-cell-id"><a[^>]* class="bi-thumb-link"[^>]*><span class="ds-thumb">.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><span class="ds-play" data-place="row">/,
   )
   assert.match(
     html,
@@ -267,6 +267,49 @@ test('Tracks Table: drawn default columns, pinned title with thumbnail and play 
     /aria-label="Playlists">.*?href="\/playlists\/playlist-one".*?Morning.*?Evening.*?\+1/,
   )
   assert.doesNotMatch(html, /[↑↓]/)
+})
+
+test('Tracks Table rows can be ticked for a merge; Grid and List cannot', async () => {
+  const html = await render('view=table')
+  // The selection column comes first, pinned, without a sort button or width handle.
+  assert.match(
+    html,
+    /<colgroup><col style="width:min\(36px, var\(--ds-col-max, 36px\)\)"\/>/,
+  )
+  assert.match(
+    html,
+    /<thead><tr><th scope="col" data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select loaded tracks"\/><\/th><th /,
+  )
+  assert.match(
+    html,
+    /<tr data-item-index="0" aria-rowindex="2"><td data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select Example Song"\/><\/td><td data-sticky="edge" style="--ds-sticky-left:36px"/,
+  )
+  // The Title header pins where its cells do, after the selection column.
+  assert.match(
+    html,
+    /<th [^>]*data-sticky="edge"[^>]*style="--ds-sticky-left:36px"[^>]*>(?:(?!<\/th>).)*Title/,
+  )
+  assert.doesNotMatch(html, /<th [^>]*data-sticky="edge"[^>]*left:0px/)
+  // Unloaded rows keep the selection column empty.
+  assert.match(
+    html,
+    /<tr aria-hidden="true" data-placeholder=""><td><\/td><td><div class="ds-skel"/,
+  )
+  // The Merge bar is attached under the scroll area and hidden until a row is ticked.
+  assert.match(
+    html,
+    /<\/table><\/div><div class="ds-selectbar sec-selectbar"><\/div>/,
+  )
+  const embedded = await renderEmbedded('tab=tracks&view=table')
+  assert.match(
+    embedded,
+    /<div class="dtl-browse-frame"><div [^>]*class="[^"]*dtl-browse-entries[^"]*".*<\/table><\/div><div class="ds-selectbar sec-selectbar"><\/div><\/div>/,
+  )
+  for (const view of ['grid', 'list']) {
+    const other = await render(`view=${view}`)
+    assert.doesNotMatch(other, /Select loaded tracks|Select Example Song/, view)
+    assert.doesNotMatch(other, /ds-selectbar/, view)
+  }
 })
 
 test('Tracks Table follows the chosen column order with the title first', async () => {

@@ -97,6 +97,18 @@ test('each library activates Matches without activating Browse', () => {
   }
 })
 
+test('Tracks History is current on its own page without Browse or Matches', () => {
+  const html = render('/tracks/changes', 'actor=owner', <AppNavigation />)
+  assert.match(
+    html,
+    /aria-current="page" href="\/tracks\/changes\?actor=owner">History/,
+  )
+  assert.ok(html.indexOf('>Matches') < html.indexOf('>History'))
+  assert.ok(html.includes('href="/tracks">Browse'))
+  assert.ok(!html.includes('aria-current="page" href="/tracks">Browse'))
+  assert.ok(!html.includes('aria-current="page" href="/tracks/matches"'))
+})
+
 test('Artists is a library choice with Browse, including legacy artist links', () => {
   for (const search of ['', 'mediaType=album', 'mediaType=track']) {
     const html = render(

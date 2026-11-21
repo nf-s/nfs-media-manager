@@ -92,10 +92,19 @@ export type TimelineItem = {
   link?: ReactNode
 }
 
-/** Newest first: when, status, what happened, and a link to the job. */
-export function Timeline({ items }: { items: readonly TimelineItem[] }) {
+/**
+ * Newest first: when, status, what happened, and a link to the job. `wrap` is
+ * for items that end in a button: on a phone the text takes its own line.
+ */
+export function Timeline({
+  items,
+  wrap = false,
+}: {
+  items: readonly TimelineItem[]
+  wrap?: boolean
+}) {
   return (
-    <ol className="ds-timeline">
+    <ol className="ds-timeline" data-wrap={wrap ? '' : undefined}>
       {items.map((item) => (
         <li key={item.key}>
           <span className="ds-muted ds-num">{item.when}</span>

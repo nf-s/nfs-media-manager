@@ -584,6 +584,10 @@
                 { flush: true },
               ) +
               g.spec(
+                `<div class="g-stack"><div class="ds-selectbar"><span><b>2 selected</b> <span class="ds-muted">of 128</span></span><span class="ds-actions ds-toolbar-end">${btn('Merge', { variant: 'primary' })}${btn('', { icon: 'x', aria: 'Clear selection' })}</span></div><div class="ds-selectbar"><span class="ds-selectbar-result" role="status">${D.icon('check', { size: 'sm' })}<span>Merged “Nite Drive” into “Night Drive”</span></span><span class="ds-actions ds-toolbar-end">${btn('Undo')}${btn('', { icon: 'x', aria: 'Dismiss' })}</span></div><div class="ds-selectbar"><span class="ds-selectbar-result" role="status">${D.icon('history', { size: 'sm' })}<span>Undone: Merged “Nite Drive” into “Night Drive”</span></span><span class="ds-actions ds-toolbar-end">${btn('Redo')}${btn('', { icon: 'x', aria: 'Dismiss' })}</span></div></div>`,
+                { flush: true },
+              ) +
+              g.spec(
                 `<div class="ds-table-wrap">${table(
                   [
                     {
@@ -678,6 +682,8 @@
                 '<b>Grouped tracks</b> place the release versions button immediately after the title link in the pinned identity cell.',
                 "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
                 '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
+                '<b>A change made from the bar reports itself there.</b> When the selection is gone the bar holds one line saying what changed (<code>TableSelectionResult</code>, <code>ds-selectbar-result</code>), then Undo and Dismiss. After Undo the line starts with <code>Undone:</code> and the button is Redo. Undo and Redo are disabled, with the reason as their title, when a later change stands in the way. The line is cut with an ellipsis; the buttons are never pushed out.',
+                '<b>Merge in a table of tracks</b> (<code>TrackMergeBar</code>) is the primary action of the bar and needs two or more rows. It is made at once. A review opens first only when something speaks against it: a version word such as Live or Demo in some titles only, lengths more than ten seconds apart, different artists, or a track that cannot be merged into another.',
               ]) +
               g.note(
                 'Replaces',
@@ -1065,6 +1071,31 @@
                   }),
               ) +
               g.spec(
+                D.timeline(
+                  [
+                    [
+                      '2026-10-06 09:12',
+                      ['done', 'You'],
+                      'Merged “Nite Drive” into “Night Drive”',
+                      btn('Undo', { size: 'xs' }),
+                    ],
+                    [
+                      '2026-09-30 21:40',
+                      ['done', 'Automatic'],
+                      'Moved “Night Drive (Remastered)” to “Night Drive”',
+                      btn('Undo', { size: 'xs' }),
+                    ],
+                    [
+                      '2026-09-12 11:05',
+                      ['cancelled', 'Undone'],
+                      'Separated “Night Drive (Demo)” from “Night Drive”',
+                      btn('Redo', { size: 'xs', variant: 'ghost' }),
+                    ],
+                  ],
+                  { wrap: true },
+                ),
+              ) +
+              g.spec(
                 D.coverage('Spotify', 42, 42) +
                   D.coverage('RYM rating', 31, 42) +
                   D.coverage('MusicBrainz ID', 20, 42, { tone: 'attention' }) +
@@ -1073,6 +1104,7 @@
               g.rules([
                 '<b>Source row.</b> One provider per row: match state, identifier, when it was last fetched, and the queue state if it is not idle. Refresh and the link to the item on the provider’s site are always the same two icons. The row opens in place. The action follows the state: a row without an ID shows one button, Find match where the provider can be searched and Add ID where it cannot. When the facts do not fit on one line they wrap; they never overlap.',
                 "<b>Find match</b> opens in the row: a search field holding the item's own text, then the candidates as compact list rows with artwork, title, creator and year, a link to the provider and Choose. The stored candidate reads Current. The identifier form follows for a row without an ID.",
+                '<b>Timeline.</b> Newest first: when, a status, what happened, then a link to the job. A timeline of changes (<code>Timeline wrap</code>) ends each item in Undo instead, or a ghost Redo once the change is undone, and its status says who made the change: You, Automatic or Undone. On a phone what happened takes its own line under the date and the button.',
                 '<b>Coverage.</b> How many items in a set have a field or a source, with one button that queues the missing ones. On a phone the button takes its own line under the bar. A count links to the list of those items where the page has one.',
                 '<b>Progress.</b> A bar with <code>done / total</code>. Used for jobs, imports and batches in place of text.',
               ]),

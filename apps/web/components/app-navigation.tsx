@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
   Download,
+  History,
   LayoutGrid,
   Layers,
   Library,
@@ -81,6 +82,12 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
         section: '/tracks',
       },
       matches,
+      {
+        href: '/tracks/changes',
+        label: 'History',
+        Icon: History,
+        section: '/tracks/changes',
+      },
       {
         href: scopedHref('/playlists', 'track'),
         label: 'Playlists',
@@ -177,12 +184,15 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
   ]
 }
 
+/** A library's own pages under its Browse path, which leave Browse unmarked. */
+const libraryPages = ['matches', 'changes']
+
 function isCurrent(path: string, item: Pick<NavItem, 'section' | 'exact'>) {
   return item.exact
     ? path === item.section
     : path === item.section ||
         (path.startsWith(`${item.section}/`) &&
-          path !== `${item.section}/matches`)
+          !libraryPages.some((page) => path === `${item.section}/${page}`))
 }
 
 function NavLink({

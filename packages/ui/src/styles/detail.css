@@ -169,11 +169,21 @@
     var(--detail-list-space, 0px)
   );
 }
-.dtl-browse-entries {
+.dtl-browse-entries,
+.dtl-browse-frame {
   max-height: max(
     min(var(--ds-detail-browse-height), 50dvh),
     var(--detail-list-space, 0px)
   );
+}
+/* A list and the selection bar under it share that room; the list gives way. */
+.dtl-browse-frame {
+  display: flex;
+  flex-direction: column;
+}
+.dtl-browse-frame > .dtl-browse-entries {
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 /* Smaller scroll areas inside detail sections */
@@ -284,6 +294,13 @@
   display: grid;
   gap: var(--ds-4);
   padding: var(--ds-5) var(--ds-6) var(--ds-7);
+}
+/* A choice among a dialog's facts fills its value's room and never widens the dialog */
+.dtl-dialog-body .ds-kv dd {
+  min-width: 0;
+}
+.dtl-dialog-body .ds-kv .ds-select {
+  width: 100%;
 }
 .dtl-identity {
   display: grid;

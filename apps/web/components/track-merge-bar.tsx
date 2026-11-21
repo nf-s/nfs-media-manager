@@ -19,6 +19,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableSelectionResult,
 } from '@repo/ui/components/ui/table'
 import { formatCount, formatTrackLength } from '@repo/ui/lib/format'
 import { updateJobSelection } from '@/utils/job-selection'
@@ -212,7 +213,11 @@ function TrackMergeReview({
       <div className="dtl-dialog-inner">
         <div className="ds-inspector-bar">
           <div className="ds-crumbs">
-            <b id={titleId}>Merge {formatCount(mergeable.length)} tracks</b>
+            <b id={titleId}>
+              {mergeable.length > 1
+                ? `Merge ${formatCount(mergeable.length)} tracks`
+                : 'Merge tracks'}
+            </b>
           </div>
           <Button
             variant="ghost"
@@ -404,11 +409,14 @@ function TrackMergeReview({
 export function LibraryChangeUndo({
   change,
   size,
+  redoVariant = 'ghost',
   onChanged,
   onError,
 }: {
   change: LibraryChange
   size?: 'xs'
+  /** The selection bar has no ghost button; Redo is a default button there. */
+  redoVariant?: 'ghost' | 'default'
   onChanged?: (change: LibraryChange) => void
   onError?: (message: string) => void
 }) {
@@ -433,7 +441,7 @@ export function LibraryChangeUndo({
   return (
     <Button
       size={size}
-      variant={change.undoneAt ? 'ghost' : 'default'}
+      variant={change.undoneAt ? redoVariant : 'default'}
       disabled={toggle.isPending || block !== null}
       title={block ?? undefined}
       onClick={() => toggle.mutate()}
@@ -555,19 +563,27 @@ export function TrackMergeBar({
         ) : (
           result && (
             <>
-              <span className="ds-truncate" role="status">
-                {result.undoneAt ? (
-                  <History className="ds-i" data-size="sm" aria-hidden="true" />
-                ) : (
-                  <Check className="ds-i" data-size="sm" aria-hidden="true" />
-                )}{' '}
+              <TableSelectionResult
+                icon={
+                  result.undoneAt ? (
+                    <History
+                      className="ds-i"
+                      data-size="sm"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Check className="ds-i" data-size="sm" aria-hidden="true" />
+                  )
+                }
+              >
                 {result.undoneAt ? 'Undone: ' : ''}
                 {describeLibraryChange(result)}
                 {error ? ` · ${error}` : ''}
-              </span>
+              </TableSelectionResult>
               <span className="ds-actions ds-toolbar-end">
                 <LibraryChangeUndo
                   change={result}
+                  redoVariant="default"
                   onChanged={(next) => {
                     setError(null)
                     setResult(next)

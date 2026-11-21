@@ -73,6 +73,11 @@ test('workspace labels follow the route, browse search and known detail title', 
     'Metadata',
   )
   assert.equal(workspaceRoute('/tags/hierarchy').label, 'Hierarchy')
+  assert.deepEqual(workspaceRoute('/tracks/changes?actor=owner'), {
+    area: 'tracks',
+    label: 'History',
+    isDetail: false,
+  })
   assert.equal(
     workspaceRoute('/films/toString', 'Fixture title').label,
     'Fixture title',

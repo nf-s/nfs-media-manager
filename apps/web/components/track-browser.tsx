@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type Ref,
 } from 'react'
 import Link from 'next/link'
 import { useQueryClient } from '@tanstack/react-query'
@@ -27,6 +28,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableScroll,
@@ -113,6 +115,13 @@ import {
 } from './track-recording-versions'
 import { LibraryTrackPlayButton } from './play-controls'
 import {
+  TrackMergeBar,
+  TrackSelectAll,
+  TrackSelectRow,
+  trackSelectionWidth,
+  useTrackSelection,
+} from './track-merge-bar'
+import {
   createBrowsePlaybackSource,
   createPendingTrackBrowseSource,
   type TrackBrowsePage,
@@ -179,6 +188,25 @@ export function EmbeddedTrackBrowser({
   return <TrackBrowse host={host} scope={creator} />
 }
 
+/** Inside a detail, the rows and the selection bar under them share the list's room. */
+function DetailListFrame({
+  embedded,
+  frame,
+  children,
+}: {
+  embedded: boolean
+  frame: Ref<HTMLDivElement>
+  children: ReactNode
+}) {
+  return embedded ? (
+    <div ref={frame} className="dtl-browse-frame">
+      {children}
+    </div>
+  ) : (
+    <>{children}</>
+  )
+}
+
 function TrackBrowse({
   host,
   scope,
@@ -200,6 +228,7 @@ function TrackBrowse({
     rowHeight: number
   } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
+  const detailList = useRef<HTMLDivElement>(null)
   const inspector = useDetailInspector()
   const pageRail = useRailSlot()
   // Inside a detail the active filters sit in a row above the results.
@@ -250,13 +279,15 @@ function TrackBrowse({
     // Leave room for the title, disclosure and playback controls on grouped rows.
     groupRecordings ? { title: 180 } : undefined,
   )
-  const tableWidths = columns.map((field) => {
+  const selectionColumnWidth = columnWidth(trackSelectionWidth)
+  const fieldWidths = columns.map((field) => {
     const width = columnWidth(widths.widthFor(field))
-    // Keep part of the horizontally scrolling columns visible beside the pinned title.
+    // Keep part of the horizontally scrolling columns visible beside the pinned selection and title.
     return groupRecordings && field.key === 'title'
-      ? `min(${width}, max(0px, ${viewport.width}px - 2 * var(--ds-8)))`
+      ? `min(${width}, max(0px, ${viewport.width}px - ${selectionColumnWidth} - 2 * var(--ds-8)))`
       : width
   })
+  const tableWidths = [selectionColumnWidth, ...fieldWidths]
   const requestedListeningPeriod =
     sortBy === listeningScrobblesKey ||
     columnKeys.includes(listeningScrobblesKey)
@@ -368,7 +399,7 @@ function TrackBrowse({
     return () => observer.disconnect()
   }, [])
   useEffect(() => {
-    if (embedded && scroller.current) return fitDetailList(scroller.current)
+    if (embedded && detailList.current) return fitDetailList(detailList.current)
   }, [embedded])
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 })
@@ -401,9 +432,10 @@ function TrackBrowse({
     view,
   ])
   useEffect(() => {
+    // Ticked table rows are selected too; the open track's row is marked.
     if (selectedId)
       scroller.current
-        ?.querySelector('[aria-selected="true"]')
+        ?.querySelector('tr[data-open], [aria-selected="true"]:not(tr)')
         ?.scrollIntoView({ block: 'nearest' })
   }, [selectedId])
 
@@ -459,6 +491,28 @@ function TrackBrowse({
   useEffect(() => {
     if (expandedSlot && !expandedVisible) collapseVersions()
   }, [collapseVersions, expandedSlot, expandedVisible])
+  // The loaded table rows in order, with open release versions under their track.
+  const loadedIds = [
+    ...new Set(
+      slots.flatMap(({ item }) =>
+        item
+          ? [
+              item.id,
+              ...(expanded?.id === item.id
+                ? versions.items.map((version) => version.id)
+                : []),
+            ]
+          : [],
+      ),
+    ),
+  ]
+  const selection = useTrackSelection(loadedIds)
+  // Another search, filter, sort, scope or view lists other tracks.
+  const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
+  if (selectionIdentity !== scrollIdentity) {
+    setSelectionIdentity(scrollIdentity)
+    selection.clear()
+  }
   const gridPanelAfter = Math.min(query.end, (gridRow + 1) * grid.columns) - 1
   const gridRowTemplate = expandedVisible
     ? `repeat(${gridRow - query.start / grid.columns + 1}, ${grid.cardHeight}px) ${versionsHeight}px`
@@ -624,21 +678,28 @@ function TrackBrowse({
     rowIndex: number,
     child = false,
   ) {
+    const open = item.id === selectedId && (!child || expanded?.id !== item.id)
     return (
       <TableRow
         key={item.id}
         data-item-index={child ? undefined : index}
-        selected={
-          item.id === selectedId && (!child || expanded?.id !== item.id)
-        }
+        data-open={open ? '' : undefined}
+        selected={open || selection.has(item.id)}
         aria-rowindex={rowIndex}
         child={child}
       >
+        <TableCell sticky={0}>
+          <TrackSelectRow
+            selection={selection}
+            id={item.id}
+            title={item.title}
+          />
+        </TableCell>
         {columns.map((field) => (
           <TableCell
             key={field.key}
             align={field.type === 'number' ? 'end' : undefined}
-            sticky={field.key === 'title' ? 0 : undefined}
+            sticky={field.key === 'title' ? trackSelectionWidth : undefined}
             stickyEdge={field.key === 'title'}
             title={formatFieldValue(
               field,
@@ -931,212 +992,235 @@ function TrackBrowse({
           filtered={activeFilterCount > 0}
           onClear={clearFilters}
         />
-        <TableScroll
-          className={`browse-scroll bi-scroll${embedded ? ` ${embeddedScrollClass}` : ''}`}
-          data-view={view}
-          data-inspector-scroll={embedded ? '' : undefined}
-          ref={scroller}
-          role="region"
-          aria-label={`${collection} ${view}`}
-          onScroll={(event) =>
-            setScroll({
-              identity: scrollIdentity,
-              top: event.currentTarget.scrollTop,
-            })
-          }
-        >
-          {view === 'grid' ? (
-            <VirtualCards
-              height={query.height}
-              padTop={padTop}
-              columns={grid.columns}
-              cardHeight={grid.cardHeight}
-              rowTemplate={gridRowTemplate}
-            >
-              {slots.map(({ item, index }) => (
-                <Fragment key={item?.id ?? `slot-${index}`}>
-                  {item ? (
-                    <Card
-                      data-item-index={index}
-                      selected={item.id === selectedId}
-                      art={
-                        <ItemArt
-                          kind="track"
-                          src={item.artworkUrl}
-                          title={item.title}
-                          target={{ kind: 'track', id: item.id }}
-                          overlay={playPair(item, index, 'tile')}
-                        />
-                      }
-                      title={titleWithVersions(
-                        item,
-                        index,
-                        <CardTitle>{trackLink(item)}</CardTitle>,
-                      )}
-                      by={
-                        <TrackArtistLinks
-                          track={item}
-                          fallbackHref={artistFilterHref}
-                        />
-                      }
-                      meta={cardMeta(item)}
-                      tags={
-                        compactCards ? undefined : (
-                          <TrackBrowseTags
-                            track={item}
-                            onFilter={addFilter}
-                            filterHref={filterHref}
+        <DetailListFrame embedded={embedded} frame={detailList}>
+          <TableScroll
+            className={`browse-scroll bi-scroll${embedded ? ` ${embeddedScrollClass}` : ''}`}
+            data-view={view}
+            data-inspector-scroll={embedded ? '' : undefined}
+            ref={scroller}
+            role="region"
+            aria-label={`${collection} ${view}`}
+            onScroll={(event) =>
+              setScroll({
+                identity: scrollIdentity,
+                top: event.currentTarget.scrollTop,
+              })
+            }
+          >
+            {view === 'grid' ? (
+              <VirtualCards
+                height={query.height}
+                padTop={padTop}
+                columns={grid.columns}
+                cardHeight={grid.cardHeight}
+                rowTemplate={gridRowTemplate}
+              >
+                {slots.map(({ item, index }) => (
+                  <Fragment key={item?.id ?? `slot-${index}`}>
+                    {item ? (
+                      <Card
+                        data-item-index={index}
+                        selected={item.id === selectedId}
+                        art={
+                          <ItemArt
+                            kind="track"
+                            src={item.artworkUrl}
+                            title={item.title}
+                            target={{ kind: 'track', id: item.id }}
+                            overlay={playPair(item, index, 'tile')}
                           />
-                        )
-                      }
-                    />
-                  ) : (
-                    <CardSkeleton />
-                  )}
-                  {expandedVisible &&
-                    index === gridPanelAfter &&
-                    renderVersionList(true)}
-                </Fragment>
-              ))}
-            </VirtualCards>
-          ) : view === 'list' ? (
-            <VirtualRows
-              height={query.height}
-              padTop={padTop}
-              compact={mobile}
-              head={
-                <ListHead
-                  title="Track"
-                  tags="Tags"
-                  meta={
-                    <>
-                      <RowValue kind="num">Duration</RowValue>
-                      <RowValue kind="num">Scrobbles</RowValue>
-                      <RowValue kind="date">Added</RowValue>
-                    </>
-                  }
-                />
-              }
-            >
-              {slots.map(({ item, index }) =>
-                item ? (
-                  <Fragment key={item.id}>
-                    {renderTrackListRow(item, index)}
-                    {expanded?.id === item.id && renderVersionList()}
+                        }
+                        title={titleWithVersions(
+                          item,
+                          index,
+                          <CardTitle>{trackLink(item)}</CardTitle>,
+                        )}
+                        by={
+                          <TrackArtistLinks
+                            track={item}
+                            fallbackHref={artistFilterHref}
+                          />
+                        }
+                        meta={cardMeta(item)}
+                        tags={
+                          compactCards ? undefined : (
+                            <TrackBrowseTags
+                              track={item}
+                              onFilter={addFilter}
+                              filterHref={filterHref}
+                            />
+                          )
+                        }
+                      />
+                    ) : (
+                      <CardSkeleton />
+                    )}
+                    {expandedVisible &&
+                      index === gridPanelAfter &&
+                      renderVersionList(true)}
                   </Fragment>
-                ) : (
-                  <RowSkeleton key={`slot-${index}`} />
-                ),
-              )}
-            </VirtualRows>
-          ) : (
-            <table
-              className="ds-table"
-              data-layout="fixed"
-              aria-label="Tracks"
-              aria-rowcount={
-                query.hasTotal
-                  ? total + 1 + (expanded ? versions.rowCount : 0)
-                  : undefined
-              }
-              style={{ width: `calc(${tableWidths.join(' + ')})` }}
-            >
-              <colgroup>
-                {columns.map((field, index) => (
-                  <col key={field.key} style={{ width: tableWidths[index] }} />
                 ))}
-              </colgroup>
-              <TableHeader>
-                <TableRow>
-                  {columns.map((field) => (
-                    <BrowseItemsHead
+              </VirtualCards>
+            ) : view === 'list' ? (
+              <VirtualRows
+                height={query.height}
+                padTop={padTop}
+                compact={mobile}
+                head={
+                  <ListHead
+                    title="Track"
+                    tags="Tags"
+                    meta={
+                      <>
+                        <RowValue kind="num">Duration</RowValue>
+                        <RowValue kind="num">Scrobbles</RowValue>
+                        <RowValue kind="date">Added</RowValue>
+                      </>
+                    }
+                  />
+                }
+              >
+                {slots.map(({ item, index }) =>
+                  item ? (
+                    <Fragment key={item.id}>
+                      {renderTrackListRow(item, index)}
+                      {expanded?.id === item.id && renderVersionList()}
+                    </Fragment>
+                  ) : (
+                    <RowSkeleton key={`slot-${index}`} />
+                  ),
+                )}
+              </VirtualRows>
+            ) : (
+              <table
+                className="ds-table"
+                data-layout="fixed"
+                aria-label="Tracks"
+                aria-rowcount={
+                  query.hasTotal
+                    ? total + 1 + (expanded ? versions.rowCount : 0)
+                    : undefined
+                }
+                style={{ width: `calc(${tableWidths.join(' + ')})` }}
+              >
+                <colgroup>
+                  <col style={{ width: selectionColumnWidth }} />
+                  {columns.map((field, index) => (
+                    <col
                       key={field.key}
-                      field={field}
-                      identity={field.key === 'title'}
-                      sortBy={sortBy}
-                      direction={direction}
-                      onSort={sort}
-                      resizer={widths.resizer(field)}
+                      style={{ width: fieldWidths[index] }}
                     />
                   ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {padTop > 0 && (
-                  <tr className="bi-spacer" aria-hidden="true">
-                    <td
-                      colSpan={tableWidths.length}
-                      style={{ height: padTop }}
-                    />
-                  </tr>
-                )}
-                {slots.map(({ item, index }) => {
-                  if (!item)
+                </colgroup>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead sticky={0}>
+                      <TrackSelectAll
+                        selection={selection}
+                        label="Select loaded tracks"
+                        disabled={!loadedIds.length}
+                      />
+                    </TableHead>
+                    {columns.map((field) => (
+                      <BrowseItemsHead
+                        key={field.key}
+                        field={field}
+                        identity={field.key === 'title'}
+                        sticky={trackSelectionWidth}
+                        sortBy={sortBy}
+                        direction={direction}
+                        onSort={sort}
+                        resizer={widths.resizer(field)}
+                      />
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {padTop > 0 && (
+                    <tr className="bi-spacer" aria-hidden="true">
+                      <td
+                        colSpan={tableWidths.length}
+                        style={{ height: padTop }}
+                      />
+                    </tr>
+                  )}
+                  {slots.map(({ item, index }) => {
+                    if (!item)
+                      return (
+                        <TableRow
+                          key={`slot-${index}`}
+                          aria-hidden="true"
+                          data-placeholder=""
+                        >
+                          <TableCell />
+                          {columns.map((field) => (
+                            <TableCell key={field.key}>
+                              <Skeleton height={10} width="70%" />
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      )
+                    const rowIndex =
+                      index +
+                      2 +
+                      (expanded && index > expanded.index
+                        ? versions.rowCount
+                        : 0)
                     return (
-                      <TableRow
-                        key={`slot-${index}`}
-                        aria-hidden="true"
-                        data-placeholder=""
-                      >
-                        {columns.map((field) => (
-                          <TableCell key={field.key}>
-                            <Skeleton height={10} width="70%" />
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    )
-                  const rowIndex =
-                    index +
-                    2 +
-                    (expanded && index > expanded.index ? versions.rowCount : 0)
-                  return (
-                    <Fragment key={item.id}>
-                      {renderTrackTableRow(item, index, rowIndex)}
-                      {expanded?.id === item.id &&
-                        (versions.items.length ? (
-                          versions.items.map((version, offset) =>
-                            renderTrackTableRow(
-                              version,
-                              index,
-                              rowIndex + offset + 1,
-                              true,
-                            ),
-                          )
-                        ) : (
-                          <TableRow child aria-rowindex={rowIndex + 1}>
-                            <TableCell
-                              colSpan={tableWidths.length}
-                              className="ds-muted"
-                            >
-                              <RecordingVersionsStatus versions={versions} />
+                      <Fragment key={item.id}>
+                        {renderTrackTableRow(item, index, rowIndex)}
+                        {expanded?.id === item.id &&
+                          (versions.items.length ? (
+                            versions.items.map((version, offset) =>
+                              renderTrackTableRow(
+                                version,
+                                index,
+                                rowIndex + offset + 1,
+                                true,
+                              ),
+                            )
+                          ) : (
+                            <TableRow child aria-rowindex={rowIndex + 1}>
+                              <TableCell
+                                colSpan={tableWidths.length}
+                                className="ds-muted"
+                              >
+                                <RecordingVersionsStatus versions={versions} />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        {expanded?.id === item.id && versions.needsPager && (
+                          <TableRow
+                            child
+                            aria-rowindex={rowIndex + versions.rowCount}
+                          >
+                            <TableCell colSpan={tableWidths.length}>
+                              <RecordingVersionsPager versions={versions} />
                             </TableCell>
                           </TableRow>
-                        ))}
-                      {expanded?.id === item.id && versions.needsPager && (
-                        <TableRow
-                          child
-                          aria-rowindex={rowIndex + versions.rowCount}
-                        >
-                          <TableCell colSpan={tableWidths.length}>
-                            <RecordingVersionsPager versions={versions} />
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  )
-                })}
-                {padBottom > 0 && (
-                  <tr className="bi-spacer" aria-hidden="true">
-                    <td
-                      colSpan={tableWidths.length}
-                      style={{ height: padBottom }}
-                    />
-                  </tr>
-                )}
-              </TableBody>
-            </table>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                  {padBottom > 0 && (
+                    <tr className="bi-spacer" aria-hidden="true">
+                      <td
+                        colSpan={tableWidths.length}
+                        style={{ height: padBottom }}
+                      />
+                    </tr>
+                  )}
+                </TableBody>
+              </table>
+            )}
+          </TableScroll>
+          {view === 'table' && (
+            <TrackMergeBar
+              selection={selection}
+              total={query.hasTotal ? total : undefined}
+            />
           )}
-        </TableScroll>
+        </DetailListFrame>
       </div>
       {!embedded && (
         <DetailInspector

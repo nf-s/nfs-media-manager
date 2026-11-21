@@ -488,8 +488,9 @@
     return `<details class="ds-source"${attrs({ open: o.open })}><summary>${icon('chevR')}${mark(o.p, { hidden: true })}<span class="ds-source-main"><span class="ds-source-line"><a class="ds-source-name" href="#">${PROVIDERS[o.p].name}</a>${status(o.match[0], o.match[1])}</span><span class="ds-source-id">${esc(o.id)}</span></span><span class="ds-source-when"><span>${esc(o.when)}</span>${o.state || ''}</span><span class="ds-cell-actions">${actions}</span></summary>${o.body ? `<div class="ds-source-body">${o.body}</div>` : ''}</details>`
   }
 
-  const timeline = (items) =>
-    `<ol class="ds-timeline">${items.map(([when, state, text, link]) => `<li><span class="ds-muted ds-num">${esc(when)}</span>${status(state[0], state[1])}<span class="ds-truncate">${text}</span>${link ? `<a class="ds-muted" href="#">${esc(link)}</a>` : '<span></span>'}</li>`).join('')}</ol>`
+  /* o.wrap: items end in a button (given as markup) instead of a link */
+  const timeline = (items, o = {}) =>
+    `<ol class="ds-timeline"${attrs({ 'data-wrap': o.wrap })}>${items.map(([when, state, text, link]) => `<li><span class="ds-muted ds-num">${esc(when)}</span>${status(state[0], state[1])}<span class="ds-truncate">${text}</span>${link ? (o.wrap ? link : `<a class="ds-muted" href="#">${esc(link)}</a>`) : '<span></span>'}</li>`).join('')}</ol>`
 
   function notice(text, o = {}) {
     return `<div class="ds-notice"${attrs({ 'data-tone': o.tone })}>${icon(o.icon || (o.tone ? 'alert' : 'info'), { size: 'sm' })}<span>${text}</span>${o.action || ''}</div>`

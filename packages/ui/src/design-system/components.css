@@ -1127,6 +1127,19 @@ a:focus-visible > .ds-logo[data-none] {
 .ds-selectbar .ds-check {
   accent-color: var(--ds-surface);
 }
+/* What the last action from the bar changed: an icon and one line, which is
+   cut short before the buttons are pushed out */
+.ds-selectbar-result {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-3);
+  min-width: 0;
+}
+.ds-selectbar-result > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 10 Card and grid --------------------------------------------------------- */
 
@@ -1745,6 +1758,21 @@ a:focus-visible > .ds-logo[data-none] {
 }
 .ds-timeline li:first-child {
   border-top: 0;
+}
+/* A timeline whose items carry a button, such as Undo. On a phone what
+   happened takes its own line under the date and the button. */
+.ds-timeline[data-wrap] li {
+  padding-block: var(--ds-2);
+}
+@media (max-width: 700px) {
+  .ds-timeline[data-wrap] li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .ds-timeline[data-wrap] li > .ds-truncate {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: normal;
+  }
 }
 .ds-coverage {
   display: grid;
