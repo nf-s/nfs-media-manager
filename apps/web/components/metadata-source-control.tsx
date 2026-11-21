@@ -3,6 +3,7 @@
 import React, {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentProps,
@@ -176,7 +177,7 @@ function SourcePopover({
     if (initiallyOpen && !panel.current?.matches(':popover-open'))
       panel.current?.showPopover()
   }, [initiallyOpen])
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
     panel.current?.focus({ preventScroll: true })
     function position() {
@@ -244,7 +245,10 @@ function SourcePopover({
         tabIndex={-1}
         aria-labelledby={titleId}
         className={`ds-pop data-stack ${styles.panel}`}
+        style={{ visibility: open ? undefined : 'hidden' }}
         onToggle={(event) => {
+          // React bubbles toggle events from the source table’s row details.
+          if (event.target !== event.currentTarget) return
           setOpen(event.newState === 'open')
           if (event.newState === 'closed' && initiallyOpen) onClose?.()
         }}
