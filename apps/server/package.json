@@ -18,7 +18,7 @@
     "prepare:cloudflare": "tsx scripts/prepare-cloudflare.ts",
     "cf-typegen": "wrangler types src/cloudflare/bindings.d.ts --env-interface CloudflareBindings",
     "typecheck:cloudflare": "tsc -p tsconfig.cloudflare.json --noEmit",
-    "build:cloudflare": "pnpm prepare:cloudflare && pnpm typecheck:cloudflare && tsx scripts/deploy-cloudflare.ts --dry-run --outdir ../../.cloudflare/server-build",
+    "build:cloudflare": "pnpm prepare:cloudflare && pnpm typecheck:cloudflare && tsx scripts/deploy-cloudflare.ts --dry-run --outdir ../../.cloudflare/server-build && tsx scripts/check-cloudflare-build.ts",
     "deploy:cloudflare": "pnpm prepare:cloudflare && pnpm typecheck:cloudflare && tsx scripts/deploy-cloudflare.ts",
     "cloud:migrate": "tsx scripts/cloud-migrate.ts",
     "cloud:nfo-export": "tsx scripts/cloud-nfo-export.ts",

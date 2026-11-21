@@ -1,12 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { env } from '../src/env'
-import { findWorkspaceRootPath } from '../src/lib/load-workspace-env'
+import { findWorkspaceFilePath } from '../src/lib/load-workspace-env'
 
 async function main() {
-  const root = findWorkspaceRootPath(process.cwd())
-  if (!root) throw new Error('Run this command from the configured workspace')
+  const manifest = findWorkspaceFilePath(process.cwd(), 'pnpm-workspace.yaml')
+  if (!manifest) throw new Error('Run this command from the workspace')
+  const root = dirname(manifest)
   const paths = env.MEDIA_PLUGIN_PATHS.map((path) => resolve(root, path))
   for (const path of paths) {
     if (!existsSync(path))
