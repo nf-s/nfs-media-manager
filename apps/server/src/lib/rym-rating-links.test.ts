@@ -40,6 +40,10 @@ vi.mock('@/services/album-playlists', () => ({
 vi.mock('@/services/music-tags', () => ({
   loadArtistTags: mocks.artistTags,
 }))
+vi.mock('@/services/album-editions', () => ({
+  readEditionCounts: vi.fn(async () => new Map()),
+  readAlbumRecord: vi.fn(async () => ({ editions: [], editionOf: null })),
+}))
 vi.mock('@/services/stored-trailers', () => ({
   withStoredTrailerLinks: vi.fn(),
 }))
