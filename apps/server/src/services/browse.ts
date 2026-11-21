@@ -363,6 +363,7 @@ function numericExpression(key: string, mediaType: MediaType): SQL {
 
 function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   const match = sql`lower(${value}::text)`
+  if (key === 'title') return sql`lower(${mediaItem.title}) = ${match}`
   if (mediaType === 'track' && key === 'source') {
     const source = TrackSourceSchema.options.find(
       (source) =>

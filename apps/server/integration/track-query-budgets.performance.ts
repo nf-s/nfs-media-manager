@@ -196,6 +196,43 @@ it('bounds selective Track pages and exact counts', async () => {
   })
 })
 
+it('uses the Track title index for exact title filters', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  const title = 'Fixture  "Exact" (Title)?'
+  await pool.query('update media_item set title = $1 where id = $2', [
+    title,
+    'track-19999',
+  ])
+  try {
+    for (const { label, value, ids } of [
+      { label: 'hit', value: title.toLowerCase(), ids: ['track-19999'] },
+      { label: 'different spaces', value: 'Fixture "Exact" (Title)?', ids: [] },
+      {
+        label: 'different punctuation',
+        value: 'Fixture  "Exact" (Title)!',
+        ids: [],
+      },
+    ]) {
+      const query = TrackQuerySchema.parse({
+        filters: [{ field: 'title', value, mode: 'required' }],
+        sortBy: 'title',
+        direction: 'asc',
+        size: 100,
+      })
+      await checkBudget(`exact Track title ${label}`, 100, 1, async () => {
+        const page = await queryBrowsePageIds('track', query)
+        expect(page.ids).toEqual(ids)
+        expect(page.hasMore).toBe(false)
+      })
+    }
+  } finally {
+    await pool.query('update media_item set title = $1 where id = $2', [
+      'Quicksilver 19999',
+      'track-19999',
+    ])
+  }
+})
+
 it('bounds unfiltered Track pages and deep positions', async () => {
   const { queryBrowsePageIds, queryBrowsePositions } =
     await import('@/services/browse')
