@@ -37,6 +37,7 @@ import subscriptions from '@/routes/subscriptions'
 import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
+import libraryChanges from '@/routes/library-changes'
 import manualAdd from '@/routes/manual-add'
 import findMatch from '@/routes/find-match'
 import ai from '@/routes/ai'
@@ -126,6 +127,7 @@ v1ApiBase.route('/playback', playback)
 v1ApiBase.route('/performance', performance)
 v1ApiBase.route('/subscriptions', subscriptions)
 v1ApiBase.route('/tags', tags)
+v1ApiBase.route('/library-changes', libraryChanges)
 v1ApiBase.route('/manual-add', manualAdd)
 v1ApiBase.route('/find-match', findMatch)
 v1ApiBase.route('/ai', ai)

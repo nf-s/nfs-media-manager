@@ -1226,6 +1226,92 @@ export const lastfmTrackSource = pgTable(
   ],
 )
 
+/** A record as it was named when a library change was made. */
+export type LibraryChangeRecordSnapshot = {
+  id: string
+  title: string
+  by: string
+}
+
+// Every merge, move and separation of scrobbled names, by the owner or by an
+// automatic rule. A change keeps its moves, and the tracks it removed, so it
+// can be undone and made again.
+export const libraryChange = pgTable(
+  'library_change',
+  {
+    id: text('id').primaryKey(),
+    // track, album or artist.
+    kind: text('kind').notNull(),
+    // merge, move, separate or rematch.
+    action: text('action').notNull(),
+    // owner or automatic.
+    actor: text('actor').notNull(),
+    rule: text('rule'),
+    target: jsonb('target').$type<LibraryChangeRecordSnapshot>(),
+    sources: jsonb('sources')
+      .$type<LibraryChangeRecordSnapshot[]>()
+      .notNull()
+      .default([]),
+    scrobbles: integer('scrobbles').notNull().default(0),
+    // False when the change also moved album positions or playlist entries.
+    reversible: boolean('reversible').notNull().default(true),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    undoneAt: timestamp('undone_at'),
+  },
+  (table) => [
+    index('library_change_kind_created_idx').on(table.kind, table.createdAt),
+  ],
+)
+
+// One scrobbled name a change moved, with its owner and manual flag on both
+// sides. A removed track keeps its ID here and is restored from
+// `library_change_removal`.
+export const libraryChangeMove = pgTable(
+  'library_change_move',
+  {
+    changeId: text('change_id')
+      .notNull()
+      .references(() => libraryChange.id, { onDelete: 'cascade' }),
+    username: text('username').notNull(),
+    artistKey: text('artist_key').notNull(),
+    trackKey: text('track_key').notNull(),
+    // The names as scrobbled, for the list of changes.
+    artistName: text('artist_name').notNull(),
+    trackName: text('track_name').notNull(),
+    scrobbles: integer('scrobbles').notNull().default(0),
+    fromId: text('from_id').notNull(),
+    fromManual: boolean('from_manual').notNull(),
+    toId: text('to_id').notNull(),
+    toManual: boolean('to_manual').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.changeId,
+        table.username,
+        table.artistKey,
+        table.trackKey,
+      ],
+    }),
+    index('library_change_move_from_idx').on(table.fromId),
+    index('library_change_move_to_idx').on(table.toId),
+  ],
+)
+
+// A Last.fm-only track that a change left without names and removed. The
+// snapshot holds its media item, library track, artist credits and tag IDs.
+export const libraryChangeRemoval = pgTable(
+  'library_change_removal',
+  {
+    changeId: text('change_id')
+      .notNull()
+      .references(() => libraryChange.id, { onDelete: 'cascade' }),
+    recordId: text('record_id').notNull(),
+    snapshot: jsonb('snapshot').$type<Record<string, JsonValue>>().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.changeId, table.recordId] })],
+)
+
 export const lastfmSync = pgTable('lastfm_sync', {
   username: text('username').primaryKey(),
   // running, failed, complete, or idle before the first run.

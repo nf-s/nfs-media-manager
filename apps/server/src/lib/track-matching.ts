@@ -55,6 +55,16 @@ export function trackVersionKey(title: string) {
   ].join(' ')
 }
 
+/**
+ * Qualifiers that name another version, such as Live or Demo, as written. A
+ * featured credit or a remaster note names the same recording and is left out.
+ */
+export function trackVersionQualifiers(title: string) {
+  return titleParts(title).qualifiers.filter(
+    (qualifier) => !SAME_RECORDING.test(qualifier),
+  )
+}
+
 /** The title without any qualifier. */
 export function trackBaseKey(title: string) {
   const { base } = titleParts(title)

@@ -379,6 +379,13 @@
       "when": 1795182828779,
       "tag": "0053_artist_mix_exact_names",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795237720943,
+      "tag": "0054_library_change_journal",
+      "breakpoints": true
     }
   ]
 }

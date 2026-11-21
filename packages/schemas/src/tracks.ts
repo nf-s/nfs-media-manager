@@ -273,6 +273,8 @@ export const TrackMergeResultSchema = z.object({
   targetId: z.string().min(1),
   /** The source track was removed after its Last.fm names were moved. */
   sourceRemoved: z.literal(true).optional(),
+  /** The recorded library change, when the action moved a name. */
+  changeId: z.string().optional(),
 })
 export type TrackMergeResult = z.infer<typeof TrackMergeResultSchema>
 

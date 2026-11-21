@@ -1,0 +1,173 @@
+import { z } from 'zod'
+import { PaginatedDataSchema, PaginationQuerySchema } from './common'
+import { TrackMatchIdSchema } from './tracks'
+
+/** The library a change belongs to. Only track changes are recorded so far. */
+export const LibraryChangeKindSchema = z.enum(['track', 'album', 'artist'])
+export type LibraryChangeKind = z.infer<typeof LibraryChangeKindSchema>
+
+/**
+ * `merge` joins whole records, `move` gives one scrobbled name to another
+ * record, `separate` gives a name its own record again and `rematch` returns a
+ * name to the automatic rules.
+ */
+export const LibraryChangeActionSchema = z.enum([
+  'merge',
+  'move',
+  'separate',
+  'rematch',
+])
+export type LibraryChangeAction = z.infer<typeof LibraryChangeActionSchema>
+
+export const LibraryChangeActorSchema = z.enum(['owner', 'automatic'])
+export type LibraryChangeActor = z.infer<typeof LibraryChangeActorSchema>
+
+/** A record as it was named when the change was made. */
+export const LibraryChangeRecordSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  by: z.string(),
+  /** The record is in the library now. A merged track returns when undone. */
+  exists: z.boolean(),
+})
+export type LibraryChangeRecord = z.infer<typeof LibraryChangeRecordSchema>
+
+/** A scrobbled artist and track name that a change moved. */
+export const LibraryChangeNameSchema = z.object({
+  artistName: z.string(),
+  trackName: z.string(),
+  scrobbles: z.number().int().nonnegative(),
+})
+export type LibraryChangeName = z.infer<typeof LibraryChangeNameSchema>
+
+export const LibraryChangeSchema = z.object({
+  id: z.string(),
+  kind: LibraryChangeKindSchema,
+  action: LibraryChangeActionSchema,
+  actor: LibraryChangeActorSchema,
+  /** The automatic rule that made the change. */
+  rule: z.string().nullable(),
+  /** The record the names belong to after the change, when it is one record. */
+  target: LibraryChangeRecordSchema.nullable(),
+  /** Records the names left. A merged track is removed with its names. */
+  sources: z.array(LibraryChangeRecordSchema),
+  /** Scrobbled names the change moved, most played first, up to five. */
+  names: z.array(LibraryChangeNameSchema),
+  nameCount: z.number().int().nonnegative(),
+  /** Scrobbles recorded under the moved names. */
+  scrobbles: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  undoneAt: z.string().nullable(),
+  /** False for a change that also moved album positions or playlist entries. */
+  reversible: z.boolean(),
+  /** Every name is still where the change put it. */
+  canUndo: z.boolean(),
+  /** Every name is still where the undo left it. */
+  canRedo: z.boolean(),
+})
+export type LibraryChange = z.infer<typeof LibraryChangeSchema>
+
+export const LibraryChangeParamsSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+})
+
+export const LibraryChangeListQuerySchema = PaginationQuerySchema.extend({
+  kind: LibraryChangeKindSchema.default('track'),
+  actor: LibraryChangeActorSchema.optional(),
+  /** Only changes that moved a name into or out of this record. */
+  recordId: TrackMatchIdSchema.optional(),
+})
+export type LibraryChangeListQuery = z.infer<
+  typeof LibraryChangeListQuerySchema
+>
+export const LibraryChangePageSchema = PaginatedDataSchema(LibraryChangeSchema)
+export type LibraryChangePage = z.infer<typeof LibraryChangePageSchema>
+
+const TrackMergeSelectionSchema = z.object({
+  trackIds: z.array(TrackMatchIdSchema).min(2).max(50),
+  /** The track to keep. Chosen by the server when omitted. */
+  targetId: TrackMatchIdSchema.optional(),
+})
+type TrackMergeSelection = z.infer<typeof TrackMergeSelectionSchema>
+const selectedOnce = ({ trackIds }: TrackMergeSelection) =>
+  new Set(trackIds).size === trackIds.length
+const targetSelected = ({ trackIds, targetId }: TrackMergeSelection) =>
+  targetId === undefined || trackIds.includes(targetId)
+const SELECTED_ONCE = 'Each track can be selected once'
+const TARGET_SELECTED = 'The track to keep must be one of the selected tracks'
+
+export const TrackMergePlanRequestSchema = TrackMergeSelectionSchema.strict()
+  .refine(selectedOnce, SELECTED_ONCE)
+  .refine(targetSelected, TARGET_SELECTED)
+export type TrackMergePlanRequest = z.infer<typeof TrackMergePlanRequestSchema>
+
+export const TrackMergeRequestSchema = TrackMergeSelectionSchema.extend({
+  /** The owner has seen the plan. Required when the plan has cautions. */
+  reviewed: z.boolean().default(false),
+})
+  .strict()
+  .refine(selectedOnce, SELECTED_ONCE)
+  .refine(targetSelected, TARGET_SELECTED)
+export type TrackMergeRequest = z.infer<typeof TrackMergeRequestSchema>
+
+/**
+ * Why a selected track cannot be merged into another yet. Joining two Spotify
+ * tracks as versions, and moving album positions or playlist entries, are not
+ * recorded as reversible changes.
+ */
+export const TrackMergeBlockSchema = z.enum(['spotify', 'album', 'playlist'])
+export type TrackMergeBlock = z.infer<typeof TrackMergeBlockSchema>
+
+export const TrackMergePlanTrackSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  by: z.string(),
+  albumTitle: z.string().nullable(),
+  durationSec: z.number().int().positive().nullable(),
+  scrobbles: z.number().int().nonnegative(),
+  /** The track has its own Spotify track ID. */
+  spotify: z.boolean(),
+  nameCount: z.number().int().nonnegative(),
+  /** Set on a track that cannot be merged into the track to keep. */
+  blocked: TrackMergeBlockSchema.nullable(),
+})
+export type TrackMergePlanTrack = z.infer<typeof TrackMergePlanTrackSchema>
+
+export const TrackMergePlanNameSchema = z.object({
+  trackId: z.string(),
+  artistName: z.string(),
+  trackName: z.string(),
+  count: z.number().int().nonnegative(),
+  /** The track to keep already counts these scrobbles. */
+  counted: z.boolean(),
+})
+
+/** Evidence against a merge. Any caution opens the review before merging. */
+export const TrackMergeCautionSchema = z.discriminatedUnion('code', [
+  /** A version word, such as Live or Demo, is in some titles only. */
+  z.object({ code: z.literal('version'), words: z.array(z.string()).min(1) }),
+  /** Known lengths differ by more than ten seconds. */
+  z.object({
+    code: z.literal('duration'),
+    seconds: z.number().int().positive(),
+  }),
+  /** The tracks are credited to different artists. */
+  z.object({ code: z.literal('artists'), names: z.array(z.string()).min(2) }),
+])
+export type TrackMergeCaution = z.infer<typeof TrackMergeCautionSchema>
+
+export const TrackMergePlanSchema = z.object({
+  targetId: z.string(),
+  tracks: z.array(TrackMergePlanTrackSchema),
+  /** Scrobbled names that move to the track to keep. */
+  names: z.array(TrackMergePlanNameSchema),
+  scrobbles: z.object({
+    target: z.number().int().nonnegative(),
+    /** Scrobbles the track to keep does not count yet. */
+    added: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  cautions: z.array(TrackMergeCautionSchema),
+  blocked: z.boolean(),
+})
+export type TrackMergePlan = z.infer<typeof TrackMergePlanSchema>

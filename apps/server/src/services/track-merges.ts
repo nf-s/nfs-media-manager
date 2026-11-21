@@ -1,5 +1,9 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import type {
+  LibraryChange,
+  TrackMergeRequest,
+} from '@repo/schemas/library-changes'
 import {
   TrackMergeInputSchema,
   type TrackMergeInput,
@@ -23,6 +27,12 @@ import {
   writeScrobbleTrackLinks,
 } from './track-links'
 import { importLastfmTrackSources } from './lastfm-library-tracks'
+import {
+  beginTrackChange,
+  getLibraryChange,
+  recordTrackChange,
+} from './library-changes'
+import { readTrackMergePlan } from './track-merge-plan'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -152,7 +162,7 @@ async function getScrobbleMatchSource(
 async function assignScrobbleNames(
   tx: Transaction,
   names: RecordedNames,
-  sourceId: string,
+  sourceIds: string[],
   targetId: string,
   standalone: boolean,
   method: 'manual' | 'exact' = 'manual',
@@ -180,10 +190,13 @@ async function assignScrobbleNames(
     on conflict (username, artist_key, track_key, track_media_item_id)
       do update set strategy = excluded.strategy
       where excluded.strategy = 'manual' or lastfm_track_link.strategy <> 'manual'`)
-  if (standalone && sourceId !== targetId)
-    await removeOrphanTracks(tx, [sourceId])
+  if (standalone)
+    await removeOrphanTracks(
+      tx,
+      sourceIds.filter((id) => id !== targetId),
+    )
   const affected = [
-    ...new Set([sourceId, targetId, ...removed.map(({ id }) => id)]),
+    ...new Set([...sourceIds, targetId, ...removed.map(({ id }) => id)]),
   ]
   await refreshTrackAddedDates(tx, affected)
   await refreshTrackListeningTotals(tx, affected)
@@ -201,6 +214,27 @@ async function trackMatchResult(
     .from(libraryTrack)
     .where(eq(libraryTrack.mediaItemId, displayedId))
   return current ? { targetId } : { targetId, sourceRemoved: true }
+}
+
+const withChange = (
+  result: TrackMergeResult,
+  changeId: string | null,
+): TrackMergeResult => (changeId ? { ...result, changeId } : result)
+
+/** Album positions and playlist entries are moved without a record. */
+async function hasMemberships(tx: Transaction, trackId: string) {
+  const rows = ChangedRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        select lt.media_item_id as id from library_track lt
+        where lt.media_item_id = ${trackId} and (
+          exists (select 1 from track t
+            where t.track_media_item_id = lt.media_item_id)
+          or exists (select 1 from playlist_item pi
+            where pi.media_item_id = lt.media_item_id))`)
+    ).rows,
+  )
+  return rows.length > 0
 }
 
 /** Move the original names and rebuild their listening totals in the caller's transaction. */
@@ -232,7 +266,7 @@ export async function moveTrackScrobbleNames(
     await assignScrobbleNames(
       tx,
       names,
-      sourceId,
+      [sourceId],
       targetId,
       removeStandalone,
       method,
@@ -252,22 +286,23 @@ export async function matchScrobbleTrack(
       { artistKey, trackKey },
       { targetId, includeListeningMatches: true },
     )
+    const names = [
+      { username: source.username, artist_key: artistKey, track_key: trackKey },
+    ]
+    const draft = await beginTrackChange(tx, { names })
     // An identical retry can arrive after the source row stopped showing the match.
     if (source.displayed)
       await assignScrobbleNames(
         tx,
-        [
-          {
-            username: source.username,
-            artist_key: artistKey,
-            track_key: trackKey,
-          },
-        ],
-        source.recording_id,
+        names,
+        [source.recording_id],
         targetId,
         source.standalone,
       )
-    return trackMatchResult(tx, displayedId, targetId)
+    return withChange(
+      await trackMatchResult(tx, displayedId, targetId),
+      await recordTrackChange(tx, draft, { action: 'move' }),
+    )
   })
 }
 
@@ -287,6 +322,15 @@ export async function removeScrobbleTrackMatch(
       eq(lastfmTrackSource.artistKey, artistKey),
       eq(lastfmTrackSource.trackKey, trackKey),
     )
+    const draft = await beginTrackChange(tx, {
+      names: [
+        {
+          username: source.username,
+          artist_key: artistKey,
+          track_key: trackKey,
+        },
+      ],
+    })
     if (mode === 'automatic')
       await tx
         .update(lastfmTrackSource)
@@ -308,7 +352,12 @@ export async function removeScrobbleTrackMatch(
         statusCode: 409,
         message: 'That Last.fm name is no longer available.',
       })
-    return trackMatchResult(tx, displayedId, result.targetId)
+    return withChange(
+      await trackMatchResult(tx, displayedId, result.targetId),
+      await recordTrackChange(tx, draft, {
+        action: mode === 'separate' ? 'separate' : 'rematch',
+      }),
+    )
   })
 }
 
@@ -384,6 +433,7 @@ export async function mergeLastfmTrack(
           ? 'Choose a track with imported Last.fm names.'
           : 'Only a Last.fm track without an imported Spotify identity can be merged.',
       })
+    const draft = await beginTrackChange(tx, { trackIds: [sourceId] })
     if (namesOnly) {
       await moveTrackScrobbleNames(
         tx,
@@ -391,7 +441,13 @@ export async function mergeLastfmTrack(
         targetId,
         source.spotify_track_id === null,
       )
-      return trackMatchResult(tx, sourceId, targetId)
+      const result = await trackMatchResult(tx, sourceId, targetId)
+      return withChange(
+        result,
+        await recordTrackChange(tx, draft, {
+          action: result.sourceRemoved ? 'merge' : 'move',
+        }),
+      )
     }
     if (target.spotify_track_id === null || !target.imported_spotify)
       throw new ServerError({
@@ -419,6 +475,7 @@ export async function mergeLastfmTrack(
       where track_media_item_id = ${targetId} and manually_matched
       on conflict (username, artist_key, track_key, track_media_item_id)
         do update set strategy = excluded.strategy`)
+    const reversible = !(await hasMemberships(tx, sourceId))
     await transferTrackMemberships(
       tx,
       sourceId,
@@ -429,6 +486,57 @@ export async function mergeLastfmTrack(
     await refreshTrackAddedDates(tx)
     await refreshTrackListeningTotals(tx)
     await refreshArtistListeningTotals(tx)
-    return { targetId }
+    return withChange(
+      { targetId },
+      await recordTrackChange(tx, draft, { action: 'merge', reversible }),
+    )
+  })
+}
+
+/**
+ * Merges the selected tracks into one and records the change. Only tracks
+ * made of scrobbled names are merged into another track; a plan with cautions
+ * must have been reviewed.
+ */
+export async function mergeTracks({
+  reviewed,
+  ...selection
+}: TrackMergeRequest): Promise<LibraryChange> {
+  return db.transaction(async (tx) => {
+    await lockLibraryTrackWrites(tx)
+    const plan = await readTrackMergePlan(tx, selection, true)
+    if (plan.blocked)
+      throw new ServerError({
+        statusCode: 409,
+        message:
+          'Some of the selected tracks cannot be merged into another track.',
+      })
+    if (plan.cautions.length && !reviewed)
+      throw new ServerError({
+        statusCode: 409,
+        message: 'Review this merge before it is made.',
+      })
+    const sourceIds = plan.tracks
+      .filter((track) => track.id !== plan.targetId && track.nameCount > 0)
+      .map((track) => track.id)
+    const draft = await beginTrackChange(tx, { trackIds: sourceIds })
+    await assignScrobbleNames(
+      tx,
+      draft.before.map(({ username, artist_key, track_key }) => ({
+        username,
+        artist_key,
+        track_key,
+      })),
+      sourceIds,
+      plan.targetId,
+      true,
+    )
+    const changeId = await recordTrackChange(tx, draft, { action: 'merge' })
+    if (!changeId)
+      throw new ServerError({
+        statusCode: 409,
+        message: 'The selected tracks have no scrobbled names to merge.',
+      })
+    return getLibraryChange(changeId, tx)
   })
 }

@@ -203,13 +203,20 @@ export async function linkScrobblesToTracks(account: string) {
 export async function writeScrobbleTrackLinks(
   tx: Transaction,
   account: string,
-  name?: TrackScrobbleNameKey,
+  name?: TrackScrobbleNameKey | TrackScrobbleNameKey[],
 ) {
+  const names = name === undefined || Array.isArray(name) ? name : [name]
+  if (names?.length === 0) return
   // Read and write under the identity writer lock so an in-flight relink
   // cannot overwrite a manual merge computed from newer source memberships.
   await lockLibraryTrackWrites(tx)
-  const nameFilter = name
-    ? sql`and artist_key = ${name.artistKey} and track_key = ${name.trackKey}`
+  const nameFilter = names
+    ? sql`and (artist_key, track_key) in (${sql.join(
+        names.map(
+          ({ artistKey, trackKey }) => sql`(${artistKey}, ${trackKey})`,
+        ),
+        sql`, `,
+      )})`
     : sql``
   const tracks = await libraryTracks(tx)
   const scrobbled = tracks.length
@@ -318,7 +325,7 @@ export async function writeScrobbleTrackLinks(
         on conflict do nothing`)
   await refreshTrackListeningTotals(
     tx,
-    name
+    names
       ? [...new Set([...stored, ...wanted.values()].map((row) => row.track_id))]
       : undefined,
   )
