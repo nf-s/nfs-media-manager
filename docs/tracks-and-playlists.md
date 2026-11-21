@@ -172,6 +172,27 @@ On a Last.fm-backed track without an imported Spotify identity, **Merge with Spo
 
 This action does not merge two different imported Spotify identities or search Spotify's remote catalogue. Different releases and versions may legitimately be separate; the retained recording is an explicit choice.
 
+### Merging from a table
+
+In the **Tracks** table, and in the Tracks table of an artist, tick two or more rows and choose **Merge** in the bar under the table. The scrobbled names of the selected tracks move to one track, and a track left with nothing is removed. The track that is kept is the one with an album position, a playlist entry or its own Spotify track; among tracks made only of scrobbled names it is the one with the most scrobbles. The header checkbox selects the rows loaded so far, and Shift selects a range. The selection is cleared when the search, a filter, the sort or the view changes.
+
+The merge is made at once and the bar reports it with **Undo**. A review opens first only when something speaks against the merge:
+
+- a version word such as Live, Demo or Remix is in some of the titles only;
+- known lengths are more than ten seconds apart;
+- the tracks have no artist in common;
+- a selected track cannot be merged into another. A track with its own Spotify track, an album position or a playlist entry stays a track of its own, so two such tracks cannot be joined yet. **Leave it out** drops those tracks from the merge.
+
+The review shows the track that is kept, the scrobbles before and after, and how many names move. When every selected track is made only of scrobbled names, **Kept** chooses which one survives. Scrobbles the kept track already counts are not added twice.
+
+### History and Undo
+
+Every move of a scrobbled name by hand is recorded: a merge from a table, **Change match**, **Add scrobbled name**, **Remove**, **Use automatic match**, **Merge Last.fm names** and **Merge with Spotify track**. **Tracks → History** lists the changes, newest first, with who made them and the scrobbles moved. A track's **Sources** tab lists its own latest changes under **Changes**.
+
+**Undo** returns each name to the track it came from. A track the change removed comes back as it was: its title and dates, artist credits, tags and their sources, provider references and identifiers, links, stored provider data and edits made by hand; stored provider responses and job history point at it again. **Redo** makes the change again.
+
+Undo is offered while every name is still where the change put it. When a later change moved one of the names, undo that change first; the button says so. A **Merge with Spotify track** that also moved album positions or playlist entries is listed but cannot be undone. Matches made by an import, by the automatic rules or by an accepted Spotify search are not recorded yet.
+
 Play controls are visible beside tracks, albums and playlists. Connect [Spotify playback](spotify-playback.md) to enable them where the library has a playable recording. Play is always followed by Add to queue. In Grid the pair appears on the artwork on hover, focus or touch; in List and Table it follows the title. In album and playlist track tables the row number sits before the pair. Playing a row captures the current table order for subsequent tracks. The playlist heading's **Play** starts at the first recorded entry that can play. Spotify opens from the link at the end of the detail header.
 
 ### Spotify matching and playback
@@ -222,6 +243,7 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `spotify_playlist_listing` holds the account's last playlist list as one JSON array per user, with its listing time.
 - `lastfm_track_source` maps each imported account, artist name and track name to one library track. It supplies Last.fm source membership, retention after playlist removal and the scrobble contribution to Added. Its `manually_matched` flag preserves confirmed recording choices; migration `0027_manual_track_matches` is required before deploying this merge workflow.
 - `lastfm_track_link` separately records which scrobbled artist and track names count towards which library tracks, and by which listening-attribution rule. A name can contribute listening counts to several Spotify editions without giving them all Last.fm membership.
+- `library_change` is the journal of merges, moves and separations of scrobbled names: the action, who made it, the kept record and the records the names left as they were named then, and when it was undone. `library_change_move` holds each name the change moved with the track it left and the track it reached, and whether each match was made by hand. `library_change_removal` holds the archive of every track the change removed, which an undo restores and then deletes. Migration `0054_library_change_journal` creates the three tables. `GET /api/v1/library-changes` lists changes (`actor`, `recordId`), `POST /api/v1/library-changes/track-merges/plan` previews a merge, `POST /api/v1/library-changes/track-merges` makes it and refuses a plan with cautions until `reviewed` is sent, and `POST /api/v1/library-changes/{id}/undo` and `/redo` reverse a change.
 - Imports run as the `spotify-playlist-import` task job, listings as `spotify-playlist-listing`, album additions as `spotify-playlist-add-album` and track additions as `spotify-playlist-add-track`, all with provider `spotify`.
 
 ## Verification
@@ -230,4 +252,6 @@ Stored Last.fm scrobbles link to library tracks by artist and track name. A scro
 - `apps/server/src/lib/playlist-sync.test.ts`: schedule times.
 - `apps/server/integration/spotify-playlists.integration.ts`: the listing job, import, progress, re-import, schedule, playlist pages, album additions with batches and a retried failure, refusals, removal, limits, filters, album membership and scrobble counts against a disposable database with mocked Spotify responses.
 - `apps/server/integration/lastfm-tracks.integration.ts`: stored-history import, identity ambiguity, source filters, playlist removal, account history and playback metadata against a disposable database without provider requests.
+- `apps/server/integration/library-changes.integration.ts` and `apps/server/src/routes/__tests__/library-changes-api.test.ts`: the merge plan and its cautions, a merge with undo and redo, a removed track restored with its provider data, links and edits, blocked tracks, later changes that stand in the way of an undo, and the endpoints, against a disposable database without provider requests.
+- `apps/web/components/track-browser.test.tsx`, `apps/web/components/library-changes.test.tsx` and `apps/web/utils/library-changes.test.ts`: the selection column and Merge bar in the Tracks table, History rows and the wording of changes and cautions.
 - `apps/web/components/playlist-detail.test.tsx`, `apps/web/components/playlists.test.tsx`, `apps/web/components/play-controls.test.tsx`, `apps/web/utils/playlist-sync.test.ts` and `apps/web/utils/playlist-links.test.ts`: the playlist drawer, its deep link, sync labels and the track play controls.

@@ -4,7 +4,26 @@ The proposed workflow starts where the duplicate is visible. From a track’s **
 
 The owner liked simplifying Sources and asked for table selection and a review that includes albums and artists. The two interactive prototypes below capture that direction. They use invented records and change only their in-memory examples. The current app supports the pairwise operations below.
 
-A later concept rethinks the model as a whole: a record is made of scrobbled names and Spotify versions, one **Merge** serves tracks, albums and artists, and every change is a history entry with **Undo**. It replaces the two prototypes below if the owner accepts it. [Library merge concept](design-system/concept-library-merge.html)
+A later concept rethinks the model as a whole: a record is made of scrobbled names and Spotify versions, one **Merge** serves tracks, albums and artists, and every change is a history entry with **Undo**. The owner accepted it on 2026-11-21 with the third behaviour for the button: **Merge** is made at once, and a review opens only when something speaks against it. It replaces the two prototypes below, which remain as a record of how the direction was reached. [Library merge concept](design-system/concept-library-merge.html)
+
+## What is built
+
+The accepted concept is built in stages. The concept page stays until the last element it draws is in the design system.
+
+| Stage | Contents                                                                                                                                                                                                                                                                                           | State                                                                                                                                             |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | The change journal with Undo and Redo for every move of a scrobbled name by hand. **Merge** from the Tracks table and an artist's Tracks table, with the review when unsure. **Tracks → History** and **Changes** in a track's Sources.                                                            | Built. See [merging from a table](tracks-and-playlists.md#merging-from-a-table) and [History and Undo](tracks-and-playlists.md#history-and-undo). |
+| 2     | Versions: joining two tracks that each have a Spotify track, an album position or a playlist entry as one record, and making the transfer of album positions and playlist entries reversible. Merge in an album's track list, whose rows all hold an album position. The part rows under a record. | Not built. Such tracks are refused with the reason.                                                                                               |
+| 3     | **Possible duplicates** as a grouped view of the table, with **Merge** and **Keep separate** per group, and the stored decision to keep records apart.                                                                                                                                             | Not built.                                                                                                                                        |
+| 4     | Albums and artists: the same Merge, review and history for both, including bringing an album's other scrobbled names when one of its tracks is merged.                                                                                                                                             | Not built.                                                                                                                                        |
+| 5     | Automatic matches written to the journal with their rule, so they can be undone and the rules tuned from what is undone.                                                                                                                                                                           | Not built. The journal already has the actor and rule fields.                                                                                     |
+
+Stage 1 decisions that later stages build on:
+
+- A change is recorded as the difference in who owns each scrobbled name before and after it, so every existing action is journaled the same way. [Journal service](../apps/server/src/services/library-changes.ts)
+- A track a change removes is archived in the journal and restored by Undo, so no read path had to learn about hidden rows.
+- Undo is refused while a later change holds one of the names. Changes are undone newest first.
+- The server refuses a merge whose plan has a caution until the request says it was reviewed, so no client can skip the review. [Merge plan](../apps/server/src/services/track-merge-plan.ts)
 
 ## Why a linked track can still appear twice
 

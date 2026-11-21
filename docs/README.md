@@ -8,7 +8,7 @@ Start with [getting started](getting-started.md) for installation or [applicatio
 - [Getting started](getting-started.md): installation, account setup, environment variables, provider API keys and troubleshooting.
 - [Importing a library](importing.md): CSV, NFO, Spotify and legacy JSON workflows.
 - [Spotify account setup](spotify-album-imports.md): callbacks, saved-album previews and read-only access.
-- [Tracks and Spotify playlists](tracks-and-playlists.md): importing playlists, Liked Songs and stored Last.fm tracks, source filters, album links and playback matching.
+- [Tracks and Spotify playlists](tracks-and-playlists.md): importing playlists, Liked Songs and stored Last.fm tracks, source filters, album links, playback matching, merging duplicates and undoing a change.
 - [Match diagnostics](match-diagnostics.md) for comparing provider identities and correcting matches in each library.
 - [Album and film collections](film-collections.md) covers the collection sidebar, ordered memberships and source links.
 - [Tag hierarchy](tag-hierarchy.md): parent tags, filtering by a parent, and editing the tree.
@@ -36,7 +36,7 @@ Back up the database and encryption key before migrations or repair commands.
 ## Development
 
 - [Development commands and checks](development.md)
-- [Library merge handover](library-merge-handover.md) covers the track, album and artist merge prototypes and implementation decisions.
+- [Library merge handover](library-merge-handover.md) covers the accepted merge model, what is built of it, the stages that remain and the earlier prototypes.
 - [Library query performance and indexes](query-performance.md)
 - [UI guidelines](dev-guidelines-ui.md) and [backend guidelines](dev-guidelines-backend.md)
 - [Secondary tables](secondary-tables.md): shared sorting, column controls, styling and verification.
