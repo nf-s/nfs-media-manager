@@ -44,6 +44,12 @@ export type ChangeEffectDefinition<Payload> = {
     direction: ChangeDirection,
     context: ChangeEffectContext,
   ): Promise<AfterNames | null>
+  /**
+   * Tracks the effect makes exist when it is applied in a direction, so the
+   * change's names can move onto a track that is not archived: one that had
+   * no row before the change. None when omitted.
+   */
+  restores?(payload: Payload, direction: ChangeDirection): string[]
 }
 
 /** An effect as stored with a change. */
@@ -69,6 +75,7 @@ export type ChangeEffectHandler = {
     direction: ChangeDirection,
     context: ChangeEffectContext,
   ): Promise<AfterNames | null>
+  restores(payload: unknown, direction: ChangeDirection): string[]
 }
 
 /**
@@ -96,6 +103,8 @@ export function defineChangeEffect<Payload>(
         direction,
         context,
       ),
+    restores: (payload, direction) =>
+      definition.restores?.(definition.payload.parse(payload), direction) ?? [],
   }
   return {
     handler,

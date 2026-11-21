@@ -21,6 +21,7 @@ import {
   libraryChangeBatch,
   libraryChangeEffect,
   libraryChangeMove,
+  libraryChangeRemoval,
   libraryMatchRejection,
   type LibraryChangeRecordSnapshot,
 } from '@/schemas/db'
@@ -382,6 +383,224 @@ export async function recordTrackChange(
   return recordChange(tx, { ...header, kind: 'track' }, { draft, effects })
 }
 
+/** A scrobbled name a run moved, as the run knows it. */
+export type RecordedNameMove = {
+  username: string
+  artistKey: string
+  trackKey: string
+  fromId: string
+  fromManual: boolean
+  toId: string
+  toManual: boolean
+}
+
+const ArchivedRecordSchema = z.object({
+  mediaItem: z.object({ title: z.string() }),
+  credits: z.array(z.object({ artistName: z.string(), role: z.string() })),
+})
+
+/** A removed track as History names it. */
+function archivedRecord({
+  id,
+  snapshot,
+}: ArchivedTrack): LibraryChangeRecordSnapshot[] {
+  const parsed = ArchivedRecordSchema.safeParse(snapshot)
+  if (!parsed.success) return []
+  return [
+    {
+      id,
+      title: parsed.data.mediaItem.title,
+      by: parsed.data.credits
+        .filter((credit) => credit.role === 'artist')
+        .map((credit) => credit.artistName)
+        .join(', '),
+    },
+  ]
+}
+
+const READ_BATCH = 5000
+
+function batches<Item>(items: Item[], size: number) {
+  const result: Item[][] = []
+  for (let start = 0; start < items.length; start += size)
+    result.push(items.slice(start, start + size))
+  return result
+}
+
+/**
+ * Records scrobbled names a run moved, when the run knows the moves: one
+ * change for each track the names went to, so one wrong match can be undone
+ * alone. Call it after the moves, in their transaction. Returns the changes'
+ * IDs.
+ */
+export async function recordNameMoves(
+  tx: Transaction,
+  {
+    moves,
+    rule,
+    action,
+    actor = 'automatic',
+    batchId = null,
+    archived = [],
+    effects,
+  }: {
+    moves: RecordedNameMove[]
+    rule: string | null
+    /** `merge` when a track the names left was removed, else `move`, when omitted. */
+    action?: LibraryChangeAction
+    actor?: LibraryChangeActor
+    /** The run, from `openChangeBatch`. */
+    batchId?: string | null
+    /** The tracks the names left, read with `archiveTracks` before the moves. */
+    archived?: ArchivedTrack[]
+    /** The effects to keep with the change of one track's names. */
+    effects?: (toId: string, moves: RecordedNameMove[]) => ChangeEffectEntry[]
+  },
+): Promise<string[]> {
+  const changed = moves.filter(
+    (move) => move.fromId !== move.toId || move.fromManual !== move.toManual,
+  )
+  if (!changed.length) return []
+
+  const nameOf = (move: RecordedNameMove) =>
+    JSON.stringify([move.username, move.artistKey, move.trackKey])
+  const scrobbled = new Map<
+    string,
+    z.infer<typeof ScrobbledNamesSchema>[number]
+  >()
+  for (const batch of batches(changed, READ_BATCH))
+    for (const name of ScrobbledNamesSchema.parse(
+      (
+        await tx.execute(sql`
+          select e.username, e.artist_key, e.track_key,
+            max(e.artist_name) as artist_name,
+            max(e.track_name) as track_name, count(*)::int as count
+          from lastfm_scrobble e
+          join ${namesInput(
+            batch.map((move) => ({
+              username: move.username,
+              artist_key: move.artistKey,
+              track_key: move.trackKey,
+            })),
+          )}
+            on e.username = r.username and e.artist_key = r.artist_key
+              and e.track_key = r.track_key
+          group by e.username, e.artist_key, e.track_key`)
+      ).rows,
+    ))
+      scrobbled.set(nameId(name), name)
+
+  const trackIds = [
+    ...new Set(changed.flatMap((move) => [move.fromId, move.toId])),
+  ]
+  const records = new Map<string, LibraryChangeRecordSnapshot>()
+  for (const batch of batches(trackIds, READ_BATCH))
+    for (const record of await readRecords(tx, batch))
+      records.set(record.id, record)
+  const removed = new Map<string, ArchivedTrack>()
+  for (const batch of batches(archived, READ_BATCH)) {
+    const present = await existingTrackIds(
+      tx,
+      batch.map((track) => track.id),
+    )
+    for (const track of batch)
+      if (!present.has(track.id)) removed.set(track.id, track)
+  }
+  for (const track of removed.values())
+    for (const record of archivedRecord(track))
+      if (!records.has(record.id)) records.set(record.id, record)
+
+  const byTarget = new Map<string, RecordedNameMove[]>()
+  for (const move of changed)
+    byTarget.set(move.toId, [...(byTarget.get(move.toId) ?? []), move])
+
+  const changes: (typeof libraryChange.$inferInsert)[] = []
+  const moveRows: (typeof libraryChangeMove.$inferInsert)[] = []
+  const effectRows: (typeof libraryChangeEffect.$inferInsert)[] = []
+  const removalRows: (typeof libraryChangeRemoval.$inferInsert)[] = []
+  let scrobbles = 0
+  for (const [toId, group] of byTarget) {
+    const id = nanoid()
+    const sourceIds = [
+      ...new Set(
+        group.filter((move) => move.fromId !== toId).map((move) => move.fromId),
+      ),
+    ]
+    let total = 0
+    for (const move of group) {
+      const name = scrobbled.get(nameOf(move))
+      total += name?.count ?? 0
+      moveRows.push({
+        changeId: id,
+        username: move.username,
+        artistKey: move.artistKey,
+        trackKey: move.trackKey,
+        artistName: name?.artist_name ?? move.artistKey,
+        trackName: name?.track_name ?? move.trackKey,
+        scrobbles: name?.count ?? 0,
+        fromId: move.fromId,
+        fromManual: move.fromManual,
+        toId: move.toId,
+        toManual: move.toManual,
+      })
+    }
+    scrobbles += total
+    changes.push({
+      id,
+      kind: 'track',
+      action:
+        action ??
+        (sourceIds.some((sourceId) => removed.has(sourceId))
+          ? 'merge'
+          : 'move'),
+      actor,
+      rule,
+      batchId,
+      target: records.get(toId) ?? null,
+      sources: sourceIds.flatMap((sourceId) => records.get(sourceId) ?? []),
+      scrobbles: total,
+      reversible: true,
+    })
+    for (const [position, effect] of (effects?.(toId, group) ?? []).entries())
+      effectRows.push({
+        changeId: id,
+        position,
+        type: effect.type,
+        recordIds: effect.recordIds,
+        payload: effect.payload,
+      })
+    for (const sourceId of sourceIds) {
+      const track = removed.get(sourceId)
+      if (track)
+        removalRows.push({
+          changeId: id,
+          recordId: track.id,
+          snapshot: track.snapshot,
+        })
+    }
+  }
+
+  for (const batch of batches(changes, WRITE_BATCH))
+    await tx.insert(libraryChange).values(batch)
+  for (const batch of batches(moveRows, WRITE_BATCH))
+    await tx.insert(libraryChangeMove).values(batch)
+  for (const batch of batches(effectRows, WRITE_BATCH))
+    await tx.insert(libraryChangeEffect).values(batch)
+  // A track's names can go to several tracks; each change can restore it.
+  for (const batch of batches(removalRows, 50))
+    await tx.insert(libraryChangeRemoval).values(batch).onConflictDoNothing()
+  if (batchId)
+    await tx
+      .update(libraryChangeBatch)
+      .set({
+        changeCount: sql`${libraryChangeBatch.changeCount} + ${changes.length}`,
+        nameCount: sql`${libraryChangeBatch.nameCount} + ${moveRows.length}`,
+        scrobbles: sql`${libraryChangeBatch.scrobbles} + ${scrobbles}`,
+      })
+      .where(eq(libraryChangeBatch.id, batchId))
+  return changes.map((change) => change.id)
+}
+
 const NAMES_MOVED = 'A later change moved these names. Undo that change first.'
 const NAMES_GONE = 'The scrobbles this change moved are no longer stored.'
 const TRACK_GONE = 'A track in this change is no longer in the library.'
@@ -400,6 +619,10 @@ async function effectBlocker(
     changeId: effect.changeId,
   })
 }
+
+/** Tracks an effect makes exist when applied in a direction. */
+const effectRestores = (effect: EffectRow, direction: ChangeDirection) =>
+  changeEffectHandler(effect.type)?.restores(effect.payload, direction) ?? []
 
 async function describeChanges(
   reader: Pick<typeof db, 'execute' | 'select'>,
@@ -463,12 +686,16 @@ async function describeChanges(
       const blocked = async () => {
         if (!row.reversible) return NOT_RECORDED
         if (!live.length && !ownEffects.length) return NAMES_GONE
-        const [here, there] = undone
-          ? (['from_id', 'to_available'] as const)
-          : (['to_id', 'from_available'] as const)
+        const [here, there, available] = undone
+          ? (['from_id', 'to_id', 'to_available'] as const)
+          : (['to_id', 'from_id', 'from_available'] as const)
         if (live.some((move) => move.owner_id !== move[here]))
           return NAMES_MOVED
-        if (live.some((move) => !move[there])) return TRACK_GONE
+        const made = new Set(
+          ownEffects.flatMap((effect) => effectRestores(effect, direction)),
+        )
+        if (live.some((move) => !move[available] && !made.has(move[there])))
+          return TRACK_GONE
         for (const effect of ownEffects) {
           const reason = await effectBlocker(reader, effect, direction)
           if (reason) return reason
@@ -675,8 +902,6 @@ async function applyChange(id: string, direction: ChangeDirection) {
       id,
       destinationIds.filter((trackId) => !present.has(trackId)),
     )
-    if (lost.length)
-      throw new ServerError({ statusCode: 409, message: TRACK_GONE })
 
     const afterNames: AfterNames[] = []
     for (const effect of direction === 'undo'
@@ -690,6 +915,9 @@ async function applyChange(id: string, direction: ChangeDirection) {
       )
       if (later) afterNames.push(later)
     }
+    // An effect can have made a track that was never archived.
+    if ((await existingTrackIds(tx, lost)).size < lost.length)
+      throw new ServerError({ statusCode: 409, message: TRACK_GONE })
 
     if (steps.length) {
       await tx.execute(sql`
