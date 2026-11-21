@@ -29,13 +29,13 @@ import {
   type SpotifyRequest,
 } from '@/lib/spotify-api'
 import {
-  artist,
   libraryTrack,
   mediaCredit,
   mediaItem,
   playlist,
   playlistItem,
 } from '@/schemas/db'
+import { writeArtistCredits } from './artist-names'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { getLastfmAccount } from './lastfm-scrobbles'
 import { loadPlaylistSummaries } from './playlist-directory'
@@ -603,14 +603,6 @@ export async function replaceSpotifyTrackCredits(
   tx: Transaction,
   batch: { id: string; artists: string[] }[],
 ) {
-  const artists = new Map<string, string>()
-  for (const track of batch)
-    for (const name of track.artists)
-      artists.set(createStableId('artist', name.toLowerCase()), name)
-  await tx
-    .insert(artist)
-    .values([...artists].map(([id, name]) => ({ id, name, sortName: name })))
-    .onConflictDoNothing()
   await tx.delete(mediaCredit).where(
     and(
       inArray(
@@ -620,24 +612,17 @@ export async function replaceSpotifyTrackCredits(
       eq(mediaCredit.role, 'artist'),
     ),
   )
-  const credits = batch.flatMap((track) =>
-    track.artists.map((name, billingOrder) => ({
-      track_id: track.id,
-      artist_id: createStableId('artist', name.toLowerCase()),
-      artist_name: name,
-      billing_order: billingOrder,
-    })),
+  await writeArtistCredits(
+    tx,
+    batch.flatMap((track) =>
+      track.artists.map((name, billingOrder) => ({
+        mediaItemId: track.id,
+        name,
+        role: 'artist',
+        billingOrder,
+      })),
+    ),
   )
-  // Legacy albums can already credit this artist under another ID.
-  await tx.execute(sql`
-    insert into media_credit (media_item_id, artist_id, role, billing_order)
-    select r.track_id, a.id, 'artist', r.billing_order
-    from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb)
-      as r(track_id text, artist_id text, artist_name text, billing_order int)
-    join lateral (select id from artist where id = r.artist_id or name = r.artist_name
-      order by case when name = r.artist_name then 0 else 1 end limit 1) a on true
-    order by r.track_id, r.billing_order
-    on conflict do nothing`)
 }
 
 async function storeImport(

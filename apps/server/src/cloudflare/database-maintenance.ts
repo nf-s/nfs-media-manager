@@ -6,6 +6,7 @@ import {
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
 import type { RecordingOrderMaintenanceSource } from '@/services/recording-groups'
+import { refreshTrackDuplicatesForMaintenance } from '@/services/track-duplicates'
 
 /** One bounded round trip on a fresh invocation pool, even when the library is idle. */
 async function probeDatabase() {
@@ -26,6 +27,7 @@ async function probeDatabase() {
 async function refreshCache(
   event:
     | { event: 'database.facet-maintenance' }
+    | { event: 'database.duplicate-maintenance' }
     | {
         event: 'database.recording-order-maintenance'
         source: RecordingOrderMaintenanceSource
@@ -65,6 +67,10 @@ export async function runDatabaseMaintenance(scheduledTime: number) {
       refreshTrackFacetVocabularyForMaintenance,
     ),
     runRecordingOrderMaintenance('scheduled'),
+    refreshCache(
+      { event: 'database.duplicate-maintenance' },
+      refreshTrackDuplicatesForMaintenance,
+    ),
   ])
   for (const outcome of outcomes)
     if (outcome.status === 'rejected') throw outcome.reason

@@ -80,6 +80,8 @@ export const FilmFilterOptionSchema = FilmBrowseFilterSchema.extend({
 export const AlbumQuerySchema = PaginationQuerySchema.extend({
   creatorId: CreatorIdSchema.optional(),
   includeArchived: z.enum(['true', 'false']).optional(),
+  /** List editions as rows of their own, not only the first album of a record. */
+  editions: z.enum(['true', 'false']).optional(),
   limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   q: z.string().optional(),
   tag: z.string().optional(),
@@ -155,11 +157,32 @@ export const AlbumListItemSchema = MediaBaseSchema.extend({
   durationSec: z.number().int().nonnegative().nullable(),
   spotifyUrl: z.string().url().nullable(),
   trackCount: z.number().int().nonnegative(),
+  /** The first album of the record this album is an edition of. */
+  editionOfId: z.string().nullable().optional(),
+  /** Editions of this album, shown under its row. */
+  editionCount: z.number().int().nonnegative().optional(),
 })
+
+/** An album of the same record, for the album page. */
+export const AlbumEditionSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  title: z.string(),
+  artworkUrl: z.string().nullable(),
+  releaseDate: z.string().nullable(),
+  trackCount: z.number().int().nonnegative(),
+  /** Scrobbles linked to this album itself. */
+  scrobbles: z.number().int().nonnegative(),
+})
+export type AlbumEdition = z.infer<typeof AlbumEditionSchema>
 
 export const AlbumDetailSchema = AlbumListItemSchema.extend({
   storedDateAdded: z.string().nullable().optional(),
   tracks: z.array(AlbumTrackEntrySchema),
+  /** The other albums of a first album's record. */
+  editions: z.array(AlbumEditionSchema).optional(),
+  /** The first album of the record, for an edition. */
+  editionOf: AlbumEditionSchema.nullable().optional(),
   collectionSources: z.array(SourceNavigationLinkSchema).optional(),
   providerDetails: z.array(AlbumProviderDetailsSchema).optional(),
   relationshipSources: z.array(EntityRelationshipSourceSchema).optional(),

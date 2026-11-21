@@ -95,6 +95,7 @@ export const trackScrobbleRuleLabels: Record<
   version: 'Ignoring version notes',
   album: 'Same album',
   manual: 'Manually matched',
+  record: 'Another version of this track',
 }
 
 export function parseTrackFilters(value: string | null): BrowseFilter[] {

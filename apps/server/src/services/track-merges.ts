@@ -2,6 +2,8 @@ import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type {
   LibraryChange,
+  LibraryChangeDetails,
+  LibraryChangePart,
   TrackMergeRequest,
 } from '@repo/schemas/library-changes'
 import {
@@ -24,15 +26,21 @@ import {
 import { refreshArtistListeningTotals } from './artist-listening'
 import {
   refreshTrackListeningTotals,
+  relinkTrackRecords,
   writeScrobbleTrackLinks,
 } from './track-links'
 import { importLastfmTrackSources } from './lastfm-library-tracks'
+import { clearKeptSeparate } from './keep-separate-effects'
+import type { ChangeEffectEntry } from './library-change-effect'
 import {
   beginTrackChange,
   getLibraryChange,
+  readChangeRecords,
   recordTrackChange,
 } from './library-changes'
 import { readTrackMergePlan } from './track-merge-plan'
+import { moveTrackMemberships } from './track-version-effects'
+import { joinTrackVersions } from './track-versions'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -221,22 +229,6 @@ const withChange = (
   changeId: string | null,
 ): TrackMergeResult => (changeId ? { ...result, changeId } : result)
 
-/** Album positions and playlist entries are moved without a record. */
-async function hasMemberships(tx: Transaction, trackId: string) {
-  const rows = ChangedRowsSchema.parse(
-    (
-      await tx.execute(sql`
-        select lt.media_item_id as id from library_track lt
-        where lt.media_item_id = ${trackId} and (
-          exists (select 1 from track t
-            where t.track_media_item_id = lt.media_item_id)
-          or exists (select 1 from playlist_item pi
-            where pi.media_item_id = lt.media_item_id))`)
-    ).rows,
-  )
-  return rows.length > 0
-}
-
 /** Move the original names and rebuild their listening totals in the caller's transaction. */
 export async function moveTrackScrobbleNames(
   tx: Transaction,
@@ -361,38 +353,44 @@ export async function removeScrobbleTrackMatch(
   })
 }
 
-/** Keep release positions and playlist entries when a confirmed recording already exists. */
+/**
+ * Keep release positions and playlist entries when a confirmed recording
+ * already exists. Returns the moves with what an undo needs, as effects to
+ * record with the change.
+ */
 export async function transferTrackMemberships(
   tx: Transaction,
   sourceId: string,
   targetId: string,
   moveAlbumPositions: boolean,
-) {
-  // Shared playlists keep the earliest position and Added date, as imports do.
-  await tx.execute(sql`
-    insert into playlist_item (playlist_id, media_item_id, position, added_at)
-    select playlist_id, ${targetId}, position, added_at
-    from playlist_item where media_item_id = ${sourceId}
-    on conflict (playlist_id, media_item_id) do update
-      set position = least(playlist_item.position, excluded.position),
-        added_at = least(playlist_item.added_at, excluded.added_at)`)
-  if (moveAlbumPositions) {
-    await tx.execute(sql`
-      update track set track_media_item_id = ${targetId}
-      where track_media_item_id = ${sourceId}`)
-    await tx.execute(sql`
-      update library_track target
-      set album_media_item_id = source.album_media_item_id,
-        album_link_strategy = 'album-track-list'
-      from library_track source
-      where target.media_item_id = ${targetId} and source.media_item_id = ${sourceId}
-        and (target.album_media_item_id is null or target.album_media_item_id = source.album_media_item_id) and exists (
-          select 1 from track t where t.track_media_item_id = target.media_item_id
-            and t.album_media_item_id = source.album_media_item_id)`)
-  }
-  await tx.execute(
-    sql`delete from playlist_item where media_item_id = ${sourceId}`,
-  )
+): Promise<ChangeEffectEntry[]> {
+  return moveTrackMemberships(tx, sourceId, targetId, moveAlbumPositions)
+}
+
+const EffectSizeSchema = z.object({
+  positionIds: z.array(z.unknown()).optional(),
+  entries: z.array(z.unknown()).optional(),
+})
+
+/** What a merge moved besides scrobbled names, for the list of changes. */
+function mergeDetails(
+  effects: ChangeEffectEntry[],
+  versionTitles: string[],
+): LibraryChangeDetails {
+  const moved = (type: string, key: 'positionIds' | 'entries') =>
+    effects
+      .filter((effect) => effect.type === type)
+      .reduce((total, effect) => {
+        const payload = EffectSizeSchema.safeParse(effect.payload)
+        return total + (payload.success ? (payload.data[key]?.length ?? 0) : 0)
+      }, 0)
+  const counts: Partial<Record<LibraryChangePart, number>> = {}
+  const position = moved('track-position-move', 'positionIds')
+  const entries = moved('track-playlist-entry-move', 'entries')
+  if (versionTitles.length) counts.version = versionTitles.length
+  if (position) counts.position = position
+  if (entries) counts['playlist-entry'] = entries
+  return { counts, labels: versionTitles.slice(0, 5) }
 }
 
 /** Keeps an explicitly chosen imported Spotify identity and its recorded evidence. */
@@ -475,8 +473,7 @@ export async function mergeLastfmTrack(
       where track_media_item_id = ${targetId} and manually_matched
       on conflict (username, artist_key, track_key, track_media_item_id)
         do update set strategy = excluded.strategy`)
-    const reversible = !(await hasMemberships(tx, sourceId))
-    await transferTrackMemberships(
+    const effects = await transferTrackMemberships(
       tx,
       sourceId,
       targetId,
@@ -485,18 +482,25 @@ export async function mergeLastfmTrack(
     await removeOrphanTracks(tx, [sourceId])
     await refreshTrackAddedDates(tx)
     await refreshTrackListeningTotals(tx)
+    await relinkTrackRecords(tx, [targetId])
     await refreshArtistListeningTotals(tx)
     return withChange(
       { targetId },
-      await recordTrackChange(tx, draft, { action: 'merge', reversible }),
+      await recordTrackChange(tx, draft, {
+        action: 'merge',
+        details: mergeDetails(effects, []),
+        effects,
+      }),
     )
   })
 }
 
 /**
- * Merges the selected tracks into one and records the change. Only tracks
- * made of scrobbled names are merged into another track; a plan with cautions
- * must have been reviewed.
+ * Merges the selected tracks into one record and records the change. A track
+ * with its own Spotify track, or without names to move, stays as a version;
+ * the others give their names, album positions and playlist entries to the
+ * track to keep and are removed. A plan with cautions must have been
+ * reviewed.
  */
 export async function mergeTracks({
   reviewed,
@@ -505,21 +509,35 @@ export async function mergeTracks({
   return db.transaction(async (tx) => {
     await lockLibraryTrackWrites(tx)
     const plan = await readTrackMergePlan(tx, selection, true)
-    if (plan.blocked)
-      throw new ServerError({
-        statusCode: 409,
-        message:
-          'Some of the selected tracks cannot be merged into another track.',
-      })
     if (plan.cautions.length && !reviewed)
       throw new ServerError({
         statusCode: 409,
         message: 'Review this merge before it is made.',
       })
-    const sourceIds = plan.tracks
-      .filter((track) => track.id !== plan.targetId && track.nameCount > 0)
-      .map((track) => track.id)
-    const draft = await beginTrackChange(tx, { trackIds: sourceIds })
+    const { targetId } = plan
+    const merged = plan.tracks.filter((track) => track.outcome === 'merge')
+    const versions = plan.tracks.filter((track) => track.outcome === 'version')
+    const records = await readChangeRecords(
+      tx,
+      'track',
+      plan.tracks.map((track) => track.id),
+    )
+    const draft = await beginTrackChange(tx, {
+      trackIds: merged.map((track) => track.id),
+    })
+    const effects: ChangeEffectEntry[] = []
+    const joined = versions.length
+      ? await joinTrackVersions(
+          tx,
+          targetId,
+          versions.map((track) => track.id),
+        )
+      : { effect: null, trackIds: [] }
+    if (joined.effect) effects.push(joined.effect)
+    for (const track of merged)
+      effects.push(
+        ...(await transferTrackMemberships(tx, track.id, targetId, true)),
+      )
     await assignScrobbleNames(
       tx,
       draft.before.map(({ username, artist_key, track_key }) => ({
@@ -527,15 +545,31 @@ export async function mergeTracks({
         artist_key,
         track_key,
       })),
-      sourceIds,
-      plan.targetId,
+      merged.map((track) => track.id),
+      targetId,
       true,
     )
-    const changeId = await recordTrackChange(tx, draft, { action: 'merge' })
+    await relinkTrackRecords(tx, [targetId, ...joined.trackIds])
+    const forgotten = await clearKeptSeparate(
+      tx,
+      'track',
+      plan.tracks.map((track) => track.id),
+    )
+    if (forgotten) effects.push(forgotten)
+    const changeId = await recordTrackChange(tx, draft, {
+      action: 'merge',
+      target: records.find((record) => record.id === targetId) ?? null,
+      sources: records.filter((record) => record.id !== targetId),
+      details: mergeDetails(
+        effects,
+        joined.effect ? versions.map((track) => track.title) : [],
+      ),
+      effects,
+    })
     if (!changeId)
       throw new ServerError({
         statusCode: 409,
-        message: 'The selected tracks have no scrobbled names to merge.',
+        message: 'The selected tracks are one record already.',
       })
     return getLibraryChange(changeId, tx)
   })

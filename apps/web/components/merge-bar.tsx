@@ -21,6 +21,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { TableSelectionResult } from '@repo/ui/components/ui/table'
 import { updateJobSelection } from '@/utils/job-selection'
 import {
+  invalidateLibraryRecords,
   libraryChangeBlock,
   toggleLibraryChange,
 } from '@/utils/library-changes'
@@ -158,12 +159,12 @@ export function LibraryChangeUndo({
     mutationFn: () => toggleLibraryChange(apiBaseUrl, change),
     onSuccess: async (next) => {
       onChanged?.(next)
-      await invalidateScrobbleLinks(
-        client,
-        [...next.sources, ...(next.target ? [next.target] : [])]
-          .filter((record) => !record.exists)
-          .map((record) => record.id),
-      )
+      const removed = [...next.sources, ...(next.target ? [next.target] : [])]
+        .filter((record) => !record.exists)
+        .map((record) => record.id)
+      await (next.kind === 'track'
+        ? invalidateScrobbleLinks(client, removed)
+        : invalidateLibraryRecords(client, next.kind, removed))
     },
     onError: (failure) =>
       onError?.(errorMessage(failure, 'The change could not be undone.')),

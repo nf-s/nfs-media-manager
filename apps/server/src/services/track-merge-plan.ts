@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type {
   TrackMergeBlock,
   TrackMergeCaution,
+  TrackMergeOutcome,
   TrackMergePlan,
   TrackMergePlanRequest,
 } from '@repo/schemas/library-changes'
@@ -10,6 +11,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { artistKeys, plainKey } from '@/lib/lastfm-album-matching'
 import { trackVersionQualifiers } from '@/lib/track-matching'
+import { readKeptSeparate } from './keep-separate-effects'
 import { albumTrackDurationExpression } from './track-values'
 
 type Reader = Pick<typeof db, 'execute'>
@@ -28,6 +30,7 @@ const PlanTracksSchema = z.array(
     spotify: z.boolean(),
     on_album: z.boolean(),
     on_playlist: z.boolean(),
+    name_count: z.number().int().nonnegative(),
   }),
 )
 type PlanTrack = z.infer<typeof PlanTracksSchema>[number]
@@ -41,6 +44,7 @@ const PlanNamesSchema = z.array(
     counted: z.boolean(),
   }),
 )
+const SharedAlbumsSchema = z.array(z.object({ title: z.string() }))
 
 const idList = (ids: string[]) =>
   sql.join(
@@ -56,10 +60,23 @@ function blockOf(track: PlanTrack): TrackMergeBlock | null {
   return null
 }
 
-/** The chosen track, else the one with its own identity, else the most played. */
+/**
+ * A track with its own Spotify track stays as a version of the kept record,
+ * and so does one with no scrobbled names to move. The others are merged.
+ */
+function outcomeOf(track: PlanTrack, target: PlanTrack): TrackMergeOutcome {
+  if (track === target) return 'keep'
+  return track.spotify || track.name_count === 0 ? 'version' : 'merge'
+}
+
+/**
+ * The chosen track, else one with its own Spotify track, else one with
+ * another identity, else the most played.
+ */
 function chooseTarget(tracks: PlanTrack[], targetId?: string) {
   const [first] = [...tracks].sort(
     (left, right) =>
+      Number(right.spotify) - Number(left.spotify) ||
       Number(blockOf(right) !== null) - Number(blockOf(left) !== null) ||
       right.scrobbles - left.scrobbles ||
       left.title.localeCompare(right.title) ||
@@ -115,6 +132,37 @@ function artistCaution(
     : []
 }
 
+/** Albums on which two of the tracks are different positions. */
+async function sameAlbumCaution(
+  reader: Reader,
+  trackIds: string[],
+): Promise<TrackMergeCaution[]> {
+  const albums = SharedAlbumsSchema.parse(
+    (
+      await reader.execute(sql`
+        select mi.title from track t join media_item mi on mi.id = t.album_media_item_id
+        where t.track_media_item_id in (${idList(trackIds)})
+        group by mi.id, mi.title
+        having count(distinct t.track_media_item_id) > 1
+        order by mi.title, mi.id`)
+    ).rows,
+  )
+  return albums.length
+    ? [{ code: 'same-album', albums: albums.map((album) => album.title) }]
+    : []
+}
+
+async function separateCaution(
+  reader: Reader,
+  trackIds: string[],
+): Promise<TrackMergeCaution[]> {
+  const pairs = await readKeptSeparate(reader, 'track', trackIds)
+  const kept = [
+    ...new Set(pairs.flatMap(({ lowId, highId }) => [lowId, highId])),
+  ]
+  return kept.length ? [{ code: 'separate', trackIds: kept }] : []
+}
+
 /**
  * What merging the selected tracks would do. `lock` holds the tracks for the
  * rest of the caller's transaction.
@@ -142,7 +190,9 @@ export async function readTrackMergePlan(
           exists (select 1 from track t
             where t.track_media_item_id = lt.media_item_id) as on_album,
           exists (select 1 from playlist_item pi
-            where pi.media_item_id = lt.media_item_id) as on_playlist
+            where pi.media_item_id = lt.media_item_id) as on_playlist,
+          (select count(*)::int from lastfm_track_source s
+            where s.track_media_item_id = lt.media_item_id) as name_count
         from library_track lt join media_item mi on mi.id = lt.media_item_id
         left join media_item am on am.id = lt.album_media_item_id
         where lt.media_item_id in (${idList(trackIds)})
@@ -174,13 +224,17 @@ export async function readTrackMergePlan(
     ).rows,
   )
   const ordered = [target, ...tracks.filter((track) => track !== target)]
-  const sources = ordered.filter(
-    (track) => track !== target && blockOf(track) === null,
+  const sources = ordered.filter((track) => track !== target)
+  const moving = names.filter((name) =>
+    sources.some(
+      (track) =>
+        track.id === name.track_id && outcomeOf(track, target) === 'merge',
+    ),
   )
-  const mergeable = new Set(sources.map((track) => track.id))
-  const moving = names.filter((name) => mergeable.has(name.track_id))
-  const added = moving.reduce(
-    (total, name) => total + (name.counted ? 0 : name.count),
+  // Names a new version keeps also count for the record.
+  const added = names.reduce(
+    (total, name) =>
+      total + (name.track_id === target.id || name.counted ? 0 : name.count),
     0,
   )
   return {
@@ -195,7 +249,8 @@ export async function readTrackMergePlan(
       spotify: track.spotify,
       nameCount: names.filter((name) => name.track_id === track.id).length,
       identity: blockOf(track),
-      blocked: track === target ? null : blockOf(track),
+      outcome: outcomeOf(track, target),
+      blocked: null,
     })),
     names: moving.map((name) => ({
       trackId: name.track_id,
@@ -210,11 +265,13 @@ export async function readTrackMergePlan(
       total: target.scrobbles + added,
     },
     cautions: [
-      ...versionCaution([target, ...sources]),
-      ...durationCaution([target, ...sources]),
+      ...versionCaution(ordered),
+      ...durationCaution(ordered),
       ...artistCaution(target, sources),
+      ...(await sameAlbumCaution(reader, trackIds)),
+      ...(await separateCaution(reader, trackIds)),
     ],
-    blocked: sources.length < ordered.length - 1,
+    blocked: false,
   }
 }
 

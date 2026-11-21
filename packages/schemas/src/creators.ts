@@ -28,6 +28,7 @@ import {
   ArtistBrowseFiltersParamSchema,
   ArtistBrowseRangesParamSchema,
 } from './artist-browse'
+import { ArtistKeptNameSchema } from './artist-merges'
 
 const CountSchema = z.number().int().nonnegative()
 const CreatorIdentitySchema = z.object({
@@ -74,6 +75,8 @@ export const ArtistDetailSchema = ArtistSummarySchema.extend({
   profile: ArtistProfileSchema,
   providers: z.array(ArtistProviderSnapshotSchema),
   history: z.array(ArtistProviderSnapshotSchema),
+  /** Names merged into this artist, which it keeps. */
+  keptNames: z.array(ArtistKeptNameSchema).default([]),
 })
 export type ArtistDetail = z.infer<typeof ArtistDetailSchema>
 

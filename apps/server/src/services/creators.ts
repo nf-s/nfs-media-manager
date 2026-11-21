@@ -1,4 +1,13 @@
-import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  eq,
+  inArray,
+  isNull,
+  sql,
+  type SQL,
+} from 'drizzle-orm'
 import type {
   ArtistProfile,
   ArtistProviderSnapshot,
@@ -53,6 +62,7 @@ import { listAlbums, listFilms } from './media'
 import { loadTracks } from './tracks'
 import { listArtistIdentifiers } from './artist-provider-evidence'
 import { visibleArtist } from './entity-relationships'
+import { currentArtistId, listKeptArtistNames } from './artist-names'
 import {
   artistFreshnessConditions,
   loadArtistMetadata,
@@ -84,9 +94,11 @@ function namePattern(value: string) {
   return `%${value.replace(/[\\%_]/g, '\\$&')}%`
 }
 
+/** A merged artist is a name another artist keeps, not a creator of its own. */
 function creatorFilter(q: string | undefined, id: string | undefined) {
   const pattern = q ? namePattern(q) : undefined
   return and(
+    isNull(artist.mergedIntoId),
     id === undefined ? undefined : eq(artist.id, id),
     pattern === undefined
       ? undefined
@@ -195,7 +207,12 @@ function combineProfiles(providers: ArtistProviderSnapshot[]): ArtistProfile {
   return profile
 }
 
-export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
+/** A merged artist's ID reads as the artist it was merged into. */
+export async function getArtist(
+  requestedId: string,
+  query: ArtistDetailQuery = {},
+) {
+  const id = await currentArtistId(db, requestedId)
   const directory = artistDirectory(id).as('directory')
   const artistId = sql`${id}`
   const [summary] = await db
@@ -212,10 +229,11 @@ export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
     .from(directory)
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })
-  const [providers, history, mixCount] = await Promise.all([
+  const [providers, history, mixCount, keptNames] = await Promise.all([
     listCurrentArtistProfiles(id),
     query.includeHistory === 'false' ? [] : listArtistProfileHistory(id, 20),
     countMixesNamingArtist(summary.name),
+    listKeptArtistNames(db, id),
   ])
   return ArtistDetailSchema.parse({
     ...summary,
@@ -225,6 +243,7 @@ export async function getArtist(id: string, query: ArtistDetailQuery = {}) {
     profile: combineProfiles(providers),
     providers,
     history,
+    keptNames,
   })
 }
 
@@ -302,31 +321,41 @@ export async function getPerson(id: string) {
   return personSummary(summary)
 }
 
-/** An artist must have at least one visible, current library credit. */
-async function requireLibraryArtist(id: string) {
+/**
+ * An artist must have at least one visible, current library credit. A merged
+ * artist's ID reads as the artist it was merged into.
+ */
+async function requireLibraryArtist(requestedId: string) {
   const [row] = await db
-    .select({ name: artist.name })
+    .select({ id: artist.id, name: artist.name })
     .from(artist)
-    .where(and(eq(artist.id, id), visibleArtist))
+    .where(
+      and(eq(artist.id, await currentArtistId(db, requestedId)), visibleArtist),
+    )
   if (!row)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })
   return row
 }
 
-/** Use the same library visibility for directory membership and related pages. */
+/**
+ * Use the same library visibility for directory membership and related pages.
+ * Returns the ID to read, which for a merged artist is the artist it was
+ * merged into.
+ */
 export async function requireCreator(id: string, kind: 'artist' | 'person') {
-  if (kind === 'artist') {
-    await requireLibraryArtist(id)
-    return
-  }
+  if (kind === 'artist') return (await requireLibraryArtist(id)).id
   const directory = personDirectory(undefined, undefined, id).as('directory')
   const [row] = await db.select({ id: directory.id }).from(directory)
   if (!row)
     throw new ServerError({ statusCode: 404, message: 'Person not found' })
+  return row.id
 }
 
-export async function listArtistAlbums(id: string, query: ArtistAlbumQuery) {
-  await requireCreator(id, 'artist')
+export async function listArtistAlbums(
+  requestedId: string,
+  query: ArtistAlbumQuery,
+) {
+  const id = await requireCreator(requestedId, 'artist')
   const data = await listAlbums(
     AlbumQuerySchema.parse({ ...query, creatorId: id }),
     {
@@ -336,8 +365,11 @@ export async function listArtistAlbums(id: string, query: ArtistAlbumQuery) {
   return { ...queryPage(query), ...data }
 }
 
-export async function getArtistHistory(id: string, query: ArtistHistoryQuery) {
-  await requireCreator(id, 'artist')
+export async function getArtistHistory(
+  requestedId: string,
+  query: ArtistHistoryQuery,
+) {
+  const id = await requireCreator(requestedId, 'artist')
   const [totalCount, items] = await Promise.all([
     countArtistProfileHistory(id, query.provider),
     listArtistProfileHistory(
@@ -350,8 +382,11 @@ export async function getArtistHistory(id: string, query: ArtistHistoryQuery) {
   return ArtistHistoryPageSchema.parse(page(query, totalCount, items))
 }
 
-export async function listArtistTracks(id: string, query: ArtistTrackQuery) {
-  await requireCreator(id, 'artist')
+export async function listArtistTracks(
+  requestedId: string,
+  query: ArtistTrackQuery,
+) {
+  const id = await requireCreator(requestedId, 'artist')
   const { ids, totalCount, pageCount } = await queryBrowseIds(
     'track',
     TrackQuerySchema.parse({ ...query, creatorId: id }),
@@ -371,10 +406,10 @@ export async function listArtistMixes(id: string, query: ArtistMixQuery) {
 }
 
 export async function listArtistPlaylists(
-  id: string,
+  requestedId: string,
   query: ArtistPlaylistQuery,
 ) {
-  await requireCreator(id, 'artist')
+  const id = await requireCreator(requestedId, 'artist')
   const memberships = artistPlaylistMembership(id).as('memberships')
   const where = query.q
     ? sql`${memberships.name} ilike ${namePattern(query.q)}`

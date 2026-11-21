@@ -1,13 +1,21 @@
+import type { QueryClient } from '@tanstack/react-query'
 import {
   LibraryChangePageSchema,
+  LibraryChangePartSchema,
   LibraryChangeSchema,
   TrackMergePlanSchema,
   type LibraryChange,
   type LibraryChangeActor,
+  type LibraryChangeKind,
+  type LibraryChangePart,
   type TrackMergeBlock,
   type TrackMergeCaution,
 } from '@repo/schemas/library-changes'
-import { formatCount, formatTrackLength } from '@repo/ui/lib/format'
+import {
+  formatCount,
+  formatItemCount,
+  formatTrackLength,
+} from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
 
 const base = '/api/v1/library-changes'
@@ -58,9 +66,13 @@ export function toggleLibraryChange(apiBaseUrl: string, change: LibraryChange) {
 export type LibraryChangeQuery = {
   page?: number
   size?: number
+  /** The library the changes belong to. The server lists tracks when omitted. */
+  kind?: LibraryChangeKind
   actor?: LibraryChangeActor
-  /** Only changes that moved a name into or out of this track. */
+  /** Only changes that moved something into or out of this record. */
   recordId?: string
+  /** Only the changes of one automatic run. */
+  batchId?: string
 }
 
 export const libraryChangesKey = (query: LibraryChangeQuery = {}) => [
@@ -70,14 +82,16 @@ export const libraryChangesKey = (query: LibraryChangeQuery = {}) => [
 
 export function loadLibraryChanges(
   apiBaseUrl: string,
-  { page, size, actor, recordId }: LibraryChangeQuery,
+  { page, size, kind, actor, recordId, batchId }: LibraryChangeQuery,
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams()
   if (page !== undefined) params.set('page', String(page))
   if (size !== undefined) params.set('size', String(size))
+  if (kind) params.set('kind', kind)
   if (actor) params.set('actor', actor)
   if (recordId) params.set('recordId', recordId)
+  if (batchId) params.set('batchId', batchId)
   return fetchApiData(
     apiBaseUrl,
     `${base}${params.size ? `?${params}` : ''}`,
@@ -92,6 +106,47 @@ const listed = new Intl.ListFormat('en', {
   type: 'conjunction',
 })
 
+type Noun = { one: string; other: string }
+
+const recordNouns: Record<LibraryChangeKind, Noun> = {
+  track: { one: 'track', other: 'tracks' },
+  album: { one: 'album', other: 'albums' },
+  artist: { one: 'artist', other: 'artists' },
+}
+
+/** What a row is shown as: a version of a track, an edition of an album. */
+const shownNouns: Record<LibraryChangeKind, string> = {
+  track: 'version',
+  album: 'edition',
+  artist: 'profile',
+}
+
+const partNouns: Record<LibraryChangePart, Noun> = {
+  version: { one: 'version', other: 'versions' },
+  edition: { one: 'edition', other: 'editions' },
+  position: { one: 'album position', other: 'album positions' },
+  'playlist-entry': { one: 'playlist entry', other: 'playlist entries' },
+  'album-name': { one: 'album name', other: 'album names' },
+  'artist-name': { one: 'artist name', other: 'artist names' },
+  title: { one: 'track name', other: 'track names' },
+  credit: { one: 'credit', other: 'credits' },
+}
+
+/** The parts a change moved besides track names: `2 versions and 1 album name`. */
+function movedPartCounts(change: LibraryChange) {
+  const counts = change.details?.counts ?? {}
+  const parts = LibraryChangePartSchema.options.flatMap((part) => {
+    const count = counts[part] ?? 0
+    return count
+      ? [{ count, text: formatItemCount(count, partNouns[part]) }]
+      : []
+  })
+  return {
+    total: parts.reduce((sum, part) => sum + part.count, 0),
+    text: parts.length ? listed.format(parts.map((part) => part.text)) : null,
+  }
+}
+
 function movedNames(change: LibraryChange) {
   const [first] = change.names
   return change.nameCount === 1 && first
@@ -99,30 +154,172 @@ function movedNames(change: LibraryChange) {
     : `${formatCount(change.nameCount)} names`
 }
 
+/**
+ * What a move or separation moved: its scrobbled names or, when it moved
+ * none, its other parts: one part by name, several by count. `parts` says
+ * how the line used the details.
+ */
+function movedParts(change: LibraryChange): {
+  text: string
+  parts: 'unused' | 'named' | 'counted'
+} {
+  const parts = movedPartCounts(change)
+  if (change.nameCount || !parts.text)
+    return { text: movedNames(change), parts: 'unused' }
+  const [label] = change.details?.labels ?? []
+  return parts.total === 1 && label
+    ? { text: quoted(label), parts: 'named' }
+    : { text: parts.text, parts: 'counted' }
+}
+
 /** One line saying what a change did. */
 export function describeLibraryChange(change: LibraryChange): string {
+  const noun = recordNouns[change.kind]
   const target = change.target ? quoted(change.target.title) : null
   const [source] = change.sources
-  if (change.action === 'merge') {
-    const merged =
-      change.sources.length === 1 && source
-        ? quoted(source.title)
-        : `${formatCount(change.sources.length)} tracks`
-    return `Merged ${merged}${target ? ` into ${target}` : ''}`
+  switch (change.action) {
+    case 'merge': {
+      const merged =
+        change.sources.length === 1 && source
+          ? quoted(source.title)
+          : formatItemCount(change.sources.length, noun)
+      return `Merged ${merged}${target ? ` into ${target}` : ''}`
+    }
+    case 'move':
+      return `Moved ${movedParts(change).text}${target ? ` to ${target}` : ''}`
+    case 'separate':
+      return `Separated ${movedParts(change).text}${source ? ` from ${quoted(source.title)}` : ''}`
+    case 'keep-separate': {
+      const titles = change.sources.map((record) => quoted(record.title))
+      return `Kept ${formatItemCount(change.sources.length, noun)} separate${titles.length ? `: ${titles.join(', ')}` : ''}`
+    }
+    case 'show':
+      return target
+        ? `Shown as ${target}`
+        : `Changed the ${shownNouns[change.kind]} shown`
+    case 'rematch':
+      return `Returned ${movedNames(change)} to automatic matching`
   }
-  if (change.action === 'move')
-    return `Moved ${movedNames(change)}${target ? ` to ${target}` : ''}`
-  if (change.action === 'separate')
-    return `Separated ${movedNames(change)}${source ? ` from ${quoted(source.title)}` : ''}`
-  return `Returned ${movedNames(change)} to automatic matching`
+}
+
+/** The automatic rules, by the code a change stores. */
+export const libraryChangeRuleLabels: ReadonlyMap<string, string> = new Map([
+  ['lastfm-exact-name', 'Same title and artist'],
+  ['lastfm-album-alias', 'Same title on the album'],
+  ['lastfm-accepted-search', 'Accepted search result'],
+  ['lastfm-unmatched', 'No longer matched'],
+  ['spotify-search', 'Spotify track search'],
+  ['album-alias', 'Album track list'],
+  ['album-history', 'Album listening history'],
+])
+
+/** The automatic rule that made a change, or its code when it has no label. */
+export function libraryChangeRule(rule: string): string {
+  return libraryChangeRuleLabels.get(rule) ?? rule
+}
+
+const alsoVerbs: Partial<Record<LibraryChange['action'], string>> = {
+  merge: 'Also merged',
+  move: 'Also moved',
+  separate: 'Also separated',
+}
+
+/** What a change moved besides what its line names, from its details. */
+function alsoMoved(change: LibraryChange) {
+  const verb = alsoVerbs[change.action]
+  if (!verb) return null
+  const labels = (change.details?.labels ?? []).map(quoted).join(', ')
+  const used = change.action === 'merge' ? 'unused' : movedParts(change).parts
+  if (used === 'named') return null
+  if (used === 'counted') return labels || null
+  const { text } = movedPartCounts(change)
+  if (!text) return labels ? `${verb} ${labels}` : null
+  return `${verb} ${text}${labels ? `: ${labels}` : ''}`
+}
+
+/**
+ * The line under a change: the scrobbled names it moved, the rule that made
+ * it, what else it moved, that an undone automatic change is not made again,
+ * and why Undo or Redo is not offered.
+ */
+export function describeLibraryChangeNote(change: LibraryChange): string {
+  const [first] = change.names
+  const names = first
+    ? `${first.artistName} · ${first.trackName}${
+        change.nameCount > 1
+          ? ` and ${formatCount(change.nameCount - 1)} more`
+          : ''
+      }`
+    : null
+  const remembered =
+    change.actor === 'automatic' &&
+    change.undoneAt !== null &&
+    (change.action === 'merge' || change.action === 'move')
+      ? 'Will not be merged automatically again'
+      : null
+  return [
+    names,
+    change.rule ? libraryChangeRule(change.rule) : null,
+    alsoMoved(change),
+    remembered,
+    libraryChangeBlock(change)?.replace(/\.$/, ''),
+  ]
+    .filter(Boolean)
+    .join('. ')
 }
 
 /** Why Undo or Redo is not offered for a change, or null when it is. */
 export function libraryChangeBlock(change: LibraryChange): string | null {
+  if (change.reversible && (change.undoneAt ? change.canRedo : change.canUndo))
+    return null
+  if (change.blocked) return change.blocked
   if (!change.reversible)
     return 'This change also moved album positions or playlist entries and cannot be undone.'
-  if (change.undoneAt ? change.canRedo : change.canUndo) return null
   return 'A later change moved these names. Undo that change first.'
+}
+
+/**
+ * Refreshes what an undone or redone album or artist change affects. Records
+ * the change removed are not fetched again. Track changes refresh through
+ * `invalidateScrobbleLinks`.
+ */
+export async function invalidateLibraryRecords(
+  client: QueryClient,
+  kind: Exclude<LibraryChangeKind, 'track'>,
+  removedIds: readonly string[],
+) {
+  for (const id of removedIds) {
+    const queryKey = [kind, id]
+    await client.cancelQueries({ queryKey, exact: true })
+    await client.invalidateQueries({
+      queryKey,
+      exact: true,
+      refetchType: 'none',
+    })
+  }
+  const removed = (key: readonly unknown[]) =>
+    key.length === 2 &&
+    key[0] === kind &&
+    removedIds.some((id) => id === key[1])
+  return client.invalidateQueries({
+    predicate: (query) =>
+      !removed(query.queryKey) &&
+      [
+        'library-changes',
+        'albums',
+        'album',
+        'album-listening',
+        'album-playlists',
+        'artists',
+        'artist',
+        'artist-overview',
+        'tracks',
+        'track',
+        'lastfm-links',
+        'playlists',
+        'playlist',
+      ].includes(String(query.queryKey[0])),
+  })
 }
 
 /** One sentence of evidence against a merge. */
@@ -131,6 +328,10 @@ export function describeMergeCaution(caution: TrackMergeCaution): string {
     return `${listed.format(caution.words.map(quoted))} ${caution.words.length === 1 ? 'is' : 'are'} in some titles only.`
   if (caution.code === 'duration')
     return `Lengths differ by ${formatTrackLength(caution.seconds * 1000)}.`
+  if (caution.code === 'same-album')
+    return `Two tracks are different positions on ${listed.format(caution.albums.map(quoted))}.`
+  if (caution.code === 'separate')
+    return 'Some of these tracks were kept separate.'
   return `The artists differ: ${caution.names.join(', ')}.`
 }
 

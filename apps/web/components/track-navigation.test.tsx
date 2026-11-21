@@ -109,6 +109,29 @@ test('Tracks History is current on its own page without Browse or Matches', () =
   assert.ok(!html.includes('aria-current="page" href="/tracks/matches"'))
 })
 
+test('Albums and Artists History are current on their own page without Browse or Matches', () => {
+  for (const library of ['albums', 'artists']) {
+    const html = render(
+      `/${library}/changes`,
+      'actor=automatic',
+      <AppNavigation />,
+    )
+    assert.ok(
+      html.includes(
+        `aria-current="page" href="/${library}/changes?actor=automatic">History`,
+      ),
+    )
+    assert.ok(html.indexOf('>Matches') < html.indexOf('>History'))
+    assert.ok(html.includes(`href="/${library}">Browse`))
+    assert.ok(!html.includes(`aria-current="page" href="/${library}">Browse`))
+    assert.ok(!html.includes(`aria-current="page" href="/${library}/matches"`))
+  }
+  const albums = render('/albums', '', <AppNavigation />)
+  assert.match(albums, /href="\/albums\/changes">History/)
+  const films = render('/films', '', <AppNavigation />)
+  assert.doesNotMatch(films, />History</)
+})
+
 test('Artists is a library choice with Browse, including legacy artist links', () => {
   for (const search of ['', 'mediaType=album', 'mediaType=track']) {
     const html = render(

@@ -3,6 +3,7 @@ import {
   createScrobbleTrackMatcher,
   createTrackAlbumMatcher,
   trackBaseKey,
+  trackMatchKeys,
   trackVersionKey,
   type MatchTrackAlbum,
 } from './track-matching'
@@ -34,6 +35,35 @@ describe('track title keys', () => {
   it('drops every qualifier from the base title', () => {
     expect(trackBaseKey('Night Drive - Example Remix')).toBe('night drive')
     expect(trackBaseKey('(Interlude)')).toBe('interlude')
+  })
+})
+
+describe('possible duplicate keys', () => {
+  it('compares the first artist and the title as the matcher does', () => {
+    const keys = trackMatchKeys('Night Drive', ['The Example Band', 'Guest'])
+    expect(keys).toEqual({
+      artistKey: 'example band',
+      versionKey: 'night drive',
+      plainKey: 'night drive',
+    })
+    expect(
+      trackMatchKeys('Night Drive - Remastered 2011', ['Example Band']),
+    ).toEqual({ ...keys, plainKey: 'night drive remastered 2011' })
+    expect(
+      trackMatchKeys('Night Drive (feat. Guest)', ['Example Band']).versionKey,
+    ).toBe(keys.versionKey)
+    expect(trackMatchKeys('Café & Bar', ['Exämple Band'])).toEqual({
+      artistKey: 'example band',
+      versionKey: 'cafe and bar',
+      plainKey: 'cafe and bar',
+    })
+  })
+
+  it('keeps other versions apart and allows a missing artist', () => {
+    expect(trackMatchKeys('Night Drive (Live)', []).versionKey).toBe(
+      'night drive live',
+    )
+    expect(trackMatchKeys('Night Drive', []).artistKey).toBe('')
   })
 })
 

@@ -144,8 +144,11 @@ export async function getTrackListeningSeries(id: string, now = new Date()) {
  * and tracks the artist page lists; scrobbled artist names are not matched
  * directly, so unlinked scrobbles do not count.
  */
-export async function getArtistListeningSeries(id: string, now = new Date()) {
-  await requireCreator(id, 'artist')
+export async function getArtistListeningSeries(
+  requestedId: string,
+  now = new Date(),
+) {
+  const id = await requireCreator(requestedId, 'artist')
   const credited = sql`from media_credit c
     join media_item m on m.id = c.media_item_id
     where c.artist_id = ${id} and c.role = 'artist'

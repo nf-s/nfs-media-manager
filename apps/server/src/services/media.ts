@@ -14,6 +14,7 @@ import {
 } from './album-match-rejections'
 import { listAlbumRelationshipSources } from './entity-relationships'
 import { albumAddedDates } from './album-added-dates'
+import { readAlbumRecord, readEditionCounts } from './album-editions'
 import { albumTrackPlaylistNames } from './album-playlists'
 import { loadTracks } from './tracks'
 import { loadArtistTags } from './music-tags'
@@ -429,14 +430,21 @@ async function loadAlbums(
     },
   })
 
-  const [preferredTags, artistTags, addedDates, trackPlaylists, rejections] =
-    await Promise.all([
-      rymTagIds(ids),
-      loadArtistTags(ids),
-      albumAddedDates(ids),
-      albumTrackPlaylistNames(ids),
-      readAlbumMatchRejectionsForItems(db, ids),
-    ])
+  const [
+    preferredTags,
+    artistTags,
+    addedDates,
+    trackPlaylists,
+    rejections,
+    editionCounts,
+  ] = await Promise.all([
+    rymTagIds(ids),
+    loadArtistTags(ids),
+    albumAddedDates(ids),
+    albumTrackPlaylistNames(ids),
+    readAlbumMatchRejectionsForItems(db, ids),
+    readEditionCounts(ids),
+  ])
   const items = reorderRecords(records, ids).flatMap((record) => {
     if (!record.album) {
       return []
@@ -471,6 +479,8 @@ async function loadAlbums(
       durationSec: record.album.durationSec ?? null,
       spotifyUrl: record.album.spotifyUrl ?? null,
       trackCount: record.album.trackCount,
+      editionOfId: record.album.editionOfId,
+      editionCount: editionCounts.get(record.id) ?? 0,
     }
 
     return [item]
@@ -585,6 +595,7 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     albumTrackPlaylistNames([id]),
   ])
   const relationshipSources = await listAlbumRelationshipSources(id)
+  const albumRecord = await readAlbumRecord(id, record.album.editionOfId)
   const addedDate = addedDates.get(id)
   const common = withAlbumMetacriticMatch(
     buildCommonPayload(
@@ -612,6 +623,10 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     durationSec: record.album.durationSec ?? null,
     spotifyUrl: record.album.spotifyUrl ?? null,
     trackCount: record.album.trackCount,
+    editionOfId: record.album.editionOfId,
+    editionCount: albumRecord.editions.length,
+    editions: albumRecord.editions,
+    editionOf: albumRecord.editionOf,
     tracks: record.album.tracks
       .flatMap((entry) => {
         const track = tracks.get(entry.trackMediaItemId)

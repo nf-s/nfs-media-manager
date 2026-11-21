@@ -302,7 +302,7 @@ export async function getPlaylistArtistCoverage(
       from (
         select a.id, lower(coalesce(a.sort_name, a.name)) as sort_key
         from artist a
-        where a.id in (
+        where a.merged_into_id is null and a.id in (
           select artist_id from (${artistPlaylistCredits(
             undefined,
             sql`playlist.id = ${id}`,
@@ -425,8 +425,11 @@ export async function getPlaylistCoverageEntries(
 }
 
 // The albums credited to the artist, as on the artist's Albums tab.
-export async function getArtistCoverage(id: string, query: CoverageQuery) {
-  await requireCreator(id, 'artist')
+export async function getArtistCoverage(
+  requestedId: string,
+  query: CoverageQuery,
+) {
+  const id = await requireCreator(requestedId, 'artist')
   return albumCoverage(
     sql`select c.media_item_id from media_credit c
       where c.artist_id = ${id} and c.role = 'artist'`,

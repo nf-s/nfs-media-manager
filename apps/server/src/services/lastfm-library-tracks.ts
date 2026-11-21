@@ -8,16 +8,12 @@ import {
   splitScrobbleCredit,
 } from '@/lib/album-track-aliases'
 import { albumNameKey } from '@/lib/album-import-candidates'
-import { createStableId, slugifyParts } from '@/lib/media-utils'
+import { slugifyParts } from '@/lib/media-utils'
 import { standaloneLastfmTrackId } from '@/lib/track-matching'
-import {
-  artist,
-  lastfmTrackSource,
-  libraryTrack,
-  mediaItem,
-} from '@/schemas/db'
+import { lastfmTrackSource, libraryTrack, mediaItem } from '@/schemas/db'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { refreshArtistListeningTotals } from './artist-listening'
+import { writeArtistCredits } from './artist-names'
 import {
   lockLibraryTrackWrites,
   removeOrphanTracks,
@@ -488,40 +484,21 @@ export async function importLastfmTrackSources(
             albumLinkStrategy: sql`excluded.album_link_strategy`,
           },
         })
-      const artists = new Map(
-        standalone.map(({ group }) => [
-          createStableId('artist', group.artist_name.toLowerCase()),
-          group.artist_name,
-        ]),
-      )
-      await tx
-        .insert(artist)
-        .values(
-          [...artists].map(([id, name]) => ({ id, name, sortName: name })),
-        )
-        .onConflictDoNothing()
       await tx.execute(
         sql`delete from media_credit where role = 'artist' and media_item_id in (${sql.join(
           standalone.map(({ id }) => sql`${id}`),
           sql`, `,
         )})`,
       )
-      // Legacy imports can have another artist ID for the same unique name.
-      await tx.execute(sql`insert into media_credit (media_item_id, artist_id, role, billing_order)
-          select r.id, a.id, 'artist', 0
-          from jsonb_to_recordset(${JSON.stringify(
-            standalone.map(({ id, group }) => ({
-              id,
-              artist_id: createStableId(
-                'artist',
-                group.artist_name.toLowerCase(),
-              ),
-              artist_name: group.artist_name,
-            })),
-          )}::jsonb) as r(id text, artist_id text, artist_name text)
-          join lateral (select id from artist where id = r.artist_id or name = r.artist_name
-            order by case when name = r.artist_name then 0 else 1 end limit 1) a on true
-          on conflict do nothing`)
+      await writeArtistCredits(
+        tx,
+        standalone.map(({ id, group }) => ({
+          mediaItemId: id,
+          name: group.artist_name,
+          role: 'artist',
+          billingOrder: 0,
+        })),
+      )
     }
     await tx
       .insert(lastfmTrackSource)

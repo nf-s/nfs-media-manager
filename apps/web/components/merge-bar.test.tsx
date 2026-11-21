@@ -16,7 +16,11 @@ import { trackMergeAdapter } from './track-merge-review'
 
 const apiBaseUrl = 'http://localhost:4001'
 
-const planTrack = (id: string, title: string) => ({
+const planTrack = (
+  id: string,
+  title: string,
+  outcome: 'keep' | 'merge' = 'merge',
+) => ({
   id,
   title,
   by: 'Example Artist',
@@ -26,13 +30,14 @@ const planTrack = (id: string, title: string) => ({
   spotify: false,
   nameCount: 1,
   identity: null,
+  outcome,
   blocked: null,
 })
 
 const cleanPlan = TrackMergePlanSchema.parse({
   targetId: 'track-1',
   tracks: [
-    planTrack('track-1', 'Night Drive'),
+    planTrack('track-1', 'Night Drive', 'keep'),
     planTrack('track-2', 'Nite Drive'),
   ],
   names: [

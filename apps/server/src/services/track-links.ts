@@ -288,6 +288,21 @@ export async function writeScrobbleTrackLinks(
   // Imported Last.fm identities always retain their own history, even when
   // broader listening rules also count that name towards Spotify editions.
   for (const source of sources) wanted.set(linkKey(source), source)
+  // A name also counts for every other version of its owner's record.
+  const records = LinkRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        select s.artist_key, s.track_key, other.media_item_id as track_id,
+          'record' as strategy
+        from lastfm_track_source s
+        join library_track owner on owner.media_item_id = s.track_media_item_id
+        join library_track other on other.version_group_id = owner.version_group_id
+          and other.media_item_id <> owner.media_item_id
+        where s.username = ${account} ${nameFilter}`)
+    ).rows,
+  )
+  for (const record of records)
+    if (!wanted.has(linkKey(record))) wanted.set(linkKey(record), record)
   const stored = LinkRowsSchema.parse(
     (
       await tx.execute(sql`
@@ -329,6 +344,53 @@ export async function writeScrobbleTrackLinks(
       ? [...new Set([...stored, ...wanted.values()].map((row) => row.track_id))]
       : undefined,
   )
+}
+
+const NameRowsSchema = z.array(
+  z.object({
+    username: z.string(),
+    artist_key: z.string(),
+    track_key: z.string(),
+  }),
+)
+
+/**
+ * Relinks the names of the given tracks' records after their versions
+ * changed: the names the tracks and their versions own, and the names that
+ * counted for the tracks as another version.
+ */
+export async function relinkTrackRecords(tx: Transaction, trackIds: string[]) {
+  if (!trackIds.length) return
+  const given = sql.join(
+    trackIds.map((id) => sql`${id}`),
+    sql`, `,
+  )
+  const names = NameRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        select s.username, s.artist_key, s.track_key
+        from lastfm_track_source s where s.track_media_item_id in (
+          select unnest(array[${given}]::text[])
+          union
+          select other.media_item_id from library_track lt
+          join library_track other on other.version_group_id = lt.version_group_id
+          where lt.media_item_id in (${given}))
+        union
+        select username, artist_key, track_key from lastfm_track_link
+        where strategy = 'record' and track_media_item_id in (${given})`)
+    ).rows,
+  )
+  for (const username of new Set(names.map((name) => name.username)))
+    await writeScrobbleTrackLinks(
+      tx,
+      username,
+      names
+        .filter((name) => name.username === username)
+        .map((name) => ({
+          artistKey: name.artist_key,
+          trackKey: name.track_key,
+        })),
+    )
 }
 
 /** Recount links after an identity change; never add already-counted summaries. */

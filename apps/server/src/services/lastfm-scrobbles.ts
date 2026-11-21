@@ -33,15 +33,16 @@ import {
   lastfmPlugin,
 } from '@/plugins/builtin/lastfm'
 import {
-  album,
-  lastfmAlbumLink,
   lastfmScrobble,
   lastfmSync,
-  mediaOverride,
   providerSecret,
   scrapeJob,
 } from '@/schemas/db'
-import { linkScrobblesToAlbums } from './lastfm-album-links'
+import { changeAlbumNameLink } from './album-names'
+import {
+  linkScrobblesToAlbums,
+  refreshAlbumListening,
+} from './lastfm-album-links'
 import { refreshTrackLinks } from './track-links'
 import {
   getLastfmSpotifySearchJobs,
@@ -180,30 +181,7 @@ const nameKey = (value: ReturnType<typeof sql>) =>
 
 /** Recomputes the scrobble-derived album browse values, including the rolling windows. */
 async function refreshAlbumListeningFields() {
-  await db.execute(sql`
-    update media_item m set metadata = jsonb_set(
-      coalesce(m.metadata, '{}'::jsonb), '{browse}',
-      coalesce(m.metadata->'browse', '{}'::jsonb) || s.stats)
-    from (
-      select album_media_item_id as id, jsonb_build_object(
-        'scrobbles', count(*),
-        'lastListenedAt', floor(extract(epoch from max(listened_at)) * 1000),
-        'scrobblesLast1y', count(*) filter (where listened_at >= (now() at time zone 'utc') - interval '1 year'),
-        'scrobblesLast5y', count(*) filter (where listened_at >= (now() at time zone 'utc') - interval '5 years')
-      ) as stats
-      from lastfm_scrobble where album_media_item_id is not null
-      group by album_media_item_id
-    ) s
-    where m.id = s.id
-      and not (coalesce(m.metadata->'browse', '{}'::jsonb) @> s.stats)`)
-  await db.execute(sql`
-    update media_item m set metadata = jsonb_set(
-      m.metadata, '{browse}',
-      (m.metadata->'browse') - 'lastListenedAt' - 'scrobblesLast1y' - 'scrobblesLast5y')
-    where m.media_type = 'album'
-      and m.metadata->'browse' ? 'lastListenedAt'
-      and not exists (
-        select 1 from lastfm_scrobble s where s.album_media_item_id = m.id)`)
+  await refreshAlbumListening(db)
 }
 
 const CountsSchema = z
@@ -564,130 +542,14 @@ export async function relinkLastfmScrobbles() {
 /**
  * Links one scrobbled artist and album name to an album, keeps it unlinked,
  * or returns it to automatic matching. Manual choices survive later syncs.
+ * Each choice is recorded as a library change that can be undone.
  */
 export async function setLastfmAlbumLink(
   input: LastfmLinkUpdate,
   userId: string | null = null,
 ) {
   const { account } = await requireCredentials()
-  const artistKey = albumNameKey(input.artistName)
-  const albumKey = albumNameKey(input.albumName)
-  const [scrobbled] = await db
-    .select({ id: lastfmScrobble.id })
-    .from(lastfmScrobble)
-    .where(
-      and(
-        eq(lastfmScrobble.username, account),
-        eq(lastfmScrobble.artistKey, artistKey),
-        eq(lastfmScrobble.albumKey, albumKey),
-      ),
-    )
-    .limit(1)
-  if (!scrobbled)
-    throw new ServerError({
-      statusCode: 404,
-      message: 'No scrobbles have this artist and album name.',
-    })
-  const group = and(
-    eq(lastfmAlbumLink.username, account),
-    eq(lastfmAlbumLink.artistKey, artistKey),
-    eq(lastfmAlbumLink.albumKey, albumKey),
-  )
-  if (input.action === 'auto') {
-    await db.delete(lastfmAlbumLink).where(group)
-    await linkScrobblesToAlbums(account)
-  } else {
-    const albumId = input.action === 'link' ? input.albumId : null
-    if (albumId !== null) {
-      const [found] = await db
-        .select({ id: album.mediaItemId })
-        .from(album)
-        .where(eq(album.mediaItemId, albumId))
-      if (!found)
-        throw new ServerError({ statusCode: 404, message: 'Album not found' })
-    }
-    const link = {
-      albumMediaItemId: albumId,
-      source: 'manual',
-      strategy: null,
-      candidateIds: [],
-    }
-    await db.transaction(async (tx) => {
-      if (input.action === 'unlink') {
-        const [previous] = await tx
-          .select({
-            albumId: lastfmAlbumLink.albumMediaItemId,
-            source: lastfmAlbumLink.source,
-          })
-          .from(lastfmAlbumLink)
-          .where(group)
-          .for('update')
-        if (
-          input.expectedAlbumId &&
-          previous?.albumId !== input.expectedAlbumId
-        ) {
-          if (previous?.source === 'manual' && previous.albumId === null) {
-            const [recorded] = await tx
-              .select({ id: mediaOverride.id })
-              .from(mediaOverride)
-              .where(
-                and(
-                  eq(mediaOverride.mediaItemId, input.expectedAlbumId),
-                  eq(mediaOverride.field, 'albumListeningLinkRejection'),
-                  sql`${mediaOverride.value}->>'artistKey' = ${artistKey} and ${mediaOverride.value}->>'albumKey' = ${albumKey}`,
-                ),
-              )
-              .limit(1)
-            if (recorded) return
-          }
-          throw new ServerError({
-            statusCode: 409,
-            message:
-              'The listening group is no longer linked to the reviewed album.',
-          })
-        }
-        if (previous?.albumId) {
-          await tx.insert(mediaOverride).values({
-            id: randomUUID(),
-            mediaItemId: previous.albumId,
-            field: 'albumListeningLinkRejection',
-            value: {
-              artistKey,
-              albumKey,
-              artistName: input.artistName,
-              albumName: input.albumName,
-            },
-            note: `${input.artistName} – ${input.albumName}`,
-            createdByUserId: userId,
-          })
-        }
-      }
-
-      await tx
-        .insert(lastfmAlbumLink)
-        .values({ username: account, artistKey, albumKey, ...link })
-        .onConflictDoUpdate({
-          target: [
-            lastfmAlbumLink.username,
-            lastfmAlbumLink.artistKey,
-            lastfmAlbumLink.albumKey,
-          ],
-          set: link,
-        })
-      await tx
-        .update(lastfmScrobble)
-        .set({ albumMediaItemId: albumId })
-        .where(
-          and(
-            eq(lastfmScrobble.username, account),
-            eq(lastfmScrobble.artistKey, artistKey),
-            eq(lastfmScrobble.albumKey, albumKey),
-          ),
-        )
-    })
-  }
-  await refreshAlbumListeningFields()
-  await refreshTrackLinks(account)
+  await changeAlbumNameLink(account, input, userId)
   return getLastfmSyncStatus()
 }
 

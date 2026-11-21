@@ -52,7 +52,8 @@ const musicCredits = sql`media_credit credit
   left join library_track recording on item.media_type = 'track' and recording.media_item_id = item.id`
 const visibleMusic = sql`credit.role = 'artist' and item.metadata->>'legacyHidden' is distinct from 'true'
   and (release.media_item_id is not null or recording.media_item_id is not null)`
-const visibleArtist = sql`exists (select 1 from ${musicCredits}
+// A merged artist is a name another artist keeps, not an artist of its own.
+const visibleArtist = sql`a.merged_into_id is null and exists (select 1 from ${musicCredits}
   where credit.artist_id = a.id and ${visibleMusic})`
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,

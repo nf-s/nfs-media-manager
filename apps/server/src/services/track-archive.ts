@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { JsonValueSchema } from '@repo/schemas/common'
 import { libraryChangeRemoval } from '@/schemas/db'
 import { removeOrphanTracks } from './album-library-tracks'
+import { writeArtistCredits } from './artist-names'
 import type { ChangeReader, ChangeTransaction } from './library-change-effect'
 
 type Reader = ChangeReader
@@ -17,6 +18,15 @@ const ArchiveRowsSchema = z.array(
 )
 /** A track as it was, with everything that is deleted with it. */
 export type ArchivedTrack = z.infer<typeof ArchiveRowsSchema>[number]
+const ArchivedCreditsSchema = z.array(
+  z.object({
+    mediaItemId: z.string(),
+    name: z.string(),
+    role: z.string(),
+    billingOrder: z.number().int(),
+    creditedAs: z.string().nullable(),
+  }),
+)
 
 export const idList = (ids: string[]) =>
   sql.join(
@@ -168,7 +178,8 @@ export async function archiveTracks(reader: Reader, ids: string[]) {
           'credits', coalesce((
             select jsonb_agg(jsonb_build_object('artistId', c.artist_id,
               'artistName', a.name, 'role', c.role,
-              'billingOrder', c.billing_order) order by c.billing_order, a.id)
+              'billingOrder', c.billing_order,
+              'creditedAs', c.credited_as) order by c.billing_order, a.id)
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = mi.id), '[]'::jsonb),
           'tagIds', coalesce((
@@ -251,26 +262,19 @@ export async function restoreRemovedTracks(
     ${selected}
       and exists (select 1 from media_item mi where mi.id = x.media_item_id)
     on conflict do nothing`)
-  await tx.execute(sql`
-    insert into artist (id, name, sort_name)
-    select distinct on (c->>'artistName')
-      c->>'artistId', c->>'artistName', c->>'artistName'
-    ${rows} jsonb_array_elements(r.snapshot->'credits') c
-    ${selected}
-    on conflict do nothing`)
-  // An artist recreated since can have another ID for the same unique name.
-  await tx.execute(sql`
-    insert into media_credit (media_item_id, artist_id, role, billing_order)
-    select r.record_id, a.id, c->>'role', (c->>'billingOrder')::int
-    ${rows} jsonb_array_elements(r.snapshot->'credits') c
-    join lateral (
-      select id from artist
-      where id = c->>'artistId' or name = c->>'artistName'
-      order by case when id = c->>'artistId' then 0 else 1 end limit 1
-    ) a on true
-    ${selected}
-      and exists (select 1 from media_item mi where mi.id = r.record_id)
-    on conflict do nothing`)
+  // The artist may have been merged into another, or recreated, since.
+  const credits = ArchivedCreditsSchema.parse(
+    (
+      await tx.execute(sql`
+        select r.record_id as "mediaItemId", c->>'artistName' as name,
+          c->>'role' as role, (c->>'billingOrder')::int as "billingOrder",
+          c->>'creditedAs' as "creditedAs"
+        ${rows} jsonb_array_elements(r.snapshot->'credits') c
+        ${selected}
+          and exists (select 1 from media_item mi where mi.id = r.record_id)`)
+    ).rows,
+  )
+  await writeArtistCredits(tx, credits)
   await tx.execute(sql`
     insert into media_item_tag (media_item_id, tag_id)
     select r.record_id, t.id

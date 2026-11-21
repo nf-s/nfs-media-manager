@@ -1,15 +1,19 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
 import {
   LibraryChangeActorSchema,
   type LibraryChange,
   type LibraryChangeActor,
+  type LibraryChangeKind,
 } from '@repo/schemas/library-changes'
+import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Segmented } from '@repo/ui/components/ds/segmented'
+import { Timeline } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
@@ -29,7 +33,7 @@ import {
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import {
   describeLibraryChange,
-  libraryChangeBlock,
+  describeLibraryChangeNote,
   libraryChangesKey,
   loadLibraryChanges,
 } from '@/utils/library-changes'
@@ -47,7 +51,12 @@ import {
 } from './secondary-table'
 import { LibraryChangeUndo } from './merge-bar'
 
-const path = '/tracks/changes'
+/** Each library's History page. */
+export const libraryChangesPaths: Record<LibraryChangeKind, string> = {
+  track: '/tracks/changes',
+  album: '/albums/changes',
+  artist: '/artists/changes',
+}
 const title = 'History'
 const pageSize = 50
 /** The one table's two-line rows (`.ds-table[data-rows='two'] td`). */
@@ -79,22 +88,6 @@ export function LibraryChangeBy({ change }: { change: LibraryChange }) {
   )
 }
 
-/** The scrobbled names the change moved, then the rule and why Undo is not offered. */
-function changeNote(change: LibraryChange) {
-  const [first] = change.names
-  const names = first
-    ? `${first.artistName} · ${first.trackName}${
-        change.nameCount > 1
-          ? ` and ${formatCount(change.nameCount - 1)} more`
-          : ''
-      }`
-    : null
-  const block = libraryChangeBlock(change)
-  return [names, change.rule, block?.replace(/\.$/, '')]
-    .filter(Boolean)
-    .join('. ')
-}
-
 function changeCell(column: string, change: LibraryChange): ReactNode {
   if (column === 'when')
     return <span className="ds-num">{formatDateTime(change.createdAt)}</span>
@@ -102,7 +95,7 @@ function changeCell(column: string, change: LibraryChange): ReactNode {
   if (column === 'scrobbles')
     return change.scrobbles ? formatCount(change.scrobbles) : <EmptyValue />
   const text = describeLibraryChange(change)
-  const note = changeNote(change)
+  const note = describeLibraryChangeNote(change)
   return (
     <span className="ds-cell-two">
       <span className="ds-cell-title" title={text}>
@@ -142,18 +135,101 @@ export function LibraryChangeRow({
   )
 }
 
-export default function LibraryChanges() {
+/**
+ * The latest changes that moved something into or out of one record, each
+ * with Undo or Redo. Hidden while loading and when there are none.
+ */
+export function LibraryRecordChanges({
+  kind,
+  recordId,
+  onResolved,
+}: {
+  kind: LibraryChangeKind
+  recordId: string
+  /** Opens the other record when an undo or redo removes this one. */
+  onResolved?: (id: string) => void
+}) {
+  const { apiBaseUrl } = useConfig()
+  const [error, setError] = useState<string | null>(null)
+  const query = { kind, recordId, size: 10 }
+  const changes = useQuery({
+    queryKey: libraryChangesKey(query),
+    queryFn: ({ signal }) => loadLibraryChanges(apiBaseUrl, query, signal),
+  })
+  if (changes.isError && !changes.data)
+    return (
+      <Section title="Changes">
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={() => changes.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load changes.
+        </Notice>
+      </Section>
+    )
+  const items = changes.data?.items ?? []
+  if (!items.length) return null
+  return (
+    <Section title="Changes">
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Timeline
+        wrap
+        items={items.map((change) => {
+          const text = describeLibraryChange(change)
+          return {
+            key: change.id,
+            when: formatDateTime(change.createdAt),
+            status: <LibraryChangeBy change={change} />,
+            text: <span title={text}>{text}</span>,
+            link: (
+              <LibraryChangeUndo
+                change={change}
+                size="xs"
+                onChanged={(next) => {
+                  setError(null)
+                  const records = [
+                    ...next.sources,
+                    ...(next.target ? [next.target] : []),
+                  ]
+                  if (
+                    !records.some(
+                      (record) => record.id === recordId && !record.exists,
+                    )
+                  )
+                    return
+                  const other = records.find(
+                    (record) => record.id !== recordId && record.exists,
+                  )
+                  if (other) onResolved?.(other.id)
+                }}
+                onError={setError}
+              />
+            ),
+          }
+        })}
+      />
+    </Section>
+  )
+}
+
+/** A library's History: every change of one kind, newest first, with Undo. */
+export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
   const { apiBaseUrl } = useConfig()
   const inspector = useDetailInspector()
   const params = useSearchParams()
   const parsedActor = LibraryChangeActorSchema.safeParse(params.get('actor'))
   const actor = parsedActor.success ? parsedActor.data : undefined
+  const path = libraryChangesPaths[kind]
   const query = useVirtualTable({
-    queryKey: libraryChangesKey({ actor, size: pageSize }),
+    queryKey: libraryChangesKey({ kind, actor, size: pageSize }),
     pageSize,
     rowHeight: twoLineRowHeight,
     loadPage: (page, size, signal) =>
-      loadLibraryChanges(apiBaseUrl, { page, size, actor }, signal),
+      loadLibraryChanges(apiBaseUrl, { page, size, kind, actor }, signal),
   })
   const table = useTableColumns('library-changes', libraryChangeColumns)
   const shown = libraryChangeColumns

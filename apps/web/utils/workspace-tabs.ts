@@ -139,7 +139,10 @@ const sections = new Map([
   ['/tags/all', 'All tags'],
   ['/tags/hidden', 'Hidden tags'],
   ['/tags/hierarchy', 'Hierarchy'],
-  ['/tracks/changes', 'History'],
+  ...['albums', 'artists', 'tracks'].map((library): [string, string] => [
+    '/' + library + '/changes',
+    'History',
+  ]),
   ...['albums', 'artists', 'films', 'subscriptions', 'tracks'].map(
     (library): [string, string] => ['/' + library + '/matches', 'Matches'],
   ),

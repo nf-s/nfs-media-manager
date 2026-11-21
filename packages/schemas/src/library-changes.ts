@@ -146,13 +146,18 @@ export const TrackMergeRequestSchema = TrackMergeSelectionSchema.extend({
   .refine(targetSelected, TARGET_SELECTED)
 export type TrackMergeRequest = z.infer<typeof TrackMergeRequestSchema>
 
-/**
- * Why a selected track cannot be merged into another yet. Joining two Spotify
- * tracks as versions, and moving album positions or playlist entries, are not
- * recorded as reversible changes.
- */
+/** What a selected track has besides scrobbled names. */
 export const TrackMergeBlockSchema = z.enum(['spotify', 'album', 'playlist'])
 export type TrackMergeBlock = z.infer<typeof TrackMergeBlockSchema>
+
+/**
+ * What a merge does with a selected track. `keep`: the track to keep.
+ * `merge`: its scrobbled names, album positions and playlist entries move to
+ * the track to keep and it is removed. `version`: it stays, as a version of
+ * the kept record, with its own names.
+ */
+export const TrackMergeOutcomeSchema = z.enum(['keep', 'merge', 'version'])
+export type TrackMergeOutcome = z.infer<typeof TrackMergeOutcomeSchema>
 
 export const TrackMergePlanTrackSchema = z.object({
   id: z.string(),
@@ -164,9 +169,13 @@ export const TrackMergePlanTrackSchema = z.object({
   /** The track has its own Spotify track ID. */
   spotify: z.boolean(),
   nameCount: z.number().int().nonnegative(),
-  /** What the track has besides scrobbled names. Such a track stays a track of its own. */
+  /** What the track has besides scrobbled names. */
   identity: TrackMergeBlockSchema.nullable(),
-  /** Set on a track that cannot be merged into the track to keep. */
+  outcome: TrackMergeOutcomeSchema,
+  /**
+   * Set on a track that cannot be merged. Every track can now be merged or
+   * joined as a version, so this is always null.
+   */
   blocked: TrackMergeBlockSchema.nullable(),
 })
 export type TrackMergePlanTrack = z.infer<typeof TrackMergePlanTrackSchema>
@@ -191,6 +200,16 @@ export const TrackMergeCautionSchema = z.discriminatedUnion('code', [
   }),
   /** The tracks are credited to different artists. */
   z.object({ code: z.literal('artists'), names: z.array(z.string()).min(2) }),
+  /** Two of the tracks are different positions on the same album. */
+  z.object({
+    code: z.literal('same-album'),
+    albums: z.array(z.string()).min(1),
+  }),
+  /** The owner kept some of the tracks separate. Merging forgets that. */
+  z.object({
+    code: z.literal('separate'),
+    trackIds: z.array(z.string()).min(2),
+  }),
 ])
 export type TrackMergeCaution = z.infer<typeof TrackMergeCautionSchema>
 
@@ -201,11 +220,15 @@ export const TrackMergePlanSchema = z.object({
   names: z.array(TrackMergePlanNameSchema),
   scrobbles: z.object({
     target: z.number().int().nonnegative(),
-    /** Scrobbles the track to keep does not count yet. */
+    /**
+     * Scrobbles the track to keep does not count yet: those of the names that
+     * move and of the names its new versions keep.
+     */
     added: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
   }),
   cautions: z.array(TrackMergeCautionSchema),
+  /** Always false: no selected track is refused. */
   blocked: z.boolean(),
 })
 export type TrackMergePlan = z.infer<typeof TrackMergePlanSchema>

@@ -455,16 +455,29 @@ it('asks for a review when the artists differ', async () => {
   ])
 })
 
-it('does not merge a track with its own Spotify identity into another', async () => {
+it('keeps a track with its own Spotify identity as a version', async () => {
   const selection = { trackIds: [spotifyTrack, liveTrack] }
   const plan = await planTrackMerge(selection)
-  expect(plan.blocked).toBe(true)
-  expect(plan.tracks.filter((track) => track.blocked)).toHaveLength(1)
-  expect(plan.tracks.find((track) => track.blocked)?.blocked).toBe('spotify')
+  expect(plan.blocked).toBe(false)
+  expect(
+    plan.tracks.map(({ id, outcome, blocked }) => ({ id, outcome, blocked })),
+  ).toEqual([
+    { id: spotifyTrack, outcome: 'keep', blocked: null },
+    { id: liveTrack, outcome: 'version', blocked: null },
+  ])
   await expect(
-    mergeTracks({ ...selection, reviewed: true }),
+    mergeTracks({ ...selection, reviewed: false }),
   ).rejects.toMatchObject({ response: { statusCode: 409 } })
   expect((await changes()).totalCount).toBe(0)
+  const merged = await mergeTracks({ ...selection, reviewed: true })
+  expect(merged).toMatchObject({
+    action: 'merge',
+    target: { id: spotifyTrack, exists: true },
+    sources: [{ id: liveTrack, exists: true }],
+    nameCount: 0,
+    canUndo: true,
+  })
+  expect(await trackRow(liveTrack)).toBeDefined()
 })
 
 it('keeps the chosen track when every track is made of scrobbles', async () => {
@@ -593,23 +606,34 @@ it('records a name returned to automatic matching', async () => {
   ])
 })
 
-it('marks a merge that moved playlist entries as not reversible', async () => {
+it('undoes a merge that moved playlist entries', async () => {
   await fixture.insert(schema.playlistItem).values({
     playlistId: 'fixture-playlist',
     mediaItemId: misspelt.id,
     position: 5,
     addedAt: new Date('2024-03-01'),
   })
+  const entries = () =>
+    fixture
+      .select()
+      .from(schema.playlistItem)
+      .orderBy(schema.playlistItem.position)
+  const before = await entries()
   const merged = await mergeLastfmTrack(misspelt.id, { targetId: spotifyTrack })
   const [change] = (await changes()).items
   expect(change).toMatchObject({
     id: merged.changeId,
     action: 'merge',
-    reversible: false,
-    canUndo: false,
+    reversible: true,
+    canUndo: true,
+    details: { counts: { 'playlist-entry': 1 } },
   })
-  await expect(undoLibraryChange(change?.id ?? '')).rejects.toMatchObject({
-    response: { statusCode: 409, message: 'This change cannot be undone.' },
+  expect(await trackRow(misspelt.id)).toBeUndefined()
+  await undoLibraryChange(change?.id ?? '')
+  expect(await entries()).toEqual(before)
+  expect(await trackRow(misspelt.id)).toEqual({
+    title: 'Nite Drive',
+    scrobbles: 2,
   })
 })
 

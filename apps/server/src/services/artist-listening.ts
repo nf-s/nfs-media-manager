@@ -5,14 +5,31 @@ import type { db } from '@/lib/db'
 
 type Executor = Pick<typeof db, 'execute'>
 
-/** One row per title. When a release is required, use the most-played named release. */
+const KeptNamesSchema = z.array(z.object({ name: z.string() }))
+
+/**
+ * One row per title, scrobbled under the artist's name or a name merged into
+ * it. When a release is required, use the most-played named release.
+ */
 export async function listArtistScrobbledRecordings(
   database: Executor,
   artistId: string,
   name: string,
   { requireRelease = false }: { requireRelease?: boolean } = {},
 ) {
-  const artistKey = albumNameKey(name)
+  const kept = KeptNamesSchema.parse(
+    (
+      await database.execute(
+        sql`select name from artist where merged_into_id = ${artistId}`,
+      )
+    ).rows,
+  )
+  const artistKeys = sql`(${sql.join(
+    [...new Set([name, ...kept.map((row) => row.name)].map(albumNameKey))].map(
+      (key) => sql`${key}`,
+    ),
+    sql`, `,
+  )})`
   const albumName = requireRelease
     ? sql`release.album_name`
     : sql`case when recording.album_count <= 1 then release.album_name end`
@@ -25,17 +42,17 @@ export async function listArtistScrobbledRecordings(
     ), plays as (
       select s.id, s.track_name, s.track_key, s.album_name, s.album_key, s.track_mbid from credited c
       join lastfm_scrobble s on s.album_media_item_id = c.media_item_id
-      where c.media_type = 'album' and s.artist_key = ${artistKey}
+      where c.media_type = 'album' and s.artist_key in ${artistKeys}
       union
       select s.id, s.track_name, s.track_key, s.album_name, s.album_key, s.track_mbid from credited c
       join lastfm_track_link l on l.track_media_item_id = c.media_item_id
       join lastfm_scrobble s using (username, artist_key, track_key)
-      where c.media_type = 'track' and l.artist_key = ${artistKey}
+      where c.media_type = 'track' and l.artist_key in ${artistKeys}
       union
       select s.id, s.track_name, s.track_key, s.album_name, s.album_key, s.track_mbid from credited c
       join lastfm_track_source l on l.track_media_item_id = c.media_item_id
       join lastfm_scrobble s using (username, artist_key, track_key)
-      where c.media_type = 'track' and l.artist_key = ${artistKey}
+      where c.media_type = 'track' and l.artist_key in ${artistKeys}
     ), recordings as (
       select track_key, count(*) as plays,
         count(distinct nullif(btrim(album_key), '')) filter (where nullif(btrim(album_name), '') is not null) as album_count,

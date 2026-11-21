@@ -80,6 +80,11 @@ import {
   trackSpotifyMatchExpression,
 } from './track-values'
 import {
+  trackDuplicateMembership,
+  trackDuplicateOrder,
+  trackDuplicatePosition,
+} from './track-duplicate-refresh'
+import {
   readRecordingBrowseOrder,
   recordingBrowseOrderRows,
   recordingCount,
@@ -1169,14 +1174,23 @@ async function browseQueries(
   const sortField = byKey.get(query.sortBy)
   if (!sortField)
     throw new ServerError({ statusCode: 422, message: 'Unknown sort field' })
+  // Possible duplicates: members of stored groups, most played group first.
+  // A Last.fm track hidden behind its match is one of them.
+  const duplicates =
+    mediaType === 'track' && 'duplicates' in query && query.duplicates === true
   const groupedTrackQuery =
-    mediaType === 'track' && 'groupRecordings' in query && query.groupRecordings
+    mediaType === 'track' &&
+    'groupRecordings' in query &&
+    query.groupRecordings &&
+    !duplicates
       ? query
       : undefined
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
+  if (duplicates) conditions.push(trackDuplicateMembership)
   // A playlist member already has a library identity.
   const hideRedundant =
     mediaType === 'track' &&
+    !duplicates &&
     !options.includeLastfmSourceRows &&
     !requestsLastfmSource(query) &&
     !query.filters.some(
@@ -1208,6 +1222,14 @@ async function browseQueries(
     conditions.push(
       sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
     )
+  // An edition is listed under the first album of its record unless asked for.
+  if (
+    mediaType === 'album' &&
+    (!('editions' in query) || query.editions !== 'true')
+  )
+    conditions.push(sql`not exists (select 1 from ${album} edition
+      where edition.media_item_id = ${mediaItem.id}
+        and edition.edition_of_id is not null)`)
   const filters = [...query.filters]
   if ('tag' in query && query.tag)
     filters.push({ field: 'genre', value: query.tag, mode: 'required' })
@@ -1275,7 +1297,19 @@ async function browseQueries(
         !options.sort,
       versionId,
     )
-  const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
+  const fieldSort = fieldOrder(
+    sort,
+    sortField.key,
+    query.direction,
+    options.sort,
+  )
+  // The chosen sort orders the tracks within each group.
+  const order = duplicates
+    ? sql.join(
+        [trackDuplicateOrder, fieldSort, trackDuplicatePosition],
+        sql`, `,
+      )
+    : fieldSort
   // Library tracks always have a subtype row, also required by loadTracks.
   // The inner join lets their date ordering use an index before pagination.
   // Other libraries do not read track columns.
@@ -1387,6 +1421,7 @@ async function browseQueries(
   const offset = (query.page - 1) * query.size
   const useTrackRanks =
     mediaType === 'track' &&
+    !duplicates &&
     (trackRankSortFields.has(sortField.key) ||
       (sortField.key === 'scrobbles' && query.direction === 'asc')) &&
     options.sort?.field.key !== sortField.key
@@ -1527,6 +1562,7 @@ async function browseQueries(
     const firstFilteredFieldPage =
       mediaType === 'track' &&
       offset === 0 &&
+      !duplicates &&
       !creatorTrackScope &&
       options.sort?.field.key !== query.sortBy &&
       (query.q || query.filters.length || query.ranges.length) &&

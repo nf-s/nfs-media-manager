@@ -12,6 +12,7 @@ import {
   type ChangeReader,
   type ChangeTransaction,
 } from './library-change-effect'
+import { refreshTrackDuplicates } from './track-duplicate-refresh'
 
 const PairSchema = z.object({ lowId: z.string(), highId: z.string() })
 /** Two records the owner said are different, in a fixed order. */
@@ -62,6 +63,36 @@ export async function readKeptSeparate(
   )
 }
 
+/**
+ * Whether two of the given records are kept separate, from one read. For the
+ * automatic rules: pass every record a run may join, then ask per pair.
+ */
+export async function readKeptSeparateTest(
+  reader: ChangeReader,
+  kind: LibraryChangeKind,
+  ids: string[],
+): Promise<(left: string, right: string) => boolean> {
+  const pairs = new Set(
+    (await readKeptSeparate(reader, kind, ids)).map(({ lowId, highId }) =>
+      JSON.stringify([lowId, highId]),
+    ),
+  )
+  return (left, right) =>
+    pairs.has(JSON.stringify(left < right ? [left, right] : [right, left]))
+}
+
+/** The possible duplicates around the records of a decision, worked out again. */
+const refreshDuplicates =
+  (tx: ChangeTransaction, kind: LibraryChangeKind, pairs: SeparatePair[]) =>
+  async () => {
+    if (kind === 'track')
+      await refreshTrackDuplicates(tx, {
+        trackIds: [
+          ...new Set(pairs.flatMap(({ lowId, highId }) => [lowId, highId])),
+        ],
+      })
+  }
+
 const keepSeparate = defineChangeEffect({
   type: 'keep-separate',
   payload: z.object({
@@ -89,9 +120,33 @@ const keepSeparate = defineChangeEffect({
         delete from library_keep_separate k using ${pairsInput(pairs)}
         where k.kind = ${kind} and k.low_id = r."lowId"
           and k.high_id = r."highId"`)
-    return null
+    return refreshDuplicates(tx, kind, pairs)
   },
 })
+
+/**
+ * The effect `storeKeptSeparate` will record for the given records, without
+ * storing anything yet, or null when every pair is stored already. The
+ * decision refers to its change, so record the change with this effect
+ * first, then store the decision with the change's ID.
+ */
+export async function keptSeparateEntry(
+  reader: ChangeReader,
+  kind: LibraryChangeKind,
+  ids: string[],
+): Promise<ChangeEffectEntry | null> {
+  const stored = new Set(
+    (await readKeptSeparate(reader, kind, ids)).map(({ lowId, highId }) =>
+      JSON.stringify([lowId, highId]),
+    ),
+  )
+  const pairs = recordPairs(ids).filter(
+    ({ lowId, highId }) => !stored.has(JSON.stringify([lowId, highId])),
+  )
+  return pairs.length
+    ? keepSeparate.entry({ kind, pairs, stored: true }, ids)
+    : null
+}
 
 /**
  * Stores that the given records are different from each other. Returns the

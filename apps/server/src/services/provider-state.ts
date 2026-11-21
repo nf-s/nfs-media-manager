@@ -25,6 +25,7 @@ import {
   lockLibraryTrackWrites,
   replaceAlbumTracks,
 } from './album-library-tracks'
+import { writeArtistCredits } from './artist-names'
 import { lockTagWrites, upsertProviderTags } from './tag-state'
 import {
   checksumJson,
@@ -34,7 +35,6 @@ import {
 } from '@/lib/media-utils'
 import {
   album,
-  artist,
   externalLink,
   film,
   mediaCredit,
@@ -207,23 +207,15 @@ async function replaceCredits(
       ),
     )
 
-  for (const credit of normalizeCreditsForInsert(credits)) {
-    await database
-      .insert(artist)
-      .values({
-        id: credit.artistId,
-        name: credit.name,
-        sortName: credit.name,
-      })
-      .onConflictDoNothing()
-
-    await database.insert(mediaCredit).values({
+  await writeArtistCredits(
+    database,
+    normalizeCreditsForInsert(credits).map(({ name, role, billingOrder }) => ({
       mediaItemId,
-      artistId: credit.artistId,
-      role: credit.role,
-      billingOrder: credit.billingOrder,
-    })
-  }
+      name,
+      role,
+      billingOrder,
+    })),
+  )
 }
 
 export function normalizeCreditsForInsert(

@@ -110,6 +110,12 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
         section: '/artists',
       },
       matches,
+      {
+        href: '/artists/changes',
+        label: 'History',
+        Icon: History,
+        section: '/artists/changes',
+      },
     ]
   if (view === 'subscription')
     return [
@@ -143,6 +149,16 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
       section: film ? '/films' : '/albums',
     },
     matches,
+    ...(film
+      ? []
+      : [
+          {
+            href: '/albums/changes',
+            label: 'History',
+            Icon: History,
+            section: '/albums/changes',
+          },
+        ]),
     ...(film
       ? [
           {

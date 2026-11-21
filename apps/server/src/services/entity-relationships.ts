@@ -17,7 +17,7 @@ import {
   providerSnapshot,
 } from '@/schemas/db'
 
-export const visibleArtist = sql`exists (
+export const visibleArtist = sql`${artist.mergedIntoId} is null and exists (
   select 1 from media_credit c
   join media_item m on m.id = c.media_item_id
   left join album a on a.media_item_id = m.id

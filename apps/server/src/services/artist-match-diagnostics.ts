@@ -46,7 +46,7 @@ const ResultRowsSchema = z.array(
 const visibleArtists = sql`
   select a.id, a.name
   from artist a
-  where exists (
+  where a.merged_into_id is null and exists (
     select 1 from media_credit c
     join media_item m on m.id = c.media_item_id
     left join album release

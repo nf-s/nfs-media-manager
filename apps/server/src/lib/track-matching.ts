@@ -4,7 +4,12 @@ import type {
   TrackScrobbleNameKey,
 } from '@repo/schemas/tracks'
 import { albumNameKey } from './album-import-candidates'
-import { artistKeys, baseTitleKey, plainKey } from './lastfm-album-matching'
+import {
+  artistKeys,
+  artistNameKey,
+  baseTitleKey,
+  plainKey,
+} from './lastfm-album-matching'
 import { createStableId } from './media-utils'
 
 const BRACKETED = /[([]([^()[\]]*)[)\]]/g
@@ -69,6 +74,20 @@ export function trackVersionQualifiers(title: string) {
 export function trackBaseKey(title: string) {
   const { base } = titleParts(title)
   return plainKey(base || title)
+}
+
+/**
+ * The keys two tracks are compared on when looking for possible duplicates:
+ * the first artist and the title as the scrobble matcher normalises them. A
+ * track without an artist has an empty artist key.
+ */
+export function trackMatchKeys(title: string, artists: string[]) {
+  const [first] = artists
+  return {
+    artistKey: first === undefined ? '' : artistNameKey(first),
+    versionKey: trackVersionKey(title),
+    plainKey: plainKey(title),
+  }
 }
 
 function add(map: Map<string, Set<string>>, key: string, value: string) {

@@ -96,6 +96,7 @@ export type TrackAlbumLinkStrategy = z.infer<
  * remaster notes and "Original Mix". `album`: the scrobble's linked album is
  * the track's album and the titles match without qualifiers. `manual`: an
  * explicit identity choice overrides automatic attribution for those names.
+ * `record`: the name is owned by another version of the track's record.
  */
 export const TrackScrobbleLinkStrategySchema = z.enum([
   'manual',
@@ -103,6 +104,7 @@ export const TrackScrobbleLinkStrategySchema = z.enum([
   'normalized',
   'version',
   'album',
+  'record',
 ])
 export type TrackScrobbleLinkStrategy = z.infer<
   typeof TrackScrobbleLinkStrategySchema
@@ -337,6 +339,13 @@ const TrackFiltersParamSchema = z.preprocess(
 export const TrackQuerySchema = PaginationQuerySchema.extend({
   creatorId: CreatorIdSchema.optional(),
   groupRecordings: z
+    .union([
+      z.boolean(),
+      z.enum(['true', 'false']).transform((value) => value === 'true'),
+    ])
+    .optional(),
+  /** Only possible duplicates, grouped, most played group first. */
+  duplicates: z
     .union([
       z.boolean(),
       z.enum(['true', 'false']).transform((value) => value === 'true'),
