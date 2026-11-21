@@ -13,6 +13,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import type { ProviderResponseBody } from '@repo/schemas/provider-response'
@@ -20,6 +21,7 @@ import type {
   ArtistProfile,
   ArtistProviderId,
 } from '@repo/schemas/artist-profiles'
+import type { LibraryChangeDetails } from '@repo/schemas/library-changes'
 export * from './auth'
 import { user } from './auth'
 import { normalizedTagSql } from '../lib/tag-sql'
@@ -89,20 +91,30 @@ export const mediaItem = pgTable(
   ],
 )
 
-export const album = pgTable('album', {
-  mediaItemId: text('media_item_id')
-    .primaryKey()
-    .references(() => mediaItem.id, { onDelete: 'cascade' }),
-  dateAdded: timestamp('date_added', {
-    mode: 'date',
-    withTimezone: false,
-  }),
-  durationSec: integer('duration_sec'),
-  trackCount: integer('track_count').default(0).notNull(),
-  spotifyUrl: text('spotify_url'),
-  metadata: jsonb('metadata').$type<Record<string, JsonValue>>(),
-  ...timestampColumns,
-})
+export const album = pgTable(
+  'album',
+  {
+    mediaItemId: text('media_item_id')
+      .primaryKey()
+      .references(() => mediaItem.id, { onDelete: 'cascade' }),
+    dateAdded: timestamp('date_added', {
+      mode: 'date',
+      withTimezone: false,
+    }),
+    durationSec: integer('duration_sec'),
+    trackCount: integer('track_count').default(0).notNull(),
+    spotifyUrl: text('spotify_url'),
+    metadata: jsonb('metadata').$type<Record<string, JsonValue>>(),
+    // The album this one is an edition of: the first album of the record,
+    // never an edition itself. Null for a first album.
+    editionOfId: text('edition_of_id').references(
+      (): AnyPgColumn => album.mediaItemId,
+      { onDelete: 'set null' },
+    ),
+    ...timestampColumns,
+  },
+  (table) => [index('album_edition_of_idx').on(table.editionOfId)],
+)
 
 export const film = pgTable('film', {
   mediaItemId: text('media_item_id')
@@ -179,10 +191,21 @@ export const libraryTrack = pgTable(
       mode: 'date',
       withTimezone: false,
     }),
+    // Tracks joined as versions of one record share a group. A group of one
+    // keeps a track apart from the versions worked out for it.
+    versionGroupId: text('version_group_id'),
+    // The version a record's row is shown as. At most one in a group.
+    versionShown: boolean('version_shown').default(false).notNull(),
     ...timestampColumns,
   },
   (table) => [
     uniqueIndex('library_track_spotify_track_uidx').on(table.spotifyTrackId),
+    index('library_track_version_group_idx')
+      .on(table.versionGroupId)
+      .where(sql`${table.versionGroupId} is not null`),
+    uniqueIndex('library_track_version_shown_uidx')
+      .on(table.versionGroupId)
+      .where(sql`${table.versionShown}`),
     index('library_track_album_idx').on(table.albumMediaItemId),
     index('library_track_spotify_album_idx').on(table.spotifyAlbumId),
     index('library_track_album_name_search_idx').using(
@@ -247,6 +270,74 @@ export const recordingBrowseOrderMember = pgTable(
   ],
 )
 
+// The keys two tracks are compared on when looking for possible duplicates:
+// the first artist and the title, as the scrobble matcher normalises them.
+export const trackMatchKey = pgTable(
+  'track_match_key',
+  {
+    trackId: text('track_id')
+      .primaryKey()
+      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
+    artistKey: text('artist_key').notNull(),
+    // The title without credits, remaster and edition notes.
+    versionKey: text('version_key').notNull(),
+    // The title with only case, accents and punctuation removed.
+    plainKey: text('plain_key').notNull(),
+  },
+  (table) => [
+    index('track_match_key_artist_version_idx').on(
+      table.artistKey,
+      table.versionKey,
+    ),
+  ],
+)
+
+// Tracks that look like the same track twice, published by the duplicates
+// refresh. A group the owner kept separate is not published.
+export const trackDuplicateGroup = pgTable(
+  'track_duplicate_group',
+  {
+    id: text('id').primaryKey(),
+    rule: text('rule').notNull(),
+    evidence: jsonb('evidence').$type<JsonValue>().notNull(),
+    cautions: jsonb('cautions').$type<JsonValue>().notNull(),
+    memberCount: integer('member_count').notNull(),
+    scrobbles: integer('scrobbles').default(0).notNull(),
+    // Most scrobbles first.
+    rank: integer('rank').notNull(),
+  },
+  (table) => [index('track_duplicate_group_rank_idx').on(table.rank)],
+)
+
+export const trackDuplicateMember = pgTable(
+  'track_duplicate_member',
+  {
+    groupId: text('group_id')
+      .notNull()
+      .references(() => trackDuplicateGroup.id, { onDelete: 'cascade' }),
+    trackId: text('track_id').notNull(),
+    position: integer('position').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.trackId] }),
+    uniqueIndex('track_duplicate_member_track_uidx').on(table.trackId),
+  ],
+)
+
+export const trackDuplicateDirty = pgTable('track_duplicate_dirty', {
+  transactionId: bigint('transaction_id', { mode: 'bigint' }).primaryKey(),
+})
+
+export const trackDuplicateState = pgTable('track_duplicate_state', {
+  singleton: boolean('singleton').primaryKey(),
+  builder: text('builder').notNull(),
+  groupCount: integer('group_count'),
+  maintenanceOnly: boolean('maintenance_only').default(false).notNull(),
+  retryAfter: timestamp('retry_after', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
 export const trackFacetDirty = pgTable('track_facet_dirty', {
   transactionId: bigint('transaction_id', { mode: 'bigint' }).primaryKey(),
 })
@@ -281,10 +372,17 @@ export const artist = pgTable(
     // Scrobbles linked to the artist's library albums and tracks, counted
     // once. Recomputed whenever scrobble links are.
     scrobbleCount: integer('scrobble_count').default(0).notNull(),
+    // The artist this name was merged into. The row stays as a name that
+    // artist keeps, and every import credits the artist it points at.
+    mergedIntoId: text('merged_into_id').references(
+      (): AnyPgColumn => artist.id,
+      { onDelete: 'set null' },
+    ),
     ...timestampColumns,
   },
   (table) => [
     uniqueIndex('artist_name_uidx').on(table.name),
+    index('artist_merged_into_idx').on(table.mergedIntoId),
     index('artist_name_search_idx').using('gin', table.name.op('gin_trgm_ops')),
     index('artist_browse_name_idx').on(
       sql`lower(coalesce(${table.sortName}, ${table.name}))`,
@@ -308,6 +406,9 @@ export const mediaCredit = pgTable(
       .references(() => artist.id, { onDelete: 'cascade' }),
     role: text('role').notNull(),
     billingOrder: integer('billing_order').default(0).notNull(),
+    // The name the source gave, when the credit went to the artist that name
+    // was merged into. Null when it is the artist's own name.
+    creditedAs: text('credited_as'),
   },
   (table) => [
     primaryKey({
@@ -1233,8 +1334,25 @@ export type LibraryChangeRecordSnapshot = {
   by: string
 }
 
-// Every merge, move and separation of scrobbled names, by the owner or by an
-// automatic rule. A change keeps its moves, and the tracks it removed, so it
+// One run that made automatic changes: a Last.fm sync, an album refresh, a
+// playlist import. History lists a run as one row.
+export const libraryChangeBatch = pgTable(
+  'library_change_batch',
+  {
+    id: text('id').primaryKey(),
+    // lastfm-sync, relink, album-refresh, playlist-import, spotify-search or
+    // backfill.
+    trigger: text('trigger').notNull(),
+    changeCount: integer('change_count').default(0).notNull(),
+    nameCount: integer('name_count').default(0).notNull(),
+    scrobbles: integer('scrobbles').default(0).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [index('library_change_batch_created_idx').on(table.createdAt)],
+)
+
+// Every merge, move and separation, by the owner or by an automatic rule. A
+// change keeps its moves, its other effects and the tracks it removed, so it
 // can be undone and made again.
 export const libraryChange = pgTable(
   'library_change',
@@ -1242,24 +1360,115 @@ export const libraryChange = pgTable(
     id: text('id').primaryKey(),
     // track, album or artist.
     kind: text('kind').notNull(),
-    // merge, move, separate or rematch.
+    // merge, move, separate, rematch, show or keep-separate.
     action: text('action').notNull(),
     // owner or automatic.
     actor: text('actor').notNull(),
     rule: text('rule'),
+    batchId: text('batch_id').references(() => libraryChangeBatch.id, {
+      onDelete: 'set null',
+    }),
     target: jsonb('target').$type<LibraryChangeRecordSnapshot>(),
     sources: jsonb('sources')
       .$type<LibraryChangeRecordSnapshot[]>()
       .notNull()
       .default([]),
     scrobbles: integer('scrobbles').notNull().default(0),
-    // False when the change also moved album positions or playlist entries.
+    // What the change moved besides scrobbled track names, for History.
+    details: jsonb('details').$type<LibraryChangeDetails>(),
+    // False for a change made before its other effects were recorded.
     reversible: boolean('reversible').notNull().default(true),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     undoneAt: timestamp('undone_at'),
   },
   (table) => [
     index('library_change_kind_created_idx').on(table.kind, table.createdAt),
+    index('library_change_kind_actor_created_idx').on(
+      table.kind,
+      table.actor,
+      table.createdAt,
+      table.id,
+    ),
+    index('library_change_batch_idx').on(table.batchId, table.createdAt),
+  ],
+)
+
+// Something a change did besides moving scrobbled track names: joining
+// versions, moving an album position, a playlist entry, an album name or a
+// credit, or storing a decision. `type` names the handler that can undo and
+// redo it from `payload`.
+export const libraryChangeEffect = pgTable(
+  'library_change_effect',
+  {
+    changeId: text('change_id')
+      .notNull()
+      .references(() => libraryChange.id, { onDelete: 'cascade' }),
+    // The order the change made its effects in. Undo runs them backwards.
+    position: integer('position').notNull(),
+    type: text('type').notNull(),
+    // The records the effect touched, for the changes of one record.
+    recordIds: text('record_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    payload: jsonb('payload').$type<JsonValue>().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.changeId, table.position] }),
+    index('library_change_effect_records_idx').using('gin', table.recordIds),
+  ],
+)
+
+// Two records the owner said are different. They are not suggested as
+// duplicates and no automatic rule merges them. Removed when the change that
+// stored the decision is undone.
+export const libraryKeepSeparate = pgTable(
+  'library_keep_separate',
+  {
+    // track, album or artist.
+    kind: text('kind').notNull(),
+    lowId: text('low_id').notNull(),
+    highId: text('high_id').notNull(),
+    changeId: text('change_id').references(() => libraryChange.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.kind, table.lowId, table.highId] }),
+    index('library_keep_separate_high_idx').on(table.kind, table.highId),
+  ],
+)
+
+// A match of a scrobbled name to a track that was undone or separated. No
+// automatic rule makes it again. Removed when the change is made again or the
+// name is returned to automatic matching.
+export const libraryMatchRejection = pgTable(
+  'library_match_rejection',
+  {
+    username: text('username').notNull(),
+    artistKey: text('artist_key').notNull(),
+    trackKey: text('track_key').notNull(),
+    recordId: text('record_id').notNull(),
+    rule: text('rule'),
+    // undo or separate.
+    reason: text('reason').notNull(),
+    changeId: text('change_id').references(() => libraryChange.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.username,
+        table.artistKey,
+        table.trackKey,
+        table.recordId,
+      ],
+    }),
+    index('library_match_rejection_change_idx').on(table.changeId),
+    index('library_match_rejection_record_idx').on(table.recordId),
   ],
 )
 

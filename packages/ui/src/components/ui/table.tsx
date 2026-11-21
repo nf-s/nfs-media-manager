@@ -1,5 +1,7 @@
 import * as React from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { Button } from './button'
 
 /**
  * The one table. Header 28px, rows 32px, identity column first, numbers
@@ -121,7 +123,8 @@ TableBody.displayName = 'TableBody'
 /**
  * A table row. `group` is a heading row over child rows. `depth` nests a
  * child row: its first cell is indented by one step per level. `child` is
- * depth 1.
+ * depth 1. `part` is one part of the record in the row above it, shown
+ * while that record's `TablePartToggle` is open.
  */
 export const TableRow = React.forwardRef<
   HTMLTableRowElement,
@@ -130,22 +133,31 @@ export const TableRow = React.forwardRef<
     group?: boolean
     child?: boolean
     depth?: number
+    part?: boolean
   }
->(({ className, selected, group, child, depth, style, ...props }, ref) => {
-  const nested = depth !== undefined && depth > 0
-  const nesting: Record<string, number> = nested ? { '--ds-depth': depth } : {}
-  return (
-    <tr
-      ref={ref}
-      className={className}
-      aria-selected={selected ? true : undefined}
-      data-group={group ? '' : undefined}
-      data-child={(depth === undefined ? child : nested) ? '' : undefined}
-      style={nested ? { ...style, ...nesting } : style}
-      {...props}
-    />
-  )
-})
+>(
+  (
+    { className, selected, group, child, depth, part, style, ...props },
+    ref,
+  ) => {
+    const nested = depth !== undefined && depth > 0
+    const nesting: Record<string, number> = nested
+      ? { '--ds-depth': depth }
+      : {}
+    return (
+      <tr
+        ref={ref}
+        className={className}
+        aria-selected={selected ? true : undefined}
+        data-group={group ? '' : undefined}
+        data-child={(depth === undefined ? child : nested) ? '' : undefined}
+        data-part={part ? '' : undefined}
+        style={nested ? { ...style, ...nesting } : style}
+        {...props}
+      />
+    )
+  },
+)
 TableRow.displayName = 'TableRow'
 
 export const TableHead = React.forwardRef<
@@ -225,6 +237,89 @@ export function TableSortButton({
         </svg>
       )}
     </button>
+  )
+}
+
+/**
+ * The chevron at the start of a record's identity cell that shows or hides
+ * the rows of what the record is made of (`TableRow part`). `label` is the
+ * button's accessible name for the current state.
+ */
+export function TablePartToggle({
+  open,
+  label,
+  onOpenChange,
+  className,
+  ...props
+}: Omit<
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  'children' | 'onClick' | 'aria-expanded' | 'aria-label'
+> & {
+  open: boolean
+  label: string
+  onOpenChange: (open: boolean) => void
+}) {
+  const Chevron = open ? ChevronDown : ChevronRight
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      icon
+      className={cn('ds-part-toggle', className)}
+      aria-expanded={open}
+      aria-label={label}
+      onClick={() => onOpenChange(!open)}
+      {...props}
+    >
+      <Chevron className="ds-i" data-size="sm" aria-hidden />
+    </Button>
+  )
+}
+
+/** The chevron's space, in an identity cell that has no parts to show. */
+export function TablePartSlot() {
+  return <span className="ds-part-slot" aria-hidden />
+}
+
+/**
+ * The identity cell of a part row: indented under the record's title, a
+ * provider mark (`ProviderMark`) and the part's title, cut short.
+ */
+export function TablePartTitle({
+  mark,
+  children,
+}: {
+  mark: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <span className="ds-cell-id ds-part-title">
+      {mark}
+      <span className="ds-truncate">{children}</span>
+    </span>
+  )
+}
+
+/**
+ * The content of a group row that carries actions (`TableRow group`, one
+ * cell across the table): small buttons, then the evidence for the group,
+ * cut short and shown in full on hover.
+ */
+export function TableGroupActions({
+  evidence,
+  children,
+}: {
+  evidence: string
+  children: React.ReactNode
+}) {
+  return (
+    <span className="ds-group-actions">
+      {children}
+      <span className="ds-group-evidence" title={evidence}>
+        {evidence}
+      </span>
+    </span>
   )
 }
 

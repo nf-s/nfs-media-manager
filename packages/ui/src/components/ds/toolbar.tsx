@@ -1,5 +1,13 @@
-import type { ComponentProps, ReactNode, SelectHTMLAttributes } from 'react'
+import type {
+  ButtonHTMLAttributes,
+  ComponentProps,
+  ReactNode,
+  SelectHTMLAttributes,
+} from 'react'
+import { formatCount } from '../../lib/format'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/button'
+import { Count } from './pill'
 
 /**
  * Toolbar above a list. Browse order: search, sort, direction, view, filters,
@@ -20,6 +28,38 @@ export function ToolbarCount({ children }: { children: ReactNode }) {
 
 export function ToolbarEnd({ children }: { children: ReactNode }) {
   return <span className="ds-toolbar-end ds-actions">{children}</span>
+}
+
+/**
+ * A toolbar button that switches the list below it to another view of the
+ * same rows and back (`aria-pressed`): an icon, the label, then `count`, how
+ * many the view holds.
+ */
+export function ToolbarToggle({
+  pressed,
+  onPressedChange,
+  icon,
+  count,
+  children,
+  ...props
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'aria-pressed'> & {
+  pressed: boolean
+  onPressedChange: (pressed: boolean) => void
+  icon: ReactNode
+  count?: number
+}) {
+  return (
+    <Button
+      type="button"
+      aria-pressed={pressed}
+      onClick={() => onPressedChange(!pressed)}
+      {...props}
+    >
+      {icon}
+      {children}
+      {count !== undefined && <Count>{formatCount(count)}</Count>}
+    </Button>
+  )
 }
 
 /**

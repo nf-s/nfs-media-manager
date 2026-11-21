@@ -414,8 +414,8 @@
       .join('')
     const body = rows
       .map((r, i) =>
-        r._group
-          ? `<tr data-group><td colspan="${cols.length}">${esc(r._group)}</td></tr>`
+        r._group || r._groupHtml
+          ? `<tr data-group><td colspan="${cols.length}">${r._groupHtml || esc(r._group)}</td></tr>`
           : `<tr${attrs(o.row ? o.row(r, i) : {})}>${cols.map((c) => `<td${attrs({ 'data-align': c.end ? 'end' : undefined, ...stick(c) })}>${c.c(r, i)}</td>`).join('')}</tr>`,
       )
       .join('')
@@ -434,6 +434,27 @@
   function idCell(item, o = {}) {
     return `<span class="ds-cell-id">${o.thumb === false ? '' : thumb(item)}<a class="ds-cell-title" href="#">${esc(item.title)}</a>${o.play === false ? '' : play('row', { playing: o.playing })}</span>`
   }
+
+  /* What a record is made of. partToggle: the chevron before the title,
+     named for its current state; PART_SLOT: the chevron's space on a row
+     with nothing to open; partTitle: a part row's identity cell, a provider's
+     mark then the part's title. Part rows are tr[data-part] under the
+     record's row. */
+  const partToggle = (label, open) =>
+    `<button type="button" class="ds-btn ds-part-toggle" data-variant="ghost" data-size="xs" data-icon aria-expanded="${Boolean(open)}" aria-label="${esc(label)}">${icon(open ? 'chevD' : 'chevR', { size: 'sm' })}</button>`
+  const PART_SLOT = '<span class="ds-part-slot" aria-hidden="true"></span>'
+  const partTitle = (providerId, title) =>
+    `<span class="ds-cell-id ds-part-title">${mark(providerId, { hidden: true })}<span class="ds-truncate">${esc(title)}</span></span>`
+
+  /* A group row that carries actions: the buttons (markup), then the
+     evidence, cut short. Pass it to table() as a row's _groupHtml. */
+  const groupActions = (buttons, evidence) =>
+    `<span class="ds-group-actions">${buttons}<span class="ds-group-evidence" title="${esc(evidence)}">${esc(evidence)}</span></span>`
+
+  /* A toolbar button that switches the list to another view of its rows and
+     back: an icon, the label, then how many the view holds (o.count). */
+  const toolbarToggle = (label, o = {}) =>
+    `<button type="button" class="ds-btn" aria-pressed="${Boolean(o.pressed)}">${o.icon ? icon(o.icon, { size: 'sm' }) : ''}${esc(label)}${o.count === undefined ? '' : count(Number(o.count).toLocaleString('en'))}</button>`
 
   function card(item, o = {}) {
     const playable =
@@ -1595,6 +1616,11 @@
     table,
     checkCol,
     idCell,
+    partToggle,
+    PART_SLOT,
+    partTitle,
+    groupActions,
+    toolbarToggle,
     card,
     row,
     listHead,

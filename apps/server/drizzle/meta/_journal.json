@@ -386,6 +386,34 @@
       "when": 1795237720943,
       "tag": "0054_library_change_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1795249753956,
+      "tag": "0055_library_merge_stages",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1795249758135,
+      "tag": "0056_track_versions_browse_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1795249758695,
+      "tag": "0057_track_duplicate_dirty_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1795249759244,
+      "tag": "0058_automatic_match_journal",
+      "breakpoints": true
     }
   ]
 }

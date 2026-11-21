@@ -2,22 +2,50 @@ import { z } from 'zod'
 import { PaginatedDataSchema, PaginationQuerySchema } from './common'
 import { TrackMatchIdSchema } from './tracks'
 
-/** The library a change belongs to. Only track changes are recorded so far. */
+/** The library a change belongs to. */
 export const LibraryChangeKindSchema = z.enum(['track', 'album', 'artist'])
 export type LibraryChangeKind = z.infer<typeof LibraryChangeKindSchema>
 
 /**
  * `merge` joins whole records, `move` gives one scrobbled name to another
- * record, `separate` gives a name its own record again and `rematch` returns a
- * name to the automatic rules.
+ * record, `separate` gives a name or a version its own record again,
+ * `rematch` returns a name to the automatic rules, `show` picks the version a
+ * record's row is shown as and `keep-separate` stores that records are
+ * different.
  */
 export const LibraryChangeActionSchema = z.enum([
   'merge',
   'move',
   'separate',
   'rematch',
+  'show',
+  'keep-separate',
 ])
 export type LibraryChangeAction = z.infer<typeof LibraryChangeActionSchema>
+
+/** What a change can move besides scrobbled track names. */
+export const LibraryChangePartSchema = z.enum([
+  'version',
+  'edition',
+  'position',
+  'playlist-entry',
+  'album-name',
+  'artist-name',
+  'title',
+  'credit',
+])
+export type LibraryChangePart = z.infer<typeof LibraryChangePartSchema>
+
+/** What a change moved besides scrobbled track names, for the list of changes. */
+export const LibraryChangeDetailsSchema = z.object({
+  /** How many parts of each kind the change moved. */
+  counts: z
+    .partialRecord(LibraryChangePartSchema, z.number().int().nonnegative())
+    .optional(),
+  /** Names of moved parts that are not track names, most played first. */
+  labels: z.array(z.string()).max(5).optional(),
+})
+export type LibraryChangeDetails = z.infer<typeof LibraryChangeDetailsSchema>
 
 export const LibraryChangeActorSchema = z.enum(['owner', 'automatic'])
 export type LibraryChangeActor = z.infer<typeof LibraryChangeActorSchema>
@@ -47,6 +75,8 @@ export const LibraryChangeSchema = z.object({
   actor: LibraryChangeActorSchema,
   /** The automatic rule that made the change. */
   rule: z.string().nullable(),
+  /** The run that made an automatic change. */
+  batchId: z.string().nullable(),
   /** The record the names belong to after the change, when it is one record. */
   target: LibraryChangeRecordSchema.nullable(),
   /** Records the names left. A merged track is removed with its names. */
@@ -56,14 +86,18 @@ export const LibraryChangeSchema = z.object({
   nameCount: z.number().int().nonnegative(),
   /** Scrobbles recorded under the moved names. */
   scrobbles: z.number().int().nonnegative(),
+  /** What the change moved besides scrobbled track names. */
+  details: LibraryChangeDetailsSchema.nullable(),
   createdAt: z.string(),
   undoneAt: z.string().nullable(),
-  /** False for a change that also moved album positions or playlist entries. */
+  /** False for a change made before its other effects were recorded. */
   reversible: z.boolean(),
-  /** Every name is still where the change put it. */
+  /** Everything is still where the change put it. */
   canUndo: z.boolean(),
-  /** Every name is still where the undo left it. */
+  /** Everything is still where the undo left it. */
   canRedo: z.boolean(),
+  /** Why the change cannot be undone, or made again, right now. */
+  blocked: z.string().nullable(),
 })
 export type LibraryChange = z.infer<typeof LibraryChangeSchema>
 
@@ -74,8 +108,10 @@ export const LibraryChangeParamsSchema = z.object({
 export const LibraryChangeListQuerySchema = PaginationQuerySchema.extend({
   kind: LibraryChangeKindSchema.default('track'),
   actor: LibraryChangeActorSchema.optional(),
-  /** Only changes that moved a name into or out of this record. */
+  /** Only changes that moved something into or out of this record. */
   recordId: TrackMatchIdSchema.optional(),
+  /** Only the changes of one automatic run. */
+  batchId: z.string().trim().min(1).max(100).optional(),
 })
 export type LibraryChangeListQuery = z.infer<
   typeof LibraryChangeListQuerySchema

@@ -27,6 +27,7 @@ const merge = LibraryChangeSchema.parse({
   action: 'merge',
   actor: 'owner',
   rule: null,
+  batchId: null,
   target: record('track-1', 'Night Drive'),
   sources: [record('track-2', 'Nite Drive', false)],
   names: [
@@ -39,6 +40,8 @@ const merge = LibraryChangeSchema.parse({
   reversible: true,
   canUndo: true,
   canRedo: false,
+  blocked: null,
+  details: null,
 })
 
 const columns = ['when', 'change', 'by', 'scrobbles']

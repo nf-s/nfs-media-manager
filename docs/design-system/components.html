@@ -65,6 +65,43 @@
         ['Last listened'],
         ['RYM rating'],
       ]
+      /* Tracks with what each is made of: rows for the part and group row
+         specs. A part row has part: true and the provider its title is from. */
+      const T = D.data.TRACKS
+      const partCols = [
+        {
+          h: '<input type="checkbox" class="ds-check" aria-label="Select all" />',
+          raw: true,
+          w: 36,
+          c: (r) =>
+            r.part
+              ? ''
+              : `<input type="checkbox" class="ds-check" aria-label="Select ${D.esc(r.title)}" />`,
+        },
+        {
+          h: 'Track',
+          c: (r) =>
+            r.part
+              ? D.partTitle(r.p, r.title)
+              : `<span class="ds-cell-id">${
+                  r.toggle
+                    ? D.partToggle(
+                        `${r.open ? 'Hide' : 'Show'} what ${r.title} is made of`,
+                        r.open,
+                      )
+                    : D.PART_SLOT
+                }${D.thumb(r)}<a class="ds-cell-title" href="#">${D.esc(r.title)}</a>${play('row')}</span>`,
+        },
+        { h: 'Artist', c: (r) => D.esc(r.by) },
+        { h: 'Length', end: true, c: (r) => r.duration || D.EMPTY },
+        {
+          h: 'Scrobbles',
+          end: true,
+          c: (r) => (r.plays === undefined ? D.EMPTY : r.plays),
+        },
+        { h: 'Made of', c: (r) => r.made },
+      ]
+      const partRows = (r) => (r.part ? { 'data-part': '' } : {})
       const viewSection = `<div class="g-stack" style="justify-items:start">${seg(['Compact', 'Standard', 'Roomy'], 1, { label: 'Grid size' })}<span class="ds-label">On cards</span>${D.checkRow('Rating', true)}${D.checkRow('Sorted value', true)}${D.checkRow('Tags', true)}${D.checkRow('Include archived imports', false)}</div>`
 
       D.page({
@@ -442,11 +479,31 @@
                 ),
                 { flush: true },
               ) +
+              g.spec(
+                g.flow([
+                  g.item(
+                    D.toolbarToggle('Possible duplicates', {
+                      icon: 'layers',
+                      count: 2,
+                    }),
+                    'view toggle',
+                  ),
+                  g.item(
+                    D.toolbarToggle('Possible duplicates', {
+                      icon: 'layers',
+                      pressed: true,
+                      count: 2,
+                    }),
+                    'view toggle, pressed',
+                  ),
+                ]),
+              ) +
               g.rules([
                 '<b>One toolbar order</b> on every Browse page and every Browse list inside a detail: actions, search, sort picker, direction, view switch, Filters button, count. Grid size and columns are in the Filters drawer, not in the row. Tables without a view switch drop the sort picker and view switch and keep their Columns button.',
                 '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons; the sort picker uses the select’s box.',
                 '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered. A Browse list inside a detail puts it on the filter line instead.',
                 '<b>On a phone</b> the toolbar wraps: the search takes the first line; the sort picker, direction, view switch and Filters button share the second, the sort picker taking the room the others leave, and the count follows where it fits. The Filters button is short on every phone toolbar.',
+                '<b>A view of the same rows</b> is a toolbar button that stays pressed while it is on (<code>ToolbarToggle</code>): an icon, the label and the count the view holds, such as Possible duplicates. Pressing it again returns to every row. It changes which rows show and how they are grouped, not how they are drawn: Grid, List and Table stay in the view switch.',
               ]) +
               g.note(
                 'Replaces',
@@ -670,6 +727,101 @@
                 )}</div>`,
                 { flush: true },
               ) +
+              g.spec(
+                `<div class="ds-table-wrap">${table(
+                  partCols,
+                  [
+                    {
+                      ...T[0],
+                      toggle: true,
+                      open: true,
+                      plays: 82,
+                      made: '1 version · 2 names',
+                    },
+                    {
+                      part: true,
+                      p: 'spotify',
+                      title: 'Harbour Lights',
+                      by: T[0].by,
+                      duration: T[0].duration,
+                      made: 'Version · shown',
+                    },
+                    {
+                      part: true,
+                      p: 'lastfm',
+                      title: 'Harbour Lights',
+                      by: T[0].by,
+                      plays: 74,
+                      made: 'Scrobbled name',
+                    },
+                    {
+                      part: true,
+                      p: 'lastfm',
+                      title: 'Harbour Lights (Live at the Old Pier Ballroom)',
+                      by: T[0].by,
+                      plays: 8,
+                      made: 'Scrobbled name',
+                    },
+                    {
+                      ...T[1],
+                      toggle: true,
+                      open: false,
+                      made: '1 version · 1 name',
+                    },
+                    { ...T[2], made: '1 version' },
+                  ],
+                  { row: partRows },
+                )}</div>`,
+                { flush: true },
+              ) +
+              g.spec(
+                `<div class="ds-toolbar">${D.search('Search tracks')}${D.toolbarToggle('Possible duplicates', { icon: 'layers', pressed: true, count: 2 })}<span class="ds-toolbar-count">4 tracks</span></div><div class="ds-table-wrap">${table(
+                  partCols,
+                  [
+                    {
+                      _groupHtml: D.groupActions(
+                        btn('Merge', { size: 'xs' }) +
+                          btn('Keep separate', {
+                            size: 'xs',
+                            variant: 'ghost',
+                          }),
+                        'Same title and artist · Album names one letter apart',
+                      ),
+                    },
+                    {
+                      ...T[3],
+                      toggle: true,
+                      made: '1 version · 1 name',
+                    },
+                    {
+                      ...T[3],
+                      album: `${T[3].album}s`,
+                      plays: 6,
+                      made: '1 name',
+                    },
+                    {
+                      _groupHtml: D.groupActions(
+                        btn('Merge', { size: 'xs' }) +
+                          btn('Keep separate', {
+                            size: 'xs',
+                            variant: 'ghost',
+                          }),
+                        'Same title without “Demo”',
+                      ),
+                    },
+                    { ...T[6], made: '1 version' },
+                    {
+                      ...T[6],
+                      title: 'Longwave (Demo)',
+                      duration: '3:20',
+                      plays: 4,
+                      made: '1 version',
+                    },
+                  ],
+                  { row: partRows },
+                )}</div>`,
+                { flush: true },
+              ) +
               g.rules([
                 '<b>Measurements.</b> Header 28px with 11px labels, rows 32px, cell padding 10px, and the panel gutter (12px) at both edges.',
                 '<b>Column order</b> is the same for every resource: identity, creator, parent, properties, dates, counts, ratings, then pill columns. See Browse screens for each resource.',
@@ -684,6 +836,8 @@
                 '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
                 '<b>A change made from the bar reports itself there.</b> When the selection is gone the bar holds one line saying what changed (<code>TableSelectionResult</code>, <code>ds-selectbar-result</code>), then Undo and Dismiss. After Undo the line starts with <code>Undone:</code> and the button is Redo. Undo and Redo are disabled, with the reason as their title, when a later change stands in the way. The line is cut with an ellipsis; the buttons are never pushed out.',
                 '<b>Merge in a table of tracks</b> (<code>TrackMergeBar</code>) is the primary action of the bar and needs two or more rows. It is made at once. A review opens first only when something speaks against it: a version word such as Live or Demo in some titles only, lengths more than ten seconds apart, different artists, or a track that cannot be merged into another.',
+                '<b>What a record is made of shows under its row.</b> A ghost chevron before the thumbnail (<code>TablePartToggle</code>, <code>ds-part-toggle</code>) opens one row per part (<code>TableRow part</code>): a provider’s mark and the part’s title in the secondary ink, indented past the chevron (<code>TablePartTitle</code>, <code>ds-part-title</code>). A record with one part keeps the chevron’s space (<code>TablePartSlot</code>) so titles line up. A part row’s other cells hold that part’s own values or nothing.',
+                '<b>A group row can carry actions</b> for the rows under it (<code>TableGroupActions</code>, <code>ds-group-actions</code>): small buttons, a default one first, such as Merge and Keep separate, then on the same line the evidence that put the rows together. The evidence is cut with an ellipsis and shows in full on hover; the buttons are never pushed out.',
               ]) +
               g.note(
                 'Replaces',

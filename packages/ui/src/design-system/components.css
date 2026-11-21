@@ -1089,6 +1089,39 @@ a:focus-visible > .ds-logo[data-none] {
 .ds-table tr[data-child] td:first-child {
   padding-left: calc(var(--ds-gutter) + var(--ds-7) * var(--ds-depth, 1));
 }
+/* What a record is made of: a chevron before the title opens one row per
+   part under the record's row (tr[data-part]). A row with nothing to open
+   keeps the chevron's space so titles line up. */
+.ds-part-toggle,
+.ds-part-slot {
+  flex: none;
+}
+.ds-part-slot {
+  width: var(--ds-h-xs);
+}
+/* A part's identity cell: indented by the chevron and the gap after it, in
+   the secondary ink, a provider mark before the part's title */
+.ds-part-title {
+  padding-left: calc(var(--ds-h-xs) + var(--ds-4));
+  color: var(--ds-ink-2);
+}
+/* A group row that carries actions: the buttons, then the evidence for the
+   group on one line, cut short before the buttons are pushed out */
+.ds-group-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-4);
+  min-width: 0;
+}
+.ds-group-actions > .ds-btn {
+  flex: none;
+}
+.ds-group-evidence {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Selection bar: the one inverse surface in the app */
 .ds-selectbar {
   display: flex;

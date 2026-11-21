@@ -19,6 +19,7 @@ const change: LibraryChange = {
   action: 'merge',
   actor: 'owner',
   rule: null,
+  batchId: null,
   target: record('kept', 'Night Drive'),
   sources: [record('merged', 'Nite Drive')],
   names: [
@@ -31,6 +32,8 @@ const change: LibraryChange = {
   reversible: true,
   canUndo: true,
   canRedo: false,
+  blocked: null,
+  details: null,
 }
 
 test('a change is described by its action, the names it moved and its records', () => {

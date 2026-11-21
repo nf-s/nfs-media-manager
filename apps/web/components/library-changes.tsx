@@ -45,7 +45,7 @@ import {
   useTableColumns,
   type TableColumn,
 } from './secondary-table'
-import { LibraryChangeUndo } from './track-merge-bar'
+import { LibraryChangeUndo } from './merge-bar'
 
 const path = '/tracks/changes'
 const title = 'History'

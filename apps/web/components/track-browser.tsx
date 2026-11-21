@@ -115,12 +115,12 @@ import {
 } from './track-recording-versions'
 import { LibraryTrackPlayButton } from './play-controls'
 import {
-  TrackMergeBar,
-  TrackSelectAll,
-  TrackSelectRow,
-  trackSelectionWidth,
-  useTrackSelection,
-} from './track-merge-bar'
+  RowSelectAll,
+  RowSelectRow,
+  rowSelectionWidth,
+  useRowSelection,
+} from './merge-bar'
+import { TrackMergeBar } from './track-merge-bar'
 import {
   createBrowsePlaybackSource,
   createPendingTrackBrowseSource,
@@ -279,7 +279,7 @@ function TrackBrowse({
     // Leave room for the title, disclosure and playback controls on grouped rows.
     groupRecordings ? { title: 180 } : undefined,
   )
-  const selectionColumnWidth = columnWidth(trackSelectionWidth)
+  const selectionColumnWidth = columnWidth(rowSelectionWidth)
   const fieldWidths = columns.map((field) => {
     const width = columnWidth(widths.widthFor(field))
     // Keep part of the horizontally scrolling columns visible beside the pinned selection and title.
@@ -506,7 +506,7 @@ function TrackBrowse({
       ),
     ),
   ]
-  const selection = useTrackSelection(loadedIds)
+  const selection = useRowSelection(loadedIds)
   // Another search, filter, sort, scope or view lists other tracks.
   const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
   if (selectionIdentity !== scrollIdentity) {
@@ -689,17 +689,13 @@ function TrackBrowse({
         child={child}
       >
         <TableCell sticky={0}>
-          <TrackSelectRow
-            selection={selection}
-            id={item.id}
-            title={item.title}
-          />
+          <RowSelectRow selection={selection} id={item.id} title={item.title} />
         </TableCell>
         {columns.map((field) => (
           <TableCell
             key={field.key}
             align={field.type === 'number' ? 'end' : undefined}
-            sticky={field.key === 'title' ? trackSelectionWidth : undefined}
+            sticky={field.key === 'title' ? rowSelectionWidth : undefined}
             stickyEdge={field.key === 'title'}
             title={formatFieldValue(
               field,
@@ -1115,7 +1111,7 @@ function TrackBrowse({
                 <TableHeader>
                   <TableRow>
                     <TableHead sticky={0}>
-                      <TrackSelectAll
+                      <RowSelectAll
                         selection={selection}
                         label="Select loaded tracks"
                         disabled={!loadedIds.length}
@@ -1126,7 +1122,7 @@ function TrackBrowse({
                         key={field.key}
                         field={field}
                         identity={field.key === 'title'}
-                        sticky={trackSelectionWidth}
+                        sticky={rowSelectionWidth}
                         sortBy={sortBy}
                         direction={direction}
                         onSort={sort}
