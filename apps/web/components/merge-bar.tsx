@@ -183,8 +183,12 @@ export function LibraryChangeUndo({
   )
 }
 
-/** The records to merge and, when chosen, the one to keep. */
-export type MergeRequest = { ids: string[]; keepId?: string }
+/**
+ * The records to merge and, when chosen, the one to keep. `follow` says
+ * whether what follows the merge is merged with it; the server does when it
+ * is omitted.
+ */
+export type MergeRequest = { ids: string[]; keepId?: string; follow?: boolean }
 
 /** Props of a kind's review content, placed in the review dialog above Merge and Cancel. */
 export type MergeReviewProps<Plan> = {
@@ -192,6 +196,9 @@ export type MergeReviewProps<Plan> = {
   pending: boolean
   /** Plans the merge again, with other records or another one to keep. */
   replan: (request: MergeRequest) => void
+  /** What follows the merge is merged with it. On until the owner turns it off. */
+  follow: boolean
+  setFollow: (follow: boolean) => void
   /** The merge's error notice, to place after the plan's own notices. */
   error: ReactNode
 }
@@ -234,6 +241,8 @@ function MergeReviewDialog<Plan>({
   plan,
   pending,
   error,
+  follow,
+  onFollow,
   onPlan,
   onMerge,
   onClose,
@@ -242,6 +251,8 @@ function MergeReviewDialog<Plan>({
   plan: Plan
   pending: boolean
   error: string | null
+  follow: boolean
+  onFollow: (follow: boolean) => void
   onPlan: (request: MergeRequest) => void
   onMerge: () => void
   onClose: () => void
@@ -295,6 +306,8 @@ function MergeReviewDialog<Plan>({
             plan={plan}
             pending={pending}
             replan={onPlan}
+            follow={follow}
+            setFollow={onFollow}
             error={error ? <Notice tone="danger">{error}</Notice> : null}
           />
           <div className="ds-actions">
@@ -334,6 +347,7 @@ export function useMerge<Plan>(
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [review, setReview] = useState<Plan | null>(null)
+  const [follow, setFollow] = useState(true)
   const [change, setChange] = useState<LibraryChange | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -366,6 +380,7 @@ export function useMerge<Plan>(
     onMutate: () => setError(null),
     onSuccess: async (outcome) => {
       if (outcome.status === 'review') {
+        setFollow(true)
         setReview(outcome.plan)
         return
       }
@@ -406,9 +421,11 @@ export function useMerge<Plan>(
         plan={review}
         pending={pending}
         error={error}
+        follow={follow}
+        onFollow={setFollow}
         onPlan={(request) => plan.mutate(request)}
         onMerge={() =>
-          make.mutate({ ...adapter.request(review), reviewed: true })
+          make.mutate({ ...adapter.request(review), follow, reviewed: true })
         }
         onClose={() => {
           setReview(null)

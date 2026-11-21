@@ -45,6 +45,7 @@ import {
   storeRemovals,
   type ArchivedTrack,
 } from './track-archive'
+import { refreshTrackDuplicates } from './track-duplicate-refresh'
 import { writeScrobbleTrackLinks } from './track-links'
 
 type Transaction = ChangeTransaction
@@ -965,6 +966,17 @@ async function applyChange(id: string, direction: ChangeDirection) {
         ...new Set([...originIds, ...destinationIds]),
       ])
       await refreshArtistListeningTotals(tx)
+    }
+    if (change.kind === 'track') {
+      // Tracks the change touched can be possible duplicates again, or not.
+      const touched = [
+        ...new Set([
+          ...moves.flatMap((move) => [move.fromId, move.toId]),
+          ...effects.flatMap((effect) => effect.recordIds),
+        ]),
+      ]
+      if (touched.length)
+        await refreshTrackDuplicates(tx, { trackIds: touched })
     }
     await tx
       .update(libraryChange)
