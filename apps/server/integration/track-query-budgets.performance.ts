@@ -196,6 +196,43 @@ it('bounds selective Track pages and exact counts', async () => {
   })
 })
 
+it('uses the Track title index for exact title filters', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  const title = 'Fixture  "Exact" (Title)?'
+  await pool.query('update media_item set title = $1 where id = $2', [
+    title,
+    'track-19999',
+  ])
+  try {
+    for (const { label, value, ids } of [
+      { label: 'hit', value: title.toLowerCase(), ids: ['track-19999'] },
+      { label: 'different spaces', value: 'Fixture "Exact" (Title)?', ids: [] },
+      {
+        label: 'different punctuation',
+        value: 'Fixture  "Exact" (Title)!',
+        ids: [],
+      },
+    ]) {
+      const query = TrackQuerySchema.parse({
+        filters: [{ field: 'title', value, mode: 'required' }],
+        sortBy: 'title',
+        direction: 'asc',
+        size: 100,
+      })
+      await checkBudget(`exact Track title ${label}`, 100, 1, async () => {
+        const page = await queryBrowsePageIds('track', query)
+        expect(page.ids).toEqual(ids)
+        expect(page.hasMore).toBe(false)
+      })
+    }
+  } finally {
+    await pool.query('update media_item set title = $1 where id = $2', [
+      'Quicksilver 19999',
+      'track-19999',
+    ])
+  }
+})
+
 it('bounds unfiltered Track pages and deep positions', async () => {
   const { queryBrowsePageIds, queryBrowsePositions } =
     await import('@/services/browse')
@@ -1170,7 +1207,7 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
   )
 })
 
-it('bounds live Track autocomplete on shared artist and album tags', async () => {
+it('bounds Track autocomplete and grouped Browse on shared artist and album tags', async () => {
   const { listBrowseFacets } = await import('@/services/browse')
   await pool.query(`
     update library_track
@@ -1292,6 +1329,62 @@ it('bounds live Track autocomplete on shared artist and album tags', async () =>
     { field: 'artistTag', value: 'fixture genre 48', count: 20_001 },
     { field: 'genre', value: 'fixture genre 48', count: 10_001 },
   ])
+
+  const { listTrackBrowsePage } = await import('@/services/tracks')
+  const query = TrackQuerySchema.parse({
+    groupRecordings: true,
+    filters: [
+      { field: 'genre', value: 'Absent fixture genre', mode: 'required' },
+    ],
+    listening: {
+      match: 'all',
+      rules: [{ period: { kind: 'rolling', amount: 1, unit: 'days' }, max: 0 }],
+    },
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    size: 5,
+  })
+  await checkBudget(
+    'tag-rich grouped lifetime page requiring an absent genre',
+    5_000,
+    4,
+    async () => {
+      const page = await listTrackBrowsePage(query)
+      expect(page.items).toEqual([])
+      expect(page.hasMore).toBe(false)
+    },
+  )
+
+  // Both artists match, but only the track without an album can use fallback.
+  await pool.query(`
+    update library_track set album_media_item_id = null, scrobble_count = 101
+    where media_item_id = 'track-10000';
+    update library_track set scrobble_count = 102
+    where media_item_id = 'track-10002';
+  `)
+  const fallbackPage = await listTrackBrowsePage({
+    ...query,
+    filters: [{ field: 'genre', value: 'Fixture Genre 48', mode: 'required' }],
+  }).finally(async () => {
+    await pool.query(`
+      update library_track set album_media_item_id = 'album-1000', scrobble_count = 1
+      where media_item_id = 'track-10000';
+      update library_track set scrobble_count = 3
+      where media_item_id = 'track-10002';
+    `)
+  })
+  expect(fallbackPage.items).toHaveLength(query.size)
+  expect(fallbackPage.items[0]).toMatchObject({
+    id: 'track-10000',
+    albumTags: [],
+  })
+  expect(fallbackPage.items.map(({ id }) => id)).not.toContain('track-10002')
+  for (const item of fallbackPage.items) {
+    expect(item.artistTags).toContain('Fixture Genre 48')
+  }
+  expect(fallbackPage.items.slice(1).map(({ albumTags }) => albumTags)).toEqual(
+    Array(4).fill(['Fixture Genre 01']),
+  )
 })
 
 it('bounds first Added pages with artist tags and unrelated Last.fm placeholders', async () => {

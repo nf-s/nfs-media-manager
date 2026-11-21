@@ -72,7 +72,6 @@ import {
   firstMusicTag,
   mediaIdsWithArtistTag,
   matchingTagNames,
-  sparseAlbumTags,
 } from './music-tags'
 import {
   albumTrackDurationExpression,
@@ -370,6 +369,7 @@ function numericExpression(key: string, mediaType: MediaType): SQL {
 
 function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   const match = sql`lower(${value}::text)`
+  if (key === 'title') return sql`lower(${mediaItem.title}) = ${match}`
   if (mediaType === 'track' && key === 'source') {
     const source = TrackSourceSchema.options.find(
       (source) =>
@@ -411,7 +411,8 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
       )
     ), false)`
     if (key !== 'albumTag' && (mediaType === 'album' || mediaType === 'track'))
-      return sql`(${releaseMatch} or (${sparseAlbumTags(tagged)} and ${matchesValue('artistTag', value, mediaType)}))`
+      return sql`(${releaseMatch} or (${matchesValue('artistTag', value, mediaType)}
+        and (${tagged} is null or ${tagged} not in (${albumsWithEnoughTags()}))))`
     return releaseMatch
   }
   if (mediaType === 'album' && key === 'playlist')

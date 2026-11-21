@@ -176,6 +176,8 @@ Titles are required, so descending title order can scan the title index backward
 
 Tracks and Albums resolve tag labels and their visible ancestors before joining media memberships. On 60,000 tracks, 6,000 albums and 60,000 current artist profiles, a one-character autocomplete request fell from 2.02 to 1.22 seconds for Tracks and from 493 to 328 ms for Albums. A selective search took 333 ms and 113 ms respectively. Albums and custom Track scopes still aggregate live memberships. Default Track autocomplete now reads the stored vocabulary described below.
 
+For genre filters, an artist tag can qualify a track when its album has too few distinct visible release tags, including when the track has no album. Browse computes the set of albums meeting that threshold once per filter. On 20,000 synthetic tracks, a grouped page sorted by lifetime plays used 972 shared buffer accesses for an absent genre, down from 82,242. A broad genre present on both releases and artists used 9,661, down from 49,559. The regression suite checks the missing-genre case with a listening filter and verifies artist fallback for a track without an album.
+
 Subscription and Mix autocomplete count scalar values once per item and collapse repeated array labels within each item on broad searches. On a synthetic fixture with 160,000 subscription and mix items, empty autocomplete took 180 ms for Subscriptions and 256 ms for Mixes, down from 584 ms and 683 ms. Artist suggestions collapse repeated profile labels and playlist memberships before counting.
 
 ### Grouped play counts
