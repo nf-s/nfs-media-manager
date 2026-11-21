@@ -1,4 +1,4 @@
-import { and, count, desc, eq, sql } from 'drizzle-orm'
+import { and, count, desc, eq, sql, type SQL } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { JsonValueSchema } from '@repo/schemas/common'
@@ -160,9 +160,127 @@ async function existingTrackIds(reader: Reader, ids: string[]) {
   )
 }
 
+type AttachedColumn = string | { name: string; value: SQL }
+const createdBy: AttachedColumn = {
+  name: 'created_by_user_id',
+  value: sql`(select u.id from "user" u where u.id = x.created_by_user_id)`,
+}
+const stamps = ['created_at', 'updated_at']
+
+/**
+ * Rows that are deleted with a track, with the columns an undo restores. A
+ * column that points at a record that can be gone by then is read through
+ * that record.
+ */
+const ATTACHED: {
+  table: string
+  columns: AttachedColumn[]
+  when?: SQL
+}[] = [
+  {
+    table: 'tag_occurrence',
+    columns: [
+      'id',
+      'media_item_id',
+      'tag_id',
+      'provider',
+      'source',
+      'source_id',
+      'raw_name',
+      'kind',
+      ...stamps,
+    ],
+    when: sql`exists (select 1 from tag t where t.id = x.tag_id)`,
+  },
+  {
+    table: 'external_link',
+    columns: ['id', 'media_item_id', 'provider', 'label', 'url', ...stamps],
+  },
+  {
+    table: 'provider_reference',
+    columns: [
+      'id',
+      'media_item_id',
+      'provider',
+      'reference_type',
+      'external_id',
+      'is_primary',
+      'metadata',
+      ...stamps,
+    ],
+  },
+  {
+    table: 'provider_current_state',
+    columns: [
+      'id',
+      'media_item_id',
+      'provider',
+      {
+        name: 'latest_snapshot_id',
+        value: sql`(select s.id from provider_snapshot s
+          where s.id = x.latest_snapshot_id)`,
+      },
+      'checksum',
+      'payload',
+      'normalized_data',
+      'status',
+      'last_successful_at',
+      'last_scraped_at',
+      ...stamps,
+    ],
+  },
+  {
+    table: 'media_override',
+    columns: [
+      'id',
+      'media_item_id',
+      'field',
+      'value',
+      'note',
+      createdBy,
+      ...stamps,
+    ],
+  },
+  {
+    table: 'provider_reference_override',
+    columns: [
+      'id',
+      'media_item_id',
+      'provider',
+      'reference_type',
+      'external_id',
+      'note',
+      createdBy,
+      ...stamps,
+    ],
+  },
+]
+
+/** Stored responses and job items outlive their track; an undo points them back. */
+const DETACHED = [
+  { table: 'provider_snapshot', key: 'snapshotIds' },
+  { table: 'scrape_job_item', key: 'jobItemIds' },
+]
+
 /** Everything needed to put a Last.fm-only track back as it was. */
 async function archiveTracks(reader: Reader, ids: string[]) {
   if (!ids.length) return []
+  const attached = sql.join(
+    ATTACHED.map(
+      ({ table }) => sql`${table}::text, coalesce((
+        select jsonb_agg(to_jsonb(x)) from ${sql.identifier(table)} x
+        where x.media_item_id = mi.id), '[]'::jsonb)`,
+    ),
+    sql`, `,
+  )
+  const detached = sql.join(
+    DETACHED.map(
+      ({ table, key }) => sql`${key}::text, coalesce((
+        select jsonb_agg(x.id) from ${sql.identifier(table)} x
+        where x.media_item_id = mi.id), '[]'::jsonb)`,
+    ),
+    sql`, `,
+  )
   return ArchiveRowsSchema.parse(
     (
       await reader.execute(sql`
@@ -177,7 +295,9 @@ async function archiveTracks(reader: Reader, ids: string[]) {
             where c.media_item_id = mi.id), '[]'::jsonb),
           'tagIds', coalesce((
             select jsonb_agg(t.tag_id order by t.tag_id)
-            from media_item_tag t where t.media_item_id = mi.id), '[]'::jsonb)
+            from media_item_tag t where t.media_item_id = mi.id), '[]'::jsonb),
+          'attached', jsonb_build_object(${attached}),
+          ${detached}
         ) as snapshot
         from media_item mi join library_track lt on lt.media_item_id = mi.id
         where mi.id in (${idList(ids)})`)
@@ -209,8 +329,9 @@ async function storeRemovals(
 }
 
 /**
- * Puts removed tracks back from the change's archive. Columns are listed so a
- * column added later takes its default. Returns the IDs it could not restore.
+ * Puts removed tracks back from the change's archive, with the provider data,
+ * links and edits they had. Columns are listed so a column added later takes
+ * its default. Returns the IDs it could not restore.
  */
 async function restoreRemovedTracks(
   tx: Transaction,
@@ -274,6 +395,38 @@ async function restoreRemovedTracks(
     ${selected}
       and exists (select 1 from media_item mi where mi.id = r.record_id)
     on conflict do nothing`)
+  for (const { table, columns, when } of ATTACHED) {
+    const target = sql.identifier(table)
+    await tx.execute(sql`
+      insert into ${target} (${sql.join(
+        columns.map((column) =>
+          sql.identifier(typeof column === 'string' ? column : column.name),
+        ),
+        sql`, `,
+      )})
+      select ${sql.join(
+        columns.map((column) =>
+          typeof column === 'string'
+            ? sql`x.${sql.identifier(column)}`
+            : column.value,
+        ),
+        sql`, `,
+      )}
+      ${rows} jsonb_populate_recordset(null::${target},
+        coalesce(r.snapshot->'attached'->${table}::text, '[]'::jsonb)) x
+      ${selected}
+        and exists (select 1 from media_item mi where mi.id = x.media_item_id)
+        ${when ? sql`and ${when}` : sql``}
+      on conflict do nothing`)
+  }
+  for (const { table, key } of DETACHED)
+    await tx.execute(sql`
+      update ${sql.identifier(table)} x set media_item_id = r.record_id
+      ${rows} jsonb_array_elements_text(
+        coalesce(r.snapshot->${key}::text, '[]'::jsonb)) kept
+      ${selected}
+        and x.id = kept and x.media_item_id is null
+        and exists (select 1 from media_item mi where mi.id = r.record_id)`)
   await tx.execute(sql`delete from library_change_removal r ${selected}`)
   const restored = await existingTrackIds(tx, ids)
   return ids.filter((id) => !restored.has(id))

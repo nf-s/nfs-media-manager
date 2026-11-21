@@ -313,6 +313,121 @@ it('merges at once, then undoes and makes the change again', async () => {
   })
 })
 
+it('returns a removed track with its provider data, links and edits', async () => {
+  const mediaItemId = misspelt.id
+  const provider = 'fixture-provider'
+  await fixture.insert(schema.providerSnapshot).values({
+    id: 'fixture-snapshot',
+    mediaItemId,
+    provider,
+    checksum: 'a',
+    payload: { title: 'Nite Drive' },
+    source: 'scrape',
+  })
+  await fixture.insert(schema.providerCurrentState).values({
+    id: 'fixture-state',
+    mediaItemId,
+    provider,
+    latestSnapshotId: 'fixture-snapshot',
+    checksum: 'a',
+    payload: { title: 'Nite Drive' },
+    status: 'ok',
+  })
+  await fixture.insert(schema.providerReference).values({
+    id: 'fixture-reference',
+    mediaItemId,
+    provider,
+    referenceType: 'recording',
+    externalId: 'recording-1',
+    isPrimary: true,
+    metadata: { score: 1 },
+  })
+  await fixture.insert(schema.providerReferenceOverride).values({
+    id: 'fixture-reference-override',
+    mediaItemId,
+    provider,
+    referenceType: 'recording',
+    externalId: 'recording-1',
+  })
+  await fixture.insert(schema.externalLink).values({
+    id: 'fixture-link',
+    mediaItemId,
+    provider,
+    label: 'Fixture',
+    url: 'https://example.com/nite-drive',
+  })
+  await fixture.insert(schema.mediaOverride).values({
+    id: 'fixture-override',
+    mediaItemId,
+    field: 'title',
+    value: 'Nite Drive',
+  })
+  await fixture.insert(schema.tagOccurrence).values({
+    id: 'fixture-occurrence',
+    mediaItemId,
+    tagId,
+    provider,
+    rawName: 'Night',
+    kind: 'genre',
+  })
+  const attached = async () => ({
+    snapshot: await fixture
+      .select({ mediaItemId: schema.providerSnapshot.mediaItemId })
+      .from(schema.providerSnapshot),
+    state: await fixture
+      .select({
+        id: schema.providerCurrentState.id,
+        latestSnapshotId: schema.providerCurrentState.latestSnapshotId,
+        payload: schema.providerCurrentState.payload,
+      })
+      .from(schema.providerCurrentState),
+    reference: await fixture
+      .select({
+        id: schema.providerReference.id,
+        isPrimary: schema.providerReference.isPrimary,
+        metadata: schema.providerReference.metadata,
+      })
+      .from(schema.providerReference),
+    referenceOverride: await fixture
+      .select({ id: schema.providerReferenceOverride.id })
+      .from(schema.providerReferenceOverride),
+    link: await fixture
+      .select({ id: schema.externalLink.id, url: schema.externalLink.url })
+      .from(schema.externalLink),
+    override: await fixture
+      .select({
+        id: schema.mediaOverride.id,
+        value: schema.mediaOverride.value,
+      })
+      .from(schema.mediaOverride),
+    occurrence: await fixture
+      .select({
+        id: schema.tagOccurrence.id,
+        tagId: schema.tagOccurrence.tagId,
+        createdAt: schema.tagOccurrence.createdAt,
+      })
+      .from(schema.tagOccurrence),
+  })
+  const before = await attached()
+
+  const merged = await mergeTracks({
+    trackIds: [misspelt.id, spotifyTrack],
+    reviewed: false,
+  })
+  expect(await attached()).toMatchObject({
+    snapshot: [{ mediaItemId: null }],
+    state: [],
+    reference: [],
+    referenceOverride: [],
+    link: [],
+    override: [],
+    occurrence: [],
+  })
+
+  await undoLibraryChange(merged.id)
+  expect(await attached()).toEqual(before)
+})
+
 it('does not count scrobbles the kept track already counts', async () => {
   const plan = await planTrackMerge({ trackIds: [remaster.id, spotifyTrack] })
   expect(plan.names).toMatchObject([{ trackId: remaster.id, counted: true }])

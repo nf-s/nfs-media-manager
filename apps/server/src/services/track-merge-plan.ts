@@ -10,6 +10,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { artistKeys, plainKey } from '@/lib/lastfm-album-matching'
 import { trackVersionQualifiers } from '@/lib/track-matching'
+import { albumTrackDurationExpression } from './track-values'
 
 type Reader = Pick<typeof db, 'execute'>
 
@@ -132,7 +133,10 @@ export async function readTrackMergePlan(
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = mi.id and c.role = 'artist'), '{}') as artists,
           coalesce(am.title, lt.album_name) as album_title,
-          case when lt.duration_sec > 0 then lt.duration_sec end as duration_sec,
+          nullif(greatest(coalesce(lt.duration_sec, ${albumTrackDurationExpression(
+            sql`lt.media_item_id`,
+            sql`lt.album_media_item_id`,
+          )}), 0), 0) as duration_sec,
           lt.scrobble_count as scrobbles,
           lt.spotify_track_id is not null as spotify,
           exists (select 1 from track t
