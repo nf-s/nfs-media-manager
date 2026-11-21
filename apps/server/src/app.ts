@@ -38,6 +38,14 @@ import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
 import libraryChanges from '@/routes/library-changes'
+import {
+  albumUnlistedNames,
+  trackParts,
+  trackVersionChanges,
+} from '@/routes/track-versions'
+import { trackDuplicates, trackSeparations } from '@/routes/track-duplicates'
+import { artistMerges } from '@/routes/artist-merges'
+import { albumMerges, albumNames } from '@/routes/album-merges'
 import manualAdd from '@/routes/manual-add'
 import findMatch from '@/routes/find-match'
 import ai from '@/routes/ai'
@@ -106,6 +114,9 @@ app.use('*', (c, next) => {
 
 const v1ApiBase = app.basePath('/api/v1')
 
+v1ApiBase.route('/albums', albumUnlistedNames)
+v1ApiBase.route('/tracks', trackParts)
+v1ApiBase.route('/tracks', trackDuplicates)
 v1ApiBase.route('/albums', albums)
 v1ApiBase.route('/films', films)
 v1ApiBase.route('/tracks', tracks)
@@ -127,6 +138,11 @@ v1ApiBase.route('/playback', playback)
 v1ApiBase.route('/performance', performance)
 v1ApiBase.route('/subscriptions', subscriptions)
 v1ApiBase.route('/tags', tags)
+v1ApiBase.route('/library-changes/track-versions', trackVersionChanges)
+v1ApiBase.route('/library-changes/track-separations', trackSeparations)
+v1ApiBase.route('/library-changes/artist-merges', artistMerges)
+v1ApiBase.route('/library-changes/album-merges', albumMerges)
+v1ApiBase.route('/library-changes/album-names', albumNames)
 v1ApiBase.route('/library-changes', libraryChanges)
 v1ApiBase.route('/manual-add', manualAdd)
 v1ApiBase.route('/find-match', findMatch)

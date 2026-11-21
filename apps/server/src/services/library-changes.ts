@@ -216,6 +216,8 @@ export async function beginTrackChange(
 }
 
 export type ChangeHeader = {
+  /** The change's ID, when an effect had to store it first. */
+  id?: string
   kind: LibraryChangeKind
   action: LibraryChangeAction
   actor?: LibraryChangeActor
@@ -305,7 +307,7 @@ export async function recordChange(
     header.target === undefined && targetIds.length === 1
       ? await readRecords(tx, targetIds)
       : []
-  const id = nanoid()
+  const id = header.id ?? nanoid()
   const rows = moves.map(({ from, to }) => {
     const name = scrobbled.get(nameId(from))
     return {
