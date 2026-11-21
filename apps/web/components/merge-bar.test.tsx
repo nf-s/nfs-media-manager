@@ -159,6 +159,8 @@ test('the track review shows the evidence, the track to keep and the error after
       plan={cautionPlan}
       pending={false}
       replan={(request) => replans.push(request)}
+      follow
+      setFollow={() => undefined}
       error={<p>Example error</p>}
     />,
   )
