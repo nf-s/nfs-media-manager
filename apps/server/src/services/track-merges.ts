@@ -580,6 +580,7 @@ export async function mergeTracks({
           tx,
           targetId,
           versions.map((track) => track.id),
+          merged.map((track) => track.id),
         )
       : { effect: null, trackIds: [] }
     if (joined.effect) effects.push(joined.effect)

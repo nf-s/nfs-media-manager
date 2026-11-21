@@ -65,16 +65,19 @@ async function readRecord(reader: ChangeReader, trackId: string) {
 /**
  * Joins the sources' records to the target's as versions of one record,
  * shown as the target. Versions worked out for any of them are joined too,
- * so none is split off. Returns the effect to record and every track of the
- * record, or a null effect when they were one record already.
+ * so none is split off, except `leavingIds`: tracks the same change removes.
+ * Returns the effect to record and every track of the record, or a null
+ * effect when they were one record already.
  */
 export async function joinTrackVersions(
   tx: ChangeTransaction,
   targetId: string,
   sourceIds: string[],
+  leavingIds: string[] = [],
 ): Promise<{ effect: ChangeEffectEntry | null; trackIds: string[] }> {
   const stored = (await readVersionStates(tx, [targetId])).get(targetId)
   const groupId = stored?.groupId ?? nanoid()
+  const leaving = new Set(leavingIds)
   const trackIds = [
     ...new Set([
       ...(await readRecordingVersions(tx, [targetId, ...sourceIds])).map(
@@ -82,7 +85,7 @@ export async function joinTrackVersions(
       ),
       ...(await groupTrackIds(tx, stored?.groupId ?? null)),
     ]),
-  ]
+  ].filter((id) => !leaving.has(id))
   const effect = await storeVersionStates(
     tx,
     trackIds.map((id) => ({ id, state: { groupId, shown: id === targetId } })),

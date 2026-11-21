@@ -652,8 +652,9 @@
     background: var(--ds-info-bg);
     color: var(--ds-info);
   }
-  .media-browser select,
-  .media-detail select,
+  /* The design system styles its own selects */
+  .media-browser select:not(.ds-select),
+  .media-detail select:not(.ds-select),
   .media-detail textarea {
     border: 1px solid var(--line);
     background: var(--ds-surface);

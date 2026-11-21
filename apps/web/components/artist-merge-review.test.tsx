@@ -142,7 +142,7 @@ test('the artist review shows the artist to keep, its names, what moves and the 
   assert.match(html, /Also known as<\/dt><dd>“Lowlands”, “The Low Lands”<\/dd>/)
   assert.match(
     html,
-    /Credits moved<\/dt><dd><span class="ds-num">2 on 0 albums and 2 tracks · 1 where “The Lowlands” is already credited<\/span>/,
+    /Credits moved<\/dt><dd><span class="ds-num">2 on 2 tracks · 1 where “The Lowlands” is already credited<\/span>/,
   )
   assert.match(
     html,

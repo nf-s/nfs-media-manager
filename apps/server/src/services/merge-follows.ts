@@ -421,9 +421,10 @@ export type TrackFollow = {
 /**
  * What follows a track merge: the album names the merged tracks' names were
  * scrobbled under move to the album of the track to keep, with the other
- * titles under them that match a track of that album. Nothing follows when
- * the track to keep is on no album, or for an album name already linked to
- * the album's record or linked by the owner. One entry per Last.fm account.
+ * titles under them that match a track of that album. Only an album name
+ * that is linked to no album follows: a name linked to an album, or decided
+ * by the owner, stays where it is. Nothing follows when the track to keep is
+ * on no album. One entry per Last.fm account.
  */
 export async function readTrackFollows(
   reader: ChangeReader,
@@ -466,8 +467,7 @@ export async function readTrackFollows(
           coalesce(max(e.album_name), c.album_key) as "albumName",
           count(*)::int as scrobbles, l.album_media_item_id as "albumId",
           (l.username is null or (l.source <> 'manual'
-            and coalesce(l.album_media_item_id <> all(
-              ${sql.param(album.record_ids)}::text[]), true)))
+            and l.album_media_item_id is null))
             and not exists (select 1 from media_override o
               where o.media_item_id = ${album.id}
                 and o.field = 'albumListeningLinkRejection'

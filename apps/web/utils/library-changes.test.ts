@@ -153,6 +153,30 @@ test('a move or separation with no scrobbled names says what it moved from its d
     }),
     'Moved “Night Cities (Remaster)” to “Night Cities”',
   )
+  // An album name with the track names that followed it.
+  const followed: LibraryChange = {
+    ...change,
+    kind: 'album',
+    action: 'move',
+    target: record('album-1', 'Night Cities'),
+    names: [
+      { artistName: 'Fixture Artist', trackName: 'Night Drive', scrobbles: 4 },
+      { artistName: 'Fixture Artist', trackName: 'Low Tide', scrobbles: 2 },
+    ],
+    nameCount: 2,
+    details: {
+      counts: { title: 2, 'album-name': 1 },
+      labels: ['Night Cities (Remaster)'],
+    },
+  }
+  assert.equal(
+    describeLibraryChange(followed),
+    'Moved “Night Cities (Remaster)” and 2 track names to “Night Cities”',
+  )
+  assert.equal(
+    describeLibraryChangeNote(followed),
+    'Fixture Artist · Night Drive and 1 more',
+  )
   const separated: LibraryChange = {
     ...parts,
     action: 'separate',
@@ -259,15 +283,26 @@ test('the sub line gives the rule, what else moved, the remembered undo and the 
     describeLibraryChangeNote(automatic),
     'Fixture Artist · Nite Drive. Same title and artist',
   )
-  // Two Spotify tracks moved no scrobbled names: the details say what moved.
+  // The line names the merged track: the version it became is not repeated.
   assert.equal(
     describeLibraryChangeNote({
       ...change,
       names: [],
       nameCount: 0,
-      details: { counts: { version: 1 } },
+      details: { counts: { version: 1 }, labels: ['Nite Drive'] },
     }),
-    'Also merged 1 version',
+    '',
+  )
+  // One of two merged tracks became a version: the details say which.
+  assert.equal(
+    describeLibraryChangeNote({
+      ...change,
+      sources: [record('a', 'Nite Drive'), record('b', 'Night Drive (Demo)')],
+      names: [],
+      nameCount: 0,
+      details: { counts: { version: 1 }, labels: ['Night Drive (Demo)'] },
+    }),
+    'Also merged 1 version: “Night Drive (Demo)”',
   )
   assert.equal(
     describeLibraryChangeNote({

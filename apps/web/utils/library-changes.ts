@@ -159,17 +159,28 @@ function movedNames(change: LibraryChange) {
 
 /**
  * What a move or separation moved: its scrobbled names or, when it moved
- * none, its other parts: one part by name, several by count. `parts` says
- * how the line used the details.
+ * none, its other parts: one part by name, several by count. An album name
+ * moved with the track names that followed it is named with their count.
+ * `parts` says how the line used the details.
  */
 function movedParts(change: LibraryChange): {
   text: string
   parts: 'unused' | 'named' | 'counted'
 } {
   const parts = movedPartCounts(change)
+  const [label] = change.details?.labels ?? []
+  if (
+    change.kind === 'album' &&
+    change.nameCount &&
+    label &&
+    change.details?.counts?.['album-name'] === 1
+  )
+    return {
+      text: `${quoted(label)} and ${formatItemCount(change.nameCount, partNouns.title)}`,
+      parts: 'named',
+    }
   if (change.nameCount || !parts.text)
     return { text: movedNames(change), parts: 'unused' }
-  const [label] = change.details?.labels ?? []
   return parts.total === 1 && label
     ? { text: quoted(label), parts: 'named' }
     : { text: parts.text, parts: 'counted' }
@@ -235,10 +246,31 @@ const alsoVerbs: Partial<Record<LibraryChange['action'], string>> = {
   separate: 'Also separated',
 }
 
+/** The part each merged record becomes, which the line of a merge names. */
+const mergedParts: Partial<Record<LibraryChangeKind, LibraryChangePart>> = {
+  track: 'version',
+  album: 'edition',
+}
+
+/** Whether a merge's details only repeat the records its line names. */
+function restatesMerge(change: LibraryChange) {
+  const counts = Object.entries(change.details?.counts ?? {}).filter(
+    ([, count]) => count,
+  )
+  const [only] = counts
+  return (
+    change.action === 'merge' &&
+    counts.length === 1 &&
+    only !== undefined &&
+    only[0] === mergedParts[change.kind] &&
+    only[1] === change.sources.length
+  )
+}
+
 /** What a change moved besides what its line names, from its details. */
 function alsoMoved(change: LibraryChange) {
   const verb = alsoVerbs[change.action]
-  if (!verb) return null
+  if (!verb || restatesMerge(change)) return null
   const labels = (change.details?.labels ?? []).map(quoted).join(', ')
   const used = change.action === 'merge' ? 'unused' : movedParts(change).parts
   if (used === 'named') return null
@@ -284,8 +316,7 @@ export function libraryChangeBlock(change: LibraryChange): string | null {
   if (change.reversible && (change.undoneAt ? change.canRedo : change.canUndo))
     return null
   if (change.blocked) return change.blocked
-  if (!change.reversible)
-    return 'This change also moved album positions or playlist entries and cannot be undone.'
+  if (!change.reversible) return 'This change cannot be undone.'
   return 'A later change moved these names. Undo that change first.'
 }
 

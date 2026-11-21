@@ -166,6 +166,7 @@ function AlbumMergePlanReview({
           >
             <table
               className="ds-table"
+              data-rows="two"
               aria-label="Albums to merge"
               {...layout.table}
             >

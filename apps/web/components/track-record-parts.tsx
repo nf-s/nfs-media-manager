@@ -53,7 +53,7 @@ import { trackMergeAdapter } from './track-merge-review'
 
 const partColumns: TableColumn[] = [
   { key: 'part', label: 'Part', width: 200, fill: true },
-  { key: 'type', label: 'Type', width: 120 },
+  { key: 'type', label: 'Type', width: 136 },
   { key: 'album', label: 'Album', width: 150 },
   { key: 'scrobbles', label: 'Scrobbles', width: 84 },
   // Room for the radio, and for Separate.
@@ -492,6 +492,7 @@ export function TrackRecordParts({
       aside={
         <Button
           size="xs"
+          variant="link"
           aria-haspopup="dialog"
           disabled={pending}
           onClick={() => {

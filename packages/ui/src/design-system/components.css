@@ -1988,6 +1988,10 @@ a:focus-visible > .ds-logo[data-none] {
   flex: 1;
   min-width: 0;
 }
+/* A pair of controls keeps its own width, so the message takes the rest */
+.ds-notice > .ds-actions {
+  flex: none;
+}
 .ds-state {
   display: grid;
   justify-items: center;

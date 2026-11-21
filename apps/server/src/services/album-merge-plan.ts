@@ -218,10 +218,12 @@ export async function readAlbumMerge(
       ? 'same-record'
       : null
 
+  // `selected` and `members` are separate readings of the same albums.
+  const listed = new Set([target.id, ...others.map((album) => album.id)])
   const ordered = [
     target,
     ...others,
-    ...members.filter((album) => album !== target && !others.includes(album)),
+    ...members.filter((album) => !listed.has(album.id)),
   ]
   return {
     names,

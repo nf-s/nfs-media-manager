@@ -17,6 +17,7 @@ import {
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import {
   artistMergeBlockLabels,
+  describeArtistCreditMoves,
   describeArtistMergeBlock,
   describeArtistMergeCaution,
   describeArtistMergeFollows,
@@ -146,16 +147,7 @@ function ArtistMergePlanReview({
               label: 'Credits moved',
               value: (
                 <span className="ds-num">
-                  {formatCount(moves.credits)} on{' '}
-                  {formatItemCount(moves.albums, {
-                    one: 'album',
-                    other: 'albums',
-                  })}{' '}
-                  and{' '}
-                  {formatItemCount(moves.tracks, {
-                    one: 'track',
-                    other: 'tracks',
-                  })}
+                  {describeArtistCreditMoves(moves)}
                   {moves.shared > 0 && kept
                     ? ` · ${formatCount(moves.shared)} where ${quoted(kept.name)} is already credited`
                     : ''}
@@ -186,6 +178,7 @@ function ArtistMergePlanReview({
         >
           <table
             className="ds-table"
+            data-rows="two"
             aria-label="Artists to merge"
             {...layout.table}
           >

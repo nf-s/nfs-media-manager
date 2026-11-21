@@ -79,6 +79,25 @@ export function describeArtistMergeBlock(
   return `${who} film credits and cannot be merged. People in films and music artists share one record.`
 }
 
+/** The credits a merge moves and where they are: `3 on 1 album and 2 tracks`. */
+export function describeArtistCreditMoves({
+  credits,
+  albums,
+  tracks,
+}: Pick<ArtistMergePlan['moves'], 'credits' | 'albums' | 'tracks'>) {
+  const places = [
+    ...(albums
+      ? [formatItemCount(albums, { one: 'album', other: 'albums' })]
+      : []),
+    ...(tracks
+      ? [formatItemCount(tracks, { one: 'track', other: 'tracks' })]
+      : []),
+  ]
+  return places.length
+    ? `${formatCount(credits)} on ${listed.format(places)}`
+    : formatCount(credits)
+}
+
 /**
  * The titles scrobbled under the merged names that move to the matching
  * tracks of the artist to keep.

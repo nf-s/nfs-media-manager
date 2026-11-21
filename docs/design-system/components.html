@@ -1273,7 +1273,7 @@
             title: 'Notice, states and menu',
             body:
               g.spec(
-                `<div class="g-stack">${D.notice('Rate Your Music is waiting until 14:20 after a rate limit. 38 jobs are queued behind it.', { tone: 'attention', action: btn('Open provider', { size: 'xs' }) })}${D.notice('Spotify credentials were rejected. Playback and sync are stopped.', { tone: 'danger', action: btn('Reconnect', { size: 'xs' }) })}${D.notice('Scrobble names are linked in Sources, under Last.fm.')}</div>`,
+                `<div class="g-stack">${D.notice('Rate Your Music is waiting until 14:20 after a rate limit. 38 jobs are queued behind it.', { tone: 'attention', action: btn('Open provider', { size: 'xs' }) })}${D.notice('Spotify credentials were rejected. Playback and sync are stopped.', { tone: 'danger', action: btn('Reconnect', { size: 'xs' }) })}${D.notice('Scrobble names are linked in Sources, under Last.fm.')}${D.notice('Possible duplicate: “Night Drive (Remastered)” by Mira Kestrel. Same title and artist', { action: `<span class="ds-actions">${btn('Merge', { size: 'xs' })}${btn('Keep separate', { size: 'xs', variant: 'ghost' })}</span>` })}${D.notice('Merged “Nite Drive” into “Night Drive”', { icon: 'check', action: `<span class="ds-actions">${btn('Undo', { size: 'xs' })}${btn('', { icon: 'x', size: 'xs', aria: 'Dismiss' })}</span>` })}</div>`,
               ) +
               `<div class="g-cols">${g.spec(D.state('No albums match', 'Remove a filter or clear the search.', { action: btn('Clear filters') }))}${g.spec(D.state('Could not load tracks', 'The request failed.', { action: btn('Retry', { icon: 'refresh' }) }))}${g.spec(
                 `<div class="g-stack">${[70, 52, 61].map((w) => `<div class="ds-skel" style="height:14px;width:${w}%"></div>`).join('')}</div>`,
@@ -1309,6 +1309,7 @@
               )}</div>` +
               g.rules([
                 '<b>Notice.</b> One line, an optional single action. Neutral, attention or danger. It sits in the flow of the panel it concerns and never floats over content.',
+                '<b>A notice holds two controls</b> in two cases only, in one <code>ds-actions</code> group. A suggestion the owner takes or declines has its action, then the other as a ghost button: Merge and Keep separate on a possible duplicate. The result of a change has Undo, or Redo once it is undone, then a Dismiss icon button where the notice can be closed.',
                 '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
                 '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
                 '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button.',

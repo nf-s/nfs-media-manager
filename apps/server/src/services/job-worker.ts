@@ -14,6 +14,7 @@ import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
 import { queueDueMixStationSync } from '@/services/mix-station-sync-jobs'
 import { queueDueSpotifyPlaylistSyncs } from '@/services/spotify-playlist-sync'
+import { refreshTrackDuplicatesForMaintenance } from '@/services/track-duplicates'
 
 const workerLock = 614105
 const scheduleCheckMs = 5 * 60 * 1000
@@ -43,7 +44,7 @@ export async function startJobWorker({
   let released = false
   let timer: ReturnType<typeof setInterval> | undefined = undefined
   let processing: Promise<void> | undefined
-  let maintenance: Promise<[boolean, boolean]> | undefined
+  let maintenance: Promise<boolean[]> | undefined
   let checking: Promise<void> | undefined
   let stopPromise: Promise<void> | undefined
   let nextScheduleCheck = 0
@@ -199,6 +200,10 @@ export async function startJobWorker({
           }),
           refreshRecordingBrowseOrderForMaintenance().catch(() => {
             console.error('Grouped Tracks order maintenance failed.')
+            return false
+          }),
+          refreshTrackDuplicatesForMaintenance().catch(() => {
+            console.error('Possible duplicates maintenance failed.')
             return false
           }),
         ]).finally(() => {

@@ -465,6 +465,65 @@ it('shows a record as another version', async () => {
   expect(await groupedRows()).toEqual([{ id: reissue, versions: 2 }])
 })
 
+it('undoes a merge of a scrobbled name that was worked out as a version', async () => {
+  // Two Spotify tracks share the title the scrobbled name's own track has.
+  const twins = ['versions-twin-a', 'versions-twin-b']
+  const [credit] = await fixture
+    .select()
+    .from(schema.mediaCredit)
+    .where(eq(schema.mediaCredit.mediaItemId, looseName.id))
+  if (!credit) throw new Error('The scrobbled name has no artist credit.')
+  await fixture.insert(schema.mediaItem).values(
+    twins.map((id) => ({
+      id,
+      slug: id,
+      title: 'Low Lanterns',
+      mediaType: 'track',
+      sourceLabel: 'spotify',
+    })),
+  )
+  await fixture.insert(schema.libraryTrack).values(
+    twins.map((mediaItemId, index) => ({
+      mediaItemId,
+      spotifyTrackId: `LowLanterns${index}`.padEnd(22, '0'),
+      durationSec: 180 + index,
+    })),
+  )
+  await fixture.insert(schema.mediaCredit).values(
+    twins.map((mediaItemId) => ({
+      mediaItemId,
+      artistId: credit.artistId,
+      role: 'artist',
+    })),
+  )
+  await linkScrobblesToTracks(account)
+  const trackIds = [...twins, looseName.id]
+  const byId = (left: { id: string }, right: { id: string }) =>
+    left.id.localeCompare(right.id)
+  const before = await tracksOf(trackIds)
+  const plan = await planTrackMerge({ trackIds })
+  expect(
+    plan.tracks.map(({ id, outcome }) => ({ id, outcome })).sort(byId),
+  ).toEqual(
+    [
+      ...twins.map((id) => ({
+        id,
+        outcome: id === plan.targetId ? 'keep' : 'version',
+      })),
+      { id: looseName.id, outcome: 'merge' },
+    ].sort(byId),
+  )
+
+  const merged = await mergeTracks({ trackIds, reviewed: true })
+  expect(merged).toMatchObject({ canUndo: true, blocked: null })
+  expect(await tracksOf([looseName.id])).toEqual([])
+
+  await undoLibraryChange(merged.id)
+  expect(await tracksOf(trackIds)).toEqual(before)
+  expect(await redoLibraryChange(merged.id)).toMatchObject({ canUndo: true })
+  expect(await tracksOf([looseName.id])).toEqual([])
+})
+
 it('asks for a review when tracks were kept separate, and forgets it', async () => {
   const [lowId = '', highId = ''] = [first, reissue].sort()
   await fixture

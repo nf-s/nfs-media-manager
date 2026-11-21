@@ -164,6 +164,7 @@ export default function AlbumEditions({ album }: { album: AlbumDetail }) {
         aside={
           <Button
             size="xs"
+            variant="link"
             disabled={separate.isPending}
             aria-label={`Separate ${album.title} from ${editionOf.title}`}
             onClick={() => onSeparate(album.id)}

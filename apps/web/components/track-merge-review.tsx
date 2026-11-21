@@ -162,6 +162,7 @@ function TrackMergePlanReview({
         >
           <table
             className="ds-table"
+            data-rows="two"
             aria-label="Tracks to merge"
             {...layout.table}
           >

@@ -4,7 +4,8 @@ import { cn } from '../../lib/utils'
 
 /**
  * A message with at most one action. `attention` for something the owner
- * should act on, `danger` for a failure.
+ * should act on, `danger` for a failure. A suggestion to take or decline and
+ * the result of a change hold two controls in one `ds-actions` group.
  * `icon={false}` leaves the icon out, for a plain statement.
  */
 export function Notice({

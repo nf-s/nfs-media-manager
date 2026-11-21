@@ -1,5 +1,6 @@
 import '@hono/zod-openapi'
 import { randomUUID } from 'node:crypto'
+import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
@@ -459,6 +460,41 @@ it('cautions when a title that follows is on another album or matches two tracks
   await trackMerge({ ...lowTide, reviewed: true })
   expect(await owner('Quay Lights')).toBe(spotify(5))
   expect(await owner('Interlude')).toBe(lastfm('Interlude'))
+})
+
+it('leaves an album name that is linked to another album where it is', async () => {
+  await fixture.insert(schema.mediaItem).values({
+    id: 'album-nite',
+    slug: 'album-nite',
+    title: scrobbledAlbum,
+    mediaType: 'album',
+  })
+  await fixture.insert(schema.album).values({ mediaItemId: 'album-nite' })
+  const link = {
+    username: account,
+    artistKey: albumNameKey(band),
+    albumKey: albumNameKey(scrobbledAlbum),
+  }
+  await fixture
+    .insert(schema.lastfmAlbumLink)
+    .values({ ...link, albumMediaItemId: 'album-nite', source: 'auto' })
+
+  const plan = await trackPlan(lowTide)
+  expect(plan.also).toEqual({ albumNames: [], titles: [] })
+  await trackMerge(lowTide)
+  expect(await owner('Low Tide')).toBe(spotify(1))
+  expect(await owner('Lanterns')).toBe(lastfm('Lanterns'))
+  const [kept] = await fixture
+    .select({ albumId: schema.lastfmAlbumLink.albumMediaItemId })
+    .from(schema.lastfmAlbumLink)
+    .where(
+      and(
+        eq(schema.lastfmAlbumLink.username, link.username),
+        eq(schema.lastfmAlbumLink.artistKey, link.artistKey),
+        eq(schema.lastfmAlbumLink.albumKey, link.albumKey),
+      ),
+    )
+  expect(kept?.albumId).toBe('album-nite')
 })
 
 it('makes matching Last.fm titles follow an artist merge and undoes it exactly', async () => {

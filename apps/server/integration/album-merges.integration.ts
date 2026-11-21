@@ -378,6 +378,7 @@ it('makes a Spotify album an edition of another, deleting nothing, and undoes it
   const reading = await plan({ albumIds: [standard, deluxe] })
   // Both have a Spotify album; the deluxe edition has more tracks.
   expect(reading.targetId).toBe(deluxe)
+  expect(reading.albums.map((album) => album.id)).toEqual([deluxe, standard])
   expect(reading.cautions).toEqual([
     { code: 'version', words: ['Deluxe Edition'] },
   ])
