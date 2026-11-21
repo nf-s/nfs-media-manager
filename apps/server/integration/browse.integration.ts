@@ -5,6 +5,8 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { and, asc, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+  AlbumDetailSchema,
+  AlbumListItemSchema,
   AlbumQuerySchema,
   FilmDetailSchema,
   FilmListItemSchema,
@@ -31,7 +33,8 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const databaseClient = drizzle(pool, { schema })
+const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
+const databaseClient = drizzle(pool, { schema, logger: { logQuery } })
 vi.mock('@/plugins/registry', () => ({
   listLoadedScrapePlugins: async () => [],
 }))
@@ -1160,44 +1163,139 @@ it('keeps track release ties across deep page and position boundaries', async ()
   }
 })
 
-it('returns the stored collection ID in film Browse and detail memberships', async () => {
-  const { getFilmDetail, listFilmBrowsePage } = await import('@/services/media')
-  const id = 'film-collection-fixture'
-  const membership = {
-    id: 'stored-collection-id',
-    name: 'Collection membership fixture',
-    kind: 'collection',
-    position: 9,
-  }
-  await databaseClient.insert(schema.mediaItem).values({
-    id,
-    slug: id,
-    title: 'Film collection membership fixture',
-    mediaType: 'film',
-  })
-  await databaseClient.insert(schema.film).values({ mediaItemId: id })
-  await databaseClient.insert(schema.playlist).values({
-    id: membership.id,
-    name: membership.name,
-    kind: 'collection',
-  })
-  await databaseClient.insert(schema.playlistItem).values({
-    playlistId: membership.id,
-    mediaItemId: id,
-    position: membership.position,
-  })
-  const page = await listFilmBrowsePage(
-    FilmQuerySchema.parse({
-      filters: JSON.stringify([
-        { field: 'collection', value: membership.name },
-      ]),
-    }),
-  )
-  expect(FilmListItemSchema.parse(page.items[0]).playlists).toEqual([
-    membership,
-  ])
-  expect(FilmDetailSchema.parse(await getFilmDetail(id)).playlists).toEqual([
-    membership,
-  ])
-  expect(fetch).not.toHaveBeenCalled()
-})
+it.each<'film' | 'album'>(['film', 'album'])(
+  'loads the relations needed by %s Browse and detail',
+  async (mediaType) => {
+    const {
+      getAlbumDetail,
+      getFilmDetail,
+      listAlbumBrowsePage,
+      listFilmBrowsePage,
+    } = await import('@/services/media')
+    const id = `projected-${mediaType}`
+    const isFilm = mediaType === 'film'
+    const kind: 'collection' | 'playlist' = isFilm ? 'collection' : 'playlist'
+    const membership = {
+      id: `${id}-playlist`,
+      name: `Projection ${mediaType} membership`,
+      kind,
+      position: 9,
+    }
+    const credit = {
+      id: `${id}-artist`,
+      name: `Projection ${mediaType} credit`,
+      role: isFilm ? 'director' : 'artist',
+      billingOrder: 3,
+    }
+    const tag = { id: `${id}-tag`, name: 'Projection tag', kind: 'genre' }
+    const hiddenTagId = `${id}-hidden-tag`
+    const link = {
+      provider: 'fixture',
+      label: 'Fixture source',
+      url: 'https://example.test/source',
+    }
+    const reference = {
+      provider: 'fixture',
+      referenceType: 'fixture-entry',
+      externalId: 'fixture-reference',
+      isPrimary: true,
+      metadata: { edition: 'Fixture edition' },
+    }
+    const sortName = 'Unused artist sort name '.repeat(32)
+    const tagCreatedAt = '1998-02-03'
+    const description = 'Unused playlist description '.repeat(1_024)
+
+    await databaseClient.insert(schema.mediaItem).values({
+      id,
+      slug: id,
+      title: `Projection ${mediaType} item`,
+      mediaType,
+    })
+    await databaseClient
+      .insert(isFilm ? schema.film : schema.album)
+      .values({ mediaItemId: id })
+    await databaseClient.insert(schema.artist).values({
+      id: credit.id,
+      name: credit.name,
+      sortName,
+    })
+    await databaseClient.insert(schema.mediaCredit).values({
+      mediaItemId: id,
+      artistId: credit.id,
+      role: credit.role,
+      billingOrder: credit.billingOrder,
+    })
+    await databaseClient.insert(schema.tag).values([
+      { ...tag, mediaType, createdAt: new Date(tagCreatedAt) },
+      {
+        id: hiddenTagId,
+        mediaType,
+        name: 'Hidden projection tag',
+        hidden: true,
+      },
+    ])
+    await databaseClient.insert(schema.mediaItemTag).values([
+      { mediaItemId: id, tagId: tag.id },
+      { mediaItemId: id, tagId: hiddenTagId },
+    ])
+    await databaseClient
+      .insert(schema.externalLink)
+      .values({ id: `${id}-link`, mediaItemId: id, ...link })
+    await databaseClient
+      .insert(schema.providerReference)
+      .values({ id: `${id}-reference`, mediaItemId: id, ...reference })
+    await databaseClient.insert(schema.playlist).values({
+      id: membership.id,
+      name: membership.name,
+      kind: membership.kind,
+      description,
+    })
+    await databaseClient.insert(schema.playlistItem).values({
+      playlistId: membership.id,
+      mediaItemId: id,
+      position: membership.position,
+    })
+
+    logQuery.mockClear()
+    const filters = JSON.stringify([
+      { field: membership.kind, value: membership.name },
+    ])
+    const page = isFilm
+      ? await listFilmBrowsePage(FilmQuerySchema.parse({ filters }))
+      : await listAlbumBrowsePage(AlbumQuerySchema.parse({ filters }))
+    const item = isFilm
+      ? FilmListItemSchema.parse(page.items[0])
+      : AlbumListItemSchema.parse(page.items[0])
+    const detail = isFilm
+      ? FilmDetailSchema.parse(await getFilmDetail(id))
+      : AlbumDetailSchema.parse(await getAlbumDetail(id))
+    const expected = {
+      id,
+      credits: [credit],
+      tags: [tag],
+      links: [link],
+      providerReferences: [reference],
+      playlists: [membership],
+    }
+    expect(item).toMatchObject(expected)
+    expect(detail).toMatchObject(expected)
+    expect(fetch).not.toHaveBeenCalled()
+
+    // Inspect the database rows before the service maps the public payload.
+    const hydration = logQuery.mock.calls.filter(
+      ([query]) =>
+        query.includes('"provider_reference"') && query.includes('"playlist"'),
+    )
+    expect(hydration).toHaveLength(2)
+    for (const [text, values] of hydration) {
+      const { rows } = await pool.query({ text, values, rowMode: 'array' })
+      expect(rows).toHaveLength(1)
+      const payload = JSON.stringify(rows)
+      expect(payload).not.toContain(sortName)
+      expect(payload).not.toContain(tagCreatedAt)
+      expect(Buffer.byteLength(payload)).toBeLessThan(
+        Buffer.byteLength(description),
+      )
+    }
+  },
+)

@@ -224,6 +224,255 @@ it('bounds unfiltered Track pages and deep positions', async () => {
   })
 })
 
+it('bounds first Track pages sorted by unindexed fields after filtering', async () => {
+  const { queryBrowsePageIds, queryBrowsePositions } =
+    await import('@/services/browse')
+  const tables = [
+    'artist',
+    'artist_provider_current_state',
+    'artist_provider_snapshot',
+    'media_item',
+    'library_track',
+    'media_credit',
+    'track',
+    'playlist',
+    'playlist_item',
+  ]
+  try {
+    await pool.query(`
+    insert into artist (id, name) values
+      ('sort-artist-a', 'Fixture sort Alpha'),
+      ('sort-artist-z', 'Fixture sort Zulu'),
+      ('sort-artist-primary', 'Zulu fixture regular'),
+      ('sort-artist-top', 'Zulu fixture top'),
+      ('sort-artist-secondary', 'Zulu fixture zz'),
+      ('sort-artist-search', 'Alpha fixture');
+    insert into media_item (id, slug, media_type, title, release_date) values
+      ('sort-album-a', 'sort-album-a', 'album', 'Zulu fixture regular', '2080-01-01'),
+      ('sort-album-z', 'sort-album-z', 'album', 'Zulu fixture regular', '2080-01-01'),
+      ('sort-album-top', 'sort-album-top', 'album', 'Zulu fixture top', '2080-01-02');
+    insert into album (media_item_id) values ('sort-album-a'), ('sort-album-z'), ('sort-album-top');
+    insert into media_credit (media_item_id, artist_id, role) values
+      ('sort-album-a', 'sort-artist-a', 'artist'),
+      ('sort-album-z', 'sort-artist-z', 'artist');
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'album-' || n, 'sort-artist-a', 'artist' from generate_series(1, 1000) n;
+    insert into track (id, track_media_item_id, album_media_item_id, title, position)
+    select 'fixture-sort-release-' || n, lt.media_item_id, lt.album_media_item_id,
+      mi.title, 10000 + n
+    from generate_series(1, 20000) n
+    join library_track lt on lt.media_item_id = 'track-' || n
+    join media_item mi on mi.id = lt.media_item_id;
+
+    insert into media_item (id, slug, media_type, title, metadata)
+    select id, id, 'track', title, metadata
+    from (values ('sort-track-1', 'Fixture first title', null::jsonb),
+      ('sort-track-2', 'Fixture second title', null),
+      ('sort-track-3', 'Fixture third title', null),
+      ('sort-track-4', 'Fixture fourth title', null),
+      ('sort-track-top', 'Fixture top title', null),
+      ('sort-track-search', 'Track matchedneedle', null),
+      ('sort-track-without-artist', 'Fixture no artist', null),
+      ('sort-track-archived', 'Fixture archived title', '{"legacyHidden":true}')) rows(id, title, metadata);
+    insert into library_track (media_item_id, album_media_item_id, duration_sec) values
+      ('sort-track-1', 'sort-album-z', 180),
+      ('sort-track-2', 'sort-album-a', 180),
+      ('sort-track-3', 'sort-album-z', null),
+      ('sort-track-4', 'sort-album-z', 180),
+      ('sort-track-top', 'sort-album-top', 181),
+      ('sort-track-search', null, 149),
+      ('sort-track-without-artist', null, 180),
+      ('sort-track-archived', 'sort-album-top', 182);
+    insert into media_credit (media_item_id, artist_id, role, billing_order)
+    select id, 'sort-artist-primary', 'artist', 0 from media_item where id in
+      ('sort-track-1', 'sort-track-2', 'sort-track-3', 'sort-track-4')
+    union all
+    select id, 'sort-artist-top', 'artist', 0 from media_item where id in
+      ('sort-track-top', 'sort-track-archived');
+    insert into media_credit (media_item_id, artist_id, role, billing_order) values
+      ('sort-track-1', 'sort-artist-secondary', 'artist', 0),
+      ('sort-track-2', 'sort-artist-secondary', 'artist', 1),
+      ('sort-track-search', 'sort-artist-search', 'artist', 0);
+    insert into track (id, track_media_item_id, album_media_item_id, title, position, duration_sec) values
+      ('sort-release-1', 'sort-track-1', 'sort-album-z', 'Fixture first title', 3, 180),
+      ('sort-release-3', 'sort-track-3', 'sort-album-z', 'Fixture third title', 1, 180),
+      ('sort-release-4', 'sort-track-4', 'sort-album-z', 'Fixture fourth title', 2, 180);
+
+    insert into playlist (id, name, kind) values
+      ('sort-playlist-top', 'Zulu fixture top', 'playlist'),
+      ('sort-playlist-regular', 'Zulu fixture regular', 'playlist');
+    insert into playlist_item (playlist_id, media_item_id)
+    select 'sort-playlist-regular', id from media_item where id in
+      ('sort-track-1', 'sort-track-2', 'sort-track-3', 'sort-track-4')
+    union all
+    select 'sort-playlist-top', id from media_item where id in
+      ('sort-track-top', 'sort-track-archived');
+
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    select 'fixture-sort-snapshot-' || n, 'artist-' || n, 'musicbrainz', '{}',
+      jsonb_build_object('tags', jsonb_build_array('Fixture search tag', 'Fixture style ' || n))
+    from generate_series(1, 1000) n;
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    select artist_id, provider, id from artist_provider_snapshot where id like 'fixture-sort-snapshot-%';
+  `)
+    for (const table of tables) await pool.query(`vacuum analyze ${table}`)
+
+    const query = TrackQuerySchema.parse({
+      groupRecordings: false,
+      sortBy: 'durationSec',
+      direction: 'desc',
+      ranges: [{ field: 'durationSec', min: 150, max: 182 }],
+      size: 3,
+    })
+    const firstFive = [
+      'sort-track-top',
+      'sort-track-2',
+      'sort-track-3',
+      'sort-track-4',
+      'sort-track-1',
+    ]
+    const budgets = {
+      durationSec: 12_000,
+      artist: 15_000,
+      album: 80_000,
+      releaseDate: 80_000,
+      playlist: 225_000,
+    }
+    for (const [sortBy, maxBlocks] of Object.entries(budgets)) {
+      await checkBudget(
+        `broad filtered Track ${sortBy} page`,
+        maxBlocks,
+        1,
+        async () => {
+          const page = await queryBrowsePageIds('track', {
+            ...query,
+            sortBy,
+            size: 100,
+          })
+          expect(page.ids).toHaveLength(100)
+          expect(page.ids.slice(0, 5)).toEqual(firstFive)
+          expect(page.hasMore).toBe(true)
+        },
+      )
+    }
+
+    // The first page ends inside a primary tie. Artist and track-list order
+    // decide which tied tracks appear, including one that inherits its duration.
+    expect((await queryBrowsePageIds('track', query)).ids).toEqual(
+      firstFive.slice(0, 3),
+    )
+    expect(
+      (await queryBrowsePageIds('track', { ...query, page: 2 })).ids.slice(
+        0,
+        2,
+      ),
+    ).toEqual(['sort-track-4', 'sort-track-1'])
+    expect(await queryBrowsePositions('track', query, [2, 3, 4])).toEqual([
+      { id: 'sort-track-3', position: 2 },
+      { id: 'sort-track-4', position: 3 },
+      { id: 'sort-track-1', position: 4 },
+    ])
+    const narrowQuery = TrackQuerySchema.parse({
+      ...query,
+      ranges: [{ field: 'durationSec', min: 180, max: 182 }],
+    })
+    const capped = await queryBrowsePageIds('track', {
+      ...narrowQuery,
+      limitResults: 2,
+    })
+    expect(capped.ids).toEqual(['sort-track-top', 'sort-track-2'])
+    expect(capped.hasMore).toBe(false)
+    const last = await queryBrowsePageIds('track', { ...narrowQuery, page: 2 })
+    expect(last.ids).toEqual([
+      'sort-track-4',
+      'sort-track-1',
+      'sort-track-without-artist',
+    ])
+    expect(last.hasMore).toBe(false)
+    // Equal billing orders use the artist's name. Tracks with no artist sort last.
+    await checkBudget(
+      'sparse filtered Track artist page',
+      7_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', {
+          ...narrowQuery,
+          sortBy: 'artist',
+          direction: 'asc',
+          size: 100,
+        })
+        expect(page.ids).toEqual([
+          ...firstFive.slice(1),
+          'sort-track-top',
+          'sort-track-without-artist',
+        ])
+        expect(page.hasMore).toBe(false)
+      },
+    )
+    const missing = await queryBrowsePageIds('track', {
+      ...query,
+      ranges: [{ field: 'durationSec', min: 182 }],
+    })
+    expect(missing.ids).toEqual([])
+    expect(missing.hasMore).toBe(false)
+
+    const textQuery = TrackQuerySchema.parse({
+      q: 'fixture track',
+      sortBy: 'artist',
+      direction: 'asc',
+      size: 100,
+    })
+    await checkBudget(
+      'broad multiword Track artist page',
+      90_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', textQuery)
+        expect(page.ids).toHaveLength(100)
+        expect(page.ids[0]).toBe('sort-track-search')
+        expect(page.hasMore).toBe(true)
+      },
+    )
+    await checkBudget(
+      'sparse multiword Track artist page',
+      85_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', {
+          ...textQuery,
+          q: 'fixture matchedneedle',
+        })
+        expect(page.ids).toEqual(['sort-track-search'])
+        expect(page.hasMore).toBe(false)
+      },
+    )
+    await checkBudget(
+      'empty multiword Track artist page',
+      1_000,
+      1,
+      async () => {
+        const page = await queryBrowsePageIds('track', {
+          ...textQuery,
+          q: 'fixture unmatchedneedle',
+        })
+        expect(page.ids).toEqual([])
+        expect(page.hasMore).toBe(false)
+      },
+    )
+  } finally {
+    await pool.query(`
+      delete from artist_provider_current_state where latest_snapshot_id like 'fixture-sort-snapshot-%';
+      delete from artist_provider_snapshot where id like 'fixture-sort-snapshot-%';
+      delete from track where id like 'fixture-sort-release-%' or id like 'sort-release-%';
+      delete from playlist where id like 'sort-playlist-%';
+      delete from media_item where id like 'sort-track-%';
+      delete from media_item where id like 'sort-album-%';
+      delete from artist where id like 'sort-artist-%';
+    `)
+    for (const table of tables) await pool.query(`vacuum analyze ${table}`)
+  }
+})
+
 it('bounds grouped Track pages and exact counts', async () => {
   const { queryBrowsePageIds, queryBrowseCount } =
     await import('@/services/browse')

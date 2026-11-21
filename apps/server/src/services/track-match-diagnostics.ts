@@ -27,7 +27,7 @@ import {
   trackBrowseSearchIds,
 } from './browse'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
-import { artistTagMemberships } from './music-tags'
+import { artistTagLabels } from './music-tags'
 import {
   playableSpotifyId,
   spotifyAlternates,
@@ -501,7 +501,7 @@ export async function listTrackMatchDiagnostics(
         ? sql`search_history as materialized (${spotifyTrackSearchHistory(userId ?? null)}),`
         : sql``
     }
-    ${sharedArtistTags ? sql`browse_artist_tags as materialized (${artistTagMemberships('track')}),` : sql``} ${
+    ${sharedArtistTags ? sql`browse_artist_tag_labels as materialized (${artistTagLabels()}),` : sql``} ${
       supportingProviders.size
         ? sql`
       records as not materialized (${records} ${trackTables} where ${visibleScope}),

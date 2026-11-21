@@ -40,6 +40,7 @@ import {
 import { AlbumMetacriticUrlSchema } from '@repo/schemas/provider-identification'
 import { ServerError } from '@/lib/error'
 import { isJsonRecord } from '@/lib/provider-normalizers'
+import { measureRequestPhase } from '@/lib/request-log'
 import { withRymRatingSourceLink } from '@/lib/rym-rating-links'
 import {
   createStableId,
@@ -106,6 +107,33 @@ type CommonRecord<TMediaType extends 'album' | 'film'> = {
   providerReferences: CommonReference[]
   playlistItems: CommonPlaylistItem[]
 }
+
+const commonMediaRelations = {
+  credits: {
+    columns: { role: true, billingOrder: true },
+    with: { artist: { columns: { id: true, name: true } } },
+  },
+  tags: {
+    columns: { tagId: true },
+    with: { tag: { columns: { name: true, kind: true, hidden: true } } },
+  },
+  links: { columns: { provider: true, label: true, url: true } },
+  providerReferences: {
+    columns: {
+      provider: true,
+      referenceType: true,
+      externalId: true,
+      isPrimary: true,
+      metadata: true,
+    },
+  },
+  playlistItems: {
+    columns: { position: true },
+    with: { playlist: { columns: { id: true, name: true, kind: true } } },
+  },
+} satisfies NonNullable<
+  Parameters<typeof db.query.mediaItem.findMany>[0]
+>['with']
 
 type CommonPayload<TMediaType extends 'album' | 'film'> = {
   id: string
@@ -373,12 +401,14 @@ export async function listAlbums(
 }
 
 export async function listAlbumBrowsePage(query: AlbumQuery) {
-  const { ids, listeningScrobbles, hasMore } = await queryBrowsePageIds(
-    'album',
-    query,
+  const { ids, listeningScrobbles, hasMore } = await measureRequestPhase(
+    'ids',
+    () => queryBrowsePageIds('album', query),
   )
   return {
-    items: await loadAlbums(ids, listeningScrobbles),
+    items: await measureRequestPhase('hydrate', () =>
+      loadAlbums(ids, listeningScrobbles),
+    ),
     page: query.page,
     size: query.size,
     hasMore,
@@ -395,23 +425,7 @@ async function loadAlbums(
     where: (table, operators) => operators.inArray(table.id, ids),
     with: {
       album: true,
-      credits: {
-        with: {
-          artist: true,
-        },
-      },
-      tags: {
-        with: {
-          tag: true,
-        },
-      },
-      links: true,
-      providerReferences: true,
-      playlistItems: {
-        with: {
-          playlist: true,
-        },
-      },
+      ...commonMediaRelations,
     },
   })
 
@@ -478,9 +492,11 @@ export async function listFilms(
 }
 
 export async function listFilmBrowsePage(query: FilmQuery) {
-  const { ids, hasMore } = await queryBrowsePageIds('film', query)
+  const { ids, hasMore } = await measureRequestPhase('ids', () =>
+    queryBrowsePageIds('film', query),
+  )
   return {
-    items: await loadFilms(ids),
+    items: await measureRequestPhase('hydrate', () => loadFilms(ids)),
     page: query.page,
     size: query.size,
     hasMore,
@@ -494,23 +510,7 @@ async function loadFilms(ids: string[]) {
     where: (table, operators) => operators.inArray(table.id, ids),
     with: {
       film: true,
-      credits: {
-        with: {
-          artist: true,
-        },
-      },
-      tags: {
-        with: {
-          tag: true,
-        },
-      },
-      links: true,
-      providerReferences: true,
-      playlistItems: {
-        with: {
-          playlist: true,
-        },
-      },
+      ...commonMediaRelations,
     },
   })
 
@@ -556,26 +556,10 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     with: {
       album: {
         with: {
-          tracks: true,
+          tracks: { columns: { trackMediaItemId: true, position: true } },
         },
       },
-      credits: {
-        with: {
-          artist: true,
-        },
-      },
-      tags: {
-        with: {
-          tag: true,
-        },
-      },
-      links: true,
-      providerReferences: true,
-      playlistItems: {
-        with: {
-          playlist: true,
-        },
-      },
+      ...commonMediaRelations,
     },
   })
 
@@ -648,23 +632,7 @@ export async function getFilmDetail(id: string): Promise<FilmDetail | null> {
       ),
     with: {
       film: true,
-      credits: {
-        with: {
-          artist: true,
-        },
-      },
-      tags: {
-        with: {
-          tag: true,
-        },
-      },
-      links: true,
-      providerReferences: true,
-      playlistItems: {
-        with: {
-          playlist: true,
-        },
-      },
+      ...commonMediaRelations,
     },
   })
 

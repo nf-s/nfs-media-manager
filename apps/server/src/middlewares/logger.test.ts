@@ -74,8 +74,12 @@ const RecordSchema = z.object({
       listening: z.boolean(),
       listeningUse: z.enum(['filter', 'column', 'both']).optional(),
       filtered: z.boolean(),
+      searchTerms: z.enum(['one', 'multiple']).optional(),
       creatorScoped: z.boolean().optional(),
       sort: z.enum(['added', 'title', 'plays', 'other']),
+      sortField: z.string().optional(),
+      filterFields: z.array(z.string()).optional(),
+      rangeFields: z.array(z.string()).optional(),
       playSort: z.enum(['scrobbles', 'listeningScrobbles']).optional(),
       recordingOrderLookup: z.enum(['hit', 'miss']).optional(),
     })
@@ -131,15 +135,22 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     listeningUse: 'both',
     filtered: false,
     creatorScoped: false,
+    searchTerms: 'multiple',
     sort: 'plays',
     playSort: 'listeningScrobbles',
+    sortField: 'listeningScrobbles',
+    filterFields: ['artistTag', 'other'],
+    rangeFields: ['durationSec'],
   } satisfies NonNullable<z.infer<typeof RecordSchema>['browse']>
   // Executing without a request, as a background job would, emits no record.
   await expect(nodeDb.execute(statement)).rejects.toThrow()
 
   await Promise.all([
     logApiRequest(request, async () => {
-      setRequestBrowseProfile(browse)
+      setRequestBrowseProfile({
+        ...browse,
+        filterFields: ['fixture-private-field', 'artistTag', 'artistTag'],
+      })
       recordRecordingOrderLookup('hit')
       await Promise.all([
         measureRequestPhase('ids', async () => {
@@ -199,6 +210,27 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     Object.keys(logs.find(({ status }) => status === 200)?.phases ?? {}),
   ).toEqual(['count'])
   expect(JSON.stringify(info.mock.calls)).not.toMatch(/fixture[_-]/)
+})
+
+it('records only built-in sort and range fields', async () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  await logApiRequest(new Request('https://fixture.invalid'), () => {
+    setRequestBrowseProfile({
+      grouped: false,
+      depth: 'first',
+      listening: false,
+      filtered: true,
+      sort: 'other',
+      sortField: 'fixture-extension',
+      rangeFields: ['fixture-extension'],
+    })
+    return new Response()
+  })
+  const [line] = info.mock.calls[0] ?? []
+  const { browse } = RecordSchema.parse(JSON.parse(line))
+  expect(browse?.sortField).toBe('other')
+  expect(browse?.rangeFields).toEqual(['other'])
+  expect(JSON.stringify(info.mock.calls)).not.toContain('fixture-extension')
 })
 
 it('preserves the request result and thrown error when log delivery fails', async () => {

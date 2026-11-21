@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Logger } from 'drizzle-orm/logger'
+import {
+  albumBrowseFields,
+  filmBrowseFields,
+  trackBrowseFields,
+} from '@repo/schemas/browse'
 import type { BrowserBrowseTiming } from '@repo/schemas/performance'
 import {
   SONOS_PAGE_HEADER,
@@ -41,8 +46,12 @@ interface RequestBrowseProfile {
   listening: boolean
   listeningUse?: 'filter' | 'column' | 'both'
   filtered: boolean
+  searchTerms?: 'one' | 'multiple'
   creatorScoped?: boolean
   sort: 'added' | 'title' | 'plays' | 'other'
+  sortField?: string
+  filterFields?: string[]
+  rangeFields?: string[]
   playSort?: 'scrobbles' | 'listeningScrobbles'
   recordingOrderLookup?: 'hit' | 'miss'
 }
@@ -168,14 +177,34 @@ export function setPlaybackLogRole(role: 'driver' | 'follower') {
   if (current) current.playbackRole = role
 }
 
+// Plugin and caller-defined fields can contain installation-specific names.
+const publicBrowseFields = new Set([
+  ...[...albumBrowseFields, ...filmBrowseFields, ...trackBrowseFields].map(
+    (field) => field.key,
+  ),
+  'listeningScrobbles',
+])
+
+function logBrowseField(key: string) {
+  return publicBrowseFields.has(key) ? key : 'other'
+}
+
+function logBrowseFields(fields?: string[]) {
+  if (fields?.length) return [...new Set(fields.map(logBrowseField))].sort()
+}
+
 export function setRequestBrowseProfile({
   grouped,
   depth,
   listening,
   listeningUse,
   filtered,
+  searchTerms,
   creatorScoped,
   sort,
+  sortField,
+  filterFields,
+  rangeFields,
   playSort,
 }: RequestBrowseProfile) {
   const current = context.getStore()
@@ -186,8 +215,12 @@ export function setRequestBrowseProfile({
       listening,
       listeningUse,
       filtered,
+      searchTerms,
       creatorScoped,
       sort,
+      sortField: sortField && logBrowseField(sortField),
+      filterFields: logBrowseFields(filterFields),
+      rangeFields: logBrowseFields(rangeFields),
       playSort,
     }
 }
