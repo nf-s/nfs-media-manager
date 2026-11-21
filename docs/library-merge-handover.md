@@ -4,6 +4,8 @@ The proposed workflow starts where the duplicate is visible. From a track’s **
 
 The owner liked simplifying Sources and asked for table selection and a review that includes albums and artists. The two interactive prototypes below capture that direction. They use invented records and change only their in-memory examples. The current app supports the pairwise operations below.
 
+A later concept rethinks the model as a whole: a record is made of scrobbled names and Spotify versions, one **Merge** serves tracks, albums and artists, and every change is a history entry with **Undo**. It replaces the two prototypes below if the owner accepts it. [Library merge concept](design-system/concept-library-merge.html)
+
 ## Why a linked track can still appear twice
 
 A library track has its own ID. Last.fm stores the artist and title used when a play was recorded. One track owns an imported Last.fm name, while matching can credit plays under that name to several release tracks. Two rows can therefore show the same plays, artwork, artist and album while still having different track IDs. Browse can also group release versions for display. To tell whether entries are duplicates, compare their track IDs, release positions and recording evidence. [Track matching and library behavior](tracks-and-playlists.md) · [Listening history](lastfm-scrobbles.md)
