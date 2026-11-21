@@ -50,6 +50,7 @@ const cleanPlan = TrackMergePlanSchema.parse({
     },
   ],
   scrobbles: { target: 10, added: 10, total: 20 },
+  also: { albumNames: [], titles: [] },
   cautions: [],
   blocked: false,
 })
