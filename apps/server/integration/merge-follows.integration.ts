@@ -48,6 +48,7 @@ import { mergeArtists } from '@/services/artist-merges'
 import { planArtistMerge } from '@/services/artist-merge-plan'
 import { refreshArtistListeningTotals } from '@/services/artist-listening'
 import { queryBrowseIds } from '@/services/browse'
+import { getArtist } from '@/services/creators'
 import { refreshAlbumListening } from '@/services/lastfm-album-links'
 import { refreshTrackAddedDates } from '@/services/spotify-playlists'
 import {
@@ -546,17 +547,15 @@ it('makes matching Last.fm titles follow an artist merge and undoes it exactly',
   const remaining = after.tracks.map((row) => row.media_item_id)
   expect(remaining).not.toContain(lastfm('Low Tide', misspelt))
   expect(remaining).toContain('misspelt-undertow')
-  // Browse by the merged name reads as the artist kept.
-  const byName = await queryBrowseIds(
-    'track',
-    TrackQuerySchema.parse({ creatorId: misspeltId, size: 100 }),
-  )
+  // The merged name's track is listed under the artist kept. A Browse page
+  // still filtered by the merged name takes the kept artist's ID from the
+  // artist detail, so the browse query stays one statement.
   const byArtist = await queryBrowseIds(
     'track',
     TrackQuerySchema.parse({ creatorId: bandId, size: 100 }),
   )
-  expect(byName.ids).toEqual(byArtist.ids)
-  expect(byName.ids).toContain('misspelt-undertow')
+  expect(byArtist.ids).toContain('misspelt-undertow')
+  expect(await getArtist(misspeltId)).toMatchObject({ id: bandId })
 
   await undoLibraryChange(merged.id)
   expect(await state()).toEqual(before)
