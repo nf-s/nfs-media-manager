@@ -410,7 +410,10 @@ it.each([
           trackKey,
           mode: 'automatic',
         }),
-      ).resolves.toEqual({ targetId: sourceId })
+      ).resolves.toEqual({
+        targetId: sourceId,
+        changeId: expect.any(String),
+      })
       await refreshHistory()
       expect(
         await fixture
@@ -425,7 +428,7 @@ it.each([
 it('can assign an imported name to a stored track without a Spotify ID', async () => {
   await expect(
     matchScrobbleTrack(original, { ...input, targetId: unknown }),
-  ).resolves.toEqual({ targetId: unknown })
+  ).resolves.toEqual({ targetId: unknown, changeId: expect.any(String) })
   expect(
     await fixture.select().from(schema.lastfmTrackSource).where(selectName),
   ).toMatchObject([{ trackMediaItemId: unknown, manuallyMatched: true }])
@@ -434,12 +437,13 @@ it('can assign an imported name to a stored track without a Spotify ID', async (
 it('replaces a previous manual match and keeps the correction across history refreshes', async () => {
   const playlists = await fixture.select().from(schema.playlistItem)
   const positions = await fixture.select().from(schema.track)
-  expect(
-    await Promise.all([
-      matchScrobbleTrack(original, input),
-      matchScrobbleTrack(original, input),
-    ]),
-  ).toEqual([{ targetId: target }, { targetId: target }])
+  const matched = await Promise.all([
+    matchScrobbleTrack(original, input),
+    matchScrobbleTrack(original, input),
+  ])
+  expect(matched.map(({ targetId }) => targetId)).toEqual([target, target])
+  // Only the request that moved the name records a change.
+  expect(matched.filter(({ changeId }) => changeId)).toHaveLength(1)
   await expect(
     matchScrobbleTrack(original, { ...input, targetId: alternate }),
   ).rejects.toMatchObject({ response: { statusCode: 409 } })
@@ -628,7 +632,11 @@ it('separates a name, preserves its plays through another import, and restores a
 
   await expect(
     removeScrobbleTrackMatch(standalone, { ...selection, mode: 'automatic' }),
-  ).resolves.toEqual({ targetId: original, sourceRemoved: true })
+  ).resolves.toEqual({
+    targetId: original,
+    sourceRemoved: true,
+    changeId: expect.any(String),
+  })
   await refreshHistory()
   expect(await getTrackDetail(standalone)).toBeNull()
   expect(await getTrackDetail(original)).toMatchObject({
@@ -694,10 +702,17 @@ it('merges all recorded names into a local Last.fm track without moving releases
       targetId: local.trackId,
       namesOnly: true,
     }),
-  ).resolves.toEqual({ targetId: local.trackId, sourceRemoved: true })
+  ).resolves.toEqual({
+    targetId: local.trackId,
+    sourceRemoved: true,
+    changeId: expect.any(String),
+  })
   await expect(
     mergeLastfmTrack(original, { targetId: local.trackId, namesOnly: true }),
-  ).resolves.toEqual({ targetId: local.trackId })
+  ).resolves.toEqual({
+    targetId: local.trackId,
+    changeId: expect.any(String),
+  })
   await refreshHistory()
   expect(await getTrackDetail(take.trackId)).toBeNull()
   expect(await getTrackDetail(local.trackId)).toMatchObject({

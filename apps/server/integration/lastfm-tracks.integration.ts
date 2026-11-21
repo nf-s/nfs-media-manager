@@ -2240,6 +2240,7 @@ describe('Last.fm tracks library', () => {
       await mergeLastfmTrack(source.id, { targetId: 'merge-target' }),
     ).toEqual({
       targetId: 'merge-target',
+      changeId: expect.any(String),
     })
     expect(await getTrackDetail(source.id)).toBeNull()
     const merged = await getTrackDetail('merge-target')

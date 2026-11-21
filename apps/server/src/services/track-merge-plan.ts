@@ -47,7 +47,7 @@ const idList = (ids: string[]) =>
     sql`, `,
   )
 
-/** What keeps a track from being merged into another one. */
+/** What a track has besides scrobbled names, which keeps it a track of its own. */
 function blockOf(track: PlanTrack): TrackMergeBlock | null {
   if (track.spotify) return 'spotify'
   if (track.on_album) return 'album'
@@ -190,6 +190,7 @@ export async function readTrackMergePlan(
       scrobbles: track.scrobbles,
       spotify: track.spotify,
       nameCount: names.filter((name) => name.track_id === track.id).length,
+      identity: blockOf(track),
       blocked: track === target ? null : blockOf(track),
     })),
     names: moving.map((name) => ({

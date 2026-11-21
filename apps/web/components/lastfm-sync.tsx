@@ -43,13 +43,14 @@ export function errorMessage(failure: unknown, fallback: string) {
   return parsed.success ? parsed.data.message : fallback
 }
 
-/** Refreshes derived data without refetching a track just removed by a merge. */
+/** Refreshes derived data without refetching tracks just removed by a merge. */
 export async function invalidateScrobbleLinks(
   client: QueryClient,
-  deletedTrackId?: string,
+  deletedTrackId?: string | string[],
 ) {
-  if (deletedTrackId !== undefined) {
-    const queryKey = ['track', deletedTrackId]
+  const deleted = deletedTrackId === undefined ? [] : [deletedTrackId].flat()
+  for (const id of deleted) {
+    const queryKey = ['track', id]
     await client.cancelQueries({ queryKey, exact: true })
     await client.invalidateQueries({
       queryKey,
@@ -60,16 +61,16 @@ export async function invalidateScrobbleLinks(
   return client.invalidateQueries({
     predicate: (query) =>
       !(
-        deletedTrackId !== undefined &&
         query.queryKey.length === 2 &&
         query.queryKey[0] === 'track' &&
-        query.queryKey[1] === deletedTrackId
+        deleted.some((id) => id === query.queryKey[1])
       ) &&
       ([
         'albums',
         'album',
         'album-listening',
         'lastfm-links',
+        'library-changes',
         'tracks',
         'track',
         'artists',

@@ -128,6 +128,8 @@ export const TrackMergePlanTrackSchema = z.object({
   /** The track has its own Spotify track ID. */
   spotify: z.boolean(),
   nameCount: z.number().int().nonnegative(),
+  /** What the track has besides scrobbled names. Such a track stays a track of its own. */
+  identity: TrackMergeBlockSchema.nullable(),
   /** Set on a track that cannot be merged into the track to keep. */
   blocked: TrackMergeBlockSchema.nullable(),
 })
