@@ -251,7 +251,8 @@ describe('Sonovault request spacing', () => {
     })
     expect(gated.manifest.rateLimit.minTimeMs).toBe(spacing)
     expect(gated.manifest.rateLimit).toMatchObject({
-      maxConcurrent: 1,
+      maxConcurrent: 8,
+      concurrentRequests: true,
       respectRateLimitHeaders: true,
       retryAfterIsAuthoritative: true,
       ietfRateLimitHeaders: true,

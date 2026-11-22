@@ -26,7 +26,11 @@ export const sonovaultPlugin: MediaProviderPlugin = {
     requireExplicitSelection: true,
     maxItemsPerJob: 1,
     rateLimit: {
-      maxConcurrent: 1,
+      // Up to eight jobs run at once, so a job's own start and finish time
+      // overlaps others' requests. Every request still takes its turn in the
+      // shared gate, which starts them at least `minTimeMs` apart.
+      maxConcurrent: 8,
+      concurrentRequests: true,
       minTimeMs: SONOVAULT_MIN_SPACING_MS,
       requestTimeoutMs: 60000,
       respectRateLimitHeaders: true,
