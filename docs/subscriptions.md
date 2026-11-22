@@ -155,6 +155,8 @@ Every endpoint requires the owner session. All read stored rows only, except the
 
 Video thumbnails are loaded from YouTube by the browser and are not stored. Watch history, playlists and comments are not read.
 
+Each sync job also keeps every YouTube or Spotify response it receives, whole, in its **Request and response** tab: the subscription and saved-podcast lists, channel details, playlist and video pages, and episode pages. Token refreshes and credentials are not stored. See [provider response history](job-worker.md#provider-response-history-and-offline-replay).
+
 Migration 0023 renamed the YouTube tables to these and marked every stored row as YouTube. It changes only the catalog, so it does not rewrite stored videos. Before applying it, make sure no YouTube sync job is queued or running, and do not run old and new server code against the same database. A paused or unfinished sync resumes from its checkpoint after the upgrade.
 
 Migration 0025 adds the video count at a channel's last read. The first sync started after it reads every channel as before and records the counts; later syncs skip unchanged channels.

@@ -16,6 +16,7 @@ import {
   SubscriptionItemQuerySchema,
   type SubscriptionItemQueryInput,
 } from '@repo/schemas/subscriptions'
+import { ProviderResponseSchema } from '@repo/schemas/provider-response'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import type { LastfmSyncJobContext } from '@/services/lastfm-scrobbles'
@@ -349,6 +350,29 @@ async function drain() {
   return status()
 }
 
+/** Every response the sync jobs stored, in job and request order. */
+async function storedResponses() {
+  const { getJobProviderResponse, listJobProviderResponses } =
+    await import('@/services/provider-response-history')
+  const stored = []
+  for (const job of await syncJobs()) {
+    const page = await listJobProviderResponses(job.id, { page: 1, size: 100 })
+    for (const item of page.items) {
+      const { body } = ProviderResponseSchema.parse(
+        await getJobProviderResponse(job.id, item.id),
+      )
+      stored.push({
+        jobId: job.id,
+        phase: item.phase,
+        url: item.requestUrl,
+        status: item.status,
+        text: body.state === 'captured' ? body.text : null,
+      })
+    }
+  }
+  return stored
+}
+
 async function syncToEnd() {
   const { queueSubscriptionSync } = await import('@/services/subscription-sync')
   await queueSubscriptionSync('spotify', USER)
@@ -525,6 +549,47 @@ describe('Spotify podcast sync jobs with offline HTTP and a temporary database',
       durationSec: 1800,
       artworkUrl: `https://i.scdn.example/${episodeId('o5')}.jpg`,
     })
+  })
+
+  it('stores every response whole on the job that read it, without credentials', async () => {
+    // Each answer also names its account and echoes credentials.
+    request.mockImplementation(async (input) => {
+      const answer = await fakeSpotify(input)
+      const body: unknown = await answer.json()
+      return Response.json(
+        {
+          ...(typeof body === 'object' && body !== null ? body : {}),
+          owner: { id: 'fixture-owner', display_name: 'Owner Fixture' },
+          refresh_token: 'fixture-refresh-secret',
+          note: 'Read with fixture-access-token',
+        },
+        { status: answer.status },
+      )
+    })
+    await syncToEnd()
+
+    const stored = await storedResponses()
+    const jobs = await syncJobs()
+    expect(stored.map(({ url }) => url)).toEqual([
+      'https://api.spotify.com/v1/me/shows',
+      'https://api.spotify.com/v1/me/shows',
+      ...[KITCHEN, KITCHEN, ORBIT, ORBIT, ORBIT, QUIET].map(
+        (id) => `https://api.spotify.com/v1/shows/${id}/episodes`,
+      ),
+    ])
+    // A job that only closes the run makes no requests.
+    expect(jobs.map((job) => job.id)).toEqual(
+      expect.arrayContaining([...new Set(stored.map(({ jobId }) => jobId))]),
+    )
+    for (const { text, phase, status } of stored) {
+      expect([phase, status]).toEqual(['task', 200])
+      expect(JSON.parse(text ?? 'null')).toMatchObject({
+        owner: { id: 'fixture-owner', display_name: 'Owner Fixture' },
+        note: 'Read with [REDACTED]',
+      })
+      expect(text).not.toContain('fixture-refresh-secret')
+      expect(text).not.toContain('fixture-access-token')
+    }
   })
 
   it('stores release dates at the precision Spotify reports', async () => {

@@ -19,6 +19,7 @@ import {
   SubscriptionItemQuerySchema,
   type SubscriptionItemQueryInput,
 } from '@repo/schemas/subscriptions'
+import { ProviderResponseSchema } from '@repo/schemas/provider-response'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import type { LastfmSyncJobContext } from '@/services/lastfm-scrobbles'
@@ -450,6 +451,29 @@ async function drain() {
   return status()
 }
 
+/** Every response the sync jobs stored, in job and request order. */
+async function storedResponses() {
+  const { getJobProviderResponse, listJobProviderResponses } =
+    await import('@/services/provider-response-history')
+  const stored = []
+  for (const job of await syncJobs()) {
+    const page = await listJobProviderResponses(job.id, { page: 1, size: 100 })
+    for (const item of page.items) {
+      const { body } = ProviderResponseSchema.parse(
+        await getJobProviderResponse(job.id, item.id),
+      )
+      stored.push({
+        jobId: job.id,
+        phase: item.phase,
+        url: item.requestUrl,
+        status: item.status,
+        text: body.state === 'captured' ? body.text : null,
+      })
+    }
+  }
+  return stored
+}
+
 async function syncToEnd() {
   const { queueYoutubeSync } = await import('@/services/youtube-sync-jobs')
   await queueYoutubeSync(USER)
@@ -814,6 +838,42 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
       viewCount: null,
       live: 'upcoming',
     })
+  })
+
+  it('stores every response on the job that read it, without the token refresh or credentials', async () => {
+    // The connected token is already due, so the first job refreshes it.
+    api.expiresIn = 1
+    await connect()
+    await syncToEnd()
+
+    const stored = await storedResponses()
+    const read = apiUrls()
+    expect(read.length).toBeGreaterThan(0)
+    expect(stored.map(({ url }) => url)).toEqual(
+      read.map((url) => url.origin + url.pathname),
+    )
+    expect(new Set(stored.map(({ phase }) => phase))).toEqual(new Set(['task']))
+    expect(stored.every(({ text }) => text !== null)).toBe(true)
+    expect(
+      request.mock.calls.some(
+        ([input, init]) =>
+          new URL(String(input)).host === 'oauth2.googleapis.com' &&
+          new URLSearchParams(String(init?.body)).get('grant_type') ===
+            'refresh_token',
+      ),
+    ).toBe(true)
+    // The subscription list is stored whole, page cursor included.
+    expect(JSON.parse(stored[0]?.text ?? 'null')).toMatchObject({
+      nextPageToken: String(PAGE),
+    })
+    for (const { text } of stored)
+      for (const secret of [
+        'refreshed-access-token',
+        'fixture-access-token',
+        'fixture-refresh-token',
+        'offline-fixture-secret',
+      ])
+        expect(text).not.toContain(secret)
   })
 
   it('reads only the newest page of a stored channel, and follows subscription changes', async () => {

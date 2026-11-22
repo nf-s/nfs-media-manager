@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import {
   ProviderItemNotFoundError,
   ProviderRequestError,
+  accountCredentialKey,
+  sanitizeAccountResponseBody,
   sanitizeProviderResponseBody,
   isNativeJsonResponse,
   isSafeNativeJsonResponse,
@@ -49,7 +51,14 @@ const nativeJsonMime = /^application\/(?:[a-z0-9.+-]+\+)?json$/i
 
 const accountPath =
   /(?:^|\/)(?:oauth2?|auth|authorize|token|log(?:in|out)|accounts?|me|users|profile|sessions?|credentials|authentication)(?:\/|$)/i
-const MAX_RETAINED_BYTES_PER_ATTEMPT = 64 * 1024 * 1024
+// Sign-in and token paths, which stay out even of a job's own account data.
+const credentialPath =
+  /(?:^|\/)(?:oauth2?|auth|authorize|token|log(?:in|out)|sessions?|credentials|authentication)(?:\/|$)/i
+const lastfmAccountMethod =
+  /^(?:auth|user|track\.scrobble|track\.updateNowPlaying)\b/i
+const lastfmCredentialMethod =
+  /^(?:auth|track\.scrobble|track\.updateNowPlaying)\b/i
+export const MAX_RETAINED_BYTES_PER_ATTEMPT = 64 * 1024 * 1024
 const spotifyTokenPath = 'https://accounts.spotify.com/api/token'
 const trafficHeaders = [
   'accept',
@@ -65,20 +74,34 @@ export function providerResponseSecretValues(settings: Record<string, string>) {
   )
 }
 
+type RecorderOptions = {
+  /**
+   * The job reads its own account's data (saved shows, subscriptions,
+   * scrobbles). Account paths, Last.fm `user` methods and fields naming the
+   * user, owner or uploader are kept. Sign-in hosts, token and OAuth paths,
+   * Last.fm `auth` methods and scrobble writes are still never stored, and
+   * credentials are removed from what is.
+   */
+  accountData?: boolean
+  /** Called once, when the first response passes the per-attempt byte cap. */
+  onCaptureLimit?: () => Promise<void>
+}
+
 function requestSecrets(
   url: URL,
   init?: RequestInit,
   secrets: readonly string[] = [],
+  isSensitive: (key: string) => boolean = sensitiveKey,
 ) {
   const values = new Set(secrets.map((value) => value.trim()).filter(Boolean))
   for (const value of [url.username, url.password]) {
     if (value) values.add(value)
   }
   for (const [key, value] of url.searchParams) {
-    if (value && sensitiveKey(key)) values.add(value)
+    if (value && isSensitive(key)) values.add(value)
   }
   for (const [key, value] of new Headers(init?.headers)) {
-    if (!sensitiveKey(key)) continue
+    if (!isSensitive(key)) continue
     if (value.trim()) values.add(value.trim())
     for (const [, secret] of value.matchAll(
       /(?:^(?:Bearer|Basic)\s+|(?:^|[\s,;])[\w-]+=)([^\s,;]+)/gi,
@@ -93,25 +116,27 @@ function requestDescriptor(
   [input, init, options]: RequestInput,
   configuredSecrets: readonly string[],
   capturePolicy?: PublicProviderCapturePolicy,
+  accountData = false,
 ) {
   const url = new URL(input)
   const method = (init?.method ?? 'GET').toUpperCase()
   const policyMatch = capturePolicy?.(url, init)
   if (capturePolicy && !policyMatch) return null
   if (
-    /^(?:accounts|oauth|auth)\./i.test(url.hostname) ||
-    accountPath.test(url.pathname)
+    /^(?:accounts|oauth2?|auth)\./i.test(url.hostname) ||
+    (accountData ? credentialPath : accountPath).test(url.pathname)
   )
     return null
   const lastfmMethod = url.searchParams.get('method')
   if (
     lastfmMethod &&
-    /^(?:auth|user|track\.scrobble|track\.updateNowPlaying)\b/i.test(
+    (accountData ? lastfmCredentialMethod : lastfmAccountMethod).test(
       lastfmMethod,
     )
   )
     return null
-  const secrets = requestSecrets(url, init, configuredSecrets)
+  const isSensitive = accountData ? accountCredentialKey : sensitiveKey
+  const secrets = requestSecrets(url, init, configuredSecrets, isSensitive)
   const path = decodeURIComponent(url.pathname)
   if (
     !['https:', 'http:'].includes(url.protocol) ||
@@ -124,12 +149,12 @@ function requestDescriptor(
   url.searchParams.sort()
   const entries = [...url.searchParams]
   const known = entries.every(([name, value]) =>
-    sensitiveKey(name)
+    isSensitive(name)
       ? !/user|account|owner|uploader/i.test(name)
       : !containsSecret(value, secrets),
   )
   for (const name of new Set(url.searchParams.keys())) {
-    if (sensitiveKey(name)) url.searchParams.delete(name)
+    if (isSensitive(name)) url.searchParams.delete(name)
   }
   const headers = new Headers(init?.headers)
   const safeHeaders = trafficHeaders.map((name) => headers.get(name))
@@ -214,9 +239,11 @@ export function createProviderResponseRecorder(
   sanitizeResponseCapture?: ArchiveSanitizer,
   sanitizeNativeJsonResponseCapture?: MediaProviderPlugin['sanitizeNativeJsonResponseCapture'],
   capturePolicy?: PublicProviderCapturePolicy,
+  options: RecorderOptions = {},
 ) {
   let ordinal = 0
   let retainedBytes = 0
+  let limitReported = false
   let failure: ProviderResponseStorageError | undefined
   function assertStored() {
     if (failure) throw failure
@@ -227,7 +254,12 @@ export function createProviderResponseRecorder(
   ) => {
     const begin = (...request: RequestInput) => {
       try {
-        const descriptor = requestDescriptor(request, secrets, capturePolicy)
+        const descriptor = requestDescriptor(
+          request,
+          secrets,
+          capturePolicy,
+          options.accountData,
+        )
         if (!descriptor) return undefined
         const nextOrdinal = ++ordinal
         return async (
@@ -303,7 +335,9 @@ export function createProviderResponseRecorder(
           ) {
             const sanitize =
               descriptor.policyMatch?.sanitizeBody ??
-              sanitizeProviderResponseBody
+              (options.accountData
+                ? sanitizeAccountResponseBody
+                : sanitizeProviderResponseBody)
             body = sanitize(body, contentType, descriptor.secrets)
           }
           if (body.state === 'captured') {
@@ -312,6 +346,10 @@ export function createProviderResponseRecorder(
               body = { state: 'unavailable', reason: 'byte-limit' }
             } else if (retainedBytes + size > MAX_RETAINED_BYTES_PER_ATTEMPT) {
               body = { state: 'unavailable', reason: 'capture-limit' }
+              if (!limitReported && options.onCaptureLimit) {
+                limitReported = true
+                await options.onCaptureLimit().catch(() => undefined)
+              }
             } else {
               retainedBytes += size
             }

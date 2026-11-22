@@ -45,6 +45,8 @@ One row per scrobble: UTC timestamp, artist, album and track names as Last.fm re
 - Scrobbles dated before 2002 come from devices with an unset clock and are ignored.
 - Scrobbles edited or deleted on Last.fm after they were stored are not corrected. Last.fm provides no change feed.
 
+Each sync job also keeps every `user.getRecentTracks` page it receives, whole, in its **Request and response** tab, account name included. The API key and shared secret are removed. See [provider response history](job-worker.md#provider-response-history-and-offline-replay).
+
 ## Linking scrobbles to albums
 
 After each sync, every scrobbled artist and album name is compared with the library's album titles, credited artists and track titles, and links to at most one album. Several scrobbled names can link to the same album, so a standard and a deluxe edition are counted together. Links are recomputed on every sync, so albums added later pick up their existing scrobbles. **Relink** on the page does the same from stored scrobbles without contacting Last.fm.

@@ -9,6 +9,7 @@ import {
 import type { YoutubeSyncSchedule } from '@repo/schemas/youtube'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { ProviderResponseStorageError } from '@/lib/provider-response-history'
 import {
   YOUTUBE_PAGE_SIZE,
   YoutubeChannelPageSchema,
@@ -36,6 +37,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { recordAccountSyncResponses } from './provider-response-history'
 import { subscriptionSearchVector } from './subscription-library'
 import {
   dueSubscriptionSyncUsers,
@@ -655,7 +657,7 @@ type ChunkOptions = { maxSteps?: number; budgetMs?: number }
  * schedule to resume; any other failure ends the job.
  */
 export async function runYoutubeSyncJob(
-  context: LastfmSyncJobContext,
+  context: LastfmSyncJobContext & { jobId?: string },
   options: ChunkOptions = {},
 ): Promise<LastfmSyncJobResult> {
   const maxSteps = options.maxSteps ?? CHUNK_STEPS
@@ -669,7 +671,10 @@ export async function runYoutubeSyncJob(
   let access: { userId: string; token: string; readAt: number } | null = null
   let steps = 0
   try {
-    const request = createProviderRequest(youtubePlugin, context.assertActive)
+    const capture = await recordAccountSyncResponses(context, youtubePlugin)
+    const request = createProviderRequest(youtubePlugin, context.assertActive, {
+      beginResponseCapture: capture?.('task'),
+    })
     for (;;) {
       if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(token)
@@ -750,14 +755,19 @@ export async function runYoutubeSyncJob(
       }
     }
     // A missing or rejected sign-in is the account's state, not a provider fault.
-    if (!(error instanceof ServerError))
+    if (
+      !(error instanceof ServerError) &&
+      !(error instanceof ProviderResponseStorageError)
+    )
       await recordProviderFailure(youtubePlugin, error)
     await db
       .update(subscriptionSync)
       .set({
         status: 'failed',
         errorMessage:
-          error instanceof ProviderRequestError || error instanceof ServerError
+          error instanceof ProviderRequestError ||
+          error instanceof ServerError ||
+          error instanceof ProviderResponseStorageError
             ? error.message
             : 'YouTube sync failed or returned invalid data. No further requests were made.',
         leaseToken: null,

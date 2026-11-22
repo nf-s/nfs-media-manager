@@ -22,6 +22,7 @@ import { albumNameKey } from '@/lib/album-import-candidates'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
+import { ProviderResponseStorageError } from '@/lib/provider-response-history'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
   AlbumCountSchema,
@@ -53,6 +54,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { recordAccountSyncResponses } from './provider-response-history'
 
 const PAGE_SIZE = 200
 // Last.fm publishes no numeric limit but warns against several calls per second.
@@ -579,7 +581,7 @@ type ChunkOptions = {
  * other failure, or one that persists, ends the job.
  */
 export async function runLastfmSyncJob(
-  context: LastfmSyncJobContext,
+  context: LastfmSyncJobContext & { jobId?: string },
   options: ChunkOptions = {},
 ): Promise<LastfmSyncJobResult> {
   const maxPages = options.maxPages ?? CHUNK_PAGES
@@ -592,7 +594,13 @@ export async function runLastfmSyncJob(
   try {
     const configured = await requireCredentials()
     account = configured.account
-    const request = createProviderRequest(lastfmPlugin, context.assertActive)
+    // The username names the account whose scrobbles are read; it stays in the data.
+    const capture = await recordAccountSyncResponses(context, lastfmPlugin, [
+      'username',
+    ])
+    const request = createProviderRequest(lastfmPlugin, context.assertActive, {
+      beginResponseCapture: capture?.('task'),
+    })
     for (;;) {
       if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(configured.account, token)
@@ -640,14 +648,16 @@ export async function runLastfmSyncJob(
   } catch (error) {
     // A cancelled job's request rejects before it is sent; that is not a provider failure.
     if (!(await context.isActive())) return { outcome: 'stopped' }
-    await recordProviderFailure(lastfmPlugin, error)
+    if (!(error instanceof ProviderResponseStorageError))
+      await recordProviderFailure(lastfmPlugin, error)
     if (account)
       await db
         .update(lastfmSync)
         .set({
           status: 'failed',
           errorMessage:
-            error instanceof ProviderRequestError
+            error instanceof ProviderRequestError ||
+            error instanceof ProviderResponseStorageError
               ? error.message
               : 'Last.fm sync failed or returned invalid data. No further requests were made.',
           leaseToken: null,

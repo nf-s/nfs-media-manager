@@ -742,6 +742,8 @@ export function isMediaProviderPlugin(
 
 export {
   sanitizeProviderResponseBody,
+  sanitizeAccountResponseBody,
+  accountCredentialKey,
   isNativeJsonResponse,
   isSafeNativeJsonResponse,
   containsSecret,

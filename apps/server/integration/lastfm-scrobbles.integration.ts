@@ -12,6 +12,7 @@ import {
   it,
   vi,
 } from 'vitest'
+import { ProviderResponseSchema } from '@repo/schemas/provider-response'
 import { env } from '@/env'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
@@ -137,6 +138,29 @@ async function drain() {
     { timeout: 10000, interval: 100 },
   )
   return getLastfmSyncStatus()
+}
+
+/** Every response the sync jobs stored, in job and request order. */
+async function storedResponses() {
+  const { getJobProviderResponse, listJobProviderResponses } =
+    await import('@/services/provider-response-history')
+  const stored = []
+  for (const job of await syncJobs()) {
+    const page = await listJobProviderResponses(job.id, { page: 1, size: 100 })
+    for (const item of page.items) {
+      const { body } = ProviderResponseSchema.parse(
+        await getJobProviderResponse(job.id, item.id),
+      )
+      stored.push({
+        jobId: job.id,
+        phase: item.phase,
+        url: item.requestUrl,
+        status: item.status,
+        text: body.state === 'captured' ? body.text : null,
+      })
+    }
+  }
+  return stored
 }
 
 async function syncToEnd() {
@@ -319,6 +343,44 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     expect(first.state).toBe('running')
     expect(second.job).toEqual(first.job)
     expect(await syncJobs()).toHaveLength(1)
+  })
+
+  it('stores every page it reads on the job that read it, with the account name and without credentials', async () => {
+    const credentialEcho = {
+      session: { key: 'fixture-session-key' },
+      note: 'Signed with offline-fixture-key',
+    }
+    respond(
+      { ...page(1, 2, [scrobble(recent, 'First track')]), ...credentialEcho },
+      { ...page(2, 2, [scrobble(old, 'First track')]), ...credentialEcho },
+    )
+    await syncToEnd()
+
+    const jobs = await syncJobs()
+    const stored = await storedResponses()
+    expect(
+      stored.map(({ jobId, phase, url, status }) => [
+        jobId,
+        phase,
+        url,
+        status,
+      ]),
+    ).toEqual(
+      jobs.map((job) => [
+        job.id,
+        'task',
+        'https://ws.audioscrobbler.com/2.0/',
+        200,
+      ]),
+    )
+    for (const [index, { text }] of stored.entries()) {
+      expect(JSON.parse(text ?? 'null')).toEqual({
+        ...page(index + 1, 2, [scrobble(index ? old : recent, 'First track')]),
+        note: 'Signed with [REDACTED]',
+      })
+      expect(text).not.toContain('offline-fixture-key')
+      expect(text).not.toContain('fixture-session-key')
+    }
   })
 
   it('re-reads an overlap on the next sync without duplicating scrobbles', async () => {

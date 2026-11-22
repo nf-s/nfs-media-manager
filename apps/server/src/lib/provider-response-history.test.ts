@@ -416,3 +416,161 @@ describe('provider response archive', () => {
     await expect(response.json()).resolves.toEqual({ projected: true })
   })
 })
+
+describe('account sync response archive', () => {
+  function accountFixture(onCaptureLimit?: () => Promise<void>) {
+    const archive: ProviderResponseCapture[] = []
+    const record = createProviderResponseRecorder(
+      async (response) => {
+        archive.push(response)
+      },
+      ['fixture-api-secret'],
+      undefined,
+      undefined,
+      undefined,
+      { accountData: true, onCaptureLimit },
+    )('task')
+    return {
+      archive,
+      async capture(
+        text: string,
+        request: Parameters<MediaPluginTestContext['request']>,
+      ) {
+        await record(...request)?.({
+          status: 200,
+          receivedAt: fixtureTime,
+          contentType: 'application/json',
+          body: { state: 'captured', text },
+        })
+      },
+    }
+  }
+
+  it('still leaves out token exchanges, sign-in paths and Last.fm sign-in and scrobble writes', async () => {
+    const { capture, archive } = accountFixture()
+    const tokenResponse = JSON.stringify({
+      access_token: 'fixture-access-secret',
+      refresh_token: 'fixture-refresh-secret',
+    })
+    for (const request of [
+      ['https://accounts.spotify.com/api/token', { method: 'POST' }],
+      ['https://oauth2.googleapis.com/token', { method: 'POST' }],
+      ['https://www.googleapis.com/oauth2/v4/token', { method: 'POST' }],
+      ['https://api.example.test/v1/authorize'],
+      ['https://api.example.test/login'],
+      ['https://api.example.test/sessions/current'],
+      [
+        'https://ws.audioscrobbler.com/2.0/?method=auth.getSession&token=fixture-token',
+      ],
+      [
+        'https://ws.audioscrobbler.com/2.0/?method=track.scrobble',
+        { method: 'POST' },
+      ],
+      [
+        'https://ws.audioscrobbler.com/2.0/?method=track.updateNowPlaying',
+        { method: 'POST' },
+      ],
+    ] satisfies Parameters<MediaPluginTestContext['request']>[])
+      await capture(tokenResponse, request)
+    expect(archive).toEqual([])
+  })
+
+  it("keeps the account's own data whole and removes credentials from it", async () => {
+    const { capture, archive } = accountFixture()
+    const page = {
+      '@attr': { user: 'Fixture-Listener', page: '1' },
+      username: 'Fixture-Listener',
+      owner: { id: 'fixture-owner', display_name: 'Fixture Owner' },
+      ownerId: 'fixture-owner',
+      uploader: 'Fixture Channel',
+      userId: 'fixture-user',
+      added_by: { id: 'fixture-adder' },
+      nextPageToken: 'CAUQAA',
+      description: 'Echoes fixture-api-secret and fixture-bearer-secret.',
+      access_token: 'fixture-access-secret',
+      refresh_token: 'fixture-refresh-secret',
+      session_key: 'fixture-session-secret',
+      password: 'fixture-password',
+      email: 'listener@example.test',
+    }
+    await capture(JSON.stringify(page), [
+      'https://api.spotify.com/v1/me/shows?limit=50&offset=0',
+      { headers: { authorization: 'Bearer fixture-bearer-secret' } },
+    ])
+    await capture(JSON.stringify(page), [
+      'https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&user=Fixture-Listener&api_key=fixture-api-secret&page=1',
+      { headers: { authorization: 'Bearer fixture-bearer-secret' } },
+    ])
+    await capture(JSON.stringify(page), [
+      'https://www.googleapis.com/youtube/v3/subscriptions?mine=true&part=snippet',
+      { headers: { authorization: 'Bearer fixture-bearer-secret' } },
+    ])
+    expect(archive.map(({ request }) => request.url)).toEqual([
+      'https://api.spotify.com/v1/me/shows',
+      'https://ws.audioscrobbler.com/2.0/',
+      'https://www.googleapis.com/youtube/v3/subscriptions',
+    ])
+    for (const { response } of archive) {
+      expect(response.body.state).toBe('captured')
+      const text = response.body.state === 'captured' ? response.body.text : ''
+      expect(JSON.parse(text)).toEqual({
+        '@attr': { user: 'Fixture-Listener', page: '1' },
+        username: 'Fixture-Listener',
+        owner: { id: 'fixture-owner', display_name: 'Fixture Owner' },
+        ownerId: 'fixture-owner',
+        uploader: 'Fixture Channel',
+        userId: 'fixture-user',
+        added_by: { id: 'fixture-adder' },
+        nextPageToken: 'CAUQAA',
+        description: 'Echoes [REDACTED] and [REDACTED].',
+      })
+      for (const secret of [
+        'fixture-api-secret',
+        'fixture-bearer-secret',
+        'fixture-access-secret',
+        'fixture-refresh-secret',
+        'fixture-session-secret',
+        'fixture-password',
+        'listener@example.test',
+      ])
+        expect(text).not.toContain(secret)
+    }
+  })
+
+  it('leaves account paths out unless the job opts in', async () => {
+    const { capture, archive } = fixture()
+    await capture({ state: 'captured', text: '{"items":[]}' }, [
+      'https://api.spotify.com/v1/me/shows?limit=50',
+    ])
+    await capture({ state: 'captured', text: '{"recenttracks":{}}' }, [
+      'https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&user=Fixture-Listener',
+    ])
+    expect(archive).toEqual([])
+  })
+
+  it('reports once when the job passes its byte cap and lists later responses without content', async () => {
+    const onCaptureLimit = vi.fn(async () => undefined)
+    const { capture, archive } = accountFixture(onCaptureLimit)
+    // Seven 9 MB pages fit within 64 MB; the eighth and ninth do not.
+    const large = JSON.stringify({
+      track: Array.from({ length: 9 * 1024 }, (_, index) => ({
+        name: `Fixture track ${index}`,
+        text: 'word '.repeat(200),
+      })),
+    })
+    for (let page = 1; page <= 9; page += 1)
+      await capture(large, [
+        `https://ws.audioscrobbler.com/2.0/?method=user.getRecentTracks&page=${page}`,
+      ])
+    expect(archive.map(({ response }) => response.body.state)).toEqual([
+      ...Array<string>(7).fill('captured'),
+      'unavailable',
+      'unavailable',
+    ])
+    expect(archive.at(-1)?.response.body).toEqual({
+      state: 'unavailable',
+      reason: 'capture-limit',
+    })
+    expect(onCaptureLimit).toHaveBeenCalledOnce()
+  })
+})

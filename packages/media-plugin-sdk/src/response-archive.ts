@@ -15,6 +15,21 @@ const nativeCredential =
   /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?$|credential|session|apikey|apiuser|privatekey|csrf|xsrf|signature|^auth$|^key$|^jwt$|^(?:email(?:address)?|username|(?:uploader|uploadedby|createdby|owner)(?:name|username))$/i
 const nativeCredentialKey = (value: string) =>
   nativeCredential.test(normalizedKey(value))
+// A job's own account data keeps fields naming its user, owner or uploader.
+// Credentials and email addresses are still removed; page cursors are kept.
+const accountCredential =
+  /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?$|credential|session|apikey|apiuser|privatekey|csrf|xsrf|signature|^auth$|^key$|^jwt$|^email(?:address)?$/i
+const pageCursor = /^(?:next|prev|previous)pagetoken$/
+export const accountCredentialKey = (value: string) => {
+  const key = normalizedKey(value)
+  return !pageCursor.test(key) && accountCredential.test(key)
+}
+type ScrubMode = 'archive' | 'native' | 'account'
+const keyFilters: Record<ScrubMode, (value: string) => boolean> = {
+  archive: sensitiveKey,
+  native: nativeCredentialKey,
+  account: accountCredentialKey,
+}
 // A JSON boolean can describe permission to use a token without carrying it.
 const tokenCapability = /^can[A-Z][A-Za-z]*Token$/
 const collection = /^(?:collages?|collections?)$/
@@ -46,15 +61,16 @@ const privatePath =
   /^(?:(?:file:)?\/\/|file:)?(?:[A-Z](?::|%3a)(?:[\\/]|%5c|%2f)|(?:\/|%2f)(?:Users|home|private|Volumes|tmp|var|mnt|media)(?:\/|%2f))/i
 
 export function scrubText(value: string, secrets: readonly string[]) {
-  return scrubResponseText(value, secrets, false)
+  return scrubResponseText(value, secrets, 'archive')
 }
 
 function scrubResponseText(
   value: string,
   secrets: readonly string[],
-  nativeCredentialsOnly: boolean,
+  mode: ScrubMode,
 ) {
-  const isSensitive = nativeCredentialsOnly ? nativeCredentialKey : sensitiveKey
+  const nativeCredentialsOnly = mode === 'native'
+  const isSensitive = keyFilters[mode]
   let safe = value
   for (const secret of secrets) safe = safe.split(secret).join('[REDACTED]')
   safe = safe.replace(/https?:\/\/[^\s<>"']+/gi, (match, offset: number) => {
@@ -134,7 +150,30 @@ export function sanitizeProviderResponseBody(
   contentType: string | null,
   secrets: readonly string[],
 ): CaptureBody {
-  const scrub = (text: string) => scrubText(text, secrets)
+  return sanitizeResponseBody(body, contentType, secrets, 'archive')
+}
+
+/**
+ * Sanitizes a job's own account data read: fields naming the user, owner or
+ * uploader are kept, while credentials, configured secrets and email
+ * addresses are removed as for any other response.
+ */
+export function sanitizeAccountResponseBody(
+  body: CaptureBody,
+  contentType: string | null,
+  secrets: readonly string[],
+): CaptureBody {
+  return sanitizeResponseBody(body, contentType, secrets, 'account')
+}
+
+function sanitizeResponseBody(
+  body: CaptureBody,
+  contentType: string | null,
+  secrets: readonly string[],
+  mode: Exclude<ScrubMode, 'native'>,
+): CaptureBody {
+  const isSensitive = keyFilters[mode]
+  const scrub = (text: string) => scrubResponseText(text, secrets, mode)
   if (body.state !== 'captured') return body
   if (!body.text.length) return { state: 'unavailable', reason: 'empty' }
   if (
@@ -202,7 +241,7 @@ export function sanitizeProviderResponseBody(
         const decoded: unknown = JSON.parse(token)
         if (typeof decoded !== 'string') return token
         if (scrub(decoded) !== decoded) changed = true
-        if (!sensitiveKey(decoded)) return token
+        if (!isSensitive(decoded)) return token
         const end = offset + token.length
         booleanMember.lastIndex = end
         if (tokenCapability.test(decoded) && booleanMember.test(body.text))
@@ -239,7 +278,7 @@ export function sanitizeProviderResponseBody(
           }
         }
         if (
-          (sensitiveKey(key) &&
+          (isSensitive(key) &&
             !(typeof value === 'boolean' && tokenCapability.test(key))) ||
           containsSecret(key, secrets) ||
           (privateRecords.has(this) && personalLabel.test(field))
@@ -333,7 +372,7 @@ export function isSafeNativeJsonResponse(
       const value: unknown = JSON.parse(token)
       if (
         typeof value !== 'string' ||
-        scrubResponseText(value, variants, true) !== value
+        scrubResponseText(value, variants, 'native') !== value
       )
         return false
       if (index === undefined || !nativeCredentialKey(value)) continue

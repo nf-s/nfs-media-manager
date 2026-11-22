@@ -9,10 +9,22 @@ import {
   type ProviderResponseBody,
   type ProviderResponseCapture,
 } from '@repo/schemas/provider-response'
+import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { getJobTask } from '@repo/schemas/job'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { providerResponse, scrapeJob, scrapeJobItem } from '@/schemas/db'
+import {
+  MAX_RETAINED_BYTES_PER_ATTEMPT,
+  createProviderResponseRecorder,
+  providerResponseSecretValues,
+} from '@/lib/provider-response-history'
+import { resolveProviderSecrets } from '@/lib/provider-secrets'
+import {
+  providerResponse,
+  providerSecret,
+  scrapeJob,
+  scrapeJobItem,
+} from '@/schemas/db'
 
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -23,6 +35,51 @@ type CaptureInput = {
   provider: string
   attempt: number
   capture: ProviderResponseCapture
+}
+
+type AccountSyncJob = {
+  jobId?: string
+  log(level: 'info' | 'warn', message: string): Promise<void>
+}
+
+/**
+ * Stores a scheduled account sync's responses on its job. The account's own
+ * data is kept whole; token exchanges are not stored, and the provider's
+ * configured secrets are removed from what is. Settings named in `readable`
+ * (such as a username) are not treated as secrets, so they stay in the data.
+ * The first response past the job's byte cap is logged on the job.
+ */
+export async function recordAccountSyncResponses(
+  job: AccountSyncJob,
+  plugin: MediaProviderPlugin,
+  readable: readonly string[] = [],
+) {
+  const jobId = job.jobId
+  if (jobId === undefined) return undefined
+  const provider = plugin.manifest.id
+  const rows = await db
+    .select()
+    .from(providerSecret)
+    .where(eq(providerSecret.provider, provider))
+  const settings = Object.entries(
+    resolveProviderSecrets(provider, rows, plugin.manifest.secrets),
+  ).filter(([name]) => !readable.includes(name))
+  return createProviderResponseRecorder(
+    (capture) =>
+      saveProviderResponseCapture({ jobId, provider, attempt: 1, capture }),
+    providerResponseSecretValues(Object.fromEntries(settings)),
+    undefined,
+    undefined,
+    undefined,
+    {
+      accountData: true,
+      onCaptureLimit: () =>
+        job.log(
+          'warn',
+          `Saved responses reached this job's ${MAX_RETAINED_BYTES_PER_ATTEMPT / 1024 / 1024} MB limit. Later responses are listed without their content.`,
+        ),
+    },
+  )
 }
 
 /**

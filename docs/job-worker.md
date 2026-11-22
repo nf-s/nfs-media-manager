@@ -236,11 +236,28 @@ Earlier jobs can still have adapter snapshots or error diagnostics. Those
 records are not reconstructed as original HTTP responses.
 
 Task jobs keep their responses on the job as well, including Spotify playlist
-imports, listings and additions, whose tasks cannot be replayed. Requests to
-sign-in and account paths are never stored: token exchanges, Spotify `/me`
-reads such as saved tracks and the account's playlist list, and Last.fm `auth`
-and `user` methods. A job made only of such requests has no saved responses.
-Fields naming who added or uploaded an item are removed before storage.
+imports, listings and additions, whose tasks cannot be replayed. Most jobs never
+store requests to account paths: Spotify `/me` reads such as saved tracks and the
+account's playlist list, and Last.fm `user` methods. A job made only of such
+requests has no saved responses. Fields naming who added or uploaded an item are
+removed before storage.
+
+The scheduled account syncs read the account's own data, so they store it whole:
+the Last.fm scrobble sync's `user.getRecentTracks` pages, the YouTube
+subscription sync's subscription, channel, playlist and video pages, and the
+Spotify podcast sync's saved-podcast (`/me/shows`) and episode pages. Fields
+naming the user, owner or uploader and page cursors are kept. Credentials are
+never stored, by any job: sign-in hosts and token, OAuth and login paths are
+left out (including the token refreshes these syncs make), as are Last.fm `auth`
+methods and scrobble writes. The provider's configured keys and secrets, the
+request's authorization header, and fields such as access or refresh tokens,
+session keys, passwords and email addresses are removed from what is stored.
+
+One attempt keeps at most 64 MB of response bodies. Past that, each further
+response is still listed with its request and status but without its body, and
+the job's log records once that the limit was reached. A sync job stops at 300
+pages or eight minutes, so a routine run stays well under the limit; a first
+full sync is split across several jobs.
 
 Use the job and item or artist identifiers to scope an offline command. The
 command uses the configured database for reads. The following IDs are examples.

@@ -12,6 +12,7 @@ import type {
 } from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { ProviderResponseStorageError } from '@/lib/provider-response-history'
 import {
   SPOTIFY_PODCAST_PAGE_SIZE,
   SpotifyEpisodesPageSchema,
@@ -38,6 +39,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { recordAccountSyncResponses } from './provider-response-history'
 import { getSpotifyAccountStatus, spotifyAccountToken } from './spotify-oauth'
 import { subscriptionSearchVector } from './subscription-library'
 import {
@@ -521,7 +523,7 @@ type ChunkOptions = { maxSteps?: number; budgetMs?: number }
  * resume; any other failure ends the job.
  */
 export async function runSpotifyPodcastSyncJob(
-  context: LastfmSyncJobContext,
+  context: LastfmSyncJobContext & { jobId?: string },
   options: ChunkOptions = {},
 ): Promise<LastfmSyncJobResult> {
   const maxSteps = options.maxSteps ?? CHUNK_STEPS
@@ -535,7 +537,10 @@ export async function runSpotifyPodcastSyncJob(
   let access: { userId: string; token: string; readAt: number } | null = null
   let steps = 0
   try {
-    const request = createProviderRequest(spotifyPlugin, context.assertActive)
+    const capture = await recordAccountSyncResponses(context, spotifyPlugin)
+    const request = createProviderRequest(spotifyPlugin, context.assertActive, {
+      beginResponseCapture: capture?.('task'),
+    })
     for (;;) {
       if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(token)
@@ -610,14 +615,19 @@ export async function runSpotifyPodcastSyncJob(
       }
     }
     // A missing or rejected sign-in is the account's state, not a provider fault.
-    if (!(error instanceof ServerError))
+    if (
+      !(error instanceof ServerError) &&
+      !(error instanceof ProviderResponseStorageError)
+    )
       await recordProviderFailure(spotifyPlugin, error)
     await db
       .update(subscriptionSync)
       .set({
         status: 'failed',
         errorMessage:
-          error instanceof ProviderRequestError || error instanceof ServerError
+          error instanceof ProviderRequestError ||
+          error instanceof ServerError ||
+          error instanceof ProviderResponseStorageError
             ? error.message
             : 'Spotify podcast sync failed or returned invalid data. No further requests were made.',
         leaseToken: null,
