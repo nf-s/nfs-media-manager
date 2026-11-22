@@ -2,6 +2,29 @@ name: Deploy production
 
 on:
   workflow_call:
+    secrets:
+      PROVIDER_ONE_REPOSITORY:
+        required: true
+      PROVIDER_TWO_REPOSITORY:
+        required: true
+      PROVIDER_ONE_REVISION:
+        required: true
+      PROVIDER_TWO_REVISION:
+        required: true
+      PROVIDER_ONE_DEPLOY_KEY:
+        required: true
+      PROVIDER_TWO_DEPLOY_KEY:
+        required: true
+      PROVIDER_ONE_ENTRYPOINT:
+        required: true
+      PROVIDER_TWO_ENTRYPOINT:
+        required: true
+      CLOUDFLARE_APP_URL:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      CLOUDFLARE_API_TOKEN:
+        required: true
 
 permissions:
   contents: read
