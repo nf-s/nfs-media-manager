@@ -113,7 +113,16 @@ import {
   TrackDuplicateGroupRow,
   TrackDuplicateResultBar,
   useTrackDuplicateActions,
+  type TrackDuplicateActions,
 } from './track-duplicate-group'
+import {
+  RowSelectAll,
+  RowSelectRow,
+  rowSelectionWidth,
+  useRowSelection,
+  type RowSelection,
+} from './merge-bar'
+import { TrackMergeBar } from './track-merge-bar'
 
 const libraryLabels = {
   album: { name: 'Album', creator: 'Library artist', plural: 'albums' },
@@ -511,6 +520,36 @@ function MatchTrackMerge({
   )
 }
 
+/**
+ * The bar under Tracks Matches: the selection with Merge or, while nothing is
+ * selected, the result of the last Merge or Keep separate from a group row.
+ * Selecting a row hides that result.
+ */
+export function TrackMatchesBar({
+  actions,
+  selection,
+  total,
+}: {
+  actions: Pick<
+    TrackDuplicateActions,
+    'change' | 'error' | 'progress' | 'setChange' | 'setError' | 'dismiss'
+  >
+  selection: RowSelection
+  /** How many tracks the table lists. */
+  total?: number
+}) {
+  const { change, error, progress, dismiss } = actions
+  const selecting = selection.count > 0
+  const finished = change !== null || error !== null
+  useEffect(() => {
+    if (selecting && finished) dismiss()
+  }, [selecting, finished, dismiss])
+  // Groups still being merged are reported too, before the first one finishes.
+  if (selecting || (!finished && progress === null))
+    return <TrackMergeBar selection={selection} total={total} />
+  return <TrackDuplicateResultBar actions={actions} />
+}
+
 export default function MatchDiagnosticsWorkspace({
   library,
 }: {
@@ -592,6 +631,18 @@ export default function MatchDiagnosticsWorkspace({
     if (loadedProviders) setKnownProviders(loadedProviders)
   }, [loadedProviders])
   const providers = loadedProviders ?? knownProviders
+  // The loaded rows in order; a selection outlives rows scrolled out.
+  const loadedIds = tracks
+    ? [...new Set(query.slots.flatMap(({ item }) => (item ? [item.id] : [])))]
+    : []
+  const selection = useRowSelection(loadedIds)
+  // Another search, filter, sort or Possible duplicates lists other tracks.
+  const selectionKey = JSON.stringify(trackQuery)
+  const [selectionIdentity, setSelectionIdentity] = useState(selectionKey)
+  if (selectionIdentity !== selectionKey) {
+    setSelectionIdentity(selectionKey)
+    selection.clear()
+  }
   const columns = matchColumns(library, providers, matchFields)
   const table = useTableColumns(`${library}-match-diagnostics`, columns)
   const trackColumnOrder = parseColumnOrder(params.get('columnOrder'))
@@ -630,7 +681,7 @@ export default function MatchDiagnosticsWorkspace({
   // Tracks keeps the widths saved under its Browse fields, Actions included.
   const layout = tracks
     ? fixedTableLayout(
-        shownKeys,
+        [rowSelectionWidth, ...shownKeys],
         (key) => {
           const field = shown.find((column) => column.key === key)?.browseField
           return field ? widths.widthFor(field) : defaultColumnWidth
@@ -638,6 +689,8 @@ export default function MatchDiagnosticsWorkspace({
         'title',
       )
     : table.layout(shownKeys)
+  // Tracks has the selection column before its columns.
+  const colSpan = shown.length + (tracks ? 1 : 0)
   const labels = libraryLabels[library]
   const title = `${labels.name} matches`
   const count = query.hasTotal
@@ -667,7 +720,7 @@ export default function MatchDiagnosticsWorkspace({
       <TrackDuplicateGroupRow
         key={`group-${group.id}`}
         group={group}
-        colSpan={shown.length}
+        colSpan={colSpan}
         rowIndex={rowIndex(index) - 1}
         actions={duplicateActions}
       />
@@ -958,12 +1011,22 @@ export default function MatchDiagnosticsWorkspace({
           {layout.colgroup}
           <TableHeader>
             <TableRow>
+              {tracks && (
+                <TableHead sticky={0}>
+                  <RowSelectAll
+                    selection={selection}
+                    label="Select loaded tracks"
+                    disabled={!loadedIds.length}
+                  />
+                </TableHead>
+              )}
               {shown.map((column) =>
                 column.browseField ? (
                   <BrowseItemsHead
                     key={column.key}
                     field={column.browseField}
                     identity={column.key === 'title'}
+                    sticky={tracks ? rowSelectionWidth : 0}
                     sortable={column.sortKey !== undefined}
                     sortBy={sortBy}
                     direction={direction}
@@ -992,7 +1055,7 @@ export default function MatchDiagnosticsWorkspace({
           </TableHeader>
           <TableBody>
             {query.hasTotal && !query.total && (
-              <TableState colSpan={shown.length}>
+              <TableState colSpan={colSpan}>
                 {q || (tracks && hasTrackFilters)
                   ? 'No matching items.'
                   : duplicates
@@ -1012,7 +1075,7 @@ export default function MatchDiagnosticsWorkspace({
             {groupRows.leading && renderGroupRow(0)}
             <SecondaryVirtualRows
               window={query}
-              colSpan={shown.length}
+              colSpan={colSpan}
               // The group row of the next group follows this row.
               renderAfter={(index) => renderGroupRow(index + 1)}
               renderRow={(item, index) => (
@@ -1020,17 +1083,29 @@ export default function MatchDiagnosticsWorkspace({
                   key={item.id}
                   aria-rowindex={rowIndex(index)}
                   selected={
-                    inspector?.root?.kind === library &&
-                    inspector.root.id === item.id
+                    (inspector?.root?.kind === library &&
+                      inspector.root.id === item.id) ||
+                    selection.has(item.id)
                   }
                 >
+                  {tracks && (
+                    <TableCell sticky={0}>
+                      <RowSelectRow
+                        selection={selection}
+                        id={item.id}
+                        title={item.name}
+                      />
+                    </TableCell>
+                  )}
                   {shown.map((column) => (
                     <TableCell
                       key={column.key}
                       sticky={
-                        column.key === 'name' || column.key === 'title'
-                          ? 0
-                          : undefined
+                        column.key === 'title'
+                          ? rowSelectionWidth
+                          : column.key === 'name'
+                            ? 0
+                            : undefined
                       }
                       stickyEdge={
                         column.key === 'name' || column.key === 'title'
@@ -1059,7 +1134,13 @@ export default function MatchDiagnosticsWorkspace({
           </TableBody>
         </table>
       </SecondaryTableScroll>
-      {tracks && <TrackDuplicateResultBar actions={duplicateActions} />}
+      {tracks && (
+        <TrackMatchesBar
+          actions={duplicateActions}
+          selection={selection}
+          total={query.hasTotal ? query.total : undefined}
+        />
+      )}
       {duplicateActions.dialog}
       {tracks && <DetailInspector track={{ onFilter: addTrackFilter }} />}
     </section>

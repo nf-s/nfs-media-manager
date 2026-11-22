@@ -3,7 +3,10 @@ import { mock, test } from 'node:test'
 import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { LibraryChangeSchema } from '@repo/schemas/library-changes'
+import {
+  LibraryChangeSchema,
+  type LibraryChangeAction,
+} from '@repo/schemas/library-changes'
 import { ConfigContext } from './providers'
 
 require.extensions['.css'] = (module) => {
@@ -128,13 +131,19 @@ test('a track in no group shows no notice', async () => {
 test('a group row has Merge and Keep separate, then what Merge does and the evidence', async () => {
   const { TrackDuplicateGroupRow, useTrackDuplicateActions } =
     await import('./track-duplicate-group')
-  function Row({ merge = group.merge }: { merge?: typeof group.merge | null }) {
+  function Row({
+    merge = group.merge,
+    cautions = group.cautions,
+  }: {
+    merge?: typeof group.merge | null
+    cautions?: Parameters<typeof TrackDuplicateGroupRow>[0]['group']['cautions']
+  }) {
     const actions = useTrackDuplicateActions()
     return (
       <table>
         <tbody>
           <TrackDuplicateGroupRow
-            group={{ ...group, merge }}
+            group={{ ...group, merge, cautions }}
             colSpan={4}
             rowIndex={2}
             actions={actions}
@@ -143,16 +152,102 @@ test('a group row has Merge and Keep separate, then what Merge does and the evid
       </table>
     )
   }
-  const text =
-    'Merge keeps “Harbour Lights”: 1 Last.fm record is removed and its plays and names move to it · Same artist · Same title without “Remastered 2011”'
-  assert.equal(
-    render(new QueryClient(), <Row />),
-    `<table><tbody><tr data-group="" aria-rowindex="2"><td colSpan="4"><span class="ds-group-actions"><button class="ds-btn" data-size="xs">Merge</button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate</button><span class="ds-group-evidence" title="${text}">${text}</span></span></td></tr></tbody></table>`,
+  const html = render(new QueryClient(), <Row />)
+  assert.match(
+    html,
+    /^<table><tbody><tr data-group="" aria-rowindex="2"><td colSpan="4"><span class="ds-group-actions"><button class="ds-btn" data-size="xs">Merge<\/button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button><div class="secondary-cell-details">.*aria-label="What Merge does".*<div>Merge keeps “Harbour Lights”: 1 Last\.fm record is removed and its plays and names move to it\.<\/div><div>Same artist<\/div><div>Same title without “Remastered 2011”<\/div><\/div><\/div><\/span><\/td><\/tr><\/tbody><\/table>$/,
   )
-  // A group whose members cannot all be read shows only the evidence.
+  // With nothing against merging the row has no line of its own.
+  assert.doesNotMatch(html, /ds-group-evidence/)
+  assert.match(
+    render(
+      new QueryClient(),
+      <Row cautions={[{ code: 'duration', seconds: 30 }]} />,
+    ),
+    /<span class="ds-group-evidence" title="Against merging: [^"]+">Against merging: /,
+  )
+  // A group whose members cannot all be read still shows the evidence.
   assert.match(
     render(new QueryClient(), <Row merge={null} />),
-    /title="Same artist · Same title without “Remastered 2011”">Same artist · Same title without “Remastered 2011”<\/span>/,
+    /<div>Same artist<\/div><div>Same title without “Remastered 2011”<\/div>/,
+  )
+})
+
+test('only the pressed group’s actions are off, and its row says what is happening to it', async () => {
+  const { TrackDuplicateGroupRow } = await import('./track-duplicate-group')
+  type Item = ReturnType<
+    Parameters<typeof TrackDuplicateGroupRow>[0]['actions']['status']
+  >
+  const row = (item: Item) =>
+    render(
+      new QueryClient(),
+      <table>
+        <tbody>
+          <TrackDuplicateGroupRow
+            group={{ ...group, cautions: [{ code: 'duration', seconds: 30 }] }}
+            colSpan={4}
+            actions={{
+              merge: async () => undefined,
+              keepSeparate: async () => undefined,
+              status: () => item,
+            }}
+          />
+        </tbody>
+      </table>,
+    )
+  const off =
+    /<button class="ds-btn" data-size="xs" disabled="">Merge<\/button><button class="ds-btn" data-variant="ghost" data-size="xs" disabled="">Keep separate<\/button>/
+  const on =
+    /<button class="ds-btn" data-size="xs">Merge<\/button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button>/
+  const line = (text: string) =>
+    new RegExp(`<span class="ds-group-evidence" title="${text}">${text}</span>`)
+  // Another group is being merged: this one is untouched and usable.
+  const idle = row(undefined)
+  assert.match(idle, on)
+  assert.match(idle, line('Against merging: [^"]+'))
+  for (const [item, text] of [
+    [{ status: 'queued', action: 'merge' }, 'Merging…'],
+    [{ status: 'running', action: 'merge' }, 'Merging…'],
+    [{ status: 'running', action: 'keep-separate' }, 'Keeping separate…'],
+    [{ status: 'review', action: 'merge' }, 'Needs review'],
+    [{ status: 'done', action: 'merge', change: kept }, 'Merged'],
+    [
+      { status: 'done', action: 'keep-separate', change: kept },
+      'Kept separate',
+    ],
+  ] satisfies [Item, string][]) {
+    const html = row(item)
+    assert.match(html, off)
+    assert.match(html, line(text))
+  }
+  // A failed group can be tried again; its row says why it failed.
+  const failed = row({
+    status: 'failed',
+    action: 'merge',
+    message: 'The tracks could not be merged.',
+  })
+  assert.match(failed, on)
+  assert.match(failed, line('The tracks could not be merged\\.'))
+})
+
+test('the bar says how many groups are still to go, in words', async () => {
+  const { describeTrackDuplicateProgress } =
+    await import('./track-duplicate-group')
+  const merge: { action: LibraryChangeAction } = { action: 'merge' }
+  const separate: { action: LibraryChangeAction } = { action: 'keep-separate' }
+  assert.equal(describeTrackDuplicateProgress([]), null)
+  assert.equal(describeTrackDuplicateProgress([merge]), 'Merging 1 group…')
+  assert.equal(
+    describeTrackDuplicateProgress([merge, merge, merge]),
+    'Merging 3 groups…',
+  )
+  assert.equal(
+    describeTrackDuplicateProgress([separate, separate]),
+    'Keeping 2 groups separate…',
+  )
+  assert.equal(
+    describeTrackDuplicateProgress([merge, separate, merge]),
+    'Merging 2 groups, keeping 1 separate…',
   )
 })
 
@@ -164,6 +259,16 @@ test('with no result the bar under the table is hidden; a result shows with Undo
       <TrackDuplicateResultBar actions={reporting(null, null)} />,
     ),
     '<div class="ds-selectbar sec-selectbar"></div>',
+  )
+  // While groups are still to go the bar says how many, before the result.
+  assert.match(
+    render(
+      new QueryClient(),
+      <TrackDuplicateResultBar
+        actions={{ ...reporting(kept, null), progress: 'Merging 3 groups…' }}
+      />,
+    ),
+    /^<div class="ds-selectbar sec-selectbar"><span role="status">Merging 3 groups…<\/span><span class="ds-selectbar-result" role="status">.*Kept 2 tracks separate/,
   )
   const result = render(
     new QueryClient(),
@@ -185,14 +290,20 @@ test('with no result the bar under the table is hidden; a result shows with Undo
   )
 })
 
-test('Merge plans the whole group keeping its first track, and Keep separate posts the group', async (t) => {
+test('Merge plans the whole group keeping its first track, and Keep separate posts the group, one request at a time in the order pressed', async (t) => {
   const { useTrackDuplicateActions } = await import('./track-duplicate-group')
   const requests: { url: URL; body: unknown }[] = []
+  let running = 0
+  let most = 0
   network.mock.mockImplementation(async (input, init) => {
     requests.push({
       url: new URL(input instanceof Request ? input.url : String(input)),
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
     })
+    running += 1
+    most = Math.max(most, running)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    running -= 1
     return Response.json(
       { statusCode: 500, message: 'Fixture failure' },
       { status: 500 },
@@ -224,16 +335,22 @@ test('Merge plans the whole group keeping its first track, and Keep separate pos
   )
   const [actions] = captured
   assert.ok(actions)
-  // The plan fails here, so nothing is merged and no review opens.
-  assert.equal(await actions.merge(group), null)
-  actions.keepSeparate(group)
-  while (client.isMutating())
-    await new Promise((resolve) => setTimeout(resolve, 0))
+  const other = { memberIds: ['track-c', 'track-d'] }
+  // Both return at once; the second waits for the first. The plan fails
+  // here, so nothing is merged and no review opens, and the next goes on.
+  const merging = actions.merge(group)
+  const separating = actions.keepSeparate(other)
+  assert.equal(requests.length, 0)
+  await Promise.all([merging, separating])
+  // A failed group can be tried again.
+  await actions.keepSeparate(group)
   client.clear()
+  assert.equal(most, 1)
   assert.deepEqual(
     requests.map(({ url }) => url.pathname),
     [
       '/api/v1/library-changes/track-merges/plan',
+      '/api/v1/library-changes/track-separations',
       '/api/v1/library-changes/track-separations',
     ],
   )
@@ -241,5 +358,78 @@ test('Merge plans the whole group keeping its first track, and Keep separate pos
     trackIds: ['track-a', 'track-b'],
     targetId: 'track-a',
   })
-  assert.deepEqual(requests[1]?.body, { trackIds: ['track-a', 'track-b'] })
+  assert.deepEqual(requests[1]?.body, { trackIds: ['track-c', 'track-d'] })
+  assert.deepEqual(requests[2]?.body, { trackIds: ['track-a', 'track-b'] })
+})
+
+test('after a merge from the notice, onChange gets the change', async (t) => {
+  const { useTrackDuplicateActions } = await import('./track-duplicate-group')
+  const merged = LibraryChangeSchema.parse({
+    ...kept,
+    id: 'change-2',
+    action: 'merge',
+    target: kept.sources[0],
+    sources: [{ ...kept.sources[1], exists: false }],
+  })
+  const plan = {
+    targetId: 'track-a',
+    tracks: ['track-a', 'track-b'].map((id, index) => ({
+      id,
+      title: 'Harbour Lights',
+      by: 'Fixture',
+      albumTitle: null,
+      durationSec: 200,
+      scrobbles: 6,
+      spotify: false,
+      nameCount: 1,
+      identity: null,
+      outcome: index === 0 ? 'keep' : 'merge',
+      blocked: null,
+    })),
+    names: [],
+    scrobbles: { target: 6, added: 6, total: 12 },
+    also: { albumNames: [], titles: [] },
+    cautions: [],
+    blocked: false,
+  }
+  network.mock.mockImplementation(async (input) => {
+    const url = String(input instanceof Request ? input.url : input)
+    return Response.json({
+      statusCode: 200,
+      message: 'OK',
+      data: url.endsWith('/plan') ? plan : merged,
+    })
+  })
+  t.after(() => {
+    network.mock.mockImplementation(async () => {
+      throw new Error('Network forbidden in UI tests')
+    })
+    network.mock.resetCalls()
+  })
+  const changes: unknown[] = []
+  const captured: ReturnType<typeof useTrackDuplicateActions>[] = []
+  function Capture() {
+    captured.push(
+      useTrackDuplicateActions({ onChange: (next) => changes.push(next) }),
+    )
+    return null
+  }
+  const client = new QueryClient()
+  renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <ConfigContext.Provider
+        value={{
+          appUrl: 'http://localhost:3001',
+          apiBaseUrl: 'http://localhost:4001',
+        }}
+      >
+        <Capture />
+      </ConfigContext.Provider>
+    </QueryClientProvider>,
+  )
+  const [actions] = captured
+  assert.ok(actions)
+  await actions.merge(group)
+  client.clear()
+  assert.deepEqual(changes, [merged])
 })

@@ -46,6 +46,12 @@ export const trackDuplicateMembership = sql`join track_duplicate_member duplicat
     on duplicate_group.id = duplicate_member.group_id`
 
 /** Group order first: most played group, then the track a merge keeps. */
+/** With `trackDuplicateMembership`: groups a merge raises nothing against, or the others. */
+export const trackDuplicateCautions = (cautions: 'none' | 'some') =>
+  cautions === 'none'
+    ? sql`duplicate_group.cautions = '[]'::jsonb`
+    : sql`duplicate_group.cautions <> '[]'::jsonb`
+
 export const trackDuplicateOrder = sql`duplicate_group.rank asc`
 export const trackDuplicatePosition = sql`duplicate_member.position asc`
 

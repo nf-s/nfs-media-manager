@@ -35,6 +35,7 @@ import {
 } from './recording-groups'
 import { loadTracks } from './tracks'
 import {
+  trackDuplicateCautions,
   trackDuplicateMembership,
   trackDuplicateOrder,
   trackDuplicatePosition,
@@ -473,6 +474,12 @@ function trackMatchDiagnosticsRows(
   if (playability) conditions.push(playability)
   if (freshness) conditions.push(freshness)
   if (listeningCondition) conditions.push(listeningCondition)
+  if (
+    query.duplicates &&
+    query.duplicateCautions &&
+    query.duplicateCautions !== 'all'
+  )
+    conditions.push(trackDuplicateCautions(query.duplicateCautions))
   for (const word of words) {
     const pattern = `%${word.replace(/[\\%_]/g, '\\$&')}%`
     conditions.push(sql`media_item.id in (

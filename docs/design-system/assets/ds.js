@@ -449,7 +449,7 @@
   /* A group row that carries actions: the buttons (markup), then the
      evidence, cut short. Pass it to table() as a row's _groupHtml. */
   const groupActions = (buttons, evidence) =>
-    `<span class="ds-group-actions">${buttons}<span class="ds-group-evidence" title="${esc(evidence)}">${esc(evidence)}</span></span>`
+    `<span class="ds-group-actions">${buttons}${evidence ? `<span class="ds-group-evidence" title="${esc(evidence)}">${esc(evidence)}</span>` : ''}</span>`
 
   /* A toolbar button that switches the list to another view of its rows and
      back: an icon, the label, then how many the view holds (o.count). */

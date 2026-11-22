@@ -304,8 +304,8 @@ export function TablePartTitle({
 
 /**
  * The content of a group row that carries actions (`TableRow group`, one
- * cell across the table): small buttons, then the evidence for the group,
- * cut short and shown in full on hover.
+ * cell across the table): small buttons, then one line about the group when
+ * there is something to say, cut short and shown in full on hover.
  */
 export function TableGroupActions({
   evidence,
@@ -317,9 +317,11 @@ export function TableGroupActions({
   return (
     <span className="ds-group-actions">
       {children}
-      <span className="ds-group-evidence" title={evidence}>
-        {evidence}
-      </span>
+      {evidence && (
+        <span className="ds-group-evidence" title={evidence}>
+          {evidence}
+        </span>
+      )}
     </span>
   )
 }

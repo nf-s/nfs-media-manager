@@ -9,6 +9,7 @@ import {
 } from '@repo/schemas/track-duplicates'
 import { formatCount } from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
+import { describeMergeCaution } from './library-changes'
 import {
   trackMatchDiagnosticsParams,
   type TrackMatchDiagnosticsState,
@@ -131,19 +132,30 @@ export function describeTrackDuplicateMerge(
   return `Merge keeps “${merge.keep.title}”${parts.length ? `: ${parts.join('; ')}` : ''}`
 }
 
-/** The text of a group row: what Merge does, then the evidence. */
-export function describeTrackDuplicateGroup(
-  group: Pick<TrackDuplicateGroup, 'evidence' | 'merge'>,
+/**
+ * What speaks against merging a group, as the text of its row: empty when
+ * nothing does. The sentences are the merge review's, joined on one line.
+ */
+export function describeTrackDuplicateCautions(
+  group: Pick<TrackDuplicateGroup, 'cautions'>,
 ) {
-  return [
-    describeTrackDuplicateMerge(group),
-    formatTrackDuplicateEvidence(group),
-  ]
-    .filter(Boolean)
-    .join(' · ')
+  if (!group.cautions.length) return ''
+  const reasons = group.cautions.map((caution) => {
+    const sentence = describeMergeCaution(caution).replace(/\.$/, '')
+    return sentence.charAt(0).toLowerCase() + sentence.slice(1)
+  })
+  return `Against merging: ${reasons.join('; ')}`
 }
 
-/** The notice on an open track: the other tracks of its group, the evidence and what Merge does. */
+/** The details behind a group row's icon: what Merge does, then what put the tracks together. */
+export function describeTrackDuplicateDetails(
+  group: Pick<TrackDuplicateGroup, 'evidence' | 'merge'>,
+) {
+  const merge = describeTrackDuplicateMerge(group)
+  return [...(merge ? [`${merge}.`] : []), ...group.evidence]
+}
+
+/** The notice on an open track: the other tracks of its group, the evidence, what speaks against merging and what Merge does. */
 export function describeTrackDuplicateNotice(
   group: TrackDuplicates['items'][number],
 ) {
@@ -151,8 +163,9 @@ export function describeTrackDuplicateNotice(
     (track) => `“${track.title}”${track.by ? ` by ${track.by}` : ''}`,
   )
   const evidence = formatTrackDuplicateEvidence(group)
+  const cautions = describeTrackDuplicateCautions(group)
   const merge = describeTrackDuplicateMerge(group)
-  return `Possible duplicate: ${others.join(', ')}.${evidence ? ` ${evidence}.` : ''}${merge ? ` ${merge}.` : ''}`
+  return `Possible duplicate: ${others.join(', ')}.${evidence ? ` ${evidence}.` : ''}${cautions ? ` ${cautions}.` : ''}${merge ? ` ${merge}.` : ''}`
 }
 
 /**

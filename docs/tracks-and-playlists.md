@@ -182,7 +182,9 @@ A track is a record made of scrobbled names and versions. A scrobbled name is an
 
 ### Merging from a table
 
-In the **Tracks** table, the Tracks table of an artist and [an album's track list](#merging-in-an-albums-track-list), tick two or more rows and choose **Merge** in the bar under the table. The header checkbox selects the rows loaded so far, and Shift selects a range. The selection is cleared when the search, a filter, the sort or the view changes.
+In the **Tracks** table, **Tracks → Matches**, the Tracks table of an artist and [an album's track list](#merging-in-an-albums-track-list), tick two or more rows and choose **Merge** in the bar under the table. The header checkbox selects the rows loaded so far, and Shift selects a range. The selection is cleared when the search, a filter, the sort or the view changes.
+
+Merge returns at once: the selection clears, the bar says Merging… and then the result with Undo, and other rows can be ticked and merged meanwhile. Merges are made one after another in the order pressed. A merge that fails, or whose review is cancelled, returns its rows to the selection.
 
 The track that is kept is the one with its own Spotify track, then one with an album position or a playlist entry, then the most played. Each other track:
 
@@ -230,11 +232,15 @@ An album's track list has the same selection column and bar. Under it, **Scrobbl
 
 **Possible duplicates** in the **Tracks → Matches** toolbar shows only the tracks that look like the same track, in groups, the most played group first. Its count is the number of groups; while Matches is held to one artist, those with that artist's tracks. A group is usually a library track beside a Last.fm record of the same song under another spelling, or the same song on two releases.
 
-Each group starts with a row holding **Merge**, **Keep separate**, what Merge does and the evidence: for example Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it · Same title and artist. Other evidence reads Scrobbles of “Night Drive” count towards both. **Merge** merges the whole group as [above](#merging-from-a-table); a caution opens the review. To merge part of a group, use **Merge** in the Actions of a Last.fm record's row, which merges that one record, or tick the tracks in the Tracks table and use the bar there. With a search or filter a group shows only its matching tracks, but Merge and Keep separate still act on the whole group.
+Each group starts with a row holding **Merge**, **Keep separate** and an info icon. The icon opens what Merge does and what put the tracks together: for example Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it, then Same title and artist. When something speaks against merging, the row says so after the icon, such as Against merging: lengths differ by 0:42; a group with nothing against it has no text. The menu beside the toggle lists **All groups**, only those with **Nothing against merging**, or only those with **Something against merging**.
 
-**Keep separate** is remembered: the group is not suggested again, merging those tracks later opens the review, and automatic matching never joins them. Both actions report in the bar under the table with Undo.
+**Merge** merges the whole group as [above](#merging-from-a-table); a group with something against it opens the review first. To merge part of a group, tick those rows and use **Merge** in the bar under the table; the tracks left over can then be kept separate. With a search or filter a group shows only its matching tracks, but Merge and Keep separate still act on the whole group.
 
-A track in a group shows a notice above its tabs naming the other tracks and what Merge does, with Merge and Keep separate.
+Merge, the review's Merge and Keep separate return at once. The requests are sent one after another in the order pressed while other groups stay usable; the group's row says Merging…, Needs review, Merged, Keeping separate… or Kept separate, or why it failed, and the bar counts the groups still to go. The table reloads once when none is left.
+
+**Keep separate** is remembered: the group is not suggested again, merging those tracks later opens the review, and automatic matching never joins them. The bar under the table shows the last finished change with Undo; every change is in **Tracks → History**.
+
+A track in a group shows a notice above its tabs naming the other tracks, what speaks against merging and what Merge does, with Merge and Keep separate.
 
 Groups are worked out in the background, so a new group can take a few minutes to appear after an import. Until the first grouping has run, the toggle shows no count and the view is empty. A large library is grouped over several runs, five minutes apart, starting with the most-played tracks; the count grows until all groups are listed. A group holds at most 12 tracks.
 

@@ -596,4 +596,22 @@ it('stores for each group the kept track and the cautions of its merge plan', as
     code: 'same-album',
     albums: ['Low Lanterns'],
   })
+
+  // Matches lists the groups nothing speaks against, or only the others.
+  const everything = await listed()
+  const clear = await listed({ duplicateCautions: 'none' })
+  const check = await listed({ duplicateCautions: 'some' })
+  expect(clear.layout.groups.length).toBeGreaterThan(0)
+  expect(check.layout.groups.length).toBeGreaterThan(0)
+  expect(clear.layout.groups.every((group) => !group.cautions.length)).toBe(
+    true,
+  )
+  expect(check.layout.groups.every((group) => group.cautions.length)).toBe(true)
+  expect(check.ids).toContain(liveDash.id)
+  expect([...clear.ids, ...check.ids].sort()).toEqual(
+    [...everything.ids].sort(),
+  )
+  expect((await listed({ duplicateCautions: 'all' })).ids).toEqual(
+    everything.ids,
+  )
 })

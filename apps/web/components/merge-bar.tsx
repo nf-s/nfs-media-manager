@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from 'react'
@@ -15,10 +16,14 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { Check, History, X } from 'lucide-react'
-import type { LibraryChange } from '@repo/schemas/library-changes'
+import type {
+  LibraryChange,
+  LibraryChangeAction,
+} from '@repo/schemas/library-changes'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { TableSelectionResult } from '@repo/ui/components/ui/table'
+import { formatItemCount } from '@repo/ui/lib/format'
 import { updateJobSelection } from '@/utils/job-selection'
 import {
   invalidateLibraryRecords,
@@ -450,6 +455,341 @@ export function useMerge<Plan>(
   }
 }
 
+/** Where one record set stands in the background work, by its key. */
+export type MergeQueueItem =
+  | { status: 'queued' | 'running' | 'review'; action: LibraryChangeAction }
+  | { status: 'done'; action: LibraryChangeAction; change: LibraryChange }
+  | { status: 'failed'; action: LibraryChangeAction; message: string }
+
+export type MergeQueueSnapshot<Plan> = {
+  items: ReadonlyMap<string, MergeQueueItem>
+  /** Queued or running, in the order pressed; the first is running. */
+  waiting: readonly { key: string; action: LibraryChangeAction }[]
+  /** Merges waiting for the owner's review; the first one is shown. */
+  reviews: readonly { key: string; plan: Plan }[]
+}
+
+export type MergeQueueHandlers = {
+  onDone?: (change: LibraryChange) => void
+  /** `ids` are the records whose change failed. */
+  onFail?: (message: string, ids: readonly string[]) => void
+  /** The review was closed without merging these records. */
+  onCancel?: (ids: readonly string[]) => void
+  /** The queue is empty again; refreshes what the finished changes affect. */
+  onDrain?: (changes: readonly LibraryChange[]) => Promise<unknown>
+}
+
+/**
+ * One change standing for several, so one refresh covers them all: every
+ * record the changes name is among its sources.
+ */
+export function combineLibraryChanges(
+  changes: readonly LibraryChange[],
+): LibraryChange | null {
+  const last = changes.at(-1)
+  if (!last) return null
+  return {
+    ...last,
+    sources: changes.flatMap((change) =>
+      change === last
+        ? change.sources
+        : [...change.sources, ...(change.target ? [change.target] : [])],
+    ),
+  }
+}
+
+/**
+ * Merges and other library changes made in the background, one request
+ * after another in the order pressed. A merge that something speaks against
+ * waits for its review while the rest go on. `onDrain` runs once each time
+ * the queue empties; finished items stay until it has refreshed.
+ */
+export function createMergeQueue<Plan>(
+  adapter: MergeAdapter<Plan>,
+  apiBaseUrl: string,
+  handlers: () => MergeQueueHandlers,
+) {
+  let snapshot: MergeQueueSnapshot<Plan> = {
+    items: new Map(),
+    waiting: [],
+    reviews: [],
+  }
+  const listeners = new Set<() => void>()
+  let tail: Promise<void> = Promise.resolve()
+  let draining: Promise<void> = Promise.resolve()
+  let finished: { key: string; change: LibraryChange }[] = []
+
+  function publish(next: Partial<MergeQueueSnapshot<Plan>>) {
+    snapshot = { ...snapshot, ...next }
+    for (const listener of listeners) listener()
+  }
+  function setItem(key: string, item: MergeQueueItem | null) {
+    const items = new Map(snapshot.items)
+    if (item) items.set(key, item)
+    else items.delete(key)
+    publish({ items })
+  }
+  function busy(key: string) {
+    const item = snapshot.items.get(key)
+    return item !== undefined && item.status !== 'failed'
+  }
+  async function drain() {
+    const changes = finished
+    finished = []
+    if (changes.length === 0) return
+    try {
+      await handlers().onDrain?.(changes.map(({ change }) => change))
+    } finally {
+      const items = new Map(snapshot.items)
+      for (const { key, change } of changes) {
+        const item = items.get(key)
+        if (item?.status === 'done' && item.change.id === change.id)
+          items.delete(key)
+      }
+      publish({ items })
+    }
+  }
+  function enqueue({
+    key,
+    ids,
+    action,
+    failed,
+    run,
+  }: {
+    key: string
+    ids: readonly string[]
+    action: LibraryChangeAction
+    /** The error when the request fails without saying why. */
+    failed: string
+    /** Makes the change, or resolves to null when the review opened. */
+    run: () => Promise<LibraryChange | null>
+  }) {
+    setItem(key, { status: 'queued', action })
+    publish({ waiting: [...snapshot.waiting, { key, action }] })
+    const job = tail.then(async () => {
+      setItem(key, { status: 'running', action })
+      const outcome = await run().then(
+        (change) => ({ change }),
+        (failure: unknown) => ({ message: errorMessage(failure, failed) }),
+      )
+      const at = snapshot.waiting.findIndex((entry) => entry.key === key)
+      publish({ waiting: snapshot.waiting.filter((_, index) => index !== at) })
+      try {
+        if ('message' in outcome) {
+          setItem(key, { status: 'failed', action, message: outcome.message })
+          handlers().onFail?.(outcome.message, ids)
+        } else if (outcome.change) {
+          setItem(key, { status: 'done', action, change: outcome.change })
+          finished.push({ key, change: outcome.change })
+          handlers().onDone?.(outcome.change)
+        }
+      } finally {
+        if (snapshot.waiting.length === 0) draining = drain()
+      }
+    })
+    // A failing handler must not stop the requests queued after it.
+    tail = job.then(
+      () => undefined,
+      () => undefined,
+    )
+    return job
+  }
+
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    getSnapshot: () => snapshot,
+    /** Queued, running, under review or finished: its actions are off. */
+    busy,
+    /** Plans the merge in turn, then makes it or opens its review. Resolves when that is done. */
+    merge(key: string, request: MergeRequest) {
+      if (busy(key)) return Promise.resolve()
+      return enqueue({
+        key,
+        ids: request.ids,
+        action: 'merge',
+        failed: adapter.wording.failed,
+        run: async () => {
+          const plan = await adapter.plan(apiBaseUrl, request)
+          if (!adapter.needsReview(plan))
+            return adapter.merge(apiBaseUrl, { ...request, reviewed: false })
+          setItem(key, { status: 'review', action: 'merge' })
+          publish({ reviews: [...snapshot.reviews, { key, plan }] })
+          return null
+        },
+      })
+    },
+    /** Another change made in turn, such as Keep separate. */
+    add(job: {
+      key: string
+      ids: readonly string[]
+      action: LibraryChangeAction
+      failed: string
+      run: () => Promise<LibraryChange>
+    }) {
+      if (busy(job.key)) return Promise.resolve()
+      return enqueue(job)
+    },
+    /** The review planned again, with other records or another one to keep. */
+    replan(key: string, plan: Plan) {
+      publish({
+        reviews: snapshot.reviews.map((review) =>
+          review.key === key ? { key, plan } : review,
+        ),
+      })
+    },
+    /** Closes the review and queues its merge. */
+    confirm(key: string, follow: boolean) {
+      const review = snapshot.reviews.find((entry) => entry.key === key)
+      if (!review) return Promise.resolve()
+      publish({ reviews: snapshot.reviews.filter((entry) => entry !== review) })
+      const request = { ...adapter.request(review.plan), follow }
+      return enqueue({
+        key,
+        ids: request.ids,
+        action: 'merge',
+        failed: adapter.wording.failed,
+        run: () => adapter.merge(apiBaseUrl, { ...request, reviewed: true }),
+      })
+    },
+    /** Closes the review without merging. */
+    cancel(key: string) {
+      const review = snapshot.reviews.find((entry) => entry.key === key)
+      if (!review) return
+      publish({ reviews: snapshot.reviews.filter((entry) => entry !== review) })
+      setItem(key, null)
+      handlers().onCancel?.(adapter.request(review.plan).ids)
+    },
+    /** Resolves once everything queued so far has finished and refreshed. */
+    settled: () => tail.then(() => draining),
+  }
+}
+export type MergeQueue<Plan> = ReturnType<typeof createMergeQueue<Plan>>
+
+/**
+ * A merge queue for a component, with its review dialog. Render `dialog`;
+ * only one review is open at a time.
+ */
+export function useMergeQueue<Plan>(
+  adapter: MergeAdapter<Plan>,
+  handlers: MergeQueueHandlers,
+) {
+  const { apiBaseUrl } = useConfig()
+  const latest = useRef(handlers)
+  latest.current = handlers
+  const [queue] = useState(() =>
+    createMergeQueue(adapter, apiBaseUrl, () => latest.current),
+  )
+  const snapshot = useSyncExternalStore(
+    queue.subscribe,
+    queue.getSnapshot,
+    queue.getSnapshot,
+  )
+  const [follow, setFollow] = useState(true)
+  const replan = useMutation({
+    retry: false,
+    mutationFn: async ({
+      key,
+      request,
+    }: {
+      key: string
+      request: MergeRequest
+    }) => ({
+      key,
+      plan: await adapter.plan(apiBaseUrl, request),
+    }),
+    onSuccess: ({ key, plan }) => queue.replan(key, plan),
+  })
+  const [review] = snapshot.reviews
+  function close() {
+    setFollow(true)
+    replan.reset()
+  }
+  return {
+    queue,
+    snapshot,
+    status: (key: string) => snapshot.items.get(key),
+    dialog: review ? (
+      <MergeReviewDialog
+        key={review.key}
+        adapter={adapter}
+        plan={review.plan}
+        pending={replan.isPending}
+        error={
+          replan.isError
+            ? errorMessage(replan.error, 'The merge could not be planned.')
+            : null
+        }
+        follow={follow}
+        onFollow={setFollow}
+        onPlan={(request) => replan.mutate({ key: review.key, request })}
+        onMerge={() => {
+          close()
+          void queue.confirm(review.key, follow)
+        }}
+        onClose={() => {
+          close()
+          queue.cancel(review.key)
+        }}
+      />
+    ) : null,
+  }
+}
+
+/**
+ * The report in a bar under a table: what is still being changed, then the
+ * last finished change with Undo, or why the last one failed.
+ */
+export function LibraryChangeReport({
+  progress,
+  change,
+  describe,
+  error,
+  onChanged,
+  onError,
+  onDismiss,
+}: {
+  /** Such as "Merging 3 groups…"; null when nothing is waiting. */
+  progress: string | null
+  change: LibraryChange | null
+  describe: (change: LibraryChange) => string
+  error: string | null
+  onChanged: (change: LibraryChange) => void
+  onError: (message: string) => void
+  onDismiss: () => void
+}) {
+  return (
+    <>
+      {progress && <span role="status">{progress}</span>}
+      {change ? (
+        <LibraryChangeResult
+          change={change}
+          describe={describe}
+          error={error}
+          onChanged={onChanged}
+          onError={onError}
+          onDismiss={onDismiss}
+        />
+      ) : (
+        error !== null && (
+          <>
+            <span role="alert">{error}</span>
+            <span className="ds-actions ds-toolbar-end">
+              <Button icon aria-label="Dismiss" onClick={onDismiss}>
+                <X className="ds-i" aria-hidden="true" />
+              </Button>
+            </span>
+          </>
+        )
+      )}
+    </>
+  )
+}
+
 /**
  * A finished change in a selection bar: one line saying what changed, then
  * Undo or Redo and Dismiss.
@@ -500,9 +840,18 @@ export function LibraryChangeResult({
   )
 }
 
+/** How many selection merges are still to go, in words. */
+export function describeMergeProgress(waiting: number) {
+  if (waiting === 0) return null
+  return waiting === 1
+    ? 'Merging…'
+    : `Merging ${formatItemCount(waiting, { one: 'selection', other: 'selections' })}…`
+}
+
 /**
  * The bar under a table: the selection with Merge, then the result of the
- * last merge with Undo.
+ * last merge with Undo. Merge returns at once: the selection clears and the
+ * merge is made in the background while another selection can be merged.
  */
 export function MergeBar<Plan>({
   selection,
@@ -514,10 +863,30 @@ export function MergeBar<Plan>({
   total?: number
   adapter: MergeAdapter<Plan>
 }) {
-  const merge = useMerge(adapter, {
-    onPlan: (ids) => selection.replace(ids),
-    onMerge: () => selection.clear(),
+  const client = useQueryClient()
+  const [change, setChange] = useState<LibraryChange | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // A merge that failed or was not confirmed comes back as the selection.
+  const restore = (ids: readonly string[]) => {
+    if (selection.count === 0) selection.replace([...ids])
+  }
+  const merges = useMergeQueue(adapter, {
+    onDone: setChange,
+    onFail: (message, ids) => {
+      setError(message)
+      restore(ids)
+    },
+    onCancel: restore,
+    onDrain: async (changes) => {
+      const combined = combineLibraryChanges(changes)
+      if (combined) await adapter.invalidate(client, combined)
+    },
   })
+  const progress = describeMergeProgress(merges.snapshot.waiting.length)
+  const dismiss = () => {
+    setChange(null)
+    setError(null)
+  }
   return (
     <>
       <SecondaryTableSelectionBar
@@ -527,27 +896,31 @@ export function MergeBar<Plan>({
       >
         {selection.count > 0 ? (
           <>
-            {merge.error && !merge.review && (
-              <span role="alert">{merge.error}</span>
-            )}
+            {progress && <span role="status">{progress}</span>}
+            {error && <span role="alert">{error}</span>}
             <span className="ds-actions ds-toolbar-end">
               <Button
                 variant="primary"
-                disabled={merge.pending || selection.count < 2}
+                disabled={selection.count < 2}
                 title={
                   selection.count < 2 ? adapter.wording.selectMore : undefined
                 }
-                onClick={() => merge.merge(selection.ids)}
+                onClick={() => {
+                  setError(null)
+                  void merges.queue.merge(selection.ids.join(' '), {
+                    ids: [...selection.ids],
+                  })
+                  selection.clear()
+                }}
               >
-                {merge.merging ? 'Merging...' : 'Merge'}
+                Merge
               </Button>
               <Button
                 icon
                 aria-label="Clear selection"
-                disabled={merge.pending}
                 onClick={() => {
                   selection.clear()
-                  merge.clearError()
+                  setError(null)
                 }}
               >
                 <X className="ds-i" aria-hidden="true" />
@@ -555,10 +928,21 @@ export function MergeBar<Plan>({
             </span>
           </>
         ) : (
-          merge.result
+          <LibraryChangeReport
+            progress={progress}
+            change={change}
+            describe={adapter.describe}
+            error={error}
+            onChanged={(next) => {
+              setError(null)
+              setChange(next)
+            }}
+            onError={setError}
+            onDismiss={dismiss}
+          />
         )}
       </SecondaryTableSelectionBar>
-      {merge.dialog}
+      {merges.dialog}
     </>
   )
 }

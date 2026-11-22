@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { trackMatchDiagnosticsQuery } from './match-diagnostics'
 import {
-  describeTrackDuplicateGroup,
+  describeTrackDuplicateCautions,
+  describeTrackDuplicateDetails,
   describeTrackDuplicateMerge,
   describeTrackDuplicateNotice,
   formatTrackDuplicateEvidence,
@@ -110,25 +111,43 @@ test('a removed track with an album position or playlist entry is not called a L
   )
 })
 
-test('a group row says what Merge does, then the evidence', () => {
+test('a group row says what speaks against merging, and nothing when nothing does', () => {
+  assert.equal(describeTrackDuplicateCautions({ cautions: [] }), '')
+  assert.equal(
+    describeTrackDuplicateCautions({
+      cautions: [{ code: 'artists', names: ['Fixture', 'Fixture Duo'] }],
+    }),
+    'Against merging: the artists differ: Fixture, Fixture Duo',
+  )
+  assert.equal(
+    describeTrackDuplicateCautions({
+      cautions: [
+        { code: 'version', words: ['Live'] },
+        { code: 'duration', seconds: 42 },
+        { code: 'same-album', albums: ['Low Lanterns'] },
+        { code: 'separate', trackIds: ['a', 'b'] },
+      ],
+    }),
+    'Against merging: “Live” is in some titles only; lengths differ by 0:42; two tracks are different positions on “Low Lanterns”; some of these tracks were kept separate',
+  )
+})
+
+test('the details behind a group row say what Merge does, then each piece of evidence', () => {
   const merge = { keep, versions: 0, removed: 1, removedRecords: 1 }
-  assert.equal(
-    describeTrackDuplicateGroup({
+  assert.deepEqual(
+    describeTrackDuplicateDetails({
       merge,
-      evidence: ['Same title and artist'],
+      evidence: ['Same title and artist', 'Same length'],
     }),
-    'Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it · Same title and artist',
+    [
+      'Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it.',
+      'Same title and artist',
+      'Same length',
+    ],
   )
-  assert.equal(
-    describeTrackDuplicateGroup({ merge, evidence: [] }),
-    'Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it',
-  )
-  assert.equal(
-    describeTrackDuplicateGroup({
-      merge: null,
-      evidence: ['Same artist', 'Same title'],
-    }),
-    'Same artist · Same title',
+  assert.deepEqual(
+    describeTrackDuplicateDetails({ merge: null, evidence: ['Same title'] }),
+    ['Same title'],
   )
 })
 
@@ -173,6 +192,14 @@ test('the notice on an open track names the other tracks, the evidence and what 
       others: [{ id: 'b', title: 'Longwave', by: 'Fixture' }],
     }),
     'Possible duplicate: “Longwave” by Fixture.',
+  )
+  assert.equal(
+    describeTrackDuplicateNotice({
+      ...group('group-1', 0),
+      cautions: [{ code: 'duration', seconds: 42 }],
+      others: [{ id: 'b', title: 'Longwave', by: 'Fixture' }],
+    }),
+    'Possible duplicate: “Longwave” by Fixture. Same title and artist. Against merging: lengths differ by 0:42. Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it.',
   )
 })
 
@@ -235,6 +262,7 @@ test('the loaders read the count, layout and track groups, and Keep separate pos
     new URLSearchParams({
       q: 'harbour',
       duplicates: 'true',
+      duplicateCautions: 'some',
       sortBy: 'scrobbles',
       direction: 'desc',
       creatorId: 'artist-1',
@@ -250,7 +278,7 @@ test('the loaders read the count, layout and track groups, and Keep separate pos
     [
       'http://api/api/v1/tracks/duplicates/count',
       'http://api/api/v1/tracks/duplicates/count?creatorId=artist-1',
-      'http://api/api/v1/tracks/duplicates/layout?sortBy=scrobbles&direction=desc&q=harbour&creatorId=artist-1&duplicates=true',
+      'http://api/api/v1/tracks/duplicates/layout?sortBy=scrobbles&direction=desc&q=harbour&creatorId=artist-1&duplicates=true&duplicateCautions=some',
       'http://api/api/v1/tracks/track%2Fa/duplicates',
       'http://api/api/v1/library-changes/track-separations',
     ],
@@ -260,4 +288,21 @@ test('the loaders read the count, layout and track groups, and Keep separate pos
     requests[4]?.init?.body,
     JSON.stringify({ trackIds: ['track-a', 'track-b'] }),
   )
+})
+
+test('the kind of group is read from the URL only with Possible duplicates on', () => {
+  const read = (params: Record<string, string>) =>
+    trackMatchDiagnosticsQuery(new URLSearchParams(params)).duplicateCautions
+  assert.equal(read({ duplicates: 'true', duplicateCautions: 'none' }), 'none')
+  assert.equal(read({ duplicates: 'true', duplicateCautions: 'some' }), 'some')
+  assert.equal(
+    read({ duplicates: 'true', duplicateCautions: 'all' }),
+    undefined,
+  )
+  assert.equal(
+    read({ duplicates: 'true', duplicateCautions: 'other' }),
+    undefined,
+  )
+  assert.equal(read({ duplicates: 'true' }), undefined)
+  assert.equal(read({ duplicateCautions: 'none' }), undefined)
 })

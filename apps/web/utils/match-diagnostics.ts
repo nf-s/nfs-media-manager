@@ -4,6 +4,7 @@ import {
   AlbumMatchRejectionSchema,
   MatchDiagnosticsPageSchema,
   MatchDiagnosticsQuerySchema,
+  TrackDuplicateCautionsSchema,
   TrackMatchDiagnosticsQuerySchema,
   TrackPlayabilitySchema,
   trackMatchProviderLabels,
@@ -130,6 +131,9 @@ export function trackMatchDiagnosticsQuery(
     TrackMatchDiagnosticsQuerySchema.shape.duplicates.safeParse(
       params.get('duplicates') ?? undefined,
     )
+  const cautions = TrackDuplicateCautionsSchema.safeParse(
+    params.get('duplicateCautions'),
+  )
   const filters = parseTrackFilters(params.get('filters'))
   const explicit = TrackPlayabilitySchema.safeParse(params.get('playability'))
   // Existing Missing Spotify bookmarks are a work queue for recordings with no playable version.
@@ -151,7 +155,15 @@ export function trackMatchDiagnosticsQuery(
           : canonicalBrowseKey(sortBy),
     direction,
     limitResults: limit.success ? limit.data : undefined,
-    ...(duplicates.success && duplicates.data ? { duplicates: true } : {}),
+    // The kind of group is a choice within Possible duplicates.
+    ...(duplicates.success && duplicates.data
+      ? {
+          duplicates: true,
+          ...(cautions.success && cautions.data !== 'all'
+            ? { duplicateCautions: cautions.data }
+            : {}),
+        }
+      : {}),
     ...parseCreatorBrowseScope(params, 'track'),
   }
 }
@@ -180,6 +192,12 @@ function trackMatchDiagnosticsRequest(query: TrackMatchDiagnosticsQuery) {
   if (query.limitResults !== undefined)
     params.set('limitResults', String(query.limitResults))
   if (query.duplicates) params.set('duplicates', 'true')
+  if (
+    query.duplicates &&
+    query.duplicateCautions &&
+    query.duplicateCautions !== 'all'
+  )
+    params.set('duplicateCautions', query.duplicateCautions)
   return params
 }
 

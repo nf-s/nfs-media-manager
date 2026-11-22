@@ -52,6 +52,20 @@ export const trackPlayabilityLabels: Record<TrackPlayability, string> = {
   unavailable: 'No playable version',
 }
 
+/** Which possible duplicate groups: those nothing speaks against merging, or the others. */
+export const TrackDuplicateCautionsSchema = z.enum(['all', 'none', 'some'])
+export type TrackDuplicateCautions = z.infer<
+  typeof TrackDuplicateCautionsSchema
+>
+export const trackDuplicateCautionsLabels: Record<
+  TrackDuplicateCautions,
+  string
+> = {
+  all: 'All groups',
+  none: 'Nothing against merging',
+  some: 'Something against merging',
+}
+
 export const TrackMatchDiagnosticsQuerySchema =
   MatchDiagnosticsQuerySchema.extend({
     /** Coverage lists read library recordings without hydrating provider payloads. */
@@ -66,6 +80,8 @@ export const TrackMatchDiagnosticsQuerySchema =
         z.enum(['true', 'false']).transform((value) => value === 'true'),
       ])
       .optional(),
+    /** With `duplicates`, only the groups of that kind. */
+    duplicateCautions: TrackDuplicateCautionsSchema.optional(),
     creatorId: TrackQuerySchema.shape.creatorId,
     filters: TrackQuerySchema.shape.filters,
     ranges: TrackQuerySchema.shape.ranges,

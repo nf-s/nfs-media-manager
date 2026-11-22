@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Layers } from 'lucide-react'
 import type { BrowseField, BrowseFilter } from '@repo/schemas/browse'
 import {
+  trackDuplicateCautionsLabels,
   trackPlayabilityLabels,
   type TrackMatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
@@ -95,6 +96,7 @@ export default function TrackMatchesToolbar({
     creatorId,
     playability = 'all',
     duplicates = false,
+    duplicateCautions = 'all',
   } = query
   const duplicateCount = useQuery({
     queryKey: trackDuplicateCountKey(creatorId),
@@ -148,7 +150,11 @@ export default function TrackMatchesToolbar({
             <ToolbarToggle
               pressed={duplicates}
               onPressedChange={(pressed) =>
-                setParams({ duplicates: pressed ? 'true' : null })
+                setParams(
+                  pressed
+                    ? { duplicates: 'true' }
+                    : { duplicates: null, duplicateCautions: null },
+                )
               }
               icon={<Layers className="ds-i" data-size="sm" aria-hidden />}
               count={
@@ -159,6 +165,27 @@ export default function TrackMatchesToolbar({
             >
               Possible duplicates
             </ToolbarToggle>
+            {duplicates && (
+              <Select
+                aria-label="Possible duplicate groups"
+                className="browse-order"
+                value={duplicateCautions}
+                onChange={(event) =>
+                  setParams({
+                    duplicateCautions:
+                      event.target.value === 'all' ? null : event.target.value,
+                  })
+                }
+              >
+                {Object.entries(trackDuplicateCautionsLabels).map(
+                  ([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ),
+                )}
+              </Select>
+            )}
             <Select
               aria-label="Match status"
               className="browse-order"

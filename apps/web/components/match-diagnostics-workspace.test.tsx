@@ -27,6 +27,7 @@ import {
 } from '@/utils/track-duplicates'
 import { TrackListItemSchema } from '@repo/schemas/tracks'
 import type { LibraryView } from '@/utils/media-scope'
+import type { RowSelection } from './merge-bar'
 import { ConfigContext } from './providers'
 
 require.extensions['.css'] = (module) => {
@@ -814,7 +815,7 @@ test('the Possible duplicates toggle leads the Tracks Matches toolbar with the g
   assert.match(building, /<\/svg>Possible duplicates<\/button>/)
 })
 
-test('Possible duplicates draws a group row saying what Merge does above the first row of each group', async () => {
+test('Possible duplicates draws a group row above the first row of each group: the details behind an icon, and what speaks against merging', async () => {
   const params = new URLSearchParams({ duplicates: 'true' })
   const page = MatchDiagnosticsPageSchema.parse({
     totalCount: 4,
@@ -845,13 +846,16 @@ test('Possible duplicates draws a group row saying what Merge does above the fir
               removedRecords: 1,
             },
           ),
-          duplicateGroup(
-            'group-2',
-            2,
-            ['track-c', 'track-d'],
-            ['Same title and artist'],
-            null,
-          ),
+          {
+            ...duplicateGroup(
+              'group-2',
+              2,
+              ['track-c', 'track-d'],
+              ['Same title and artist'],
+              null,
+            ),
+            cautions: [{ code: 'version', words: ['Demo'] }],
+          },
         ],
       },
     ),
@@ -874,19 +878,28 @@ test('Possible duplicates draws a group row saying what Merge does above the fir
   )
   // The header, four tracks and two group rows.
   assert.match(html, /aria-rowcount="7"/)
-  const text =
-    'Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it · Same artist · Same title without “Remastered 2011”'
+  const groupRows = [
+    ...html.matchAll(/<tr data-group="" aria-rowindex="\d+">.*?<\/tr>/g),
+  ].map(([row]) => row)
+  assert.equal(groupRows.length, 2)
+  const [clear = '', unsure = ''] = groupRows
+  // Nothing speaks against the first group: its buttons, then the details behind the icon.
   assert.match(
-    html,
-    new RegExp(
-      `<tbody><tr data-group="" aria-rowindex="2"><td colSpan="\\d+"><span class="ds-group-actions"><button class="ds-btn" data-size="xs">Merge</button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate</button><span class="ds-group-evidence" title="${text}">${text}</span></span></td></tr><tr aria-rowindex="3"`,
-    ),
+    clear,
+    /<td colSpan="\d+"><span class="ds-group-actions"><button class="ds-btn"[^>]*>Merge<\/button><button class="ds-btn"[^>]*>Keep separate<\/button><div class="secondary-cell-details"><button[^>]*aria-label="What Merge does"/,
   )
-  // A group whose members cannot all be read shows only its evidence.
   assert.match(
-    html,
-    /Night Drive \(Remastered 2011\)<\/a>.*?<\/tr><tr data-group="" aria-rowindex="5">.*?title="Same title and artist">Same title and artist<\/span>.*?<\/tr><tr aria-rowindex="6"/,
+    clear,
+    /<div>Merge keeps “Night Drive”: 1 Last\.fm record is removed and its plays and names move to it\.<\/div><div>Same artist<\/div><div>Same title without “Remastered 2011”<\/div>/,
   )
+  assert.doesNotMatch(clear, /ds-group-evidence/)
+  // The second says what speaks against it; its members cannot all be read, so the details hold only the evidence.
+  assert.match(
+    unsure,
+    /<span class="ds-group-evidence" title="Against merging: “Demo” is in some titles only">Against merging: “Demo” is in some titles only<\/span><\/span><\/td><\/tr>$/,
+  )
+  assert.match(unsure, /<div>Same title and artist<\/div>/)
+  assert.doesNotMatch(unsure, /Merge keeps/)
   // The bar for the result of Merge or Keep separate waits under the table.
   assert.match(
     html,
@@ -914,4 +927,174 @@ test('Possible duplicates with nothing listed says so, and with a search or filt
   assert.doesNotMatch(searched, /No possible duplicates/)
   const all = await render('track', emptyPage)
   assert.match(all, /No library items\./)
+})
+
+test('Tracks Matches rows have tick boxes, and other libraries do not', async () => {
+  const page = MatchDiagnosticsPageSchema.parse({
+    totalCount: 2,
+    pageCount: 1,
+    providers: [],
+    items: [
+      duplicateRow('track-a', 'Night Drive'),
+      duplicateRow('track-b', 'Longwave'),
+    ],
+  })
+  for (const params of [
+    new URLSearchParams(),
+    new URLSearchParams({ duplicates: 'true' }),
+  ]) {
+    const html = await render('track', page, params)
+    assert.match(
+      html,
+      /<thead><tr><th scope="col" data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select loaded tracks"\/><\/th><th [^>]*style="--ds-sticky-left:36px"/,
+    )
+    assert.match(
+      html,
+      /<tr aria-rowindex="2"[^>]*><td data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select Night Drive"\/><\/td><td [^>]*style="--ds-sticky-left:36px"/,
+    )
+    assert.match(html, /aria-label="Select Longwave"/)
+    // The selection column is the first of the fixed layout.
+    assert.match(html, /<colgroup><col style="width:min\(36px, [^"]*"\/>/)
+  }
+  const albums = await render(
+    'album',
+    MatchDiagnosticsPageSchema.parse({
+      totalCount: 1,
+      pageCount: 1,
+      providers: [],
+      items: [duplicateRow('album-a', 'Night Album')],
+    }),
+  )
+  assert.match(albums, /Night Album/)
+  assert.doesNotMatch(albums, /type="checkbox"|Select loaded|Select Night/)
+})
+
+test('Possible duplicates group rows and the empty state span the selection column too', async () => {
+  const params = new URLSearchParams({ duplicates: 'true' })
+  const page = MatchDiagnosticsPageSchema.parse({
+    totalCount: 2,
+    pageCount: 1,
+    providers: [],
+    items: [
+      duplicateRow('track-a', 'Night Drive'),
+      duplicateRow('track-b', 'Night Drive (Remastered 2011)'),
+    ],
+  })
+  const html = await render('track', page, params, (client) =>
+    client.setQueryData(
+      trackDuplicateLayoutKey(trackMatchDiagnosticsQuery(params)),
+      {
+        totalRows: 2,
+        groups: [
+          duplicateGroup(
+            'group-1',
+            0,
+            ['track-a', 'track-b'],
+            ['Same artist'],
+            null,
+          ),
+        ],
+      },
+    ),
+  )
+  const header = /<thead><tr>(.*?)<\/tr><\/thead>/.exec(html)?.[1] ?? ''
+  const headers = [...header.matchAll(/<th[ >]/g)].length
+  const cells = [
+    ...(
+      /<tr aria-rowindex="3"[^>]*>(.*?)<\/tr>/.exec(html)?.[1] ?? ''
+    ).matchAll(/<td[ >]/g),
+  ].length
+  assert.ok(headers > 1)
+  assert.equal(cells, headers)
+  assert.match(
+    html,
+    new RegExp(`<tr data-group="" aria-rowindex="2"><td colSpan="${headers}">`),
+  )
+  assert.match(html, /aria-rowcount="4"/)
+  const none = await render('track', emptyPage, params)
+  const emptyHeaders = [
+    ...(/<thead><tr>(.*?)<\/tr><\/thead>/.exec(none)?.[1] ?? '').matchAll(
+      /<th[ >]/g,
+    ),
+  ].length
+  assert.match(
+    none,
+    new RegExp(
+      `<td colSpan="${emptyHeaders}" class="table-state"><div role="status">No possible duplicates`,
+    ),
+  )
+})
+
+function selectionOf(ids: string[]): RowSelection {
+  return {
+    ids,
+    count: ids.length,
+    has: (id) => ids.includes(id),
+    all: false,
+    some: ids.length > 0,
+    toggle: () => undefined,
+    setAll: () => undefined,
+    replace: () => undefined,
+    clear: () => undefined,
+  }
+}
+
+test('the Tracks Matches bar offers Merge for ticked rows and otherwise reports the last group action', async (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Network forbidden in UI tests')
+  })
+  const { TrackMatchesBar } = await import('./match-diagnostics-workspace')
+  const client = new QueryClient()
+  const error = 'The tracks could not be kept separate.'
+  const bar = (
+    ids: string[],
+    reported: string | null,
+    progress: string | null = null,
+  ) =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'http://example.test',
+            apiBaseUrl: 'http://api.example.test',
+          }}
+        >
+          <TrackMatchesBar
+            actions={{
+              change: null,
+              error: reported,
+              progress,
+              setChange: () => undefined,
+              setError: () => undefined,
+              dismiss: () => undefined,
+            }}
+            selection={selectionOf(ids)}
+            total={250}
+          />
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+  try {
+    assert.equal(
+      bar([], null),
+      '<div class="ds-selectbar sec-selectbar"></div>',
+    )
+    const reporting = bar([], error)
+    assert.match(reporting, new RegExp(`<span role="alert">${error}</span>`))
+    assert.match(reporting, /aria-label="Dismiss"/)
+    assert.doesNotMatch(reporting, />Merge</)
+    // Groups still being merged are reported before any has finished.
+    assert.match(
+      bar([], null, 'Merging 2 groups…'),
+      /<span role="status">Merging 2 groups…<\/span>/,
+    )
+    // A selection takes the bar over from the result.
+    const selecting = bar(['track-a', 'track-b'], error)
+    assert.match(selecting, /<button[^>]*>Merge<\/button>/)
+    assert.match(selecting, /aria-label="Clear selection"/)
+    assert.doesNotMatch(selecting, new RegExp(error))
+    assert.equal(network.mock.callCount(), 0)
+  } finally {
+    client.clear()
+  }
 })

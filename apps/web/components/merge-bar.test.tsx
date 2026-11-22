@@ -9,7 +9,15 @@ import {
   type LibraryChange,
   type TrackMergePlan,
 } from '@repo/schemas/library-changes'
-import { useMerge, type MergeAdapter, type RowSelection } from './merge-bar'
+import {
+  combineLibraryChanges,
+  createMergeQueue,
+  describeMergeProgress,
+  LibraryChangeReport,
+  useMerge,
+  type MergeAdapter,
+  type RowSelection,
+} from './merge-bar'
 import { ConfigContext } from './providers'
 import { TrackMergeBar } from './track-merge-bar'
 import { trackMergeAdapter } from './track-merge-review'
@@ -254,4 +262,190 @@ test('merge(ids) opens the review without a selection when the plan has a cautio
   assert.deepEqual(outcome, { status: 'review', plan: cautionPlan })
   assert.deepEqual(finished, [])
   assert.deepEqual(invalidated, [])
+})
+
+/** A queue over the track adapter whose requests each take a moment. */
+function queueWith(
+  t: TestContext,
+  respond: (url: string, body: unknown) => unknown,
+) {
+  const requests: Array<{ url: string; body: unknown }> = []
+  const most = { running: 0, at: 0 }
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input).replace(apiBaseUrl, '')
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null
+      requests.push({ url, body })
+      most.running += 1
+      most.at = Math.max(most.at, most.running)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      most.running -= 1
+      const data = respond(url, body)
+      return data === null
+        ? Response.json(
+            { statusCode: 500, message: 'Fixture failure' },
+            { status: 500 },
+          )
+        : Response.json({ statusCode: 200, message: 'OK', data })
+    },
+  )
+  const drained: LibraryChange[][] = []
+  const done: LibraryChange[] = []
+  const failed: Array<{ message: string; ids: readonly string[] }> = []
+  const cancelled: Array<readonly string[]> = []
+  const queue = createMergeQueue(trackMergeAdapter, apiBaseUrl, () => ({
+    onDone: (change) => done.push(change),
+    onFail: (message, ids) => failed.push({ message, ids }),
+    onCancel: (ids) => cancelled.push(ids),
+    onDrain: async (changes) => {
+      drained.push([...changes])
+    },
+  }))
+  return { queue, requests, most, drained, done, failed, cancelled }
+}
+
+const otherMerged = LibraryChangeSchema.parse({
+  ...merged,
+  id: 'change-2',
+  target: { ...merged.target, id: 'track-3' },
+  sources: [{ ...merged.sources[0], id: 'track-4' }],
+})
+
+test('queued merges go out one at a time in the order pressed, a failure does not stop the next, and one refresh follows when the queue is empty', async (t) => {
+  const { queue, requests, most, drained, done, failed } = queueWith(
+    t,
+    (url, body) => {
+      const ids =
+        body && typeof body === 'object' && 'trackIds' in body
+          ? body.trackIds
+          : null
+      if (url.endsWith('/plan'))
+        return Array.isArray(ids) && ids.includes('track-5') ? null : cleanPlan
+      return Array.isArray(ids) && ids.includes('track-3')
+        ? otherMerged
+        : merged
+    },
+  )
+  const first = queue.merge('a', { ids: ['track-1', 'track-2'] })
+  const second = queue.merge('b', { ids: ['track-5', 'track-6'] })
+  const third = queue.merge('c', { ids: ['track-3', 'track-4'] })
+  // Pressing returns at once; nothing has been sent yet and each is queued.
+  assert.equal(requests.length, 0)
+  assert.deepEqual(
+    queue.getSnapshot().waiting.map((entry) => entry.key),
+    ['a', 'b', 'c'],
+  )
+  assert.equal(queue.getSnapshot().items.get('b')?.status, 'queued')
+  // A group already queued is not queued twice.
+  assert.equal(queue.busy('a'), true)
+  await queue.merge('a', { ids: ['track-1', 'track-2'] })
+  await first
+  assert.equal(queue.getSnapshot().items.get('a')?.status, 'done')
+  assert.equal(queue.getSnapshot().items.get('c')?.status, 'queued')
+  assert.deepEqual(drained, [])
+  await Promise.all([second, third])
+  await queue.settled()
+  assert.equal(most.at, 1)
+  assert.deepEqual(
+    requests.map(({ url }) => url),
+    [
+      '/api/v1/library-changes/track-merges/plan',
+      '/api/v1/library-changes/track-merges',
+      '/api/v1/library-changes/track-merges/plan',
+      '/api/v1/library-changes/track-merges/plan',
+      '/api/v1/library-changes/track-merges',
+    ],
+  )
+  assert.deepEqual(done, [merged, otherMerged])
+  assert.deepEqual(failed, [
+    {
+      message: 'Fixture failure',
+      ids: ['track-5', 'track-6'],
+    },
+  ])
+  // One refresh for both merges; the finished ones then leave the queue.
+  assert.deepEqual(drained, [[merged, otherMerged]])
+  assert.deepEqual([...queue.getSnapshot().items.keys()], ['b'])
+  assert.deepEqual(queue.getSnapshot().items.get('b'), {
+    status: 'failed',
+    action: 'merge',
+    message: 'Fixture failure',
+  })
+  assert.equal(queue.busy('b'), false)
+})
+
+test('Confirm closes the review at once and queues its merge; Cancel leaves the records untouched', async (t) => {
+  const { queue, requests, drained, cancelled } = queueWith(t, (url) =>
+    url.endsWith('/plan') ? cautionPlan : merged,
+  )
+  await queue.merge('a', { ids: ['track-1', 'track-2'] })
+  await queue.merge('b', { ids: ['track-1', 'track-2'] })
+  assert.deepEqual(
+    queue.getSnapshot().reviews.map((review) => review.key),
+    ['a', 'b'],
+  )
+  assert.equal(queue.getSnapshot().items.get('a')?.status, 'review')
+  assert.equal(queue.busy('a'), true)
+  const sent = requests.length
+  const confirmed = queue.confirm('a', false)
+  // The review is closed before the merge is sent.
+  assert.equal(requests.length, sent)
+  assert.deepEqual(
+    queue.getSnapshot().reviews.map((review) => review.key),
+    ['b'],
+  )
+  assert.equal(queue.getSnapshot().items.get('a')?.status, 'queued')
+  queue.cancel('b')
+  assert.deepEqual(queue.getSnapshot().reviews, [])
+  assert.equal(queue.getSnapshot().items.get('b'), undefined)
+  assert.deepEqual(cancelled, [['track-1', 'track-2']])
+  await confirmed
+  await queue.settled()
+  assert.deepEqual(requests.at(-1), {
+    url: '/api/v1/library-changes/track-merges',
+    body: {
+      trackIds: ['track-1', 'track-2'],
+      targetId: 'track-1',
+      reviewed: true,
+      follow: false,
+    },
+  })
+  assert.deepEqual(drained, [[merged]])
+  assert.equal(queue.getSnapshot().items.size, 0)
+})
+
+test('one change stands for several so one refresh covers them', () => {
+  assert.equal(combineLibraryChanges([]), null)
+  const combined = combineLibraryChanges([merged, otherMerged])
+  // The earlier change's kept record is among the sources too.
+  assert.deepEqual(
+    combined?.sources.map((source) => source.id),
+    ['track-2', 'track-1', 'track-4'],
+  )
+  assert.equal(combined?.target?.id, 'track-3')
+})
+
+test('the Merge bar says how many selections are still to go', () => {
+  assert.equal(describeMergeProgress(0), null)
+  assert.equal(describeMergeProgress(1), 'Merging…')
+  assert.equal(describeMergeProgress(3), 'Merging 3 selections…')
+  const html = renderToStaticMarkup(
+    <Providers client={new QueryClient()}>
+      <LibraryChangeReport
+        progress="Merging 3 selections…"
+        change={merged}
+        describe={trackMergeAdapter.describe}
+        error={null}
+        onChanged={() => undefined}
+        onError={() => undefined}
+        onDismiss={() => undefined}
+      />
+    </Providers>,
+  )
+  assert.match(
+    html,
+    /^<span role="status">Merging 3 selections…<\/span><span class="ds-selectbar-result" role="status">.*<button class="ds-btn">Undo<\/button>/,
+  )
 })
