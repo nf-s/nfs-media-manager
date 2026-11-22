@@ -44,7 +44,9 @@ import {
   sonovaultLinkUrl,
   sonovaultSettings,
   type SonovaultBulkResolveResponse,
+  SonovaultStoredRecordSchema,
   type SonovaultLink,
+  type SonovaultReleaseTrack,
   type SonovaultResolveResult,
   type SonovaultTrack,
 } from '@/lib/sonovault-api'
@@ -336,7 +338,8 @@ export const sonovaultTrackNameInput = (item: {
   title: string
 }) => JSON.stringify({ artist: item.artist, title: item.title })
 
-const sameInput = (
+/** Whether a bulk response line answers what was sent. */
+export const sameSonovaultInput = (
   inputType: SonovaultLookupInputType,
   sent: string,
   echoed: SonovaultResolveResult['input'],
@@ -362,16 +365,16 @@ export type SonovaultRecordsWritten = {
 }
 type Written = SonovaultRecordsWritten
 
-/** A record's fields a library track is given: a track or a release's track. */
-export type SonovaultTrackRecord = Omit<SonovaultTrack, 'releases'>
-
 /** What one response said about one library track. */
 export type SonovaultRecordEntry = {
   trackId: string
   /** What the track was reached by: its ID, ISRC, artist and title, or release. */
   input: string
   /** Null for a line Sonovault skipped for lack of credits. */
-  record: { track: SonovaultTrackRecord | null; links: SonovaultLink[] } | null
+  record: {
+    track: SonovaultTrack | SonovaultReleaseTrack | null
+    links: SonovaultLink[]
+  } | null
   /** The owner or the stage 4 rule accepted the record as the library recording. */
   accepted?: boolean
   /**
@@ -452,6 +455,7 @@ export async function writeSonovaultRecords(
         sonovaultTrackId: null,
         verified: null,
         primaryIsrc: null,
+        record: null,
         scrapeJobId: input.jobId,
         responseId: response.id,
         lookedUpAt: response.fetchedAt,
@@ -550,6 +554,12 @@ export async function writeSonovaultRecords(
       sonovaultTrackId: String(record.id),
       verified,
       primaryIsrc: fills ? recordIsrc : null,
+      // The track's own record, so it is never requested again (SONO-05).
+      record: SonovaultStoredRecordSchema.parse(
+        input.inputType === 'release'
+          ? { kind: 'release', releaseId: Number(sent), track: record }
+          : { kind: 'resolve', track: record, links: entry.record.links },
+      ),
       scrapeJobId: input.jobId,
       responseId: response.id,
       lookedUpAt: response.fetchedAt,
@@ -603,6 +613,7 @@ export async function writeSonovaultRecords(
         primaryIsrc: sql`excluded.primary_isrc`,
         scrapeJobId: sql`excluded.scrape_job_id`,
         responseId: sql`excluded.response_id`,
+        record: sql`excluded.record`,
         lookedUpAt: sql`excluded.looked_up_at`,
         updatedAt: new Date(),
       },
@@ -629,7 +640,7 @@ export async function writeSonovaultLookups(
 ): Promise<Written> {
   input.sent.forEach(({ input: sent }, index) => {
     const result = input.results[index]
-    if (!result || !sameInput(input.inputType, sent, result.input))
+    if (!result || !sameSonovaultInput(input.inputType, sent, result.input))
       throw new Error('Sonovault answered the lines in a different order.')
   })
   return writeSonovaultRecords(tx, {

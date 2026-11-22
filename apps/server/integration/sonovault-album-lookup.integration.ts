@@ -61,6 +61,7 @@ import {
   listSonovaultAlbumReview,
   queueSonovaultAlbumLookups,
 } from '@/services/sonovault-album-lookup'
+import { backfillSonovaultTrackRecords } from '@/services/sonovault-track-records'
 import {
   getSonovaultSummary,
   queueSonovaultTrackLookups,
@@ -552,6 +553,60 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
     // A confirmed album is not looked up again.
     request.mockClear()
     expect(await lookUpAlbum()).toMatchObject({ queued: 0, skipped: 1 })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it("keeps each track's own record on its lookup row, past its job", async () => {
+    await lookUpAlbum()
+    const own = await trackLookup(1)
+    expect(own?.record).toMatchObject({
+      kind: 'resolve',
+      track: { id: recordId(1), releases: [{ id: 8101 }, { id: 8102 }] },
+      links: expect.arrayContaining([
+        expect.objectContaining({
+          source: 'spotify',
+          external_id: spotifyId(1),
+        }),
+      ]),
+    })
+    expect((await trackLookup(3))?.record).toMatchObject({
+      kind: 'release',
+      releaseId: 8102,
+      track: { id: recordId(3), track_number: 3 },
+    })
+    const before = (await Promise.all(positions.map(trackLookup))).map(
+      (row) => row?.record,
+    )
+
+    // Rows stored before records were kept there are filled from responses.
+    await databaseClient
+      .update(schema.sonovaultTrackLookup)
+      .set({ record: null })
+    expect(
+      await backfillSonovaultTrackRecords(databaseClient, { apply: false }),
+    ).toEqual({
+      apply: false,
+      rows: 4,
+      filled: 4,
+      unreadable: 0,
+      noResponse: 0,
+    })
+    expect((await trackLookup(1))?.record).toBeNull()
+    expect(
+      await backfillSonovaultTrackRecords(databaseClient, { apply: true }),
+    ).toMatchObject({ filled: 4, unreadable: 0 })
+    expect(
+      (await Promise.all(positions.map(trackLookup))).map((row) => row?.record),
+    ).toEqual(before)
+
+    // Deleting the jobs and their responses leaves every record in place,
+    // and a track with a record is not sent to Sonovault again.
+    await databaseClient.delete(schema.scrapeJob)
+    expect(
+      (await Promise.all(positions.map(trackLookup))).map((row) => row?.record),
+    ).toEqual(before)
+    request.mockClear()
+    await lookUpTracks()
     expect(request).not.toHaveBeenCalled()
   })
 

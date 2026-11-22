@@ -45,6 +45,7 @@ import {
 import {
   getSonovaultRelease,
   SonovaultBulkResolveResponseSchema,
+  SonovaultStoredRecordSchema,
   sonovaultGatedPlugin,
   sonovaultSettings,
   type SonovaultRelease,
@@ -56,6 +57,7 @@ import {
   providerResponse,
   scrapeJob,
   sonovaultAlbumLookup,
+  sonovaultTrackLookup,
   track,
 } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
@@ -268,19 +270,26 @@ async function storedBulk(
   return parsed
 }
 
-/** The record a track's own lookup stored, with the releases it is on. */
+/**
+ * The record a track's own lookup stored, with the releases it is on: from
+ * its lookup row, or, for a row stored before records were kept there, from
+ * the response it names.
+ */
 async function storedRecord(
   database: Reader,
   cache: Map<string, StoredBulk>,
   target: SonovaultTarget,
+  own: unknown,
 ): Promise<SonovaultTrack | null> {
   const lookup = target.lookup
   if (
-    !lookup?.responseId ||
-    lookup.status !== 'matched' ||
+    lookup?.status !== 'matched' ||
     (lookup.inputType !== 'spotify_id' && lookup.inputType !== 'isrc')
   )
     return null
+  const kept = SonovaultStoredRecordSchema.safeParse(own)
+  if (kept.success) return kept.data.kind === 'resolve' ? kept.data.track : null
+  if (!lookup.responseId) return null
   const payload = await storedBulk(database, cache, lookup.responseId)
   const sent = lookup.input
   const line = payload?.results.find(({ input }) =>
@@ -327,11 +336,34 @@ async function releaseCandidates(
   const ordered = album.tracks.flatMap(
     ({ trackMediaItemId }) => byId.get(trackMediaItemId) ?? [],
   )
+  const kept = new Map(
+    ordered.length
+      ? (
+          await database
+            .select({
+              id: sonovaultTrackLookup.mediaItemId,
+              record: sonovaultTrackLookup.record,
+            })
+            .from(sonovaultTrackLookup)
+            .where(
+              inArray(
+                sonovaultTrackLookup.mediaItemId,
+                ordered.map(({ id }) => id),
+              ),
+            )
+        ).map((row) => [row.id, row.record])
+      : [],
+  )
   const cache = new Map<string, StoredBulk>()
   const counts = new Map<number, number>()
   let first: string | null = null
   for (const target of ordered) {
-    const record = await storedRecord(database, cache, target)
+    const record = await storedRecord(
+      database,
+      cache,
+      target,
+      kept.get(target.id) ?? null,
+    )
     if (!record) continue
     first ??= target.id
     for (const id of new Set(record.releases.map((release) => release.id)))

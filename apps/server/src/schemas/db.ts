@@ -1157,6 +1157,12 @@ export const sonovaultTrackLookup = pgTable(
     responseId: text('response_id').references(() => providerResponse.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The track's own record as Sonovault returned it (`SonovaultStoredRecord`),
+     * kept here so it outlives its job and response and is never requested
+     * again before a refresh. Null for a miss.
+     */
+    record: jsonb('record').$type<JsonValue>(),
     lookedUpAt: timestamp('looked_up_at', {
       mode: 'date',
       withTimezone: false,

@@ -141,6 +141,27 @@ export const SonovaultReleaseTrackSchema = z.object({
   track_number: z.number().int().nullable(),
 })
 
+export type SonovaultReleaseTrack = z.infer<typeof SonovaultReleaseTrackSchema>
+
+/**
+ * A library track's own Sonovault record as Sonovault returned it, kept on
+ * its lookup row (SONO-05): its result line from a bulk lookup, or its entry
+ * on an album's confirmed release.
+ */
+export const SonovaultStoredRecordSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('resolve'),
+    track: SonovaultTrackSchema,
+    links: z.array(SonovaultLinkSchema).max(50),
+  }),
+  z.object({
+    kind: z.literal('release'),
+    releaseId: z.number().int().positive(),
+    track: SonovaultReleaseTrackSchema,
+  }),
+])
+export type SonovaultStoredRecord = z.infer<typeof SonovaultStoredRecordSchema>
+
 /** One provider's listing of a release (OpenAPI `ReleaseEdition`). */
 export const SonovaultReleaseEditionSchema = z.object({
   id: z.number().int(),

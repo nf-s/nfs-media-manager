@@ -45,6 +45,7 @@
     "apply:sonovault-track-facts": "tsx scripts/apply-sonovault-track-facts.ts",
     "queue:sonovault-track-names": "tsx scripts/queue-sonovault-track-names.ts",
     "queue:sonovault-albums": "tsx scripts/queue-sonovault-albums.ts",
+    "backfill:sonovault-track-records": "tsx scripts/backfill-sonovault-track-records.ts",
     "review:spotify-tracks": "tsx scripts/local-spotify-review/export.ts"
   },
   "devDependencies": {

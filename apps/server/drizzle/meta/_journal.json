@@ -470,6 +470,13 @@
       "when": 1795335919694,
       "tag": "0066_sonovault_album_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1795345814463,
+      "tag": "0067_sonovault_track_record",
+      "breakpoints": true
     }
   ]
 }

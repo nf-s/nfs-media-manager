@@ -1,0 +1,1 @@
+ALTER TABLE "sonovault_track_lookup" ADD COLUMN "record" jsonb;
