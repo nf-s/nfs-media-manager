@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { expect, type Page } from '@playwright/test'
-import { defaultPreviewPorts } from '../../server/scripts/preview/preview-ports'
+import { defaultPreviewPorts } from './preview-ports'
 
 // The preview command's default ports for this checkout, or the ones given to both.
 const defaults = defaultPreviewPorts(resolve(__dirname, '../../..'))

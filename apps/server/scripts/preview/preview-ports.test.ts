@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { defaultPreviewPorts as webDefaultPreviewPorts } from '../../../web/e2e/preview-ports'
 import { defaultPreviewPorts } from './preview-ports'
 
 describe('defaultPreviewPorts', () => {
@@ -18,5 +19,9 @@ describe('defaultPreviewPorts', () => {
       ),
     )
     expect(webPorts.size).toBeGreaterThan(10)
+  })
+  it('matches the copy the browser tests use', () => {
+    for (const path of ['/work/checkout', '/work/worktree-1', '/other/place'])
+      expect(webDefaultPreviewPorts(path)).toEqual(defaultPreviewPorts(path))
   })
 })

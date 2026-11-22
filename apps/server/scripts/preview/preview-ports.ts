@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
-// Node built-ins only: the web app's browser tests import this file too.
+// apps/web/e2e/preview-ports.ts is a copy for the browser tests; keep them equal.
 
 /**
  * The preview's default ports for one checkout. Each checkout or worktree
