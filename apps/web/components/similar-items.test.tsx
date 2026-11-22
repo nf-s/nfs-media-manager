@@ -81,6 +81,7 @@ const similar = (values: Partial<TidalSimilar> = {}) =>
     job: job('succeeded'),
     lookupJob: null,
     readAt: createdAt,
+    source: null,
     items,
     ...values,
   })
@@ -140,6 +141,27 @@ test('each suggestion says where it plays and links where it opens', () => {
   assert.match(
     html,
     /Not on Spotify · Example artist · 2023<\/span><\/div><span><\/span>/,
+  )
+})
+
+test('the counts say which TIDAL ID the list was read with', () => {
+  const sonovault = body({
+    kind: 'track',
+    source: { kind: 'sonovault', tidalId: '200001', jobId: 'example-lookup' },
+  })
+  assert.match(sonovault, /on Spotify · <a [^>]*>TIDAL ID from Sonovault<\/a>/)
+  assert.match(sonovault, /href="[^"]*example-lookup[^"]*"/)
+  const match = body({
+    source: { kind: 'tidal', tidalId: '200002', jobId: null },
+  })
+  assert.match(match, /on Spotify · TIDAL match/)
+  assert.doesNotMatch(body(), /TIDAL ID from|TIDAL match/)
+  assert.match(
+    body({
+      items: [],
+      source: { kind: 'sonovault', tidalId: '200001', jobId: null },
+    }),
+    /Read 2026-01-01 · TIDAL ID from Sonovault/,
   )
 })
 

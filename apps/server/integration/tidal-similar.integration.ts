@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -15,6 +15,7 @@ import {
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   TIDAL_SIMILAR_TASK,
+  TIDAL_TRACK_MATCH_TASK,
 } from '@repo/schemas/tidal'
 import { env } from '@/env'
 import { clearTidalTokenCache } from '@/lib/tidal-api'
@@ -219,6 +220,23 @@ function mockProviders() {
       return Response.json(similarAlbums)
     if (url.pathname === '/v2/tracks/800002/relationships/similarTracks')
       return Response.json(similarTracks)
+    // A TIDAL ID that no longer exists.
+    if (url.pathname === '/v2/tracks/899999/relationships/similarTracks')
+      return Response.json(
+        { errors: [{ status: '404', code: 'NOT_FOUND' }] },
+        { status: 404 },
+      )
+    // A track match by ISRC: TIDAL has the Sonovault track's recording as
+    // 800002 and nothing for isrc(61).
+    if (url.pathname === '/v2/tracks' && url.searchParams.has('filter[isrc]'))
+      return Response.json({
+        data:
+          url.searchParams.get('filter[isrc]') === isrc(60)
+            ? [{ ...tidalTrack('800002', 'Signal Fade', isrc(60)) }]
+            : [],
+        included: [],
+        links: { self: '/tracks' },
+      })
     if (url.href.startsWith('https://api.spotify.com/v1/search')) {
       const query = url.searchParams.get('q') ?? ''
       const [field, code = ''] = query.split(':')
@@ -243,6 +261,29 @@ const reference = (
   externalId: string,
   metadata: Record<string, string> = {},
 ) => ({ id, mediaItemId, provider, referenceType, externalId, metadata })
+
+/** A Sonovault record's TIDAL link, as the Sonovault lookup stores it. */
+const sonovaultTidal = (
+  id: string,
+  mediaItemId: string,
+  tidalId: string,
+  verified: boolean,
+  responseId = 'fixture-sonovault-response',
+) => ({
+  id,
+  mediaItemId,
+  provider: 'sonovault',
+  referenceType: 'tidal-track',
+  externalId: tidalId,
+  metadata: {
+    url: `https://tidal.com/browse/track/${tidalId}`,
+    verified,
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+    responseId,
+    jobId: 'fixture-sonovault-job',
+    inputType: 'spotify_id',
+  },
+})
 
 let created = false
 beforeAll(async () => {
@@ -282,6 +323,7 @@ beforeEach(async () => {
       ['track-library', 'Glass Arcade'],
       ['track-spotify-library', 'Afterhours Telex (Album)'],
       ['track-unmatched', 'Wet Pavement'],
+      ['track-sonovault', 'Signal Fade (Single)'],
     ].map(([id, title]) => ({
       id,
       slug: id,
@@ -305,6 +347,7 @@ beforeEach(async () => {
       { mediaItemId: 'track-library', spotifyTrackId: spotifyId(11) },
       { mediaItemId: 'track-spotify-library', spotifyTrackId: spotifyId(22) },
       { mediaItemId: 'track-unmatched' },
+      { mediaItemId: 'track-sonovault', isrc: isrc(60) },
     ])
   await databaseClient.insert(schema.providerReference).values([
     reference('r1', albumId, 'tidal', 'album', '800001'),
@@ -341,6 +384,28 @@ async function runQueued() {
   }
   throw new Error('Queued jobs did not finish')
 }
+
+const tidalPaths = () =>
+  request.mock.calls.flatMap(([input]) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    return url.hostname === 'openapi.tidal.com'
+      ? [
+          `${url.pathname}${url.searchParams.has('filter[isrc]') ? `?isrc=${url.searchParams.get('filter[isrc]')}` : ''}`,
+        ]
+      : []
+  })
+
+const similarJobs = (task: string, itemKey: string, id: string) =>
+  databaseClient
+    .select({
+      status: schema.scrapeJob.status,
+      options: schema.scrapeJob.options,
+    })
+    .from(schema.scrapeJob)
+    .where(
+      sql`${schema.scrapeJob.options}->>'task' = ${task} and ${schema.scrapeJob.options}->>${itemKey} = ${id}`,
+    )
+    .orderBy(schema.scrapeJob.createdAt)
 
 const searches = () =>
   request.mock.calls.flatMap(([input]) => {
@@ -595,4 +660,199 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       getTidalSimilar({ kind: 'albums', id: trackId }),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })
   })
+})
+
+describe('the TIDAL ID of a similar-tracks read (SONO-27)', () => {
+  it('reads with the TIDAL match and says so', async () => {
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: trackId },
+      userId,
+    )
+    expect(result.source).toEqual({
+      kind: 'tidal',
+      tidalId: '800002',
+      jobId: null,
+    })
+    expect(tidalPaths()).toEqual([
+      '/v2/tracks/800002/relationships/similarTracks',
+    ])
+  })
+
+  it('reads a track with a verified Sonovault TIDAL ID without matching it first', async () => {
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(sonovaultTidal('s1', 'track-sonovault', '800002', true))
+    const before = await getTidalSimilar({
+      kind: 'tracks',
+      id: 'track-sonovault',
+    })
+    // The tab reads it as it does a matched track.
+    expect(before).toMatchObject({ matched: true, job: null, source: null })
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-sonovault' },
+      userId,
+    )
+    expect(tidalPaths()).toEqual([
+      '/v2/tracks/800002/relationships/similarTracks',
+    ])
+    expect(
+      await similarJobs(TIDAL_TRACK_MATCH_TASK, 'trackId', 'track-sonovault'),
+    ).toEqual([])
+    expect(result).toMatchObject({
+      matched: true,
+      matchJob: null,
+      job: { status: 'succeeded' },
+      source: {
+        kind: 'sonovault',
+        tidalId: '800002',
+        jobId: 'fixture-sonovault-job',
+      },
+    })
+    expect(result.items).toHaveLength(4)
+    if (!result.job) throw new Error('Missing job')
+    const responses = await readProviderResponseAttempt({
+      jobId: result.job.jobId,
+      attempt: 1,
+    })
+    expect(responses.map(({ capture }) => capture.request.url)).toEqual([
+      'https://openapi.tidal.com/v2/tracks/800002/relationships/similarTracks',
+    ])
+    const [log] = await databaseClient
+      .select({ message: schema.scrapeJobLog.message })
+      .from(schema.scrapeJobLog)
+      .where(eq(schema.scrapeJobLog.jobId, result.job.jobId))
+      .orderBy(schema.scrapeJobLog.createdAt)
+      .then((rows) => rows.slice(-1))
+    expect(log?.message).toMatch(/with the TIDAL ID from Sonovault/)
+  })
+
+  it('matches first when the Sonovault record is not verified', async () => {
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(sonovaultTidal('s1', 'track-sonovault', '800002', false))
+    const before = await getTidalSimilar({
+      kind: 'tracks',
+      id: 'track-sonovault',
+    })
+    expect(before.matched).toBe(false)
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-sonovault' },
+      userId,
+    )
+    expect(tidalPaths()).toEqual([`/v2/tracks?isrc=${isrc(60)}`])
+    expect(result).toMatchObject({
+      matched: true,
+      matchJob: { status: 'succeeded' },
+      job: null,
+    })
+  })
+
+  it("prefers the owner's TIDAL choice to Sonovault's", async () => {
+    await databaseClient.insert(schema.providerReference).values([
+      reference('r6', 'track-sonovault', 'tidal', 'track', '800002', {
+        source: 'tidal-track-match',
+        matchReason: 'manual',
+        jobId: 'fixture-review-job',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      sonovaultTidal('s1', 'track-sonovault', '899999', true),
+    ])
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-sonovault' },
+      userId,
+    )
+    expect(tidalPaths()).toEqual([
+      '/v2/tracks/800002/relationships/similarTracks',
+    ])
+    expect(result.source).toEqual({
+      kind: 'tidal',
+      tidalId: '800002',
+      jobId: 'fixture-review-job',
+    })
+  })
+
+  it('matches and reads once when TIDAL does not know the Sonovault ID, and keeps off that ID until the record changes', async () => {
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(sonovaultTidal('s1', 'track-sonovault', '899999', true))
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-sonovault' },
+      userId,
+    )
+    expect(tidalPaths()).toEqual([
+      '/v2/tracks/899999/relationships/similarTracks',
+      `/v2/tracks?isrc=${isrc(60)}`,
+      '/v2/tracks/800002/relationships/similarTracks',
+    ])
+    expect(result).toMatchObject({
+      matched: true,
+      matchJob: { status: 'succeeded' },
+      job: { status: 'succeeded' },
+      source: { kind: 'tidal', tidalId: '800002' },
+    })
+    expect(result.items).toHaveLength(4)
+    const reads = await similarJobs(
+      TIDAL_SIMILAR_TASK,
+      'itemId',
+      'track-sonovault',
+    )
+    expect(
+      reads.map(({ status, options }) => [
+        status,
+        options.tidalId,
+        options.tidalIdDead ?? null,
+      ]),
+    ).toEqual([
+      ['succeeded', '899999', true],
+      ['succeeded', '800002', null],
+    ])
+    // A missing ID is not a TIDAL failure.
+    const [gate] = await databaseClient
+      .select({ failureCount: schema.providerRequestState.failureCount })
+      .from(schema.providerRequestState)
+      .where(eq(schema.providerRequestState.provider, 'tidal'))
+    expect(gate?.failureCount ?? 0).toBe(0)
+  }, 30000)
+
+  it('does not try a dead Sonovault ID again until its record is refreshed', async () => {
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ isrc: isrc(61) })
+      .where(eq(schema.libraryTrack.mediaItemId, 'track-sonovault'))
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(sonovaultTidal('s1', 'track-sonovault', '899999', true))
+    // TIDAL has no track for the ISRC either.
+    const first = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-sonovault' },
+      userId,
+    )
+    expect(first.matched).toBe(false)
+    expect(tidalPaths()).toEqual([
+      '/v2/tracks/899999/relationships/similarTracks',
+      `/v2/tracks?isrc=${isrc(61)}`,
+    ])
+    request.mockClear()
+    await refreshTidalSimilar({ kind: 'tracks', id: 'track-sonovault' }, userId)
+    expect(tidalPaths()).toEqual([`/v2/tracks?isrc=${isrc(61)}`])
+
+    // A refreshed record is a new response: its ID is tried again.
+    await databaseClient
+      .update(schema.providerReference)
+      .set({
+        metadata: sonovaultTidal(
+          's1',
+          'track-sonovault',
+          '899999',
+          true,
+          'fixture-sonovault-response-2',
+        ).metadata,
+      })
+      .where(eq(schema.providerReference.id, 's1'))
+    request.mockClear()
+    await refreshTidalSimilar({ kind: 'tracks', id: 'track-sonovault' }, userId)
+    expect(tidalPaths()[0]).toBe(
+      '/v2/tracks/899999/relationships/similarTracks',
+    )
+  }, 30000)
 })

@@ -1,5 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { isProviderItemNotFoundError } from '@repo/media-plugin-sdk'
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   SpotifyCodeMatchSchema,
@@ -9,20 +10,24 @@ import {
   TidalIdSchema,
   TidalSimilarKindSchema,
   TidalSimilarSchema,
+  TidalSimilarSourceSchema,
   TidalSuggestionSchema,
   type TidalSimilar,
   type TidalSimilarItem,
   type TidalSimilarJob,
   type TidalSimilarKind,
+  type TidalSimilarSource,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
 import {
   SONOVAULT_REFRESH_MONTHS,
   SONOVAULT_SIMILAR_LOOKUP_TASK,
+  SonovaultReferenceMetadataSchema,
 } from '@repo/schemas/sonovault'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
+import { sonovaultLinkReferenceTypes } from '@/lib/sonovault-api'
 import {
   createProviderResponseRecorder,
   providerResponseSecretValues,
@@ -70,10 +75,23 @@ const SimilarParamsSchema = z.object({
   kind: TidalSimilarKindSchema,
   itemId,
 })
+const TidalIdSourceSchema = TidalSimilarSourceSchema.shape.kind
 const SimilarOptionsSchema = SimilarParamsSchema.extend({
   tidalId: TidalIdSchema,
+  /** Where the TIDAL ID came from; reads queued before SONO-27 used TIDAL's. */
+  tidalIdSource: TidalIdSourceSchema.default('tidal'),
+  /** The job that recorded the TIDAL ID, when known. */
+  tidalIdJobId: z.string().nullable().default(null),
+  /** For a Sonovault ID: the stored response its record was read from. */
+  sonovaultResponseId: z.string().nullable().default(null),
   groupKey: z.string().min(1),
   itemTitle: z.string().min(1).max(500),
+})
+/** What a read's job options say about the ID it used. */
+const ReadSourceSchema = z.object({
+  tidalId: TidalIdSchema,
+  tidalIdSource: TidalIdSourceSchema.default('tidal'),
+  tidalIdJobId: z.string().nullable().default(null),
 })
 const StoredItemsSchema = z
   .array(TidalSuggestionSchema)
@@ -83,11 +101,18 @@ const kindOf = (kind: 'albums' | 'tracks'): TidalSimilarKind =>
   kind === 'albums' ? 'album' : 'track'
 
 /**
- * The item's current TIDAL album or track: for a track, a track match before
- * an album alignment, then the most recently recorded.
+ * A field of the item's current TIDAL album or track: for a track, a track
+ * match (automatic or chosen by the owner) before an album alignment, then
+ * the most recently recorded.
  */
-function currentTidalId(kind: TidalSimilarKind) {
-  return sql<string | null>`(select r.external_id from provider_reference r
+function currentTidalReference(
+  kind: TidalSimilarKind,
+  field: 'externalId' | 'jobId',
+) {
+  const column = sql.raw(
+    field === 'externalId' ? 'r.external_id' : `r.metadata->>'jobId'`,
+  )
+  return sql<string | null>`(select ${column} from provider_reference r
     where r.media_item_id = ${mediaItem.id} and r.provider = 'tidal'
       and r.reference_type = ${kind}
     order by (r.metadata->>'source' = 'tidal-track-match') desc nulls last,
@@ -95,7 +120,66 @@ function currentTidalId(kind: TidalSimilarKind) {
     limit 1)`
 }
 
-/** A visible library album or track, its TIDAL ID and its stored read. */
+type IdSource = TidalSimilarSource & { sonovaultResponseId: string | null }
+
+/**
+ * The track's TIDAL ID from its Sonovault record (SONO-27): only a verified
+ * record, since an unverified one may be another version of the recording,
+ * and not an ID TIDAL said it does not know while the record is unchanged.
+ */
+async function sonovaultTidalId(
+  database: Pick<typeof db, 'select'>,
+  trackId: string,
+): Promise<IdSource | null> {
+  const [reference] = await database
+    .select({
+      externalId: providerReference.externalId,
+      metadata: providerReference.metadata,
+    })
+    .from(providerReference)
+    .where(
+      and(
+        eq(providerReference.mediaItemId, trackId),
+        eq(providerReference.provider, 'sonovault'),
+        eq(providerReference.referenceType, sonovaultLinkReferenceTypes.tidal),
+        sql`${providerReference.metadata}->>'verified' = 'true'`,
+      ),
+    )
+    .orderBy(providerReference.id)
+    .limit(1)
+  const tidalId = TidalIdSchema.safeParse(reference?.externalId)
+  const metadata = SonovaultReferenceMetadataSchema.safeParse(
+    reference?.metadata,
+  )
+  if (!tidalId.success || !metadata.success || !metadata.data.verified)
+    return null
+  const [dead] = await database
+    .select({ id: scrapeJob.id })
+    .from(scrapeJob)
+    .where(
+      and(
+        sql`${scrapeJob.options}->>'task' = ${sql.raw(`'${TIDAL_SIMILAR_TASK}'`)}`,
+        sql`${scrapeJob.options}->>'itemId' = ${trackId}`,
+        sql`${scrapeJob.options}->>'tidalId' = ${tidalId.data}`,
+        sql`${scrapeJob.options}->>'sonovaultResponseId' = ${metadata.data.responseId}`,
+        sql`${scrapeJob.options}->>'tidalIdDead' = 'true'`,
+      ),
+    )
+    .limit(1)
+  if (dead) return null
+  return {
+    kind: 'sonovault',
+    tidalId: tidalId.data,
+    jobId: metadata.data.jobId,
+    sonovaultResponseId: metadata.data.responseId,
+  }
+}
+
+/**
+ * A visible library album or track, its TIDAL ID and its stored read. The ID
+ * is TIDAL's own match or album job, which includes the owner's choice in
+ * review; for a track without one, its verified Sonovault record's.
+ */
 async function similarTarget(
   database: Pick<typeof db, 'select'>,
   kind: TidalSimilarKind,
@@ -104,12 +188,15 @@ async function similarTarget(
   const [target] = await database
     .select({
       title: mediaItem.title,
-      tidalId: currentTidalId(kind),
+      tidalId: currentTidalReference(kind, 'externalId'),
+      tidalJobId: currentTidalReference(kind, 'jobId'),
       items: tidalSimilar.items,
       readAt: tidalSimilar.readAt,
+      readOptions: scrapeJob.options,
     })
     .from(mediaItem)
     .leftJoin(tidalSimilar, eq(tidalSimilar.mediaItemId, mediaItem.id))
+    .leftJoin(scrapeJob, eq(scrapeJob.id, tidalSimilar.scrapeJobId))
     .where(
       and(
         eq(mediaItem.id, id),
@@ -120,11 +207,31 @@ async function similarTarget(
   if (!target) return undefined
   const tidalId = TidalIdSchema.safeParse(target.tidalId)
   const items = StoredItemsSchema.safeParse(target.items)
+  const read = ReadSourceSchema.safeParse(target.readOptions)
+  const source: IdSource | null = tidalId.success
+    ? {
+        kind: 'tidal',
+        tidalId: tidalId.data,
+        jobId: target.tidalJobId,
+        sonovaultResponseId: null,
+      }
+    : kind === 'track'
+      ? await sonovaultTidalId(database, id)
+      : null
   return {
     title: target.title.trim(),
-    tidalId: tidalId.success ? tidalId.data : null,
+    tidalId: source?.tidalId ?? null,
+    source,
     items: items.success ? items.data : [],
     readAt: target.readAt,
+    readSource:
+      target.readAt && read.success
+        ? TidalSimilarSourceSchema.parse({
+            kind: read.data.tidalIdSource,
+            tidalId: read.data.tidalId,
+            jobId: read.data.tidalIdJobId,
+          })
+        : null,
   }
 }
 
@@ -142,7 +249,7 @@ export async function prepareTidalSimilar(
   const { kind, itemId: id } = SimilarParamsSchema.parse(input)
   const target = await similarTarget(db, kind, id)
   if (!target) notFound(kind)
-  if (!target.tidalId)
+  if (!target.source)
     throw new ServerError({
       statusCode: 409,
       message: 'Not matched on TIDAL.',
@@ -150,7 +257,10 @@ export async function prepareTidalSimilar(
   return SimilarOptionsSchema.parse({
     kind,
     itemId: id,
-    tidalId: target.tidalId,
+    tidalId: target.source.tidalId,
+    tidalIdSource: target.source.kind,
+    tidalIdJobId: target.source.jobId,
+    sonovaultResponseId: target.source.sonovaultResponseId,
     groupKey: createStableId(
       TIDAL_SIMILAR_TASK,
       JSON.stringify([userId, kind, id]),
@@ -273,12 +383,17 @@ export async function runTidalSimilar(
     const options = SimilarOptionsSchema.parse(input)
     await context.assertActive()
     const target = await similarTarget(db, options.kind, options.itemId)
-    if (!target || target.tidalId !== options.tidalId)
+    if (
+      !target?.source ||
+      target.source.tidalId !== options.tidalId ||
+      target.source.kind !== options.tidalIdSource
+    )
       return {
         outcome: 'complete',
         message: 'Read skipped: the item or its TIDAL match has changed.',
         noProviderRequests: true,
       }
+    const fromSonovault = options.tidalIdSource === 'sonovault'
     const suggestions = await providerOperation(
       PROVIDER,
       async ({ secrets, request }, plugin) => {
@@ -304,24 +419,45 @@ export async function runTidalSimilar(
             }),
           providerResponseSecretValues(secrets),
         )
-        const found = await lookupTidalSimilar(
-          createProviderRequest(plugin, context.assertActive, {
+        const similarRequest = createProviderRequest(
+          plugin,
+          context.assertActive,
+          {
             ...(context.maxSlotWaitMs === undefined
               ? {}
               : { maxSlotWaitMs: context.maxSlotWaitMs }),
             beginResponseCapture: recorder('task'),
-          }),
-          token,
-          lookup,
+          },
         )
-        recorder.assertStored()
-        return found
+        try {
+          const found = await lookupTidalSimilar(
+            similarRequest,
+            token,
+            lookup,
+            {
+              notFoundOn404: fromSonovault,
+            },
+          )
+          recorder.assertStored()
+          return found
+        } catch (error) {
+          // A Sonovault ID TIDAL does not know is not a TIDAL failure.
+          if (!fromSonovault || !isProviderItemNotFoundError(error)) throw error
+          recorder.assertStored()
+          return null
+        }
       },
       context.assertActive,
       'reading similar items',
       context.maxSlotWaitMs,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
+    if (!suggestions)
+      return {
+        outcome: 'complete',
+        message: `TIDAL has no track ${options.tidalId}, the TIDAL ID from Sonovault.`,
+        options: { tidalIdDead: true },
+      }
     const noun = options.kind === 'album' ? 'albums' : 'tracks'
     const spotify = await queueSpotifyLookup(context.requestedByUserId, {
       kind: options.kind,
@@ -332,7 +468,7 @@ export async function runTidalSimilar(
     return {
       outcome: 'complete',
       message: [
-        `Read ${suggestions.length} similar ${noun} from TIDAL.`,
+        `Read ${suggestions.length} similar ${noun} from TIDAL${fromSonovault ? ' with the TIDAL ID from Sonovault' : ''}.`,
         spotify,
       ]
         .filter(Boolean)
@@ -516,6 +652,7 @@ async function readTidalSimilar(
     job: summarize(job),
     lookupJob: summarize(lookupJob),
     readAt: target.readAt?.toISOString() ?? null,
+    source: target.readSource,
     items,
   })
 }
@@ -545,7 +682,9 @@ async function albumHasSpotifyUpc(id: string) {
 /**
  * Matches an item not yet matched on TIDAL, or else reads its similar items,
  * in this request through the request gate, and returns the Similar state.
- * The Spotify lookup of the suggestions stays a queued job of its own.
+ * A track with a verified Sonovault TIDAL ID is read without a match; when
+ * TIDAL does not know that ID, the track is matched and then read, once
+ * (SONO-27). The Spotify lookup of the suggestions stays a queued job.
  */
 export async function refreshTidalSimilar(
   input: { kind: 'albums' | 'tracks'; id: string },
@@ -556,9 +695,19 @@ export async function refreshTidalSimilar(
   const target = await similarTarget(db, kind, id)
   if (!target) notFound(kind)
   if (target.tidalId) {
-    await createTaskJob(TIDAL_SIMILAR_TASK, userId, {
+    const read = await createTaskJob(TIDAL_SIMILAR_TASK, userId, {
       taskOptions: { kind, itemId: id },
     })
+    if (read.options.tidalIdDead === true) {
+      await createTaskJob(TIDAL_TRACK_MATCH_TASK, userId, {
+        taskOptions: { trackId: id },
+      })
+      const matched = await similarTarget(db, kind, id)
+      if (matched?.source?.kind === 'tidal')
+        await createTaskJob(TIDAL_SIMILAR_TASK, userId, {
+          taskOptions: { kind, itemId: id },
+        })
+    }
   } else if (kind === 'track') {
     await createTaskJob(TIDAL_TRACK_MATCH_TASK, userId, {
       taskOptions: { trackId: id },

@@ -1,6 +1,6 @@
 # Sonovault identifiers and track facts
 
-Status: stage 1 (SONO-01 to SONO-12), stage 3 (SONO-18 to SONO-22) and stage 4 (SONO-23 to SONO-25) are built and released through `main`. The owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5, built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
+Status: stage 1 (SONO-01 to SONO-12), stage 3 (SONO-18 to SONO-22) and stage 4 (SONO-23 to SONO-25) are built and released through `main`. The owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5 (and later to the TIDAL half of SONO-27), built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
 
 Sonovault is a paid lookup service. Given a track's ISRC or its ID on one service, it returns the same recording's IDs on the other services, with its ISRC, tempo, key, genre, label and releases. It is added as a provider that fills identifiers and track facts. It does not play music and it has no similar-track or recommendation endpoint, so TIDAL and Last.fm stay the sources of related music. If it stops being good enough, another lookup provider can take its place: everything it reports is stored under its own provider name and can be removed or replaced without touching what other providers reported.
 
@@ -10,7 +10,7 @@ The build has five stages, each released through `main` on its own:
 2. Tempo, key and genre on tracks.
 3. Albums, through Sonovault releases.
 4. Tracks with no identifier, by artist and title, for review.
-5. Later uses, each only when the owner asks for it. SONO-26 is asked for.
+5. Later uses, each only when the owner asks for it. SONO-26 and the TIDAL half of SONO-27 are asked for.
 
 ## What the service returns
 
@@ -93,7 +93,11 @@ Each is a separate piece of work, started only when the owner asks for it.
   - A miss from Sonovault (not found, no Spotify link, a record that fails the check, or skipped for credits) is not "Not on Spotify": the job queues the existing Spotify search (`spotify-similar-lookup`) for those ISRCs only. When Sonovault cannot take the job (not configured, a cooldown, or the credit reserve), every suggestion goes to the Spotify search. Each job's message says how many it mapped, and the Similar tab follows the latest of the two jobs.
   - SONO-10 covers these rows: the removal deletes every `sonovault` row of `spotify_code_lookup`, and the refresh deletes those older than 11 months, so the suggestion is looked up again the next time its similar tracks are read; such a row is also due for lookup on that read.
   - Nothing plays as a result of a lookup, and the interface is unchanged.
-- SONO-27: A library track's `tidal-track` and `musicbrainz-recording` references let the TIDAL similar-tracks job and a ListenBrainz similar-recordings source run for tracks that have no confirmed match on those services. The suggestion list says which reference it used.
+- SONO-27: A library track's `tidal-track` and `musicbrainz-recording` references let the TIDAL similar-tracks job and a ListenBrainz similar-recordings source run for tracks that have no confirmed match on those services. The suggestion list says which reference it used. The TIDAL half is built and released through `main` (the owner asked for it on 2026-11-22); the ListenBrainz half is not built:
+  - A similar-tracks read takes the track's TIDAL ID from TIDAL's own match or album job, which includes a match the owner chose in review, and otherwise from its `tidal-track` reference when that Sonovault record is verified (SONO-08). Such a track counts as matched on the Similar tab and is read with one TIDAL request, without a TIDAL track match first. An unverified record may be another version of the recording, so its TIDAL link is not used: the track is matched by ISRC first as before.
+  - When TIDAL answers 404 for the Sonovault ID, the read records that on its job (not as a TIDAL failure), and the same request matches the track by ISRC and, if that finds it, reads it with TIDAL's match. That ID is not tried again for the track until its Sonovault record is read again, which gives it a new stored response.
+  - The read's job keeps which ID it used and where it came from, and the Similar tab's count line says "TIDAL ID from Sonovault" or "TIDAL match", opening the job that recorded the ID.
+  - The read's stored response, the Sonovault mapping back to Spotify (SONO-26), refresh intervals and similar albums are unchanged.
 - SONO-28: Artist facts (country, year formed, Wikidata and MusicBrainz artist IDs, social links) are stored on library artists and used as an independent check of a saved artist match.
 - SONO-29: New releases by library artists and on library labels, from the dated artist and label feeds, as a list the owner can open. This is the closest the service comes to discovery.
 - SONO-30: Other recordings of the same composition (by ISWC) listed on a track: covers and other versions.

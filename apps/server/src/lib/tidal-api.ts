@@ -85,22 +85,30 @@ export async function tidalToken(
   return parsed.data.access_token
 }
 
-/** One GET of the TIDAL API; repeated keys are sent as repeated parameters. */
+/**
+ * One GET of the TIDAL API; repeated keys are sent as repeated parameters.
+ * With `notFoundOn404`, a 404 throws `ProviderItemNotFoundError`, which is not
+ * counted as a TIDAL failure.
+ */
 export async function tidalJson(
   request: TidalRequest,
   token: string,
   path: string,
   params: ReadonlyArray<readonly [string, string]>,
+  options: { notFoundOn404?: boolean } = {},
 ): Promise<unknown> {
   if (!path.startsWith('/')) throw new Error('Invalid TIDAL path')
   const url = new URL(`${TIDAL_API_BASE}${path}`)
   for (const [key, value] of params) url.searchParams.append(key, value)
-  const response = await request(url, {
+  const init = {
     headers: {
       Accept: 'application/vnd.api+json',
       Authorization: `Bearer ${token}`,
     },
-  })
+  }
+  const response = await (options.notFoundOn404
+    ? request(url, init, { notFoundOn404: true })
+    : request(url, init))
   if (!response.ok)
     throw new Error(`TIDAL request failed (HTTP ${response.status})`)
   try {

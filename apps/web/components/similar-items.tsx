@@ -9,6 +9,7 @@ import {
   type TidalSimilarItem,
   type TidalSimilarJob,
   type TidalSimilarKind,
+  type TidalSimilarSource,
 } from '@repo/schemas/tidal'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { List, RowTitle } from '@repo/ui/components/ds/list-row'
@@ -248,6 +249,27 @@ export function similarCounts(items: readonly TidalSimilarItem[]) {
   return `${formatCount(items.length)} from TIDAL · ${formatCount(count('library'))} in library · ${formatCount(count('spotify'))} on Spotify`
 }
 
+/**
+ * Which TIDAL ID the list was read with (SONO-27), opening the job that
+ * recorded it.
+ */
+function SimilarSource({ source }: { source: TidalSimilarSource }) {
+  const label =
+    source.kind === 'sonovault' ? 'TIDAL ID from Sonovault' : 'TIDAL match'
+  return (
+    <>
+      {' · '}
+      {source.jobId ? (
+        <DetailLink kind="job" id={source.jobId} title="Open job">
+          {label}
+        </DetailLink>
+      ) : (
+        label
+      )}
+    </>
+  )
+}
+
 /** The tab's content for one loaded `TidalSimilar`. */
 export function SimilarBody({
   similar,
@@ -262,7 +284,8 @@ export function SimilarBody({
   requestFailed?: boolean
   onRequest: () => void
 }) {
-  const { kind, matched, matchJob, job, lookupJob, readAt, items } = similar
+  const { kind, matched, matchJob, job, lookupJob, readAt, source, items } =
+    similar
   const noun = plural[kind]
   if (isActiveSimilarJob(matchJob) || (requesting && !matched))
     return <SimilarLoading label="Matching on TIDAL" />
@@ -313,6 +336,7 @@ export function SimilarBody({
         action={readAgain}
       >
         Read {formatDate(readAt)}
+        {source && <SimilarSource source={source} />}
       </State>
     )
   return (
@@ -329,7 +353,10 @@ export function SimilarBody({
         ) : isActiveSimilarJob(lookupJob) ? (
           <Status state="running">Finding on Spotify</Status>
         ) : (
-          <ToolbarCount>{similarCounts(items)}</ToolbarCount>
+          <ToolbarCount>
+            {similarCounts(items)}
+            {source && <SimilarSource source={source} />}
+          </ToolbarCount>
         )}
         <Button
           size="xs"

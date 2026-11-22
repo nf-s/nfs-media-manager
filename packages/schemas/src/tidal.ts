@@ -326,10 +326,23 @@ export const TidalSimilarJobSchema = z.object({
 export type TidalSimilarJob = z.infer<typeof TidalSimilarJobSchema>
 
 /**
+ * Where the TIDAL ID of a read came from: TIDAL's own match or album job, or
+ * a verified Sonovault record's TIDAL link (SONO-27). `jobId` is the job that
+ * recorded the ID, when known.
+ */
+export const TidalSimilarSourceSchema = z.object({
+  kind: z.enum(['tidal', 'sonovault']),
+  tidalId: TidalIdSchema,
+  jobId: z.string().nullable(),
+})
+export type TidalSimilarSource = z.infer<typeof TidalSimilarSourceSchema>
+
+/**
  * The Similar tab of one library album or track. `matched` is false until a
  * TIDAL album job or track match has linked the item to TIDAL; `matchJob` is
  * the latest of those, `job` the latest TIDAL similar read and `lookupJob` the
- * latest Spotify lookup. `readAt` is null until a read has succeeded.
+ * latest Spotify lookup. `readAt` is null until a read has succeeded, and
+ * `source` says where the TIDAL ID of that read came from.
  */
 export const TidalSimilarSchema = z.object({
   kind: TidalSimilarKindSchema,
@@ -339,6 +352,7 @@ export const TidalSimilarSchema = z.object({
   job: TidalSimilarJobSchema.nullable(),
   lookupJob: TidalSimilarJobSchema.nullable(),
   readAt: dateTime.nullable(),
+  source: TidalSimilarSourceSchema.nullable(),
   items: z.array(TidalSimilarItemSchema).max(TIDAL_SIMILAR_LIMIT),
 })
 export type TidalSimilar = z.infer<typeof TidalSimilarSchema>

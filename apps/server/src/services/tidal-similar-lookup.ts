@@ -81,12 +81,14 @@ function trackSuggestion(
 
 /**
  * The first page of TIDAL's similar albums or tracks, in TIDAL's order, with
- * their artists. One request.
+ * their artists. One request. With `notFoundOn404`, an ID TIDAL does not
+ * know throws `ProviderItemNotFoundError`.
  */
 export async function lookupTidalSimilar(
   request: TidalRequest,
   token: string,
   input: TidalSimilarLookup,
+  options: { notFoundOn404?: boolean } = {},
 ): Promise<TidalSuggestion[]> {
   const { countryCode, kind, tidalId } = TidalSimilarLookupSchema.parse(input)
   const name = relationship(kind)
@@ -99,6 +101,7 @@ export async function lookupTidalSimilar(
         ['countryCode', countryCode],
         ['include', `${name},${name}.artists`],
       ],
+      options,
     ),
   )
   const artists = includedArtists(document.included)
