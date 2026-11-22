@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Concept: tag location · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <!--
+      Styles for the concepts go here while they are concepts. Use only the
+      tokens. The accepted concept's styles move to components.css.
+    -->
+    <style>
+      .concept-levels {
+        display: grid;
+        gap: var(--ds-2);
+        justify-items: start;
+      }
+      .concept-levels[data-indent] {
+        padding-left: var(--ds-5);
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-tag-location.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, pill, count } = D
+
+      const fixed = (html, width) =>
+        `<div style="width:${width}px;max-width:100%">${html}</div>`
+      const phone = (body) =>
+        `<div class="g-phone"><div class="g-phone-scroll">${body}</div></div>`
+      const check = (label, o = {}) =>
+        `<label class="ds-checkrow"><input type="checkbox" class="ds-check"${o.on ? ' checked' : ''}${o.off ? ' disabled' : ''} /> ${D.esc(label)}${o.note ? ` <span class="ds-muted">${D.esc(o.note)}</span>` : ''}</label>`
+      const muted = (text) => `<span class="ds-muted">${text}</span>`
+
+      const activePills = (pills) =>
+        `<div class="g-stack" style="justify-items:start"><span class="ds-pills" data-wrap>${pills.join('')}</span>${btn('Clear all', { variant: 'link', size: 'xs' })}</div>`
+      const basePills = [
+        pill('Deep House', { mode: 'required', remove: true }),
+        pill('Ambient', { mode: 'exclude', remove: true }),
+      ]
+      const ranges = [
+        'Ranges',
+        `<div class="g-stack">${D.select(['Tempo'], { label: 'Field' })}<input class="ds-input" value="118" aria-label="From" /><input class="ds-input" value="124" aria-label="To" /></div>`,
+      ]
+      const view = ['View', check('Group recordings', { on: true })]
+
+      // Option A: the owner's idea, a section of its own in the drawer.
+      const levelsA = (auto) =>
+        `<div class="concept-levels">${check('Auto: most detailed', { on: auto })}<div class="concept-levels" data-indent>${check('Track', { on: !auto, off: auto })}${check('Album', { on: !auto, off: auto })}${check('Artist', { off: auto })}</div>${muted(auto ? 'Each track’s own tags; its album’s and artists’ tags for tags that tracks do not carry, or when it has none.' : 'A track matches when any ticked level has the tag.')}</div>`
+      const drawerA = (auto) =>
+        D.filtersDrawer([
+          view,
+          ['Active filters', activePills(basePills)],
+          ['Tag location', levelsA(auto)],
+          ranges,
+        ])
+
+      // Option B: the location chosen on each Tags filter.
+      const pillsB = [
+        pill('Deep House · Track', { mode: 'required', remove: true }),
+        pill('Ambient', { mode: 'exclude', remove: true }),
+      ]
+      const pillMenu = `<div class="ds-pop" role="menu" aria-label="Deep House" style="position:static;width:240px"><div class="ds-pop-head">Deep House</div>${[
+        'Any',
+        'Required',
+        'Exclude',
+      ]
+        .map(
+          (mode, i) =>
+            `<button type="button" class="ds-menu-item" role="menuitemradio" aria-checked="${i === 1}">${i === 1 ? D.icon('check', { size: 'sm' }) : '<span class="ds-menu-slot"></span>'}${mode}</button>`,
+        )
+        .join(
+          '',
+        )}<div class="ds-pop-head">Tag location</div><div class="concept-levels" style="padding:var(--ds-2) var(--ds-3)">${check('Auto: most detailed')}${check('Track', { on: true })}${check('Album')}${check('Artist')}</div></div>`
+      const drawerB = D.filtersDrawer([
+        view,
+        ['Active filters', activePills(pillsB)],
+        ranges,
+      ])
+
+      // Option C: no new control. Each level is its own field in the search.
+      const suggestions = `<div class="ds-pop" role="listbox" aria-label="Suggestions" style="position:static;width:320px">${D.search('Search tracks', { value: 'deep ho', ai: true })}<div class="ds-pop-head">Deep House</div>${[
+        ['tag', 'Tags', '1,204 · 6 subtags'],
+        ['tag', 'Track tags', '312'],
+        ['disc', 'Album tags', '980'],
+        ['user', 'Artist tags', '1,530'],
+      ]
+        .map(
+          ([ic, field, n]) =>
+            `<button type="button" class="ds-menu-item" role="option">${D.icon(ic, { size: 'sm' })}${field}<span class="ds-muted">${n}</span></button>`,
+        )
+        .join('')}</div>`
+      const pillsC = [
+        pill('Track tags: Deep House', { mode: 'any', remove: true }),
+        pill('Album tags: Deep House', { mode: 'any', remove: true }),
+        pill('Ambient', { mode: 'exclude', remove: true }),
+      ]
+      const drawerC = D.filtersDrawer([
+        view,
+        ['Active filters', activePills(pillsC)],
+        ranges,
+      ])
+
+      // The result under Option A, the same in every option.
+      const T = D.data.TRACKS
+      const rows = [
+        [T[0], ['Deep House', 'House']],
+        [T[1], ['Deep House', 'Microhouse']],
+        [T[2], ['Deep House', 'Dub Techno', 'Balearic Beat']],
+      ].map(([t, tags]) => [t, `${t.by} · ${t.album}`, tags])
+      const result = `${D.toolbar({ placeholder: 'Search tracks', sort: ['Title'], filterCount: 3, view: 1, count: '312 of 9,400 tracks' })}<div class="ds-list">${rows
+        .map(([t, by, tags]) => D.row({ ...t, by, tags }, { by }))
+        .join('')}</div>`
+
+      const pair = (desktop, phoneBody, captions) =>
+        g.spec(
+          g.flow(
+            [
+              g.item(fixed(desktop, 360), captions[0]),
+              g.item(phone(phoneBody), captions[1]),
+            ],
+            { top: true },
+          ),
+        )
+
+      D.page({
+        title: 'Concept: tag location',
+        lede: 'Tracks get tags of their own (from Sonovault and the owner), beside the album and artist tags they inherit today. A Tags filter needs to say which of those levels it reads. The Filters drawer has no control for this: Active filters holds pills, and the checkbox row and select are not tied to a filter.',
+        sections: [
+          {
+            id: 'option-a',
+            title: 'Option A: Tag location section',
+            body:
+              pair(drawerA(true), drawerA(true), [
+                'desktop, Auto on (the default)',
+                'phone, Auto on',
+              ]) +
+              pair(drawerA(false), drawerA(false), [
+                'desktop, Track and Album ticked',
+                'phone, Track and Album ticked',
+              ]) +
+              g.rules([
+                'A section of its own, <b>Tag location</b>, after Active filters on Tracks and Albums. It applies to every Tags filter and to the Tags suggestions’ counts. Tracks list Track, Album and Artist; Albums list Track, Album and Artist with Album and Artist ticked when Auto is unticked.',
+                'Unticking Auto enables the three levels with the most detailed one ticked. Unticking the last level ticks Auto again.',
+                'Kept in the URL (<code>tagLevels=track,album</code>; Auto is the default and is left out) and in saved views.',
+                '<b>For:</b> the owner’s idea; one place, read at a glance; any combination; built from the checkbox row and the drawer section, so the only new part is the section’s content.',
+                '<b>Against:</b> one location for all Tags filters in the view: “Deep House on the track and Berlin on the artist” needs the Track tags and Artist tags fields instead. Out of sight while the drawer is closed.',
+              ]),
+          },
+          {
+            id: 'option-b',
+            title: 'Option B: location on each Tags filter',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(drawerB, 360),
+                      'desktop: each pill names its location',
+                    ),
+                    g.item(pillMenu, 'the pill’s menu: mode, then location'),
+                    g.item(phone(drawerB), 'phone'),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                'Clicking a Tags pill opens a menu with its mode and its location. The pill adds the location after its name unless it is Auto.',
+                '<b>For:</b> each filter reads its own levels, so tags at different levels combine in one view; the location is visible on the pill with the drawer closed.',
+                '<b>Against:</b> a new pill content and a new menu, so the Pill component changes; the pill cycles Any, Required and Exclude on click today, which becomes a menu; longer pills on a phone; each filter carries its levels in the URL.',
+              ]),
+          },
+          {
+            id: 'option-c',
+            title: 'Option C: no new control, one field per level',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      suggestions,
+                      'the suggestion lists the tag under each field',
+                    ),
+                    g.item(
+                      fixed(drawerC, 360),
+                      'desktop: Track or Album as two Any filters',
+                    ),
+                    g.item(phone(drawerC), 'phone'),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                'Tags stays the Auto field. Track tags, Album tags and Artist tags are fields of their own, as Album tags and Artist tags are today. A suggestion shows the tag’s count in each field; picking one adds a filter on that field.',
+                '<b>For:</b> nothing new to design or learn; uses the existing fields, modes and URL.',
+                '<b>Against:</b> “Track or Album” means adding the same tag twice in Any mode, and Any joins every Any filter in the view, so it cannot be combined with other Any filters; four rows per tag in the suggestions.',
+              ]),
+          },
+          {
+            id: 'result',
+            title: 'The result',
+            body:
+              g.spec(fixed(result, 760)) +
+              g.rules([
+                'The same in every option. The Tags pills on a row show the track’s own tags first, then the album’s and artists’ tags it inherits, without repeats. Each pill’s sources say where it came from: Sonovault, added by the owner, the album, or an artist.',
+              ]),
+          },
+          {
+            id: 'recommendation',
+            title: 'Recommendation',
+            body: g.note(
+              'Recommended',
+              'Option A. It is the owner’s idea, it reads at a glance, it covers every combination the Browse filter needs with the existing checkbox row, and a filter on a tag at a second level stays possible through the Track tags, Album tags and Artist tags fields. The owner decides.',
+            ),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>
