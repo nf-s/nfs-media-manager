@@ -27,6 +27,7 @@ const AlbumSearchInputSchema = SearchInputSchema.extend({
 
 const UnavailableSpotifyCatalogTrackSchema = z.union([
   z.object({ is_playable: z.literal(false) }),
+  z.object({ is_local: z.literal(true) }),
   z.object({ restrictions: z.object({ reason: z.string().trim().min(1) }) }),
 ])
 
@@ -36,16 +37,34 @@ type AlbumSearchInput = z.infer<typeof AlbumSearchInputSchema>
 
 const ALBUM_PAGE_SIZE = 10
 
-export async function searchSpotifyCatalogTracks(
+export function normalizeSpotifyCatalogTrack(item: unknown) {
+  if (UnavailableSpotifyCatalogTrackSchema.safeParse(item).success) return null
+  const { track } = normalizeSpotifyTrackEntry({ item })
+  if (!track) return null
+  const candidate = SpotifyTrackSearchCandidateSchema.safeParse({
+    ...track,
+    spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
+  })
+  return candidate.success
+    ? { ...candidate.data, releaseDate: track.releaseDate }
+    : null
+}
+
+export async function searchSpotifyCatalogTrackPage(
   request: Request,
   token: string,
-  { query, market }: SearchInput,
+  { query, market, page }: SearchInput & { page?: number },
 ) {
+  const offset = ((page ?? 1) - 1) * SPOTIFY_TRACK_SEARCH_LIMIT
   const { tracks } = z
     .object({
       tracks: z.object({
         items: z.array(z.unknown()).max(SPOTIFY_TRACK_SEARCH_LIMIT),
-        offset: z.literal(0),
+        offset: z.literal(offset),
+        total:
+          page === undefined
+            ? z.number().int().nonnegative().optional()
+            : z.number().int().nonnegative(),
       }),
     })
     .parse(
@@ -54,21 +73,35 @@ export async function searchSpotifyCatalogTracks(
         q: query,
         type: 'track',
         limit: String(SPOTIFY_TRACK_SEARCH_LIMIT),
+        ...(page === undefined ? {} : { offset: String(offset) }),
       }),
     )
   const seen = new Set<string>()
-  return tracks.items.flatMap((item) => {
-    if (UnavailableSpotifyCatalogTrackSchema.safeParse(item).success) return []
-    const { track } = normalizeSpotifyTrackEntry({ item })
+  const items = tracks.items.flatMap((item) => {
+    const track = normalizeSpotifyCatalogTrack(item)
     if (!track || seen.has(track.spotifyTrackId)) return []
-    const candidate = SpotifyTrackSearchCandidateSchema.safeParse({
-      ...track,
-      spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
-    })
-    if (!candidate.success) return []
     seen.add(track.spotifyTrackId)
-    return [candidate.data]
+    return [track]
   })
+  return {
+    items,
+    hasMore:
+      page !== undefined &&
+      page < 50 &&
+      tracks.items.length > 0 &&
+      offset + tracks.items.length < (tracks.total ?? 0),
+  }
+}
+
+export async function searchSpotifyCatalogTracks(
+  request: Request,
+  token: string,
+  input: SearchInput,
+) {
+  const page = await searchSpotifyCatalogTrackPage(request, token, input)
+  return page.items.map((track) =>
+    SpotifyTrackSearchCandidateSchema.parse(track),
+  )
 }
 
 export async function searchSpotifyCatalogAlbums(

@@ -14,7 +14,11 @@ import {
 } from '@/lib/openapi'
 import { ServerError } from '@/lib/error'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
+import {
+  authMiddleware,
+  mutationOriginMiddleware,
+  requireOwnerUser,
+} from '@/middlewares/auth'
 import { addManualMedia, searchManualMedia } from '@/services/manual-add'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
@@ -34,7 +38,7 @@ app.openapi(
     },
     responses: {
       200: {
-        description: 'One page of Spotify albums or TMDb films',
+        description: 'One page of Spotify albums, Spotify tracks or TMDb films',
         content: {
           'application/json': {
             schema: createResponseSchema(ManualMediaSearchResultSchema),
@@ -46,7 +50,13 @@ app.openapi(
     },
   }),
   async (c) =>
-    generateJsonResponse(c, await searchManualMedia(c.req.valid('json')), 200),
+    generateJsonResponse(
+      c,
+      await searchManualMedia(c.req.valid('json'), {
+        userId: requireOwnerUser(c).id,
+      }),
+      200,
+    ),
 )
 
 app.openapi(
@@ -75,7 +85,11 @@ app.openapi(
     },
   }),
   async (c) =>
-    generateJsonResponse(c, await addManualMedia(c.req.valid('json')), 200),
+    generateJsonResponse(
+      c,
+      await addManualMedia(c.req.valid('json'), requireOwnerUser(c).id),
+      200,
+    ),
 )
 
 app.onError((error, c) =>

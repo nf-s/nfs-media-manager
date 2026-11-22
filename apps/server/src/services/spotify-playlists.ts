@@ -568,13 +568,13 @@ export async function resolveSpotifyTrackIds(
   return ids
 }
 
-/** The earliest playlist-added date or first imported scrobble. */
+/** The earliest manual addition, playlist-added date or first imported scrobble. */
 export async function refreshTrackAddedDates(
   tx: Transaction,
   trackIds?: string[],
 ) {
   await tx.execute(sql`
-    update library_track lt set date_added = m.added
+    update library_track lt set date_added = least(m.added, manual.added_at)
     from library_track base
     left join (
       select media_item_id, min(added_at) as added from (
@@ -587,9 +587,13 @@ export async function refreshTrackAddedDates(
         ${trackIds ? sql`where ${inArray(sql`l.track_media_item_id`, trackIds)}` : sql``}
       ) dates group by media_item_id
     ) m on m.media_item_id = base.media_item_id
+    left join lateral (
+      select (mi.metadata->>'spotifyTrackManualAddedAt')::timestamptz at time zone 'UTC' as added_at
+      from media_item mi where mi.id = base.media_item_id
+    ) manual on true
     where lt.media_item_id = base.media_item_id
       ${trackIds ? sql`and ${inArray(sql`lt.media_item_id`, trackIds)}` : sql``}
-      and lt.date_added is distinct from m.added`)
+      and lt.date_added is distinct from least(m.added, manual.added_at)`)
 }
 
 /** Resolve the provider's ordered artist credits against existing library artists. */

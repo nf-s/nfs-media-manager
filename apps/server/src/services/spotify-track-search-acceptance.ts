@@ -8,7 +8,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { slugifyParts } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
-import { libraryTrack, mediaItem, scrapeJob } from '@/schemas/db'
+import { scrapeJob } from '@/schemas/db'
 import {
   independentTrackData,
   lockLibraryTrackWrites,
@@ -29,11 +29,11 @@ import {
   spotifySearchRecordingEvidence,
   spotifySearchTargetConflicts,
 } from './spotify-track-search-evidence'
+import { resolveSpotifyTrackIds, spotifyTrackItemId } from './spotify-playlists'
 import {
-  replaceSpotifyTrackCredits,
-  resolveSpotifyTrackIds,
-  spotifyTrackItemId,
-} from './spotify-playlists'
+  libraryRecording,
+  storeConfirmedRecording,
+} from './spotify-track-recordings'
 import { listTracksNeedingSpotifyMatch } from './track-match-diagnostics'
 import {
   moveTrackScrobbleNames,
@@ -102,119 +102,6 @@ async function checkRecordingTransfer(
     })
 }
 
-async function libraryRecording(tx: Transaction, id: string) {
-  const [row] = await tx
-    .select({
-      id: mediaItem.id,
-      title: mediaItem.title,
-      source: mediaItem.sourceLabel,
-      spotifyId: libraryTrack.spotifyTrackId,
-      hasArtists: sql<boolean>`exists (select 1 from media_credit c where c.media_item_id = ${mediaItem.id} and c.role = 'artist')`,
-      hidden: sql<boolean>`coalesce(${mediaItem.metadata}->>'legacyHidden' = 'true', false)`,
-    })
-    .from(mediaItem)
-    .innerJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
-    .where(eq(mediaItem.id, id))
-  return row
-}
-
-async function storeConfirmedRecording(
-  tx: Transaction,
-  targetId: string,
-  candidate: SpotifyTrackSearchCandidate,
-  jobId: string,
-  matchMethod: MatchMethod,
-  albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection,
-) {
-  const existing = await libraryRecording(tx, targetId)
-  if (existing?.hidden)
-    throw new ServerError({
-      statusCode: 409,
-      message: 'The selected Spotify recording is hidden in the library.',
-    })
-  const metadata = {
-    spotifyTrackSearch: {
-      title: candidate.title,
-      artists: candidate.artists,
-      spotifyTrackId: candidate.spotifyTrackId,
-      matchMethod,
-    },
-    ...(candidate.artistCredits.length
-      ? {
-          spotifyArtistCredits: candidate.artistCredits,
-          spotifyArtistCreditsSource: { source: 'spotify-search', jobId },
-        }
-      : {}),
-    ...(albumFallbackArtistCreditCorrection
-      ? { albumFallbackArtistCreditCorrection }
-      : {}),
-  }
-  await tx
-    .insert(mediaItem)
-    .values({
-      id: targetId,
-      mediaType: 'track',
-      slug: slugifyParts(candidate.title, targetId),
-      title: candidate.title,
-      artworkUrl: candidate.artworkUrl,
-      sourceLabel: 'spotify-search',
-      metadata,
-    })
-    .onConflictDoUpdate({
-      target: mediaItem.id,
-      set: {
-        sourceLabel:
-          existing?.spotifyId === candidate.spotifyTrackId
-            ? existing.source
-            : 'spotify-search',
-        artworkUrl: sql`coalesce(${mediaItem.artworkUrl}, excluded.artwork_url)`,
-        metadata: sql`coalesce(${mediaItem.metadata}, '{}'::jsonb) ||
-          case when ${matchMethod} = 'automatic' and ${mediaItem.metadata} ? 'spotifyTrackSearch'
-            then excluded.metadata - 'spotifyTrackSearch' else excluded.metadata end`,
-        updatedAt: new Date(),
-      },
-    })
-  await tx
-    .insert(libraryTrack)
-    .values({
-      mediaItemId: targetId,
-      spotifyTrackId: candidate.spotifyTrackId,
-      spotifyUrl: candidate.spotifyUrl,
-      durationSec: candidate.durationSec,
-      isrc: candidate.isrc,
-      spotifyAlbumId: candidate.spotifyAlbumId,
-      albumName: candidate.albumName,
-    })
-    .onConflictDoUpdate({
-      target: libraryTrack.mediaItemId,
-      set: {
-        spotifyTrackId: candidate.spotifyTrackId,
-        spotifyUrl: candidate.spotifyUrl,
-        durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
-        isrc: sql`coalesce(${libraryTrack.isrc}, excluded.isrc)`,
-        spotifyAlbumId: sql`coalesce(excluded.spotify_album_id, ${libraryTrack.spotifyAlbumId})`,
-        albumName:
-          matchMethod === 'automatic' || albumFallbackArtistCreditCorrection
-            ? sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`
-            : sql`coalesce(excluded.album_name, ${libraryTrack.albumName})`,
-        updatedAt: new Date(),
-      },
-    })
-  if (!existing?.hasArtists || albumFallbackArtistCreditCorrection)
-    await replaceSpotifyTrackCredits(tx, [
-      { id: targetId, artists: candidate.artists },
-    ])
-  if (candidate.spotifyAlbumId)
-    await tx.execute(sql`
-    update library_track set album_media_item_id = matched.id, album_link_strategy = 'spotify-album'
-    from (select min(r.album_id) as id from (${spotifyAlbumReleaseIds()}) r
-      join media_item album on album.id = r.album_id where r.spotify_id = ${candidate.spotifyAlbumId}
-        and album.metadata->>'legacyHidden' is distinct from 'true' having count(distinct r.album_id) = 1) matched
-    where media_item_id = ${targetId} and not exists (
-      select 1 from track position where position.track_media_item_id = library_track.media_item_id
-        and position.album_media_item_id = library_track.album_media_item_id)`)
-}
-
 const AcceptedSchema = z.object({
   acceptedTrackId: z.string(),
   acceptedSpotifyTrackId: z.string(),
@@ -248,14 +135,11 @@ async function linkSpotifyRecording(
     albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection
   } = {},
 ) {
-  await storeConfirmedRecording(
-    tx,
-    targetId,
-    candidate,
+  await storeConfirmedRecording(tx, targetId, candidate, {
     jobId,
     matchMethod,
     albumFallbackArtistCreditCorrection,
-  )
+  })
   if (targetId !== trackId)
     await transferTrackMemberships(tx, trackId, targetId, true)
   await moveTrackScrobbleNames(
