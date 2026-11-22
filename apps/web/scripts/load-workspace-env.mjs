@@ -23,6 +23,14 @@ function findWorkspaceFilePath(startDirectory, filename) {
 }
 
 export function loadWorkspaceEnv(startDirectory = process.cwd()) {
+  // Matches workspaceEnvFileKey in apps/server/src/lib/load-workspace-env.ts.
+  const replacementPath = process.env.MEDIA_MANAGER_ENV_FILE
+
+  if (replacementPath) {
+    loadDotenv({ path: replacementPath, override: true, quiet: true })
+    return
+  }
+
   const envPath = findWorkspaceFilePath(startDirectory, '.env')
   const envLocalPath = findWorkspaceFilePath(startDirectory, '.env.local')
 

@@ -9,6 +9,7 @@
     "production:status": "pnpm --filter \"@repo/server^...\" build && pnpm --filter @repo/server production:status",
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "preview": "pnpm --filter @repo/server preview",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "typecheck:watch": "turbo typecheck:watch",

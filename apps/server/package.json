@@ -32,6 +32,7 @@
     "migrate:dev": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
     "seed:dev": "tsx scripts/seed.ts",
+    "preview": "tsx scripts/preview/run.ts",
     "import:legacy": "tsx scripts/import-legacy.ts",
     "test:unit": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",

@@ -30,6 +30,8 @@
     "components/**/*",
     "utils/**/*",
     "hooks/**/*",
+    "e2e/**/*",
+    "playwright.config.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", ".next"]

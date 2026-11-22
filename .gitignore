@@ -18,6 +18,9 @@ node_modules
 # Testing
 coverage
 .playwright-mcp/
+.playwright/
+test-results/
+playwright-report/
 
 # Turbo
 .turbo

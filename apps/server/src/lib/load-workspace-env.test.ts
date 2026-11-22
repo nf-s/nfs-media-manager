@@ -6,12 +6,15 @@ import {
   findWorkspaceEnvPath,
   findWorkspaceFilePath,
   loadWorkspaceEnv,
+  readWorkspaceEnv,
+  workspaceEnvFileKey,
 } from '@/lib/load-workspace-env'
 
 const environmentKey = 'LOAD_WORKSPACE_ENV_TEST_KEY'
 
 afterEach(() => {
   delete process.env[environmentKey]
+  delete process.env[workspaceEnvFileKey]
 })
 
 function createTempWorkspace(): string {
@@ -82,6 +85,49 @@ describe('findWorkspaceEnvPath', () => {
     loadWorkspaceEnv(nestedDirectory)
 
     expect(process.env[environmentKey]).toBe('loaded-from-env-local')
+
+    rmSync(workspaceDirectory, { recursive: true, force: true })
+  })
+
+  it('loads only the named env file when one replaces the workspace files', () => {
+    const workspaceDirectory = createTempWorkspace()
+    const nestedDirectory = join(workspaceDirectory, 'apps', 'server')
+    const replacementPath = join(workspaceDirectory, 'preview.env')
+
+    writeFileSync(
+      join(workspaceDirectory, '.env.local'),
+      `${environmentKey}=loaded-from-env-local\n`,
+    )
+    writeFileSync(replacementPath, `${environmentKey}=loaded-from-preview\n`)
+    process.env[workspaceEnvFileKey] = replacementPath
+
+    loadWorkspaceEnv(nestedDirectory)
+
+    expect(process.env[environmentKey]).toBe('loaded-from-preview')
+
+    rmSync(workspaceDirectory, { recursive: true, force: true })
+  })
+})
+
+describe('readWorkspaceEnv', () => {
+  it('returns env.local over env without changing the process environment', () => {
+    const workspaceDirectory = createTempWorkspace()
+    const nestedDirectory = join(workspaceDirectory, 'apps', 'server')
+
+    writeFileSync(
+      join(workspaceDirectory, '.env'),
+      `${environmentKey}=loaded-from-env\nOTHER=kept\n`,
+    )
+    writeFileSync(
+      join(workspaceDirectory, '.env.local'),
+      `${environmentKey}=loaded-from-env-local\n`,
+    )
+
+    expect(readWorkspaceEnv(nestedDirectory)).toEqual({
+      [environmentKey]: 'loaded-from-env-local',
+      OTHER: 'kept',
+    })
+    expect(process.env[environmentKey]).toBeUndefined()
 
     rmSync(workspaceDirectory, { recursive: true, force: true })
   })

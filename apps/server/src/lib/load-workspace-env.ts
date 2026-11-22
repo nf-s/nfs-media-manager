@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { config } from 'dotenv'
+import { config, parse } from 'dotenv'
 
 export function findWorkspaceFilePath(
   startDirectory: string,
@@ -25,15 +25,11 @@ export function findWorkspaceFilePath(
   }
 }
 
-export function findWorkspaceEnvPath(
-  startDirectory: string,
-): string | null {
+export function findWorkspaceEnvPath(startDirectory: string): string | null {
   return findWorkspaceFilePath(startDirectory, '.env')
 }
 
-export function findWorkspaceRootPath(
-  startDirectory: string,
-): string | null {
+export function findWorkspaceRootPath(startDirectory: string): string | null {
   const envPath = findWorkspaceEnvPath(startDirectory)
 
   if (!envPath) {
@@ -43,7 +39,34 @@ export function findWorkspaceRootPath(
   return dirname(envPath)
 }
 
+/**
+ * Names one env file that replaces the workspace `.env` and `.env.local`, so a
+ * process such as the preview can run on its own settings without reading the
+ * local ones.
+ */
+export const workspaceEnvFileKey = 'MEDIA_MANAGER_ENV_FILE'
+
+/** The workspace `.env` values with `.env.local` over them, without loading them. */
+export function readWorkspaceEnv(
+  startDirectory: string = process.cwd(),
+): Record<string, string> {
+  const envPath = findWorkspaceFilePath(startDirectory, '.env')
+  const envLocalPath = findWorkspaceFilePath(startDirectory, '.env.local')
+
+  return {
+    ...(envPath ? parse(readFileSync(envPath)) : {}),
+    ...(envLocalPath ? parse(readFileSync(envLocalPath)) : {}),
+  }
+}
+
 export function loadWorkspaceEnv(startDirectory: string = process.cwd()): void {
+  const replacementPath = process.env[workspaceEnvFileKey]
+
+  if (replacementPath) {
+    config({ path: replacementPath, override: true, quiet: true })
+    return
+  }
+
   const envPath = findWorkspaceFilePath(startDirectory, '.env')
   const envLocalPath = findWorkspaceFilePath(startDirectory, '.env.local')
 

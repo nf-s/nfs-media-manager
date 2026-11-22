@@ -13,7 +13,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "typecheck:watch": "tsc --noEmit --watch"
+    "typecheck:watch": "tsc --noEmit --watch",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "1.20.14",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "15.1.7",
+    "@playwright/test": "1.62.1",
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/eslint": "catalog:",

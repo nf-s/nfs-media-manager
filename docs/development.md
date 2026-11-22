@@ -42,6 +42,31 @@ Build the self-hosted Node application with `corepack pnpm build`. The web build
 
 Run the configured Prettier formatter on changed files as the final edit step. Do not commit environment files, database dumps, generated output, library data or local provider packages. Reproduce bugs, run relevant tests, review the diff and avoid unrelated refactors.
 
+## Preview for interface checks
+
+```sh
+corepack pnpm --filter @repo/schemas build
+corepack pnpm --filter @repo/media-plugin-sdk build
+corepack pnpm preview
+```
+
+`corepack pnpm preview` starts the app on a disposable database filled with the synthetic preview library (`apps/server/scripts/preview/seed.ts`): albums, tracks, artists, films, playlists, scrobbles, subscriptions and jobs with saved provider results. It needs only the local PostgreSQL server from your settings and refuses any other host.
+
+- It creates a database named `media_preview_run_<id>`, writes its own settings file outside the checkout and passes it to every preview process through `MEDIA_MANAGER_ENV_FILE`, which the workspace env loader uses in place of `.env` and `.env.local`. Those files are read only for the PostgreSQL connection and are never changed. Provider keys and plugins are not loaded.
+- It runs the migrations, the initial account seed and the preview seed, then the API without the job worker (nothing a click queues is run) on `127.0.0.1:4710` and the web app on `127.0.0.1:3710`. Choose other ports with `-- --web-port <port> --api-port <port>`.
+- Open the sign-in link it prints (`http://127.0.0.1:4710/preview/sign-in?next=/tracks`) to sign in as the generated preview account; the password is never shown.
+- Ctrl+C stops both servers, drops the database and deletes the settings. A database left by a preview that was killed is dropped the next time the command starts, unless something is still connected to it.
+
+The preview uses its own Next.js process in the checkout, so stop `corepack pnpm dev` in the same checkout first, or run the preview from a worktree.
+
+## Browser tests
+
+```sh
+corepack pnpm --filter web test:browser
+```
+
+Playwright tests in `apps/web/e2e` run against the preview at desktop width and at phone width (375 × 812). A preview already running on the default ports is reused; otherwise the run starts one and removes it at the end. `tracks-browse.spec.ts` covers Tracks Browse and `metadata-selection.spec.ts` the track Metadata selection: a field filter through the shared search control, selecting rows, and a reload that keeps the filter from the URL. The tests use Playwright's Chromium; if it is missing, run `corepack pnpm --filter web exec playwright install chromium`. They are not part of CI yet.
+
 ## Provider development
 
 Use the registry and [plugin SDK workflow](local-plugins.md). Validate untrusted inputs at the boundary. Route handlers validate/authenticate, call services and return results. Providers must use the shared request gate; no direct networking, hidden retries or broad automatic runs. The one exception is the [Sonos](sonos.md) Control API, whose calls a listener is waiting on: they use the gate module's `createDirectProviderRequest`, which keeps the provider's halt, cooldown and failure records but skips the durable reservation, pacing and request count. It refuses any provider with a request budget.
