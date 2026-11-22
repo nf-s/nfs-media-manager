@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -150,6 +151,52 @@ const PlanRowsSchema = z.array(
 function flattenPlan(plan: PlanNode): PlanNode[] {
   return [plan, ...(plan.Plans ?? []).flatMap(flattenPlan)]
 }
+
+it('searches visible album tags across words in Tracks and match diagnostics', async () => {
+  const { queryBrowseIds, listBrowseFacets } = await import('@/services/browse')
+  const { listTrackMatchDiagnosticIds } =
+    await import('@/services/track-match-diagnostics')
+  await pool.query(`
+    insert into tag (id, media_type, name, kind, hidden) values
+      ('search-tag-one', 'album', 'Ultraviolet Test', 'genre', false),
+      ('search-tag-two', 'album', 'Test Ultraviolet', 'genre', false),
+      ('search-tag-hidden', 'album', 'Infrared Test', 'genre', true);
+    insert into media_item_tag (media_item_id, tag_id)
+    values ('album-1000', 'search-tag-one'), ('album-1000', 'search-tag-two'),
+      ('album-1000', 'search-tag-hidden');
+  `)
+  try {
+    const q = 'needle ultraviolet'
+    const found = { ids: ['song-20000'], totalCount: 1 }
+    expect(
+      await queryBrowseIds('track', TrackQuerySchema.parse({ q })),
+    ).toMatchObject(found)
+    expect(
+      await listTrackMatchDiagnosticIds(
+        TrackMatchDiagnosticsQuerySchema.parse({ q, view: 'spotify-coverage' }),
+      ),
+    ).toEqual(found)
+    expect(
+      await queryBrowseIds(
+        'track',
+        TrackQuerySchema.parse({ q: 'needle infrared' }),
+      ),
+    ).toMatchObject({ ids: [], totalCount: 0 })
+    const facets = await listBrowseFacets('track', { q: 'ultraviolet' })
+    expect(
+      facets
+        .filter(({ field }) => field === 'albumTag')
+        .map(({ value, count }) => ({ value, count })),
+    ).toEqual([
+      { value: 'test ultraviolet', count: 20 },
+      { value: 'ultraviolet test', count: 20 },
+    ])
+  } finally {
+    await pool.query(
+      `delete from tag where id in ('search-tag-one', 'search-tag-two', 'search-tag-hidden')`,
+    )
+  }
+})
 
 it('counts the same filtered, capped browse set without blocking any row-only page', async () => {
   const { queryBrowseCount, queryBrowseIds, queryBrowsePageIds } =

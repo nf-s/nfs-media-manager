@@ -513,6 +513,14 @@ function browseTextSearchIds(
               select artist_id from (${labels}) search_labels where name ilike ${search}
             )`
       }
+      // An album with several matching tags still contributes each track once.
+      if (field.key === 'albumTag' && mediaType === 'track')
+        return sql`select m.id from media_item m
+          join library_track lt on lt.media_item_id = m.id
+          where m.media_type = ${mediaType} and lt.album_media_item_id in (
+            select mt.media_item_id from media_item_tag mt join tag t on t.id = mt.tag_id
+            where t.media_type = 'album' and not t.hidden and t.name ilike ${search}
+          )`
       const rows = sql`select id from (
         ${textRows(field.key, mediaType, { includeArchived: true })}
       ) searchable_values where value ilike ${search}`
