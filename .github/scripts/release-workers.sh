@@ -6,10 +6,36 @@ fail() {
   exit 1
 }
 
+# Runs a step on public code silently. On failure, prints the last lines of
+# its output before the failure line, with workflow commands disabled so the
+# output cannot change masking or annotations.
 quiet() {
+  local description="$1" output token
+  shift
+  output="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/release-step.XXXXXX")" ||
+    fail "$description could not start."
+  if "$@" >"$output" 2>&1; then
+    rm -f "$output"
+    return
+  fi
+  printf '%s output (last 300 lines):\n' "$description" >&2
+  if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+    token="$(openssl rand -hex 16)"
+    printf '::stop-commands::%s\n' "$token" >&2
+  fi
+  tail -n 300 "$output" >&2
+  [[ -z ${token:-} ]] || printf '::%s::\n' "$token" >&2
+  rm -f "$output"
+  fail "$description failed."
+}
+
+# Runs a step that reads private provider source. Its output is discarded,
+# because the job log of this public repository would publish it.
+quiet_private() {
   local description="$1"
   shift
-  "$@" >/dev/null 2>&1 || fail "$description failed."
+  "$@" >/dev/null 2>&1 ||
+    fail "$description failed. Its output is withheld because it includes private provider source; reproduce it locally with the pinned provider checkouts."
 }
 
 wrangler() {
@@ -42,7 +68,7 @@ install_provider_dependencies() {
   local checkout=".cloudflare/provider-$slot"
   [[ -f "$checkout/package-lock.json" ]] ||
     fail "The pinned checkout for provider $slot is missing its npm lockfile."
-  quiet "Provider $slot dependency install" npm --prefix "$checkout" ci \
+  quiet_private "Provider $slot dependency install" npm --prefix "$checkout" ci \
     --omit=dev --ignore-scripts --no-audit --no-fund
 }
 
@@ -65,10 +91,10 @@ build() {
   build_auth="$(openssl rand -hex 32)"
   build_key="$(openssl rand -hex 32)"
   BETTER_AUTH_SECRET="$build_auth" MEDIA_ENCRYPTION_KEY="$build_key" MEDIA_PLUGIN_PATHS="$provider_one,$provider_two" \
-    quiet 'Private provider build preparation' pnpm --filter @repo/server prepare:cloudflare
-  quiet 'API Worker typecheck' pnpm --filter @repo/server typecheck:cloudflare
-  quiet 'API Worker bundle' wrangler @repo/server deploy --dry-run --outdir ../../.cloudflare/server-build
-  quiet 'Packaged API Worker healthcheck' pnpm --filter @repo/server exec tsx scripts/check-cloudflare-build.ts
+    quiet_private 'Private provider build preparation' pnpm --filter @repo/server prepare:cloudflare
+  quiet_private 'API Worker typecheck' pnpm --filter @repo/server typecheck:cloudflare
+  quiet_private 'API Worker bundle' wrangler @repo/server deploy --dry-run --outdir ../../.cloudflare/server-build
+  quiet_private 'Packaged API Worker healthcheck' pnpm --filter @repo/server exec tsx scripts/check-cloudflare-build.ts
   CLOUDFLARE_APP_URL="$app_origin" quiet 'Web Worker build' pnpm --filter web build:cloudflare
   quiet 'Web Worker bundle' wrangler web deploy --dry-run
 }
@@ -177,7 +203,7 @@ report_served() {
 
 publish() {
   require_workers_access
-  quiet 'API Worker deployment' wrangler @repo/server deploy --keep-vars --tag "$GITHUB_SHA"
+  quiet_private 'API Worker deployment' wrangler @repo/server deploy --keep-vars --tag "$GITHUB_SHA"
   verify_version @repo/server API
   quiet 'Web Worker deployment' wrangler web deploy --keep-vars --tag "$GITHUB_SHA" \
     --var "APP_URL:$app_origin"

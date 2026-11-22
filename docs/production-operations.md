@@ -31,6 +31,8 @@ Nothing is published when this check fails. Re-run the job after applying the mi
 
 After the signed-out checks, the job opens Tracks Browse in the table view with `BROWSE_CHECK_SESSION_TOKEN` in headless Chrome. It fails if the first track row is not visible within 10 seconds of navigation start, or if production sends the session to the login page. The time is in the job summary. Without the secret, the step passes with a warning. Replace the secret when the session expires: sessions last 30 days and are extended when used.
 
+Build and publish steps run silently. When a step on public code fails, such as the web Worker build or bundle, the shared schema, SDK or API declaration builds, or the web Worker deployment, the `deploy-production / deploy` job log shows the last 300 lines of its output directly above the `::error::` line that names the step. Open the failed step (usually **Build Worker bundles**) in the run to read it. GitHub masks the workflow's secrets in that output. Steps that read private provider source (provider dependency install, provider build preparation, API Worker typecheck, bundle, healthcheck and deployment) discard their output, because this repository's job logs are public. Reproduce those failures locally with the pinned provider checkouts.
+
 If any step fails or the job is cancelled, a final step reports the commit each Worker serves, in the log and the job summary, and warns when either is not serving the release commit. A failure after the API deploy can leave the two Workers on different revisions. Check the existing release's database and runtime compatibility before retrying or rolling either Worker back.
 
 ## Production status
