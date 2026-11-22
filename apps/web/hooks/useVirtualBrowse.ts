@@ -120,6 +120,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     headerHeight,
     extraRowHeights,
     totalCount: count.data?.totalCount,
+    prioritizeVisible: true,
   })
   const conflict =
     rows.conflictingPage === undefined
@@ -189,18 +190,20 @@ export type VirtualPageOptions<Page extends VirtualPageData> = {
   loadPage: (page: number, size: number, signal: AbortSignal) => Promise<Page>
   enabled?: boolean
   performanceScreen?: BrowsePerformanceScreen
+  prioritizeVisible?: boolean
   viewportEnabled?: boolean
   totalCount?: number
   refetchInterval?: number | ((page: Page | undefined) => number | false)
 }
 
-/** Mount page one for its count and just the pages intersecting the viewport. */
+/** Keep the first-page count available and observe the current window. */
 export function useVirtualPages<Page extends VirtualPageData>({
   queryKey,
   pageSize,
   loadPage,
   enabled = true,
   performanceScreen,
+  prioritizeVisible = false,
   viewportEnabled = true,
   refetchInterval,
   extraRowHeights,
@@ -216,12 +219,12 @@ export function useVirtualPages<Page extends VirtualPageData>({
     'columns' | 'rowHeight' | 'scrollTop' | 'viewportHeight' | 'headerHeight'
   > & { extraRowHeights?: ReadonlyMap<number, number> }) {
   const client = useQueryClient()
-  function options(page: number) {
+  function options(page: number, pageEnabled = enabled) {
     return {
       ...virtualPageOptions(queryKey, page, (number, signal) =>
         loadPage(number, pageSize, signal),
       ),
-      enabled,
+      enabled: pageEnabled,
       refetchInterval:
         typeof refetchInterval === 'function'
           ? (query: { state: { data?: Page } }) =>
@@ -229,14 +232,12 @@ export function useVirtualPages<Page extends VirtualPageData>({
           : refetchInterval,
     }
   }
-  const first = useQuery({
-    ...options(1),
-  })
+  const firstData = client.getQueryData<Page>([...queryKey, 1])
   // A cached count can end inside a page whose response proves more rows exist.
   const lastPage = Math.max(1, Math.ceil((totalCount ?? 0) / pageSize))
   const lastData =
     lastPage === 1
-      ? first.data
+      ? firstData
       : client.getQueryData<Page>([...queryKey, lastPage])
   const lastEnd = (lastPage - 1) * pageSize + (lastData?.items.length ?? 0)
   const outgrewCount =
@@ -244,10 +245,10 @@ export function useVirtualPages<Page extends VirtualPageData>({
     lastData?.hasMore !== undefined &&
     (lastEnd > totalCount || (lastEnd === totalCount && lastData.hasMore))
   const anchorPage = outgrewCount ? lastPage : 1
-  const anchor = outgrewCount ? lastData : first.data
+  const anchor = outgrewCount ? lastData : firstData
   let loadedEnd = (anchorPage - 1) * pageSize + (anchor?.items.length ?? 0)
   let hasMore = anchor?.hasMore === true
-  let total = first.data?.totalCount ?? (outgrewCount ? undefined : totalCount)
+  let total = firstData?.totalCount ?? (outgrewCount ? undefined : totalCount)
   if (total === undefined && anchor?.hasMore === false) total = loadedEnd
   // Follow cached pages from the known boundary. The extra slot gives the
   // viewport a way to request the next page before an exact count arrives.
@@ -264,7 +265,7 @@ export function useVirtualPages<Page extends VirtualPageData>({
     }
   }
   const reserved = Math.max(1, Math.ceil(viewportHeight / rowHeight)) * columns
-  const extent = first.data ? loadedEnd + Number(hasMore) : reserved
+  const extent = firstData ? loadedEnd + Number(hasMore) : reserved
   const window = browseWindow({
     total: total ?? extent,
     columns,
@@ -279,8 +280,34 @@ export function useVirtualPages<Page extends VirtualPageData>({
     viewportEnabled && (total !== undefined || hasMore)
       ? window.pages.filter((page) => page !== 1)
       : []
+  const visiblePage = Math.floor(window.firstVisibleIndex / pageSize) + 1
+  const lastVisiblePage = Math.max(
+    visiblePage,
+    Math.ceil(window.visibleEnd / pageSize),
+  )
+  const isVisible = (page: number) =>
+    page >= visiblePage && page <= lastVisiblePage
+  const needsFirst =
+    !prioritizeVisible || totalCount === undefined || isVisible(1)
+  const first = useQuery(options(1, enabled && needsFirst))
+  // Cached overscan stays renderable. Fetch missing overscan only after the
+  // viewport has data, and refresh a cached page when it becomes visible.
+  const visibleReady = window.pages.every(
+    (page) =>
+      !isVisible(page) ||
+      client.getQueryData([...queryKey, page]) !== undefined,
+  )
   const queries = useQueries({
-    queries: pageNumbers.map(options),
+    queries: pageNumbers.map((page) =>
+      options(
+        page,
+        enabled &&
+          (!prioritizeVisible ||
+            isVisible(page) ||
+            (visibleReady &&
+              client.getQueryData([...queryKey, page]) === undefined)),
+      ),
+    ),
   })
   const pages = new Map([[1, first]])
   pageNumbers.forEach((page, index) => {
@@ -312,7 +339,6 @@ export function useVirtualPages<Page extends VirtualPageData>({
     const items: Page['items'] | undefined = page?.data?.items
     return { index, item: items?.[index % pageSize] }
   })
-  const visiblePage = Math.floor(window.firstVisibleIndex / pageSize) + 1
   const visible = pages.get(visiblePage)
   const visibleSlot = slots[window.firstVisibleIndex - window.start]
   useBrowsePerformance(performanceScreen, {
@@ -323,13 +349,19 @@ export function useVirtualPages<Page extends VirtualPageData>({
     outcome:
       visibleSlot?.item !== undefined
         ? 'rows'
-        : first.isError || visible?.isError
+        : (needsFirst && first.isError) || visible?.isError
           ? 'error'
           : first.data && first.data.items.length === 0 && total === 0
             ? 'empty'
             : undefined,
   })
-  const failures = [...pages.values()].filter((query) => query.isError)
+  const failures = [...pages.entries()]
+    .filter(
+      ([page, query]) =>
+        query.isError &&
+        (!prioritizeVisible || isVisible(page) || (page === 1 && needsFirst)),
+    )
+    .map(([, query]) => query)
   return {
     ...window,
     slots,
@@ -341,7 +373,8 @@ export function useVirtualPages<Page extends VirtualPageData>({
     firstPage: first.data,
     hasTotal: total !== undefined,
     conflictingPage,
-    isPending: first.isPending,
+    isPending:
+      prioritizeVisible && visible ? visible.isPending : first.isPending,
     isError: failures.length > 0,
     isFetching: [...pages.values()].some((query) => query.isFetching),
     retry: () => {

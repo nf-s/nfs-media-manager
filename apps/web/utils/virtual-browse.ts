@@ -42,6 +42,10 @@ export function browseWindow({
   const firstVisible = extra.length
     ? rowAt(top)
     : Math.min(Math.max(0, rows - 1), Math.floor(top / rowHeight))
+  const bottom = top + viewportHeight
+  const bottomRow = extra.length ? rowAt(bottom) : Math.ceil(bottom / rowHeight)
+  const visibleEndRow =
+    extra.length && rowTop(bottomRow) < bottom ? bottomRow + 1 : bottomRow
   const startRow = Math.max(0, firstVisible - 4)
   const endRow = Math.min(
     rows,
@@ -63,6 +67,10 @@ export function browseWindow({
     start,
     end,
     firstVisibleIndex: firstVisible * columns,
+    visibleEnd: Math.min(
+      total,
+      Math.max(firstVisible + 1, visibleEndRow) * columns,
+    ),
     pages,
     padTop: rowTop(startRow),
     padBottom: rowTop(rows) - rowTop(endRow),

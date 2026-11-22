@@ -7,7 +7,7 @@ import {
   QueryObserver,
 } from '@tanstack/react-query'
 import { z } from 'zod'
-import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
+import { useVirtualBrowse, useVirtualPages } from '@/hooks/useVirtualBrowse'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { SecondaryVirtualRows } from './secondary-table'
 
@@ -318,4 +318,76 @@ test('a secondary pager retains visited pages for selection without rendering th
   assert.doesNotMatch(html, />Visited final page<|Other filter/)
   assert.match(html, /Initial page<\/td>/)
   assert.match(html, /virtual-browse-placeholder/)
+})
+
+test('a deep viewport prioritizes visible pages on mount and invalidation', async () => {
+  const key = ['fixture virtual pages']
+  const page = {
+    items: Array.from({ length: 100 }, () => 'Cached row'),
+    hasMore: true,
+  }
+  function View({
+    firstRow,
+    started,
+  }: {
+    firstRow: number
+    started: number[]
+  }) {
+    useVirtualPages({
+      queryKey: key,
+      pageSize: 100,
+      totalCount: 400,
+      prioritizeVisible: true,
+      columns: 1,
+      rowHeight: 32,
+      viewportHeight: 96,
+      scrollTop: firstRow * 32,
+      headerHeight: 0,
+      loadPage: (page, _size, signal) => {
+        started.push(page)
+        return new Promise<{ items: string[] }>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason))
+        })
+      },
+    })
+    return null
+  }
+  for (const { firstRow, cached, mount, invalidation } of [
+    { firstRow: 195, cached: [], mount: [2], invalidation: [2] },
+    { firstRow: 195, cached: [2], mount: [3], invalidation: [3, 2] },
+    { firstRow: 195, cached: [2, 3], mount: [], invalidation: [2] },
+    { firstRow: 198, cached: [], mount: [2, 3], invalidation: [2, 3] },
+  ]) {
+    const client = new QueryClient()
+    const started: number[] = []
+    client.setQueryData([...key, 1], page, { updatedAt: 1 })
+    for (const number of cached) client.setQueryData([...key, number], page)
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <View firstRow={firstRow} started={started} />
+      </QueryClientProvider>,
+    )
+    const observers = client
+      .getQueryCache()
+      .findAll({ queryKey: key })
+      .map((query) =>
+        new QueryObserver(client, {
+          ...query.options,
+          queryKey: query.queryKey,
+        }).subscribe(() => undefined),
+      )
+    try {
+      assert.deepEqual(started, mount)
+      const refresh = client.invalidateQueries({ queryKey: key })
+      try {
+        assert.deepEqual(started, invalidation)
+      } finally {
+        await client.cancelQueries({ queryKey: key })
+        await refresh
+      }
+    } finally {
+      observers.forEach((unsubscribe) => unsubscribe())
+      client.clear()
+    }
+  }
 })
