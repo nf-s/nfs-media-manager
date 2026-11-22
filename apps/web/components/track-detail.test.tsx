@@ -68,6 +68,7 @@ const scrobbled = TrackDetailSchema.parse({
   ],
   spotifyAlbumId: null,
   scrobbledAlbums: [],
+  isrcs: [],
   listening: {
     total: 3,
     firstListenedAt: '2026-01-02T00:00:00.000Z',
@@ -254,6 +255,27 @@ test('tracks with a Spotify match keep album metadata, playback and every source
     /href="https:\/\/open.spotify.com\/track\/1234567890ABCDEFGHIJKL"/,
   )
   assert.match(render(matched, '', 'sources'), /unique artist and title match/)
+})
+
+test('details list every recorded ISRC with the services that reported it', () => {
+  const html = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      isrc: 'ZZAAA2600001',
+      isrcs: [
+        { isrc: 'ZZAAA2600001', providers: ['spotify'] },
+        { isrc: 'ZZAAA2600002', providers: ['spotify', 'tidal'] },
+      ],
+    }),
+  )
+  assert.match(
+    html,
+    /<span class="ds-mono">ZZAAA2600001<\/span> <span class="ds-muted">Spotify<\/span>/,
+  )
+  assert.match(
+    html,
+    /<span class="ds-mono">ZZAAA2600002<\/span> <span class="ds-muted">Spotify, TIDAL<\/span>/,
+  )
 })
 
 test('Sources offers Spotify search on uncovered tracks and opens a verified alternate directly', () => {

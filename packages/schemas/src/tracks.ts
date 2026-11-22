@@ -296,6 +296,13 @@ export type TrackScrobbleRemoveInput = z.infer<
   typeof TrackScrobbleRemoveInputSchema
 >
 
+/** An ISRC recorded for a track and the services that reported it. */
+export const TrackIsrcSchema = z.object({
+  isrc: z.string(),
+  providers: z.array(z.string()),
+})
+export type TrackIsrc = z.infer<typeof TrackIsrcSchema>
+
 export const TrackDetailSchema = TrackListItemSchema.extend({
   /** Playback coverage from a confirmed version when this entry has no usable Spotify ID. */
   spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
@@ -314,6 +321,8 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
       scrobbles: z.number().int().positive(),
     }),
   ),
+  /** Every ISRC recorded for the track, in code order. */
+  isrcs: z.array(TrackIsrcSchema),
   listening: z.object({
     total: z.number().int().nonnegative(),
     firstListenedAt: z.string().datetime().nullable(),

@@ -34,6 +34,7 @@ import {
 } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import { providerLabel } from '@/utils/field-provenance'
 import { trackServiceLinks } from '@/utils/track-links'
 import {
   parseTrackFilters,
@@ -287,7 +288,18 @@ function TrackOverview({
               { label: 'Added', value: formatDate(item.dateAdded) },
               {
                 label: 'ISRC',
-                value: item.isrc ? (
+                value: item.isrcs.length ? (
+                  item.isrcs.map((code) => (
+                    <div key={code.isrc}>
+                      <span className="ds-mono">{code.isrc}</span>{' '}
+                      <span className="ds-muted">
+                        {code.providers
+                          .map((provider) => providerLabel(provider))
+                          .join(', ')}
+                      </span>
+                    </div>
+                  ))
+                ) : item.isrc ? (
                   <span className="ds-mono">{item.isrc}</span>
                 ) : (
                   EMPTY_VALUE

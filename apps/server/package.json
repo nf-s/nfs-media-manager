@@ -41,6 +41,7 @@
     "verify:legacy": "tsx scripts/verify-legacy.ts",
     "backfill:film-added": "tsx scripts/backfill-film-added.ts",
     "backfill:spotify-track-searches": "tsx scripts/backfill-spotify-track-searches.ts",
+    "recover:track-isrcs": "tsx scripts/recover-track-isrcs.ts",
     "review:spotify-tracks": "tsx scripts/local-spotify-review/export.ts"
   },
   "devDependencies": {

@@ -15,6 +15,7 @@ import {
   resolveSpotifyTrackIds,
   spotifyTrackItemId,
 } from './spotify-playlists'
+import { recordTrackIsrcs } from './track-isrcs'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -145,6 +146,17 @@ export async function storeConfirmedRecording(
         updatedAt: new Date(),
       },
     })
+  await recordTrackIsrcs(tx, [
+    {
+      mediaItemId: targetId,
+      isrc: candidate.isrc,
+      provider: 'spotify',
+      source:
+        'jobId' in provenance
+          ? { kind: 'spotify-track-search', jobId: provenance.jobId }
+          : { kind: 'spotify-manual-add' },
+    },
+  ])
   if (!existing?.hasArtists || albumFallbackArtistCreditCorrection)
     await replaceSpotifyTrackCredits(tx, [
       { id: targetId, artists: candidate.artists },

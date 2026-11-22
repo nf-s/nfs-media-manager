@@ -7,6 +7,7 @@ These requirements describe supported behavior for film and album libraries, inc
 - [Browsing and navigation](browsing.md)
 - [Search, filtering and sorting](search.md)
 - [Albums, music and playlists](music.md)
+- [ISRC and TIDAL matching](isrc-and-tidal.md)
 - [Films](films.md)
 - [Details, overrides and history](details.md)
 - [Imports, providers and safety](imports-and-plugins.md)
