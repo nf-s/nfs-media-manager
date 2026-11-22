@@ -9,6 +9,7 @@ import { musicbrainzPlugin } from '@/plugins/builtin/musicbrainz'
 import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { serplyPlugin } from '@/plugins/builtin/serply'
+import { tidalPlugin } from '@/plugins/builtin/tidal'
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import { sonosPlugin } from '@/plugins/builtin/sonos'
 import { mixStationPlugins } from '@/plugins/builtin/mix-stations'
@@ -82,6 +83,15 @@ const builtinProviders = [
     supportsScrape: true,
     supportsArtistEnrichment: true,
     supportsLegacyImport: true,
+    pluginPath: null,
+  },
+  {
+    ...tidalPlugin.manifest,
+    surface: 'provider',
+    subscriptions: false,
+    mixes: false,
+    supportsScrape: true,
+    supportsLegacyImport: false,
     pluginPath: null,
   },
   {

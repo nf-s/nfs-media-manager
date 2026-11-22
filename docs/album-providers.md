@@ -7,13 +7,14 @@ prevent an otherwise valid release group from being matched or imported.
 
 ## Supported adapters
 
-| Provider    | Behavior                                                                                                                                     |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| MusicBrainz | Uses an owned release-group ID first, then bounded barcode/name searches. Retains relations without changing another provider's identifiers. |
-| Last.fm     | Looks up the album by album MBID, corrected URL, or canonical names. Ranked album tags are opt-in. Release-group IDs are not album MBIDs.    |
-| Discogs     | Uses an owned corrected ID or bounded native barcode/master/release searches. A master lookup fetches its main release only.                 |
-| Spotify     | Supports album metadata and the separately authorized [saved-album import](spotify-album-imports.md). Audio-feature acquisition is excluded. |
-| Serply      | Looks up indexed Rate Your Music results. Search-derived ratings can lag the source.                                                         |
+| Provider    | Behavior                                                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| MusicBrainz | Uses an owned release-group ID first, then bounded barcode/name searches. Retains relations without changing another provider's identifiers.   |
+| Last.fm     | Looks up the album by album MBID, corrected URL, or canonical names. Ranked album tags are opt-in. Release-group IDs are not album MBIDs.      |
+| Discogs     | Uses an owned corrected ID or bounded native barcode/master/release searches. A master lookup fetches its main release only.                   |
+| Spotify     | Supports album metadata and the separately authorized [saved-album import](spotify-album-imports.md). Audio-feature acquisition is excluded.   |
+| Serply      | Looks up indexed Rate Your Music results. Search-derived ratings can lag the source.                                                           |
+| TIDAL       | Matches by the Spotify album's UPC or a stored TIDAL ID and aligns its tracks; tracks match by ISRC. Catalogue data only; see [TIDAL](#tidal). |
 
 Google Custom Search is retired. Historical ratings and source links remain importable under the existing provider ID; see [retirement behavior](google-search-retirement.md). CSV and legacy JSON files use the current [import workflows](importing.md). Archived scrapers, cleaners, playlist-sync helpers and prototypes are no longer included.
 
@@ -24,12 +25,25 @@ Google Custom Search is retired. Historical ratings and source links remain impo
 | MusicBrainz | 1 / 1000 ms                   | 1 direct; 2 name or barcode; 3 barcode miss then name |
 | Last.fm     | 1 / 200 ms                    | 1 normally; 2 with `options.includeTopTags: true`     |
 | Discogs     | 1 / 1050 ms                   | 1 release; 2 master; at most 4 with searches          |
+| TIDAL       | 1 / 1500 ms                   | 1 per 20 album tracks; 1 per track match              |
 
 Every HTTP request, including searches, uses `context.request`. There are no client libraries, direct fetches, hidden retries, pagination walks, quota-discovery calls, or network activity on module import. The persistent server gate owns spacing, timeouts, cooldowns and shared budgets. Runtime account access is not proven by these offline tests. The MusicBrainz, Last.fm and Discogs plugins do not claim a connection-test hook; no credentials are tested on import. The separate [Last.fm scrobble sync](lastfm-scrobbles.md) runs as account-level Last.fm jobs outside the plugin; it pages `user.getRecentTracks` through the same Last.fm gate and repeats a page after a temporary failure. Last.fm sets `errorBackoffMs: 5000` and `failureCooldownMs: 0`: an HTTP 400 or 5xx delays the next request by five seconds without a provider cooldown, for album jobs as well.
 
 Serial metadata jobs can make up to three attempts for a bodyless GET returning HTTP 502, 503 or 504. The shared gate records every request and the job logs each retry, with five- and ten-second minimum backoffs and any longer `Retry-After`. This does not extend adapter search windows. Concurrent providers, account task jobs, writes, timeouts, authentication errors and rate limits do not gain this retry behavior. See [job worker](job-worker.md) for the retry window and repeated-failure threshold.
 
 An existing owned reference is validated before any search. Invalid IDs fail immediately, rather than silently searching for a different album. Search windows are at most five MusicBrainz/Discogs candidates. Ambiguous matches or responses reporting more candidates than the bounded window require a direct corrected ID and are not marked benign. Discogs keeps these cases as failed jobs for review without counting them toward its provider safety stop. Validated searches with no matching item throw `ProviderItemNotFoundError`; malformed bodies, HTTP failures and access denial are not benign misses. Transport/gateway errors retain their type and retry time. Last.fm error 29 uses `ProviderRequestError('rate-limit')`, without retries, with at least a 60-second retry time extended by Retry-After. Existing shared request-gate quota classification remains unchanged by Google retirement; it no longer implies an active Google adapter.
+
+## TIDAL
+
+`tidal` reads the catalogue at `https://openapi.tidal.com/v2` (JSON:API, `Accept: application/vnd.api+json`). Configure its client ID and secret in Providers → TIDAL → Settings, or with `TIDAL_CLIENT_ID` and `TIDAL_CLIENT_SECRET`; an optional country (default `AU`) sets the catalogue it answers for. The server requests a client-credentials token from `https://auth.tidal.com/v1/oauth2/token` and keeps it in memory until five minutes before it expires (tokens last four hours). Tokens never reach the browser, and token requests are not kept in request history. Nothing plays through TIDAL: third-party playback is limited to previews.
+
+Requests go through the request gate one at a time, 1.5 seconds apart. TIDAL publishes no limits and sends no rate-limit headers; a 429 cools the provider down until its `Retry-After`, or for five minutes without one. Every response is stored with its job and validated before use.
+
+**Albums.** A TIDAL album job reads `GET /albums?filter[barcodeId]=<UPC>&include=items` with the UPC of the album's Spotify album, or `filter[id]` with a TIDAL album ID already stored for it. It never searches by name. No result is a not-found; a barcode TIDAL reports differently, or a rejected album, is not a match; two albums for one UPC need the TIDAL album ID set. The first response holds up to 20 tracks; longer albums read further pages of `/albums/<id>/relationships/items` by cursor, up to 500 tracks. The match stores a `tidal` `album` reference and a TIDAL link. The track list is then aligned to the library album's tracks: by position when both lists have the same length and the durations agree within three seconds or the titles match, otherwise by a unique title with a duration within three seconds. Each aligned library track gains a `tidal` `track` reference (TIDAL track ID, link, version, duration, popularity, and BPM and key when TIDAL returns them, which it did not for this app in November 2026) and its ISRC as a `tidal` `isrc` reference. A track without a primary ISRC takes TIDAL's when the alignment agreed on duration. A later album job replaces that album's alignment. Like the other providers, TIDAL supplies the library track list only until Spotify supplies one.
+
+**Tracks.** A TIDAL track match is a task job for one library track with an ISRC. It reads `GET /tracks?filter[isrc]=<ISRC>&include=albums`. When several TIDAL tracks carry the ISRC (the same recording on a single, an EP, an album and compilations), the job keeps those on a release whose barcode equals the UPC of a library album the track is on, then those whose duration is within two seconds, then those whose version agrees with the library title, then those that can be streamed. One left is stored as the track's `tidal` `track` reference with its ISRC. Several left are kept with the job for review in Tracks → Matches and the track's Sources, where choosing one stores it. None is a not-found.
+
+One request can carry 20 barcodes or 20 ISRCs, but a job is one item, so jobs send one each.
 
 ## Provider Workspace
 

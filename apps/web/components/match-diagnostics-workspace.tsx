@@ -17,8 +17,9 @@ import {
   getTrackBrowseValues,
   isImportedSpotifyMatch,
   TrackDetailSchema,
+  type TrackListItem,
 } from '@repo/schemas/tracks'
-import { Notice } from '@repo/ui/components/ds/feedback'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
@@ -123,6 +124,11 @@ import {
   type RowSelection,
 } from './merge-bar'
 import { TrackMergeBar } from './track-merge-bar'
+import {
+  TidalTrackMatchCell,
+  TidalTrackMatchReviewDialog,
+  useTidalTrackMatchStatusForPages,
+} from './tidal-track-match'
 
 const libraryLabels = {
   album: { name: 'Album', creator: 'Library artist', plural: 'albums' },
@@ -138,6 +144,7 @@ const libraryLabels = {
 
 /** A group row of the Possible duplicates view is as tall as the header (--ds-head). */
 const groupRowHeight = tableHeaderHeight
+const tidalColumn = 'tidal'
 
 type Provider = MatchDiagnosticsPage['providers'][number]
 type Column = TableColumn & {
@@ -178,6 +185,17 @@ function matchColumns(
         provider,
         browseField: { ...provider, type: 'text', filterable: false },
       })),
+      // Read from the TIDAL match jobs, so it is neither sorted nor searched.
+      {
+        key: tidalColumn,
+        label: 'TIDAL',
+        browseField: {
+          key: tidalColumn,
+          label: 'TIDAL',
+          type: 'text',
+          filterable: false,
+        },
+      },
       {
         key: 'actions',
         label: 'Actions',
@@ -589,6 +607,7 @@ export default function MatchDiagnosticsWorkspace({
   const matchFields = orderedTrackMatchBrowseFields
   const [knownProviders, setKnownProviders] = useState<Provider[]>([])
   const [merge, setMerge] = useState<MergeSelection | null>(null)
+  const [tidalReview, setTidalReview] = useState<TrackListItem | null>(null)
   // Possible duplicates lists only grouped tracks, under a row for each group.
   const duplicates = tracks && trackQuery.duplicates === true
   // The group rows, read with the same request as the rows they stand above.
@@ -659,6 +678,7 @@ export default function MatchDiagnosticsWorkspace({
       'artist',
       'album',
       ...providers.map(({ key }) => key),
+      tidalColumn,
       'actions',
     ]),
   ]
@@ -669,7 +689,12 @@ export default function MatchDiagnosticsWorkspace({
     browseField ? [browseField] : [],
   )
   const trackSortFields = trackColumnFields.filter(
-    ({ key }) => key !== 'actions',
+    ({ key }) => key !== 'actions' && key !== tidalColumn,
+  )
+  const tidal = useTidalTrackMatchStatusForPages(
+    tracks && shown.some(({ key }) => key === tidalColumn)
+      ? query.windowPageItems
+      : [],
   )
   // The Last.fm match shares its cell with Change match.
   const widths = useColumnWidths('tracks-matches', (field: BrowseField) =>
@@ -806,6 +831,22 @@ export default function MatchDiagnosticsWorkspace({
   }
 
   function renderCell(column: Column, item: MatchDiagnosticsRow) {
+    if (column.key === tidalColumn) {
+      const { track } = item
+      if (!track) return <EmptyValue />
+      const status = tidal.byId.get(track.id)
+      return status ? (
+        <TidalTrackMatchCell
+          status={status}
+          isrc={track.isrc}
+          onReview={() => setTidalReview(track)}
+        />
+      ) : tidal.isError ? (
+        <EmptyValue />
+      ) : (
+        <Skeleton width={40} height={12} />
+      )
+    }
     if (column.provider)
       return (
         <ProviderMatchCell
@@ -1147,6 +1188,12 @@ export default function MatchDiagnosticsWorkspace({
         />
       )}
       {duplicateActions.dialog}
+      {tidalReview && (
+        <TidalTrackMatchReviewDialog
+          track={tidalReview}
+          onClose={() => setTidalReview(null)}
+        />
+      )}
       {tracks && <DetailInspector track={{ onFilter: addTrackFilter }} />}
     </section>
   )

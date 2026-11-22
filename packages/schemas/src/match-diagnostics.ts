@@ -10,8 +10,10 @@ import {
   TrackQuerySchema,
   TrackSpotifyAlternateSchema,
 } from './tracks'
-import { selectionQueryFields } from './film-selection'
-import { SpotifyTrackSearchFreshnessSchema } from './spotify-track-search'
+import {
+  ProviderFreshnessFiltersSchema,
+  selectionQueryFields,
+} from './film-selection'
 import {
   albumMatchIdentifierMaxLength,
   AlbumHttpUrlSchema,
@@ -66,6 +68,16 @@ export const trackDuplicateCautionsLabels: Record<
   some: 'Something against merging',
 }
 
+/** Track Metadata filters by Spotify search and TIDAL match freshness. */
+export const trackMatchFreshnessProviders = ['spotify', 'tidal'] as const
+export const TrackMatchFreshnessSchema = ProviderFreshnessFiltersSchema.refine(
+  (filters) =>
+    filters.every(({ provider }) =>
+      trackMatchFreshnessProviders.some((item) => item === provider),
+    ),
+  'Track freshness is available for Spotify and TIDAL',
+)
+
 export const TrackMatchDiagnosticsQuerySchema =
   MatchDiagnosticsQuerySchema.extend({
     /** Coverage lists read library recordings without hydrating provider payloads. */
@@ -89,7 +101,7 @@ export const TrackMatchDiagnosticsQuerySchema =
     listening: TrackQuerySchema.shape.listening,
     listeningSort: TrackQuerySchema.shape.listeningSort,
     freshness: selectionQueryFields.freshness
-      .pipe(SpotifyTrackSearchFreshnessSchema)
+      .pipe(TrackMatchFreshnessSchema)
       .optional(),
   })
 export type TrackMatchDiagnosticsQuery = z.infer<

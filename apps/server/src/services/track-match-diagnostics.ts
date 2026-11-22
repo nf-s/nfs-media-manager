@@ -17,6 +17,7 @@ import { trackSpotifyMatchLabels } from '@repo/schemas/tracks'
 import { defaultListeningPeriod } from '@repo/schemas/listening'
 import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
+import { TIDAL_TRACK_MATCH_TASK } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
@@ -287,18 +288,26 @@ const spotifyCoverageOrder = sql`case
 type DiagnosticsQuery = Omit<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'> &
   Partial<Pick<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'>>
 
-function searchFreshness(filters: ProviderFreshnessFilter[]) {
+/** Each provider's job history, as joined to the Matches rows. */
+const freshnessHistories = {
+  spotify: sql.raw('search_history'),
+  tidal: sql.raw('tidal_history'),
+}
+type FreshnessProvider = keyof typeof freshnessHistories
+
+/** Any selected status of a provider's history. */
+function providerFreshness(filters: ProviderFreshnessFilter[], history: SQL) {
   if (!filters.length || filters.some((filter) => filter.mode === 'all')) return
   const modes = filters.map((filter) => {
     switch (filter.mode) {
       case 'never':
-        return sql`search_history.latest_attempt_status is null`
+        return sql`${history}.latest_attempt_status is null`
       case 'failed':
-        return sql`search_history.latest_attempt_status = 'failed'`
+        return sql`${history}.latest_attempt_status = 'failed'`
       case 'older':
-        return sql`(search_history.last_success is null or search_history.last_success < ${new Date(Date.now() - filter.olderThanDays * 86_400_000).toISOString()}::timestamp)`
+        return sql`(${history}.last_success is null or ${history}.last_success < ${new Date(Date.now() - filter.olderThanDays * 86_400_000).toISOString()}::timestamp)`
       case 'unscraped':
-        return sql`search_history.last_success is null`
+        return sql`${history}.last_success is null`
       case 'all':
         return sql`true`
     }
@@ -306,8 +315,39 @@ function searchFreshness(filters: ProviderFreshnessFilter[]) {
   return sql`(${sql.join(modes, sql` or `)})`
 }
 
+/** Every filtered provider, each by any of its selected statuses. */
+function searchFreshness(filters: ProviderFreshnessFilter[]) {
+  const providers = new Map<FreshnessProvider, SQL>()
+  for (const provider of ['spotify', 'tidal'] as const) {
+    const condition = providerFreshness(
+      filters.filter((filter) => filter.provider === provider),
+      freshnessHistories[provider],
+    )
+    if (condition) providers.set(provider, condition)
+  }
+  return providers.size
+    ? {
+        providers: new Set(providers.keys()),
+        condition: sql`(${sql.join([...providers.values()], sql` and `)})`,
+      }
+    : undefined
+}
+
 export function spotifySearchRecordingId(options: SQL) {
   return sql<string>`coalesce(${options}->>'acceptedTrackId', ${options}->>'trackId')`
+}
+
+/** The last attempt and last success of each track's TIDAL match jobs. */
+function tidalTrackMatchHistory() {
+  const recordingId = sql`options->>'trackId'`
+  return sql`
+    select ${recordingId} as id,
+      max(finished_at) filter (where status = 'succeeded' and options ? 'reason') as last_success,
+      (array_agg(status order by started_at desc, created_at desc, id desc))[1] as latest_attempt_status
+    from scrape_job where provider = 'tidal'
+      and options->>'task' = ${sql.raw(`'${TIDAL_TRACK_MATCH_TASK}'`)}
+      and started_at is not null and (status <> 'succeeded' or options ? 'reason')
+    group by ${recordingId}`
 }
 
 function spotifyTrackSearchHistory(userId: string | null, trackId?: string) {
@@ -329,14 +369,16 @@ export async function trackMatchesSpotifySearchFreshness(
   userId: string | null,
   filters: ProviderFreshnessFilter[],
 ) {
-  const freshness = searchFreshness(filters)
+  const freshness = searchFreshness(
+    filters.filter((filter) => filter.provider === 'spotify'),
+  )
   if (!freshness) return true
   const { rows } = await database.execute(sql`
     with search_history as (${spotifyTrackSearchHistory(userId, trackId)})
     select exists (
       select 1 from (values (${trackId}::text)) target(id)
       left join search_history on search_history.id = target.id
-      where ${freshness}
+      where ${freshness.condition}
     ) as eligible`)
   return z.object({ eligible: z.boolean() }).parse(rows[0]).eligible
 }
@@ -353,9 +395,16 @@ function trackMatchDiagnosticsRows(
 ) {
   const includeEvidence = !query.view || query.view === 'providers'
   const metadata = query.view === 'spotify-search-metadata'
-  const freshness = metadata && searchFreshness(query.freshness ?? [])
+  const freshness = metadata
+    ? searchFreshness(query.freshness ?? [])
+    : undefined
   const sortBy = query.sortBy
-  const usesHistory = metadata && (freshness || sortBy === 'spotifyLastSearch')
+  const usesHistory =
+    metadata &&
+    (freshness?.providers.has('spotify') || sortBy === 'spotifyLastSearch')
+  const usesTidalHistory =
+    metadata &&
+    (freshness?.providers.has('tidal') || sortBy === 'tidalLastMatch')
   const sortsByListening = sortBy === 'listeningScrobbles'
   const listening = createBrowseListening(
     query.listening,
@@ -369,9 +418,15 @@ function trackMatchDiagnosticsRows(
   const listeningJoin = listeningSource
     ? sql`left join period_counts listening_counts on listening_counts.id = ${trackId}`
     : sql``
-  const historyJoin = usesHistory
-    ? sql`left join search_history on search_history.id = ${trackId}`
-    : sql``
+  const historyJoin = sql`${
+    usesHistory
+      ? sql`left join search_history on search_history.id = ${trackId}`
+      : sql``
+  } ${
+    usesTidalHistory
+      ? sql`left join tidal_history on tidal_history.id = ${trackId}`
+      : sql``
+  }`
   const providerSort =
     allEvidenceProviders.has(sortBy) ||
     (sortBy !== 'spotifyId' && evidenceFields.has(sortBy)) ||
@@ -380,17 +435,19 @@ function trackMatchDiagnosticsRows(
     ? sql`provider_order.value`
     : sortBy === 'spotifyLastSearch' && metadata
       ? sql`search_history.last_success`
-      : listening?.sort
-        ? listening.sort
-        : sortBy === 'spotifyCoverage'
-          ? spotifyCoverageOrder
-          : sortBy === 'name'
-            ? sql`lower(media_item.title)`
-            : sortBy === 'creator'
-              ? sql`lower(${trackCreator})`
-              : sortBy === 'spotifyId'
-                ? sql`lower(library_track.spotify_track_id)`
-                : undefined
+      : sortBy === 'tidalLastMatch' && metadata
+        ? sql`tidal_history.last_success`
+        : listening?.sort
+          ? listening.sort
+          : sortBy === 'spotifyCoverage'
+            ? spotifyCoverageOrder
+            : sortBy === 'name'
+              ? sql`lower(media_item.title)`
+              : sortBy === 'creator'
+                ? sql`lower(${trackCreator})`
+                : sortBy === 'spotifyId'
+                  ? sql`lower(library_track.spotify_track_id)`
+                  : undefined
   const direction = query.direction === 'desc' ? sql`desc` : sql`asc`
   const ordering = diagnosticSort
     ? [
@@ -472,7 +529,7 @@ function trackMatchDiagnosticsRows(
     ),
   ]
   if (playability) conditions.push(playability)
-  if (freshness) conditions.push(freshness)
+  if (freshness) conditions.push(freshness.condition)
   if (listeningCondition) conditions.push(listeningCondition)
   if (
     query.duplicates &&
@@ -505,6 +562,11 @@ function trackMatchDiagnosticsRows(
     ${
       usesHistory
         ? sql`search_history as materialized (${spotifyTrackSearchHistory(userId ?? null)}),`
+        : sql``
+    }
+    ${
+      usesTidalHistory
+        ? sql`tidal_history as materialized (${tidalTrackMatchHistory()}),`
         : sql``
     }
     ${sharedArtistTags ? sql`browse_artist_tag_labels as materialized (${artistTagLabels()}),` : sql``} ${

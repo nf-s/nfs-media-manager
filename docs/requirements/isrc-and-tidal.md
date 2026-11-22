@@ -22,13 +22,20 @@ Why a provider reference and not a column or a new table: a single column cannot
 
 ## Stage 2: TIDAL provider
 
-Needs the owner's agreement on these requirements first. A small live test (about ten albums by UPC and twenty tracks by ISRC, dance releases included) runs before the build, and the design is adjusted to what it shows.
+The owner agreed on 2026-11-22 to start this stage beside stage 1, with a live test on albums and some tracks first.
 
-- TIDAL-01: A built-in provider `tidal` for albums and tracks. It uses the client-credentials grant; the token is cached until shortly before it expires and never reaches the browser. The client ID and secret are provider secrets (`TIDAL_CLIENT_ID`, `TIDAL_CLIENT_SECRET`).
-- TIDAL-02: Requests go through the project's request gate with a concurrency of one until the live test shows otherwise. A 429 starts a cooldown from its `Retry-After` header or a conservative default. Every request and response is stored like every other provider's, and every payload is validated with a schema before use.
-- TIDAL-03: Albums match by UPC with `filter[barcodeId]` only, never by a text search. A match stores the TIDAL album ID and link as a `tidal` reference. The album's TIDAL tracks are then aligned to the library album's tracks by position, duration and title. An aligned track gains its TIDAL track ID, its ISRC as a `tidal` `isrc` reference, and BPM and key in its TIDAL provider data.
-- TIDAL-04: Tracks match by ISRC with `filter[isrc]`. When several TIDAL tracks share the ISRC, the choice uses the album UPC, then duration, then version. A track that is still ambiguous is offered for review in Tracks → Matches instead of being guessed.
-- TIDAL-05: A job is one provider and one media item. Metadata selection shows TIDAL freshness like the other providers. A bulk run is started by the owner and checked on one item first.
+Live test (2026-11-22, country AU, about 40 requests 2.5 seconds apart, library items chosen read-only):
+
+- Albums by UPC: 11 of 13 found, each with one album whose barcode equals the stored Spotify UPC as stored (12, 13 and 14 digits). The two misses were large Japanese compilations that TIDAL does not have in AU, US or JP; a miss is an empty `data` list with HTTP 200. Track counts equalled the library's on every hit. One request returns the album and its first 20 tracks with their ISRCs; longer albums page by a cursor on the album's `items` relationship (20 a page).
+- Tracks by ISRC: 20 of 20 found. 9 returned two to four TIDAL tracks: the same recording on a single, an EP, the album and compilations, nearly always with the same duration and version. The library album's UPC settled all but one of those with a UPC; there, two TIDAL albums shared the barcode and only one track was streamable. One track had no library album UPC and four identical candidates.
+- One request accepts up to 20 barcodes or 20 ISRCs (one result each). No rate-limit headers were sent and no request was refused.
+- TIDAL returned no BPM, key or key scale for any track, including single-track requests, although its specification lists them. The stage 3 probe saw none on 126 tracks either.
+
+- TIDAL-01: A built-in provider `tidal` for albums and tracks. It uses the client-credentials grant; the token is cached until shortly before it expires and never reaches the browser. The client ID and secret are provider secrets (`TIDAL_CLIENT_ID`, `TIDAL_CLIENT_SECRET`); an optional country (default `AU`) sets the catalogue it answers for.
+- TIDAL-02: Requests go through the project's request gate with a concurrency of one and 1.5 seconds between starts. A 429 starts a cooldown from its `Retry-After` header, or five minutes without one. Every request and response is stored like every other provider's, and every payload is validated with a schema before use.
+- TIDAL-03: Albums match by the UPC of their Spotify album with `filter[barcodeId]`, or by a TIDAL album ID already stored for them, never by a text search. A match stores the TIDAL album ID and link as a `tidal` reference. The album's TIDAL tracks are then aligned to the library album's tracks by position, duration and title. An aligned track gains a `tidal` `track` reference holding its TIDAL track ID, link, version, duration and popularity, and BPM and key when TIDAL returns them; its ISRC as a `tidal` `isrc` reference; and its ISRC as the primary ISRC when it had none and the alignment agreed on duration. One request covers an album of up to 20 tracks.
+- TIDAL-04: Tracks match by ISRC with `filter[isrc]`. When several TIDAL tracks share the ISRC, the choice uses the album UPC, then duration, then version, then whether the track can be streamed. A track that is still ambiguous is offered for review in Tracks → Matches and its Sources instead of being guessed. A matched track gains the same `tidal` `track` and `isrc` references.
+- TIDAL-05: A job is one provider and one media item. Metadata selection shows TIDAL freshness like the other providers. A bulk run is started by the owner and checked on one item first. Album jobs come first: they supply ISRCs for most album tracks that have none, so a track job is needed only for tracks with an ISRC that are not on a matched album.
 
 ## Stage 3: Similar albums and tracks
 

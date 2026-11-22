@@ -66,6 +66,7 @@ import { TrackLastfmSources } from './track-lastfm-sources'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
 import { TrackSpotifySource } from './track-spotify-source'
+import { TrackTidalSource } from './tidal-track-match'
 import TrackAppearsOn from './track-playlist-additions'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
@@ -141,8 +142,8 @@ function FilterValues({
 }
 
 /**
- * The track's album warnings, its Spotify match and the Last.fm names that
- * count towards it.
+ * The track's album warnings, its Spotify and TIDAL matches and the Last.fm
+ * names that count towards it.
  */
 export function TrackSources({
   item,
@@ -155,6 +156,7 @@ export function TrackSources({
     <>
       <TrackAlbumNotices key={`album-${item.id}`} item={item} />
       <TrackSpotifySource key={item.id} item={item} onResolved={onResolved} />
+      <TrackTidalSource key={`tidal-${item.id}`} item={item} />
       <TrackLastfmSources item={item} onResolved={onResolved} />
     </>
   )

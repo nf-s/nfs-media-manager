@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   queryOptions,
   useMutation,
@@ -247,6 +247,8 @@ export function SpotifyTrackSearchSelectionBar({
   freshness,
   disabled = false,
   total,
+  otherStatus,
+  otherActions,
 }: {
   selectedIds: string[]
   onSelect: (ids: string[]) => void
@@ -254,6 +256,9 @@ export function SpotifyTrackSearchSelectionBar({
   freshness?: SpotifyTrackSearchFreshness
   disabled?: boolean
   total?: number
+  /** Another provider's queueing status and actions for the same selection. */
+  otherStatus?: ReactNode
+  otherActions?: ReactNode
 }) {
   const search = useQueueSpotifyTrackSearch()
   const client = useQueryClient()
@@ -293,7 +298,13 @@ export function SpotifyTrackSearchSelectionBar({
       }
     },
   })
-  if (!selectedIds.length && !queue.isPending && !queue.isError && !queue.data)
+  if (
+    !selectedIds.length &&
+    !queue.isPending &&
+    !queue.isError &&
+    !queue.data &&
+    !otherStatus
+  )
     return null
   return (
     <SecondaryTableSelectionBar
@@ -342,6 +353,7 @@ export function SpotifyTrackSearchSelectionBar({
               ))}
             </span>
           )}
+        {otherStatus}
         {selectedIds.length > 0 && (
           <span className="ds-actions">
             <Button
@@ -363,6 +375,7 @@ export function SpotifyTrackSearchSelectionBar({
             >
               Search Spotify tracks
             </ConfirmAction>
+            {otherActions}
           </span>
         )}
       </div>

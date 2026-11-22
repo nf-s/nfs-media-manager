@@ -46,6 +46,10 @@ import {
   SpotifyTrackSearchFreshnessSchema,
   SpotifyTrackSearchParamsSchema,
 } from '@repo/schemas/spotify-track-search'
+import {
+  TIDAL_TRACK_MATCH_TASK,
+  TidalTrackMatchParamsSchema,
+} from '@repo/schemas/tidal'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   MIX_STATION_SYNC_TASKS,
@@ -164,6 +168,10 @@ import {
   runSpotifyTrackSearch,
   validateQueuedSpotifyTrackSearch,
 } from '@/services/spotify-track-search'
+import {
+  prepareTidalTrackMatch,
+  runTidalTrackMatch,
+} from '@/services/tidal-track-match'
 import {
   collectAlbumArtistProfiles,
   prepareArtistEnrichment,
@@ -1159,6 +1167,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    TIDAL_TRACK_MATCH_TASK,
+    {
+      provider: 'tidal',
+      prepare: prepareTidalTrackMatch,
+      run: runTidalTrackMatch,
+    },
+  ],
+  [
     SPOTIFY_PLAYLIST_IMPORT_TASK,
     {
       provider: 'spotify',
@@ -1250,7 +1266,9 @@ async function insertTaskJob(
   const trackSearch =
     options.task === SPOTIFY_TRACK_SEARCH_TASK
       ? SpotifyTrackSearchParamsSchema.parse(options)
-      : null
+      : options.task === TIDAL_TRACK_MATCH_TASK
+        ? TidalTrackMatchParamsSchema.parse(options)
+        : null
   await tx.insert(scrapeJob).values({
     id: jobId,
     provider,
@@ -2113,6 +2131,7 @@ export async function jobSortField(query: JobListQuery) {
       case when nullif(btrim(concat_ws('', ${table.options}->>'artistName', ${table.options}->>'albumName')), '') is not null
         then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
     when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
+    when ${TIDAL_TRACK_MATCH_TASK} then concat_ws(' · ', 'TIDAL track match', nullif(btrim(${table.options}->>'trackTitle'), ''))
     else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
       where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
   const result = query.mediaItemId
@@ -2475,7 +2494,7 @@ function jobsInMediaScope(
   const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
   if (mediaType === 'artist') return artistEnrichment
   if (mediaType === 'track')
-    return sql`${scrapeJob.options}->>'task' = ${SPOTIFY_TRACK_SEARCH_TASK}`
+    return sql`${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK})`
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (
     select 1 from scrape_job_item scoped_item join media_item scoped_media on scoped_media.id = scoped_item.media_item_id
     where scoped_item.job_id = ${scrapeJob.id} and scoped_media.media_type = ${mediaType}

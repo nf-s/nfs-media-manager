@@ -15,6 +15,7 @@ import { scrapeJob } from '@/schemas/db'
 import { mixStationCapturePolicy } from '@/lib/mix-station-archive'
 import { replayMixStationSteps } from './mix-station-replay'
 import { replayProviderSearchTask } from './provider-search-task-replay'
+import { replayTidalTrackMatch } from './tidal-track-lookup'
 
 const stepSchema = z
   .object({
@@ -79,7 +80,9 @@ export async function replayProviderTask(
   try {
     return station
       ? await replayMixStationSteps(station, steps, request)
-      : await replayProviderSearchTask(task, steps, request)
+      : provider === 'tidal'
+        ? await replayTidalTrackMatch(steps, request)
+        : await replayProviderSearchTask(task, steps, request)
   } finally {
     replay.assertComplete()
   }

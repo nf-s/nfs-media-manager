@@ -80,6 +80,13 @@ import {
   isActiveSpotifyTrackSearch,
   useSpotifyTrackSearchStatusForPages,
 } from './spotify-track-search'
+import {
+  TidalTrackMatchCell,
+  TidalTrackMatchReviewDialog,
+  isActiveTidalTrackMatch,
+  useTidalTrackMatchSelection,
+  useTidalTrackMatchStatusForPages,
+} from './tidal-track-match'
 import { TrackBrowseValue } from './track-browse-cells'
 import { TrackBrowseSearch } from './track-browse-controls'
 
@@ -89,6 +96,8 @@ const searchColumn = 'spotifyLastSearch'
 const searchColumnLabel = 'Spotify · Last searched'
 /** Room for the search status, its result or Review matches, and its age. */
 const searchColumnWidth = 260
+const tidalColumn = 'tidalLastMatch'
+const tidalColumnLabel = 'TIDAL · Last matched'
 const defaultColumns = ['title', 'artist', 'album', 'dateAdded']
 const trackNoun = { one: 'track', other: 'tracks' }
 const searchFreshnessOptions = providerFreshnessOptions.map((option) =>
@@ -96,6 +105,15 @@ const searchFreshnessOptions = providerFreshnessOptions.map((option) =>
     ? { ...option, label: 'No successful search' }
     : option,
 )
+const tidalFreshnessOptions = providerFreshnessOptions.map((option) =>
+  option.value === 'unscraped'
+    ? { ...option, label: 'No successful match' }
+    : option,
+)
+const freshnessProviders = {
+  spotify: { name: 'Spotify', options: searchFreshnessOptions },
+  tidal: { name: 'TIDAL', options: tidalFreshnessOptions },
+}
 
 export default function TrackMetadataTable({
   filters: library,
@@ -108,6 +126,7 @@ export default function TrackMetadataTable({
   const inspector = useDetailInspector()
   const [pending, setPending] = useState(false)
   const [review, setReview] = useState<TrackListItem | null>(null)
+  const [tidalReview, setTidalReview] = useState<TrackListItem | null>(null)
   const [matched, setMatched] = useState<string | null>(null)
   const { listening, listeningSort } = parseListeningParams(params)
   const fields = [
@@ -129,13 +148,16 @@ export default function TrackMetadataTable({
       width: searchColumnWidth,
       required: true,
     },
+    { key: tidalColumn, label: tidalColumnLabel, width: searchColumnWidth },
   ])
   const visible = fields.filter((field) => columns.visible(field.key))
-  const colSpan = visible.length + 2
+  const showTidal = columns.visible(tidalColumn)
+  const colSpan = visible.length + (showTidal ? 3 : 2)
   const layout = columns.layout([
     selectionWidth,
     ...visible.map((field) => field.key),
     searchColumn,
+    ...(showTidal ? [tidalColumn] : []),
   ])
   const creator = parseCreatorBrowseScope(params, 'track')
   const q = params.get('q')?.slice(0, 200) ?? ''
@@ -147,9 +169,17 @@ export default function TrackMetadataTable({
   )
   const freshness = freshParam.success
     ? freshParam.data.filter(
-        (filter) => filter.provider === 'spotify' && filter.mode !== 'all',
+        (filter) =>
+          (filter.provider === 'spotify' || filter.provider === 'tidal') &&
+          filter.mode !== 'all',
       )
     : []
+  const spotifyFreshness = freshness.filter(
+    (filter) => filter.provider === 'spotify',
+  )
+  const tidalFreshness = freshness.filter(
+    (filter) => filter.provider === 'tidal',
+  )
   const playabilityParam = TrackPlayabilitySchema.safeParse(
     params.get('playability'),
   )
@@ -163,6 +193,7 @@ export default function TrackMetadataTable({
   const requestedSort = canonicalBrowseKey(params.get('sortBy') ?? 'dateAdded')
   const sortBy =
     requestedSort === searchColumn ||
+    requestedSort === tidalColumn ||
     fields.some((field) => field.key === requestedSort)
       ? requestedSort
       : 'dateAdded'
@@ -199,15 +230,29 @@ export default function TrackMetadataTable({
       ),
   })
   const status = useSpotifyTrackSearchStatusForPages(tracks.windowPageItems)
+  const tidal = useTidalTrackMatchStatusForPages(tracks.windowPageItems)
+  const tidalSelection = useTidalTrackMatchSelection({
+    onSelect: (next) => select(next),
+    onPendingChange: setPending,
+  })
+  // A track can be selected while Spotify or TIDAL can match it; each action
+  // skips the selected tracks it cannot match.
   const ids = tracks.loadedSlots.flatMap(({ item }) => {
     const { track } = item
-    const job = track ? status.byId.get(track.id)?.job : undefined
-    return track &&
+    if (!track) return []
+    const job = status.byId.get(track.id)?.job
+    const tidalStatus = tidal.byId.get(track.id)
+    const tidalJob = tidalStatus?.job
+    const spotifyEligible =
       !item.spotifyAlternate &&
       !spotifyTrackUri(track.spotifyTrackId) &&
       !isActiveSpotifyTrackSearch(job)
-      ? [track.id]
-      : []
+    const tidalEligible =
+      Boolean(track.isrc) &&
+      !tidalStatus?.match &&
+      !tidalJob?.acceptedTidalTrackId &&
+      !isActiveTidalTrackMatch(tidalJob)
+    return spotifyEligible || tidalEligible ? [track.id] : []
   })
   const checked = ids.length > 0 && ids.every((id) => selected.includes(id))
   const mixed = !checked && ids.some((id) => selected.includes(id))
@@ -251,8 +296,8 @@ export default function TrackMetadataTable({
   }
   const filterChips = [
     ...freshness.map((filter) => ({
-      key: `spotify:${providerFreshnessValue(filter)}`,
-      label: `Spotify · ${filter.mode === 'unscraped' ? 'No successful search' : providerFreshnessLabel(filter)}`,
+      key: `${filter.provider}:${providerFreshnessValue(filter)}`,
+      label: `${filter.provider === 'tidal' ? freshnessProviders.tidal.name : freshnessProviders.spotify.name} · ${filter.mode === 'unscraped' ? (filter.provider === 'tidal' ? 'No successful match' : 'No successful search') : providerFreshnessLabel(filter)}`,
       remove: () =>
         setParams({
           freshness: JSON.stringify(
@@ -382,7 +427,7 @@ export default function TrackMetadataTable({
           }
         />
       </MetadataSelectionToolbar>
-      {(tracks.isError || status.isError || matched) && (
+      {(tracks.isError || status.isError || tidal.isError || matched) && (
         <div className="ops-notice">
           {tracks.isError && (
             <Notice
@@ -406,6 +451,18 @@ export default function TrackMetadataTable({
               }
             >
               Could not load Spotify search results.
+            </Notice>
+          )}
+          {tidal.isError && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={tidal.retry}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load TIDAL matches.
             </Notice>
           )}
           {matched && (
@@ -439,7 +496,7 @@ export default function TrackMetadataTable({
                   ref={selectAll}
                   type="checkbox"
                   className="ds-check"
-                  aria-label="Select all loaded tracks needing a Spotify match"
+                  aria-label="Select all loaded tracks needing a Spotify or TIDAL match"
                   checked={checked}
                   disabled={pending || tracks.isError || !ids.length}
                   onChange={() =>
@@ -477,7 +534,7 @@ export default function TrackMetadataTable({
                   <SecondaryColumnFilter
                     label="Spotify search freshness"
                     options={searchFreshnessOptions}
-                    value={freshness.map(providerFreshnessValue)}
+                    value={spotifyFreshness.map(providerFreshnessValue)}
                     onChange={(next) =>
                       setParams({
                         freshness: JSON.stringify(
@@ -489,6 +546,32 @@ export default function TrackMetadataTable({
                   />
                 }
               />
+              {showTidal && (
+                <SecondaryTableHead
+                  sortKey={tidalColumn}
+                  label={tidalColumnLabel}
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  disabled={pending}
+                  resizer={columns.resizer(tidalColumn)}
+                  filter={
+                    <SecondaryColumnFilter
+                      label="TIDAL match freshness"
+                      options={tidalFreshnessOptions}
+                      value={tidalFreshness.map(providerFreshnessValue)}
+                      onChange={(next) =>
+                        setParams({
+                          freshness: JSON.stringify(
+                            updateProviderFreshness(freshness, 'tidal', next),
+                          ),
+                        })
+                      }
+                      disabled={pending}
+                    />
+                  }
+                />
+              )}
             </TableRow>
           </thead>
           <tbody>
@@ -503,6 +586,9 @@ export default function TrackMetadataTable({
                   if (!track) return null
                   const search = status.byId.get(track.id)
                   const date = search?.lastSuccessfulAt
+                  const tidalMatch = tidal.byId.get(track.id)
+                  const tidalDate =
+                    tidalMatch?.job?.finishedAt ?? tidalMatch?.job?.createdAt
                   return (
                     <TableRow
                       key={track.id}
@@ -587,6 +673,35 @@ export default function TrackMetadataTable({
                           )}
                         </div>
                       </TableCell>
+                      {showTidal && (
+                        <TableCell>
+                          <div className="secondary-cell-actions">
+                            {!tidalMatch ? (
+                              tidal.isError ? (
+                                EMPTY_VALUE
+                              ) : (
+                                <Skeleton width={40} height={12} />
+                              )
+                            ) : (
+                              <TidalTrackMatchCell
+                                status={tidalMatch}
+                                isrc={track.isrc}
+                                disabled={pending}
+                                onReview={() => setTidalReview(track)}
+                              />
+                            )}
+                            {tidalDate && (
+                              <time
+                                className="ds-muted"
+                                dateTime={tidalDate}
+                                title={formatDateTime(tidalDate)}
+                              >
+                                {formatAge(tidalDate)}
+                              </time>
+                            )}
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   )
                 }}
@@ -599,9 +714,14 @@ export default function TrackMetadataTable({
         selectedIds={selected}
         onSelect={select}
         onPendingChange={setPending}
-        freshness={freshness.length ? freshness : undefined}
+        freshness={spotifyFreshness.length ? spotifyFreshness : undefined}
         disabled={tracks.isError}
         total={tracks.hasTotal ? tracks.total : undefined}
+        otherStatus={tidalSelection.status}
+        otherActions={tidalSelection.action(
+          selected,
+          tracks.isError || pending,
+        )}
       />
       {review && (
         <SpotifyTrackSearchReview
@@ -611,6 +731,12 @@ export default function TrackMetadataTable({
             setReview(null)
             setMatched(id)
           }}
+        />
+      )}
+      {tidalReview && (
+        <TidalTrackMatchReviewDialog
+          track={tidalReview}
+          onClose={() => setTidalReview(null)}
         />
       )}
     </div>

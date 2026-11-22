@@ -15,13 +15,15 @@ export type TrackIsrcSource =
   | { kind: 'spotify-manual-add' }
   // A raw Spotify playlist file stored by the legacy import.
   | { kind: 'legacy-playlist-import'; snapshotId: string }
+  | { kind: 'tidal-album'; jobId: string }
+  | { kind: 'tidal-track-match'; jobId: string }
   // The value stored on the library track before references existed.
   | { kind: 'library-track' }
 
 export type TrackIsrcEvidence = {
   mediaItemId: string
   isrc: string | null
-  provider: 'spotify'
+  provider: 'spotify' | 'tidal'
   source: TrackIsrcSource
 }
 

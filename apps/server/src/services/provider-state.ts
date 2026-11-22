@@ -25,6 +25,7 @@ import {
   lockLibraryTrackWrites,
   replaceAlbumTracks,
 } from './album-library-tracks'
+import { recordAlbumTrackProviderReferences } from './album-track-provider-references'
 import { writeArtistCredits } from './artist-names'
 import { lockTagWrites, upsertProviderTags } from './tag-state'
 import {
@@ -587,6 +588,17 @@ export async function applyProviderResultInTransaction(
         input.mediaItemId,
         input.normalized.tracks,
       )
+    if (
+      input.normalized.tracks.some(
+        (entry) => entry.references?.length || entry.isrc,
+      )
+    )
+      await recordAlbumTrackProviderReferences(database, {
+        albumId: input.mediaItemId,
+        provider: input.provider,
+        tracks: input.normalized.tracks,
+        jobId: input.scrapeJobId ?? null,
+      })
   }
 
   if (input.normalized.playlists.length > 0) {
