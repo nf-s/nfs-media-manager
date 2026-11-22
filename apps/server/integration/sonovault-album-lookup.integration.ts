@@ -55,6 +55,7 @@ vi.mock('@/lib/provider-secrets', () => ({
 import { getJob, processQueuedJobs } from '@/services/jobs'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
 import { listUnresolvedMatches } from '@/services/find-match'
+import { listCloudQueuedJobIds } from '@/services/cloud-job-store'
 import {
   getSonovaultAlbumState,
   getSonovaultAlbumSummary,
@@ -608,6 +609,37 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
     request.mockClear()
     await lookUpTracks()
     expect(request).not.toHaveBeenCalled()
+  })
+
+  it('dispatches bulk track lookups before album jobs queued earlier', async () => {
+    await queueSonovaultAlbumLookups({ albumIds: [albumId] }, userId)
+    await queueSonovaultTrackLookups({ trackIds: [trackId(1)] }, userId)
+    await queueSonovaultTrackLookups({ trackIds: [trackId(2)] }, userId)
+    const queued = await databaseClient
+      .select({
+        id: schema.scrapeJob.id,
+        task: sql<string>`${schema.scrapeJob.options}->>'task'`,
+        priority: sql<
+          string | null
+        >`${schema.scrapeJob.options}->>'dispatchPriority'`,
+      })
+      .from(schema.scrapeJob)
+      .orderBy(asc(schema.scrapeJob.createdAt), asc(schema.scrapeJob.id))
+    expect(queued.map(({ task, priority }) => [task, priority])).toEqual([
+      [SONOVAULT_ALBUM_LOOKUP_TASK, null],
+      ['sonovault-track-lookup', '1'],
+      ['sonovault-track-lookup', '1'],
+    ])
+    const [album, first, second] = queued
+    // Higher priority first; equal priority keeps the oldest first.
+    expect(await listCloudQueuedJobIds('sonovault', [], 10)).toEqual([
+      first?.id,
+      second?.id,
+      album?.id,
+    ])
+    expect(
+      await listCloudQueuedJobIds('sonovault', [first?.id ?? ''], 1),
+    ).toEqual([second?.id])
   })
 
   it('waits, recording nothing, while its tracks are not looked up', async () => {

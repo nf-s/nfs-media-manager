@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { CloudDispatchJobIdsSchema } from '@repo/schemas/job'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
+import { dispatchPriorityOrder } from '@/lib/job-dispatch-order'
 import { getScrapePlugin } from '@/plugins/registry'
 import {
   providerRequestEvent,
@@ -36,6 +37,7 @@ export async function listCloudQueuedJobIds(
           : undefined,
       ),
     orderBy: (table, operators) => [
+      dispatchPriorityOrder(table.options),
       operators.asc(table.createdAt),
       operators.asc(table.id),
     ],

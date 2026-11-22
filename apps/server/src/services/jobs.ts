@@ -108,6 +108,7 @@ import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { env } from '@/env'
+import { dispatchPriorityOrder } from '@/lib/job-dispatch-order'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
 import {
   artistProviderCurrentState,
@@ -374,6 +375,7 @@ async function nextQueuedJob(
       )`,
       ),
     orderBy: (table, operators) => [
+      dispatchPriorityOrder(table.options),
       operators.asc(table.createdAt),
       operators.asc(table.id),
     ],
@@ -1228,6 +1230,16 @@ type TaskJobDefinition = {
   ): Promise<TaskJobResult>
 }
 
+/**
+ * Tasks that run before a provider's other queued jobs (`dispatchPriority`,
+ * highest first): a Sonovault similar-track lookup has someone waiting on a
+ * screen, and bulk track lookups come before the album jobs that read them.
+ */
+const taskDispatchPriority = new Map<string, number>([
+  [SONOVAULT_SIMILAR_LOOKUP_TASK, 2],
+  [SONOVAULT_TRACK_LOOKUP_TASK, 1],
+])
+
 const taskJobs = new Map<string, TaskJobDefinition>([
   [
     ARTIST_ENRICHMENT_TASK,
@@ -1553,9 +1565,11 @@ export async function createTaskJob(
       ? prepared.artistId
       : null
   const batchId = scheduling.taskOptions?.batchId
+  const dispatchPriority = taskDispatchPriority.get(task)
   const taskOptions = {
     ...prepared,
     ...(typeof batchId === 'string' ? { batchId } : {}),
+    ...(dispatchPriority ? { dispatchPriority } : {}),
   }
 
   let created = false
