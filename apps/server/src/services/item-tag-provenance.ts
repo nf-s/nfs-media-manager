@@ -19,6 +19,7 @@ import {
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { libraryTrack, mediaItem } from '@/schemas/db'
 import { loadArtistTagEvidence, releaseTagMemberships } from './music-tags'
+import { normalizedTagSql } from './tag-state'
 import { getReleaseTagProvenance } from './tags'
 
 function tagNotFound() {
@@ -99,6 +100,95 @@ async function readArtistEvidence(
   }
 }
 
+const TrackTagRowsSchema = z.array(
+  z.object({
+    tagId: z.string(),
+    title: z.string(),
+    owner: z.enum(['added', 'removed']).nullable(),
+    ownerChangedAt: z.string().nullable(),
+    sonovault: z.boolean(),
+    verified: z.boolean(),
+    total: z.number().int().nonnegative(),
+    occurrences: z.array(
+      z.object({
+        source: z.string().nullable(),
+        rawName: z.string(),
+        sourceId: z.string().nullable(),
+        kind: z.string(),
+      }),
+    ),
+  }),
+)
+
+/**
+ * TTAG-11: why a track carries a tag of its own. Sonovault's names behind the
+ * tag on this track, and the owner's change, if any.
+ */
+async function readTrackTag(
+  trackId: string,
+  name: string,
+  query: ItemTagProvenanceQuery,
+): Promise<ItemTagProvenancePage> {
+  const result = await db.execute(sql`
+    with target as (
+      select tt.tag_id, tt.owner, tt.owner_changed_at, tt.sonovault, tt.verified, m.title
+      from track_tag tt join tag t on t.id = tt.tag_id
+      join media_item m on m.id = tt.media_item_id
+      where tt.media_item_id = ${trackId} and t.media_type = 'album'
+        and ${normalizedTagSql(sql`t.name`)} = ${name}
+      order by tt.in_browse desc, t.id limit 1
+    ), names as (
+      select o.source, o.raw_name, o.source_id, o.kind from tag_occurrence o
+      where o.media_item_id = ${trackId} and o.provider = 'sonovault'
+        and o.tag_id = (select tag_id from target)
+    )
+    select target.tag_id as "tagId", target.title, target.owner,
+      to_char(target.owner_changed_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "ownerChangedAt",
+      target.sonovault, target.verified,
+      (select count(*)::int from names) as total,
+      coalesce((select jsonb_agg(jsonb_build_object('source', page.source,
+          'rawName', page.raw_name, 'sourceId', page.source_id, 'kind', page.kind)
+          order by page.kind, page.raw_name)
+        from (select * from names order by kind, raw_name, source_id
+          limit ${query.size} offset ${(query.page - 1) * query.size}) page), '[]'::jsonb) as occurrences
+    from target`)
+  const [row] = TrackTagRowsSchema.parse(result.rows)
+  if (!row) throw tagNotFound()
+  const providerLabel = sourceProviderLabel('sonovault', 'Sonovault')
+  return {
+    mediaType: 'album',
+    tagId: row.tagId,
+    originType: 'track',
+    reason: 'track',
+    trackTag: {
+      owner: row.owner,
+      ownerChangedAt: row.ownerChangedAt,
+      sonovault: row.sonovault,
+      verified: row.verified,
+    },
+    items: row.occurrences.map((occurrence) => ({
+      provider: 'sonovault',
+      source: occurrence.source,
+      rawName: occurrence.rawName,
+      ...(occurrence.sourceId === null
+        ? {}
+        : { sourceId: occurrence.sourceId }),
+      kind: occurrence.kind,
+      providerLabel,
+      onMedia: true,
+      link: null,
+      linkKind: null,
+      originType: 'track',
+      originId: trackId,
+      originTitle: row.title,
+    })),
+    page: query.page,
+    size: query.size,
+    totalCount: row.total,
+    pageCount: Math.ceil(row.total / query.size),
+  }
+}
+
 async function readVisibleAlbumTags(albumId: string, name: string) {
   const rows = await db.execute(sql`
     select coalesce(bool_or(name_key = ${name}), false) as "hasTag",
@@ -121,6 +211,10 @@ export async function getItemTagProvenance(
 
   if (resourceType === 'artist') {
     return readArtistEvidence({ artistId: resourceId }, name, query)
+  }
+  if (query.level === 'track') {
+    if (resourceType !== 'track') throw tagNotFound()
+    return readTrackTag(resourceId, name, query)
   }
 
   const albumItem = alias(mediaItem, 'linked_album')

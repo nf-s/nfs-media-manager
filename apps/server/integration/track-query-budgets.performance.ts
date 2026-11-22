@@ -2108,3 +2108,337 @@ it('bounds Track pages sorted and filtered by tempo and key', async () => {
     await pool.query('delete from track_fact')
   }
 })
+
+const PlanNodeSchema: z.ZodType<PlanNode> = z.lazy(() =>
+  z.object({
+    'Node Type': z.string(),
+    'Relation Name': z.string().optional(),
+    'Index Name': z.string().optional(),
+    'Parent Relationship': z.string().optional(),
+    'Subplan Name': z.string().optional(),
+    'Actual Loops': z.number(),
+    Plans: z.array(PlanNodeSchema).default([]),
+  }),
+)
+type PlanNode = {
+  'Node Type': string
+  'Relation Name'?: string
+  'Index Name'?: string
+  'Parent Relationship'?: string
+  'Subplan Name'?: string
+  'Actual Loops': number
+  Plans: PlanNode[]
+}
+
+/** Every read of track_tag in the plans of a read's select statements. */
+async function trackTagScans(read: () => Promise<unknown>) {
+  logQuery.mockClear()
+  await read()
+  const scans: PlanNode[] = []
+  const visit = (node: PlanNode) => {
+    if (node['Relation Name'] === 'track_tag') scans.push(node)
+    node.Plans.forEach(visit)
+  }
+  for (const [query, params] of logQuery.mock.calls.filter(([query]) =>
+    /^\s*(select|with)\b/i.test(query),
+  )) {
+    const result = await pool.query(
+      `explain (analyze, buffers, timing off, format json) ${query}`,
+      params,
+    )
+    const plan = z
+      .tuple([
+        z.object({
+          'QUERY PLAN': z.tuple([z.object({ Plan: PlanNodeSchema })]),
+        }),
+      ])
+      .parse(result.rows)[0]['QUERY PLAN'][0].Plan
+    visit(plan)
+  }
+  return scans
+}
+
+it('bounds Track pages filtered, sorted and hydrated by Track tags', async () => {
+  const { queryBrowsePageIds, queryBrowseCount, listBrowseFacets } =
+    await import('@/services/browse')
+  const { listTrackBrowsePage } = await import('@/services/tracks')
+  const { rebuildTagAncestors } = await import('@/services/tag-hierarchy')
+  // About two tags on each of 18,000 tracks, a tenth unverified and a few
+  // removed by the owner. The broad tag has 300 subtags and, with them, half
+  // the tracks; the narrow one 720 tracks; the rare one a single track; the
+  // absent one none. Sixty filler tags carry the rest.
+  await pool.query(`
+    insert into tag (id, media_type, name, kind) values
+      ('ttag-broad', 'album', 'Fixture Tide', 'genre'),
+      ('ttag-narrow', 'album', 'Fixture Narrow', 'genre'),
+      ('ttag-rare', 'album', 'Fixture Rare', 'genre'),
+      ('ttag-absent', 'album', 'Fixture Absent', 'genre'),
+      ('ttag-hidden', 'album', 'Fixture Hidden', 'genre');
+    update tag set hidden = true where id = 'ttag-hidden';
+    insert into tag (id, media_type, name, kind)
+    select 'ttag-sub-' || n, 'album'::media_type, 'Fixture Tide ' || n, 'genre' from generate_series(1, 300) n
+    union all
+    select 'ttag-filler-' || n, 'album'::media_type, 'Fixture Filler ' || n, 'genre' from generate_series(1, 60) n;
+    insert into tag_identity (media_type, normalized_name, kind, tag_id)
+    select media_type, lower(name), kind, id from tag where id like 'ttag-%';
+    insert into tag_parent (media_type, child_key, parent_key)
+    select 'album'::media_type, 'fixture tide ' || n, 'fixture tide' from generate_series(1, 300) n;
+    insert into track_tag (media_item_id, tag_id, sonovault, verified)
+    select 'track-' || n, 'ttag-sub-' || (1 + n % 300), true, n % 10 <> 0
+    from generate_series(2, 18000, 2) n
+    union all
+    select 'track-' || n, 'ttag-filler-' || (1 + n % 60), true, n % 10 <> 1
+    from generate_series(1, 18000) n
+    union all
+    select 'track-' || n, 'ttag-narrow', true, true from generate_series(25, 18000, 25) n
+    union all
+    select 'track-' || n, 'ttag-hidden', true, true from generate_series(7, 18000, 70) n
+    union all
+    select 'track-19995', 'ttag-rare', true, true;
+    update track_tag set owner = 'removed', owner_changed_at = timestamp '2026-11-01'
+    where media_item_id in (select 'track-' || n from generate_series(997, 18000, 997) n);
+  `)
+  await rebuildTagAncestors(database, 'album')
+  for (const table of [
+    'tag',
+    'tag_identity',
+    'tag_parent',
+    'tag_ancestor',
+    'track_tag',
+    'library_track',
+  ])
+    await pool.query(`vacuum analyze ${table}`)
+  const expected = z.object({ broad: z.number(), narrow: z.number() }).parse(
+    (
+      await pool.query(`select
+          (select count(distinct media_item_id)::int from track_tag
+            where in_browse and tag_id like 'ttag-sub-%') as broad,
+          (select count(*)::int from track_tag
+            where in_browse and tag_id = 'ttag-narrow') as narrow`)
+    ).rows[0],
+  )
+  const page = (input: Record<string, unknown>) =>
+    queryBrowsePageIds('track', TrackQuerySchema.parse({ size: 100, ...input }))
+  const tagFilter = (value: string, mode?: string) =>
+    JSON.stringify([{ field: 'trackTag', value, ...(mode ? { mode } : {}) }])
+  // The track_tag reads of a plan are one pass over a partial index, a hashed
+  // SubPlan or the primary key of the page's rows: never a probe per track.
+  async function expectSetReads(label: string, read: () => Promise<unknown>) {
+    const scans = await trackTagScans(read)
+    expect(scans.length, label).toBeGreaterThan(0)
+    for (const scan of scans) {
+      expect(
+        scan['Actual Loops'],
+        `${label} track_tag loops`,
+      ).toBeLessThanOrEqual(1)
+      if (scan['Index Name'])
+        expect(scan['Index Name'], label).toMatch(
+          /^track_tag_(tag_media_browse_idx|media_browse_idx|pkey)$/,
+        )
+    }
+  }
+
+  try {
+    const workloads = [
+      ['broad', 'Fixture Tide', 100],
+      ['narrow', 'Fixture Narrow', 100],
+      ['rare', 'Fixture Rare', 1],
+      ['absent', 'Fixture Absent', 0],
+    ] as const
+    // 1.5 times the shared blocks measured when these workloads were added.
+    const budgets: Record<string, number> = {
+      'broad title': 36_100,
+      'narrow title': 10_300,
+      'rare title': 7_700,
+      'absent title': 7_700,
+      'broad added': 20_700,
+      'narrow added': 21_500,
+      'rare added': 38_600,
+      'absent added': 38_600,
+    }
+    for (const [tag, value, rows] of workloads)
+      for (const [sort, sortBy, direction] of [
+        ['title', 'title', 'asc'],
+        ['added', 'dateAdded', 'desc'],
+      ] as const) {
+        const read = async () => {
+          const result = await page({
+            sortBy,
+            direction,
+            filters: tagFilter(value),
+          })
+          expect(result.ids).toHaveLength(rows)
+        }
+        const label = `Track tags ${tag} ${sort} page`
+        await checkBudget(
+          label,
+          budgets[`${tag} ${sort}`] ?? 0,
+          1,
+          read,
+          10_000,
+        )
+        await expectSetReads(label, read)
+      }
+    for (const [sort, sortBy, direction] of [
+      ['added', 'dateAdded', 'desc'],
+      ['title', 'title', 'asc'],
+    ] as const) {
+      const read = async () => {
+        const result = await page({
+          sortBy,
+          direction,
+          filters: tagFilter('Fixture Narrow', 'exclude'),
+        })
+        expect(result.ids).toHaveLength(100)
+      }
+      const label = `Track tags narrow exclude ${sort} page`
+      // Excluding a narrow tag keeps nearly every track, so the page costs
+      // about what its order costs without the filter.
+      const unfiltered = await sharedBlocksOf(() => page({ sortBy, direction }))
+      process.stdout.write(`${label}: unfiltered ${unfiltered} shared blocks\n`)
+      await checkBudget(label, Math.ceil(unfiltered * 1.5), 1, read, 10_000)
+      await expectSetReads(label, read)
+    }
+    await checkBudget('Track tags broad deep page', 4_600, 1, async () => {
+      const result = await page({
+        sortBy: 'title',
+        direction: 'asc',
+        page: 40,
+        filters: tagFilter('Fixture Tide'),
+      })
+      expect(result.ids).toHaveLength(100)
+    })
+    // An exact count with a filter on library_track pays for the same
+    // visibility reads; the tag set adds one read of the partial index.
+    const rangeCountBlocks = await sharedBlocksOf(() =>
+      queryBrowseCount(
+        'track',
+        TrackQuerySchema.parse({
+          ranges: JSON.stringify([
+            { field: 'durationSec', min: 150, max: 165 },
+          ]),
+        }),
+      ),
+    )
+    process.stdout.write(
+      `Track tags broad count: a Duration range count reads ${rangeCountBlocks} shared blocks\n`,
+    )
+    let broadCount = 0
+    await checkBudget(
+      'Track tags broad count',
+      Math.ceil(rangeCountBlocks * 1.5),
+      3,
+      async () => {
+        // Less any fixture track an earlier test hid from Browse.
+        const { totalCount } = await queryBrowseCount(
+          'track',
+          TrackQuerySchema.parse({ filters: tagFilter('Fixture Tide') }),
+        )
+        expect(totalCount).toBeLessThanOrEqual(expected.broad)
+        expect(totalCount).toBeGreaterThan(expected.broad - 10)
+        broadCount = totalCount
+      },
+    )
+    // A first page sorted by Track tags resolves the release order of every
+    // track, as the Duration, Tempo and Key sorts do; it may cost no more.
+    const durationBlocks = await sharedBlocksOf(() =>
+      page({ sortBy: 'durationSec', direction: 'asc' }),
+    )
+    for (const [label, input, budget] of [
+      ['Track tags sort page', {}, Math.ceil(durationBlocks * 1.05)],
+      ['Track tags sort deep page', { page: 40 }, 207_400],
+    ] as const) {
+      const read = async () => {
+        const result = await page({
+          sortBy: 'trackTag',
+          direction: 'asc',
+          ...input,
+        })
+        expect(result.ids).toHaveLength(100)
+      }
+      await checkBudget(label, budget, 1, read)
+      await expectSetReads(label, read)
+    }
+    const hydrate = async () => {
+      const result = await listTrackBrowsePage(
+        TrackQuerySchema.parse({
+          size: 100,
+          sortBy: 'dateAdded',
+          direction: 'desc',
+          filters: tagFilter('Fixture Narrow'),
+        }),
+      )
+      expect(result.items).toHaveLength(100)
+      expect(
+        result.items.every((item) =>
+          item.trackTags.some((name) => name === 'Fixture Narrow'),
+        ),
+      ).toBe(true)
+      expect(
+        result.items.some((item) => item.trackTags.includes('Fixture Hidden')),
+      ).toBe(false)
+    }
+    await checkBudget('Track tags hydrated page', 27_200, 2, hydrate)
+    await expectSetReads('Track tags hydrated page', hydrate)
+    const trackTagField = trackBrowseFields.filter(
+      (field) => field.key === 'trackTag',
+    )
+    // Live suggestions run only before the stored vocabulary is built. Both
+    // tag fields pay for the same visibility of Last.fm placeholders.
+    const albumTagSuggestionBlocks = await sharedBlocksOf(() =>
+      listBrowseFacets(
+        'track',
+        { q: 'fixture tide' },
+        {
+          fields: trackBrowseFields.filter((field) => field.key === 'albumTag'),
+        },
+      ),
+    )
+    process.stdout.write(
+      `Track tags live suggestions: Album tags read ${albumTagSuggestionBlocks} shared blocks\n`,
+    )
+    await checkBudget(
+      'Track tags live suggestions',
+      Math.ceil(albumTagSuggestionBlocks * 1.5),
+      4,
+      async () => {
+        const facets = await listBrowseFacets(
+          'track',
+          { q: 'fixture tide' },
+          { fields: trackTagField },
+        )
+        expect(facets[0]).toMatchObject({
+          field: 'trackTag',
+          value: 'fixture tide',
+          count: broadCount,
+          subtags: 300,
+        })
+      },
+    )
+    const { refreshTrackFacetVocabularyForMaintenance } =
+      await import('@/services/browse')
+    const built = performance.now()
+    expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(true)
+    process.stdout.write(
+      `Track tags vocabulary build: ${(performance.now() - built).toFixed(0)} ms\n`,
+    )
+    await pool.query('vacuum analyze track_facet_value')
+    await checkBudget('Track tags stored suggestions', 720, 4, async () => {
+      const facets = await listBrowseFacets('track', { q: 'fixture tide' })
+      expect(
+        facets.find(
+          ({ field, value }) =>
+            field === 'trackTag' && value === 'fixture tide',
+        ),
+      ).toMatchObject({ count: broadCount, subtags: 300 })
+    })
+  } finally {
+    await pool.query(`
+      delete from track_tag;
+      delete from tag_parent where child_key like 'fixture tide %';
+      delete from tag_identity where tag_id like 'ttag-%';
+      delete from tag where id like 'ttag-%';
+    `)
+    await rebuildTagAncestors(database, 'album')
+  }
+})

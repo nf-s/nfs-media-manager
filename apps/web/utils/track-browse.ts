@@ -34,6 +34,7 @@ export const trackFieldOrder = [
   'scrobbles',
   'playlist',
   'genre',
+  'trackTag',
   'albumTag',
   'artistTag',
 ]

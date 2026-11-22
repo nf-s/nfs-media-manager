@@ -67,8 +67,15 @@ export function TrackBrowseTags({
   return (
     <BrowseTagBadges
       field={field}
-      tags={field === 'artistTag' ? track.artistTags : track.albumTags}
+      tags={
+        field === 'artistTag'
+          ? track.artistTags
+          : field === 'trackTag'
+            ? track.trackTags
+            : track.albumTags
+      }
       artistTags={field === 'genre' ? track.artistTags : undefined}
+      trackTags={field === 'genre' ? track.trackTags : undefined}
       onFilter={onFilter}
       filterHref={filterHref}
       max={2}
@@ -123,7 +130,7 @@ export function TrackBrowseValue({
       <EmptyValue />
     )
   const value = getTrackBrowseValues(track)[field.key]
-  if (['genre', 'albumTag', 'artistTag'].includes(field.key))
+  if (['genre', 'trackTag', 'albumTag', 'artistTag'].includes(field.key))
     return textValues(value).length ? (
       <TrackBrowseTags
         track={track}

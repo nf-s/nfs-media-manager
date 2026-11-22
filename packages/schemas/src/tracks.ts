@@ -166,6 +166,8 @@ export const TrackListItemSchema = z.object({
   /** The linked library album. */
   album: z.object({ id: z.string(), title: z.string() }).nullable(),
   albumLinkStrategy: TrackAlbumLinkStrategySchema.nullable(),
+  /** The track's own tags in Browse: Sonovault's verified ones and the owner's. */
+  trackTags: z.array(z.string()).default([]),
   /** Tags of the linked library album. */
   albumTags: z.array(z.string()),
   artistTags: z.array(z.string()).default([]),
@@ -321,7 +323,45 @@ export const TrackFactSchema = z.object({
 })
 export type TrackFact = z.infer<typeof TrackFactSchema>
 
+export const TrackTagSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+})
+export type TrackTag = z.infer<typeof TrackTagSchema>
+
+/** A track's own tags as track details list them, by state (TTAG-11). */
+export const TrackTagGroupsSchema = z.object({
+  /** In Browse: verified Sonovault tags and the owner's additions. */
+  own: z.array(
+    TrackTagSchema.extend({
+      /** The owner added it. */
+      added: z.boolean(),
+      /** Sonovault reported it. */
+      sonovault: z.boolean(),
+    }),
+  ),
+  /** From a Sonovault record that may be another version; not in Browse. */
+  unverified: z.array(TrackTagSchema),
+  /** Removed by the owner; a Sonovault refresh does not bring them back. */
+  removed: z.array(TrackTagSchema),
+})
+export type TrackTagGroups = z.infer<typeof TrackTagGroupsSchema>
+
+export const TrackTagInputSchema = z
+  .object({ tagId: z.string().trim().min(1).max(200) })
+  .strict()
+export type TrackTagInput = z.infer<typeof TrackTagInputSchema>
+export const TrackTagChangeSchema = z.object({
+  /** The tag the edit applied to, after merges. */
+  tagId: z.string(),
+  changed: z.boolean(),
+})
+export const TrackTagResetSchema = z.object({
+  changed: z.number().int().nonnegative(),
+})
+
 export const TrackDetailSchema = TrackListItemSchema.extend({
+  tags: TrackTagGroupsSchema.default({ own: [], unverified: [], removed: [] }),
   /** Playback coverage from a confirmed version when this entry has no usable Spotify ID. */
   spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
   /** Recorded names with strict Last.fm membership, most played first, up to 50. */
@@ -448,9 +488,12 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     playlist: item.playlists.map((playlist) => playlist.name),
     source: item.sources.map((source) => trackSourceLabels[source]),
     spotifyMatch: trackSpotifyMatchLabels[item.spotifyMatch],
-    genre: musicDisplayTags(item.albumTags, item.artistTags).map(
-      (tag) => tag.name,
-    ),
+    genre: musicDisplayTags(
+      item.albumTags,
+      item.artistTags,
+      item.trackTags,
+    ).map((tag) => tag.name),
+    trackTag: item.trackTags,
     albumTag: item.albumTags,
     artistTag: item.artistTags,
     albumLink: item.album

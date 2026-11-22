@@ -14,7 +14,7 @@ Parents are edited in three places:
 - In **Tags → All**, select tags and choose **Parent tags**. **Add parent** keeps existing parents, **Move under** replaces them, and **Remove all parents** makes the tags top-level.
 - The **Outside the hierarchy** choice in **Tags → All** lists visible tags with neither a parent nor a subtag. The Hierarchy page links to it with their count.
 
-The All table has a Parents column and an optional Subtags column.
+The All table has a Parents column and an optional Subtags column. For album tags, **Albums** counts the albums carrying a tag and **Tracks** the tracks carrying it themselves (their own tags in Browse); each count opens that library filtered on the tag, Tracks by **Track tags**. A tag's details show both counts and **Browse tracks with this tag**.
 
 In Browse, a tag suggestion that has subtags shows both numbers, for example `1,204 · 38 subtags`. The first is the number of items the filter matches. Required and Exclude apply to the tag with its subtags as one group.
 

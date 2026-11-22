@@ -21,12 +21,14 @@ import {
   type TrackFact,
 } from '@repo/schemas/tracks'
 import { formatMusicalKey, type KeyNotation } from '@repo/schemas/musical-keys'
+import { formatTagName } from '@repo/schemas/tags'
 import { Thumb } from '@repo/ui/components/ds/artwork'
 import {
   DetailActionsSpacer,
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
+import { Pill, PillLabel } from '@repo/ui/components/ds/pill'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Button } from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
@@ -70,6 +72,8 @@ import { TrackAlbumNotices } from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
+import { BrowseFilterPill } from './browse-controls'
+import { TrackTagEditor, useTrackTagEdits } from './track-tag-editor'
 import { TrackSpotifySource } from './track-spotify-source'
 import { TrackTidalSource } from './tidal-track-match'
 import { TrackSonovaultSource } from './sonovault-track-lookup'
@@ -222,6 +226,116 @@ function TrackFactValues({
   })
 }
 
+/**
+ * TTAG-11: the track's own tags first, with Sonovault's unverified tags and
+ * the ones the owner removed listed apart. Edit tags adds and removes them.
+ */
+function TrackTags({
+  item,
+  onFilter,
+  filterHref,
+}: {
+  item: TrackDetail
+  onFilter?: OnFilter
+  filterHref: BrowseFilterHref
+}) {
+  const [editing, setEditing] = useState(false)
+  const edits = useTrackTagEdits(item.id)
+  const { own, unverified, removed } = item.tags
+  const sources = (name: string) => (
+    <MetadataSourceControl
+      field="trackTag"
+      name={name}
+      resource={{ kind: 'track', id: item.id }}
+    />
+  )
+  const others = [
+    ...(unverified.length
+      ? [
+          {
+            label: 'Sonovault, may be another version',
+            value: (
+              <span className="ds-pills" data-wrap="">
+                {unverified.map((tag) => (
+                  <Pill asChild size="md" key={tag.id}>
+                    <span className="browse-filter-pill">
+                      <PillLabel>{formatTagName(tag.name)}</PillLabel>
+                      {sources(tag.name)}
+                    </span>
+                  </Pill>
+                ))}
+              </span>
+            ),
+          },
+        ]
+      : []),
+    ...(removed.length
+      ? [
+          {
+            label: 'Removed by you',
+            value: removed.map((tag) => (
+              <div key={tag.id}>
+                <span>{formatTagName(tag.name)}</span>{' '}
+                <Button
+                  variant="link"
+                  size="xs"
+                  disabled={edits.isPending}
+                  aria-label={`Restore ${formatTagName(tag.name)}`}
+                  onClick={() => edits.mutate({ kind: 'add', tagId: tag.id })}
+                >
+                  Restore
+                </Button>
+              </div>
+            )),
+          },
+        ]
+      : []),
+  ]
+  return (
+    <Section
+      title="Track tags"
+      aside={
+        <Button variant="link" size="xs" onClick={() => setEditing(!editing)}>
+          {editing ? 'Done' : 'Edit tags'}
+        </Button>
+      }
+    >
+      {editing ? (
+        own.length > 0 && (
+          <span className="ds-pills" data-wrap="">
+            {own.map((tag) => (
+              <BrowseFilterPill
+                key={tag.id}
+                removeLabel={`Remove ${formatTagName(tag.name)}`}
+                onRemove={() => edits.mutate({ kind: 'remove', tagId: tag.id })}
+              >
+                {formatTagName(tag.name)}
+              </BrowseFilterPill>
+            ))}
+          </span>
+        )
+      ) : own.length ? (
+        <FilterValues
+          field="trackTag"
+          values={own.map((tag) => tag.name)}
+          onFilter={onFilter}
+          filterHref={filterHref}
+          sourcesFor={item.id}
+        />
+      ) : (
+        <span className="ds-muted">{EMPTY_VALUE}</span>
+      )}
+      {others.map((group) => (
+        <div className="dtl-stack" key={group.label}>
+          <span className="ds-label">{group.label}</span>
+          <div>{group.value}</div>
+        </div>
+      ))}
+      {editing && <TrackTagEditor tags={item.tags} edits={edits} />}
+    </Section>
+  )
+}
+
 function TrackOverview({
   item,
   onFilter,
@@ -329,6 +443,7 @@ function TrackOverview({
         </TrackAppearsOn>
       </div>
       <div className="dtl-side">
+        <TrackTags item={item} onFilter={onFilter} filterHref={filterHref} />
         {tags.map((group) => (
           <Section key={group.field} title={group.label}>
             <FilterValues

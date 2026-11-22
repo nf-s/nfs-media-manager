@@ -8,6 +8,7 @@ import {
   notExists,
   sql,
   type SQL,
+  type SQLWrapper,
 } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
@@ -81,6 +82,12 @@ function visibleTagOccurrenceSql(occurrence: SQL): SQL {
         )
     )
   )`
+}
+
+/** Tracks carrying any of the tags themselves, in Browse (TTAG-15). */
+function trackTagCount(ids: SQLWrapper) {
+  return sql`(select count(distinct tt.media_item_id) from track_tag tt
+    where tt.tag_id = any(${ids}) and tt.in_browse)`
 }
 
 export async function getTagProvenance(
@@ -565,6 +572,7 @@ async function readTagPage(
   const sortFields = {
     name: sql`lower(${groups.name})`,
     mediaCount: sql`(select count(distinct m.media_item_id) from media_item_tag m where m.tag_id = any(${groups.ids}))`,
+    trackCount: trackTagCount(groups.ids),
     sourceCount: sql`(select count(distinct (o.provider, o.source, o.raw_name, o.source_id, o.kind)) from tag_occurrence o where o.tag_id = any(${groups.ids}) and ${visibleTagOccurrenceSql(sql`o`)})`,
     mergedNames: sql`(select lower(string_agg(distinct original.name, ', ' order by original.name)) from tag_alias a join tag original on original.id = a.source_tag_id where a.target_tag_id = any(${groups.ids}))`,
   }
@@ -603,6 +611,7 @@ async function readTagPage(
         string[]
       >`array(select distinct original.name from tag_alias a join tag original on original.id = a.source_tag_id where a.target_tag_id = any(${pageGroups.ids}) order by original.name)`,
       mediaCount: sql<number>`(select count(distinct m.media_item_id)::integer from media_item_tag m where m.tag_id = any(${pageGroups.ids}))`,
+      trackCount: sql<number>`${trackTagCount(pageGroups.ids)}::integer`,
       sourceCount: sql<number>`(select count(distinct (o.provider, o.source, o.raw_name, o.source_id, o.kind))::integer from tag_occurrence o where o.tag_id = any(${pageGroups.ids}) and ${visibleTagOccurrenceSql(sql`o`)})`,
       sources: sql<
         Array<{
@@ -645,6 +654,7 @@ async function readTagPage(
       kind: row.kind,
       mergedNames: row.mergedNames,
       mediaCount: row.mediaCount,
+      trackCount: query.mediaType === 'album' ? row.trackCount : 0,
       sourceCount: row.sourceCount,
       mediaType: query.mediaType,
       parents: row.parents,

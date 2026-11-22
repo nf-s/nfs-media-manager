@@ -15,6 +15,7 @@ import {
   TrackSourceSchema,
   TrackSpotifyAlternateSchema,
   TrackSpotifyMatchSchema,
+  TrackTagGroupsSchema,
   type PlaylistAlbum,
   type PlaylistDetail,
   type PlaylistDetailQuery,
@@ -62,6 +63,30 @@ import { setPlaylistSyncSchedule } from './spotify-playlist-sync'
 const isoTimestamp = (column: SQL) =>
   sql`to_char(${column}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
 
+/** The visible tags in Browse of the returned page's tracks, read once (TTAG-14). */
+function trackTagsForItems(ids: SQL) {
+  return sql`select tt.media_item_id, array_agg(t.name order by t.name) as tags
+    from track_tag tt join tag t on t.id = tt.tag_id
+    where tt.media_item_id = ${ids} and tt.in_browse and not t.hidden
+    group by tt.media_item_id`
+}
+
+/**
+ * Every visible tag a track carries or once carried, with its state, for
+ * track details (TTAG-11). Hidden tags are left out as in Browse.
+ */
+function trackTagGroupsExpression(id: SQL) {
+  const tags = (where: SQL, extra = sql``) =>
+    sql`coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name${extra})
+        order by lower(t.name), t.id)
+      from track_tag tt join tag t on t.id = tt.tag_id
+      where tt.media_item_id = ${id} and not t.hidden and ${where}), '[]'::jsonb)`
+  return sql`jsonb_build_object(
+    'own', ${tags(sql`tt.in_browse`, sql`, 'added', tt.owner is not distinct from 'added', 'sonovault', tt.sonovault`)},
+    'unverified', ${tags(sql`tt.sonovault and not tt.verified and tt.owner is null`)},
+    'removed', ${tags(sql`tt.owner = 'removed'`)})`
+}
+
 const TrackRowsSchema = z.array(
   z.object({
     id: z.string(),
@@ -74,6 +99,7 @@ const TrackRowsSchema = z.array(
     album_id: z.string().nullable(),
     album_title: z.string().nullable(),
     album_link_strategy: TrackAlbumLinkStrategySchema.nullable(),
+    track_tags: z.array(z.string()),
     album_tags: z.array(z.string()),
     playlists: z.array(z.object({ id: z.string(), name: z.string() })),
     sources: z.array(TrackSourceSchema),
@@ -104,6 +130,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
           coalesce(page_tags.tags, '[]'::jsonb) as artist_tags,
           coalesce(lt.album_name, am.title) as album_name, lt.album_media_item_id as album_id,
           am.title as album_title, lt.album_link_strategy,
+          coalesce(page_track_tags.tags, '{}') as track_tags,
           coalesce((
             select array_agg(distinct t.name order by t.name)
             from media_item_tag mt join tag t on t.id = mt.tag_id
@@ -127,6 +154,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         join media_item mi on mi.id = lt.media_item_id
         left join media_item am on am.id = lt.album_media_item_id
         left join (${artistTagsForItems(pageIds)}) page_tags on page_tags.media_item_id = lt.media_item_id
+        left join (${trackTagsForItems(pageIds)}) page_track_tags on page_track_tags.media_item_id = lt.media_item_id
         where lt.media_item_id = ${pageIds}`)
     ).rows,
   )
@@ -151,6 +179,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
             ? { id: row.album_id, title: row.album_title }
             : null,
         albumLinkStrategy: row.album_link_strategy,
+        trackTags: row.track_tags,
         albumTags: row.album_tags,
         playlists: row.playlists,
         sources: row.sources,
@@ -299,6 +328,7 @@ const ListeningDetailSchema = z.object({
   ),
   isrcs: z.array(TrackIsrcSchema),
   facts: z.array(TrackFactSchema),
+  tags: TrackTagGroupsSchema,
 })
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
@@ -362,7 +392,8 @@ async function getTrackListeningDetail(id: string) {
       (select spotify_album_id from target) as spotify_album_id,
       coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums,
       ${trackIsrcsExpression(sql`${id}::text`)} as isrcs,
-      ${trackFactsExpression(sql`${id}::text`)} as facts
+      ${trackFactsExpression(sql`${id}::text`)} as facts,
+      ${trackTagGroupsExpression(sql`${id}::text`)} as tags
     from linked`)
   return ListeningDetailSchema.parse(result.rows[0])
 }
@@ -391,6 +422,7 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
     scrobbledAlbums: listening.scrobbled_albums,
     isrcs: listening.isrcs,
     facts: listening.facts,
+    tags: listening.tags,
     listening: {
       total: listening.total,
       firstListenedAt: isoSeconds(listening.first),

@@ -19,6 +19,7 @@ const detail = TagDetailSchema.parse({
     name: 'Synthetic tag',
     kind: 'genre',
     mediaCount: 4,
+    trackCount: 3,
     hidden: true,
     mergedNames: [],
     sources: [],
@@ -82,7 +83,12 @@ test('a tag has the shared header and Overview and Sources tabs', () => {
   const html = render(<TagDetail id="tag-1" mediaType="album" />)
   assert.match(html, /<div class="ds-kicker">Tag<\/div>/)
   assert.match(html, /<h2 class="ds-detail-title">Synthetic Tag<\/h2>/)
-  assert.match(html, /4 items/)
+  assert.match(html, /<span>4 albums<\/span><span>3 tracks<\/span>/)
+  // TTAG-15: the tracks carrying the tag themselves, at the Track location.
+  assert.match(
+    html,
+    /href="\/tracks\?filters=%5B%7B%22field%22%3A%22trackTag%22%2C%22value%22%3A%22Synthetic\+tag%22%7D%5D">Browse tracks with this tag</,
+  )
   assert.match(html, /data-status="paused">Hidden</)
   const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],

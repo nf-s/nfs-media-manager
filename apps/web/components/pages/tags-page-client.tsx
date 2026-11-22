@@ -55,7 +55,7 @@ const TAGS = { one: 'tag', other: 'tags' }
 /** Width of the selection column; the tag name is pinned after it. */
 const CHECK_WIDTH = 36
 
-const tagColumns = [
+const filmTagColumns = [
   { key: 'name', label: 'Tag', width: 280 },
   { key: 'mediaCount', label: 'Items', width: 90 },
   { key: 'sourceCount', label: 'Sources', width: 110 },
@@ -68,12 +68,23 @@ const tagColumns = [
     defaultVisible: false,
   },
 ]
+/** Album tags also count the tracks that carry them themselves (TTAG-15). */
+const albumTagColumns = filmTagColumns.flatMap((column) =>
+  column.key === 'mediaCount'
+    ? [
+        { ...column, label: 'Albums' },
+        { key: 'trackCount', label: 'Tracks', width: 90 },
+      ]
+    : [column],
+)
 
 export default function TagsPageClient({
   hidden = false,
 }: {
   hidden?: boolean
 }) {
+  const mediaType = useMediaScope()
+  const tagColumns = mediaType === 'film' ? filmTagColumns : albumTagColumns
   const columns = useTableColumns('tags', tagColumns)
   const layout = columns.layout([
     CHECK_WIDTH,
@@ -89,7 +100,6 @@ export default function TagsPageClient({
   }
   const { apiBaseUrl } = useConfig()
   const params = useSearchParams()
-  const mediaType = useMediaScope()
   const inspector = useDetailInspector()
   const search = params.get('q') ?? ''
   const query = useDeferredValue(search.trim())
@@ -259,13 +269,25 @@ export default function TagsPageClient({
                 {columns.visible('mediaCount') && (
                   <SecondaryTableHead
                     sortKey="mediaCount"
-                    label="Items"
+                    label={tagScope === 'album' ? 'Albums' : 'Items'}
                     sortBy={sortBy}
                     direction={direction}
                     onSort={sort}
                     align="end"
                     disabled={pending}
                     resizer={columns.resizer('mediaCount')}
+                  />
+                )}
+                {columns.visible('trackCount') && (
+                  <SecondaryTableHead
+                    sortKey="trackCount"
+                    label="Tracks"
+                    sortBy={sortBy}
+                    direction={direction}
+                    onSort={sort}
+                    align="end"
+                    disabled={pending}
+                    resizer={columns.resizer('trackCount')}
                   />
                 )}
                 {columns.visible('sourceCount') && (
@@ -386,6 +408,21 @@ export default function TagsPageClient({
                           tabIndex={0}
                         >
                           {formatCount(tag.mediaCount)}
+                        </span>
+                      </TableCell>
+                    )}
+                    {columns.visible('trackCount') && (
+                      <TableCell align="end">
+                        <span
+                          {...workspaceTabLinkProps(
+                            browseFilterHref('/tracks', [
+                              { field: 'trackTag', value: tag.name },
+                            ]),
+                            formatTagName(tag.name),
+                          )}
+                          tabIndex={0}
+                        >
+                          {formatCount(tag.trackCount)}
                         </span>
                       </TableCell>
                     )}

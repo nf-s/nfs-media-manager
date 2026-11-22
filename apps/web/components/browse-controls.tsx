@@ -30,7 +30,10 @@ import {
   type BrowseView,
   type GridDensity,
 } from '@/utils/media-grid'
-import { musicDisplayTags } from '@repo/schemas/music-tags'
+import {
+  musicDisplayTags,
+  type MusicDisplayTag,
+} from '@repo/schemas/music-tags'
 import { formatTagName } from '@repo/schemas/tags'
 import type { BrowseFilterHref } from '@/utils/browse-items'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
@@ -109,6 +112,7 @@ export function BrowseTagBadges({
   field = 'genre',
   tags,
   artistTags,
+  trackTags,
   onFilter,
   filterHref,
   className,
@@ -118,26 +122,38 @@ export function BrowseTagBadges({
   field?: string
   tags: string[]
   artistTags?: string[]
+  /** A track's own tags, shown before `tags` (TTAG-14). */
+  trackTags?: string[]
   onFilter: (filter: BrowseFilter) => void
   filterHref?: BrowseFilterHref
   className?: string
   max?: number
   storedNames?: boolean
 }) {
-  const shown =
-    artistTags === undefined
+  const shown: MusicDisplayTag[] =
+    artistTags === undefined && trackTags === undefined
       ? tags.map((name) => ({
           name,
-          source: field === 'artistTag' ? 'artist' : 'album',
+          source:
+            field === 'artistTag'
+              ? 'artist'
+              : field === 'trackTag'
+                ? 'track'
+                : 'album',
         }))
-      : musicDisplayTags(tags, artistTags)
+      : musicDisplayTags(tags, artistTags ?? [], trackTags)
   if (shown.length === 0) return null
   return (
     <Pills label="Tags" max={max} className={className}>
       {shown.map(({ name: tag, source }) => {
         const label = storedNames ? tag : formatTagName(tag)
         const filter = {
-          field: source === 'artist' ? 'artistTag' : field,
+          field:
+            source === 'artist'
+              ? 'artistTag'
+              : source === 'track'
+                ? 'trackTag'
+                : field,
           value: tag,
         }
         return (
@@ -151,7 +167,7 @@ export function BrowseTagBadges({
                 ? workspaceTabLinkProps(filterHref(filter), label)
                 : undefined)}
               type="button"
-              title={`${source === 'artist' ? 'Artist tag' : 'Tag'}: ${label}`}
+              title={`${source === 'artist' ? 'Artist tag' : source === 'track' ? 'Track tag' : 'Tag'}: ${label}`}
               onClick={(event) => {
                 event.stopPropagation()
                 onFilter(filter)

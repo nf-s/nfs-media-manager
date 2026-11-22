@@ -257,6 +257,63 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   assert.match(render(matched, '', 'sources'), /unique artist and title match/)
 })
 
+test('details list the track’s own tags first, then Sonovault’s unverified and the removed ones', () => {
+  const tagged = TrackDetailSchema.parse({
+    ...scrobbled,
+    album: { id: 'album-1', title: 'Library album' },
+    albumTags: ['Electronic', 'Synthetic Wave'],
+    trackTags: ['Deep Current', 'Harbour Bass'],
+    tags: {
+      own: [
+        { id: 'tag-deep', name: 'Deep Current', added: false, sonovault: true },
+        {
+          id: 'tag-harbour',
+          name: 'Harbour Bass',
+          added: true,
+          sonovault: false,
+        },
+      ],
+      unverified: [{ id: 'tag-glass', name: 'Glass Pop' }],
+      removed: [{ id: 'tag-tide', name: 'Peak Hour Tide' }],
+    },
+  })
+  const html = render(tagged)
+  const trackTags = html.indexOf('<h3>Track tags</h3>')
+  assert.ok(trackTags >= 0)
+  assert.ok(trackTags < html.indexOf('<h3>Album tags</h3>'))
+  // TTAG-11: a pill opens Tracks filtered on the tag at the Track location.
+  assert.deepEqual(pillHref(html, 'Deep Current'), [
+    { field: 'trackTag', value: 'Deep Current' },
+  ])
+  assert.deepEqual(pillHref(html, 'Harbour Bass'), [
+    { field: 'trackTag', value: 'Harbour Bass' },
+  ])
+  assert.match(
+    html,
+    /<button type="button"[^>]*aria-label="Sources for Deep Current"[^>]*class="browse-pill-action"/,
+  )
+  assert.match(
+    html,
+    /<span class="ds-label">Sonovault, may be another version<\/span><div>.*Glass Pop.*aria-label="Sources for Glass Pop"/,
+  )
+  assert.doesNotMatch(
+    html,
+    /href="[^"]*"[^>]*><span class="ds-pill-label">Glass Pop</,
+  )
+  assert.match(
+    html,
+    /<span class="ds-label">Removed by you<\/span><div>.*Peak Hour Tide.*aria-label="Restore Peak Hour Tide"[^>]*>Restore</,
+  )
+  assert.match(html, />Edit tags</)
+})
+
+test('a track without tags of its own still offers Edit tags', () => {
+  const html = render(scrobbled)
+  assert.match(html, /<h3>Track tags<\/h3>/)
+  assert.match(html, />Edit tags</)
+  assert.doesNotMatch(html, /Removed by you|may be another version/)
+})
+
 test('details list every recorded ISRC with the services that reported it', () => {
   const html = render(
     TrackDetailSchema.parse({

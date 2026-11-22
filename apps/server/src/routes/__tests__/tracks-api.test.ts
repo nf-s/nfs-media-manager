@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   positions: vi.fn(),
   diagnostics: vi.fn(),
   matchFacets: vi.fn(),
+  addTag: vi.fn(),
+  removeTag: vi.fn(),
+  resetTags: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -44,6 +47,11 @@ vi.mock('@/services/track-match-diagnostics', () => ({
 vi.mock('@/services/track-merges', () => ({
   matchScrobbleTrack: mocks.matchScrobble,
   mergeLastfmTrack: mocks.merge,
+}))
+vi.mock('@/services/track-tags', () => ({
+  addTrackTag: mocks.addTag,
+  removeTrackTag: mocks.removeTag,
+  resetTrackTags: mocks.resetTags,
 }))
 vi.mock('@/services/spotify-track-playlist-additions', () => ({
   queueSpotifyTrackPlaylistAddition: mocks.addTrack,
@@ -375,6 +383,71 @@ describe('tracks API', () => {
       data: { targetId: 'target' },
     })
     expect(mocks.matchScrobble).toHaveBeenCalledExactlyOnceWith('source', input)
+  })
+
+  it('authorizes and validates track tag edits before calling the service (TTAG-12)', async () => {
+    const origin = 'http://localhost:3001'
+    const edit = (
+      method: 'POST' | 'DELETE',
+      body: unknown,
+      path = '/track-1/tags',
+      from = origin,
+    ) =>
+      app.request(`http://localhost:4001${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json', origin: from },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+    for (const method of ['POST', 'DELETE'] as const) {
+      for (const body of [
+        {},
+        { tagId: '' },
+        { tagId: 1 },
+        { tagId: 'tag-1', owner: 'added' },
+      ])
+        expect((await edit(method, body)).status).toBe(422)
+      expect(
+        (
+          await edit(
+            method,
+            { tagId: 'tag-1' },
+            '/track-1/tags',
+            'https://evil.invalid',
+          )
+        ).status,
+      ).toBe(403)
+      mocks.session.mockResolvedValueOnce(null)
+      expect((await edit(method, { tagId: 'tag-1' })).status).toBe(401)
+    }
+    mocks.session.mockResolvedValueOnce({
+      user: { id: 'user-2', email: 'guest@example.com', role: 'user' },
+      session: { id: 'session-2', userId: 'user-2' },
+    })
+    expect((await edit('POST', undefined, '/track-1/tags/reset')).status).toBe(
+      403,
+    )
+    expect(mocks.addTag).not.toHaveBeenCalled()
+    expect(mocks.removeTag).not.toHaveBeenCalled()
+    expect(mocks.resetTags).not.toHaveBeenCalled()
+
+    mocks.addTag.mockResolvedValueOnce({ tagId: 'tag-1', changed: true })
+    const added = await edit('POST', { tagId: ' tag-alias ' })
+    expect(added.status).toBe(200)
+    expect(await added.json()).toMatchObject({
+      data: { tagId: 'tag-1', changed: true },
+    })
+    expect(mocks.addTag).toHaveBeenCalledExactlyOnceWith('track-1', 'tag-alias')
+    mocks.removeTag.mockResolvedValueOnce({ tagId: 'tag-1', changed: false })
+    expect((await edit('DELETE', { tagId: 'tag-1' })).status).toBe(200)
+    expect(mocks.removeTag).toHaveBeenCalledExactlyOnceWith('track-1', 'tag-1')
+    mocks.resetTags.mockResolvedValueOnce({ changed: 2 })
+    const reset = await edit('POST', undefined, '/track-1/tags/reset')
+    expect(await reset.json()).toMatchObject({ data: { changed: 2 } })
+    expect(mocks.resetTags).toHaveBeenCalledExactlyOnceWith('track-1')
+    mocks.addTag.mockRejectedValueOnce(
+      new ServerError({ statusCode: 404, message: 'Tag not found' }),
+    )
+    expect((await edit('POST', { tagId: 'missing' })).status).toBe(404)
   })
 
   it('rejects invalid input and cross-origin requests before service work', async () => {

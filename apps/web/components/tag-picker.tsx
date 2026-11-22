@@ -2,7 +2,12 @@
 
 import { useDeferredValue, useState } from 'react'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { formatTagName, TagPageSchema, type Tag } from '@repo/schemas/tags'
+import {
+  formatTagName,
+  normalizeTagName,
+  TagPageSchema,
+  type Tag,
+} from '@repo/schemas/tags'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -15,7 +20,7 @@ import { SecondaryTableScroll, SecondaryVirtualRows } from './secondary-table'
  * Finds one tag of a library by name: a search field and the matching tags
  * as a scrolling list. Choosing a tag clears the search. `unavailable` names
  * why a tag cannot be chosen, such as "current tag"; that tag is listed but
- * disabled.
+ * disabled. With `onCreate`, a search that names no tag offers to create it.
  */
 export function TagPicker({
   mediaType,
@@ -25,6 +30,7 @@ export function TagPicker({
   disabled = false,
   unavailable,
   onPick,
+  onCreate,
 }: {
   mediaType: 'album' | 'film'
   label: string
@@ -33,6 +39,7 @@ export function TagPicker({
   disabled?: boolean
   unavailable?: (tag: Tag) => string | null
   onPick: (tag: Tag) => void
+  onCreate?: (name: string) => void
 }) {
   const { apiBaseUrl } = useConfig()
   const [search, setSearch] = useState('')
@@ -128,6 +135,25 @@ export function TagPicker({
               </TableBody>
             </table>
           </SecondaryTableScroll>
+          {onCreate &&
+            matches.hasTotal &&
+            !matches.firstPage?.items.some(
+              (tag) => normalizeTagName(tag.name) === normalizeTagName(query),
+            ) && (
+              <span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  onClick={() => {
+                    setSearch('')
+                    onCreate(query)
+                  }}
+                >
+                  Create tag “{query}”
+                </Button>
+              </span>
+            )}
         </>
       )}
     </div>

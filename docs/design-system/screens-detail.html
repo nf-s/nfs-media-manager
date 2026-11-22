@@ -370,6 +370,18 @@
           `<div class="ds-list" data-compact style="margin:0 -12px">${D.row(A[0], { by: 'Album · Mira Kestrel · 2019' })}</div>${pills(['Late shift', 'Kitchen'], md)}`,
           { aside: linkBtn('Add to playlist') },
         ) +
+        section(
+          'Track tags',
+          pills(['Dream Pop', 'Jangle Pop'], sourced) +
+            facts([
+              [
+                'Sonovault, may be another version',
+                pills(['Shoegaze'], sourced),
+              ],
+              ['Removed by you', `Twee Pop ${linkBtn('Restore')}`],
+            ]),
+          { aside: linkBtn('Edit tags') },
+        ) +
         section('Album tags', pills(['Dream Pop'], sourced)) +
         section('Artist tags', pills(['Bedroom Pop', 'New Zealand'], sourced)) +
         section(
@@ -740,6 +752,7 @@
                 '<b>Summary:</b> scrobbles with an all-time sparkline, the headline ratings and last played. Each rating opens the page that supplied its score, in a new tab; a provider with no rating shown keeps its icon in the header. Provider statistics (votes, have, want, listeners) move to each source.',
                 '<b>Tracks are a compact table</b> in the overview: number, title, duration, scrobbles. No toolbar, no Artist or Album column. An Artist column appears only on a compilation. Long albums preview at least 20 tracks, showing extra rows when the panel has room. Show all opens the remaining tracks.',
                 '<b>Each tag group is its own section</b> (Album tags, Artist tags, or Genres and Keywords on a film), set flush left like Playlists and Details. The sources icon inside each tag pill opens the stored evidence for the open item. Inherited tags identify their contributing album or artists. The tag label still filters the library.',
+                '<b>A track’s own tags come first</b> as Track tags: Sonovault’s verified genres and subgenres and the ones you added, each filtering Tracks by Track tags. Sonovault tags from a record that may be another version, and tags you removed (with Restore), are listed under the pills. Edit tags adds a tag with the tag picker, which can create one, removes one with the pill’s remove control, and offers Reset to Sonovault once you have changed something.',
                 '<b>Details</b> holds six facts. All fields opens the full list with the source of each.',
                 '<b>A section has one action,</b> a link button at the end of its heading: Manage tags, Add to playlist, All fields. No section uses a bordered button or an icon for it.',
               ]) +

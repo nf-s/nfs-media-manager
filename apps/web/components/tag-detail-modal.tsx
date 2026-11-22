@@ -266,7 +266,12 @@ export function TagDetail({
         title={formatTagName(data.tag.name)}
         by={data.tag.mediaType === 'album' ? 'Album tag' : 'Film tag'}
         facts={[
-          `${formatCount(data.tag.mediaCount)} items`,
+          data.tag.mediaType === 'album'
+            ? `${formatCount(data.tag.mediaCount)} albums`
+            : `${formatCount(data.tag.mediaCount)} items`,
+          data.tag.mediaType === 'album'
+            ? `${formatCount(data.tag.trackCount)} tracks`
+            : null,
           `${formatCount(data.tag.sourceCount)} sources`,
           data.children.length
             ? formatItemCount(data.children.length, {
@@ -286,6 +291,14 @@ export function TagDetail({
                   label: `Browse ${library} with this tag`,
                   href: `/${library}?${new URLSearchParams({ filters: JSON.stringify([{ field: 'genre', value: data.tag.name }]) })}`,
                 },
+                ...(data.tag.mediaType === 'album'
+                  ? [
+                      {
+                        label: 'Browse tracks with this tag',
+                        href: `/tracks?${new URLSearchParams({ filters: JSON.stringify([{ field: 'trackTag', value: data.tag.name }]) })}`,
+                      },
+                    ]
+                  : []),
               ]}
             />
           </>

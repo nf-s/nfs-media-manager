@@ -1,6 +1,6 @@
 # Track tags
 
-Status: accepted by the owner on 2026-11-22 with the recommendations below. Stage 1 (storage and backfill) is built and its backfill has run; stage 4's reviewed mapping has been applied. Stages 2 and 3 are not built. Stages are built in order, each released through `main` on its own. It answers SONO-15 in [Sonovault identifiers and track facts](sonovault.md) and follows the owner's decision of 2026-11-22: tracks get a tags field of their own holding Sonovault's genres and subgenres, the genre hierarchy takes the names it lacks, and a Tags filter can say whether it reads the track's, the album's or the artists' tags.
+Status: accepted by the owner on 2026-11-22 with the recommendations below. Stage 1 (storage and backfill) is built and its backfill has run; stage 4's reviewed mapping has been applied. Stage 2 (showing and editing) is built. Stage 3 is not built. Stages are built in order, each released through `main` on its own. It answers SONO-15 in [Sonovault identifiers and track facts](sonovault.md) and follows the owner's decision of 2026-11-22: tracks get a tags field of their own holding Sonovault's genres and subgenres, the genre hierarchy takes the names it lacks, and a Tags filter can say whether it reads the track's, the album's or the artists' tags.
 
 ## What changes for the owner
 

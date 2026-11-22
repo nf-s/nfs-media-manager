@@ -150,16 +150,18 @@ List is the default Tracks view. Table columns default to Title, Artists, Album,
 
 **Artist** groups by the first billed track artist, then release year and album name. **Album** sorts by album name, then release date. **Released** sorts by release date and keeps ties in album order. Both use the linked album's title and date when available, so edition names and dates reported for individual tracks do not split the release. Other sorts break ties by the album's billed artist, release year and title. The stored album position preserves disc and track order. Secondary keys stay ascending in either sort direction, with missing values last.
 
-| Field                    | Source                                                                               |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| Title, Artists, Album    | Album track lists, Spotify catalog or playlist metadata, or stored Last.fm names.    |
-| Released, Duration       | Spotify or a matched library album/track; empty when unknown.                        |
-| Source                   | Album track lists, Last.fm, Spotify playlists, Liked Songs and Spotify track search. |
-| Playlists                | Imported playlists containing the track, including Liked Songs.                      |
-| Added                    | Earliest manual addition, playlist addition or scrobble from its Last.fm membership. |
-| Library album            | "In library" or "Not in library".                                                    |
-| Album tags               | Tags of the linked library album. Empty when the album is not in library.            |
-| Scrobbles, Last listened | Linked Last.fm scrobbles; see [scrobbles](#scrobbles).                               |
+| Field                    | Source                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| Title, Artists, Album    | Album track lists, Spotify catalog or playlist metadata, or stored Last.fm names.                 |
+| Released, Duration       | Spotify or a matched library album/track; empty when unknown.                                     |
+| Source                   | Album track lists, Last.fm, Spotify playlists, Liked Songs and Spotify track search.              |
+| Playlists                | Imported playlists containing the track, including Liked Songs.                                   |
+| Added                    | Earliest manual addition, playlist addition or scrobble from its Last.fm membership.              |
+| Library album            | "In library" or "Not in library".                                                                 |
+| Tags                     | The track's own tags first, then its album's, and its artists' when the album has fewer than two. |
+| Track tags               | The track's own tags: Sonovault's verified genres and subgenres and the owner's additions.        |
+| Album tags               | Tags of the linked library album. Empty when the album is not in library.                         |
+| Scrobbles, Last listened | Linked Last.fm scrobbles; see [scrobbles](#scrobbles).                                            |
 
 Setting two or more playlists to **required** shows the tracks in all of them. A playlist in the **Playlists** column opens the [playlist drawer](#playlist-drawer), whose **Filter tracks** applies the filter.
 
@@ -167,7 +169,7 @@ Use **Source** to include or exclude **Album track list**, **Last.fm**, **Spotif
 
 Listening counts use broader matching rules than source membership. A Spotify track can therefore show scrobbles without having a Last.fm source. Manually added tracks keep their Spotify track search source when a playlist is removed.
 
-A track's detail shows its sources, playlists (each opens the playlist drawer), Spotify link when available, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album. Last.fm tracks can inherit artwork and release date from their linked library album.
+A track's detail shows its sources, playlists (each opens the playlist drawer), Spotify link when available, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album. Its own tags come first under **Track tags**; Sonovault tags from a record that may be another version and tags the owner removed are listed apart. **Edit tags** adds an album-library tag (or creates one), removes one, restores a removed one and resets the track to Sonovault's tags. A tag the owner removed stays removed when Sonovault's record is refreshed, and one the owner added stays. Last.fm tracks can inherit artwork and release date from their linked library album.
 
 **Spotify match** is available as a table column and an include/exclude filter. **Spotify playlist / Liked Songs** means a playlist or Liked Songs import supplied the ID. **Spotify track search** means a catalog search supplied the ID through Add track or an automatic or confirmed match. **Album track list** means the stored album track list supplied it. **Unmatched** means no stored Spotify ID is available. Counts, filters and playback use the same ID. The drawer explains the method and shows the original artist, track and album names recorded by Last.fm, independently of the broader listening matches below them. Spotify playback uses stored metadata.
 

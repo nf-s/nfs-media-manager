@@ -161,6 +161,7 @@ export const trackBrowseFields: BrowseField[] = [
   text('album', 'Album'),
   text('playlist', 'Playlists'),
   text('genre', 'Tags'),
+  text('trackTag', 'Track tags'),
   text('albumTag', 'Album tags'),
   text('artistTag', 'Artist tags'),
   text('albumLink', 'Library album'),
@@ -254,7 +255,9 @@ export function canonicalBrowseKey(key: string): string {
 
 /** Whether a field's values are tag names, matched whatever their case. */
 export function isTagBrowseField(key: string): boolean {
-  return ['genre', 'albumTag', 'artistTag'].includes(canonicalBrowseKey(key))
+  return ['genre', 'trackTag', 'albumTag', 'artistTag'].includes(
+    canonicalBrowseKey(key),
+  )
 }
 
 /** A filter value as the interface shows it: a tag in its display form, a key in the chosen notation. */

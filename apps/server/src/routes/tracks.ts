@@ -29,6 +29,9 @@ import {
   TrackScrobbleNamesPageSchema,
   TrackScrobbleNamesQuerySchema,
   TrackScrobbleRemoveInputSchema,
+  TrackTagChangeSchema,
+  TrackTagInputSchema,
+  TrackTagResetSchema,
 } from '@repo/schemas/tracks'
 import {
   TrackPlaylistAdditionInputSchema,
@@ -68,6 +71,11 @@ import {
   removeScrobbleTrackMatch,
 } from '@/services/track-merges'
 import { listLastfmTrackNames } from '@/services/lastfm-track-names'
+import {
+  addTrackTag,
+  removeTrackTag,
+  resetTrackTags,
+} from '@/services/track-tags'
 import {
   listTrackMatchDiagnostics,
   listTrackMatchDiagnosticsFacets,
@@ -598,6 +606,109 @@ app
       generateJsonResponse(
         c,
         await mergeLastfmTrack(c.req.valid('param').id, c.req.valid('json')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/tags',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({ id: TrackMatchIdSchema }),
+        body: {
+          content: { 'application/json': { schema: TrackTagInputSchema } },
+          required: true,
+        },
+      },
+      responses: {
+        200: {
+          description: 'Added a tag to the track, or restored a removed one',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackTagChangeSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track or tag not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await addTrackTag(c.req.valid('param').id, c.req.valid('json').tagId),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'delete',
+      path: '/:id/tags',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({ id: TrackMatchIdSchema }),
+        body: {
+          content: { 'application/json': { schema: TrackTagInputSchema } },
+          required: true,
+        },
+      },
+      responses: {
+        200: {
+          description:
+            'Removed a tag from the track; a Sonovault refresh does not bring it back',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackTagChangeSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track or tag not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await removeTrackTag(
+          c.req.valid('param').id,
+          c.req.valid('json').tagId,
+        ),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/tags/reset',
+      middleware: [authMiddleware(), mutationOriginMiddleware()],
+      request: {
+        params: z.object({ id: TrackMatchIdSchema }),
+      },
+      responses: {
+        200: {
+          description:
+            "Cleared the owner's tag changes on the track, leaving Sonovault's tags",
+          content: {
+            'application/json': {
+              schema: createResponseSchema(TrackTagResetSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        403: jsonErrorResponse('Forbidden'),
+        404: jsonErrorResponse('Track or tag not found'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await resetTrackTags(c.req.valid('param').id),
         200,
       ),
   )

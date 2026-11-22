@@ -25,6 +25,7 @@ import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Button } from '@repo/ui/components/ui/button'
+import { formatDate } from '@repo/ui/lib/format'
 import { DetailLink } from './detail-link'
 import { useDetailView } from './detail-inspector-context'
 import { useConfig } from './providers'
@@ -34,6 +35,18 @@ import { VirtualTagSources } from './metadata-source-list'
 import TagDetailModal from './tag-detail-modal'
 
 type TagResource = { kind: 'artist' | 'track' | 'album' | 'film'; id: string }
+
+function trackTagExplanation(page: ItemTagProvenancePage) {
+  const state = page.trackTag
+  if (!state) return 'A tag of this track.'
+  if (state.owner === 'added')
+    return `Added by you${state.ownerChangedAt ? ` on ${formatDate(state.ownerChangedAt)}` : ''}${state.sonovault ? '. Sonovault also reports it.' : '.'}`
+  if (state.owner === 'removed')
+    return `Removed by you${state.ownerChangedAt ? ` on ${formatDate(state.ownerChangedAt)}` : ''}. A Sonovault refresh does not bring it back.`
+  return state.verified
+    ? 'Reported by Sonovault for this track.'
+    : 'Reported by Sonovault from a record that may be another version, so it is not used in Browse.'
+}
 
 function tagSourceExplanation(
   resource: TagResource,
@@ -54,6 +67,8 @@ function tagSourceExplanation(
       )
     case 'artist-fallback':
       return `This ${resource.kind} has fewer than ${artistTagFallbackThreshold} album tags, so tags from credited artists are also shown.`
+    case 'track':
+      return trackTagExplanation(page)
     case 'direct':
       return resource.kind === 'artist'
         ? 'From this artist’s saved metadata.'
@@ -65,18 +80,21 @@ function TagSources({
   mediaType,
   name,
   resource,
+  level,
   tagId,
   onManage,
 }: {
   mediaType?: 'album' | 'film'
   name: string
   resource?: TagResource
+  /** `track`: the track's own tag rather than its album's or artists'. */
+  level?: 'track'
   tagId?: string
   onManage: (id: string, mediaType: 'album' | 'film') => void
 }) {
   const { apiBaseUrl } = useConfig()
   const query = useVirtualTable<TagProvenancePage | ItemTagProvenancePage>({
-    queryKey: ['tag-provenance', mediaType, resource, name],
+    queryKey: ['tag-provenance', mediaType, resource, level, name],
     pageSize: 25,
     loadPage: (page, size, signal) => {
       const params = new URLSearchParams({
@@ -87,6 +105,7 @@ function TagSources({
       if (resource) {
         params.set('resourceType', resource.kind)
         params.set('resourceId', resource.id)
+        if (level) params.set('level', level)
         return fetchApiData(
           apiBaseUrl,
           `/api/v1/tags/item-provenance?${params}`,
@@ -391,6 +410,11 @@ export default function MetadataSourceControl({
             mediaType={mediaType}
             name={name}
             resource={resource}
+            level={
+              field === 'trackTag' && resource?.kind === 'track'
+                ? 'track'
+                : undefined
+            }
             tagId={tagId}
             onManage={(id, scope) => {
               close()

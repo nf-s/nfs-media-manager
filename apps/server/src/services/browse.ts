@@ -192,6 +192,7 @@ const trackRankSortFields = new Set([
   'album',
   'playlist',
   'genre',
+  'trackTag',
   'albumTag',
   'artistTag',
   'releaseDate',
@@ -292,6 +293,8 @@ function trackValueExpression(key: string): SQL | null {
       return sql`to_jsonb(${verifiedTrackKey(sql`${mediaItem.id}`)})`
     case 'albumTag':
       return sql`(select jsonb_agg(distinct t.name order by t.name) from media_item_tag mt join tag t on t.id = mt.tag_id where mt.media_item_id = ${libraryTrack.albumMediaItemId} and t.media_type = 'album' and not t.hidden)`
+    case 'trackTag':
+      return sql`(select jsonb_agg(t.name order by t.name) from track_tag tt join tag t on t.id = tt.tag_id where tt.media_item_id = ${libraryTrack.mediaItemId} and tt.in_browse and not t.hidden)`
     default:
       return null
   }
@@ -392,6 +395,24 @@ function numericExpression(key: string, mediaType: MediaType): SQL {
   return sql`case when jsonb_typeof(${value}) = 'number' then (${value} #>> '{}')::numeric else null end`
 }
 
+/**
+ * TTAG-13: tracks whose own tags in Browse include the tag or one of its
+ * visible subtags. The tag set resolves to IDs once and the rows are a hashed
+ * set, never probed once per track. Test it on the table the sort order walks
+ * (`media_item` for Title, `library_track` otherwise): PostgreSQL charges the
+ * hash build to every rescan of a scan that carries it, so on the other table
+ * it materialises the matches and compares them with every row walked.
+ */
+function trackTagMatch(value: string, trackId: SQL): SQL {
+  return sql`coalesce(${trackId} in (
+    select tt.media_item_id from track_tag tt
+    where tt.in_browse and tt.tag_id in (
+      select t.id from tag t where t.media_type = 'album'
+        and ${normalizedTagSql(sql`t.name`)} in (${matchingTagNames(normalizeTagName(value), 'album')})
+    )
+  ), false)`
+}
+
 function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   const match = sql`lower(${value}::text)`
   if (key === 'title') return sql`lower(${mediaItem.title}) = ${match}`
@@ -424,6 +445,8 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
   }
   if ((mediaType === 'album' || mediaType === 'track') && key === 'artistTag')
     return sql`${mediaType === 'track' ? libraryTrack.mediaItemId : mediaItem.id} in (${mediaIdsWithArtistTag(normalizeTagName(value))})`
+  if (mediaType === 'track' && key === 'trackTag')
+    return trackTagMatch(value, sql`${libraryTrack.mediaItemId}`)
   if (key === 'genre' || key === 'keyword' || key === 'albumTag') {
     // Resolve merged names once for this library, not once per media/tag pair.
     const name = normalizeTagName(value)
@@ -561,6 +584,12 @@ function browseTextSearchIds(
               select artist_id from (${labels}) search_labels where name ilike ${search}
             )`
       }
+      if (field.key === 'trackTag' && mediaType === 'track')
+        return sql`select tt.media_item_id as id from track_tag tt
+          where tt.in_browse and tt.tag_id in (
+            select t.id from tag t
+            where t.media_type = 'album' and not t.hidden and t.name ilike ${search}
+          )`
       // An album with several matching tags still contributes each track once.
       if (field.key === 'albumTag' && mediaType === 'track')
         return sql`select m.id from media_item m
@@ -1445,7 +1474,15 @@ async function browseQueries(
       ),
       ...searchConditions,
     )
-  const where = whereWithFilters()
+  // A Title page walks media_item in title order; see trackTagMatch.
+  const where = whereWithFilters(
+    mediaType === 'track' && sortField.key === 'title'
+      ? (filter) =>
+          filter.field === 'trackTag'
+            ? trackTagMatch(filter.value, sql`${mediaItem.id}`)
+            : undefined
+      : undefined,
+  )
   const orderRows =
     versionId || (mediaType === 'track' && query.creatorId)
       ? undefined
@@ -1703,7 +1740,10 @@ async function browseQueries(
   async function readPage(limit: number) {
     // Keep positive artist tags as a set of keys. A broad tag must not be
     // nested-loop joined against the date index, and release ordering only
-    // needs to resolve the primary date ties at the page boundary.
+    // needs to resolve the primary date ties at the page boundary. Track tags
+    // filters in any mode take the same path: their hashed set is tested on
+    // the date index, and the visibility probe below keeps media_item a
+    // lookup per walked track instead of a materialised scan.
     const firstArtistTagPage =
       mediaType === 'track' &&
       offset === 0 &&
@@ -1711,7 +1751,9 @@ async function browseQueries(
       query.direction === 'desc' &&
       useTrackRanks &&
       query.filters.some(
-        (chip) => chip.field === 'artistTag' && chip.mode !== 'exclude',
+        (chip) =>
+          chip.field === 'trackTag' ||
+          (chip.field === 'artistTag' && chip.mode !== 'exclude'),
       )
     const firstArtistTagWhere = firstArtistTagPage
       ? and(
@@ -2078,6 +2120,10 @@ function browseOrderRows(mediaType: MediaType, key: string): SQL | undefined {
   if (mediaType !== 'film' && key === 'artistTag')
     return sql`select media_item_id, min(name) as name
       from (${artistTagMemberships(mediaType)}) tags group by media_item_id`
+  if (mediaType === 'track' && key === 'trackTag')
+    return sql`select tt.media_item_id, min(t.name) as name
+      from track_tag tt join tag t on t.id = tt.tag_id
+      where tt.in_browse and not t.hidden group by tt.media_item_id`
   if (
     key === 'playlist' ||
     key === 'collection' ||
@@ -2249,6 +2295,16 @@ function textRows(
   const tagName = options.normalizeTags
     ? normalizedTagSql(sql`t.name`)
     : sql`t.name`
+  if (mediaType === 'track' && key === 'trackTag') {
+    const membership = sql`join track_tag tt on tt.media_item_id = media_item.id and tt.in_browse`
+    const direct = sql`select media_item.id, ${tagName} as value from media_item ${membership}
+      join tag t on t.id = tt.tag_id where ${visible} and not t.hidden`
+    if (!options.rollUpTags) return direct
+    return sql`${direct}
+      union all select media_item.id, ancestor.ancestor_key as value from media_item ${membership}
+        join (${tagAncestorRows('album')}) ancestor on ancestor.tag_id = tt.tag_id
+        where ${visible}`
+  }
   if (
     (mediaType === 'album' || mediaType === 'track') &&
     (key === 'genre' || key === 'artistTag')
@@ -2318,7 +2374,7 @@ const CachedTrackFacetsSchema = z.object({
   rows: z.array(FacetRowSchema),
 })
 const musicTagFacetFields = ['genre', 'albumTag', 'artistTag']
-const tagFacetFields = [...musicTagFacetFields, 'keyword']
+const tagFacetFields = [...musicTagFacetFields, 'trackTag', 'keyword']
 
 const releaseTagFacetKeys = sql`select t.id as tag_id, ${normalizedTagSql(sql`t.name`)} as value
   from tag t where t.media_type = 'album' and not t.hidden
@@ -2341,17 +2397,28 @@ function albumTagFacetRows(key: string) {
     and media_item.id not in (${albumsWithEnoughTags()})`
 }
 
+function releaseFacetKeysSource(matches?: SQL) {
+  const condition = matches ? sql`where ${matches}` : sql``
+  return sql`browse_release_facet_keys as materialized (
+    select tag_id, value from (${releaseTagFacetKeys}) keys ${condition}
+  )`
+}
+
 function musicFacetSources(mediaType: 'album' | 'track', matches?: SQL) {
   const condition = matches ? sql`where ${matches}` : sql``
   return [
     sql`browse_artist_facet_keys as materialized (
       select artist_id, value from (${artistTagFacetKeys(mediaType)}) keys ${condition}
     )`,
-    sql`browse_release_facet_keys as materialized (
-      select tag_id, value from (${releaseTagFacetKeys}) keys ${condition}
-    )`,
+    releaseFacetKeysSource(matches),
   ]
 }
+
+// A track's own tags in Browse, each with its visible ancestors.
+const trackTagFacetRows = sql`select tt.media_item_id as id, labels.value from track_tag tt
+  join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+  join media_item on media_item.id = tt.media_item_id
+  where tt.in_browse and media_item.metadata->>'legacyHidden' is distinct from 'true'`
 
 function trackMusicFacetSources(includeLastfmSourceRows?: boolean) {
   const visibility = includeLastfmSourceRows
@@ -2507,15 +2574,21 @@ function browseFacetQuery(
   const musicFields = music
     ? fields.filter((field) => musicTagFacetFields.includes(field.key))
     : []
-  if (mediaType === 'track' && musicFields.length) {
+  const trackTagFields =
+    mediaType === 'track'
+      ? fields.filter((field) => field.key === 'trackTag')
+      : []
+  if (mediaType === 'track' && (musicFields.length || trackTagFields.length)) {
     // Restrict expansion to labels wanted by any of the requested tag fields.
     const matches = or(
-      ...musicFields.map(
+      ...[...musicFields, ...trackTagFields].map(
         (field) => facetValueMatches(field, query) ?? sql`true`,
       ),
     )
-    sources.push(...musicFacetSources(mediaType, matches))
-    sources.push(...trackMusicFacetSources(options.includeLastfmSourceRows))
+    if (musicFields.length) {
+      sources.push(...musicFacetSources(mediaType, matches))
+      sources.push(...trackMusicFacetSources(options.includeLastfmSourceRows))
+    } else sources.push(releaseFacetKeysSource(matches))
   } else if (mediaType === 'album' && musicFields.length) {
     sources.push(...musicFacetSources(mediaType))
   }
@@ -2523,12 +2596,15 @@ function browseFacetQuery(
     const musicTagFacet = music && musicTagFacetFields.includes(field.key)
     if (mediaType === 'track' && musicTagFacet)
       return trackMusicFacetRows(field, query, limit)
+    const trackTagFacet = mediaType === 'track' && field.key === 'trackTag'
     const source = musicTagFacet
       ? albumTagFacetRows(field.key)
-      : textRows(field.key, mediaType, {
-          normalizeTags: true,
-          rollUpTags: true,
-        })
+      : trackTagFacet
+        ? trackTagFacetRows
+        : textRows(field.key, mediaType, {
+            normalizeTags: true,
+            rollUpTags: true,
+          })
     // Choosing the Last.fm source explicitly includes its retained source rows.
     const visibility =
       mediaType !== 'track' || options.includeLastfmSourceRows
@@ -2549,7 +2625,7 @@ function browseFacetQuery(
       options.includeLastfmSourceRows && mediaType === 'track'
         ? sql`and id in (select media_item_id from library_track)`
         : visibility,
-      musicTagFacet
+      musicTagFacet || trackTagFacet
         ? 'deduplicateRows'
         : uniqueValuePerItem
           ? 'uniqueRows'

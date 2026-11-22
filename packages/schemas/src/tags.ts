@@ -212,6 +212,8 @@ export const TagSchema = z.object({
   name: z.string(),
   kind: z.string(),
   mediaCount: z.number().int().nonnegative(),
+  /** Album-library tags: tracks carrying the tag themselves, in Browse. */
+  trackCount: z.number().int().nonnegative().default(0),
   hidden: z.boolean().default(false),
   mergedNames: z.array(z.string()).default([]),
   sources: z.array(TagSourceSchema),
@@ -223,6 +225,7 @@ export const TagSchema = z.object({
 export const TagSortKeySchema = z.enum([
   'name',
   'mediaCount',
+  'trackCount',
   'sourceCount',
   'mergedNames',
 ])
@@ -254,11 +257,13 @@ export const TagProvenanceSourceSchema = TagSourceSchema.extend({
 export const TagProvenancePageSchema = PaginatedDataSchema(
   TagProvenanceSourceSchema,
 ).extend({ tagId: z.string().optional(), mediaType: MediaTypeSchema })
-const TagOriginTypeSchema = MediaTypeSchema.or(z.literal('artist'))
+const TagOriginTypeSchema = MediaTypeSchema.or(z.enum(['artist', 'track']))
 
 export const ItemTagProvenanceQuerySchema = TagSourcesQuerySchema.extend({
   resourceType: z.enum(['album', 'film', 'track', 'artist']),
   resourceId: z.string().min(1).max(200),
+  /** `track`: the track's own tag, shown or not in Browse. */
+  level: z.enum(['track']).optional(),
 })
 
 export const TagReleaseSupportSchema = z
@@ -290,8 +295,17 @@ export const ItemTagProvenancePageSchema = PaginatedDataSchema(
   mediaType: MediaTypeSchema.optional(),
   tagId: z.string().optional(),
   originType: TagOriginTypeSchema,
-  reason: z.enum(['direct', 'linked-album', 'artist-fallback']),
+  reason: z.enum(['direct', 'linked-album', 'artist-fallback', 'track']),
   linkedAlbum: z.object({ id: z.string(), title: z.string() }).optional(),
+  /** For `track`: how the track carries the tag. */
+  trackTag: z
+    .object({
+      owner: z.enum(['added', 'removed']).nullable(),
+      ownerChangedAt: z.string().datetime().nullable(),
+      sonovault: z.boolean(),
+      verified: z.boolean(),
+    })
+    .optional(),
 })
 
 export type ItemTagProvenanceQuery = z.infer<
