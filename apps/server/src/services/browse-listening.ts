@@ -135,13 +135,28 @@ export function listeningCounts(
 export const linkedTrackScrobbles = sql`lastfm_track_link listening_link
   join lastfm_scrobble using (username, artist_key, track_key)`
 
-function hasBrowseScrobbles(subject: ListeningSubject, id: SQL, period: SQL) {
+function hasBrowseScrobbles(
+  subject: ListeningSubject,
+  id: SQL,
+  period: SQL,
+  collectPlayedGroups: boolean,
+) {
   if (subject === 'album')
     return sql`exists (select 1 from lastfm_scrobble
       where album_media_item_id = ${id} and ${period})`
   if (subject === 'track')
     return sql`exists (select 1 from ${linkedTrackScrobbles}
       where listening_link.track_media_item_id = ${id} and ${period})`
+  // Multiword recording searches can underestimate the matching groups and
+  // compare every absent group with every played member. Group keys are non-null.
+  if (collectPlayedGroups)
+    return sql`${id} in (select distinct listening_member.group_key
+      from recording_members listening_member
+      join lastfm_track_link listening_link on listening_link.track_media_item_id = listening_member.id
+      where exists (select 1 from lastfm_scrobble
+        where lastfm_scrobble.username = listening_link.username
+          and lastfm_scrobble.artist_key = listening_link.artist_key
+          and lastfm_scrobble.track_key = listening_link.track_key and ${period}))`
   return sql`exists (select 1 from recording_members listening_member
     join ${linkedTrackScrobbles} on listening_link.track_media_item_id = listening_member.id
     where listening_member.group_key = ${id} and ${period})`
@@ -226,8 +241,14 @@ export function createBrowseListening(
   }
   return {
     source,
-    condition: (subject: ListeningSubject, id: SQL) =>
-      condition((period) => hasBrowseScrobbles(subject, id, period)),
+    condition: (
+      subject: ListeningSubject,
+      id: SQL,
+      collectPlayedGroups = false,
+    ) =>
+      condition((period) =>
+        hasBrowseScrobbles(subject, id, period, collectPlayedGroups),
+      ),
     multiRulePresenceCondition(hasScrobbles: ScrobblePresence) {
       if (
         !filter ||

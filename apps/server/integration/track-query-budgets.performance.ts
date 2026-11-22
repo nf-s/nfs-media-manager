@@ -130,15 +130,15 @@ function rejectedJoinRows(plan: unknown): number {
 
 // PostgreSQL's root buffer totals include child paths. Hits plus reads
 // measure logical work independently of the warmth of the shared cache.
-async function checkBudget(
+async function checkBudget<T>(
   label: string,
   maxSharedBlocks: number,
   maxStatements: number,
-  read: () => Promise<void>,
+  read: () => Promise<T>,
   maxRejectedJoinRows?: number,
 ) {
   logQuery.mockClear()
-  await read()
+  const observed = await read()
   const statements = logQuery.mock.calls.filter(([query]) =>
     /^\s*(select|with)\b/i.test(query),
   )
@@ -181,6 +181,7 @@ async function checkBudget(
       maxRejectedJoinRows,
     )
   }
+  return observed
 }
 
 it('bounds selective Track pages and exact counts', async () => {
@@ -1386,6 +1387,214 @@ it('bounds Track autocomplete and grouped Browse on shared artist and album tags
   expect(fallbackPage.items.slice(1).map(({ albumTags }) => albumTags)).toEqual(
     Array(4).fill(['Fixture Genre 01']),
   )
+})
+
+it('bounds grouped lifetime Browse with a broad genre and two listening rules', async () => {
+  const { queryBrowseCounts, refreshRecordingBrowseOrderForMaintenance } =
+    await import('@/services/browse')
+  const { listTrackBrowsePage } = await import('@/services/tracks')
+  await pool.query(`
+    insert into tag (id, media_type, name, kind)
+    values ('lifetime-fixture-genre', 'album', 'Lifetime Fixture Genre', 'genre');
+    insert into media_item_tag (media_item_id, tag_id)
+    select 'album-' || n, 'lifetime-fixture-genre' from generate_series(1, 600) n;
+    insert into media_item (id, slug, media_type, title)
+    select 'lifetime-edition-' || n, 'lifetime-edition-' || n, 'track', 'Fixture Lifetime Edition ' || n
+    from generate_series(1, 3) n;
+    insert into library_track (media_item_id, album_media_item_id, date_added, version_group_id, version_shown)
+    select 'lifetime-edition-' || n,
+      case when n = 3 then 'album-900' else 'album-1' end,
+      timestamp '2024-01-01' + n * interval '1 day', 'lifetime-manual-group', n = 2
+    from generate_series(1, 3) n;
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'lifetime-edition-' || n, 'artist-1000', 'artist' from generate_series(1, 3) n;
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
+    select 'lifetime-fixture-listener', 'fixture-artist', 'track-' || n, 'track-' || n, 'name'
+    from generate_series(1001, 7000) n
+    union all
+    select 'lifetime-fixture-listener', 'fixture-artist', 'track-' || n, 'track-' || n, 'name'
+    from (values (101), (18101)) editions(n)
+    union all
+    select 'lifetime-fixture-listener', 'fixture-artist', 'lifetime-edition-' || n,
+      'lifetime-edition-' || n, 'name' from generate_series(1, 3) n;
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    select 'lifetime-fixture-' || track_key || '-' || event, username,
+      case when track_media_item_id in ('track-18101', 'lifetime-edition-3')
+        or track_media_item_id in (
+          select 'track-' || n from generate_series(1004, 7000, 4) n)
+        then statement_timestamp() - interval '2 days'
+        else timestamp '2001-01-01' + event * interval '1 day' end,
+      'Fixture artist', track_key, artist_key, track_key
+    from lastfm_track_link
+    cross join lateral generate_series(1, case track_media_item_id
+      when 'lifetime-edition-1' then 102 when 'lifetime-edition-2' then 103 else 1 end) event
+    where username = 'lifetime-fixture-listener';
+
+    -- The preferred version fails the genre. Its recent play must not
+    -- exclude the earlier edition that still matches.
+    update library_track set album_media_item_id = 'album-900',
+      version_shown = true, scrobble_count = 301 where media_item_id = 'track-18101';
+    update library_track set scrobble_count = 201 where media_item_id = 'track-101';
+    update library_track set scrobble_count = 250 where media_item_id = 'track-1004';
+    insert into recording_browse_order_state (singleton, builder, maintenance_only, retry_after)
+    values (true, current_user, true, statement_timestamp() - interval '1 second')
+    on conflict (singleton) do update set maintenance_only = true,
+      retry_after = excluded.retry_after;
+  `)
+  for (const table of [
+    'media_item_tag',
+    'lastfm_track_link',
+    'lastfm_scrobble',
+  ])
+    await pool.query(`vacuum analyze ${table}`)
+
+  const params = new URLSearchParams({
+    q: '',
+    filters: JSON.stringify([
+      { field: 'genre', value: 'Lifetime Fixture Genre', mode: 'required' },
+    ]),
+    ranges: '[]',
+    groupRecordings: 'true',
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    listening: JSON.stringify({
+      match: 'all',
+      rules: [
+        { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 0 },
+        { period: { kind: 'all' }, min: 1 },
+      ],
+    }),
+  })
+  const countParams = new URLSearchParams(params)
+  countParams.delete('sortBy')
+  countParams.delete('direction')
+  const countQuery = TrackQuerySchema.parse(Object.fromEntries(countParams))
+  const pageQuery = (page: number) =>
+    TrackQuerySchema.parse({
+      ...Object.fromEntries(params),
+      page: String(page),
+      size: '100',
+    })
+  const readPage = (page: number) => listTrackBrowsePage(pageQuery(page))
+  const textAbsence = TrackQuerySchema.parse({
+    ...Object.fromEntries(params),
+    q: 'fixture track',
+    page: '1',
+    size: '100',
+    listening: JSON.stringify({
+      match: 'all',
+      rules: [
+        { period: { kind: 'rolling', amount: 1, unit: 'years' }, max: 0 },
+      ],
+    }),
+  })
+
+  try {
+    const coldCount = await queryBrowseCounts('track', countQuery)
+    expect(coldCount.totalCount).toBeGreaterThan(2_000)
+    const cold = []
+    for (const page of [1, 3, 20]) {
+      const result = await readPage(page)
+      expect(result.items).toHaveLength(100)
+      expect(result.hasMore).toBe(true)
+      cold.push(result)
+    }
+    expect(cold[0]?.items[0]).toMatchObject({
+      id: 'lifetime-edition-2',
+      scrobbles: 205,
+      recordingGroup: { versionCount: 2 },
+    })
+    expect(cold[0]?.items[1]).toMatchObject({ id: 'track-101', scrobbles: 201 })
+    expect(cold[0]?.items[1]?.recordingGroup).toBeUndefined()
+    const coldTextAbsence = await checkBudget(
+      'cold two-word genre page with no recent listening',
+      220_000,
+      4,
+      async () => {
+        const page = await listTrackBrowsePage(textAbsence)
+        expect(
+          logQuery.mock.calls.some(([sql]) =>
+            sql.includes('in (select distinct listening_member.group_key'),
+          ),
+        ).toBe(true)
+        return page
+      },
+      500_000,
+    )
+    expect(coldTextAbsence.items).toHaveLength(100)
+    expect(coldTextAbsence.items[0]?.id).toBe('track-101')
+    expect(coldTextAbsence.items.map(({ id }) => id)).not.toContain(
+      'track-1004',
+    )
+
+    expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
+    await pool.query('vacuum analyze recording_browse_order')
+    await pool.query('vacuum analyze recording_browse_order_member')
+
+    for (const page of cold) {
+      await checkBudget(
+        `warm broad-genre grouped lifetime page ${page.page}`,
+        24_000,
+        2,
+        async () => {
+          expect(await readPage(page.page)).toEqual(page)
+          expect(logQuery.mock.calls[0]?.[0]).toContain(
+            'recording_browse_order_member',
+          )
+        },
+      )
+    }
+    await checkBudget(
+      'separate exact broad-genre grouped total',
+      24_000,
+      2,
+      async () => {
+        expect(await queryBrowseCounts('track', countQuery)).toEqual(coldCount)
+        expect(
+          logQuery.mock.calls.some(([sql]) =>
+            sql.includes('recording_browse_order_member'),
+          ),
+        ).toBe(true)
+      },
+    )
+    await checkBudget(
+      'warm two-word genre page with no recent listening',
+      220_000,
+      2,
+      async () => {
+        expect(await listTrackBrowsePage(textAbsence)).toEqual(coldTextAbsence)
+      },
+      500_000,
+    )
+
+    // A committed rank change must be visible before maintenance runs again.
+    await pool.query(`
+      update library_track set scrobble_count = 0 where media_item_id = 'track-101'
+    `)
+    logQuery.mockClear()
+    expect((await readPage(1)).items.map(({ id }) => id)).not.toContain(
+      'track-101',
+    )
+    expect(
+      logQuery.mock.calls.some(([sql]) =>
+        sql.includes('recording_duration_spans as ('),
+      ),
+    ).toBe(true)
+    expect(await queryBrowseCounts('track', countQuery)).toEqual(coldCount)
+  } finally {
+    await pool.query(`
+      delete from lastfm_scrobble where username = 'lifetime-fixture-listener';
+      delete from lastfm_track_link where username = 'lifetime-fixture-listener';
+      delete from media_item where id in ('lifetime-edition-1', 'lifetime-edition-2', 'lifetime-edition-3');
+      delete from media_item_tag where tag_id = 'lifetime-fixture-genre';
+      delete from tag where id = 'lifetime-fixture-genre';
+      update library_track set scrobble_count = 0 where media_item_id = 'track-101';
+      update library_track set scrobble_count = 95 where media_item_id = 'track-1004';
+      update library_track set album_media_item_id = (select album_media_item_id
+        from library_track where media_item_id = 'track-101'),
+        version_shown = false, scrobble_count = 22 where media_item_id = 'track-18101';
+    `)
+  }
 })
 
 it('bounds first Added pages with artist tags and unrelated Last.fm placeholders', async () => {

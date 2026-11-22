@@ -287,7 +287,10 @@ export const recordingCount = sql`
  */
 export function recordingRepresentatives(
   spotifyAvailable = sql`lt.spotify_track_id is not null`,
-  { shownFirst = true }: { shownFirst?: boolean } = {},
+  {
+    shownFirst = true,
+    singletons,
+  }: { shownFirst?: boolean; singletons?: SQL } = {},
 ) {
   const preference = shownFirst
     ? sql`lt.version_shown desc, (${spotifyAvailable}) desc`
@@ -305,11 +308,15 @@ export function recordingRepresentatives(
     group by m.group_key
   ),
   recording_singletons as (
+    ${
+      singletons ??
+      sql`
     select m.id as group_key, 1 as version_count, lt.date_added, m.id,
       lt.scrobble_count as scrobbles, lt.last_listened_at
     from recording_matches m
     join library_track lt on lt.media_item_id = m.id
-    where not exists (select 1 from recording_group_members g where g.id = m.id)
+    where not exists (select 1 from recording_group_members g where g.id = m.id)`
+    }
   )`
 }
 

@@ -209,6 +209,7 @@ export type BrowseQueryOptions = {
   conditions?: SQL[]
   sort?: { field: BrowseField; expression: SQL; missingFirst?: boolean }
   includeLastfmSourceRows?: boolean
+  preferStoredRecordingTotal?: boolean
 }
 
 export async function listBrowseFields(
@@ -568,6 +569,7 @@ function trackReleaseLookups(trackId: SQL) {
 function groupedTrackBrowse(
   query: TrackQuery,
   where: SQL | undefined,
+  visibility: SQL | undefined,
   sort: SQL,
   naturalOrder: SQL[],
   sharedArtistTags: boolean,
@@ -585,15 +587,15 @@ function groupedTrackBrowse(
       versionId !== undefined
         ? and(
             where,
+            visibility,
             sql`${mediaItem.id} in (select id from recording_version_tracks)`,
           )
-        : where,
+        : and(where, visibility),
     )
-  const memberships = sql`with ${
-    sharedArtistTags
-      ? sql`browse_artist_tag_labels as (${artistTagLabels()}), `
-      : sql``
-  }${recordingMemberships(matches, { creatorId: query.creatorId, versionId })}`
+  const artistTagScope = sharedArtistTags
+    ? sql`browse_artist_tag_labels as (${artistTagLabels()}), `
+    : sql``
+  const memberships = sql`with ${artistTagScope}${recordingMemberships(matches, { creatorId: query.creatorId, versionId })}`
   const groupRanges = query.ranges.flatMap((range) => {
     const value = recordingGroupValue(range.field)
     if (!value) return []
@@ -605,8 +607,13 @@ function groupedTrackBrowse(
     )
   })
   const groupKey = sql`g.group_key`
+  const collectPlayedGroups =
+    sharedArtistTags && !query.creatorId && versionId === undefined
   const groupConditions = (requested?: BrowseListening) =>
-    and(...groupRanges, requested?.condition('recording', groupKey))
+    and(
+      ...groupRanges,
+      requested?.condition('recording', groupKey, collectPlayedGroups),
+    )
   const groupJoins = (
     requested?: BrowseListening,
     members?: SQL,
@@ -706,7 +713,10 @@ function groupedTrackBrowse(
     ) g ${releaseJoins}`
   }
 
-  function lifetimeRows(ranks: number[] | { first: number; last: number }) {
+  function lifetimeRows(
+    ranks: number[] | { first: number; last: number },
+    scope = grouped,
+  ) {
     const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
     const primary = primaryOrdering(sql`g.scrobbles`)
     const ordinalRange = Array.isArray(ranks)
@@ -720,7 +730,7 @@ function groupedTrackBrowse(
       : sql`rank between ${ranks.first} and ${last}`
     // Only resolve release order in primary tie sets that can overlap the
     // requested ranks. In particular, a deep page skips earlier tie sets.
-    const ranked = sql`${grouped}, primary_recordings as materialized (
+    const ranked = sql`${scope}, primary_recordings as materialized (
       select g.*, ${deferPeriodCounts ? sql`null::int as listening_scrobbles` : listeningValue},
         rank() over (order by ${primary}) as first_rank,
         row_number() over (order by ${primary}) as ordinal
@@ -757,6 +767,50 @@ function groupedTrackBrowse(
   const useStoredOrder =
     useStoredScope && query.sortBy === 'scrobbles' && !listening
   const useStoredMembership = useStoredScope && dynamicLifetimeOrder
+  // Search and Genre chips only remove editions from the default visibility
+  // scope. Compute representatives, statistics and ranks from those editions.
+  const useFilteredMembership =
+    defaultScope &&
+    visibility !== undefined &&
+    !query.ranges.length &&
+    !query.creatorId &&
+    !('includeArchived' in query && query.includeArchived === 'true') &&
+    versionId === undefined &&
+    Boolean(query.q || query.filters.length) &&
+    query.filters.every((chip) => chip.field === 'genre')
+  function filteredMembers(withStats = false) {
+    // The page already joins library_track to match editions. Carry the
+    // singleton statistics through that join rather than looking each up again.
+    const candidateColumns = withStats
+      ? sql`, ${libraryTrack.dateAdded} as date_added, ${libraryTrack.scrobbleCount} as scrobbles,
+          ${libraryTrack.lastListenedAt} as last_listened_at`
+      : sql``
+    return sql`with ${artistTagScope}
+    recording_candidates as materialized (
+      select ${mediaItem.id}${candidateColumns}
+      from ${mediaItem}
+      join ${libraryTrack} on ${libraryTrack.mediaItemId} = ${mediaItem.id}
+      where ${where ?? sql`true`}
+    ),
+    recording_matches as materialized (
+      select candidate.*, published.recording_id
+      from recording_candidates candidate
+      join (
+        select id, null::text as recording_id from recording_browse_order where version_count = 1
+        union all select track_id, recording_id from recording_browse_order_member
+      ) published using (id)
+    ),
+    recording_group_members as materialized (
+      select id, recording_id as group_key from recording_matches where recording_id is not null
+    ),
+    recording_members as materialized (
+      select id, coalesce(recording_id, id) as group_key from recording_matches
+    )`
+  }
+  const filteredRepresentatives = recordingRepresentatives(undefined, {
+    singletons: sql`select id as group_key, 1 as version_count, date_added,
+      id, scrobbles, last_listened_at from recording_matches where recording_id is null`,
+  })
   const storedRank =
     query.direction === 'asc' ? sql`g.ascending_rank` : sql`g.descending_rank`
   // A singleton needs no side row. All listening eligibility still reads
@@ -917,12 +971,14 @@ function groupedTrackBrowse(
     }
   }
 
-  async function readCount() {
+  async function readCount(preferStoredTotal = false) {
     // The frontend strips sort controls from count requests.
     if (
-      useStoredOrder ||
-      useStoredMembership ||
-      (useStoredScope && countedListening)
+      useStoredScope &&
+      (preferStoredTotal ||
+        useStoredOrder ||
+        useStoredMembership ||
+        countedListening)
     ) {
       const predicate = countedGroupCondition
         ? sql`${storedMemberships} select count(*)::int from ${storedGroups} g
@@ -932,6 +988,19 @@ function groupedTrackBrowse(
       const total = predicate ? cached?.filtered_count : cached?.total_count
       if (total != null)
         return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
+    }
+    if (useFilteredMembership && countedListening && countedGroupCondition) {
+      const cached = await readRecordingBrowseOrder(
+        undefined,
+        sql`${filteredMembers()}
+          select count(*)::int from (select distinct group_key from recording_members) g
+          ${countedGroupListening} where ${countedGroupCondition}`,
+      )
+      if (cached?.filtered_count != null)
+        return Math.min(
+          cached.filtered_count,
+          query.limitResults ?? Number.MAX_SAFE_INTEGER,
+        )
     }
     const counted = countedGroupCondition
       ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
@@ -962,6 +1031,14 @@ function groupedTrackBrowse(
             ? await refreshRecordingBrowseOrder(completeOrder(), selected)
             : undefined
       if (stored) rows = RecordingGroupRowsSchema.parse(stored)
+    }
+    if (useFilteredMembership && dynamicLifetimeOrder && limit > 0) {
+      const selected = lifetimeRows(
+        { first: offset + 1, last: offset + limit },
+        sql`${filteredMembers(true)}, ${filteredRepresentatives}, ${recordingListening}`,
+      )
+      const cached = await readRecordingBrowseOrder(selected)
+      if (cached?.total_count != null) rows = cached.rows
     }
     // Count the linked names of selective first-page matches. Reuse the title
     // lookup bound to keep name preaggregation for broad filters.
@@ -1187,7 +1264,6 @@ async function browseQueries(
     ? sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or
     ${mediaItem.id} not in (${redundantLastfmTrackIds()}))`
     : undefined
-  if (visibleTrack && groupedTrackQuery) conditions.push(visibleTrack)
   let creatorCredit: SQL | undefined
   if (query.creatorId) {
     const role = 'creatorRole' in query ? query.creatorRole : undefined
@@ -1273,6 +1349,7 @@ async function browseQueries(
     return groupedTrackBrowse(
       groupedTrackQuery,
       where,
+      visibleTrack,
       sort,
       naturalOrder,
       sharedArtistTags,
@@ -1801,7 +1878,7 @@ export async function queryBrowseCount(
   options: BrowseQueryOptions = {},
 ) {
   const { readCount } = await browseQueries(mediaType, query, options)
-  return { totalCount: await readCount() }
+  return { totalCount: await readCount(options.preferStoredRecordingTotal) }
 }
 
 /**
@@ -1844,6 +1921,7 @@ export async function queryBrowseCounts(
         ? queryBrowseCount(mediaType, unfiltered, {
             includeLastfmSourceRows:
               mediaType === 'track' && requestsLastfmSource(query),
+            preferStoredRecordingTotal: true,
           })
         : undefined,
     ]),
