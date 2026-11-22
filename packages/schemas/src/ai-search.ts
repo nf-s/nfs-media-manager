@@ -3,6 +3,7 @@ import {
   BrowseFilterSchema,
   BrowseKeySchema,
   BrowseRangeSchema,
+  TagLevelsSchema,
   type BrowseFilter,
   type BrowseRange,
 } from './browse'
@@ -67,6 +68,8 @@ export const AiSearchPlanSchema = z
     limitResults: z.number().int().min(1).max(10000).nullable(),
     listening: ListeningFilterSchema.nullable(),
     listeningSort: ListeningPeriodSchema.nullable(),
+    /** Where Tags filters read tags on Tracks and Albums; null is Auto. */
+    tagLevels: TagLevelsSchema.nullable().default(null),
     playability: TrackPlayabilitySchema.optional(),
   })
   .strict()

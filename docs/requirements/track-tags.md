@@ -1,6 +1,6 @@
 # Track tags
 
-Status: accepted by the owner on 2026-11-22 with the recommendations below. Stage 1 (storage and backfill) is built and its backfill has run; stage 4's reviewed mapping has been applied. Stage 2 (showing and editing) is built. Stage 3 is not built. Stages are built in order, each released through `main` on its own. It answers SONO-15 in [Sonovault identifiers and track facts](sonovault.md) and follows the owner's decision of 2026-11-22: tracks get a tags field of their own holding Sonovault's genres and subgenres, the genre hierarchy takes the names it lacks, and a Tags filter can say whether it reads the track's, the album's or the artists' tags.
+Status: accepted by the owner on 2026-11-22 with the recommendations below. All four stages are built: stage 1 (storage and backfill, its backfill has run), stage 2 (showing and editing), stage 3 (filtering by tag location) and stage 4 (the reviewed mapping, applied). Each was released through `main` on its own. It answers SONO-15 in [Sonovault identifiers and track facts](sonovault.md) and follows the owner's decision of 2026-11-22: tracks get a tags field of their own holding Sonovault's genres and subgenres, the genre hierarchy takes the names it lacks, and a Tags filter can say whether it reads the track's, the album's or the artists' tags.
 
 ## What changes for the owner
 
@@ -70,7 +70,14 @@ Done when: the screens are checked in a browser at desktop and phone widths on a
 
 ### The control
 
-The Tag location control is new interface, so it waits for the owner's choice among the concepts in the design library: [`concept-tag-location.html`](../design-system/concept-tag-location.html). Option A, a **Tag location** section in the Filters drawer with **Auto: most detailed** and the Track, Album and Artist checkboxes, is recommended. The accepted option goes into the design system (styles, React component, rules on the components page) before the stage uses it, and the concept page is deleted.
+The owner chose Option A of the concepts: a **Tag location** section in the Filters drawer with **Auto: most detailed** and the Track, Album and Artist checkboxes. It is the design system's `TagLocation` component (`packages/ui/src/components/ds/tag-location.tsx`, styles `ds-levels`), with its rules on the [components page](../design-system/components.html#tag-location); the concept page was deleted.
+
+### As built
+
+- Auto's "a Sonovault name on any track" is read as a verified Sonovault tag in Browse (`track_tag.in_browse and sonovault`) whose tag is in the resolved set, one probe of the partial index per statement.
+- Every location is one hashed set of track IDs (album IDs on Albums), the tag set resolved once inside it and read as `= any(array(…))` so each membership reads only the tag's index entries, tested on the table the sort order walks (`media_item` for Title, `library_track` otherwise). Tags and Album tags filters on a first Added page take the path Track tags filters take. The Album tags field on Tracks uses the same set at the Album level.
+- Sorting by Tags at a combination orders by the first tag, by name, on any ticked level.
+- Suggestions: Auto counts are stored in the Tracks vocabulary (field `genre`); a single level reads the counts of its own field (Track tags, Album tags, Artist tags). A combination counts live, for at most the suggestion limit of values its levels list most (at most 63), one bit per value in a mask per track.
 
 Done when: every location, mode and sort above is covered by integration tests on synthetic fixtures; the stage 3 workloads pass on PostgreSQL 17 and 18; Tracks and Albums are checked in a browser at desktop and phone widths, including URL round trips and a saved view; AI search maps the three examples in TTAG-27.
 
@@ -160,6 +167,6 @@ Stages 2 and 3 both change `browse.ts` and the Tracks web screens, so they run o
 The owner accepted the plan on 2026-11-22 as recommended:
 
 1. **Auto** is TTAG-21 as written: a track's own tags decide the tags Sonovault speaks to; the album and artists decide the rest.
-2. **The Tag location control** is Option A in [`concept-tag-location.html`](../design-system/concept-tag-location.html): a Tag location section with Auto and the Track, Album and Artist checkboxes. It joins the design system at the start of stage 3, and the concept page is then deleted.
+2. **The Tag location control** is Option A of the concepts: a Tag location section with Auto and the Track, Album and Artist checkboxes. It joined the design system at the start of stage 3 ([components page](../design-system/components.html#tag-location)), and the concept page was deleted.
 3. **Unverified Sonovault tags** stay out of Browse and are shown in track details, as SONO-17 does for tempo and key.
 4. **The hierarchy mapping** (stage 4) was reviewed and accepted by the owner on 2026-11-22 exactly as proposed. The Sonovault name map ships in stage 1 with its one entry: Sonovault's Garage resolves to the tag UK Garage, and the hidden album tag `garage` stays hidden and untouched. Tracks Sonovault files under Garage that the owner would tag otherwise are corrected by hand.

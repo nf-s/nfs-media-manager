@@ -6,6 +6,7 @@ import {
   type BrowseField,
   type BrowseFilter,
   type BrowseRange,
+  type TagLevels,
 } from '@repo/schemas/browse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
@@ -38,6 +39,7 @@ export function TrackBrowseSearch({
   ready = true,
   disabled = false,
   matches = false,
+  tagLevels,
 }: {
   fields: BrowseField[]
   filters: BrowseFilter[]
@@ -51,6 +53,8 @@ export function TrackBrowseSearch({
   ready?: boolean
   disabled?: boolean
   matches?: boolean
+  /** Where the Tags suggestions are counted; left out for Auto. */
+  tagLevels?: TagLevels
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState('')
@@ -60,6 +64,7 @@ export function TrackBrowseSearch({
     draft,
     ready && !disabled,
     matches,
+    tagLevels,
   )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({

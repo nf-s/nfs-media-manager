@@ -390,6 +390,15 @@
   const checkRow = (label, on) =>
     `<label class="ds-checkrow"><input type="checkbox" class="ds-check"${on ? ' checked' : ''} /> ${esc(label)}</label>`
 
+  /* Tag location: Auto, then the levels, disabled while Auto is ticked.
+     levels: [label, ticked]; o.hint: the line under them. */
+  const tagLocation = (levels, o = {}) => {
+    const auto = !levels.some(([, on]) => on)
+    const box = (label, on, off) =>
+      `<label class="ds-checkrow"><input type="checkbox" class="ds-check"${on ? ' checked' : ''}${off ? ' disabled' : ''} /> ${esc(label)}</label>`
+    return `<div class="ds-levels" role="group" aria-label="Tag location">${box('Auto: most detailed', auto)}<div class="ds-levels" data-indent>${levels.map(([label, on]) => box(label, on, auto)).join('')}</div>${o.hint ? `<span class="ds-muted">${esc(o.hint)}</span>` : ''}</div>`
+  }
+
   /* Table. cols: { h, c(row, i), end, w, sort, raw, sticky, edge }
      sticky is the column's left offset in px; edge marks the last sticky column. */
   const stick = (c) =>
@@ -1647,6 +1656,7 @@
     toolbar,
     filtersDrawer,
     checkRow,
+    tagLocation,
     table,
     checkCol,
     idCell,

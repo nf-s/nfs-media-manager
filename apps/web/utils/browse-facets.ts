@@ -3,6 +3,8 @@ import { z } from 'zod'
 import {
   BrowseFacetQuerySchema,
   formatBrowseFilterValue,
+  formatTagLevelsParam,
+  type TagLevels,
 } from '@repo/schemas/browse'
 import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { fetchApiData } from './api'
@@ -44,17 +46,26 @@ export function browseFacetOptions(
   collection: BrowseFacetCollection,
   search: string,
   matches = false,
+  /** Where the Tags suggestions are counted; left out for Auto. */
+  tagLevels?: TagLevels,
 ) {
   // Bound suggestion requests, not the user's full-text filter draft.
   const query = BrowseFacetQuerySchema.parse({ q: search.trim().slice(0, 200) })
   const endpoint = facetEndpoint(collection)
+  const levels = formatTagLevelsParam(tagLevels)
   const params = new URLSearchParams({
     q: query.q ?? '',
     limitPerField: String(query.limitPerField),
     ...endpoint.params,
+    ...(levels ? { tagLevels: levels } : {}),
   })
   return queryOptions({
-    queryKey: [collection, matches ? 'match-facets' : 'facets', query.q ?? ''],
+    queryKey: [
+      collection,
+      matches ? 'match-facets' : 'facets',
+      query.q ?? '',
+      ...(levels ? [levels] : []),
+    ],
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,

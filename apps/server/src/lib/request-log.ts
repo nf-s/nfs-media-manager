@@ -65,6 +65,8 @@ interface RequestBrowseProfile {
   sortField?: string
   filterFields?: string[]
   rangeFields?: string[]
+  /** Where Tags filters and the Tags sort read tags: `auto` or `track,album`. */
+  tagLevels?: string
   playSort?: 'scrobbles' | 'listeningScrobbles'
   recordingOrderLookup?: 'hit' | 'miss'
 }
@@ -220,6 +222,7 @@ export function setRequestBrowseProfile({
   sortField,
   filterFields,
   rangeFields,
+  tagLevels,
   playSort,
 }: RequestBrowseProfile) {
   const current = context.getStore()
@@ -245,6 +248,7 @@ export function setRequestBrowseProfile({
       sortField: sortField && logBrowseField(sortField),
       filterFields: logBrowseFields(filterFields),
       rangeFields: logBrowseFields(rangeFields),
+      tagLevels,
       playSort,
     }
 }

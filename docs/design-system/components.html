@@ -754,10 +754,87 @@
               g.rules([
                 '<b>One button</b> holds everything a list keeps off its toolbar: filters, columns and grid size. It carries the number of filters that are on, and its accessible name says what it holds.',
                 '<b>Full or short.</b> A Browse page shows the name, <code>Filters · 2</code>. A list inside a detail shows the icon and the count, and so does every toolbar on a phone. With no filter on, the short button is the icon alone.',
-                '<b>The drawer</b> is titled Filters and view. Its sections are, in order: View, Columns (Table view only), then the active filters, Ranges, Listening and the rest.',
+                '<b>The drawer</b> is titled Filters and view. Its sections are, in order: View, Columns (Table view only), then the active filters, Tag location (Tracks and Albums), Ranges, Listening and the rest.',
                 '<b>View</b> starts with Grid size (Compact, Standard, Roomy) while the Grid view is on, then the list’s own view options: what cards show, Include archived imports, Group recordings. Grid size is saved per library and kept in the URL. Phones start compact; wider screens start standard.',
                 '<b>The filter line</b> sits under the toolbar of a Browse list inside a detail: an artist’s Albums and Tracks, a person’s Films, a channel’s or show’s items. It holds the active filters as removable pills and Clear all, then, at the right, the count and the link to the same result in Browse (Show in Albums, Show in Tracks). It is there even when no filter is on.',
                 '<b>Other lists inside a detail</b> that have only a count, such as a playlist’s tracks, keep the count in the toolbar, use the short button and have no filter line.',
+              ]),
+          },
+          {
+            id: 'tag-location',
+            title: 'Tag location',
+            body:
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(
+                        D.filtersDrawer([
+                          [
+                            'Active filters',
+                            `<span class="ds-pills" data-wrap>${D.pill('Deep Current', { mode: 'required', remove: true })}</span>`,
+                          ],
+                          [
+                            'Tag location',
+                            D.tagLocation(
+                              [
+                                ['Track', false],
+                                ['Album', false],
+                                ['Artist', false],
+                              ],
+                              {
+                                hint: 'Each track’s own tags; its album’s and artists’ tags for tags that tracks do not carry, or when it has none.',
+                              },
+                            ),
+                          ],
+                        ]),
+                        360,
+                      ),
+                      'Tracks, Auto (the default)',
+                    ),
+                    g.item(
+                      fixed(
+                        D.tagLocation(
+                          [
+                            ['Track', true],
+                            ['Album', true],
+                            ['Artist', false],
+                          ],
+                          {
+                            hint: 'A track matches when any ticked level has the tag.',
+                          },
+                        ),
+                        360,
+                      ),
+                      'Tracks, Track and Album ticked',
+                    ),
+                    g.item(
+                      fixed(
+                        D.tagLocation(
+                          [
+                            ['Track', false],
+                            ['Album', true],
+                            ['Artist', true],
+                          ],
+                          {
+                            hint: 'An album matches when any ticked level has the tag.',
+                          },
+                        ),
+                        360,
+                      ),
+                      'Albums, after unticking Auto',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
+              g.rules([
+                '<b>Where Tags filters read tags</b> on Tracks and Albums: a section of the Filters drawer after the active filters. It applies to every Tags filter in the view, to sorting by Tags and to the counts of the Tags suggestions. Track tags, Album tags and Artist tags stay fields of their own.',
+                '<b>Auto: most detailed</b> is the default. On Tracks it reads each track’s own tags, and its album’s and artists’ tags for tags that tracks do not carry or when the track has none. On Albums it reads the album’s tags, and its artists’ when it has fewer than two.',
+                '<b>Levels</b> are Track, Album and Artist, disabled while Auto is ticked. A result matches when any ticked level has the tag. Unticking Auto ticks the most detailed level of the list: Track on Tracks, Album and Artist on Albums. Unticking the last level ticks Auto again.',
+                '<b>One line under the levels</b> says what the choice matches.',
+                '<b>Kept in the URL</b> as <code>tagLevels=track,album</code>, in the order track, album, artist; Auto is left out. Saved views keep it.',
+                'Artists, Films and Mixes have one level of tags and no Tag location.',
               ]),
           },
           {

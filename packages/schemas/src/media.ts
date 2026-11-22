@@ -12,6 +12,7 @@ import {
   BrowseFilterSchema,
   BrowseKeySchema,
   BrowseRangesParamSchema,
+  TagLevelsParamSchema,
   albumBrowseFields,
   filmBrowseFields,
 } from './browse'
@@ -87,6 +88,8 @@ export const AlbumQuerySchema = PaginationQuerySchema.extend({
   tag: z.string().optional(),
   filters: AlbumBrowseFiltersParamSchema,
   ranges: BrowseRangesParamSchema,
+  /** Where Tags filters and the Tags sort read tags; Auto when left out. */
+  tagLevels: TagLevelsParamSchema,
   listening: ListeningFilterParamSchema,
   listeningSort: ListeningPeriodParamSchema,
   sortBy: AlbumSortSchema.default('dateAdded'),

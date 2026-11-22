@@ -2,9 +2,12 @@ import {
   canonicalBrowseKey,
   formatBrowseFilterValue,
   formatBrowseValue,
+  TagLevelsParamSchema,
   type BrowseField,
   type BrowseFilter,
   type BrowseValues,
+  type TagLevel,
+  type TagLevels,
 } from '@repo/schemas/browse'
 import {
   EMPTY_VALUE,
@@ -36,6 +39,20 @@ export function browseFilterHref(href: string, filters: BrowseFilter[]) {
 }
 
 export type BrowseFilterHref = (filter: BrowseFilter) => string
+
+export const tagLevelLabels: Record<TagLevel, string> = {
+  track: 'Track',
+  album: 'Album',
+  artist: 'Artist',
+}
+
+/** The `tagLevels` URL parameter; Auto (`undefined`) when absent or invalid. */
+export function parseTagLevelsParam(
+  value: string | null,
+): TagLevels | undefined {
+  const result = TagLevelsParamSchema.safeParse(value ?? undefined)
+  return result.success ? result.data : undefined
+}
 
 /*
  * Card grid geometry for the virtual scroller. The numbers mirror `.ds-grid`

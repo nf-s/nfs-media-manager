@@ -1,5 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
+import type { TagLevel } from '@repo/schemas/browse'
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
 import { db } from '@/lib/db'
 import { normalizedTagSql } from '@/lib/tag-sql'
@@ -36,6 +37,78 @@ export function matchingTagNames(
     )
     select name from named
     union ${descendantTagNames(mediaType, sql`select name from named`)}`
+}
+
+/** Album-library tag IDs a filter on `name` matches: the tag, its aliases and its visible subtags. */
+export function matchingTagIds(name: string): SQL {
+  return sql`select t.id from tag t where t.media_type = 'album'
+    and ${normalizedTagSql(sql`t.name`)} in (${matchingTagNames(name, 'album')})`
+}
+
+/**
+ * TTAG-20 to TTAG-22: library tracks whose tags at `levels` include the tag
+ * or a visible subtag, as one set of track IDs with the tag set resolved once.
+ * Without levels (Auto, TTAG-21) a track is judged by its own tags, and by
+ * its album's and artists' tags (the artists' when the album has fewer than
+ * two) when it has none of its own or no verified Sonovault tag in Browse is
+ * in the tag set. `has_own_tags` is stored, so that is never worked out here.
+ */
+export function trackIdsWithTag(
+  name: string,
+  levels: readonly TagLevel[] | undefined,
+): SQL {
+  const own = sql`select tt.media_item_id from track_tag tt
+    where tt.in_browse and tt.tag_id = any(array(select id from location_tags))`
+  const albums = sql`select mt.media_item_id from media_item_tag mt
+    where mt.tag_id = any(array(select id from location_tags))`
+  const artists = sql`select media_item_id from (${mediaIdsWithArtistTag(name)}) artist_items`
+  const sets: SQL[] = []
+  if (!levels) {
+    // A track with tags of its own inherits only tags Sonovault does not use.
+    const inherits = sql`(not lt.has_own_tags or not exists (
+      select 1 from track_tag sonovault_tag where sonovault_tag.in_browse
+        and sonovault_tag.sonovault and sonovault_tag.tag_id = any(array(select id from location_tags))))`
+    sets.push(
+      own,
+      sql`select lt.media_item_id from library_track lt
+        where lt.album_media_item_id in (${albums}) and ${inherits}`,
+      sql`select lt.media_item_id from library_track lt
+        where lt.media_item_id in (${artists}) and ${inherits}
+          and (lt.album_media_item_id is null
+            or lt.album_media_item_id not in (${albumsWithEnoughTags()}))`,
+    )
+  } else {
+    if (levels.includes('track')) sets.push(own)
+    if (levels.includes('album'))
+      sets.push(sql`select lt.media_item_id from library_track lt
+        where lt.album_media_item_id in (${albums})`)
+    if (levels.includes('artist')) sets.push(artists)
+  }
+  // An array of the IDs lets each membership read the tag's index entries.
+  return sql`with location_tags as materialized (${matchingTagIds(name)})
+    ${sql.join(sets, sql` union all `)}`
+}
+
+/**
+ * TTAG-23: albums whose tags at `levels` include the tag or a visible subtag.
+ * Track is an album with a library track carrying the tag itself.
+ */
+export function albumIdsWithTag(name: string, levels: readonly TagLevel[]) {
+  const sets: SQL[] = []
+  if (levels.includes('track'))
+    sets.push(sql`select lt.album_media_item_id from library_track lt
+      where lt.album_media_item_id is not null and lt.media_item_id in (
+        select tt.media_item_id from track_tag tt
+        where tt.in_browse and tt.tag_id = any(array(select id from location_tags)))`)
+  if (levels.includes('album'))
+    sets.push(sql`select mt.media_item_id from media_item_tag mt
+      where mt.tag_id = any(array(select id from location_tags))`)
+  if (levels.includes('artist'))
+    sets.push(
+      sql`select media_item_id from (${mediaIdsWithArtistTag(name)}) artist_items`,
+    )
+  return sql`with location_tags as materialized (${matchingTagIds(name)})
+    ${sql.join(sets, sql` union all `)}`
 }
 
 /** Resolve the requested canonical labels back to raw profile keys before reading snapshots. */
@@ -171,12 +244,30 @@ export function albumsWithEnoughTags(): SQL {
 }
 
 /** First displayed tag for each item, retaining release labels on a duplicate. */
-export function firstMusicTagRows(mediaType: 'album' | 'track'): SQL {
-  const releaseRows =
-    mediaType === 'track'
-      ? sql`select lt.media_item_id, r.name, r.name_key from (${releaseTagMemberships()}) r
-          join library_track lt on lt.album_media_item_id = r.media_item_id`
-      : releaseTagMemberships()
+export function firstMusicTagRows(
+  mediaType: 'album' | 'track',
+  /** Limits Tracks to the library tracks it holds for (alias `lt`). */
+  tracks: SQL = sql`true`,
+): SQL {
+  // A track's first tag is its album's first, or its artists' first when the
+  // album has too few tags. Read each album's first tag once, not per track.
+  if (mediaType === 'track')
+    return sql`with album_firsts as materialized (
+        select media_item_id, min(name) as name, count(*) as tags
+        from (${releaseTagMemberships()}) r group by media_item_id
+      ), artist_firsts as (
+        select a.media_item_id, min(a.name) as name from (${artistTagMemberships('track')}) a
+        join library_track lt on lt.media_item_id = a.media_item_id
+        where ${tracks} and (lt.album_media_item_id is null or lt.album_media_item_id not in (
+          select media_item_id from album_firsts where tags >= ${artistTagFallbackThreshold}))
+        group by a.media_item_id
+      )
+      select lt.media_item_id, least(album.name, artist.name) as name
+      from library_track lt
+      left join album_firsts album on album.media_item_id = lt.album_media_item_id
+      left join artist_firsts artist on artist.media_item_id = lt.media_item_id
+      where ${tracks} and (album.name is not null or artist.name is not null)`
+  const releaseRows = releaseTagMemberships()
   return sql`with item_release_tags as materialized (${releaseRows}),
     dense_items as (select media_item_id from item_release_tags group by media_item_id
       having count(*) >= ${artistTagFallbackThreshold})

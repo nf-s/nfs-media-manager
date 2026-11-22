@@ -736,6 +736,15 @@ a:focus-visible > .ds-logo[data-none] {
   gap: var(--ds-3);
   font-size: var(--ds-text-sm);
 }
+/* Tag location: Auto, then the levels it stands for, indented under it. */
+.ds-levels {
+  display: grid;
+  gap: var(--ds-2);
+  justify-items: start;
+}
+.ds-levels[data-indent] {
+  padding-left: var(--ds-5);
+}
 .ds-field {
   display: grid;
   gap: var(--ds-2);

@@ -14,11 +14,13 @@ import {
 import {
   formatBrowseFilterValue,
   formatBrowseValue,
+  formatTagLevelsParam,
   type BrowseField,
 } from '@repo/schemas/browse'
 import { subscriptionTypeLabels } from '@repo/schemas/subscriptions'
 import type { ListeningLibrary } from '@repo/schemas/listening'
 import { trackPlayabilityLabels } from '@repo/schemas/match-diagnostics'
+import { tagLevelLabels } from './browse-items'
 import {
   formatListeningPeriod,
   formatListeningRule,
@@ -83,6 +85,7 @@ export function aiSearchParams(
     q: plan.q || null,
     filters: plan.filters.length ? JSON.stringify(plan.filters) : null,
     ranges: plan.ranges.length ? JSON.stringify(plan.ranges) : null,
+    tagLevels: formatTagLevelsParam(plan.tagLevels ?? undefined),
     listening: plan.listening ? JSON.stringify(plan.listening) : null,
     listeningSort: plan.listeningSort
       ? JSON.stringify(plan.listeningSort)
@@ -119,6 +122,10 @@ export function describeAiSearchPlan(
       `${mode} · ${label}: ${formatBrowseFilterValue(filter.field, filter.value)}`,
     )
   }
+  if (plan.tagLevels)
+    descriptions.push(
+      `Tag location: ${plan.tagLevels.map((level) => tagLevelLabels[level]).join(', ')}`,
+    )
   for (const range of plan.ranges) {
     const field = fields.find((field) => field.key === range.field)
     const display = (value: number) =>

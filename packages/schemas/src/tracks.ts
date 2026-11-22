@@ -6,6 +6,7 @@ import {
   BrowseKeySchema,
   BrowsePageSliceSchema,
   BrowseRangesParamSchema,
+  TagLevelsParamSchema,
   type BrowseValues,
 } from './browse'
 import {
@@ -430,6 +431,8 @@ export const TrackQuerySchema = PaginationQuerySchema.extend({
   q: z.string().optional(),
   filters: TrackFiltersParamSchema,
   ranges: BrowseRangesParamSchema,
+  /** Where Tags filters and the Tags sort read tags; Auto when left out. */
+  tagLevels: TagLevelsParamSchema,
   listening: ListeningFilterParamSchema,
   listeningSort: ListeningPeriodParamSchema,
   sortBy: BrowseKeySchema.default('dateAdded'),

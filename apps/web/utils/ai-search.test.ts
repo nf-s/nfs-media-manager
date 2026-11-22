@@ -82,6 +82,22 @@ test('preview shows actual thresholds and listening logic independently of model
   assert.match(descriptions, /Sort: Scrobbles · last 5 years, ascending/)
 })
 
+test('a plan with a tag location sets tagLevels and describes it; Auto clears it', () => {
+  const located = AiSearchPlanSchema.parse({
+    ...plan,
+    tagLevels: ['album', 'track'],
+  })
+  assert.equal(aiSearchParams(located).tagLevels, 'track,album')
+  assert.equal(aiSearchParams(plan).tagLevels, null)
+  const descriptions = describeAiSearchPlan(located, trackBrowseFields, 'track')
+  assert.ok(descriptions.includes('Tag location: Track, Album'))
+  assert.ok(
+    !describeAiSearchPlan(plan, trackBrowseFields, 'track').some((line) =>
+      line.startsWith('Tag location'),
+    ),
+  )
+})
+
 test('a track preview counts plays and an artist preview track plays', () => {
   const listening = AiSearchPlanSchema.parse({
     ...plan,
@@ -123,6 +139,7 @@ test('track plans use the album URL parameters and clear unused listening state'
     q: 'live',
     filters: JSON.stringify(trackPlan.filters),
     ranges: JSON.stringify(trackPlan.ranges),
+    tagLevels: null,
     listening: null,
     listeningSort: null,
     sortBy: 'scrobbles',
@@ -195,6 +212,7 @@ test('artist plans use the shared search parameters and describe every applied c
     q: null,
     filters: JSON.stringify(artistPlan.filters),
     ranges: JSON.stringify(artistPlan.ranges),
+    tagLevels: null,
     listening: null,
     listeningSort: null,
     sortBy: 'trackCount',

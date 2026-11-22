@@ -21,6 +21,7 @@ import {
   type BrowseField,
   type BrowseFilter,
   type BrowseRange,
+  type TagLevels,
 } from '@repo/schemas/browse'
 import { parseMusicalKey } from '@repo/schemas/musical-keys'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
@@ -69,14 +70,17 @@ import {
 } from './browse-listening'
 import {
   firstMusicTagRows,
+  albumIdsWithTag,
   albumsWithEnoughTags,
   artistTagFacetKeys,
   artistTagLabels,
   artistTagMemberships,
   firstArtistTag,
   firstMusicTag,
+  releaseTagMemberships,
   mediaIdsWithArtistTag,
   matchingTagNames,
+  trackIdsWithTag,
 } from './music-tags'
 import {
   albumTrackDurationExpression,
@@ -413,7 +417,26 @@ function trackTagMatch(value: string, trackId: SQL): SQL {
   ), false)`
 }
 
-function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
+/**
+ * TTAG-20 to TTAG-25: a Tags filter at a location, as one hashed set of IDs
+ * tested on the table the sort order walks (see trackTagMatch). The album
+ * Tags filter tested album IDs on library_track: on a Title page the planner
+ * then nested-looped every walked track with the materialised tracks.
+ */
+function tagLocationMatch(
+  value: string,
+  levels: TagLevels | undefined,
+  trackId: SQL,
+): SQL {
+  return sql`coalesce(${trackId} in (${trackIdsWithTag(normalizeTagName(value), levels)}), false)`
+}
+
+function matchesValue(
+  key: string,
+  value: string,
+  mediaType: MediaType,
+  tagLevels?: TagLevels,
+): SQL {
   const match = sql`lower(${value}::text)`
   if (key === 'title') return sql`lower(${mediaItem.title}) = ${match}`
   if (mediaType === 'track' && key === 'source') {
@@ -447,6 +470,15 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
     return sql`${mediaType === 'track' ? libraryTrack.mediaItemId : mediaItem.id} in (${mediaIdsWithArtistTag(normalizeTagName(value))})`
   if (mediaType === 'track' && key === 'trackTag')
     return trackTagMatch(value, sql`${libraryTrack.mediaItemId}`)
+  if (mediaType === 'track' && (key === 'genre' || key === 'albumTag'))
+    return tagLocationMatch(
+      value,
+      key === 'albumTag' ? ['album'] : tagLevels,
+      sql`${libraryTrack.mediaItemId}`,
+    )
+  // Albums at Auto keep the album Tags filter below.
+  if (mediaType === 'album' && key === 'genre' && tagLevels)
+    return sql`coalesce(${mediaItem.id} in (${albumIdsWithTag(normalizeTagName(value), tagLevels)}), false)`
   if (key === 'genre' || key === 'keyword' || key === 'albumTag') {
     // Resolve merged names once for this library, not once per media/tag pair.
     const name = normalizeTagName(value)
@@ -485,6 +517,7 @@ function browseFieldConditions(
   ranges: BrowseRange[],
   fields: ReadonlyMap<string, BrowseField>,
   extraMatch?: (filter: BrowseFilter) => SQL | undefined,
+  tagLevels?: TagLevels,
 ) {
   const conditions: SQL[] = []
   const any: SQL[] = []
@@ -493,7 +526,7 @@ function browseFieldConditions(
       throw new ServerError({ statusCode: 422, message: 'Unknown text filter' })
     const match =
       extraMatch?.(filter) ??
-      matchesValue(filter.field, filter.value, mediaType)
+      matchesValue(filter.field, filter.value, mediaType, tagLevels)
     if (filter.mode === 'exclude') conditions.push(sql`not (${match})`)
     else if (filter.mode === 'required') conditions.push(match)
     else any.push(match)
@@ -1438,6 +1471,7 @@ async function browseQueries(
       where edition.media_item_id = ${mediaItem.id}
         and edition.edition_of_id is not null)`)
   const filters = [...query.filters]
+  const tagLevels = 'tagLevels' in query ? query.tagLevels : undefined
   if ('tag' in query && query.tag)
     filters.push({ field: 'genre', value: query.tag, mode: 'required' })
   if ('sourceKind' in query && query.sourceKind)
@@ -1471,6 +1505,7 @@ async function browseQueries(
         filterRanges,
         byKey,
         extraMatch,
+        tagLevels,
       ),
       ...searchConditions,
     )
@@ -1480,13 +1515,19 @@ async function browseQueries(
       ? (filter) =>
           filter.field === 'trackTag'
             ? trackTagMatch(filter.value, sql`${mediaItem.id}`)
-            : undefined
+            : filter.field === 'genre' || filter.field === 'albumTag'
+              ? tagLocationMatch(
+                  filter.value,
+                  filter.field === 'albumTag' ? ['album'] : tagLevels,
+                  sql`${mediaItem.id}`,
+                )
+              : undefined
       : undefined,
   )
   const orderRows =
     versionId || (mediaType === 'track' && query.creatorId)
       ? undefined
-      : browseOrderRows(mediaType, sortField.key)
+      : browseOrderRows(mediaType, sortField.key, tagLevels)
   const sort =
     sortField.key === 'listeningScrobbles' && listening?.sort
       ? listening.sort
@@ -1496,7 +1537,7 @@ async function browseQueries(
           ? numericOrderRowFields.has(sortField.key)
             ? sql`field_order.name`
             : sql`lower(field_order.name)`
-          : browseSortExpression(sortField, mediaType)
+          : browseSortExpression(sortField, mediaType, tagLevels)
   const naturalOrder =
     mediaType === 'track' ? trackNaturalOrder(sortField.key) : []
   if (groupedTrackQuery)
@@ -1740,10 +1781,10 @@ async function browseQueries(
   async function readPage(limit: number) {
     // Keep positive artist tags as a set of keys. A broad tag must not be
     // nested-loop joined against the date index, and release ordering only
-    // needs to resolve the primary date ties at the page boundary. Track tags
-    // filters in any mode take the same path: their hashed set is tested on
-    // the date index, and the visibility probe below keeps media_item a
-    // lookup per walked track instead of a materialised scan.
+    // needs to resolve the primary date ties at the page boundary. Tags,
+    // Track tags and Album tags filters in any mode take the same path: their
+    // hashed set is tested on the date index, and the visibility probe below
+    // keeps media_item a lookup per walked track instead of a materialised scan.
     const firstArtistTagPage =
       mediaType === 'track' &&
       offset === 0 &&
@@ -1753,6 +1794,8 @@ async function browseQueries(
       query.filters.some(
         (chip) =>
           chip.field === 'trackTag' ||
+          chip.field === 'genre' ||
+          chip.field === 'albumTag' ||
           (chip.field === 'artistTag' && chip.mode !== 'exclude'),
       )
     const firstArtistTagWhere = firstArtistTagPage
@@ -1932,6 +1975,13 @@ function recordBrowseShape(query: BrowseQuery) {
     creatorScoped: Boolean(query.creatorId),
     sortField: query.sortBy,
     filterFields: query.filters.map((chip) => chip.field),
+    // The location only changes Tags filters and the Tags sort.
+    tagLevels:
+      'tagLevels' in query &&
+      (query.sortBy === 'genre' ||
+        query.filters.some((chip) => chip.field === 'genre'))
+        ? (query.tagLevels?.join(',') ?? 'auto')
+        : undefined,
     rangeFields: query.ranges.map((range) => range.field),
     sort:
       query.sortBy === 'dateAdded'
@@ -2112,11 +2162,62 @@ export async function queryBrowseCounts(
 // Order rows whose name is a number rather than text.
 const numericOrderRowFields = new Set(['bpm', 'musicalKey'])
 
-function browseOrderRows(mediaType: MediaType, key: string): SQL | undefined {
+// A track's own tags in Browse, by name.
+const ownTrackTagRows = sql`select tt.media_item_id, t.name
+  from track_tag tt join tag t on t.id = tt.tag_id
+  where tt.in_browse and not t.hidden`
+const firstOwnTrackTags = sql`select media_item_id, min(name) as name
+  from (${ownTrackTagRows}) own_tags group by media_item_id`
+
+/**
+ * TTAG-28: the first tag at a location. Auto takes a track's own first tag,
+ * and the first tag it inherits only when it has none (`has_own_tags`);
+ * levels take the first tag on any of them. Each level contributes at most
+ * one row per item, read once for the statement.
+ */
+function tagLocationOrderRows(
+  mediaType: 'album' | 'track',
+  levels: TagLevels | undefined,
+): SQL {
+  if (!levels && mediaType === 'album') return firstMusicTagRows(mediaType)
+  if (!levels)
+    return sql`${firstOwnTrackTags} union all
+      select media_item_id, name from (${firstMusicTagRows('track', sql`not lt.has_own_tags`)}) inherited`
+  const firstReleaseTags = sql`select media_item_id, min(name) as name
+    from (${releaseTagMemberships()}) r group by media_item_id`
+  const rows: SQL[] = []
+  if (levels.includes('track'))
+    rows.push(
+      mediaType === 'track'
+        ? firstOwnTrackTags
+        : sql`select lt.album_media_item_id as media_item_id, min(own_tags.name) as name
+            from (${ownTrackTagRows}) own_tags
+            join library_track lt on lt.media_item_id = own_tags.media_item_id
+            where lt.album_media_item_id is not null group by lt.album_media_item_id`,
+    )
+  if (levels.includes('album'))
+    rows.push(
+      mediaType === 'track'
+        ? sql`select lt.media_item_id, r.name from (${firstReleaseTags}) r
+            join library_track lt on lt.album_media_item_id = r.media_item_id`
+        : firstReleaseTags,
+    )
+  if (levels.includes('artist'))
+    rows.push(sql`select media_item_id, min(name) as name
+      from (${artistTagMemberships(mediaType)}) a group by media_item_id`)
+  return sql`select media_item_id, min(name) as name
+    from (${sql.join(rows, sql` union all `)}) tags group by media_item_id`
+}
+
+function browseOrderRows(
+  mediaType: MediaType,
+  key: string,
+  tagLevels?: TagLevels,
+): SQL | undefined {
   if (mediaType === 'track' && (key === 'bpm' || key === 'musicalKey'))
     return verifiedTrackFactOrderRows(key)
   if (mediaType !== 'film' && key === 'genre')
-    return firstMusicTagRows(mediaType)
+    return tagLocationOrderRows(mediaType, tagLevels)
   if (mediaType !== 'film' && key === 'artistTag')
     return sql`select media_item_id, min(name) as name
       from (${artistTagMemberships(mediaType)}) tags group by media_item_id`
@@ -2136,13 +2237,33 @@ function browseOrderRows(mediaType: MediaType, key: string): SQL | undefined {
     ) memberships group by id`
 }
 
-function directSortExpression(key: string, mediaType: MediaType): SQL | null {
+function directSortExpression(
+  key: string,
+  mediaType: MediaType,
+  tagLevels?: TagLevels,
+): SQL | null {
   if (mediaType === 'album' && key === 'dateAdded')
     return albumAddedDateExpression
   if (mediaType === 'track') {
     const id = sql`${mediaItem.id}`
-    if (key === 'genre')
-      return sql`lower(${firstMusicTag(id, sql`${libraryTrack.albumMediaItemId}`)})`
+    if (key === 'genre') {
+      // A track's own first tag; the album's and artists' as tagLocationOrderRows.
+      const albumId = sql`${libraryTrack.albumMediaItemId}`
+      const own = sql`(select min(own_tags.name) from (${ownTrackTagRows}) own_tags
+        where own_tags.media_item_id = ${id})`
+      if (!tagLevels)
+        return sql`lower(coalesce(${own}, ${firstMusicTag(id, albumId)}))`
+      const firsts = [
+        ...(tagLevels.includes('track') ? [own] : []),
+        ...(tagLevels.includes('album')
+          ? [
+              sql`(select min(r.name) from (${releaseTagMemberships(albumId)}) r)`,
+            ]
+          : []),
+        ...(tagLevels.includes('artist') ? [firstArtistTag(id)] : []),
+      ]
+      return sql`lower(least(${sql.join(firsts, sql`, `)}))`
+    }
     if (key === 'artistTag') return sql`lower(${firstArtistTag(id)})`
     if (key === 'artist') return firstTrackArtist(id)
     if (key === 'album') return trackSortAlbumName
@@ -2159,9 +2280,13 @@ function directSortExpression(key: string, mediaType: MediaType): SQL | null {
   return null
 }
 
-function browseSortExpression(field: BrowseField, mediaType: MediaType) {
+function browseSortExpression(
+  field: BrowseField,
+  mediaType: MediaType,
+  tagLevels?: TagLevels,
+) {
   return (
-    directSortExpression(field.key, mediaType) ??
+    directSortExpression(field.key, mediaType, tagLevels) ??
     (field.type === 'text'
       ? sql`lower(${textExpression(field.key, mediaType)})`
       : numericExpression(field.key, mediaType))
@@ -2380,7 +2505,7 @@ const releaseTagFacetKeys = sql`select t.id as tag_id, ${normalizedTagSql(sql`t.
   from tag t where t.media_type = 'album' and not t.hidden
   union all select tag_id, ancestor_key from (${tagAncestorRows('album')}) ancestors`
 
-function albumTagFacetRows(key: string) {
+function albumTagFacetRows(key: string, tagLevels?: TagLevels) {
   const visible = sql`media_item.media_type = 'album'
     and media_item.metadata->>'legacyHidden' is distinct from 'true'`
   const release = sql`select media_item.id, labels.value from media_item
@@ -2393,6 +2518,19 @@ function albumTagFacetRows(key: string) {
     join browse_artist_facet_keys labels on labels.artist_id = c.artist_id
     where ${visible}`
   if (key === 'artistTag') return artist
+  if (tagLevels) {
+    // TTAG-23: an album is under a track tag when a library track has it.
+    const rows: SQL[] = []
+    if (tagLevels.includes('track'))
+      rows.push(sql`select media_item.id, labels.value from media_item
+        join library_track lt on lt.album_media_item_id = media_item.id
+        join track_tag tt on tt.media_item_id = lt.media_item_id and tt.in_browse
+        join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+        where ${visible}`)
+    if (tagLevels.includes('album')) rows.push(release)
+    if (tagLevels.includes('artist')) rows.push(artist)
+    return sql.join(rows, sql` union all `)
+  }
   return sql`${release} union all ${artist}
     and media_item.id not in (${albumsWithEnoughTags()})`
 }
@@ -2420,58 +2558,203 @@ const trackTagFacetRows = sql`select tt.media_item_id as id, labels.value from t
   join media_item on media_item.id = tt.media_item_id
   where tt.in_browse and media_item.metadata->>'legacyHidden' is distinct from 'true'`
 
-function trackMusicFacetSources(includeLastfmSourceRows?: boolean) {
+/**
+ * Tag counts for Tracks: Album tags, Artist tags and Tags, each a count of
+ * tracks. Tags counts at Auto (TTAG-21) when `auto`: a track's own tags,
+ * plus the album's and artists' tags of tracks without tags of their own,
+ * and of every track for a value no verified Sonovault tag rolls up to.
+ */
+function trackMusicFacetSources(
+  includeLastfmSourceRows?: boolean,
+  auto = false,
+) {
   const visibility = includeLastfmSourceRows
     ? sql``
     : sql`and m.id not in (select id from redundant_lastfm_tracks)`
-  return [
+  const sources = [
     // Every track on the same album with the same credited artists contributes
     // the same labels. Expand the labels once and carry the track count.
-    sql`browse_track_facet_groups as materialized (
-      select row_number() over () as id, album_id, artist_ids, count(*) as weight
+    sql`browse_track_facet_tracks as materialized (
+      select id, album_id, artist_ids, has_own,
+        dense_rank() over (order by album_id, artist_ids, has_own) as group_id
       from (
         select m.id, lt.album_media_item_id as album_id,
+          ${auto ? sql`lt.has_own_tags` : sql`false`} as has_own,
           array_agg(c.artist_id order by c.artist_id) filter (where c.artist_id is not null) as artist_ids
         from media_item m join library_track lt on lt.media_item_id = m.id
         left join media_credit c on c.media_item_id = m.id and c.role = 'artist'
         where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true' ${visibility}
           and (exists (select 1 from browse_artist_facet_keys)
             or exists (select 1 from browse_release_facet_keys))
-        group by m.id, lt.album_media_item_id
-      ) credited_tracks group by album_id, artist_ids
+        group by m.id, lt.album_media_item_id, lt.has_own_tags
+      ) credited_tracks
+    )`,
+    sql`browse_track_facet_groups as materialized (
+      select group_id as id, min(album_id) as album_id, min(artist_ids) as artist_ids,
+        bool_or(has_own) as has_own, count(*) as weight
+      from browse_track_facet_tracks group by group_id
+    )`,
+    sql`browse_track_facet_hits as materialized (
+      select id, value, bool_or(is_release) as release_tag, bool_or(not is_release) as artist_tag
+      from (
+        select g.id, labels.value, true as is_release from browse_track_facet_groups g
+        join media_item_tag mt on mt.media_item_id = g.album_id
+        join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
+        union all
+        select g.id, labels.value, false as is_release from browse_track_facet_groups g
+        cross join lateral unnest(g.artist_ids) as credit(artist_id)
+        join browse_artist_facet_keys labels on labels.artist_id = credit.artist_id
+      ) tag_hits group by id, value
+    )`,
+    sql`browse_track_dense_albums as materialized (${albumsWithEnoughTags()})`,
+  ]
+  // The labels a track inherits: its album's, or its artists' on a sparse album.
+  const inherited = sql`(labels.release_tag or dense.media_item_id is null)`
+  if (!auto)
+    return [
+      ...sources,
+      sql`browse_track_facet_counts as materialized (
+        select labels.value,
+          sum(g.weight) filter (where labels.release_tag) as album_tag,
+          sum(g.weight) filter (where labels.artist_tag) as artist_tag,
+          sum(g.weight) filter (where ${inherited}) as genre
+        from browse_track_facet_hits labels join browse_track_facet_groups g on g.id = labels.id
+        left join browse_track_dense_albums dense on dense.media_item_id = g.album_id
+        group by labels.value
+      )`,
+    ]
+  return [
+    ...sources,
+    sql`browse_track_own_facet_rows as materialized (
+      select tt.media_item_id as id, labels.value from track_tag tt
+      join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+      join browse_track_facet_tracks t on t.id = tt.media_item_id
+      where tt.in_browse group by tt.media_item_id, labels.value
+    )`,
+    sql`browse_track_sonovault_values as materialized (
+      select distinct labels.value from track_tag tt
+      join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+      where tt.in_browse and tt.sonovault
+    )`,
+    // Own tags no verified Sonovault tag rolls up to are inherited as well:
+    // count each such track once.
+    sql`browse_track_own_overlap as materialized (
+      select own.value, count(*) as tracks from browse_track_own_facet_rows own
+      join browse_track_facet_tracks t on t.id = own.id
+      join browse_track_facet_hits labels on labels.id = t.group_id and labels.value = own.value
+      left join browse_track_dense_albums dense on dense.media_item_id = t.album_id
+      where own.value not in (select value from browse_track_sonovault_values) and ${inherited}
+      group by own.value
     )`,
     sql`browse_track_facet_counts as materialized (
-      select labels.value,
-        sum(g.weight) filter (where labels.release_tag) as album_tag,
-        sum(g.weight) filter (where labels.artist_tag) as artist_tag,
-        sum(g.weight) filter (where labels.release_tag or dense.media_item_id is null) as genre
+      select value, max(album_tag) as album_tag, max(artist_tag) as artist_tag,
+        nullif(sum(genre), 0) as genre
       from (
-        select id, value, bool_or(is_release) as release_tag, bool_or(not is_release) as artist_tag
-        from (
-          select g.id, labels.value, true as is_release from browse_track_facet_groups g
-          join media_item_tag mt on mt.media_item_id = g.album_id
-          join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
-          union all
-          select g.id, labels.value, false as is_release from browse_track_facet_groups g
-          cross join lateral unnest(g.artist_ids) as credit(artist_id)
-          join browse_artist_facet_keys labels on labels.artist_id = credit.artist_id
-        ) tag_hits group by id, value
-      ) labels join browse_track_facet_groups g on g.id = labels.id
-      left join (${albumsWithEnoughTags()}) dense on dense.media_item_id = g.album_id
-      group by labels.value
+        select labels.value,
+          sum(g.weight) filter (where labels.release_tag) as album_tag,
+          sum(g.weight) filter (where labels.artist_tag) as artist_tag,
+          coalesce(sum(g.weight) filter (where ${inherited} and (not g.has_own
+            or labels.value not in (select value from browse_track_sonovault_values))), 0) as genre
+        from browse_track_facet_hits labels join browse_track_facet_groups g on g.id = labels.id
+        left join browse_track_dense_albums dense on dense.media_item_id = g.album_id
+        group by labels.value
+        union all
+        select value, null, null, count(*) from browse_track_own_facet_rows group by value
+        union all
+        select value, null, null, -tracks from browse_track_own_overlap
+      ) parts group by value
     )`,
   ]
 }
+
+/**
+ * TTAG-29: tracks per tag value at a combination of levels, a track counted
+ * once however many levels carry the value. Reads the facet key sources, so
+ * it counts only the values they hold.
+ */
+function trackTagLocationFacetCounts(
+  levels: TagLevels,
+  includeLastfmSourceRows?: boolean,
+): SQL {
+  const visibility = includeLastfmSourceRows
+    ? sql``
+    : sql`and m.id not in (select id from redundant_lastfm_tracks)`
+  return sql`select value, count(*) as count from (
+      select distinct hits.id, hits.value from (${tagLocationFacetHits(levels)}) hits
+    ) located join media_item m on m.id = located.id
+    join library_track lt on lt.media_item_id = m.id
+    where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true'
+      and value is not null and value <> '' ${visibility}
+    group by value`
+}
+
+/**
+ * The same counts for at most 63 values, each with its own bit in
+ * `location_candidates (value, bit)`: one mask per track holds every value
+ * it has at any level, so memory grows with the tracks, not with each track
+ * and value.
+ */
+function trackTagLocationCandidateCounts(levels: TagLevels) {
+  return {
+    // Masks are built once; every candidate then tests its bit in them.
+    source: sql`location_masks as materialized (
+      select located.id, located.mask from (
+        select hits.id, bit_or(1::bigint << c.bit) as mask
+        from (${tagLocationFacetHits(levels)}) hits
+        join location_candidates c on c.value = hits.value group by hits.id
+      ) located join media_item m on m.id = located.id
+      join library_track lt on lt.media_item_id = m.id
+      where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true'
+        and m.id not in (select id from redundant_lastfm_tracks)
+    )`,
+    counts: sql`select c.value, count(*) as count
+      from location_masks located cross join location_candidates c
+      where located.mask & (1::bigint << c.bit) <> 0 group by c.value`,
+  }
+}
+
+/** Track and tag value pairs at each of the levels, read from the facet keys. */
+function tagLocationFacetHits(levels: TagLevels): SQL {
+  const rows: SQL[] = []
+  if (levels.includes('track'))
+    rows.push(sql`select tt.media_item_id as id, labels.value from track_tag tt
+      join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+      where tt.in_browse`)
+  if (levels.includes('album'))
+    rows.push(sql`select lt.media_item_id as id, labels.value from media_item_tag mt
+      join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
+      join library_track lt on lt.album_media_item_id = mt.media_item_id`)
+  if (levels.includes('artist'))
+    rows.push(sql`select c.media_item_id as id, labels.value from browse_artist_facet_keys labels
+      join media_credit c on c.artist_id = labels.artist_id and c.role = 'artist'`)
+  return sql.join(rows, sql` union all `)
+}
+
+/** The level of a location with one level. */
+function singleTagLevel(levels: TagLevels | undefined) {
+  const [level, ...others] = levels ?? []
+  return others.length ? undefined : level
+}
+
+/** The Tracks vocabulary field holding the counts of one tag level. */
+const tagLevelFacetFields = {
+  track: 'trackTag',
+  album: 'albumTag',
+  artist: 'artistTag',
+} as const
 
 function trackMusicFacetRows(
   field: BrowseField,
   query: BrowseFacetQuery,
   limit: number | undefined,
 ) {
+  // Tags at one level counts what that level's own field counts.
+  const single = field.key === 'genre' && singleTagLevel(query.tagLevels)
+  const level = single ? tagLevelFacetFields[single] : field.key
   const count =
-    field.key === 'albumTag'
+    level === 'albumTag'
       ? sql`album_tag`
-      : field.key === 'artistTag'
+      : level === 'artistTag'
         ? sql`artist_tag`
         : sql`genre`
   const matches = facetValueMatches(field, query)
@@ -2587,24 +2870,47 @@ function browseFacetQuery(
     )
     if (musicFields.length) {
       sources.push(...musicFacetSources(mediaType, matches))
-      sources.push(...trackMusicFacetSources(options.includeLastfmSourceRows))
+      sources.push(
+        ...trackMusicFacetSources(
+          options.includeLastfmSourceRows,
+          !query.tagLevels &&
+            musicFields.some((field) => field.key === 'genre'),
+        ),
+      )
     } else sources.push(releaseFacetKeysSource(matches))
   } else if (mediaType === 'album' && musicFields.length) {
     sources.push(...musicFacetSources(mediaType))
   }
   const queries = fields.map((field) => {
     const musicTagFacet = music && musicTagFacetFields.includes(field.key)
-    if (mediaType === 'track' && musicTagFacet)
+    const trackLevels =
+      mediaType === 'track' && field.key === 'genre'
+        ? query.tagLevels
+        : undefined
+    if (trackLevels && !singleTagLevel(trackLevels)) {
+      const matches = facetValueMatches(field, query)
+      return sql`(select ${field.key}::text as field, value, count::int as count
+        from (${trackTagLocationFacetCounts(trackLevels, options.includeLastfmSourceRows)}) located
+        ${matches ? sql`where ${matches}` : sql``}
+        ${facetOrder(query, limit)})`
+    }
+    if (
+      mediaType === 'track' &&
+      musicTagFacet &&
+      singleTagLevel(trackLevels) !== 'track'
+    )
       return trackMusicFacetRows(field, query, limit)
-    const trackTagFacet = mediaType === 'track' && field.key === 'trackTag'
-    const source = musicTagFacet
-      ? albumTagFacetRows(field.key)
-      : trackTagFacet
-        ? trackTagFacetRows
-        : textRows(field.key, mediaType, {
-            normalizeTags: true,
-            rollUpTags: true,
-          })
+    const trackTagFacet =
+      mediaType === 'track' && (field.key === 'trackTag' || !!trackLevels)
+    const source =
+      musicTagFacet && !trackTagFacet
+        ? albumTagFacetRows(field.key, query.tagLevels)
+        : trackTagFacet
+          ? trackTagFacetRows
+          : textRows(field.key, mediaType, {
+              normalizeTags: true,
+              rollUpTags: true,
+            })
     // Choosing the Last.fm source explicitly includes its retained source rows.
     const visibility =
       mediaType !== 'track' || options.includeLastfmSourceRows
@@ -2662,13 +2968,40 @@ const trackFacetBuilder = sql`current_user || ':' || ${checksumJson(dialect.sqlT
 
 function readTrackFacetQuery(fields: BrowseField[], query: BrowseFacetQuery) {
   const limit = facetFieldLimit(query, fields.length)
+  const priority = query.q
+    ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
+    : sql``
   const facets = fields.map((field) => {
-    const priority = query.q
-      ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
-      : sql``
     const matches = facetValueMatches(field, query)
-    return sql`(select field, value, count from track_facet_value
-      where field = ${field.key} ${matches ? sql`and ${matches}` : sql``}
+    const levels = field.key === 'genre' ? query.tagLevels : undefined
+    const single = singleTagLevel(levels)
+    if (levels && !single) {
+      // TTAG-29: count the values these levels list most, live, and only those.
+      const candidates = sql`select value, (row_number() over () - 1)::int as bit from (
+          select value from track_facet_value
+          where field in (${sql.join(
+            levels.map((level) => sql`${tagLevelFacetFields[level]}`),
+            sql`, `,
+          )}) ${matches ? sql`and ${matches}` : sql``}
+          group by value order by ${priority}max(count) desc, value
+          limit ${Math.min(limit, 63)}
+        ) listed`
+      const wanted = sql`value in (select value from location_candidates)`
+      const located = trackTagLocationCandidateCounts(levels)
+      return sql`(with location_candidates as materialized (${candidates}),
+          ${redundantTrackFacetSource},
+          ${sql.join(
+            levels.includes('artist')
+              ? musicFacetSources('track', wanted)
+              : [releaseFacetKeysSource(wanted)],
+            sql`, `,
+          )}, ${located.source}
+        select ${field.key}::text as field, value, count::int as count
+        from (${located.counts}) located)`
+    }
+    return sql`(select ${field.key}::text as field, value, count from track_facet_value
+      where field = ${single ? tagLevelFacetFields[single] : field.key}
+        ${matches ? sql`and ${matches}` : sql``}
       order by ${priority}rank limit ${limit})`
   })
   return sql`with ready_track_facet_vocabulary as materialized (

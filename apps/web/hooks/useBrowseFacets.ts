@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import type { TagLevels } from '@repo/schemas/browse'
 import {
   browseFacetOptions,
   type BrowseFacetCollection,
@@ -13,6 +14,7 @@ export function useBrowseFacets(
   draft: string,
   enabled = true,
   matches = false,
+  tagLevels?: TagLevels,
 ) {
   const [search, setSearch] = useState('')
   const [activated, setActivated] = useState(false)
@@ -25,7 +27,7 @@ export function useBrowseFacets(
   const active = enabled && (activated || Boolean(query))
   const current = active && !isDebouncing
   const result = useQuery({
-    ...browseFacetOptions(apiBaseUrl, collection, search, matches),
+    ...browseFacetOptions(apiBaseUrl, collection, search, matches, tagLevels),
     enabled: current,
   })
   return {

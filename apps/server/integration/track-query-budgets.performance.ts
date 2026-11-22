@@ -4,7 +4,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { trackBrowseFields } from '@repo/schemas/browse'
+import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
@@ -2448,5 +2448,533 @@ it('bounds Track pages filtered, sorted and hydrated by Track tags', async () =>
       delete from tag where id like 'ttag-%';
     `)
     await rebuildTagAncestors(database, 'album')
+  }
+})
+
+/**
+ * Stage 3 of track tags: tags read from the track, its album or its artists.
+ * About two own tags on each of 18,000 tracks (Sonovault rows, a tenth
+ * unverified, a few removed, a few added by the owner); a broad tag with 300
+ * subtags on half of them and on 400 albums; a narrow tag on every 25th
+ * track, 20 albums and a tenth of the artists; a rare tag on one track; a tag
+ * on albums and artists that no track carries itself.
+ */
+async function seedTagLocationFixture() {
+  const { rebuildTagAncestors } = await import('@/services/tag-hierarchy')
+  await pool.query(`
+    insert into tag (id, media_type, name, kind) values
+      ('loc-broad', 'album', 'Location Tide', 'genre'),
+      ('loc-narrow', 'album', 'Location Narrow', 'genre'),
+      ('loc-rare', 'album', 'Location Rare', 'genre'),
+      ('loc-absent', 'album', 'Location Absent', 'genre'),
+      ('loc-micro', 'album', 'Location Micro', 'genre'),
+      ('loc-owner', 'album', 'Location Owner', 'genre'),
+      ('loc-hidden', 'album', 'Location Hidden', 'genre');
+    update tag set hidden = true where id = 'loc-hidden';
+    insert into tag (id, media_type, name, kind)
+    select 'loc-sub-' || n, 'album'::media_type, 'Location Tide ' || n, 'genre' from generate_series(1, 300) n
+    union all
+    select 'loc-filler-' || n, 'album'::media_type, 'Location Filler ' || n, 'genre' from generate_series(1, 60) n;
+    insert into tag_identity (media_type, normalized_name, kind, tag_id)
+    select media_type, lower(name), kind, id from tag where id like 'loc-%';
+    insert into tag_parent (media_type, child_key, parent_key)
+    select 'album'::media_type, 'location tide ' || n, 'location tide' from generate_series(1, 300) n;
+    insert into track_tag (media_item_id, tag_id, sonovault, verified)
+    select 'track-' || n, 'loc-sub-' || (1 + n % 300), true, n % 10 <> 0
+    from generate_series(2, 18000, 2) n
+    union all
+    select 'track-' || n, 'loc-filler-' || (1 + n % 60), true, n % 10 <> 1
+    from generate_series(1, 18000) n
+    union all
+    select 'track-' || n, 'loc-narrow', true, true from generate_series(25, 18000, 25) n
+    union all
+    select 'track-' || n, 'loc-hidden', true, true from generate_series(7, 18000, 70) n
+    union all
+    select 'track-19995', 'loc-rare', true, true;
+    insert into track_tag (media_item_id, tag_id, sonovault, verified, owner, owner_changed_at)
+    select 'track-' || n, 'loc-owner', false, false, 'added', timestamp '2026-11-01'
+    from generate_series(30, 18000, 600) n;
+    update track_tag set owner = 'removed', owner_changed_at = timestamp '2026-11-01'
+    where tag_id like 'loc-%' and owner is null
+      and media_item_id in (select 'track-' || n from generate_series(997, 18000, 997) n);
+    insert into media_item_tag (media_item_id, tag_id)
+    select 'album-' || n, 'loc-sub-' || (1 + n % 300) from generate_series(1, 400) n
+    union all
+    select 'album-' || n, 'loc-narrow' from generate_series(50, 1000, 50) n
+    union all
+    select 'album-' || n, 'loc-micro' from generate_series(1, 300, 3) n
+    union all
+    select 'album-' || n, 'loc-owner' from generate_series(1, 5) n;
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    select 'location-profile-' || n, 'artist-' || n, 'location-fixture', '{}',
+      jsonb_build_object('tags', jsonb_build_array('Location Tide 7', 'Location Micro', 'Location Narrow'))
+    from generate_series(10, 1000, 10) n;
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    select 'artist-' || n, 'location-fixture', 'location-profile-' || n from generate_series(10, 1000, 10) n;
+    insert into media_credit (media_item_id, artist_id, role)
+    select 'album-' || n, 'artist-' || n, 'artist' from generate_series(1, 1000) n
+    on conflict do nothing;
+  `)
+  await rebuildTagAncestors(database, 'album')
+  for (const table of [
+    'tag',
+    'tag_identity',
+    'tag_parent',
+    'tag_ancestor',
+    'track_tag',
+    'library_track',
+    'media_item_tag',
+    'artist_provider_snapshot',
+    'artist_provider_current_state',
+    'media_credit',
+  ])
+    await pool.query(`vacuum analyze ${table}`)
+}
+
+async function clearTagLocationFixture() {
+  const { rebuildTagAncestors } = await import('@/services/tag-hierarchy')
+  await pool.query(`
+    delete from track_tag where tag_id like 'loc-%';
+    delete from media_credit where media_item_id like 'album-%' and role = 'artist';
+    delete from media_item_tag where tag_id like 'loc-%';
+    delete from artist_provider_current_state where latest_snapshot_id like 'location-profile-%';
+    delete from artist_provider_snapshot where id like 'location-profile-%';
+    delete from tag_parent where child_key like 'location tide %';
+    delete from tag_identity where tag_id like 'loc-%';
+    delete from tag where id like 'loc-%';
+  `)
+  await rebuildTagAncestors(database, 'album')
+}
+
+const tagLocations = [
+  ['auto', undefined],
+  ['track', 'track'],
+  ['album', 'album'],
+  ['artist', 'artist'],
+  ['track+album', 'track,album'],
+  ['all', 'track,album,artist'],
+] as const
+const locationTags = [
+  ['broad', 'Location Tide', 'loc-broad'],
+  ['narrow', 'Location Narrow', 'loc-narrow'],
+  ['rare', 'Location Rare', 'loc-rare'],
+  ['absent', 'Location Absent', 'loc-absent'],
+] as const
+
+/** Tracks or albums matching a tag at a location, worked out row by row. */
+async function expectedAtLocation(
+  library: 'track' | 'album',
+  levels: string | undefined,
+  tagId: string,
+) {
+  const k = `(select id from tag where id = '${tagId}'
+    or ('${tagId}' = 'loc-broad' and id like 'loc-sub-%'))`
+  const names = `(select lower(name) from tag where id in ${k})`
+  const taggedArtists = `with tagged_artists as materialized (
+    select st.artist_id from artist_provider_current_state st
+    join artist_provider_snapshot sn on sn.id = st.latest_snapshot_id
+    cross join lateral jsonb_array_elements_text(sn.normalized_data->'tags') x(name)
+    where lower(x.name) in ${names})`
+  const artist = (id: string) => `exists (select 1 from media_credit c
+    where c.media_item_id = ${id} and c.role = 'artist'
+      and c.artist_id in (select artist_id from tagged_artists))`
+  const albumTag = (id: string) =>
+    `exists (select 1 from media_item_tag mt where mt.media_item_id = ${id} and mt.tag_id in ${k})`
+  const sparse = (
+    id: string,
+  ) => `(${id} is null or (select count(distinct lower(t.name))
+    from media_item_tag mt join tag t on t.id = mt.tag_id
+    where mt.media_item_id = ${id} and not t.hidden) < 2)`
+  const own = `exists (select 1 from track_tag tt where tt.media_item_id = m.id
+    and tt.in_browse and tt.tag_id in ${k})`
+  const level = (name: string) => levels?.split(',').includes(name)
+  const Count = z.object({ count: z.number() })
+  if (library === 'track') {
+    const hasOwn = `exists (select 1 from track_tag tt join tag t on t.id = tt.tag_id
+      where tt.media_item_id = m.id and tt.in_browse and not t.hidden)`
+    const speaks = `exists (select 1 from track_tag tt where tt.in_browse
+      and tt.sonovault and tt.tag_id in ${k})`
+    const today = `(${albumTag('lt.album_media_item_id')} or (${artist('m.id')}
+      and ${sparse('lt.album_media_item_id')}))`
+    const match = levels
+      ? [
+          level('track') ? own : 'false',
+          level('album') ? albumTag('lt.album_media_item_id') : 'false',
+          level('artist') ? artist('m.id') : 'false',
+        ].join(' or ')
+      : `${own} or ((not ${hasOwn} or not ${speaks}) and ${today})`
+    const result =
+      await pool.query(`${taggedArtists} select count(*)::int as count from media_item m
+      join library_track lt on lt.media_item_id = m.id
+      where m.media_type = 'track' and m.source_label is distinct from 'lastfm'
+        and m.metadata->>'legacyHidden' is distinct from 'true' and (${match})`)
+    return Count.parse(result.rows[0]).count
+  }
+  const trackLevel = `exists (select 1 from library_track lt join track_tag tt
+    on tt.media_item_id = lt.media_item_id
+    where lt.album_media_item_id = m.id and tt.in_browse and tt.tag_id in ${k})`
+  const match = levels
+    ? [
+        level('track') ? trackLevel : 'false',
+        level('album') ? albumTag('m.id') : 'false',
+        level('artist') ? artist('m.id') : 'false',
+      ].join(' or ')
+    : `${albumTag('m.id')} or (${artist('m.id')} and ${sparse('m.id')})`
+  const result =
+    await pool.query(`${taggedArtists} select count(*)::int as count from media_item m
+    where m.media_type = 'album' and m.metadata->>'legacyHidden' is distinct from 'true'
+      and not exists (select 1 from album e where e.media_item_id = m.id and e.edition_of_id is not null)
+      and (${match})`)
+  return Count.parse(result.rows[0]).count
+}
+
+it('bounds Track and Album pages filtered and sorted by tag location', async () => {
+  const {
+    queryBrowsePageIds,
+    queryBrowseCount,
+    listBrowseFacets,
+    refreshTrackFacetVocabularyForMaintenance,
+  } = await import('@/services/browse')
+  const { listTrackBrowsePage } = await import('@/services/tracks')
+  const { AlbumQuerySchema } = await import('@repo/schemas/media')
+  await seedTagLocationFixture()
+  // 1.5 times the shared blocks measured when these workloads were added
+  // (at least 200), on PostgreSQL 17.9 here.
+  const budgets: Record<string, number> = {
+    'track Tags auto broad title page': 84_500,
+    'track Tags auto broad added page': 42_900,
+    'track Tags auto broad count': 223_100,
+    'track Tags auto narrow title page': 17_700,
+    'track Tags auto narrow added page': 27_100,
+    'track Tags auto rare title page': 8_500,
+    'track Tags auto rare added page': 39_400,
+    'track Tags auto absent title page': 8_500,
+    'track Tags auto absent added page': 39_400,
+    'track Tags track broad title page': 57_400,
+    'track Tags track broad added page': 21_000,
+    'track Tags track broad count': 202_300,
+    'track Tags track narrow title page': 12_000,
+    'track Tags track narrow added page': 21_700,
+    'track Tags track rare title page': 7_300,
+    'track Tags track rare added page': 38_200,
+    'track Tags track absent title page': 7_300,
+    'track Tags track absent added page': 38_200,
+    'track Tags album broad title page': 58_900,
+    'track Tags album broad added page': 22_400,
+    'track Tags album broad count': 203_800,
+    'track Tags album narrow title page': 11_000,
+    'track Tags album narrow added page': 23_500,
+    'track Tags album rare title page': 7_300,
+    'track Tags album rare added page': 38_200,
+    'track Tags album absent title page': 7_300,
+    'track Tags album absent added page': 38_200,
+    'track Tags artist broad title page': 38_100,
+    'track Tags artist broad added page': 39_300,
+    'track Tags artist broad count': 219_500,
+    'track Tags artist narrow title page': 20_100,
+    'track Tags artist narrow added page': 21_300,
+    'track Tags artist rare title page': 7_300,
+    'track Tags artist rare added page': 38_300,
+    'track Tags artist absent title page': 7_300,
+    'track Tags artist absent added page': 38_300,
+    'track Tags track+album broad title page': 89_200,
+    'track Tags track+album broad added page': 22_500,
+    'track Tags track+album broad count': 203_900,
+    'track Tags track+album narrow title page': 13_600,
+    'track Tags track+album narrow added page': 23_000,
+    'track Tags track+album rare title page': 7_300,
+    'track Tags track+album rare added page': 38_300,
+    'track Tags track+album absent title page': 7_300,
+    'track Tags track+album absent added page': 38_200,
+    'track Tags all broad title page': 115_400,
+    'track Tags all broad added page': 41_100,
+    'track Tags all broad count': 221_300,
+    'track Tags all narrow title page': 24_300,
+    'track Tags all narrow added page': 23_000,
+    'track Tags all rare title page': 7_400,
+    'track Tags all rare added page': 38_400,
+    'track Tags all absent title page': 7_400,
+    'track Tags all absent added page': 38_400,
+    'album Tags auto broad title page': 19_100,
+    'album Tags auto broad added page': 20_000,
+    'album Tags auto broad count': 19_100,
+    'album Tags auto narrow title page': 1_100,
+    'album Tags auto narrow added page': 1_400,
+    'album Tags auto rare title page': 400,
+    'album Tags auto rare added page': 400,
+    'album Tags auto absent title page': 400,
+    'album Tags auto absent added page': 400,
+    'album Tags track broad title page': 1_800,
+    'album Tags track broad added page': 2_500,
+    'album Tags track broad count': 1_800,
+    'album Tags track narrow title page': 1_800,
+    'album Tags track narrow added page': 1_900,
+    'album Tags track rare title page': 1_800,
+    'album Tags track rare added page': 1_800,
+    'album Tags track absent title page': 200,
+    'album Tags track absent added page': 200,
+    'album Tags album broad title page': 200,
+    'album Tags album broad added page': 800,
+    'album Tags album broad count': 200,
+    'album Tags album narrow title page': 200,
+    'album Tags album narrow added page': 200,
+    'album Tags album rare title page': 200,
+    'album Tags album rare added page': 200,
+    'album Tags album absent title page': 200,
+    'album Tags album absent added page': 200,
+    'album Tags artist broad title page': 18_700,
+    'album Tags artist broad added page': 18_900,
+    'album Tags artist broad count': 18_700,
+    'album Tags artist narrow title page': 700,
+    'album Tags artist narrow added page': 900,
+    'album Tags artist rare title page': 200,
+    'album Tags artist rare added page': 200,
+    'album Tags artist absent title page': 200,
+    'album Tags artist absent added page': 200,
+    'album Tags track+album broad title page': 1_800,
+    'album Tags track+album broad added page': 2_800,
+    'album Tags track+album broad count': 1_800,
+    'album Tags track+album narrow title page': 1_800,
+    'album Tags track+album narrow added page': 1_900,
+    'album Tags track+album rare title page': 1_800,
+    'album Tags track+album rare added page': 1_800,
+    'album Tags track+album absent title page': 200,
+    'album Tags track+album absent added page': 200,
+    'album Tags all broad title page': 20_500,
+    'album Tags all broad added page': 21_800,
+    'album Tags all broad count': 20_500,
+    'album Tags all narrow title page': 2_400,
+    'album Tags all narrow added page': 2_900,
+    'album Tags all rare title page': 1_900,
+    'album Tags all rare added page': 2_200,
+    'album Tags all absent title page': 300,
+    'album Tags all absent added page': 300,
+    'track Tags auto narrow exclude added page': 10_200,
+    'track Tags auto narrow exclude title page': 329_300,
+    'track Tags auto broad deep page': 114_800,
+    'track Tags auto sort page': 428_200,
+    'track Tags auto sort deep page': 246_000,
+    'track Tags track+album sort page': 424_900,
+    'track Tags track+album sort deep page': 654_800,
+    'track Tags all sort page': 426_600,
+    'track Tags all sort deep page': 656_400,
+    'album Tags auto sort page': 1_000,
+    'album Tags auto sort deep page': 1_000,
+    'album Tags track+album sort page': 2_800,
+    'album Tags track+album sort deep page': 2_800,
+    'album Tags all sort page': 3_500,
+    'album Tags all sort deep page': 3_500,
+    'track Tags auto hydrated page': 33_600,
+    'track Tags auto live suggestions': 205_100,
+    'track Tags track live suggestions': 267_200,
+    'track Tags album live suggestions': 203_300,
+    'track Tags artist live suggestions': 203_300,
+    'track Tags track+album live suggestions': 429_400,
+    'track Tags all live suggestions': 455_200,
+    'album Tags auto live suggestions': 7_400,
+    'album Tags track live suggestions': 132_300,
+    'album Tags album live suggestions': 5_500,
+    'album Tags artist live suggestions': 20_700,
+    'album Tags track+album live suggestions': 137_700,
+    'album Tags all live suggestions': 158_300,
+    'track Tags auto stored suggestions': 900,
+    'track Tags auto stored suggestions, nothing typed': 200,
+    'track Tags track stored suggestions': 900,
+    'track Tags track stored suggestions, nothing typed': 200,
+    'track Tags album stored suggestions': 900,
+    'track Tags album stored suggestions, nothing typed': 200,
+    'track Tags artist stored suggestions': 900,
+    'track Tags artist stored suggestions, nothing typed': 200,
+    'track Tags track+album stored suggestions': 309_200,
+    'track Tags track+album stored suggestions, nothing typed': 382_600,
+    'track Tags all stored suggestions': 319_800,
+    'track Tags all stored suggestions, nothing typed': 386_400,
+  }
+  const budget = (label: string) => budgets[label] ?? Number.MAX_SAFE_INTEGER
+  // track_tag is read in one pass over a partial index, a hashed SubPlan or
+  // the primary key of a page's rows: never probed once per track.
+  async function expectSetReads(label: string, read: () => Promise<unknown>) {
+    for (const scan of await trackTagScans(read)) {
+      expect(
+        scan['Actual Loops'],
+        `${label} track_tag loops`,
+      ).toBeLessThanOrEqual(1)
+      if (scan['Index Name'])
+        expect(scan['Index Name'], label).toMatch(
+          /^track_tag_(tag_media_browse_idx|media_browse_idx|pkey)$/,
+        )
+    }
+  }
+  const query = (library: 'track' | 'album', input: Record<string, unknown>) =>
+    library === 'track'
+      ? TrackQuerySchema.parse({ size: 100, ...input })
+      : AlbumQuerySchema.parse({ size: 100, ...input })
+  const tideFilter = JSON.stringify([
+    { field: 'genre', value: 'Location Tide' },
+  ])
+  try {
+    for (const library of ['track', 'album'] as const)
+      for (const [location, tagLevels] of tagLocations)
+        for (const [tag, value, tagId] of locationTags) {
+          const expected = await expectedAtLocation(library, tagLevels, tagId)
+          process.stdout.write(
+            `${library} Tags ${location} ${tag}: ${expected} expected\n`,
+          )
+          const filters = JSON.stringify([{ field: 'genre', value }])
+          for (const [sort, sortBy, direction] of [
+            ['title', 'title', 'asc'],
+            ['added', 'dateAdded', 'desc'],
+          ] as const) {
+            const read = async () => {
+              const page = await queryBrowsePageIds(
+                library,
+                query(library, { sortBy, direction, filters, tagLevels }),
+              )
+              if (expected >= 110) expect(page.ids).toHaveLength(100)
+              else {
+                expect(page.ids.length).toBeLessThanOrEqual(expected)
+                expect(page.ids.length).toBeGreaterThan(expected - 10)
+              }
+            }
+            const label = `${library} Tags ${location} ${tag} ${sort} page`
+            await checkBudget(label, budget(label), 1, read, 10_000)
+            await expectSetReads(label, read)
+          }
+          if (tag !== 'broad') continue
+          const label = `${library} Tags ${location} broad count`
+          await checkBudget(label, budget(label), 3, async () => {
+            const { totalCount } = await queryBrowseCount(
+              library,
+              query(library, { filters, tagLevels }),
+            )
+            expect(totalCount).toBeLessThanOrEqual(expected)
+            expect(totalCount).toBeGreaterThan(expected - 10)
+          })
+        }
+    for (const [sort, sortBy, direction] of [
+      ['added', 'dateAdded', 'desc'],
+      ['title', 'title', 'asc'],
+    ] as const) {
+      const label = `track Tags auto narrow exclude ${sort} page`
+      const read = async () => {
+        const page = await queryBrowsePageIds(
+          'track',
+          query('track', {
+            sortBy,
+            direction,
+            filters: JSON.stringify([
+              { field: 'genre', value: 'Location Narrow', mode: 'exclude' },
+            ]),
+          }),
+        )
+        expect(page.ids).toHaveLength(100)
+      }
+      await checkBudget(label, budget(label), 1, read, 10_000)
+      await expectSetReads(label, read)
+    }
+    const deep = async () => {
+      const page = await queryBrowsePageIds(
+        'track',
+        query('track', {
+          sortBy: 'title',
+          direction: 'asc',
+          page: 40,
+          filters: tideFilter,
+        }),
+      )
+      expect(page.ids).toHaveLength(100)
+    }
+    const deepLabel = 'track Tags auto broad deep page'
+    await checkBudget(deepLabel, budget(deepLabel), 1, deep, 10_000)
+    await expectSetReads(deepLabel, deep)
+    for (const library of ['track', 'album'] as const)
+      for (const [location, tagLevels] of [
+        tagLocations[0],
+        tagLocations[4],
+        tagLocations[5],
+      ])
+        for (const [name, page] of [
+          ['sort', 1],
+          ['sort deep', 9],
+        ] as const) {
+          const label = `${library} Tags ${location} ${name} page`
+          const read = async () => {
+            const result = await queryBrowsePageIds(
+              library,
+              query(library, {
+                sortBy: 'genre',
+                direction: 'asc',
+                page,
+                tagLevels,
+              }),
+            )
+            expect(result.ids).toHaveLength(100)
+          }
+          await checkBudget(label, budget(label), 1, read)
+          await expectSetReads(label, read)
+        }
+    const hydrate = async () => {
+      const result = await listTrackBrowsePage(
+        query('track', {
+          sortBy: 'dateAdded',
+          direction: 'desc',
+          filters: JSON.stringify([
+            { field: 'genre', value: 'Location Narrow' },
+          ]),
+        }),
+      )
+      expect(result.items).toHaveLength(100)
+    }
+    const hydrateLabel = 'track Tags auto hydrated page'
+    await checkBudget(hydrateLabel, budget(hydrateLabel), 2, hydrate)
+    // Suggestions count what the filter matches at each location.
+    const countAt = async (
+      library: 'track' | 'album',
+      tagLevels: string | undefined,
+    ) =>
+      (
+        await queryBrowseCount(
+          library,
+          query(library, { filters: tideFilter, tagLevels }),
+        )
+      ).totalCount
+    for (const library of ['track', 'album'] as const)
+      for (const [location, tagLevels] of tagLocations) {
+        const label = `${library} Tags ${location} live suggestions`
+        const total = await countAt(library, tagLevels)
+        const fields = (
+          library === 'track' ? trackBrowseFields : albumBrowseFields
+        ).filter((field) => field.key === 'genre')
+        await checkBudget(label, budget(label), 4, async () => {
+          const facets = await listBrowseFacets(
+            library,
+            { q: 'location tide', tagLevels },
+            { fields },
+          )
+          expect(
+            facets.find(({ value }) => value === 'location tide'),
+            label,
+          ).toMatchObject({ field: 'genre', count: total })
+        })
+      }
+    expect(await refreshTrackFacetVocabularyForMaintenance()).toBe(true)
+    await pool.query('vacuum analyze track_facet_value')
+    for (const [location, tagLevels] of tagLocations) {
+      const total = await countAt('track', tagLevels)
+      for (const q of ['location tide', '']) {
+        const label = `track Tags ${location} stored suggestions${q ? '' : ', nothing typed'}`
+        await checkBudget(label, budget(label), 4, async () => {
+          const facets = await listBrowseFacets('track', { q, tagLevels })
+          const tide = facets.find(
+            ({ field, value }) =>
+              field === 'genre' && value === 'location tide',
+          )
+          if (q) expect(tide, label).toMatchObject({ count: total })
+          else if (tide) expect(tide.count, label).toBe(total)
+        })
+      }
+    }
+  } finally {
+    await clearTagLocationFixture()
   }
 })

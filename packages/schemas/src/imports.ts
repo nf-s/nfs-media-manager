@@ -6,6 +6,7 @@ import {
   BrowseFilterSchema,
   BrowseKeySchema,
   BrowseRangeSchema,
+  TagLevelsSchema,
 } from './browse'
 
 export const StartImportSchema = z.object({
@@ -61,6 +62,8 @@ export const SavedViewSchema = z.object({
   sortBy: BrowseKeySchema,
   direction: z.enum(['asc', 'desc']),
   limit: z.number().int().positive().optional(),
+  /** Where its Tags filters read tags; Auto when left out. */
+  tagLevels: TagLevelsSchema.optional(),
   listening: ListeningFilterSchema.optional(),
   listeningSort: ListeningPeriodSchema.optional(),
 })

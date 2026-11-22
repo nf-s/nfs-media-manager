@@ -53,9 +53,45 @@ export const BrowseFieldSchema = z.object({
   rating: RatingDisplaySchema.optional(),
 })
 export type BrowseField = z.infer<typeof BrowseFieldSchema>
+
+/** Where a Tags filter reads tags: the track's own, its album's, its artists'. */
+export const TagLevelSchema = z.enum(['track', 'album', 'artist'])
+export type TagLevel = z.infer<typeof TagLevelSchema>
+export const tagLevelOrder = TagLevelSchema.options
+/**
+ * A Tags filter location other than Auto: distinct levels, in the order
+ * track, album, artist. Auto, the default, is no value.
+ */
+export const TagLevelsSchema = z
+  .array(TagLevelSchema)
+  .min(1)
+  .max(tagLevelOrder.length)
+  .refine(
+    (levels) => new Set(levels).size === levels.length,
+    'Each tag level once',
+  )
+  .transform((levels) =>
+    tagLevelOrder.filter((level) => levels.includes(level)),
+  )
+export type TagLevels = z.infer<typeof TagLevelsSchema>
+/** The `tagLevels` URL parameter: `track,album`; left out for Auto. */
+export const TagLevelsParamSchema = z.preprocess(
+  (value) =>
+    typeof value === 'string'
+      ? value.length
+        ? value.split(',')
+        : undefined
+      : value,
+  TagLevelsSchema.optional(),
+)
+export function formatTagLevelsParam(levels: TagLevels | undefined) {
+  return levels?.join(',') ?? null
+}
+
 export const BrowseFacetQuerySchema = z.object({
   q: z.string().max(200).trim().optional(),
   limitPerField: z.coerce.number().int().min(1).max(50).default(25),
+  tagLevels: TagLevelsParamSchema,
 })
 export type BrowseFacetQuery = z.infer<typeof BrowseFacetQuerySchema>
 

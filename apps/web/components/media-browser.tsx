@@ -83,6 +83,7 @@ import {
   formatBrowseValue,
   filmIdentificationStatus,
   canonicalBrowseKey,
+  formatTagLevelsParam,
   sameBrowseFilter,
   type BrowseField,
   type BrowseFilter,
@@ -122,6 +123,7 @@ import {
 import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { FilterPanelSection } from './browse-filter-panel'
+import { TagLocationSection } from './tag-location-section'
 import {
   BrowsePlaceholderRow,
   BrowseSortHead,
@@ -162,6 +164,7 @@ import {
   orderColumns,
   orderFields,
   parseColumnOrder,
+  parseTagLevelsParam,
 } from '@/utils/browse-items'
 import { ColumnChoices } from './browse-items'
 import {
@@ -451,6 +454,12 @@ function MediaBrowse({
   const listeningSort =
     mediaType === 'album' ? listeningParams.listeningSort : undefined
   const listeningPeriod = listeningSort ?? defaultListeningPeriod
+  // Films have one level of tags.
+  const tagLevels =
+    mediaType === 'album'
+      ? parseTagLevelsParam(searchParams.get('tagLevels'))
+      : undefined
+  const tagLevelsParam = formatTagLevelsParam(tagLevels)
   const q = searchParams.get('q') ?? ''
   const includeArchived = searchParams.get('includeArchived') === 'true'
   // Editions are listed under their first album unless they are asked for as rows.
@@ -532,6 +541,7 @@ function MediaBrowse({
     listening,
     listeningSort: requestedListeningPeriod,
     ...(editions ? { editions } : {}),
+    ...(tagLevelsParam ? { tagLevels: tagLevelsParam } : {}),
     ...creator,
   })
   // A compact card is too narrow for tags or a value beside the year.
@@ -726,6 +736,7 @@ function MediaBrowse({
   if (includeArchived) params.set('includeArchived', 'true')
   if (editions) params.set('editions', 'true')
   if (limitResults) params.set('limitResults', limitResults)
+  if (tagLevelsParam) params.set('tagLevels', tagLevelsParam)
   if (listening) params.set('listening', JSON.stringify(listening))
   if (requestedListeningPeriod)
     params.set('listeningSort', JSON.stringify(requestedListeningPeriod))
@@ -768,7 +779,14 @@ function MediaBrowse({
     selectedItem?.mediaType === 'album'
       ? selectedItem.listeningScrobbles
       : undefined
-  const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    collection,
+    draft,
+    ready,
+    false,
+    tagLevels,
+  )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
     queryKey: [
@@ -1433,6 +1451,15 @@ function MediaBrowse({
                 </section>
               )}
               {mediaType === 'album' && (
+                <TagLocationSection
+                  library="album"
+                  value={tagLevels}
+                  onChange={(next) =>
+                    setParams({ tagLevels: formatTagLevelsParam(next) })
+                  }
+                />
+              )}
+              {mediaType === 'album' && (
                 <FilterPanelSection
                   title="Smart playlists"
                   icon={
@@ -1466,6 +1493,7 @@ function MediaBrowse({
                               listeningSort: view.listeningSort
                                 ? JSON.stringify(view.listeningSort)
                                 : null,
+                              tagLevels: formatTagLevelsParam(view.tagLevels),
                             })
                         }}
                       >

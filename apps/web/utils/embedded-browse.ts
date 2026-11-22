@@ -28,6 +28,7 @@ export const browseStateKeys: readonly string[] = [
   'fields',
   'filters',
   'ranges',
+  'tagLevels',
   'listening',
   'listeningSort',
   'playlistIds',

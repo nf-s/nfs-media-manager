@@ -52,6 +52,7 @@ import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import {
   BrowseRangesParamSchema,
   canonicalBrowseKey,
+  formatTagLevelsParam,
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
@@ -88,6 +89,7 @@ import {
   nextSortDirection,
   orderColumns,
   parseColumnOrder,
+  parseTagLevelsParam,
   sortedValueLabel,
 } from '@/utils/browse-items'
 import { playlistFilter } from '@/utils/playlist-links'
@@ -101,6 +103,7 @@ import {
   parseListeningParams,
 } from '@/utils/listening-filters'
 import { RangeEditor } from './browse-controls'
+import { TagLocationSection } from './tag-location-section'
 import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import {
   TrackBrowseAlbum,
@@ -280,6 +283,8 @@ function TrackBrowse({
     searchParams.get('ranges'),
   )
   const ranges = rangesResult.success ? rangesResult.data : []
+  const tagLevels = parseTagLevelsParam(searchParams.get('tagLevels'))
+  const tagLevelsParam = formatTagLevelsParam(tagLevels)
   const q = searchParams.get('q') ?? ''
   const sortBy = canonicalBrowseKey(searchParams.get('sortBy') ?? 'dateAdded')
   const direction = searchParams.get('direction') === 'asc' ? 'asc' : 'desc'
@@ -338,6 +343,7 @@ function TrackBrowse({
     listening,
     listeningSort: requestedListeningPeriod,
     ...(groupRecordings ? { groupRecordings } : {}),
+    ...(tagLevelsParam ? { tagLevels: tagLevelsParam } : {}),
     ...creator,
   })
   const scrollIdentity = `${collection}:${queryKey}:${view}`
@@ -484,6 +490,7 @@ function TrackBrowse({
     ...creator,
   })
   if (groupRecordings) params.set('groupRecordings', 'true')
+  if (tagLevelsParam) params.set('tagLevels', tagLevelsParam)
   if (listening) params.set('listening', JSON.stringify(listening))
   if (requestedListeningPeriod)
     params.set('listeningSort', JSON.stringify(requestedListeningPeriod))
@@ -914,6 +921,7 @@ function TrackBrowse({
               searchHref={(value) => browseSearchHref(browseHref, { q: value })}
               setParams={setParams}
               ready={ready}
+              tagLevels={tagLevels}
             />
           }
           sort={{
@@ -967,6 +975,13 @@ function TrackBrowse({
                   {filterPills}
                 </ActiveFiltersSection>
               )}
+              <TagLocationSection
+                library="track"
+                value={tagLevels}
+                onChange={(next) =>
+                  setParams({ tagLevels: formatTagLevelsParam(next) })
+                }
+              />
               <RangeEditor
                 presentation="panel"
                 fields={fields.filter((field) => field.filterable)}

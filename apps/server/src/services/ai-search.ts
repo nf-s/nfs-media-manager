@@ -135,6 +135,18 @@ ${listeningPeriods}
 - To sort by scrobble count always use sortBy:"listeningScrobbles" and listeningSort with the period (all for lifetime); never sort by scrobbles, scrobblesLast1y or scrobblesLast5y. To sort by most/least recent listen, use lastListenedAt. Otherwise listeningSort:null. Film plans MUST have listening:null and listeningSort:null. Do not use listeningScrobbles as a numeric range.`
 }
 
+// TTAG-27: where Tags (genre) filters read tags, on Tracks and Albums only.
+function tagLevelRule(
+  mediaType: AiMediaLibrary,
+  context?: AiSearchInput['context'],
+) {
+  if (mediaType === 'track' && context !== 'matches')
+    return `- tagLevels says where every genre filter reads tags. null is Auto, the default: a track's own tags, and its album's and artists' tags for tags tracks do not carry or when it has none. Set it only when the request names a level: ["track"] for tags on the track itself ('tagged house on the track itself'), ["album"] for its album's tags, ["artist"] for its artists' tags; several levels match a tag on any of them. trackTag, albumTag and artistTag filter one level each regardless of tagLevels.`
+  if (mediaType === 'album')
+    return `- tagLevels says where every genre filter reads tags. null is Auto, the default: the album's tags, and its artists' when it has fewer than two. Set it only when the request names a level: ["artist"] for albums by artists tagged with it ('albums by artists tagged jazz'), ["album"] for the album's own tags, ["track"] for albums with a track tagged with it; several levels match a tag on any of them.`
+  return '- tagLevels is always null.'
+}
+
 export function aiSearchStatus() {
   const available = aiAvailable()
   return {
@@ -168,8 +180,9 @@ Supported fields: ${JSON.stringify(fields)}.
 Rules:
 ${sharedRules}
 - Search only the current library (${mediaType}). If the request requires another library, unavailable data, recommendations from outside the library, unsupported boolean grouping, or actions, return plan:null and explain the limitation or ask one concise clarification question. Never silently drop a requested condition.
-- A plan replaces the current search. Include every required key; use q:"", filters:[], ranges:[], listening:null, listeningSort:null, limitResults:null${matches ? ', playability:"all"' : ''} when unused. Use ${matches ? 'title asc' : defaultSorts[mediaType]} by default.
+- A plan replaces the current search. Include every required key; use q:"", filters:[], ranges:[], listening:null, listeningSort:null, limitResults:null, tagLevels:null${matches ? ', playability:"all"' : ''} when unused. Use ${matches ? 'title asc' : defaultSorts[mediaType]} by default.
 - filters are exact, case-insensitive text matches. Genre/tag/keyword all use genre. Use canonical natural tag names without inventing matches or synonyms. All required filters are ANDed; all any filters form ONE OR group across fields; exclude means NOT. That OR group is ANDed with required, excluded, ranges and listening. Use required for 'rock and highly rated', any only for alternatives. Do not put a full natural-language sentence in q. q is a substring search for a residual title/name.
+${tagLevelRule(mediaType, context)}
 - ranges have inclusive min/max and includeMissing:false unless explicitly requested. Do not turn missing ratings into zero. All ranges are ANDed. Use each field only once. Date range values are UTC epoch milliseconds, with an end date at 23:59:59.999. Respect each rating's scale. 'High RYM score' defaults to at least 3.5 out of 5, explained as an assumption. Other vague ratings default to 70% of their scale, explained. 'Top/best' sorts that rating descending; only cap results if a count was requested.
 ${listeningRules(mediaType, context)}
 ${
@@ -273,6 +286,11 @@ export function validateAiPlan(
     if (!listening || !plan.listeningSort) invalidPlan()
   } else if (!fields.has(plan.sortBy) || plan.listeningSort) invalidPlan()
   if (!listening && plan.listening) invalidPlan()
+  if (
+    plan.tagLevels &&
+    !(mediaType === 'album' || (mediaType === 'track' && context !== 'matches'))
+  )
+    invalidPlan()
   // The track browser has no result limit, so a cap would be dropped.
   if (
     mediaType === 'track' &&

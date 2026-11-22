@@ -53,3 +53,36 @@ test('facet query identities separate libraries and encode literal search text',
   ])
   assert.equal(draft.length, 250)
 })
+
+test('a tag location is sent with the suggestions and keys them apart from Auto', async (t) => {
+  const requests: (RequestInfo | URL)[] = []
+  t.mock.method(globalThis, 'fetch', (input: RequestInfo | URL) => {
+    requests.push(input)
+    return new Promise<Response>(() => {})
+  })
+  const auto = browseFacetOptions('', 'tracks', 'house')
+  const located = browseFacetOptions('/backend', 'tracks', 'house', false, [
+    'track',
+    'album',
+  ])
+  assert.deepEqual(auto.queryKey, ['tracks', 'facets', 'house'])
+  assert.deepEqual(located.queryKey, [
+    'tracks',
+    'facets',
+    'house',
+    'track,album',
+  ])
+  const client = new QueryClient()
+  const observer = new QueryObserver(client, located)
+  const close = observer.subscribe(() => {})
+  try {
+    assert.equal(
+      requests[0],
+      '/backend/api/v1/tracks/facets?q=house&limitPerField=25&tagLevels=track%2Calbum',
+    )
+  } finally {
+    close()
+    observer.destroy()
+    client.clear()
+  }
+})

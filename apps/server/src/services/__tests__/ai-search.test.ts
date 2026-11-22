@@ -58,6 +58,7 @@ function plan(overrides: Partial<AiSearchPlan> = {}): AiSearchPlan {
     limitResults: null,
     listening: null,
     listeningSort: null,
+    tagLevels: null,
     ...overrides,
   }
 }
@@ -475,6 +476,37 @@ describe('AI track search', () => {
     expect(prompt).toContain('Track results cannot be capped')
     expect(prompt).toContain('"key":"albumLink"')
     expect(prompt).not.toContain('ratingRymValue')
+  })
+
+  it('describes tag locations and accepts them only on Tracks and Albums', () => {
+    expect(aiSearchPrompt('track', now)).toContain(
+      `["track"] for tags on the track itself ('tagged house on the track itself')`,
+    )
+    expect(aiSearchPrompt('album', now)).toContain(
+      `["artist"] for albums by artists tagged with it`,
+    )
+    expect(aiSearchPrompt('film', now)).toContain('tagLevels is always null')
+    const located = plan({
+      filters: [{ field: 'genre', value: 'house', mode: 'required' }],
+      tagLevels: ['track'],
+    })
+    expect(() => validateAiPlan(located, 'track')).not.toThrow()
+    expect(() =>
+      validateAiPlan({ ...located, tagLevels: ['artist'] }, 'album'),
+    ).not.toThrow()
+    expect(() => validateAiPlan(located, 'film')).toThrow()
+    expect(() => validateAiPlan(located, 'artist')).toThrow()
+    expect(() => validateAiPlan(located, 'track', 'matches')).toThrow()
+    // Only the location values of the URL parameter are accepted.
+    expect(() =>
+      parseAiInterpretation({
+        response: {
+          plan: { ...located, tagLevels: ['everywhere'] },
+          explanation: 'Tracks tagged house on the track.',
+          assumptions: [],
+        },
+      }),
+    ).toThrow()
   })
 
   it('accepts track filters and sorts by linked track scrobbles after a completed sync', async () => {
