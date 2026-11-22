@@ -115,6 +115,14 @@ async function manualProvider(
   return { plugin, secrets }
 }
 
+/** Throws a 422 when the provider is not loaded or lacks its credentials. */
+export async function assertProviderConfigured(
+  providerId: string,
+  action: string,
+) {
+  await manualProvider(providerId, action)
+}
+
 export async function prepareManualMediaSearch(mediaType: 'album' | 'film') {
   await manualProvider(
     mediaType === 'album' ? 'spotify' : 'tmdb',

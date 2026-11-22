@@ -9,6 +9,7 @@ import {
   SONOVAULT_DEFAULT_MONTHLY_CREDITS,
   SONOVAULT_MISS_RETRY_DAYS,
   SONOVAULT_REFRESH_MONTHS,
+  SONOVAULT_SIMILAR_LOOKUP_TASK,
   SONOVAULT_TRACK_LOOKUP_TASK,
   SonovaultReferenceMetadataSchema,
   SonovaultReferenceTypeSchema,
@@ -53,6 +54,7 @@ import {
   providerSecret,
   scrapeJob,
   sonovaultTrackLookup,
+  spotifyCodeLookup,
   trackFact,
 } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
@@ -234,15 +236,18 @@ export async function prepareSonovaultTrackLookup(
   }
 }
 
-/** The credits the latest lookup reported, this calendar month (UTC). */
-async function reportedCredits(database: Reader, now: Date) {
+/**
+ * The credits the latest Sonovault response reported, from a track lookup or
+ * a similar-track lookup (SONO-26), with whether it is this calendar month (UTC).
+ */
+export async function reportedSonovaultCredits(database: Reader, now: Date) {
   const [latest] = await database
     .select({ options: scrapeJob.options })
     .from(scrapeJob)
     .where(
       and(
         eq(scrapeJob.provider, PROVIDER),
-        sql`${scrapeJob.options}->>'task' = ${SONOVAULT_TRACK_LOOKUP_TASK}`,
+        sql`${scrapeJob.options}->>'task' in (${SONOVAULT_TRACK_LOOKUP_TASK}, ${SONOVAULT_SIMILAR_LOOKUP_TASK})`,
         sql`${scrapeJob.options} ? 'creditsReportedAt'`,
       ),
     )
@@ -268,7 +273,10 @@ type Lookup =
   | { kind: 'resolved'; payload: SonovaultBulkResolveResponse }
 
 /** The ID and time of the response this job stored for its bulk call. */
-async function storedResponse(tx: Transaction, jobId: string) {
+export async function storedSonovaultResponse(
+  tx: Pick<typeof db, 'select'>,
+  jobId: string,
+) {
   const [row] = await tx
     .select({
       id: providerResponse.id,
@@ -318,7 +326,7 @@ async function writeLookups(
     results: SonovaultResolveResult[]
   },
 ): Promise<Written> {
-  const response = await storedResponse(tx, input.jobId)
+  const response = await storedSonovaultResponse(tx, input.jobId)
   const fetchedAt = response.fetchedAt.toISOString()
   // Read again under the lock: another job may have changed the tracks.
   const current = new Map(
@@ -552,7 +560,7 @@ export async function runSonovaultTrackLookup(
       PROVIDER,
       async ({ secrets }, plugin) => {
         const settings = sonovaultSettings(secrets)
-        const report = await reportedCredits(db, now)
+        const report = await reportedSonovaultCredits(db, now)
         const remaining = report?.current
           ? report.remaining
           : settings.monthlyCredits
@@ -700,6 +708,17 @@ export async function queueSonovaultRefresh(
       ),
     )
     .orderBy(sonovaultTrackLookup.lookedUpAt, sonovaultTrackLookup.mediaItemId)
+  // A similar track's Spotify match from Sonovault (SONO-26) is removed
+  // rather than re-requested: the Similar tab looks it up again when it next
+  // reads that item's similar tracks.
+  await db
+    .delete(spotifyCodeLookup)
+    .where(
+      and(
+        eq(spotifyCodeLookup.source, PROVIDER),
+        sql`${spotifyCodeLookup.searchedAt} < ${refreshCutoff(new Date()).toISOString()}::timestamp`,
+      ),
+    )
   const result = { batchId, queued: 0, skipped: 0, warnings: [] as string[] }
   for (let start = 0; start < due.length; start += SONOVAULT_BULK_LIMIT) {
     const chunk = await queueSonovaultTrackLookups(
@@ -898,7 +917,7 @@ export async function getSonovaultSummary() {
     .select({ count: sql<number>`count(*)::int` })
     .from(providerResponse)
     .where(eq(providerResponse.provider, PROVIDER))
-  const report = await reportedCredits(db, now)
+  const report = await reportedSonovaultCredits(db, now)
   return SonovaultSummarySchema.parse({
     lookups: {
       matched: lookups?.matched ?? 0,
@@ -922,7 +941,8 @@ export async function getSonovaultSummary() {
 /**
  * SONO-10: removes everything stored from Sonovault in one transaction of
  * set-based statements: primary ISRCs it gave, its references, its lookups
- * and its stored responses. Jobs keep their counts and messages only.
+ * (with the Spotify matches it gave similar tracks, SONO-26) and its stored
+ * responses. Jobs keep their counts and messages only.
  */
 export async function removeSonovaultData() {
   return db.transaction(async (tx) => {
@@ -940,13 +960,17 @@ export async function removeSonovaultData() {
     const lookups = await tx
       .delete(sonovaultTrackLookup)
       .returning({ id: sonovaultTrackLookup.mediaItemId })
+    const similarLookups = await tx
+      .delete(spotifyCodeLookup)
+      .where(eq(spotifyCodeLookup.source, PROVIDER))
+      .returning({ code: spotifyCodeLookup.code })
     const responses = await tx
       .delete(providerResponse)
       .where(eq(providerResponse.provider, PROVIDER))
       .returning({ id: providerResponse.id })
     return SonovaultRemovalSchema.parse({
       references: references.length,
-      lookups: lookups.length,
+      lookups: lookups.length + similarLookups.length,
       primaryIsrcs: cleared.rowCount ?? 0,
       responses: responses.length,
       trackFacts,

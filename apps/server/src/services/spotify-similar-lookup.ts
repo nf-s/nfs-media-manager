@@ -4,6 +4,7 @@ import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   TIDAL_SIMILAR_LIMIT,
   TidalSimilarKindSchema,
+  type SpotifyCodeLookupSource,
   type SpotifyCodeMatch,
   type TidalSimilarKind,
 } from '@repo/schemas/tidal'
@@ -78,19 +79,28 @@ export async function prepareSpotifySimilarLookup(
   })
 }
 
-/** Stores one search's result, or its miss, with the time of the search. */
-async function storeLookup(input: {
+/**
+ * Stores one lookup's result, or a Spotify search's miss, with its time and
+ * who answered: a Spotify search, or Sonovault with the response it came
+ * from (SONO-26).
+ */
+export async function storeSpotifyCodeLookup(input: {
   kind: TidalSimilarKind
   key: string
   match: SpotifyCodeMatch | null
   jobId: string
+  sonovault?: { responseId: string; fetchedAt: Date }
 }) {
-  const searchedAt = new Date()
+  const source: SpotifyCodeLookupSource = input.sonovault
+    ? 'sonovault'
+    : 'spotify'
   const values = {
     spotifyId: input.match?.spotifyId ?? null,
     result: input.match,
+    source,
+    responseId: input.sonovault?.responseId ?? null,
     scrapeJobId: input.jobId,
-    searchedAt,
+    searchedAt: input.sonovault?.fetchedAt ?? new Date(),
   }
   await db
     .insert(spotifyCodeLookup)
@@ -164,7 +174,7 @@ export async function runSpotifySimilarLookup(
               : null
           }
           await context.assertActive()
-          await storeLookup({
+          await storeSpotifyCodeLookup({
             kind: options.kind,
             key,
             match,

@@ -23,6 +23,7 @@ import type {
   ArtistProviderId,
 } from '@repo/schemas/artist-profiles'
 import type { LibraryChangeDetails } from '@repo/schemas/library-changes'
+import type { SpotifyCodeLookupSource } from '@repo/schemas/tidal'
 export * from './auth'
 import { user } from './auth'
 import { normalizedTagSql } from '../lib/tag-sql'
@@ -899,7 +900,7 @@ export const scrapeJob = pgTable(
         table.id.desc(),
       )
       .where(
-        sql`${table.options}->>'task' in ('tidal-similar', 'spotify-similar-lookup')`,
+        sql`${table.options}->>'task' in ('tidal-similar', 'spotify-similar-lookup', 'sonovault-similar-lookup')`,
       ),
     index('scrape_job_artist_created_idx')
       .on(
@@ -1232,6 +1233,16 @@ export const spotifyCodeLookup = pgTable(
     code: text('code').notNull(),
     spotifyId: text('spotify_id'),
     result: jsonb('result').$type<Record<string, JsonValue>>(),
+    /**
+     * Who answered: a Spotify search, or Sonovault's bulk resolve (SONO-26),
+     * whose rows follow its terms and are removed with its data.
+     */
+    source: text('source')
+      .$type<SpotifyCodeLookupSource>()
+      .notNull()
+      .default('spotify'),
+    /** The stored Sonovault response a `sonovault` row was read from. */
+    responseId: text('response_id'),
     scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
       onDelete: 'set null',
     }),

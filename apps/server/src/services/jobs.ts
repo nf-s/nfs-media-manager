@@ -54,6 +54,7 @@ import {
   TidalTrackMatchParamsSchema,
 } from '@repo/schemas/tidal'
 import {
+  SONOVAULT_SIMILAR_LOOKUP_TASK,
   SONOVAULT_TRACK_LOOKUP_TASK,
   SonovaultTrackLookupParamsSchema,
 } from '@repo/schemas/sonovault'
@@ -184,6 +185,10 @@ import {
   prepareSonovaultTrackLookup,
   runSonovaultTrackLookup,
 } from '@/services/sonovault-track-lookup'
+import {
+  prepareSonovaultSimilarLookup,
+  runSonovaultSimilarLookup,
+} from '@/services/sonovault-similar-lookup'
 import {
   prepareSpotifySimilarLookup,
   runSpotifySimilarLookup,
@@ -1199,6 +1204,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    SONOVAULT_SIMILAR_LOOKUP_TASK,
+    {
+      provider: 'sonovault',
+      prepare: prepareSonovaultSimilarLookup,
+      run: runSonovaultSimilarLookup,
+    },
+  ],
+  [
     TIDAL_SIMILAR_TASK,
     {
       provider: 'tidal',
@@ -1316,7 +1329,8 @@ async function insertTaskJob(
         : null
   const similar =
     options.task === TIDAL_SIMILAR_TASK ||
-    options.task === SPOTIFY_SIMILAR_LOOKUP_TASK
+    options.task === SPOTIFY_SIMILAR_LOOKUP_TASK ||
+    options.task === SONOVAULT_SIMILAR_LOOKUP_TASK
       ? SimilarScopeSchema.parse(options)
       : null
   const scopeItem = similar
@@ -2204,6 +2218,7 @@ export async function jobSortField(query: JobListQuery) {
     when ${SONOVAULT_TRACK_LOOKUP_TASK} then concat('Sonovault lookup · ', jsonb_array_length(${table.options}->'trackIds'), ' tracks')
     when ${TIDAL_SIMILAR_TASK} then concat_ws(' · ', 'TIDAL similar', nullif(btrim(${table.options}->>'itemTitle'), ''))
     when ${SPOTIFY_SIMILAR_LOOKUP_TASK} then 'Spotify similar lookup'
+    when ${SONOVAULT_SIMILAR_LOOKUP_TASK} then 'Sonovault similar lookup'
     else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
       where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
   const result = query.mediaItemId

@@ -3,6 +3,11 @@ import { JobStatusSchema } from './job'
 
 /** The task that looks up to 100 library tracks on Sonovault in one request. */
 export const SONOVAULT_TRACK_LOOKUP_TASK = 'sonovault-track-lookup'
+/**
+ * Maps one library track's similar tracks from TIDAL to Spotify by ISRC
+ * through one bulk request (SONO-26).
+ */
+export const SONOVAULT_SIMILAR_LOOKUP_TASK = 'sonovault-similar-lookup'
 /** The bulk call takes at most this many input lines. */
 export const SONOVAULT_BULK_LIMIT = 100
 /** A lookup that found nothing is not repeated for this many days (SONO-09). */

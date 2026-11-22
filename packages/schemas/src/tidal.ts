@@ -250,6 +250,15 @@ export const SpotifyCodeMatchSchema = z.object({
 export type SpotifyCodeMatch = z.infer<typeof SpotifyCodeMatchSchema>
 
 /**
+ * Who answered a stored Spotify lookup: a Spotify `isrc:` or `upc:` search,
+ * or, for tracks, Sonovault's bulk resolve by ISRC (SONO-26).
+ */
+export const SpotifyCodeLookupSourceSchema = z.enum(['spotify', 'sonovault'])
+export type SpotifyCodeLookupSource = z.infer<
+  typeof SpotifyCodeLookupSourceSchema
+>
+
+/**
  * How a suggestion can be played: `library` opens the library item;
  * `spotify` plays it on Spotify; `none` was searched on Spotify and not
  * found; `unsearched` has not been searched on Spotify yet.

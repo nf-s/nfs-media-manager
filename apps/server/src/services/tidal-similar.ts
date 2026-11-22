@@ -16,6 +16,10 @@ import {
   type TidalSimilarKind,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
+import {
+  SONOVAULT_REFRESH_MONTHS,
+  SONOVAULT_SIMILAR_LOOKUP_TASK,
+} from '@repo/schemas/sonovault'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
@@ -48,11 +52,16 @@ import {
   type SimilarLibraryItem,
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
+import { similarTrackCheck } from './sonovault-similar-lookup'
 import { lookupTidalSimilar } from './tidal-similar-lookup'
 
 type Reader = Pick<typeof db, 'select' | 'execute'>
 
 const PROVIDER = 'tidal'
+type SimilarJobTask =
+  | typeof TIDAL_SIMILAR_TASK
+  | typeof SPOTIFY_SIMILAR_LOOKUP_TASK
+  | typeof SONOVAULT_SIMILAR_LOOKUP_TASK
 /** A Spotify search that found nothing is tried again after this long. */
 export const SPOTIFY_MISS_RETRY_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -171,9 +180,10 @@ async function spotifyLookups(
 }
 
 /**
- * The suggestions that still need a Spotify search: not in the library, with
- * a valid code, and never searched or missed longer ago than the retry
- * interval. At most one per code.
+ * The suggestions that still need a Spotify lookup: not in the library, with
+ * a valid code, and never looked up, missed longer ago than the retry
+ * interval, or mapped by Sonovault longer ago than its refresh interval
+ * (SONO-10). At most one per code.
  */
 export async function suggestionsNeedingSpotify(
   database: Reader,
@@ -183,8 +193,14 @@ export async function suggestionsNeedingSpotify(
 ) {
   const keyed = suggestions.flatMap((suggestion) => {
     const key = suggestion.code ? codeKey(kind, suggestion.code) : null
-    return key && suggestion.code ? [{ key, code: suggestion.code }] : []
+    return key && suggestion.code
+      ? [{ key, code: suggestion.code, suggestion }]
+      : []
   })
+  const refreshBefore = new Date(now)
+  refreshBefore.setUTCMonth(
+    refreshBefore.getUTCMonth() - SONOVAULT_REFRESH_MONTHS,
+  )
   const keys = [...new Set(keyed.map(({ key }) => key))]
   const [library, lookups] = await Promise.all([
     libraryItemsByCode(database, kind, keys),
@@ -198,20 +214,42 @@ export async function suggestionsNeedingSpotify(
     return (
       !lookup ||
       (lookup.spotifyId === null &&
-        now.getTime() - lookup.searchedAt.getTime() > SPOTIFY_MISS_RETRY_MS)
+        now.getTime() - lookup.searchedAt.getTime() > SPOTIFY_MISS_RETRY_MS) ||
+      (lookup.source === 'sonovault' && lookup.searchedAt < refreshBefore)
     )
   })
 }
 
+/**
+ * Queues the Spotify lookup of the suggestions that need one. Tracks go to
+ * Sonovault first, which queues a Spotify search for what it does not map
+ * (SONO-26); when Sonovault cannot take the job, and for albums, Spotify is
+ * searched directly.
+ */
 async function queueSpotifyLookup(
   userId: string | null,
   input: {
     kind: TidalSimilarKind
     itemId: string
-    codes: { code: string }[]
+    codes: { code: string; suggestion: TidalSuggestion }[]
   },
 ) {
   if (!input.codes.length) return null
+  const tracks =
+    input.kind === 'track'
+      ? input.codes.flatMap(
+          ({ suggestion }) => similarTrackCheck(suggestion) ?? [],
+        )
+      : []
+  if (tracks.length)
+    try {
+      await createTaskJob(SONOVAULT_SIMILAR_LOOKUP_TASK, userId, {
+        taskOptions: { kind: 'track', itemId: input.itemId, tracks },
+      })
+      return `Looking up ${tracks.length} on Spotify through Sonovault.`
+    } catch (error) {
+      if (!(error instanceof ServerError)) throw error
+    }
   try {
     await createTaskJob(SPOTIFY_SIMILAR_LOOKUP_TASK, userId, {
       taskOptions: {
@@ -346,10 +384,14 @@ const summarize = (job: JobRow | undefined): TidalSimilarJob | null =>
       }
     : null
 
-/** The latest job of a similar task for one item; the partial index's order. */
+/**
+ * The latest job of the item among the similar tasks, in the partial index's
+ * order. A track's Spotify lookup is either Sonovault's job or the Spotify
+ * search it queues (SONO-26).
+ */
 async function latestSimilarJob(
   database: Pick<typeof db, 'select'>,
-  task: typeof TIDAL_SIMILAR_TASK | typeof SPOTIFY_SIMILAR_LOOKUP_TASK,
+  tasks: readonly SimilarJobTask[],
   id: string,
 ) {
   const [job] = await database
@@ -357,7 +399,7 @@ async function latestSimilarJob(
     .from(scrapeJob)
     .where(
       and(
-        sql`${scrapeJob.options}->>'task' = ${sql.raw(`'${task}'`)}`,
+        sql`${scrapeJob.options}->>'task' in (${sql.raw(tasks.map((task) => `'${task}'`).join(', '))})`,
         sql`${scrapeJob.options}->>'itemId' = ${id}`,
       ),
     )
@@ -454,8 +496,12 @@ async function readTidalSimilar(
   if (!target) notFound(kind)
   const [matchJob, job, lookupJob, items] = await Promise.all([
     latestMatchJob(db, kind, id),
-    latestSimilarJob(db, TIDAL_SIMILAR_TASK, id),
-    latestSimilarJob(db, SPOTIFY_SIMILAR_LOOKUP_TASK, id),
+    latestSimilarJob(db, [TIDAL_SIMILAR_TASK], id),
+    latestSimilarJob(
+      db,
+      [SPOTIFY_SIMILAR_LOOKUP_TASK, SONOVAULT_SIMILAR_LOOKUP_TASK],
+      id,
+    ),
     mapSuggestions(db, kind, target.items),
   ])
   return TidalSimilarSchema.parse({
