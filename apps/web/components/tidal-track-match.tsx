@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
   queryOptions,
@@ -11,18 +10,20 @@ import {
 } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { z } from 'zod'
-import { EnrichmentResultSchema } from '@repo/schemas/job'
 import { AlbumDetailSchema } from '@repo/schemas/media'
 import {
+  TIDAL_TRACK_MATCH_REQUEST_LIMIT,
   TidalTrackMatchAcceptInputSchema,
   TidalTrackMatchInputSchema,
   TidalTrackMatchReviewSchema,
+  TidalTrackMatchRunSchema,
   TidalTrackMatchStatusInputSchema,
   TidalTrackMatchStatusSchema,
   type TidalTrackCandidate,
   type TidalTrackMatch,
   type TidalTrackMatchJob,
   type TidalTrackMatchReview,
+  type TidalTrackMatchRun,
 } from '@repo/schemas/tidal'
 import type { TrackDetail, TrackListItem } from '@repo/schemas/tracks'
 import { Section } from '@repo/ui/components/ds/facts'
@@ -42,9 +43,7 @@ import {
 import { fetchApiData } from '@/utils/api'
 import { providerLogoUrl } from '@/utils/provider-logos'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
-import { dispatchFilmSelection } from '@/utils/film-selection'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
-import { scopedHref } from '@/utils/media-scope'
 import { formatTrackDuration } from '@/utils/track-browse'
 import { ConfirmAction } from './confirm-action'
 import { useDetailView } from './detail-inspector-context'
@@ -150,28 +149,63 @@ export function useTidalTrackMatchStatusForPages(
   }
 }
 
-export function useQueueTidalTrackMatches() {
+/**
+ * Matches tracks on TIDAL in the request and stores each result with the
+ * track's TIDAL match.
+ */
+export function useMatchTidalTracks() {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   return useMutation({
     retry: false,
-    mutationFn: (trackIds: string[]) =>
-      fetchApiData(apiBaseUrl, tidalMatchPath, EnrichmentResultSchema, {
+    mutationFn: (input: { trackIds: string[]; batchId?: string }) =>
+      fetchApiData(apiBaseUrl, tidalMatchPath, TidalTrackMatchRunSchema, {
         method: 'POST',
         body: JSON.stringify(
           TidalTrackMatchInputSchema.parse({
-            trackIds,
-            confirmBroadRun: trackIds.length > 5,
+            ...input,
+            confirmBroadRun: input.trackIds.length > 5,
           }),
         ),
       }),
-    onSettled: () => invalidateSpotifySearchJobs(client),
+    onSuccess: (run) => {
+      for (const item of run.items)
+        client.setQueryData([...tidalMatchKey, item.trackId], item)
+    },
+    onSettled: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: tidalMatchKey }),
+        invalidateSpotifySearchJobs(client),
+      ]),
   })
 }
 
+type MatchTally = {
+  matched: number
+  review: number
+  unmatched: number
+  skipped: number
+  warnings: string[]
+}
+
+function tallyRun(tally: MatchTally, run: TidalTrackMatchRun): MatchTally {
+  const review = run.items.filter(
+    (item) => !item.match && needsTidalReview(item.job),
+  ).length
+  const matched = run.items.filter((item) => item.match).length
+  return {
+    matched: tally.matched + matched,
+    review: tally.review + review,
+    unmatched: tally.unmatched + run.items.length - matched - review,
+    skipped: tally.skipped + run.skipped,
+    warnings: [...new Set([...tally.warnings, ...run.warnings])],
+  }
+}
+
 /**
- * Queues TIDAL matches for a table's selection: its status for the selection
- * bar and the action that starts it.
+ * Matches a table's selection on TIDAL, a few tracks per request: its status
+ * for the selection bar and the action that starts it. A rate limit or error
+ * stops the rest of the selection, which stays selected.
  */
 export function useTidalTrackMatchSelection({
   onSelect,
@@ -180,70 +214,74 @@ export function useTidalTrackMatchSelection({
   onSelect: (ids: string[]) => void
   onPendingChange: (pending: boolean) => void
 }) {
-  const { apiBaseUrl } = useConfig()
-  const client = useQueryClient()
-  const [batchId, setBatchId] = useState('')
-  const [progress, setProgress] = useState(0)
-  const queue = useMutation({
+  const match = useMatchTidalTracks()
+  const [progress, setProgress] = useState({ done: 0, total: 0 })
+  const run = useMutation({
     retry: false,
-    mutationFn: (ids: string[]) => {
-      const batch = crypto.randomUUID()
-      setBatchId(batch)
-      return dispatchFilmSelection(
-        ids,
-        (chunk) =>
-          fetchApiData(apiBaseUrl, tidalMatchPath, EnrichmentResultSchema, {
-            method: 'POST',
-            body: JSON.stringify(
-              TidalTrackMatchInputSchema.parse({
-                trackIds: chunk,
-                batchId: batch,
-                confirmBroadRun: ids.length > 5,
-              }),
-            ),
-          }),
-        setProgress,
-      )
-    },
-    onMutate: () => {
-      setProgress(0)
-      onPendingChange(true)
-    },
-    onSuccess: (result, ids) => {
-      const completed = new Set(result.completed)
-      onSelect(ids.filter((id) => !completed.has(id)))
-    },
-    onSettled: async () => {
-      try {
-        await invalidateSpotifySearchJobs(client)
-      } finally {
-        onPendingChange(false)
+    mutationFn: async (selected: string[]) => {
+      const ids = [...new Set(selected)]
+      const batchId = crypto.randomUUID()
+      let tally: MatchTally = {
+        matched: 0,
+        review: 0,
+        unmatched: 0,
+        skipped: 0,
+        warnings: [],
       }
+      let done = 0
+      setProgress({ done, total: ids.length })
+      for (
+        let offset = 0;
+        offset < ids.length;
+        offset += TIDAL_TRACK_MATCH_REQUEST_LIMIT
+      ) {
+        const chunk = ids.slice(
+          offset,
+          offset + TIDAL_TRACK_MATCH_REQUEST_LIMIT,
+        )
+        try {
+          const result = await match.mutateAsync({ trackIds: chunk, batchId })
+          tally = tallyRun(tally, result)
+          done += chunk.length - result.notRun
+          setProgress({ done, total: ids.length })
+          if (result.notRun) break
+        } catch (error) {
+          if (!done) throw error
+          tally = {
+            ...tally,
+            warnings: [
+              ...tally.warnings,
+              errorMessage(error, 'Could not match the rest on TIDAL.'),
+            ],
+          }
+          break
+        }
+      }
+      return { ...tally, remaining: ids.slice(done) }
     },
+    onMutate: () => onPendingChange(true),
+    onSuccess: ({ remaining }) => onSelect(remaining),
+    onSettled: () => onPendingChange(false),
   })
-  const status = queue.isPending ? (
+  const status = run.isPending ? (
     <span role="status">
-      Queueing TIDAL matches · {formatCount(progress)} confirmed
+      Matching on TIDAL · {formatCount(progress.done)} of{' '}
+      {formatCount(progress.total)}
     </span>
-  ) : queue.isError ? (
+  ) : run.isError ? (
     <span role="alert">
-      {errorMessage(queue.error, 'Could not queue TIDAL matches.')}
+      {errorMessage(run.error, 'Could not match on TIDAL.')}
     </span>
-  ) : queue.data ? (
+  ) : run.data ? (
     <span role="status">
-      TIDAL: {formatCount(queue.data.queued)} queued ·{' '}
-      {formatCount(queue.data.skipped)} skipped.{' '}
-      {batchId && (queue.data.queued > 0 || queue.data.interrupted) && (
-        <Link
-          href={scopedHref(
-            `/jobs?batchId=${encodeURIComponent(batchId)}`,
-            'track',
-          )}
-        >
-          View TIDAL jobs
-        </Link>
-      )}
-      {queue.data.warnings.map((warning) => (
+      TIDAL: {formatCount(run.data.matched)} matched ·{' '}
+      {formatCount(run.data.review)} to review ·{' '}
+      {formatCount(run.data.unmatched)} not matched ·{' '}
+      {formatCount(run.data.skipped)} skipped
+      {run.data.remaining.length > 0 &&
+        ` · ${formatCount(run.data.remaining.length)} not started`}
+      .
+      {run.data.warnings.map((warning) => (
         <span key={warning} className="block">
           {warning}
         </span>
@@ -252,15 +290,15 @@ export function useTidalTrackMatchSelection({
   ) : null
   return {
     status,
-    pending: queue.isPending,
+    pending: run.isPending,
     action: (selectedIds: string[], disabled: boolean) => (
       <ConfirmAction
         confirm={selectedIds.length > 5}
         question={`Match ${formatItemCount(selectedIds.length, TRACKS)} on TIDAL?`}
-        details="Each track with an ISRC uses one TIDAL job. Tracks without an ISRC are skipped."
+        details="Each track with an ISRC is matched now with one TIDAL request, at most one every 1.5 seconds. Tracks without an ISRC are skipped."
         confirmLabel="Match on TIDAL"
-        disabled={disabled || queue.isPending || !selectedIds.length}
-        onConfirm={() => queue.mutate(selectedIds)}
+        disabled={disabled || run.isPending || !selectedIds.length}
+        onConfirm={() => run.mutate(selectedIds)}
       >
         Match on TIDAL
       </ConfirmAction>
@@ -593,7 +631,7 @@ export function TidalTrackMatchReviewDialog({
   const titleId = useId()
   const review = useTidalTrackMatch(track.id)
   const upcs = useLibraryAlbumUpcs(track.album?.id)
-  const queue = useQueueTidalTrackMatches()
+  const match = useMatchTidalTracks()
   useEffect(() => {
     const element = dialog.current
     const previous = document.activeElement
@@ -668,8 +706,8 @@ export function TidalTrackMatchReviewDialog({
                 !review.data.match && (
                   <Button
                     size="xs"
-                    disabled={queue.isPending}
-                    onClick={() => queue.mutate([track.id])}
+                    disabled={match.isPending}
+                    onClick={() => match.mutate({ trackIds: [track.id] })}
                   >
                     Match on TIDAL
                   </Button>
@@ -681,12 +719,9 @@ export function TidalTrackMatchReviewDialog({
                 review={review.data}
                 upcs={upcs}
               />
-              {queue.isError && (
+              {match.isError && (
                 <Notice tone="danger">
-                  {errorMessage(
-                    queue.error,
-                    'Could not queue the TIDAL match.',
-                  )}
+                  {errorMessage(match.error, 'Could not match on TIDAL.')}
                 </Notice>
               )}
             </Section>
@@ -707,7 +742,7 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
   sourceParams.set('sourceProvider', 'tidal')
   sourceParams.set('tab', 'sources')
   const review = useTidalTrackMatch(item.id)
-  const queue = useQueueTidalTrackMatches()
+  const match = useMatchTidalTracks()
   const upcs = useLibraryAlbumUpcs(open ? item.album?.id : null)
   const isrc = item.isrc ?? item.isrcs[0]?.isrc ?? null
   const track = { ...item, isrc }
@@ -744,7 +779,13 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
             </time>
           )
         }
-        state={job && <TidalTrackMatchJobStatus job={job} />}
+        state={
+          match.isPending ? (
+            <Status state="running">Matching</Status>
+          ) : (
+            job && <TidalTrackMatchJobStatus job={job} />
+          )
+        }
         actions={
           <>
             {reviewing && (
@@ -762,8 +803,8 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
               !isActiveTidalTrackMatch(job) && (
                 <Button
                   size="xs"
-                  disabled={queue.isPending || review.isPending}
-                  onClick={() => queue.mutate([item.id])}
+                  disabled={match.isPending || review.isPending}
+                  onClick={() => match.mutate({ trackIds: [item.id] })}
                 >
                   Match on TIDAL
                 </Button>
@@ -787,7 +828,7 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
           )}
         </SourceBlock>
       </SourceRow>
-      {(review.isError || queue.isError) && (
+      {(review.isError || match.isError) && (
         <Notice
           tone="danger"
           action={
@@ -800,7 +841,7 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
         >
           {review.isError
             ? 'Could not load the TIDAL match.'
-            : errorMessage(queue.error, 'Could not queue the TIDAL match.')}
+            : errorMessage(match.error, 'Could not match on TIDAL.')}
         </Notice>
       )}
     </>

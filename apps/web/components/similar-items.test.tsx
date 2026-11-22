@@ -104,13 +104,13 @@ function render(element: React.ReactNode, client = new QueryClient()) {
   }
 }
 
-const body = (values: Partial<TidalSimilar> = {}, queueFailed = false) =>
+const body = (values: Partial<TidalSimilar> = {}, requestFailed = false) =>
   render(
     <SimilarBody
       similar={similar(values)}
-      queueing={false}
-      queueFailed={queueFailed}
-      onQueue={() => assert.fail('Rendering must not queue')}
+      requesting={false}
+      requestFailed={requestFailed}
+      onRequest={() => assert.fail('Rendering must not request')}
     />,
   )
 
@@ -156,7 +156,7 @@ test('the tab says what TIDAL is doing and what is missing', () => {
     body({ job: job('queued'), readAt: null, items: [] }),
     /Reading from TIDAL/,
   )
-  // Matched and never read: Loading while the tab queues the read.
+  // Matched and never read: Loading while the tab reads it.
   assert.match(body({ job: null, readAt: null, items: [] }), /Reading from/)
   assert.match(
     body({ job: null, readAt: null, items: [] }, true),
@@ -186,8 +186,8 @@ test('the tab says what TIDAL is doing and what is missing', () => {
   const tracks = render(
     <SimilarBody
       similar={similar({ kind: 'track', items: [] })}
-      queueing={false}
-      onQueue={() => undefined}
+      requesting={false}
+      onRequest={() => undefined}
     />,
   )
   assert.match(tracks, /TIDAL has no similar tracks/)

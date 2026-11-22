@@ -136,9 +136,15 @@ export const TidalTrackMatchSchema = TidalTrackDataSchema.extend({
 export type TidalTrackMatch = z.infer<typeof TidalTrackMatchSchema>
 
 export const TidalTrackMatchParamsSchema = z.object({ trackId })
+/**
+ * Tracks matched in one request. Each match runs in the request, one TIDAL
+ * request at least 1.5 seconds after the last.
+ */
+export const TIDAL_TRACK_MATCH_REQUEST_LIMIT = 10
+
 export const TidalTrackMatchInputSchema = z
   .object({
-    trackIds: z.array(trackId).min(1).max(100),
+    trackIds: z.array(trackId).min(1).max(TIDAL_TRACK_MATCH_REQUEST_LIMIT),
     batchId: id.optional(),
     confirmBroadRun: z.boolean().default(false),
   })
@@ -185,6 +191,22 @@ export const TidalTrackMatchReviewSchema = z.object({
     .max(TIDAL_TRACK_CANDIDATE_LIMIT),
 })
 export type TidalTrackMatchReview = z.infer<typeof TidalTrackMatchReviewSchema>
+
+/**
+ * The matches run in one request, in the order asked. Tracks that were
+ * missing, had no ISRC or were already being matched are skipped. A cooldown
+ * or busy provider stops the rest, which the warnings say.
+ */
+export const TidalTrackMatchRunSchema = z.object({
+  batchId: z.string(),
+  items: z
+    .array(TidalTrackMatchReviewSchema)
+    .max(TIDAL_TRACK_MATCH_REQUEST_LIMIT),
+  skipped: z.number().int().nonnegative(),
+  notRun: z.number().int().nonnegative(),
+  warnings: z.array(z.string()),
+})
+export type TidalTrackMatchRun = z.infer<typeof TidalTrackMatchRunSchema>
 
 export const TidalTrackMatchStatusInputSchema = z
   .object({ trackIds: z.array(trackId).min(1).max(100) })

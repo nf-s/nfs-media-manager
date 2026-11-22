@@ -306,6 +306,9 @@ export async function runTidalSimilar(
         )
         const found = await lookupTidalSimilar(
           createProviderRequest(plugin, context.assertActive, {
+            ...(context.maxSlotWaitMs === undefined
+              ? {}
+              : { maxSlotWaitMs: context.maxSlotWaitMs }),
             beginResponseCapture: recorder('task'),
           }),
           token,
@@ -316,6 +319,7 @@ export async function runTidalSimilar(
       },
       context.assertActive,
       'reading similar items',
+      context.maxSlotWaitMs,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     const noun = options.kind === 'album' ? 'albums' : 'tracks'
@@ -539,10 +543,11 @@ async function albumHasSpotifyUpc(id: string) {
 }
 
 /**
- * Queues the TIDAL match of an item not yet matched on TIDAL, or else the
- * read of its similar items, and returns the Similar state.
+ * Matches an item not yet matched on TIDAL, or else reads its similar items,
+ * in this request through the request gate, and returns the Similar state.
+ * The Spotify lookup of the suggestions stays a queued job of its own.
  */
-export async function queueTidalSimilar(
+export async function refreshTidalSimilar(
   input: { kind: 'albums' | 'tracks'; id: string },
   userId: string | null,
 ): Promise<TidalSimilar> {

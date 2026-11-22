@@ -5,6 +5,8 @@ interface ServerErrorOptions {
   statusCode?: ContentfulStatusCode
   message?: string
   description?: string
+  /** The error this one reports, kept for callers that read its kind. */
+  cause?: unknown
 }
 
 export class ServerError extends Error {
@@ -14,7 +16,7 @@ export class ServerError extends Error {
   private description: string | null = null
 
   constructor(options: ServerErrorOptions) {
-    super(options.message)
+    super(options.message, { cause: options.cause })
     this.statusCode = options.statusCode || 500
     this.message = options.message || 'Something went wrong'
     this.data = options.data

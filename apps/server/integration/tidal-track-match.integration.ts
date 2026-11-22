@@ -15,6 +15,7 @@ import {
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { TIDAL_TRACK_MATCH_TASK } from '@repo/schemas/tidal'
 import { env } from '@/env'
+import { createStableId } from '@/lib/media-utils'
 import { clearTidalTokenCache } from '@/lib/tidal-api'
 import { tidalPlugin } from '@/plugins/builtin/tidal'
 import * as schema from '@/schemas/db'
@@ -46,7 +47,7 @@ vi.mock('@/lib/provider-secrets', () => ({
   }),
 }))
 
-import { getJob, processQueuedJobs } from '@/services/jobs'
+import { getJob, IN_REQUEST_SLOT_WAIT_MS } from '@/services/jobs'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
 import {
   ProviderTaskReplayStepsSchema,
@@ -58,7 +59,7 @@ import {
   acceptTidalTrackMatch,
   getTidalTrackMatch,
   listTidalTrackMatchStatuses,
-  queueTidalTrackMatches,
+  matchTidalTracks,
 } from '@/services/tidal-track-match'
 
 const userId = 'fixture-owner'
@@ -214,13 +215,20 @@ const tokenResponse = {
   token_type: 'Bearer',
 }
 
-function mockTidal() {
+/** Answers TIDAL requests offline; a request for `limitedIsrc` gets a 429. */
+function mockTidal(limitedIsrc?: string) {
   request.mockImplementation(async (input) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     if (url.href === 'https://auth.tidal.com/v1/oauth2/token')
       return Response.json(tokenResponse)
     if (url.pathname !== '/v2/tracks') throw new Error('Unexpected request')
-    const pages = documents.get(url.searchParams.get('filter[isrc]') ?? '')
+    const code = url.searchParams.get('filter[isrc]') ?? ''
+    if (code === limitedIsrc)
+      return Response.json(
+        { errors: [{ status: '429', detail: 'Too many requests' }] },
+        { status: 429, headers: { 'retry-after': '60' } },
+      )
+    const pages = documents.get(code)
     const page = url.searchParams.get('page[cursor]') ? 1 : 0
     const body = pages?.[page]
     if (!body) throw new Error('Unexpected request')
@@ -299,39 +307,26 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
-/** Runs queued TIDAL jobs, waiting out the request spacing between them. */
-async function runQueued() {
-  for (let round = 0; round < 20; round += 1) {
-    const [queued] = await databaseClient
-      .select({ id: schema.scrapeJob.id })
-      .from(schema.scrapeJob)
-      .where(eq(schema.scrapeJob.status, 'queued'))
-      .limit(1)
-    if (!queued) return
-    const [gate] = await databaseClient
-      .select({ nextAllowedAt: schema.providerRequestState.nextAllowedAt })
-      .from(schema.providerRequestState)
-      .where(eq(schema.providerRequestState.provider, 'tidal'))
-    const wait = (gate?.nextAllowedAt?.getTime() ?? 0) - Date.now()
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait + 50))
-    await processQueuedJobs()
-  }
-  throw new Error('Queued jobs did not finish')
-}
-
+/** Matches one track in the request and reads its record. */
 async function match(position: number) {
-  const result = await queueTidalTrackMatches(
+  const result = await matchTidalTracks(
     { trackIds: [trackId(position)] },
     userId,
   )
-  expect(result.queued).toBe(1)
-  await runQueued()
+  expect(result).toMatchObject({ skipped: 0, notRun: 0 })
   const review = await getTidalTrackMatch(trackId(position))
+  expect(result.items).toEqual([review])
   if (!review.job) throw new Error('Missing job')
   const job = await getJob(review.job.jobId)
   if (!job) throw new Error('Missing job')
   return { review, job }
 }
+
+const tidalJobs = () =>
+  databaseClient
+    .select({ id: schema.scrapeJob.id, status: schema.scrapeJob.status })
+    .from(schema.scrapeJob)
+    .where(eq(schema.scrapeJob.provider, 'tidal'))
 
 const references = (position: number, referenceType: string) =>
   databaseClient
@@ -346,7 +341,7 @@ const references = (position: number, referenceType: string) =>
     )
     .orderBy(asc(schema.providerReference.externalId))
 
-describe('TIDAL track match through the queue, with offline HTTP', () => {
+describe('TIDAL track match in the request, with offline HTTP', () => {
   it('matches the only track with the ISRC and keeps its responses', async () => {
     const { review, job } = await match(scenario.single)
     expect(job.status).toBe('succeeded')
@@ -567,11 +562,17 @@ describe('TIDAL track match through the queue, with offline HTTP', () => {
       ),
     ).toEqual(['900403'])
 
-    // A newer queued match blocks acceptance from the older one.
-    await queueTidalTrackMatches(
-      { trackIds: [trackId(scenario.ambiguous)] },
-      userId,
-    )
+    // A match running in another request blocks acceptance from this one.
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'running-match-fixture',
+      provider: 'tidal',
+      status: 'running',
+      scope: { mediaItemIds: [trackId(scenario.ambiguous)], limit: 1 },
+      options: {
+        task: TIDAL_TRACK_MATCH_TASK,
+        trackId: trackId(scenario.ambiguous),
+      },
+    })
     await expect(
       acceptTidalTrackMatch({
         trackId: trackId(scenario.ambiguous),
@@ -604,13 +605,156 @@ describe('TIDAL track match through the queue, with offline HTTP', () => {
       .set({ isrc: null })
       .where(eq(schema.libraryTrack.mediaItemId, trackId(scenario.single)))
     expect(
-      await queueTidalTrackMatches(
+      await matchTidalTracks(
         { trackIds: [trackId(scenario.single), 'missing-track'] },
         userId,
       ),
-    ).toMatchObject({ queued: 0, skipped: 2 })
+    ).toMatchObject({ items: [], skipped: 2, notRun: 0 })
     expect(request).not.toHaveBeenCalled()
   })
+
+  it('creates no queued job: the record is finished when the request returns', async () => {
+    const result = await matchTidalTracks(
+      { trackIds: [trackId(scenario.single), trackId(scenario.duration)] },
+      userId,
+    )
+    expect(result.items.map((item) => item.match?.tidalTrackId)).toEqual([
+      '900101',
+      '900302',
+    ])
+    expect(await tidalJobs()).toEqual([
+      expect.objectContaining({ status: 'succeeded' }),
+      expect.objectContaining({ status: 'succeeded' }),
+    ])
+    // Every TIDAL request, the token included, took a slot from the gate.
+    expect(
+      await databaseClient.select().from(schema.providerRequestEvent),
+    ).toHaveLength(request.mock.calls.length)
+    const events = await databaseClient
+      .select({ requestedAt: schema.providerRequestEvent.requestedAt })
+      .from(schema.providerRequestEvent)
+      .orderBy(asc(schema.providerRequestEvent.requestedAt))
+    for (const [index, event] of events.entries()) {
+      const previous = events[index - 1]
+      if (previous)
+        expect(
+          event.requestedAt.getTime() - previous.requestedAt.getTime(),
+        ).toBeGreaterThanOrEqual(tidalPlugin.manifest.rateLimit.minTimeMs)
+    }
+  }, 30_000)
+
+  it('runs a match queued before matching ran in the request', async () => {
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'queued-match-fixture',
+      provider: 'tidal',
+      status: 'queued',
+      scope: { mediaItemIds: [trackId(scenario.single)], limit: 1 },
+      options: {
+        task: TIDAL_TRACK_MATCH_TASK,
+        trackId: trackId(scenario.single),
+        isrc: isrc(scenario.single),
+        groupKey: createStableId(
+          TIDAL_TRACK_MATCH_TASK,
+          JSON.stringify([userId, trackId(scenario.single)]),
+        ),
+        trackTitle: 'Fixture 1',
+      },
+    })
+    const { job } = await match(scenario.single)
+    expect(job).toMatchObject({
+      id: 'queued-match-fixture',
+      status: 'succeeded',
+    })
+    expect(await tidalJobs()).toHaveLength(1)
+  }, 30_000)
+
+  it('refuses at a cooldown without a request or a record', async () => {
+    await databaseClient.insert(schema.providerRequestState).values({
+      provider: 'tidal',
+      cooldownUntil: new Date(Date.now() + 120_000),
+    })
+    await expect(
+      matchTidalTracks({ trackIds: [trackId(scenario.single)] }, userId),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 429,
+        message: expect.stringMatching(
+          /^TIDAL is rate limited\. Try again in 1[12]\d seconds\.$/,
+        ),
+      },
+    })
+    expect(request).not.toHaveBeenCalled()
+    expect(await tidalJobs()).toEqual([])
+  })
+
+  it('waits a bounded time for a busy slot, then refuses', async () => {
+    // Another request holds TIDAL's only slot for longer than a match waits.
+    await databaseClient.insert(schema.providerRequestState).values({
+      provider: 'tidal',
+      leaseId: 'other-request',
+      leaseUntil: new Date(Date.now() + 60_000),
+    })
+    const started = Date.now()
+    await expect(
+      matchTidalTracks({ trackIds: [trackId(scenario.single)] }, userId),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 429,
+        message: expect.stringMatching(/^TIDAL is rate limited\. Try again/),
+      },
+    })
+    const waited = Date.now() - started
+    expect(waited).toBeLessThan(IN_REQUEST_SLOT_WAIT_MS + 5000)
+    expect(request).not.toHaveBeenCalled()
+    // The record keeps the refusal; the gate's state is unchanged.
+    const [job] = await tidalJobs()
+    expect(job?.status).toBe('failed')
+    const [gate] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+      .where(eq(schema.providerRequestState.provider, 'tidal'))
+    expect(gate).toMatchObject({ failureCount: 0, cooldownUntil: null })
+  }, 30_000)
+
+  it('stops the rest of a batch when TIDAL answers 429', async () => {
+    const limited = isrc(scenario.duration)
+    mockTidal(limited)
+    const result = await matchTidalTracks(
+      {
+        trackIds: [
+          trackId(scenario.single),
+          trackId(scenario.duration),
+          trackId(scenario.albumUpc),
+        ],
+      },
+      userId,
+    )
+    expect(result.items.map((item) => item.trackId)).toEqual([
+      trackId(scenario.single),
+    ])
+    expect(result.notRun).toBe(2)
+    expect(result.warnings).toEqual([
+      expect.stringMatching(
+        /^TIDAL is rate limited\. Try again in \d+ seconds\.$/,
+      ),
+    ])
+    // The refused request is kept with its record like any other response.
+    const jobs = await tidalJobs()
+    const refused = jobs.find((job) => job.status === 'failed')
+    if (!refused) throw new Error('Missing refused record')
+    const responses = await readProviderResponseAttempt({
+      jobId: refused.id,
+      attempt: 1,
+    })
+    expect(responses.map(({ capture }) => capture.response.status)).toEqual([
+      429,
+    ])
+    const [gate] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+      .where(eq(schema.providerRequestState.provider, 'tidal'))
+    expect(gate?.cooldownUntil?.getTime()).toBeGreaterThan(Date.now())
+  }, 30_000)
 
   it('reports an album job reference as the current match, a track match first', async () => {
     const albumReference = (tidalTrackId: string, recordedAt: string) => ({

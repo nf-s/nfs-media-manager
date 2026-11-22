@@ -1,5 +1,4 @@
 import { createRoute } from '@hono/zod-openapi'
-import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   TidalSimilarParamsSchema,
   TidalSimilarSchema,
@@ -7,6 +6,7 @@ import {
   TidalTrackMatchInputSchema,
   TidalTrackMatchParamsSchema,
   TidalTrackMatchReviewSchema,
+  TidalTrackMatchRunSchema,
   TidalTrackMatchStatusInputSchema,
   TidalTrackMatchStatusSchema,
 } from '@repo/schemas/tidal'
@@ -26,9 +26,9 @@ import {
   acceptTidalTrackMatch,
   getTidalTrackMatch,
   listTidalTrackMatchStatuses,
-  queueTidalTrackMatches,
+  matchTidalTracks,
 } from '@/services/tidal-track-match'
-import { getTidalSimilar, queueTidalSimilar } from '@/services/tidal-similar'
+import { getTidalSimilar, refreshTidalSimilar } from '@/services/tidal-similar'
 
 const app = createOpenAPIApp()
 
@@ -47,22 +47,23 @@ app.openapi(
     },
     responses: {
       200: {
-        description: 'Queue one TIDAL ISRC match per eligible selected track',
+        description:
+          'Match each selected track with an ISRC on TIDAL in this request',
         content: {
           'application/json': {
-            schema: createResponseSchema(EnrichmentResultSchema),
+            schema: createResponseSchema(TidalTrackMatchRunSchema),
           },
         },
       },
       401: jsonErrorResponse('Unauthorized'),
       422: validationErrorResponse,
-      429: jsonErrorResponse('TIDAL is cooling down or halted'),
+      429: jsonErrorResponse('TIDAL is rate limited, busy or halted'),
     },
   }),
   async (c) =>
     generateJsonResponse(
       c,
-      await queueTidalTrackMatches(c.req.valid('json'), requireOwnerUser(c).id),
+      await matchTidalTracks(c.req.valid('json'), requireOwnerUser(c).id),
       200,
     ),
 )
@@ -213,7 +214,7 @@ app.openapi(
     responses: {
       200: {
         description:
-          'Queue the TIDAL match of an unmatched item, or else the read of its similar items',
+          'Match an unmatched item on TIDAL, or else read its similar items, in this request',
         content: {
           'application/json': {
             schema: createResponseSchema(TidalSimilarSchema),
@@ -222,14 +223,16 @@ app.openapi(
       },
       401: jsonErrorResponse('Unauthorized'),
       404: jsonErrorResponse('Album or track not found'),
-      409: jsonErrorResponse('The album has no UPC or the track no ISRC'),
-      429: jsonErrorResponse('TIDAL is cooling down or halted'),
+      409: jsonErrorResponse(
+        'The album has no UPC, the track no ISRC, or a match is running',
+      ),
+      429: jsonErrorResponse('TIDAL is rate limited, busy or halted'),
     },
   }),
   async (c) =>
     generateJsonResponse(
       c,
-      await queueTidalSimilar(c.req.valid('param'), requireOwnerUser(c).id),
+      await refreshTidalSimilar(c.req.valid('param'), requireOwnerUser(c).id),
       200,
     ),
 )

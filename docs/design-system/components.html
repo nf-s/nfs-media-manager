@@ -197,7 +197,7 @@
       const simStates = [
         [
           `<div class="ds-filterline">${status('running', 'Reading from TIDAL')}</div><div class="ds-list" data-compact>${D.skelRow().repeat(3)}</div>`,
-          'Loading: the TIDAL match or read is queued or running. While matching, the status reads Matching on TIDAL.',
+          'Loading: the TIDAL match or read is running. While matching, the status reads Matching on TIDAL.',
         ],
         [
           `<div class="ds-filterline">${status('running', 'Finding on Spotify')}</div>${simList(SIM_ALBUMS.slice(4, 7))}`,
@@ -209,7 +209,7 @@
             'Similar albums come from TIDAL.',
             btn('Match on TIDAL', { size: 'xs' }),
           ),
-          'Not matched: the button queues the TIDAL match. After a failed match, its error is the text.',
+          'Not matched: the button runs the TIDAL match. After a failed match, its error is the text.',
         ],
         [
           simBox(

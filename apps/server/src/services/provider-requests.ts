@@ -486,6 +486,22 @@ async function reserve(
   })
 }
 
+/**
+ * Other requests held the provider's slots for longer than the caller could
+ * wait. Nothing was sent, so it is not recorded as a provider failure.
+ */
+function slotWaitExpired(plugin: MediaProviderPlugin, waitMs: number) {
+  const retryAt =
+    Date.now() + Math.max(waitMs, plugin.manifest.rateLimit.minTimeMs)
+  return new ProviderRequestError(
+    `${plugin.manifest.displayName} is busy with other requests`,
+    'cooldown',
+    retryAt,
+    true,
+    { diagnostics: { source: 'local-cooldown' } },
+  )
+}
+
 function expiredReservation() {
   return new ProviderRequestError(
     'Provider request reservation expired before dispatch',
@@ -952,6 +968,11 @@ export function createProviderRequest(
     onRetry?: (retry: ProviderRequestRetry) => Promise<void>
     dispatchFetch?: ProviderFetch
     beginResponseCapture?: BeginProviderResponseCapture
+    /**
+     * How long a request waits for a slot before it is refused as busy. A
+     * caller in a browser request sets it; jobs wait for as long as it takes.
+     */
+    maxSlotWaitMs?: number
   } = {},
 ): MediaPluginTestContext['request'] {
   const dispatchFetch = configuration.dispatchFetch ?? fetchProvider
@@ -1009,7 +1030,14 @@ export function createProviderRequest(
       timeoutMs,
       transport !== null,
     )
+    const waitStartedAt = Date.now()
     while (reservation.kind === 'wait') {
+      const { maxSlotWaitMs } = configuration
+      if (
+        maxSlotWaitMs !== undefined &&
+        Date.now() + reservation.ms - waitStartedAt > maxSlotWaitMs
+      )
+        throw slotWaitExpired(plugin, reservation.ms)
       await delay(reservation.ms)
       await assertActive?.()
       init?.signal?.throwIfAborted()

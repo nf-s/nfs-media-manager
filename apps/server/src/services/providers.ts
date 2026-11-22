@@ -119,8 +119,11 @@ export async function listProviders(): Promise<ProviderSummary[]> {
           envVars: field.envVars ?? [],
         })),
         supportsTestConnection: !!plugin?.testConnection,
+        // Jobs of a provider that runs them in the request have no queue.
         supportsJobDispatchControl:
-          env.RUNTIME_KIND === 'cloudflare' && plugin !== null,
+          env.RUNTIME_KIND === 'cloudflare' &&
+          plugin !== null &&
+          !plugin.manifest.runsInRequest,
         supportsLocalWorker:
           env.RUNTIME_KIND === 'cloudflare' && !!plugin?.manifest.localWorker,
         maxItemsPerJob: provider.maxItemsPerJob,

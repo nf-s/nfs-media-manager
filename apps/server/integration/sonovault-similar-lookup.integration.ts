@@ -87,7 +87,7 @@ import {
 } from '@/services/sonovault-track-lookup'
 import {
   getTidalSimilar,
-  queueTidalSimilar,
+  refreshTidalSimilar,
   suggestionsNeedingSpotify,
 } from '@/services/tidal-similar'
 
@@ -368,7 +368,7 @@ async function jobsByTask(task: string) {
 
 describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
   it('maps verified records through one bulk call and leaves the rest to Spotify search', async () => {
-    await queueTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
 
     // The library track is not sent; one Sonovault request for the other
@@ -506,7 +506,7 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
   }, 30000)
 
   it('removes its matches with the rest of Sonovault data', async () => {
-    await queueTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
     const removal = await removeSonovaultData()
     expect(removal.lookups).toBe(1)
@@ -520,7 +520,7 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
 
   it('searches Spotify for every suggestion when Sonovault is not configured', async () => {
     delete sonovaultSecrets['apiKey']
-    await queueTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
     expect(requested()).toEqual(
       [2, 3, 4, 5].map((n) => `spotify isrc:${isrc(n)}`),
@@ -533,7 +533,7 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
 
   it('falls back to Spotify search when the credit reserve would be crossed', async () => {
     sonovaultSecrets['monthlyCredits'] = '2003'
-    await queueTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
     expect(requested()).toEqual(
       [2, 3, 4, 5].map((n) => `spotify isrc:${isrc(n)}`),

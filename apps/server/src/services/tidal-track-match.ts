@@ -5,7 +5,6 @@ import {
   ProviderItemNotFoundError,
   type JsonValue,
 } from '@repo/media-plugin-sdk'
-import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
   TIDAL_TRACK_CANDIDATE_LIMIT,
   TIDAL_TRACK_MATCH_TASK,
@@ -16,6 +15,7 @@ import {
   TidalTrackMatchParamsSchema,
   TidalTrackMatchReasonSchema,
   TidalTrackMatchReviewSchema,
+  TidalTrackMatchRunSchema,
   TidalTrackMatchSchema,
   TidalTrackMatchStatusInputSchema,
   TidalTrackMatchStatusSchema,
@@ -23,6 +23,7 @@ import {
   TidalTrackDataSchema,
   type TidalTrackCandidate,
   type TidalTrackMatchInput,
+  type TidalTrackMatchReview,
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -364,6 +365,9 @@ export async function runTidalTrackMatch(
         )
         const found = await lookupTidalTracksByIsrc(
           createProviderRequest(plugin, context.assertActive, {
+            ...(context.maxSlotWaitMs === undefined
+              ? {}
+              : { maxSlotWaitMs: context.maxSlotWaitMs }),
             beginResponseCapture: recorder('task'),
           }),
           token,
@@ -374,6 +378,7 @@ export async function runTidalTrackMatch(
       },
       context.assertActive,
       'matching tracks',
+      context.maxSlotWaitMs,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     const kept = candidates.slice(0, TIDAL_TRACK_CANDIDATE_LIMIT)
@@ -425,41 +430,53 @@ export async function runTidalTrackMatch(
   }
 }
 
-export async function queueTidalTrackMatches(
+/**
+ * Matches each track by ISRC in this request, one after another through the
+ * request gate, and returns each one's result. Missing tracks, tracks without
+ * an ISRC and tracks already being matched are skipped. A cooldown or busy
+ * provider refuses the request when nothing has run yet, and otherwise stops
+ * the rest. A later bulk run calls this per batch the same way.
+ */
+export async function matchTidalTracks(
   input: TidalTrackMatchInput,
   userId: string | null,
 ) {
   const { trackIds, batchId = nanoid() } =
     TidalTrackMatchInputSchema.parse(input)
   const unique = [...new Set(trackIds)]
-  let queued = 0
-  for (const trackId of unique) {
+  const items: TidalTrackMatchReview[] = []
+  const warnings: string[] = []
+  let skipped = 0
+  let notRun = 0
+  for (const [index, trackId] of unique.entries()) {
     try {
       await createTaskJob(TIDAL_TRACK_MATCH_TASK, userId, {
         taskOptions: { trackId, batchId },
         skipActive: true,
       })
-      queued += 1
+      items.push(await readTidalTrackMatch(db, trackId))
     } catch (error) {
-      if (
-        !(
-          error instanceof ServerError &&
-          [404, 409].includes(error.response.statusCode)
-        )
-      )
-        throw error
+      if (!(error instanceof ServerError)) throw error
+      const { statusCode, message } = error.response
+      if (statusCode === 429 && items.length) {
+        notRun = unique.length - index
+        warnings.push(message)
+        break
+      }
+      if (![404, 409].includes(statusCode)) throw error
+      skipped += 1
     }
   }
-  const skipped = trackIds.length - queued
-  return EnrichmentResultSchema.parse({
+  if (skipped)
+    warnings.unshift(
+      'Missing tracks, tracks without an ISRC and tracks already being matched were skipped.',
+    )
+  return TidalTrackMatchRunSchema.parse({
     batchId,
-    queued,
-    skipped,
-    warnings: skipped
-      ? [
-          'Missing tracks, tracks without an ISRC and queued tracks were skipped.',
-        ]
-      : [],
+    items,
+    skipped: skipped + trackIds.length - unique.length,
+    notRun,
+    warnings,
   })
 }
 

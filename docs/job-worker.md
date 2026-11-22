@@ -35,6 +35,12 @@ Every five minutes, between dispatches, the worker queues what the owner's sched
 
 Spotify track search runs once per explicitly selected recording. The worker rechecks Spotify coverage before making a request, observes the provider’s concurrency and cooldown settings, and saves the candidate list in the job. At completion it ranks compatible recordings using the stored release evidence, library matches, artist credits, track popularity and original result order. It links the first candidate that can receive the match, honoring manual source decisions. Saved searches use the same rules when replayed. A single-track search with user-entered text saves its candidates for explicit selection, including after retry. The job history records successful searches even when Spotify returned no tracks.
 
+## Jobs run in the request
+
+A provider whose manifest sets `runsInRequest` (TIDAL) has no queue. `createJob` and `createTaskJob` insert its job already `running`, so no dispatcher can claim it, and run it in the same request through the same code a dispatcher uses (`runClaimedJob`, then the task or album handler). The request returns the finished job; the job row is the run's record, and its requests and responses are stored on it like any job's. A job of that provider still `queued` from before is claimed and run in the request instead of creating a new one; one `running` in another request is returned as it is. No queue is woken and Providers shows no dispatch controls for it.
+
+Every request still goes through the provider's request gate (`createProviderRequest`), which queued jobs, local workers and other in-request calls share, so together they never exceed its concurrency and spacing, and a 429 cooldown stops them all. A job run in the request waits at most `IN_REQUEST_SLOT_WAIT_MS` (10 seconds) for a slot (`maxSlotWaitMs`); then nothing is sent, nothing is recorded as a provider failure, and the job fails. A cooldown or halt before the run refuses it without a job; a cooldown, busy slot or 429 during it finishes the job as failed. Both answer 429 with "<Provider> is rate limited. Try again in N seconds."
+
 ## Hosted queue recovery
 
 In the hosted runtime, queued jobs can wait while their provider's dispatcher is

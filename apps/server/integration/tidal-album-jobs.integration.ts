@@ -215,16 +215,9 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
+/** Matches the album in the request; the job returned is already finished. */
 async function runJob() {
-  const { createJob, processQueuedJobs, getJob } =
-    await import('@/services/jobs')
-  // The worker skips TIDAL until its request spacing has passed.
-  const [gate] = await databaseClient
-    .select({ nextAllowedAt: schema.providerRequestState.nextAllowedAt })
-    .from(schema.providerRequestState)
-    .where(eq(schema.providerRequestState.provider, 'tidal'))
-  const wait = (gate?.nextAllowedAt?.getTime() ?? 0) - Date.now()
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait + 50))
+  const { createJob, getJob } = await import('@/services/jobs')
   const job = await createJob(
     CreateJobSchema.parse({
       provider: 'tidal',
@@ -232,9 +225,10 @@ async function runJob() {
     }),
     null,
   )
-  await processQueuedJobs()
+  expect(['succeeded', 'failed']).toContain(job.status)
   const finished = await getJob(job.id)
   if (!finished) throw new Error('Missing job')
+  expect(finished.status).toBe(job.status)
   return finished
 }
 
@@ -271,7 +265,7 @@ const stable = (rows: Array<typeof schema.providerReference.$inferSelect>) =>
     ),
   }))
 
-describe('TIDAL album job through the queue, with offline HTTP', () => {
+describe('TIDAL album match in the request, with offline HTTP', () => {
   it('records track references and ISRCs on the aligned library tracks', async () => {
     const tracks = await albumTrackRows()
     const keptIsrcTrack = tracks[KEPT_ISRC - 1]?.trackMediaItemId

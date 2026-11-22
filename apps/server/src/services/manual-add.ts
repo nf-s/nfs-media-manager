@@ -143,9 +143,10 @@ export async function providerOperation<T>(
   ) => Promise<T>,
   assertActive?: () => Promise<void>,
   action = 'searching or adding items',
+  maxSlotWaitMs?: number,
 ): Promise<T> {
   const provider = await manualProvider(providerId, action)
-  return runProviderOperation(provider, execute, assertActive)
+  return runProviderOperation(provider, execute, assertActive, maxSlotWaitMs)
 }
 
 async function runProviderOperation<T>(
@@ -155,11 +156,18 @@ async function runProviderOperation<T>(
     plugin: MediaProviderPlugin,
   ) => Promise<T>,
   assertActive?: () => Promise<void>,
+  maxSlotWaitMs?: number,
 ): Promise<T> {
   try {
     await assertActive?.()
     const result = await execute(
-      { secrets, request: createProviderRequest(plugin, assertActive) },
+      {
+        secrets,
+        request:
+          maxSlotWaitMs === undefined
+            ? createProviderRequest(plugin, assertActive)
+            : createProviderRequest(plugin, assertActive, { maxSlotWaitMs }),
+      },
       plugin,
     )
     await assertActive?.()
@@ -179,6 +187,7 @@ async function runProviderOperation<T>(
         error instanceof ProviderRequestError
           ? error.message
           : `${plugin.manifest.displayName} request failed or returned invalid data. Review provider status before retrying.`,
+      cause: error,
     })
   }
 }

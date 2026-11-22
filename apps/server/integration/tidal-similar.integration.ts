@@ -65,7 +65,7 @@ import {
   ProviderTaskReplayStepsSchema,
   replayProviderTask,
 } from '@/services/provider-task-replay'
-import { getTidalSimilar, queueTidalSimilar } from '@/services/tidal-similar'
+import { getTidalSimilar, refreshTidalSimilar } from '@/services/tidal-similar'
 
 const userId = 'fixture-owner'
 const albumId = 'album-seed'
@@ -209,6 +209,12 @@ function mockProviders() {
       })
     if (url.hostname === 'accounts.spotify.com')
       return Response.json(spotifyTokenFixture)
+    // TIDAL has no album with the unmatched album's UPC.
+    if (
+      url.pathname === '/v2/albums' &&
+      url.searchParams.get('filter[barcodeId]') === '000000000066'
+    )
+      return Response.json({ data: [], links: { self: '/albums' } })
     if (url.pathname === '/v2/albums/800001/relationships/similarAlbums')
       return Response.json(similarAlbums)
     if (url.pathname === '/v2/tracks/800002/relationships/similarTracks')
@@ -316,7 +322,7 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 
-/** Runs queued jobs, waiting out each provider's request spacing. */
+/** Runs the queued Spotify and Sonovault lookups, waiting out each provider's spacing. */
 async function runQueued() {
   for (let round = 0; round < 20; round += 1) {
     const [queued] = await databaseClient
@@ -344,18 +350,21 @@ const searches = () =>
       : []
   })
 
-describe('TIDAL similar items through the queue, with offline HTTP', () => {
+describe('TIDAL similar items in the request, with offline HTTP', () => {
   it('reads similar albums, maps them to the library and Spotify, and keeps the responses', async () => {
-    const queued = await queueTidalSimilar(
+    const read = await refreshTidalSimilar(
       { kind: 'albums', id: albumId },
       userId,
     )
-    expect(queued).toMatchObject({
+    // The TIDAL read is done; only the Spotify lookup is queued.
+    expect(read).toMatchObject({
       kind: 'album',
       matched: true,
-      readAt: null,
-      job: { status: 'queued' },
+      readAt: expect.any(String),
+      job: { status: 'succeeded' },
+      lookupJob: { status: 'queued' },
     })
+    expect(read.items).toHaveLength(4)
     await runQueued()
     const result = await getTidalSimilar({ kind: 'albums', id: albumId })
     expect(result.job?.status).toBe('succeeded')
@@ -464,7 +473,7 @@ describe('TIDAL similar items through the queue, with offline HTTP', () => {
   }, 30000)
 
   it('chooses Spotify tracks by library, then the earliest release that is not a compilation', async () => {
-    await queueTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
     const result = await getTidalSimilar({ kind: 'tracks', id: trackId })
     expect(
@@ -510,7 +519,7 @@ describe('TIDAL similar items through the queue, with offline HTTP', () => {
 
     // A second read searches Spotify only for what it has not searched.
     request.mockClear()
-    await queueTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
     expect(searches()).toEqual([])
     const again = await getTidalSimilar({ kind: 'tracks', id: trackId })
@@ -524,7 +533,7 @@ describe('TIDAL similar items through the queue, with offline HTTP', () => {
 
   it('leaves suggestions unsearched when Spotify cannot search', async () => {
     spotifyMarket = undefined
-    await queueTidalSimilar({ kind: 'albums', id: albumId }, userId)
+    await refreshTidalSimilar({ kind: 'albums', id: albumId }, userId)
     await runQueued()
     const result = await getTidalSimilar({ kind: 'albums', id: albumId })
     expect(result.lookupJob).toBeNull()
@@ -545,17 +554,17 @@ describe('TIDAL similar items through the queue, with offline HTTP', () => {
     expect(searches()).toEqual([])
   }, 30000)
 
-  it('queues the TIDAL match for an item not matched yet', async () => {
-    const track = await queueTidalSimilar(
+  it('matches an item not matched yet in the request', async () => {
+    const track = await refreshTidalSimilar(
       { kind: 'tracks', id: 'track-unmatched' },
       userId,
     ).catch((error: unknown) => error)
-    // The track has no ISRC, so its match cannot be queued.
+    // The track has no ISRC, so it cannot be matched.
     expect(track).toMatchObject({
       response: { statusCode: 409 },
     })
     await expect(
-      queueTidalSimilar({ kind: 'albums', id: 'album-unmatched' }, userId),
+      refreshTidalSimilar({ kind: 'albums', id: 'album-unmatched' }, userId),
     ).rejects.toMatchObject({ response: { statusCode: 409 } })
 
     await databaseClient
@@ -563,16 +572,25 @@ describe('TIDAL similar items through the queue, with offline HTTP', () => {
       .values(
         reference('r5', 'album-unmatched', 'spotify', 'upc', '000000000066'),
       )
-    const album = await queueTidalSimilar(
+    const album = await refreshTidalSimilar(
       { kind: 'albums', id: 'album-unmatched' },
       userId,
     )
     expect(album).toMatchObject({
       matched: false,
-      matchJob: { status: 'queued' },
+      matchJob: {
+        status: 'failed',
+        errorMessage: expect.stringMatching(/no album with this UPC/),
+      },
       job: null,
       items: [],
     })
+    expect(
+      await databaseClient
+        .select({ status: schema.scrapeJob.status })
+        .from(schema.scrapeJob)
+        .where(eq(schema.scrapeJob.status, 'queued')),
+    ).toEqual([])
     await expect(
       getTidalSimilar({ kind: 'albums', id: trackId }),
     ).rejects.toMatchObject({ response: { statusCode: 404 } })

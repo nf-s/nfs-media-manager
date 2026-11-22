@@ -164,6 +164,7 @@ export const tidalPlugin: MediaProviderPlugin = {
     identifierTypes: ['album', 'upc'],
     requireExplicitSelection: true,
     maxItemsPerJob: 1,
+    runsInRequest: true,
     rateLimit: {
       maxConcurrent: 1,
       minTimeMs: 1500,

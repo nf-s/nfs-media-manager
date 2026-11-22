@@ -499,7 +499,7 @@ export function ProviderSources({
         } catch (error) {
           results.push({
             row,
-            error: errorMessage(error, 'Could not queue refresh.'),
+            error: errorMessage(error, 'Could not refresh.'),
           })
         }
       }
@@ -616,11 +616,22 @@ export function ProviderSources({
             <li key={row.id} role={error ? 'alert' : 'status'}>
               {row.label} ·{' '}
               {error ??
-                (job && (
-                  <DetailLink kind="job" id={job.id}>
-                    View refresh job
-                  </DetailLink>
-                ))}
+                (job &&
+                  (job.status === 'queued' || job.status === 'running' ? (
+                    <DetailLink kind="job" id={job.id}>
+                      View refresh job
+                    </DetailLink>
+                  ) : (
+                    <>
+                      {job.status === 'succeeded'
+                        ? 'Updated'
+                        : (job.errorMessage ?? 'Failed')}{' '}
+                      ·{' '}
+                      <DetailLink kind="job" id={job.id}>
+                        View job
+                      </DetailLink>
+                    </>
+                  )))}
             </li>
           ))}
         </ul>

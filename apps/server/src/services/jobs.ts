@@ -385,7 +385,59 @@ async function nextQueuedJob(
   })
 }
 
-type ProviderExecution = { failures: number; stopped: boolean }
+type ProviderExecution = {
+  failures: number
+  stopped: boolean
+  /** Set for a job run in the request: how long a request waits for a slot. */
+  maxSlotWaitMs?: number
+  /** When a job run in the request stopped at a cooldown or a busy slot. */
+  rateLimitedUntil?: number
+}
+
+/** A request run in the request waits at most this long for a slot. */
+export const IN_REQUEST_SLOT_WAIT_MS = 10000
+
+/** Notes a cooldown or busy slot that stopped a job run in the request. */
+function noteRateLimit(execution: ProviderExecution, error: unknown) {
+  if (execution.maxSlotWaitMs === undefined) return
+  let current: unknown = error
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    if (
+      current instanceof ProviderRequestError &&
+      (current.code === 'cooldown' || current.code === 'rate-limit')
+    ) {
+      execution.rateLimitedUntil = current.retryAt ?? Date.now()
+      return
+    }
+    current = current.cause
+  }
+}
+
+function rateLimitedInRequest(displayName: string, until: number) {
+  const seconds = Math.max(1, Math.ceil((until - Date.now()) / 1000))
+  return new ServerError({
+    statusCode: 429,
+    message: `${displayName} is rate limited. Try again in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`,
+  })
+}
+
+/** The 429 that refuses new work while the provider is halted or cooling down. */
+function providerSafetyRefusal(
+  plugin: MediaProviderPlugin | null,
+  safety: Awaited<ReturnType<typeof getProviderSafety>>,
+) {
+  if (!safety.halted && safety.cooldownUntil && plugin?.manifest.runsInRequest)
+    return rateLimitedInRequest(
+      plugin.manifest.displayName,
+      Date.parse(safety.cooldownUntil),
+    )
+  return new ServerError({
+    statusCode: 429,
+    message: safety.halted
+      ? 'Provider requests are halted after access denial'
+      : `Provider is cooling down until ${safety.cooldownUntil}`,
+  })
+}
 
 export interface QueuedJobExecution {
   canContinue(): Promise<boolean>
@@ -538,7 +590,16 @@ async function processJob(
     .where(and(eq(scrapeJob.id, nextJob.id), eq(scrapeJob.status, 'queued')))
     .returning({ id: scrapeJob.id })
   if (!claimed) return
+  await runClaimedJob(nextJob, plugin, execution, control)
+}
 
+/** Runs a job this process has set running. */
+async function runClaimedJob(
+  nextJob: NonNullable<Awaited<ReturnType<typeof nextQueuedJob>>>,
+  plugin: MediaProviderPlugin | null,
+  execution: ProviderExecution,
+  control?: QueuedJobExecution,
+): Promise<void> {
   const task = getJobTask(nextJob.options)
   if (task !== null) {
     await processTaskJob(nextJob, task, plugin, execution, control)
@@ -780,6 +841,9 @@ async function processJob(
       storageError = capture.storageError
       const requestFor = (artistId?: string) =>
         createProviderRequest(plugin, assertActive, {
+          ...(execution.maxSlotWaitMs === undefined
+            ? {}
+            : { maxSlotWaitMs: execution.maxSlotWaitMs }),
           beginResponseCapture: capture(
             artistId ? 'artist' : 'media',
             artistId,
@@ -993,6 +1057,7 @@ async function processJob(
           ? 'ambiguous'
           : null
       const stoppedBeforeRequest = error === stoppedError
+      noteRateLimit(execution, error)
       const handled = await withRunningJob(nextJob.id, async (tx) => {
         if (
           !classification &&
@@ -1142,6 +1207,11 @@ export type TaskJobResult = LastfmSyncJobResult & {
 export interface TaskJobContext extends LastfmSyncJobContext {
   jobId: string
   requestedByUserId: string | null
+  /**
+   * Set when the job runs in the request: the task passes it to
+   * `createProviderRequest` so a busy provider refuses instead of waiting.
+   */
+  maxSlotWaitMs?: number
   /** Records how far the job has read, in `options.progress`. */
   progress(progress: JobProgress): Promise<void>
 }
@@ -1358,6 +1428,7 @@ async function insertTaskJob(
   options: Record<string, JsonValue>,
   userId: string | null,
   message: string,
+  inRequest = false,
 ): Promise<string> {
   const jobId = nanoid()
   // Artist, subscription and mix tasks have no album or film media item scope.
@@ -1399,7 +1470,9 @@ async function insertTaskJob(
   await tx.insert(scrapeJob).values({
     id: jobId,
     provider,
-    status: 'queued',
+    // A job run in the request is never queued, so no dispatcher can take it.
+    status: inRequest ? 'running' : 'queued',
+    startedAt: inRequest ? new Date() : null,
     scope: {
       mediaItemIds: lookupTracks ?? (scopeItem ? [scopeItem.id] : []),
       mediaType: lookupTracks
@@ -1465,14 +1538,11 @@ export async function createTaskJob(
   const provider = taskProvider(definition, input)
   if (!provider)
     throw new ServerError({ statusCode: 422, message: 'Invalid task provider' })
+  const plugin = await getScrapePlugin(provider)
+  const inRequest = plugin?.manifest.runsInRequest === true
   const safety = await getProviderSafety(provider)
   if (safety.halted || safety.cooldownUntil)
-    throw new ServerError({
-      statusCode: 429,
-      message: safety.halted
-        ? 'Provider requests are halted after access denial'
-        : `Provider is cooling down until ${safety.cooldownUntil}`,
-    })
+    throw providerSafetyRefusal(plugin, safety)
   const prepared = await definition.prepare(userId, input)
   const trackSearch =
     task === SPOTIFY_TRACK_SEARCH_TASK
@@ -1548,7 +1618,11 @@ export async function createTaskJob(
         : sql`${scrapeJob.options}->>'task' = ${sql.raw(`'${ARTIST_ENRICHMENT_TASK}'`)}
             and ${scrapeJob.options}->>'artistId' = ${artistId}`
     const [active] = await tx
-      .select({ id: scrapeJob.id, options: scrapeJob.options })
+      .select({
+        id: scrapeJob.id,
+        status: scrapeJob.status,
+        options: scrapeJob.options,
+      })
       .from(scrapeJob)
       .where(
         and(
@@ -1558,6 +1632,9 @@ export async function createTaskJob(
         ),
       )
       .limit(1)
+    // A job queued before the provider ran in the request runs now instead.
+    if (inRequest && active?.status === 'queued' && !scheduling.retryOf)
+      return active.id
     // A search that finished before the active read has already updated freshness.
     if (trackSearch)
       await validateQueuedSpotifyTrackSearch(tx, {
@@ -1645,7 +1722,10 @@ export async function createTaskJob(
       provider,
       { task, ...taskOptions, ...(original ? { retryOf: original.id } : {}) },
       userId,
-      `Queued for ${provider}`,
+      inRequest
+        ? `Running for ${provider} in the request`
+        : `Queued for ${provider}`,
+      inRequest,
     )
     if (original)
       await linkCreatedJobRetry(
@@ -1658,12 +1738,50 @@ export async function createTaskJob(
     created = true
     return id
   })
+  if (inRequest && plugin) return runJobInRequest(jobId, plugin, created)
   if (!scheduling.scheduled) await resumeJobProvider(provider)
   else if (created) await wakeJobProvider(provider)
   const job = await getJobRecord(jobId)
   if (!job)
     throw new ServerError({ statusCode: 500, message: 'Failed to create job' })
   return job
+}
+
+/**
+ * Runs a job of a provider that runs in the request (`runsInRequest`) now,
+ * through the request gate, and returns it finished. A new job was inserted
+ * running; a job queued earlier is claimed first. A job running elsewhere is
+ * returned as it is. Refused with a 429 when a cooldown or busy slot stopped
+ * it; the finished job keeps the failure and any responses.
+ */
+async function runJobInRequest(
+  jobId: string,
+  plugin: MediaProviderPlugin,
+  created: boolean,
+): Promise<Job> {
+  const job = await db.query.scrapeJob.findFirst({
+    where: (table, operators) => operators.eq(table.id, jobId),
+    with: { items: true },
+  })
+  if (!job)
+    throw new ServerError({ statusCode: 500, message: 'Failed to create job' })
+  const execution: ProviderExecution = {
+    failures: 0,
+    stopped: false,
+    maxSlotWaitMs: IN_REQUEST_SLOT_WAIT_MS,
+  }
+  if (job.status === 'queued') await processJob(job, plugin, execution)
+  else if (created && job.status === 'running')
+    await runClaimedJob(job, plugin, execution)
+  if (execution.rateLimitedUntil !== undefined)
+    throw rateLimitedInRequest(
+      plugin.manifest.displayName,
+      execution.rateLimitedUntil,
+    )
+  const finished = await getJobRecord(jobId)
+  if (!finished)
+    throw new ServerError({ statusCode: 500, message: 'Failed to create job' })
+  return finished
 }
 
 async function processTaskJob(
@@ -1735,6 +1853,9 @@ async function processTaskJob(
     {
       jobId: nextJob.id,
       requestedByUserId: nextJob.requestedByUserId,
+      ...(execution.maxSlotWaitMs === undefined
+        ? {}
+        : { maxSlotWaitMs: execution.maxSlotWaitMs }),
       assertActive,
       isActive: async () => {
         try {
@@ -1778,6 +1899,7 @@ async function processTaskJob(
     metadata: Record<string, JsonValue> = {},
     classification?: TaskJobResult['failureClassification'],
   ) => {
+    noteRateLimit(execution, error)
     const providerSecrets = await db.query.providerSecret.findMany({
       where: (table, operators) =>
         operators.eq(table.provider, plugin.manifest.id),
@@ -1925,19 +2047,16 @@ export async function createJob(
         'This provider requires a smaller, explicitly selected set of media items',
     })
   }
+  const inRequest = plugin.manifest.runsInRequest === true
   const safety = await getProviderSafety(plugin.manifest.id)
   if (
     safety.halted ||
     (safety.cooldownUntil &&
-      (!scheduling.deferUntilReady ||
+      (inRequest ||
+        !scheduling.deferUntilReady ||
         safety.consecutiveFailures >= MAX_CONSECUTIVE_PROVIDER_FAILURES))
   )
-    throw new ServerError({
-      statusCode: 429,
-      message: safety.halted
-        ? 'Provider requests are halted after access denial'
-        : `Provider is cooling down until ${safety.cooldownUntil}`,
-    })
+    throw providerSafetyRefusal(plugin, safety)
 
   const jobId = nanoid()
   const selectedItems = (
@@ -2064,7 +2183,7 @@ export async function createJob(
       )
     }
     const active = await tx
-      .select({ id: scrapeJobItem.id })
+      .select({ jobId: scrapeJob.id, status: scrapeJob.status })
       .from(scrapeJobItem)
       .innerJoin(scrapeJob, eq(scrapeJob.id, scrapeJobItem.jobId))
       .where(
@@ -2076,6 +2195,10 @@ export async function createJob(
         ),
       )
       .limit(1)
+    // A job queued before the provider ran in the request runs now instead.
+    const [queued] = active
+    if (inRequest && !scheduling.retryOf && queued?.status === 'queued')
+      return queued.jobId
     if (active.length)
       throw new ServerError({
         statusCode: 409,
@@ -2085,7 +2208,9 @@ export async function createJob(
     await tx.insert(scrapeJob).values({
       id: jobId,
       provider: parsedInput.provider,
-      status: 'queued',
+      // A job run in the request is never queued, so no dispatcher can take it.
+      status: inRequest ? 'running' : 'queued',
+      startedAt: inRequest ? new Date() : null,
       scope: {
         ...parsedInput.scope,
         mediaItemIds,
@@ -2113,8 +2238,13 @@ export async function createJob(
     await logJob(
       jobId,
       'info',
-      `Queued ${mediaItemIds.length} item(s) for ${parsedInput.provider}`,
+      inRequest
+        ? `Running ${mediaItemIds.length} item(s) for ${parsedInput.provider} in the request`
+        : `Queued ${mediaItemIds.length} item(s) for ${parsedInput.provider}`,
     )
+
+  if (inRequest)
+    return runJobInRequest(queuedJobId, plugin, queuedJobId === jobId)
 
   await wakeJobProvider(parsedInput.provider)
 

@@ -74,8 +74,8 @@ export function useTidalSimilar(kind: TidalSimilarKind, id: string) {
   })
 }
 
-/** Queues the TIDAL match, or the read once the item is matched. */
-export function useQueueTidalSimilar(kind: TidalSimilarKind, id: string) {
+/** Matches the item on TIDAL, or reads it once matched, in the request. */
+export function useRefreshTidalSimilar(kind: TidalSimilarKind, id: string) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   return useMutation({
@@ -251,24 +251,29 @@ export function similarCounts(items: readonly TidalSimilarItem[]) {
 /** The tab's content for one loaded `TidalSimilar`. */
 export function SimilarBody({
   similar,
-  queueing,
-  queueFailed = false,
-  onQueue,
+  requesting,
+  requestFailed = false,
+  onRequest,
 }: {
   similar: TidalSimilar
-  queueing: boolean
-  /** Queueing failed: an unread item stops showing Loading. */
-  queueFailed?: boolean
-  onQueue: () => void
+  /** The match or read is running in a request. */
+  requesting: boolean
+  /** The request failed: an unread item stops showing Loading. */
+  requestFailed?: boolean
+  onRequest: () => void
 }) {
   const { kind, matched, matchJob, job, lookupJob, readAt, items } = similar
   const noun = plural[kind]
-  if (isActiveSimilarJob(matchJob))
+  if (isActiveSimilarJob(matchJob) || (requesting && !matched))
     return <SimilarLoading label="Matching on TIDAL" />
-  if (isActiveSimilarJob(job) || (matched && !job && !readAt && !queueFailed))
+  if (
+    isActiveSimilarJob(job) ||
+    (requesting && !items.length) ||
+    (matched && !job && !readAt && !requestFailed)
+  )
     return <SimilarLoading label="Reading from TIDAL" />
   const readAgain = (
-    <Button size="xs" disabled={queueing} onClick={onQueue}>
+    <Button size="xs" disabled={requesting} onClick={onRequest}>
       <RefreshCw className="ds-i" data-size="sm" aria-hidden />
       Read again
     </Button>
@@ -279,7 +284,7 @@ export function SimilarBody({
         size="sm"
         title="Not matched on TIDAL"
         action={
-          <Button size="xs" disabled={queueing} onClick={onQueue}>
+          <Button size="xs" disabled={requesting} onClick={onRequest}>
             Match on TIDAL
           </Button>
         }
@@ -319,7 +324,9 @@ export function SimilarBody({
         </Notice>
       )}
       <FilterLine>
-        {isActiveSimilarJob(lookupJob) ? (
+        {requesting ? (
+          <Status state="running">Reading from TIDAL</Status>
+        ) : isActiveSimilarJob(lookupJob) ? (
           <Status state="running">Finding on Spotify</Status>
         ) : (
           <ToolbarCount>{similarCounts(items)}</ToolbarCount>
@@ -330,8 +337,8 @@ export function SimilarBody({
           icon
           aria-label="Read again from TIDAL"
           title={`Read again from TIDAL · updated ${formatDate(readAt)}`}
-          disabled={queueing}
-          onClick={onQueue}
+          disabled={requesting}
+          onClick={onRequest}
         >
           <RefreshCw className="ds-i" data-size="sm" aria-hidden />
         </Button>
@@ -347,8 +354,8 @@ export function SimilarBody({
 
 /**
  * The Similar tab of an album or track: TIDAL's similar items, played
- * through Spotify. A matched item that was never read queues the read once
- * when the tab opens; the read itself runs in a job.
+ * through Spotify. A matched item that was never read is read once when the
+ * tab opens, in that request; the Spotify lookup of its suggestions is a job.
  */
 export function SimilarItems({
   kind,
@@ -358,11 +365,11 @@ export function SimilarItems({
   id: string
 }) {
   const similar = useTidalSimilar(kind, id)
-  const queue = useQueueTidalSimilar(kind, id)
+  const refresh = useRefreshTidalSimilar(kind, id)
   const requested = useRef(false)
   const data = similar.data
   const unread = Boolean(data?.matched && !data.job && !data.readAt)
-  const { mutate } = queue
+  const { mutate } = refresh
   useEffect(() => {
     if (!unread || requested.current) return
     requested.current = true
@@ -391,13 +398,13 @@ export function SimilarItems({
     <>
       <SimilarBody
         similar={data}
-        queueing={queue.isPending}
-        queueFailed={queue.isError}
-        onQueue={() => queue.mutate()}
+        requesting={refresh.isPending}
+        requestFailed={refresh.isError}
+        onRequest={() => refresh.mutate()}
       />
-      {queue.isError && (
+      {refresh.isError && (
         <Notice tone="danger">
-          {errorMessage(queue.error, 'Could not queue the TIDAL job.')}
+          {errorMessage(refresh.error, 'Could not reach TIDAL.')}
         </Notice>
       )}
     </>

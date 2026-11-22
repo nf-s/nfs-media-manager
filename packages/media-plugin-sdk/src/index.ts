@@ -369,6 +369,11 @@ export interface MediaPluginManifest {
   secrets: PluginSecretDescriptor[]
   maxItemsPerJob?: number
   requireExplicitSelection?: boolean
+  /**
+   * Jobs run in the request that creates them, through the request gate,
+   * instead of waiting for dispatch. Their job row is the run's record.
+   */
+  runsInRequest?: boolean
   identifierTypes?: string[]
   supportsNameLookup?: boolean
   albumReleaseHints?: boolean
@@ -577,6 +582,7 @@ export const MediaPluginManifestSchema = z
     secrets: z.array(PluginSecretDescriptorSchema),
     maxItemsPerJob: z.number().int().positive().optional(),
     requireExplicitSelection: z.boolean().optional(),
+    runsInRequest: z.boolean().optional(),
     identifierTypes: z.array(z.string().min(1)).optional(),
     supportsNameLookup: z.boolean().optional(),
     albumReleaseHints: z.boolean().optional(),

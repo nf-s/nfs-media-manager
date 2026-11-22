@@ -173,13 +173,17 @@ export default function MediaSources({
   ])
   // Sonovault has its own row, with its release lookup and match review.
   ids.delete('sonovault')
-  function queueRefresh(id: string) {
-    return fetchApiData(
+  async function queueRefresh(id: string) {
+    const job = await fetchApiData(
       apiBaseUrl,
       `/api/v1/media/${encodeURIComponent(item.id)}/rescrape`,
       JobSchema,
       { method: 'POST', body: JSON.stringify({ provider: id }) },
     )
+    // A provider that runs its jobs in the request returns the job finished.
+    if (job.status !== 'queued' && job.status !== 'running')
+      await client.invalidateQueries({ queryKey: [item.mediaType, item.id] })
+    return job
   }
   const rows = [...ids].map<ProviderSourceRow>((id) => {
     const provider = supported.find((provider) => provider.id === id)
