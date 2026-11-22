@@ -76,6 +76,8 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Release order tests
+        run: bash .github/scripts/release-order.test.sh
       - name: Design system style check and table audit
         run: pnpm --filter @repo/ui check:design
       - name: Build shared packages

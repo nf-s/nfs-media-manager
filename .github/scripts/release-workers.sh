@@ -140,6 +140,59 @@ served_tags() {
     done
 }
 
+not_published() {
+  local line="Not published: $1"
+  printf '%s\n' "$line"
+  if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+    printf '%s\n\n' "$line" >> "$GITHUB_STEP_SUMMARY"
+  fi
+}
+
+# Allows publishing when no Worker serves a commit newer than this one. Publish
+# jobs run one at a time but not always in commit order, so the commit is
+# compared with what production serves, not with the tip of main.
+check_order() {
+  require_workers_access
+  local on_main package label served live newer='' unordered=''
+  on_main="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" --jq '.status' 2>/dev/null)" ||
+    fail 'Could not compare this commit with main. Nothing was published.'
+  if [[ "$on_main" != identical && "$on_main" != ahead ]]; then
+    not_published "${GITHUB_SHA:0:7} is no longer part of main."
+    return
+  fi
+
+  for package in @repo/server web; do
+    [[ "$package" == web ]] && label=web || label=API
+    served="$(served_tags "$package")" ||
+      fail "Could not read the commit the $label Worker serves. Nothing was published."
+    if [[ "$served" =~ ^([a-f0-9]{40})\ 100$ ]] &&
+        git cat-file -e "${BASH_REMATCH[1]}^{commit}" 2>/dev/null; then
+      live="${BASH_REMATCH[1]}"
+      if [[ "$live" == "$GITHUB_SHA" ]] || git merge-base --is-ancestor "$live" "$GITHUB_SHA"; then
+        continue
+      fi
+      if git merge-base --is-ancestor "$GITHUB_SHA" "$live"; then
+        newer="${newer:+$newer, }$label ${live:0:7}"
+        continue
+      fi
+    fi
+    unordered="${unordered:+$unordered and }$label"
+  done
+
+  if [[ -n "$newer" ]]; then
+    not_published "production already serves a newer commit that contains ${GITHUB_SHA:0:7} ($newer)."
+    return
+  fi
+  # With no order to go by, keep the earlier rule: only the tip of main publishes.
+  if [[ -n "$unordered" && "$on_main" != identical ]]; then
+    printf '::warning::Production does not serve a single commit that %s descends from (%s), so only the tip of main may publish.\n' "${GITHUB_SHA:0:7}" "$unordered"
+    not_published "the release order could not be decided and main has moved on from ${GITHUB_SHA:0:7}."
+    return
+  fi
+  printf 'publish=true\n' >> "$GITHUB_OUTPUT"
+  printf 'Production serves nothing newer than %s.\n' "${GITHUB_SHA:0:7}"
+}
+
 check_migrations() {
   require_workers_access
   if [[ -n ${MIGRATION_CHECK_DATABASE_URL:-} ]]; then
@@ -221,9 +274,10 @@ publish() {
 
 case "${1:-}" in
   build) build ;;
+  order) check_order ;;
   publish) publish ;;
   migrations) check_migrations ;;
   browse) check_browse ;;
   served) report_served ;;
-  *) fail 'Specify build, migrations, publish, browse or served.' ;;
+  *) fail 'Specify build, order, migrations, publish, browse or served.' ;;
 esac

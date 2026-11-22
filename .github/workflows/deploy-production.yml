@@ -39,6 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: production
+    # One publish at a time, each waiting its turn. Turns are not always in
+    # commit order, so the order steps decide whether this commit may publish.
     concurrency:
       group: production-workers
       cancel-in-progress: false
@@ -62,7 +64,16 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check release order before building
+        id: order
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_APP_URL: ${{ secrets.CLOUDFLARE_APP_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash .github/scripts/release-workers.sh order
       - name: Fetch pinned provider source
+        if: steps.order.outputs.publish == 'true'
         env:
           PROVIDER_ONE_REPOSITORY: ${{ secrets.PROVIDER_ONE_REPOSITORY }}
           PROVIDER_TWO_REPOSITORY: ${{ secrets.PROVIDER_TWO_REPOSITORY }}
@@ -72,27 +83,25 @@ jobs:
           PROVIDER_TWO_DEPLOY_KEY: ${{ secrets.PROVIDER_TWO_DEPLOY_KEY }}
         run: bash .github/scripts/checkout-providers.sh
       - name: Build Worker bundles
+        if: steps.order.outputs.publish == 'true'
         env:
           PROVIDER_ONE_ENTRYPOINT: ${{ secrets.PROVIDER_ONE_ENTRYPOINT }}
           PROVIDER_TWO_ENTRYPOINT: ${{ secrets.PROVIDER_TWO_ENTRYPOINT }}
           CLOUDFLARE_APP_URL: ${{ secrets.CLOUDFLARE_APP_URL }}
         run: bash .github/scripts/release-workers.sh build
-      - name: Check main tip before publishing
-        id: main
+      # Checked again because production can change during the build when
+      # something other than this job publishes.
+      - name: Check release order before publishing
+        id: release
+        if: steps.order.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha' 2>/dev/null)"; then
-            echo "::error::Could not verify the current main revision."
-            exit 1
-          fi
-          if [[ "$current" == "$GITHUB_SHA" ]]; then
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Skipped publishing because main advanced."
-          fi
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_APP_URL: ${{ secrets.CLOUDFLARE_APP_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bash .github/scripts/release-workers.sh order
       - name: Check production has this commit's migrations
-        if: steps.main.outputs.current == 'true'
+        if: steps.release.outputs.publish == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_APP_URL: ${{ secrets.CLOUDFLARE_APP_URL }}
@@ -101,14 +110,14 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
         run: bash .github/scripts/release-workers.sh migrations
       - name: Publish API and web Workers and verify the release
-        if: steps.main.outputs.current == 'true'
+        if: steps.release.outputs.publish == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_APP_URL: ${{ secrets.CLOUDFLARE_APP_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bash .github/scripts/release-workers.sh publish
       - name: Signed-in Browse check
-        if: steps.main.outputs.current == 'true'
+        if: steps.release.outputs.publish == 'true'
         env:
           CLOUDFLARE_APP_URL: ${{ secrets.CLOUDFLARE_APP_URL }}
           BROWSE_CHECK_SESSION_TOKEN: ${{ secrets.BROWSE_CHECK_SESSION_TOKEN }}

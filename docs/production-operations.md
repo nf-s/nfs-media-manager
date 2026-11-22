@@ -20,7 +20,16 @@ Each push to `main` can deploy from GitHub-hosted Actions after Checks and both 
 
 Each provider must commit an npm lockfile. The runner installs its locked production dependencies with lifecycle scripts disabled, after the SSH credentials have been removed. The entrypoints are bundled into the API Worker in slot order and can import the shared workspace SDK. The provider checkouts, credentials and raw provider build output stay on the ephemeral runner. Update the corresponding pinned revision in the production environment when releasing provider changes. Review private source and its transitive dependencies before changing the pin.
 
-The workflow builds and dry-runs both Worker bundles and boots the packaged API Worker locally before publishing. Only one production job runs at a time, and the job checks the current `main` revision before changing production. It deploys and verifies the API Worker first, then deploys and verifies the web Worker. It confirms that both deployments serve the version tagged with the release commit and checks the login page, API health endpoint and anonymous access to a protected endpoint. Wrangler preserves production dashboard variables with `--keep-vars`. Cloudflare holds the production runtime credentials and settings.
+The workflow builds and dry-runs both Worker bundles and boots the packaged API Worker locally before publishing. It deploys and verifies the API Worker first, then deploys and verifies the web Worker. It confirms that both deployments serve the version tagged with the release commit and checks the login page, API health endpoint and anonymous access to a protected endpoint. Wrangler preserves production dashboard variables with `--keep-vars`. Cloudflare holds the production runtime credentials and settings.
+
+Production jobs run one at a time and each waits its turn (up to 100 can wait), so a commit whose checks passed is published even when `main` has moved on since. Turns are not always in commit order. Before building, and again before publishing, the job compares its commit with the commit each Worker serves, which is the tag on the served version:
+
+- It publishes when neither Worker serves a newer commit. This includes a re-run for the commit already served, for example after changing a provider pin.
+- It ends without publishing when either Worker serves a newer commit, because that release already contains this one.
+- When a Worker serves something the job cannot place before its own commit (a version without a commit tag, a commit from another branch, or traffic split between versions), only the tip of `main` publishes.
+- A commit that is no longer part of `main` is never published.
+
+A job that does not publish says why in its log and summary. `.github/scripts/release-order.test.sh` tests these rules against a throwaway Git history and runs with the unit tests.
 
 The release does not run database migrations. Apply them separately before releasing code that depends on them. Before publishing, the job checks migrations:
 
@@ -53,7 +62,7 @@ It loads the workspace `.env` and `.env.local` the usual way, then reads each `-
 
 The output has these sections:
 
-- **Workers**: for the API and web Workers, the deployment time and each served version's commit tag and traffic share. When the commit is in the checkout, it also shows the commit subject and how many commits it is behind `--ref`. A release run can succeed without publishing when `main` moved on during the build, so this, not the run status, says what is live.
+- **Workers**: for the API and web Workers, the deployment time and each served version's commit tag and traffic share. When the commit is in the checkout, it also shows the commit subject and how many commits it is behind `--ref`. A release run can succeed without publishing when production already serves a newer commit, so this, not the run status, says what is live.
 - **Jobs**: queued, running and failed `scrape_job` counts by provider and task, the oldest queued and longest running age per type, the oldest queued job's id, and the ids of the five latest failed jobs. Use those ids to find a failed job's saved request, response and snapshot.
 - **Paused or blocked providers**: providers whose requests are halted after an access denial or are cooling down. The dispatcher's own pause switch is held by the API Worker's coordinator and is not read; the app's queue controls show it.
 - **Syncs**: subscription and Last.fm sync states with their counts.
