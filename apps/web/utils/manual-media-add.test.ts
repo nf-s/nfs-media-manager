@@ -89,39 +89,41 @@ test('an existing library result is reused without an add request', async () => 
   }
 })
 
-test('a selected result adds only its provider identity and retains the returned album', async () => {
-  const request = mock.method(
-    globalThis,
-    'fetch',
-    async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      assert.equal(url, 'http://localhost/api/v1/manual-add/add')
-      assert.equal(init?.method, 'POST')
-      assert.equal(
-        init?.body,
-        JSON.stringify({ mediaType: 'album', externalId: item.externalId }),
-      )
-      return Response.json({
-        statusCode: 200,
-        message: 'OK',
-        data: { mediaItemId: 'created-album', created: true },
-      })
-    },
-  )
-  try {
-    const id = await addManualMediaItem('http://localhost', 'album', item)
-    assert.equal(id, 'created-album')
-    assert.equal(
-      await addManualMediaItem('http://localhost', 'album', {
-        ...item,
-        mediaItemId: id,
-      }),
-      id,
+for (const mediaType of ['album', 'track'] satisfies ('album' | 'track')[]) {
+  test(`a selected ${mediaType} adds only its provider identity and reuses its library ID`, async () => {
+    const request = mock.method(
+      globalThis,
+      'fetch',
+      async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        assert.equal(url, 'http://localhost/api/v1/manual-add/add')
+        assert.equal(init?.method, 'POST')
+        assert.equal(
+          init?.body,
+          JSON.stringify({ mediaType, externalId: item.externalId }),
+        )
+        return Response.json({
+          statusCode: 200,
+          message: 'OK',
+          data: { mediaItemId: `created-${mediaType}`, created: true },
+        })
+      },
     )
-    assert.equal(request.mock.callCount(), 1)
-  } finally {
-    request.mock.restore()
-  }
-})
+    try {
+      const id = await addManualMediaItem('http://localhost', mediaType, item)
+      assert.equal(id, `created-${mediaType}`)
+      assert.equal(
+        await addManualMediaItem('http://localhost', mediaType, {
+          ...item,
+          mediaItemId: id,
+        }),
+        id,
+      )
+      assert.equal(request.mock.callCount(), 1)
+    } finally {
+      request.mock.restore()
+    }
+  })
+}
 
 test('failed additions propagate once and do not retry provider requests', async () => {
   const request = mock.method(globalThis, 'fetch', async () =>

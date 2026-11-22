@@ -8,6 +8,10 @@ The library selector has **Albums**, **Tracks**, **Films** and **Subscriptions**
 
 The app can [add a library album](#adding-an-album-to-a-playlist) or [one track](#adding-a-track-to-a-playlist) to a Spotify playlist when the owner asks. It never creates, renames, follows, reorders or removes from a Spotify playlist and never changes Liked Songs. There is no per-track metadata scrape, genre lookup or audio-feature collection.
 
+## Adding a track
+
+In **Tracks → Browse**, choose **Add track**, search Spotify by track or artist, then choose **Add** beside the recording you want. The track opens in your library. Results already in the library show **Open**. A track added this way has **Spotify track search** as a source. Search uses the market set in **Providers → Spotify** or the market of your connected Spotify account.
+
 ## Connecting
 
 Playlists need a connected Spotify account with the `playlist-read-private` and `playlist-read-collaborative` permissions, as well as `user-library-read` for Liked Songs. An account connected before playlist support does not have them: **Imports → Spotify playlists** shows a reconnect button, which returns to the same page afterwards. Adding albums or tracks also needs `playlist-modify-private` and `playlist-modify-public`, which are requested only when asked for; see [adding an album](#adding-an-album-to-a-playlist). Account setup is described in [Spotify account setup](spotify-album-imports.md#account-setup).
@@ -23,8 +27,8 @@ The Import column shows Imported, Needs update or Not imported, or the job state
 An import of a playlist first reads the playlist's details: one request that gives its current version and, only for a playlist the account owns or collaborates on, its item count. A playlist the account can no longer read fails without requesting its tracks. Otherwise the import reads the whole playlist in pages of 50 through the Spotify request gate (one request at a time, at least 1500 ms apart), then stores it in a single transaction:
 
 - The playlist's tracks are replaced by what Spotify returned, in playlist order with each track's added date.
-- A recording stays in Tracks while it belongs to an album track list, a playlist or imported Last.fm history.
-- A track's **Added** date is the earliest known playlist-added date or first scrobble represented by its imported Last.fm membership.
+- A recording stays in Tracks while it has an album, playlist, Last.fm or Spotify track search source.
+- A track's **Added** date is the earliest known manual addition, playlist addition or first scrobble from its imported Last.fm membership.
 - A playlist whose Spotify snapshot has not changed since the last import is not read again; the import still counts as a completed check. Liked Songs has no snapshot and is always read.
 
 Importing the same playlist again updates it. While an import or listing runs, its job records the pages read and the pages expected (`options.progress`), updated after every page; the total for a playlist comes from its item count, and for Liked Songs from the first page.
@@ -141,26 +145,26 @@ List is the default Tracks view. Table columns default to Title, Artists, Album,
 
 **Artist** groups by the first billed track artist, then release year and album name. **Album** sorts by album name, then release date. **Released** sorts by release date and keeps ties in album order. Both use the linked album's title and date when available, so edition names and dates reported for individual tracks do not split the release. Other sorts break ties by the album's billed artist, release year and title. The stored album position preserves disc and track order. Secondary keys stay ascending in either sort direction, with missing values last.
 
-| Field                    | Source                                                                       |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| Title, Artists, Album    | Stored album track lists, Spotify playlist metadata or stored Last.fm names. |
-| Released, Duration       | Spotify or a matched library album/track; empty when unknown.                |
-| Source                   | Album track lists, Last.fm, Spotify playlists and Liked Songs.               |
-| Playlists                | Imported playlists containing the track, including Liked Songs.              |
-| Added                    | Earliest playlist-added date or scrobble from its Last.fm membership.        |
-| Library album            | "In library" or "Not in library".                                            |
-| Album tags               | Tags of the linked library album. Empty when the album is not in library.    |
-| Scrobbles, Last listened | Linked Last.fm scrobbles; see [scrobbles](#scrobbles).                       |
+| Field                    | Source                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| Title, Artists, Album    | Album track lists, Spotify catalog or playlist metadata, or stored Last.fm names.    |
+| Released, Duration       | Spotify or a matched library album/track; empty when unknown.                        |
+| Source                   | Album track lists, Last.fm, Spotify playlists, Liked Songs and Spotify track search. |
+| Playlists                | Imported playlists containing the track, including Liked Songs.                      |
+| Added                    | Earliest manual addition, playlist addition or scrobble from its Last.fm membership. |
+| Library album            | "In library" or "Not in library".                                                    |
+| Album tags               | Tags of the linked library album. Empty when the album is not in library.            |
+| Scrobbles, Last listened | Linked Last.fm scrobbles; see [scrobbles](#scrobbles).                               |
 
 Setting two or more playlists to **required** shows the tracks in all of them. A playlist in the **Playlists** column opens the [playlist drawer](#playlist-drawer), whose **Filter tracks** applies the filter.
 
-Use **Source** to include or exclude **Album track list**, **Last.fm**, **Spotify playlists** and **Liked Songs**, with the normal **Any**, **Required** and **Excluded** filter modes. Requiring both Last.fm and Spotify playlists shows their overlap; excluding Last.fm hides tracks with imported Last.fm membership. Source filters stay in the URL with the other browse filters.
+Use **Source** to include or exclude **Album track list**, **Last.fm**, **Spotify playlists**, **Liked Songs** and **Spotify track search**, with the normal **Any**, **Required** and **Excluded** filter modes. Requiring both Last.fm and Spotify playlists shows their overlap; excluding Last.fm hides tracks with imported Last.fm membership. Source filters stay in the URL with the other browse filters.
 
-Listening counts use broader matching rules than source membership. A Spotify track can therefore show scrobbles without having a Last.fm source. Track retention follows its memberships. The Added date comes from playlist additions and imported Last.fm history.
+Listening counts use broader matching rules than source membership. A Spotify track can therefore show scrobbles without having a Last.fm source. Manually added tracks keep their Spotify track search source when a playlist is removed.
 
 A track's detail shows its sources, playlists (each opens the playlist drawer), Spotify link when available, listening history and, when its album is in the library, a link to the album and the album's tags, labelled as coming from the album. Last.fm tracks can inherit artwork and release date from their linked library album.
 
-**Spotify match** is available as a table column and an include/exclude filter. **Spotify playlist / Liked Songs** means a playlist or Liked Songs import supplied the ID. **Spotify track search** means a catalog search supplied the ID through an automatic or confirmed match. **Album track list** means the stored album track list supplied it. **Unmatched** means no stored Spotify ID is available. Counts, filters and playback use the same ID. The drawer explains the method and shows the original artist, track and album names recorded by Last.fm, independently of the broader listening matches below them. Spotify playback uses stored metadata.
+**Spotify match** is available as a table column and an include/exclude filter. **Spotify playlist / Liked Songs** means a playlist or Liked Songs import supplied the ID. **Spotify track search** means a catalog search supplied the ID through Add track or an automatic or confirmed match. **Album track list** means the stored album track list supplied it. **Unmatched** means no stored Spotify ID is available. Counts, filters and playback use the same ID. The drawer explains the method and shows the original artist, track and album names recorded by Last.fm, independently of the broader listening matches below them. Spotify playback uses stored metadata.
 
 Play controls are visible beside tracks, albums and playlists. Connect [Spotify playback](spotify-playback.md) to enable them where the library has a playable recording. Play is always followed by Add to queue. In Grid the pair appears on the artwork on hover, focus or touch; in List and Table it follows the title. In album and playlist track tables the row number sits before the pair. Playing a row captures the current table order for subsequent tracks. The playlist heading's **Play** starts at the first recorded entry that can play. Spotify opens from the link at the end of the detail header.
 

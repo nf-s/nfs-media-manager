@@ -172,7 +172,7 @@ export const libraryTrack = pgTable(
     spotifyTrackId: text('spotify_track_id'),
     isrc: text('isrc'),
     durationSec: integer('duration_sec'),
-    // The earliest playlist-added date or first imported scrobble.
+    // The earliest manual addition, playlist-added date or first imported scrobble.
     dateAdded: timestamp('date_added', {
       mode: 'date',
       withTimezone: false,

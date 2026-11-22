@@ -77,7 +77,7 @@ describe('manual provider search and library additions', () => {
       throw new Error('Cancelled')
     })
     await expect(
-      searchManualMedia({ mediaType: 'album', q: 'Example' }, assertActive),
+      searchManualMedia({ mediaType: 'album', q: 'Example' }, { assertActive }),
     ).rejects.toThrow('Cancelled')
     expect(mocks.request).not.toHaveBeenCalled()
     expect(mocks.success).not.toHaveBeenCalled()

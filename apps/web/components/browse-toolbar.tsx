@@ -141,8 +141,10 @@ export default function BrowseToolbar<Key extends string>({
   return (
     <>
       <Toolbar>
-        {actions}
-        <div className="browse-find">{search}</div>
+        <div className="browse-toolbar-start">
+          {actions}
+          <div className="browse-find">{search}</div>
+        </div>
         <SortPicker
           value={sort.key}
           options={sort.options}

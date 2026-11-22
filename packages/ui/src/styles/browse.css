@@ -33,6 +33,9 @@
 }
 
 /* Toolbar: the search grows, sort keeps a readable width */
+.browse-toolbar-start {
+  display: contents;
+}
 .browse-find {
   display: flex;
   flex: 1;
@@ -43,10 +46,10 @@
 }
 /* Controls that do not fit, as in a narrow detail drawer, wrap onto a second
    row instead of squeezing the search */
-.ds-toolbar:has(> .browse-find) {
+.ds-toolbar:has(> .browse-toolbar-start) {
   flex-wrap: wrap;
 }
-.ds-toolbar > .browse-find {
+.browse-toolbar-start > .browse-find {
   min-width: min(100%, calc(var(--ds-rail) - var(--ds-6)));
 }
 
@@ -416,8 +419,21 @@
   color: var(--ds-ink);
 }
 
-/* Phone: the search takes its own line; the controls wrap below it */
+/* Phone: search and its leading buttons share the first line. */
 @media (max-width: 700px) {
+  .browse-toolbar-start:has(> :is(button, a)) {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-3);
+    width: 100%;
+  }
+  .browse-toolbar-start:has(> :is(button, a)) :is(.browse-find, .ds-search) {
+    min-width: 0;
+  }
+  .browse-toolbar-start:has(> :is(button, a)) .browse-menu {
+    right: 0;
+    left: auto;
+  }
   .browse-find,
   .ds-toolbar > .browse-combobox {
     flex-basis: 100%;

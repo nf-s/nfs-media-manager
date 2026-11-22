@@ -71,6 +71,7 @@ describe('manual additions API', () => {
       expect((await manualAdd.request(post('/search', input))).status).toBe(422)
     for (const input of [
       { mediaType: 'album', externalId: 'bad' },
+      { mediaType: 'track', externalId: 'bad' },
       { mediaType: 'film', externalId: '701', title: 'Untrusted title' },
     ])
       expect((await manualAdd.request(post('/add', input))).status).toBe(422)
@@ -80,22 +81,25 @@ describe('manual additions API', () => {
 
   it('returns validated search and add envelopes', async () => {
     mocks.search.mockResolvedValue({ items: [], page: 1, hasMore: false })
-    mocks.add.mockResolvedValue({ mediaItemId: 'film-one', created: true })
+    mocks.add.mockResolvedValue({ mediaItemId: 'track-one', created: true })
     const search = await manualAdd.request(
-      post('/search', { mediaType: 'film', q: ' Example ' }),
+      post('/search', { mediaType: 'track', q: ' Example ' }),
     )
     expect(search.status).toBe(200)
-    expect(mocks.search).toHaveBeenCalledWith({
-      mediaType: 'film',
-      q: 'Example',
-      page: 1,
-    })
-    const response = await manualAdd.request(
-      post('/add', { mediaType: 'film', externalId: '701' }),
+    expect(mocks.search).toHaveBeenCalledWith(
+      {
+        mediaType: 'track',
+        q: 'Example',
+        page: 1,
+      },
+      { userId: 'owner' },
     )
+    const input = { mediaType: 'track', externalId: 'AAAAAAAAAAAAAAAAAAAAAA' }
+    const response = await manualAdd.request(post('/add', input))
     expect(response.status).toBe(200)
+    expect(mocks.add).toHaveBeenCalledWith(input, 'owner')
     expect(await response.json()).toMatchObject({
-      data: { mediaItemId: 'film-one', created: true },
+      data: { mediaItemId: 'track-one', created: true },
     })
   })
 

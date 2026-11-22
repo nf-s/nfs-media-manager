@@ -4,6 +4,7 @@ import {
   ManualMediaAddResultSchema,
   ManualMediaSearchInputSchema,
   ManualMediaSearchResultSchema,
+  type ManualMediaSearchInput,
   type ManualMediaSearchItem,
   type ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
@@ -20,7 +21,7 @@ export async function loadManualSearchPage({
   signal,
 }: {
   apiBaseUrl: string
-  mediaType: 'album' | 'film'
+  mediaType: ManualMediaSearchInput['mediaType']
   query: string
   page: number
   stored: ManualMediaSearchResult | undefined
@@ -53,7 +54,7 @@ export async function loadManualSearchPage({
 /** Adds a selected provider result, or reuses its existing library item. */
 export async function addManualMediaItem(
   apiBaseUrl: string,
-  mediaType: 'album' | 'film',
+  mediaType: ManualMediaSearchInput['mediaType'],
   item: ManualMediaSearchItem,
 ) {
   if (item.mediaItemId) return item.mediaItemId
@@ -76,8 +77,20 @@ export async function addManualMediaItem(
 
 export function invalidateManualMediaAddition(
   client: QueryClient,
-  mediaType: 'album' | 'film',
+  mediaType: ManualMediaSearchInput['mediaType'],
 ) {
+  if (mediaType === 'track')
+    return Promise.all(
+      [
+        'tracks',
+        'track',
+        'album',
+        'artists',
+        'artist',
+        'artist-overview',
+        'artist-selection',
+      ].map((key) => client.invalidateQueries({ queryKey: [key] })),
+    )
   return Promise.all([
     client.invalidateQueries({
       queryKey: [mediaType === 'album' ? 'albums' : 'films'],
