@@ -198,6 +198,9 @@ export const libraryTrack = pgTable(
     versionGroupId: text('version_group_id'),
     // The version a record's row is shown as. At most one in a group.
     versionShown: boolean('version_shown').default(false).notNull(),
+    // A `track_tag` row in Browse whose tag is visible (TTAG-03). Kept by the
+    // triggers on `track_tag`, `tag` and `tag_alias`.
+    hasOwnTags: boolean('has_own_tags').default(false).notNull(),
     ...timestampColumns,
   },
   (table) => [
@@ -1224,6 +1227,62 @@ export const trackFact = pgTable(
     check(
       'track_fact_key_camelot',
       sql`${table.keyCamelot} is null or ${table.keyCamelot} ~ '^(1[0-2]|[1-9])[AB]$'`,
+    ),
+  ],
+)
+
+/**
+ * A library track's own tags (TTAG-01): album-library tags Sonovault reported
+ * for it and the owner's edits. A Sonovault write changes only `sonovault`,
+ * `verified`, `responseId` and `fetchedAt`; the owner's mark outlives it.
+ */
+export const trackTag = pgTable(
+  'track_tag',
+  {
+    mediaItemId: text('media_item_id')
+      .notNull()
+      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
+    tagId: text('tag_id')
+      .notNull()
+      .references(() => tag.id, { onDelete: 'cascade' }),
+    sonovault: boolean('sonovault').default(false).notNull(),
+    // The Sonovault record agreed with the library track (SONO-08).
+    verified: boolean('verified').default(false).notNull(),
+    responseId: text('response_id').references(() => providerResponse.id, {
+      onDelete: 'set null',
+    }),
+    fetchedAt: timestamp('fetched_at', { mode: 'date', withTimezone: false }),
+    owner: text('owner').$type<'added' | 'removed'>(),
+    ownerChangedAt: timestamp('owner_changed_at', {
+      mode: 'date',
+      withTimezone: false,
+    }),
+    inBrowse: boolean('in_browse').generatedAlwaysAs(
+      sql`coalesce(owner = 'added', false) or (sonovault and verified and owner is null)`,
+    ),
+    ...timestampColumns,
+  },
+  (table) => [
+    primaryKey({ columns: [table.mediaItemId, table.tagId] }),
+    index('track_tag_tag_media_browse_idx')
+      .on(table.tagId, table.mediaItemId)
+      .where(sql`${table.inBrowse}`),
+    // The migration adds `include (tag_id)`, which Drizzle cannot express.
+    index('track_tag_media_browse_idx')
+      .on(table.mediaItemId)
+      .where(sql`${table.inBrowse}`),
+    // Deleting a job's responses clears their IDs here.
+    index('track_tag_response_idx')
+      .on(table.responseId)
+      .where(sql`${table.responseId} is not null`),
+    check(
+      'track_tag_owner',
+      sql`${table.owner} is null or ${table.owner} in ('added', 'removed')`,
+    ),
+    // A row with neither Sonovault nor the owner behind it is deleted.
+    check(
+      'track_tag_has_source',
+      sql`${table.sonovault} or ${table.owner} is not null`,
     ),
   ],
 )

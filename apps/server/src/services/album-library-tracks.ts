@@ -429,6 +429,7 @@ export function independentTrackData(id: SQL) {
               select 1 from media_credit where media_item_id = ${id} and role <> 'artist'
               union all select 1 from media_item_tag where media_item_id = ${id}
               union all select 1 from tag_occurrence where media_item_id = ${id}
+              union all select 1 from track_tag where media_item_id = ${id} and owner is not null
               union all select 1 from external_link where media_item_id = ${id}
               union all select 1 from provider_reference where media_item_id = ${id}
               union all select 1 from provider_snapshot where media_item_id = ${id}

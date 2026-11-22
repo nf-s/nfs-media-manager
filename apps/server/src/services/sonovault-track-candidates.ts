@@ -79,6 +79,7 @@ import {
 import { spotifySearchArtistNames } from './spotify-track-search-evidence'
 import { prepareSpotifyTrackSearch } from './spotify-track-search'
 import { listTracksNeedingSpotifyMatch } from './track-match-diagnostics'
+import { clearSonovaultTrackTags } from './track-tags'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'select'>
@@ -1011,9 +1012,9 @@ export async function completeSonovaultSpotifyStep(
   let targetId: string | null = null
   try {
     targetId = await tx.transaction(async (savepoint) => {
-      // Sonovault's references count as the track's own data and would stop
-      // its names moving to a Spotify recording; they are written again on
-      // the recording that keeps them. A failed match restores them.
+      // Sonovault's references and tags count as the track's own data and
+      // would stop its names moving to a Spotify recording; they are written
+      // again on the recording that keeps them. A failed match restores them.
       await savepoint
         .delete(providerReference)
         .where(
@@ -1022,6 +1023,7 @@ export async function completeSonovaultSpotifyStep(
             eq(providerReference.provider, PROVIDER),
           ),
         )
+      await clearSonovaultTrackTags(savepoint, [input.trackId])
       const matched = await matchSpotifyStep(savepoint, input, candidate)
       if (!matched) throw new SpotifyStepUnmatched()
       return matched

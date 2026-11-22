@@ -76,6 +76,11 @@ import {
   removeProviderTrackFacts,
   type SonovaultTrackFactsEntry,
 } from './track-facts'
+import {
+  recordSonovaultTrackTags,
+  removeSonovaultTrackTags,
+  type SonovaultTrackTagsEntry,
+} from './track-tags'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'select'>
@@ -415,6 +420,7 @@ export async function writeSonovaultRecords(
   const lookups: (typeof sonovaultTrackLookup.$inferInsert)[] = []
   const isrcs: Parameters<typeof recordTrackIsrcs>[1] = []
   const facts: SonovaultTrackFactsEntry[] = []
+  const tags: SonovaultTrackTagsEntry[] = []
   const primary: { id: string; isrc: string | null }[] = []
   const written: Written = {
     matched: 0,
@@ -446,6 +452,13 @@ export async function writeSonovaultRecords(
         : null
     if (!record) {
       written.notFound += 1
+      tags.push({
+        mediaItemId: target.id,
+        record: null,
+        verified: false,
+        responseId: response.id,
+        fetchedAt: response.fetchedAt,
+      })
       if (previousPrimary) primary.push({ id: target.id, isrc: null })
       lookups.push({
         mediaItemId: target.id,
@@ -468,6 +481,14 @@ export async function writeSonovaultRecords(
     facts.push({
       mediaItemId: target.id,
       track: record,
+      verified,
+      responseId: response.id,
+      fetchedAt: response.fetchedAt,
+    })
+    // Genres and subgenres (TTAG-08); an unverified record's stay out of Browse.
+    tags.push({
+      mediaItemId: target.id,
+      record,
       verified,
       responseId: response.id,
       fetchedAt: response.fetchedAt,
@@ -593,6 +614,7 @@ export async function writeSonovaultRecords(
     ),
   )
   await recordSonovaultTrackFacts(tx, facts)
+  await recordSonovaultTrackTags(tx, tags)
   if (primary.length)
     await tx.execute(sql`
       update library_track lt
@@ -1100,6 +1122,7 @@ export async function removeSonovaultData() {
       .where(eq(providerReference.provider, PROVIDER))
       .returning({ id: providerReference.id })
     const trackFacts = await removeProviderTrackFacts(tx, PROVIDER)
+    await removeSonovaultTrackTags(tx)
     await tx.delete(sonovaultTrackCandidate)
     const lookups = await tx
       .delete(sonovaultTrackLookup)
