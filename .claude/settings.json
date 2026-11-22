@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -d \"$CLAUDE_PROJECT_DIR/apps/server/node_modules\" || echo 'This checkout is not set up: run corepack pnpm worktree:setup before typechecks, tests or the preview.'"
+          }
+        ]
+      }
+    ]
+  }
+}

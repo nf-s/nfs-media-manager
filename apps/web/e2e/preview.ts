@@ -1,9 +1,12 @@
+import { resolve } from 'node:path'
 import { expect, type Page } from '@playwright/test'
+import { defaultPreviewPorts } from '../../server/scripts/preview/preview-ports'
 
-// The preview command's default ports, or the ones given to both.
+// The preview command's default ports for this checkout, or the ones given to both.
+const defaults = defaultPreviewPorts(resolve(__dirname, '../../..'))
 export const previewPorts = {
-  web: Number(process.env.PREVIEW_WEB_PORT ?? 3710),
-  api: Number(process.env.PREVIEW_API_PORT ?? 4710),
+  web: Number(process.env.PREVIEW_WEB_PORT ?? defaults.web),
+  api: Number(process.env.PREVIEW_API_PORT ?? defaults.api),
 }
 export const webOrigin = `http://127.0.0.1:${previewPorts.web}`
 export const apiOrigin = `http://127.0.0.1:${previewPorts.api}`

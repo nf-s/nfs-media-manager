@@ -14,6 +14,30 @@ Start with [getting started](getting-started.md) to configure PostgreSQL, secret
 
 `corepack pnpm dev` runs the apps and shared build watchers. To run a single app, use `corepack pnpm --filter web dev` or `corepack pnpm --filter @repo/server dev:server`. The root environment is loaded automatically. Restart after environment/plugin changes.
 
+## Worktrees
+
+Every chat that changes code works in its own Git worktree. Set a new worktree up from inside it:
+
+```sh
+corepack pnpm worktree:setup
+```
+
+It needs Node 22 or later and is safe to run again. It:
+
+1. Finds the main checkout through `git rev-parse --git-common-dir` and refuses to run in the main checkout itself.
+2. Links the main checkout's ignored working files into the worktree, so there is one shared copy of each: `docs/.local`, `docs/cloudflare-deployment.md`, `docs/local-worker.md`, `docs/mobile-home-screen.md`, `.cloudflare`, `.local-plugins`, `.neon` and `.claude/launch.json` (the list is `sharedPaths` in the script). It skips a path the main checkout does not have and never replaces a file or folder the worktree already has. It then checks that Git ignores each link: an ignore pattern ending in `/` matches a folder but not a link to one. Local documents are therefore shared between the main checkout and every worktree, and what a chat writes there stays when the worktree is removed. Data, backups, legacy inputs, `.playwright-mcp` and per-chat or per-worker state are not linked.
+3. Installs dependencies from the shared pnpm store (`pnpm install --frozen-lockfile --prefer-offline`).
+4. Builds `@repo/schemas`, `@repo/media-plugin-sdk` and the `@repo/server` types, which the typechecks need.
+5. Makes the main checkout's `.env` and `.env.local` visible to the workspace env loader. A worktree under `.claude/worktrees/` needs nothing, because the loader walks up to the main checkout. Elsewhere, such as Codex worktrees, the command links each file to the main checkout's, so they cannot drift. It never writes an env file of its own and never prints a setting. `packages/local-worker/.env` is not linked, so a worktree cannot start the local worker against the real library by accident.
+6. Checks that the local PostgreSQL server named in the settings answers. If it does not, the command says how to start it, for example the `docker start` command for the container that publishes the port. It never starts or changes a container or database itself.
+7. Prints what it did and what is still missing, and exits non-zero if the worktree is not ready.
+
+A worktree must not get its own `.env.local`. The loader finds it first, and it replaces the main checkout's file instead of merging with it. Because it is loaded with override, a test suite or migration then reaches whatever database it names, or fails to find one. For a separate database, use `corepack pnpm preview`, which passes its own settings file through `MEDIA_MANAGER_ENV_FILE` and writes nothing in the checkout. The set-up command reports a worktree `.env.local` as missing work and does not remove it. Where it has linked `.env.local`, a tool that writes to that path writes to the main checkout's file.
+
+In a new Claude Code session, the committed `.claude/settings.json` adds a note to the session when `apps/server/node_modules` is missing, so the agent runs the command first. `.worktreeinclude` is not used because it copies files. A `WorktreeCreate` hook is not used because it replaces how Claude Code creates worktrees. Codex has no committed hook for this, so run the command by hand there.
+
+Claude Code worktree sessions refuse compound shell commands unless their permission mode allows them. Examples are a heredoc followed by other commands or steps joined with `&&`. Put a longer sequence in a script and run it as one command.
+
 ## Checks
 
 ```sh
@@ -53,8 +77,9 @@ corepack pnpm preview
 `corepack pnpm preview` starts the app on a disposable database filled with the synthetic preview library (`apps/server/scripts/preview/seed.ts`): albums, tracks, artists, films, playlists, scrobbles, subscriptions and jobs with saved provider results. It needs only the local PostgreSQL server from your settings and refuses any other host.
 
 - It creates a database named `media_preview_run_<id>`, writes its own settings file outside the checkout and passes it to every preview process through `MEDIA_MANAGER_ENV_FILE`, which the workspace env loader uses in place of `.env` and `.env.local`. Those files are read only for the PostgreSQL connection and are never changed. Provider keys and plugins are not loaded.
-- It runs the migrations, the initial account seed and the preview seed, then the API without the job worker (nothing a click queues is run) on `127.0.0.1:4710` and the web app on `127.0.0.1:3710`. Choose other ports with `-- --web-port <port> --api-port <port>`.
-- Open the sign-in link it prints (`http://127.0.0.1:4710/preview/sign-in?next=/tracks`) to sign in as the generated preview account; the password is never shown.
+- It runs the migrations, the initial account seed and the preview seed, then the API without the job worker (nothing a click queues is run) and the web app on `127.0.0.1`. Each checkout and worktree gets its own pair of ports, derived from its path (`apps/server/scripts/preview/preview-ports.ts`): the web app on 3710–3809 and the API on 4710–4809, the same offset for both. The command prints them at start. Set `PREVIEW_WEB_PORT` and `PREVIEW_API_PORT` to choose others.
+- Every preview step checks first that its settings name a `media_preview_run_<id>` database on a local server, so it cannot migrate or seed the development database.
+- Open the sign-in link it prints (`http://127.0.0.1:<API port>/preview/sign-in?next=/tracks`) to sign in as the generated preview account; the password is never shown.
 - Ctrl+C stops both servers, drops the database and deletes the settings. A database left by a preview that was killed is dropped the next time the command starts, unless something is still connected to it.
 
 The preview uses its own Next.js process in the checkout, so stop `corepack pnpm dev` in the same checkout first, or run the preview from a worktree.
@@ -65,7 +90,7 @@ The preview uses its own Next.js process in the checkout, so stop `corepack pnpm
 corepack pnpm --filter web test:browser
 ```
 
-Playwright tests in `apps/web/e2e` run against the preview at desktop width and at phone width (375 × 812). A preview already running on the default ports is reused; otherwise the run starts one and removes it at the end. `tracks-browse.spec.ts` covers Tracks Browse and `metadata-selection.spec.ts` the track Metadata selection: a field filter through the shared search control, selecting rows, and a reload that keeps the filter from the URL. The tests use Playwright's Chromium; if it is missing, run `corepack pnpm --filter web exec playwright install chromium`. They are not part of CI yet.
+Playwright tests in `apps/web/e2e` run against the preview at desktop width and at phone width (375 × 812). A preview already running on the checkout's default ports is reused; otherwise the run starts one and removes it at the end. `tracks-browse.spec.ts` covers Tracks Browse and `metadata-selection.spec.ts` the track Metadata selection: a field filter through the shared search control, selecting rows, and a reload that keeps the filter from the URL. The tests use Playwright's Chromium; if it is missing, run `corepack pnpm --filter web exec playwright install chromium`. They are not part of CI yet.
 
 ## Provider development
 

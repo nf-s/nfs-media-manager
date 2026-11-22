@@ -9,8 +9,8 @@ node_modules
 .env
 .env*.local
 !.env.example.local
-.local-plugins/
-.cloudflare/
+.local-plugins
+.cloudflare
 .wrangler/
 .open-next/
 .neon
@@ -57,5 +57,6 @@ next-env.d.ts
 
 .cursor
 .codex
-.claude
+.claude/*
+!.claude/settings.json
 .vscode

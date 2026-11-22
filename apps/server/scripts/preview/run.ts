@@ -26,7 +26,9 @@ import {
   isLocalDatabaseHost,
   previewDatabasePattern,
   previewDatabasePrefix,
+  workspaceDatabaseConnection,
 } from './preview-database'
+import { defaultPreviewPorts } from './preview-ports'
 
 const serverDirectory = process.cwd()
 const webDirectory = resolve(serverDirectory, '../web')
@@ -55,6 +57,7 @@ function say(message: string): void {
 }
 
 function readPorts() {
+  const defaults = defaultPreviewPorts(resolve(serverDirectory, '../..'))
   const { values } = parseArgs({
     options: {
       'web-port': { type: 'string' },
@@ -63,31 +66,17 @@ function readPorts() {
   })
   return {
     web: PortSchema.parse(
-      values['web-port'] ?? process.env.PREVIEW_WEB_PORT ?? 3710,
+      values['web-port'] ?? process.env.PREVIEW_WEB_PORT ?? defaults.web,
     ),
     api: PortSchema.parse(
-      values['api-port'] ?? process.env.PREVIEW_API_PORT ?? 4710,
+      values['api-port'] ?? process.env.PREVIEW_API_PORT ?? defaults.api,
     ),
   }
 }
 
 /** The local PostgreSQL server from the workspace settings; nothing else. */
 function localConnection(local: Record<string, string>): Connection {
-  const url = local.DATABASE_URL ? new URL(local.DATABASE_URL) : null
-  // The fallbacks match the defaults in src/env.ts.
-  const result = url
-    ? {
-        host: url.hostname,
-        port: Number(url.port || 5432),
-        user: decodeURIComponent(url.username),
-        password: decodeURIComponent(url.password),
-      }
-    : {
-        host: local.DATABASE_HOST || 'localhost',
-        port: Number(local.DATABASE_PORT || 5431),
-        user: local.DATABASE_USER || 'admin',
-        password: local.DATABASE_PASSWORD || 'admin',
-      }
+  const result = workspaceDatabaseConnection(local)
   if (!isLocalDatabaseHost(result.host))
     throw new Error('Refusing: the preview runs only on a local PostgreSQL')
   return result

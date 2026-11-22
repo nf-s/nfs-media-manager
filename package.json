@@ -10,6 +10,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "preview": "pnpm --filter @repo/server preview",
+    "worktree:setup": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON apps/server/scripts/worktree-setup.ts",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "typecheck:watch": "turbo typecheck:watch",
