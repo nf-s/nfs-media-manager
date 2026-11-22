@@ -289,16 +289,21 @@ function TrackOverview({
               {
                 label: 'ISRC',
                 value: item.isrcs.length ? (
-                  item.isrcs.map((code) => (
-                    <div key={code.isrc}>
-                      <span className="ds-mono">{code.isrc}</span>{' '}
-                      <span className="ds-muted">
-                        {code.providers
-                          .map((provider) => providerLabel(provider))
-                          .join(', ')}
-                      </span>
-                    </div>
-                  ))
+                  item.isrcs.map((code) => {
+                    const providers = code.providers
+                      .map((provider) => providerLabel(provider))
+                      .join(', ')
+                    return (
+                      <div
+                        key={code.isrc}
+                        className="ds-truncate"
+                        title={`${code.isrc} ${providers}`}
+                      >
+                        <span className="ds-mono">{code.isrc}</span>{' '}
+                        <span className="ds-muted">{providers}</span>
+                      </div>
+                    )
+                  })
                 ) : item.isrc ? (
                   <span className="ds-mono">{item.isrc}</span>
                 ) : (
