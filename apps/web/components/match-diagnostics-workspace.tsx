@@ -604,7 +604,6 @@ export default function MatchDiagnosticsWorkspace({
     duplicates ? (duplicateLayout.data?.groups ?? []) : [],
     groupRowHeight,
   )
-  const duplicateActions = useTrackDuplicateActions()
   const query = useVirtualTable({
     queryKey: tracks
       ? [...matchDiagnosticsKey(library), trackQuery]
@@ -643,6 +642,11 @@ export default function MatchDiagnosticsWorkspace({
     setSelectionIdentity(selectionKey)
     selection.clear()
   }
+  const duplicateActions = useTrackDuplicateActions({
+    // A group's selected rows that were not merged are selected again.
+    onNotMerged: (ids) =>
+      selection.replace([...new Set([...selection.ids, ...ids])]),
+  })
   const columns = matchColumns(library, providers, matchFields)
   const table = useTableColumns(`${library}-match-diagnostics`, columns)
   const trackColumnOrder = parseColumnOrder(params.get('columnOrder'))
@@ -723,6 +727,7 @@ export default function MatchDiagnosticsWorkspace({
         colSpan={colSpan}
         rowIndex={rowIndex(index) - 1}
         actions={duplicateActions}
+        selection={selection}
       />
     ) : null
   }

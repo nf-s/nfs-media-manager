@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, History, X } from 'lucide-react'
 import type {
@@ -32,6 +32,7 @@ import {
   LibraryChangeUndo,
   useMergeQueue,
   type MergeQueueItem,
+  type RowSelection,
 } from './merge-bar'
 import { useConfig } from './providers'
 import {
@@ -78,8 +79,9 @@ export function describeTrackDuplicateStatus(item: MergeQueueItem) {
 /**
  * Merge and Keep separate for groups of possible duplicates, and the last
  * change either made. Merge is the normal track merge of the whole group,
- * keeping its first member; it opens the review when something speaks
- * against it. Render `dialog` for that review.
+ * keeping its first member, or of the group's selected rows alone; it opens
+ * the review when something speaks against it. Render `dialog` for that
+ * review.
  *
  * Both return at once: the requests are sent one after another in the order
  * pressed, only the pressed group's actions are off meanwhile, and the
@@ -87,20 +89,32 @@ export function describeTrackDuplicateStatus(item: MergeQueueItem) {
  */
 export function useTrackDuplicateActions({
   onChange,
+  onNotMerged,
 }: {
   /** A merge or Keep separate finished. */
   onChange?: (change: LibraryChange) => void
+  /** A merge of selected rows failed or its review was closed: these tracks. */
+  onNotMerged?: (ids: readonly string[]) => void
 } = {}) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [change, setChange] = useState<LibraryChange | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The merges of selected rows, by their tracks.
+  const selected = useRef(new Set<string>())
+  const notMerged = (ids: readonly string[]) => {
+    if (selected.current.delete(ids.join(' '))) onNotMerged?.(ids)
+  }
   const work = useMergeQueue(trackMergeAdapter, {
     onDone: (next) => {
       setChange(next)
       onChange?.(next)
     },
-    onFail: (message) => setError(message),
+    onFail: (message, ids) => {
+      setError(message)
+      notMerged(ids)
+    },
+    onCancel: notMerged,
     // The track merge refresh also covers what Keep separate changes.
     onDrain: async (changes) => {
       const combined = combineLibraryChanges(changes)
@@ -108,12 +122,18 @@ export function useTrackDuplicateActions({
     },
   })
   return {
-    /** Queues the group's merge; resolves when it is made or its review opens. */
-    merge: (group: DuplicateMembers) => {
+    /**
+     * Queues the merge of the group, or of `rows` alone when given; resolves
+     * when it is made or its review opens. The group's first track is kept
+     * when it is among the merged ones.
+     */
+    merge: (group: DuplicateMembers, rows: readonly string[] = []) => {
       const [keep] = group.memberIds
+      const ids = rows.length ? [...rows] : [...group.memberIds]
+      if (rows.length) selected.current.add(ids.join(' '))
       return work.queue.merge(groupKey(group), {
-        ids: [...group.memberIds],
-        keepId: keep,
+        ids,
+        keepId: keep !== undefined && ids.includes(keep) ? keep : undefined,
       })
     },
     /** Queues Keep separate for the group; resolves when it is made. */
@@ -160,15 +180,26 @@ function ChangeIcon({ change }: { change: LibraryChange }) {
   )
 }
 
+/** The group's selected tracks, in the group's order. */
+export function selectedGroupTracks(
+  group: DuplicateMembers,
+  selection: Pick<RowSelection, 'has'> | undefined,
+) {
+  return selection ? group.memberIds.filter((id) => selection.has(id)) : []
+}
+
 /**
  * The group row above a group's first shown track: Merge, Keep separate, the
  * details behind an icon and, when something speaks against merging, what.
+ * With `selection`, Merge joins only the group's selected rows; while none
+ * of them is selected it joins the whole group.
  */
 export function TrackDuplicateGroupRow({
   group,
   colSpan,
   rowIndex,
   actions,
+  selection,
 }: {
   group: Pick<
     TrackDuplicateGroup,
@@ -177,9 +208,14 @@ export function TrackDuplicateGroupRow({
   colSpan: number
   rowIndex?: number
   actions: Pick<TrackDuplicateActions, 'merge' | 'keepSeparate' | 'status'>
+  /** The table's row selection. */
+  selection?: Pick<RowSelection, 'ids' | 'has' | 'replace'>
 }) {
   const item = actions.status(group)
   const busy = groupBusy(item)
+  const rows = selectedGroupTracks(group, selection)
+  // One track cannot be merged by itself.
+  const alone = rows.length === 1
   return (
     <TableRow group aria-rowindex={rowIndex}>
       <TableCell colSpan={colSpan}>
@@ -192,10 +228,20 @@ export function TrackDuplicateGroupRow({
         >
           <Button
             size="xs"
-            disabled={busy}
-            onClick={() => void actions.merge(group)}
+            disabled={busy || alone}
+            title={alone ? trackMergeAdapter.wording.selectMore : undefined}
+            onClick={() => {
+              // The merged rows leave the selection, as from the bar.
+              if (selection && rows.length)
+                selection.replace(
+                  selection.ids.filter((id) => !rows.includes(id)),
+                )
+              void actions.merge(group, rows)
+            }}
           >
-            Merge
+            {rows.length
+              ? `Merge ${formatCount(rows.length)} selected`
+              : 'Merge'}
           </Button>
           <Button
             size="xs"
@@ -209,6 +255,9 @@ export function TrackDuplicateGroupRow({
             {describeTrackDuplicateDetails(group).map((line) => (
               <div key={line}>{line}</div>
             ))}
+            {selection && (
+              <div>Select rows of the group to merge only those.</div>
+            )}
           </SecondaryCellDetails>
         </TableGroupActions>
       </TableCell>

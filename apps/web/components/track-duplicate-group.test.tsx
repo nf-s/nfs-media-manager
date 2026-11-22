@@ -230,6 +230,57 @@ test('only the pressed group’s actions are off, and its row says what is happe
   assert.match(failed, line('The tracks could not be merged\\.'))
 })
 
+test('with rows of the group selected, Merge says how many it joins; one alone cannot be merged', async () => {
+  const { TrackDuplicateGroupRow, selectedGroupTracks } =
+    await import('./track-duplicate-group')
+  const three = { ...group, memberIds: ['track-a', 'track-b', 'track-c'] }
+  const row = (ids: string[]) =>
+    render(
+      new QueryClient(),
+      <table>
+        <tbody>
+          <TrackDuplicateGroupRow
+            group={three}
+            colSpan={4}
+            actions={{
+              merge: async () => undefined,
+              keepSeparate: async () => undefined,
+              status: () => undefined,
+            }}
+            selection={{
+              ids,
+              has: (id) => ids.includes(id),
+              replace: () => undefined,
+            }}
+          />
+        </tbody>
+      </table>,
+    )
+  // Rows of other groups do not count.
+  const none = row(['track-x', 'track-y'])
+  assert.match(none, /<button class="ds-btn" data-size="xs">Merge<\/button>/)
+  assert.match(
+    none,
+    /<div>Select rows of the group to merge only those\.<\/div>/,
+  )
+  assert.match(
+    row(['track-c', 'track-x', 'track-b']),
+    /<button class="ds-btn" data-size="xs">Merge 2 selected<\/button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button>/,
+  )
+  assert.match(
+    row(['track-b']),
+    /<button class="ds-btn" data-size="xs" disabled="" title="Select two or more tracks to merge">Merge 1 selected<\/button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button>/,
+  )
+  // The selected tracks keep the group's order.
+  assert.deepEqual(
+    selectedGroupTracks(three, {
+      has: (id) => ['track-c', 'track-x', 'track-b'].includes(id),
+    }),
+    ['track-b', 'track-c'],
+  )
+  assert.deepEqual(selectedGroupTracks(three, undefined), [])
+})
+
 test('the bar says how many groups are still to go, in words', async () => {
   const { describeTrackDuplicateProgress } =
     await import('./track-duplicate-group')
@@ -360,6 +411,66 @@ test('Merge plans the whole group keeping its first track, and Keep separate pos
   })
   assert.deepEqual(requests[1]?.body, { trackIds: ['track-c', 'track-d'] })
   assert.deepEqual(requests[2]?.body, { trackIds: ['track-a', 'track-b'] })
+})
+
+test('Merge of selected rows plans only those, keeps the group’s first track when it is among them, and hands them back when it is not made', async (t) => {
+  const { useTrackDuplicateActions } = await import('./track-duplicate-group')
+  const bodies: unknown[] = []
+  network.mock.mockImplementation(async (_input, init) => {
+    bodies.push(typeof init?.body === 'string' ? JSON.parse(init.body) : null)
+    return Response.json(
+      { statusCode: 500, message: 'Fixture failure' },
+      { status: 500 },
+    )
+  })
+  t.after(() => {
+    network.mock.mockImplementation(async () => {
+      throw new Error('Network forbidden in UI tests')
+    })
+    network.mock.resetCalls()
+  })
+  const client = new QueryClient()
+  const returned: (readonly string[])[] = []
+  const captured: ReturnType<typeof useTrackDuplicateActions>[] = []
+  function Capture() {
+    captured.push(
+      useTrackDuplicateActions({ onNotMerged: (ids) => returned.push(ids) }),
+    )
+    return null
+  }
+  renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <ConfigContext.Provider
+        value={{
+          appUrl: 'http://localhost:3001',
+          apiBaseUrl: 'http://localhost:4001',
+        }}
+      >
+        <Capture />
+      </ConfigContext.Provider>
+    </QueryClientProvider>,
+  )
+  const [actions] = captured
+  assert.ok(actions)
+  const four = { memberIds: ['track-a', 'track-b', 'track-c', 'track-d'] }
+  // The plans fail here, so each group can be tried again.
+  await actions.merge(four, ['track-a', 'track-c'])
+  await actions.merge(four, ['track-b', 'track-d'])
+  await actions.merge(four)
+  client.clear()
+  assert.deepEqual(bodies, [
+    { trackIds: ['track-a', 'track-c'], targetId: 'track-a' },
+    { trackIds: ['track-b', 'track-d'] },
+    {
+      trackIds: ['track-a', 'track-b', 'track-c', 'track-d'],
+      targetId: 'track-a',
+    },
+  ])
+  // Only the selected rows come back; the whole group had none selected.
+  assert.deepEqual(returned, [
+    ['track-a', 'track-c'],
+    ['track-b', 'track-d'],
+  ])
 })
 
 test('after a merge from the notice, onChange gets the change', async (t) => {

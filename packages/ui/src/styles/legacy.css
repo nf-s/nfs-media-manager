@@ -1670,6 +1670,11 @@ button.player-track:hover strong,
   max-width: 320px;
   height: 24px;
 }
+/* With set column widths the column limits the text, so a wider column
+   shows more of it */
+.ds-table[data-layout='fixed'] .secondary-cell {
+  max-width: none;
+}
 .secondary-cell-text {
   display: block;
   flex: 1 1 auto;
