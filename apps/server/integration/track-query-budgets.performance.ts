@@ -5,6 +5,7 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { trackBrowseFields } from '@repo/schemas/browse'
+import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -1738,4 +1739,50 @@ it('plans the duplicate group trigger for the rows of each track write', async (
   } finally {
     await session.end()
   }
+})
+
+it('bounds the Possible duplicates view of Matches and its layout', async () => {
+  const { refreshTrackDuplicatesForMaintenance, readTrackDuplicateLayout } =
+    await import('@/services/track-duplicates')
+  const { listTrackMatchDiagnostics } =
+    await import('@/services/track-match-diagnostics')
+  // Each artist's tracks titled Fixture Intro by the detail test above are one
+  // group, and so is each title of a second release with its first.
+  expect(await refreshTrackDuplicatesForMaintenance()).toBe(true)
+  await pool.query('vacuum analyze track_duplicate_group')
+  await pool.query('vacuum analyze track_duplicate_member')
+  const counts = z.object({ groups: z.number(), members: z.number() }).parse(
+    (
+      await pool.query(`select
+          (select count(*)::int from track_duplicate_group) as groups,
+          (select count(*)::int from track_duplicate_member) as members`)
+    ).rows[0],
+  )
+  process.stdout.write(
+    `duplicates: ${counts.groups} groups, ${counts.members} tracks\n`,
+  )
+  const query = TrackMatchDiagnosticsQuerySchema.parse({
+    duplicates: 'true',
+    size: 50,
+  })
+  // Most of the page's work is the Spotify versions of its common title, as
+  // on any Matches page of these tracks.
+  await checkBudget(
+    'Matches page of possible duplicates',
+    150_000,
+    2,
+    async () => {
+      const page = await listTrackMatchDiagnostics(query)
+      expect(page.items).toHaveLength(50)
+      expect(page.totalCount).toBe(counts.members)
+    },
+  )
+  // The IDs, their groups, the groups, then what Merge does to each group:
+  // one statement for each 2,000 tracks.
+  await checkBudget('Possible duplicates layout', 160_000, 10, async () => {
+    const layout = await readTrackDuplicateLayout(query)
+    expect(layout.totalRows).toBe(counts.members)
+    expect(layout.groups).toHaveLength(counts.groups)
+    expect(layout.groups.every((group) => group.merge)).toBe(true)
+  })
 })

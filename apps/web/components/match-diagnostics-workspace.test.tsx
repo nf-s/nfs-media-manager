@@ -20,6 +20,11 @@ import {
   trackMatchPreset,
 } from '@/utils/match-diagnostics'
 import { browseFacetOptions } from '@/utils/browse-facets'
+import {
+  loadTrackDuplicateLayout,
+  trackDuplicateCountKey,
+  trackDuplicateLayoutKey,
+} from '@/utils/track-duplicates'
 import { TrackListItemSchema } from '@repo/schemas/tracks'
 import type { LibraryView } from '@/utils/media-scope'
 import { ConfigContext } from './providers'
@@ -39,6 +44,8 @@ async function render(
   library: LibraryView,
   page: MatchDiagnosticsPage,
   params = new URLSearchParams(),
+  /** Caches more reads, such as the Possible duplicates layout and count. */
+  seed?: (client: QueryClient) => void,
 ) {
   const { default: MatchDiagnosticsWorkspace } =
     await import('./match-diagnostics-workspace')
@@ -49,6 +56,7 @@ async function render(
       : [...matchDiagnosticsKey(library), '', 'name', 'asc', 1]
   client.setQueryData(key, page)
   client.setQueryData(['ai-status'], { available: true, reason: null })
+  seed?.(client)
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -673,4 +681,237 @@ test('the rejection request preserves the exact source and history requests a bo
     size: '10',
     longRym: '1',
   })
+})
+
+const duplicateRow = (id: string, name: string) => ({
+  id,
+  name,
+  creator: 'Fixture Artist',
+  matches: [],
+})
+const duplicateGroup = (
+  id: string,
+  offset: number,
+  memberIds: string[],
+  evidence: string[],
+  merge: {
+    keep: { id: string; title: string; by: string }
+    versions: number
+    removed: number
+    removedRecords: number
+  } | null,
+) => ({
+  id,
+  rule: 'key' as const,
+  evidence,
+  cautions: [],
+  memberCount: memberIds.length,
+  scrobbles: 10,
+  memberIds,
+  merge,
+  offset,
+  rowCount: memberIds.length,
+})
+
+test('Possible duplicates is read from the URL and sent with the Matches rows and the group layout', async (t) => {
+  const requests: URL[] = []
+  t.mock.method(globalThis, 'fetch', async (input: string) => {
+    const url = new URL(input)
+    requests.push(url)
+    return Response.json({
+      statusCode: 200,
+      message: 'OK',
+      data: url.pathname.endsWith('/layout')
+        ? { totalRows: 0, groups: [] }
+        : emptyPage,
+    })
+  })
+  const params = new URLSearchParams({
+    duplicates: 'true',
+    q: 'Night',
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    creatorId: 'fixture-artist',
+  })
+  const state = trackMatchDiagnosticsQuery(params)
+  assert.equal(state.duplicates, true)
+  assert.equal(
+    trackMatchDiagnosticsQuery(new URLSearchParams()).duplicates,
+    undefined,
+  )
+  assert.equal(
+    trackMatchDiagnosticsQuery(new URLSearchParams({ duplicates: 'false' }))
+      .duplicates,
+    undefined,
+  )
+  await loadTrackMatchDiagnosticsPage('http://example.test', {
+    ...state,
+    page: 1,
+    size: 50,
+  })
+  await loadTrackDuplicateLayout('http://example.test', state)
+  const shared = {
+    q: 'Night',
+    sortBy: 'scrobbles',
+    direction: 'desc',
+    creatorId: 'fixture-artist',
+    duplicates: 'true',
+  }
+  assert.equal(requests[0]?.pathname, '/api/v1/tracks/match-diagnostics')
+  assert.deepEqual(Object.fromEntries(requests[0]?.searchParams ?? []), {
+    ...shared,
+    page: '1',
+    size: '50',
+  })
+  // The layout takes the rows' request without the page.
+  assert.equal(requests[1]?.pathname, '/api/v1/tracks/duplicates/layout')
+  assert.deepEqual(Object.fromEntries(requests[1]?.searchParams ?? []), shared)
+})
+
+test('the Possible duplicates toggle leads the Tracks Matches toolbar with the group count once ready', async () => {
+  const off = await render(
+    'track',
+    emptyPage,
+    new URLSearchParams(),
+    (client) =>
+      client.setQueryData(trackDuplicateCountKey(), {
+        count: 1234,
+        ready: true,
+      }),
+  )
+  assert.match(
+    off,
+    /<div class="ds-toolbar"><button class="ds-btn" type="button" aria-pressed="false"><svg[^>]*>.*?<\/svg>Possible duplicates<span class="ds-count">1,234<\/span><\/button><select[^>]*aria-label="Match status"/,
+  )
+  // The count is scoped to the creator the list is held to.
+  const scoped = await render(
+    'track',
+    emptyPage,
+    new URLSearchParams({ duplicates: 'true', creatorId: 'fixture-artist' }),
+    (client) => {
+      client.setQueryData(trackDuplicateCountKey(), {
+        count: 1234,
+        ready: true,
+      })
+      client.setQueryData(trackDuplicateCountKey('fixture-artist'), {
+        count: 2,
+        ready: true,
+      })
+    },
+  )
+  assert.match(
+    scoped,
+    /aria-pressed="true"><svg[^>]*>.*?<\/svg>Possible duplicates<span class="ds-count">2<\/span>/,
+  )
+  // Before the first rebuild the toggle has no count.
+  const building = await render(
+    'track',
+    emptyPage,
+    new URLSearchParams(),
+    (client) =>
+      client.setQueryData(trackDuplicateCountKey(), { count: 0, ready: false }),
+  )
+  assert.match(building, /<\/svg>Possible duplicates<\/button>/)
+})
+
+test('Possible duplicates draws a group row saying what Merge does above the first row of each group', async () => {
+  const params = new URLSearchParams({ duplicates: 'true' })
+  const page = MatchDiagnosticsPageSchema.parse({
+    totalCount: 4,
+    pageCount: 1,
+    providers: [],
+    items: [
+      duplicateRow('track-a', 'Night Drive'),
+      duplicateRow('track-b', 'Night Drive (Remastered 2011)'),
+      duplicateRow('track-c', 'Longwave'),
+      duplicateRow('track-d', 'Longwave (Demo)'),
+    ],
+  })
+  const html = await render('track', page, params, (client) =>
+    client.setQueryData(
+      trackDuplicateLayoutKey(trackMatchDiagnosticsQuery(params)),
+      {
+        totalRows: 4,
+        groups: [
+          duplicateGroup(
+            'group-1',
+            0,
+            ['track-a', 'track-b'],
+            ['Same artist', 'Same title without “Remastered 2011”'],
+            {
+              keep: { id: 'track-a', title: 'Night Drive', by: 'Fixture' },
+              versions: 0,
+              removed: 1,
+              removedRecords: 1,
+            },
+          ),
+          duplicateGroup(
+            'group-2',
+            2,
+            ['track-c', 'track-d'],
+            ['Same title and artist'],
+            null,
+          ),
+        ],
+      },
+    ),
+  )
+  const rows = [...html.matchAll(/<tr ([^>]*)>/g)].map(
+    ([, attrs]) => attrs ?? '',
+  )
+  assert.deepEqual(
+    rows
+      .filter((attrs) => /aria-rowindex/.test(attrs))
+      .map((attrs) => attrs.replace(/ data-selected="[^"]*"/, '')),
+    [
+      'data-group="" aria-rowindex="2"',
+      'aria-rowindex="3"',
+      'aria-rowindex="4"',
+      'data-group="" aria-rowindex="5"',
+      'aria-rowindex="6"',
+      'aria-rowindex="7"',
+    ],
+  )
+  // The header, four tracks and two group rows.
+  assert.match(html, /aria-rowcount="7"/)
+  const text =
+    'Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it · Same artist · Same title without “Remastered 2011”'
+  assert.match(
+    html,
+    new RegExp(
+      `<tbody><tr data-group="" aria-rowindex="2"><td colSpan="\\d+"><span class="ds-group-actions"><button class="ds-btn" data-size="xs">Merge</button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate</button><span class="ds-group-evidence" title="${text}">${text}</span></span></td></tr><tr aria-rowindex="3"`,
+    ),
+  )
+  // A group whose members cannot all be read shows only its evidence.
+  assert.match(
+    html,
+    /Night Drive \(Remastered 2011\)<\/a>.*?<\/tr><tr data-group="" aria-rowindex="5">.*?title="Same title and artist">Same title and artist<\/span>.*?<\/tr><tr aria-rowindex="6"/,
+  )
+  // The bar for the result of Merge or Keep separate waits under the table.
+  assert.match(
+    html,
+    /<\/table><\/div><div class="ds-selectbar sec-selectbar"><\/div>/,
+  )
+})
+
+test('Possible duplicates with nothing listed says so, and with a search or filter offers Clear filters', async () => {
+  const none = await render(
+    'track',
+    emptyPage,
+    new URLSearchParams({ duplicates: 'true' }),
+  )
+  assert.match(none, /No possible duplicates/)
+  assert.doesNotMatch(none, /No matching items|No library items|data-group/)
+  const searched = await render(
+    'track',
+    emptyPage,
+    new URLSearchParams({ duplicates: 'true', q: 'Night' }),
+  )
+  assert.match(
+    searched,
+    /No matching items\.<button[^>]*>Clear filters<\/button>/,
+  )
+  assert.doesNotMatch(searched, /No possible duplicates/)
+  const all = await render('track', emptyPage)
+  assert.match(all, /No library items\./)
 })

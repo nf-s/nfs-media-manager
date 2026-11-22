@@ -790,7 +790,7 @@
                             size: 'xs',
                             variant: 'ghost',
                           }),
-                        'Same title and artist · Album names one letter apart',
+                        'Merge keeps “Paper Moons”: 1 Last.fm record is removed and its plays and names move to it · Same title and artist',
                       ),
                     },
                     {
@@ -811,7 +811,7 @@
                             size: 'xs',
                             variant: 'ghost',
                           }),
-                        'Same title without “Demo”',
+                        'Merge keeps “Longwave”: 1 other track stays under it as a version · Same title without “Demo”',
                       ),
                     },
                     { ...T[6], made: '1 version' },
@@ -842,7 +842,7 @@
                 '<b>A change made from the bar reports itself there.</b> When the selection is gone the bar holds one line saying what changed (<code>TableSelectionResult</code>, <code>ds-selectbar-result</code>), then Undo and Dismiss. After Undo the line starts with <code>Undone:</code> and the button is Redo. Undo and Redo are disabled, with the reason as their title, when a later change stands in the way. The line is cut with an ellipsis; the buttons are never pushed out.',
                 '<b>Merge in a table of tracks</b> (<code>TrackMergeBar</code>) is the primary action of the bar and needs two or more rows. It is made at once. A review opens first only when something speaks against it: a version word such as Live or Demo in some titles only, lengths more than ten seconds apart, different artists, two positions on one album, or tracks that were kept separate.',
                 '<b>What a record is made of shows under its row.</b> A ghost chevron before the thumbnail (<code>TablePartToggle</code>, <code>ds-part-toggle</code>) opens one row per part (<code>TableRow part</code>): a provider’s mark and the part’s title in the secondary ink, indented past the chevron (<code>TablePartTitle</code>, <code>ds-part-title</code>). A record with one part keeps the chevron’s space (<code>TablePartSlot</code>) so titles line up. A part row’s other cells hold that part’s own values or nothing.',
-                '<b>A group row can carry actions</b> for the rows under it (<code>TableGroupActions</code>, <code>ds-group-actions</code>): small buttons, a default one first, such as Merge and Keep separate, then on the same line the evidence that put the rows together. The evidence is cut with an ellipsis and shows in full on hover; the buttons are never pushed out.',
+                '<b>A group row can carry actions</b> for the rows under it (<code>TableGroupActions</code>, <code>ds-group-actions</code>): small buttons, a default one first, such as Merge and Keep separate, then on the same line what the default action does and the evidence that put the rows together. The line is cut with an ellipsis and shows in full on hover; the buttons are never pushed out.',
               ]) +
               g.note(
                 'Replaces',

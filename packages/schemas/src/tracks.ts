@@ -344,13 +344,6 @@ export const TrackQuerySchema = PaginationQuerySchema.extend({
       z.enum(['true', 'false']).transform((value) => value === 'true'),
     ])
     .optional(),
-  /** Only possible duplicates, grouped, most played group first. */
-  duplicates: z
-    .union([
-      z.boolean(),
-      z.enum(['true', 'false']).transform((value) => value === 'true'),
-    ])
-    .optional(),
   limitResults: z.coerce.number().int().min(1).max(10000).optional(),
   q: z.string().optional(),
   filters: TrackFiltersParamSchema,

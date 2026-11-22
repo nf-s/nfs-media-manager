@@ -20,6 +20,8 @@ Track **Sources** also lets you search for and add an imported scrobbled name, k
 
 Use **Merge** when a separate Last.fm record and an imported Spotify track should be one library entry. The review identifies the source and the track to keep. A confirmed merge carries over the source's recorded names and playlist memberships. The manual choice is used on subsequent syncs. Standalone Last.fm rows hidden from ordinary Browse remain available in Matches. Each of these changes is listed in **Tracks → History** with Undo; see [History and Undo](tracks-and-playlists.md#history-and-undo).
 
+**Possible duplicates** in the toolbar lists only the tracks that look like the same track, in groups. Each group's row says what **Merge** does and holds **Merge** and **Keep separate**. Search, filters, sorting and columns work as they do without it. See [possible duplicates](tracks-and-playlists.md#possible-duplicates-and-keep-separate).
+
 An artist filter on a merged artist reads as the artist it was merged into.
 
 ## Albums, artists and films

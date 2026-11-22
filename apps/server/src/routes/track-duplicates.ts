@@ -1,6 +1,7 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { z } from 'zod'
 import { LibraryChangeSchema } from '@repo/schemas/library-changes'
+import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import {
   TrackDuplicateCountQuerySchema,
   TrackDuplicateCountSchema,
@@ -8,7 +9,6 @@ import {
   TrackDuplicatesSchema,
   TrackSeparationRequestSchema,
 } from '@repo/schemas/track-duplicates'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
 import {
   createOpenAPIApp,
   createResponseSchema,
@@ -17,7 +17,11 @@ import {
   validationErrorResponse,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
+import {
+  authMiddleware,
+  mutationOriginMiddleware,
+  requireOwnerUser,
+} from '@/middlewares/auth'
 import {
   countTrackDuplicateGroups,
   keepTracksSeparate,
@@ -93,11 +97,11 @@ export const trackDuplicates: OpenAPIHono<AppEnv> = createOpenAPIApp()
       method: 'get',
       path: '/duplicates/layout',
       middleware: [authMiddleware()],
-      request: { query: TrackQuerySchema },
+      request: { query: TrackMatchDiagnosticsQuerySchema },
       responses: {
         200: {
           description:
-            'Possible duplicate groups in browse order, with the rows of each',
+            'Possible duplicate groups in Matches order, with the rows of each',
           content: {
             'application/json': {
               schema: createResponseSchema(TrackDuplicateLayoutSchema),
@@ -111,7 +115,10 @@ export const trackDuplicates: OpenAPIHono<AppEnv> = createOpenAPIApp()
     async (c) =>
       generateJsonResponse(
         c,
-        await readTrackDuplicateLayout(c.req.valid('query')),
+        await readTrackDuplicateLayout(
+          c.req.valid('query'),
+          requireOwnerUser(c).id,
+        ),
         200,
       ),
   )

@@ -1,12 +1,14 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Layers } from 'lucide-react'
 import type { BrowseField, BrowseFilter } from '@repo/schemas/browse'
 import {
   trackPlayabilityLabels,
   type TrackMatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
-import { Select } from '@repo/ui/components/ds/toolbar'
+import { Select, ToolbarToggle } from '@repo/ui/components/ds/toolbar'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import type { BrowseFilterHref } from '@/utils/browse-items'
 import {
@@ -18,6 +20,11 @@ import {
   trackMatchPreset,
   trackMatchPresets,
 } from '@/utils/match-diagnostics'
+import { clientQueryDefaults } from '@/utils/query-cache'
+import {
+  loadTrackDuplicateCount,
+  trackDuplicateCountKey,
+} from '@/utils/track-duplicates'
 import {
   ActiveFiltersSection,
   ColumnChoices,
@@ -25,6 +32,7 @@ import {
 } from './browse-items'
 import { BrowseFilterPill, RangeEditor } from './browse-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { useConfig } from './providers'
 import {
   TrackBrowseFilterChips,
   TrackBrowseSearch,
@@ -77,6 +85,7 @@ export default function TrackMatchesToolbar({
   onColumnOrder: (keys: string[]) => void
   onResetOrder?: () => void
 }) {
+  const { apiBaseUrl } = useConfig()
   const railSlot = useRailSlot()
   const {
     q = '',
@@ -85,7 +94,15 @@ export default function TrackMatchesToolbar({
     limitResults,
     creatorId,
     playability = 'all',
+    duplicates = false,
   } = query
+  const duplicateCount = useQuery({
+    queryKey: trackDuplicateCountKey(creatorId),
+    queryFn: ({ signal }) =>
+      loadTrackDuplicateCount(apiBaseUrl, creatorId, signal),
+    ...clientQueryDefaults,
+    retry: false,
+  })
   const creator: CreatorBrowseScope | undefined = creatorId
     ? { creatorId }
     : undefined
@@ -128,6 +145,20 @@ export default function TrackMatchesToolbar({
       <BrowseToolbar
         actions={
           <>
+            <ToolbarToggle
+              pressed={duplicates}
+              onPressedChange={(pressed) =>
+                setParams({ duplicates: pressed ? 'true' : null })
+              }
+              icon={<Layers className="ds-i" data-size="sm" aria-hidden />}
+              count={
+                duplicateCount.data?.ready
+                  ? duplicateCount.data.count
+                  : undefined
+              }
+            >
+              Possible duplicates
+            </ToolbarToggle>
             <Select
               aria-label="Match status"
               className="browse-order"

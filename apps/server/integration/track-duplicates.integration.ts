@@ -9,7 +9,7 @@ import {
   LibraryChangeListQuerySchema,
   type TrackMergeCaution,
 } from '@repo/schemas/library-changes'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
+import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { standaloneLastfmTrackId } from '@/lib/track-matching'
@@ -49,7 +49,7 @@ import {
   readTrackDuplicateLayout,
   refreshTrackDuplicatesForMaintenance,
 } from '@/services/track-duplicates'
-import { listTrackBrowsePage } from '@/services/tracks'
+import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
 
 const account = 'fixture-duplicates'
 const artistId = 'fixture-artist'
@@ -121,8 +121,31 @@ const spotifyTracks = [
 ]
 
 const changes = () => listLibraryChanges(LibraryChangeListQuerySchema.parse({}))
-const browse = (query: Record<string, unknown> = {}) =>
-  TrackQuerySchema.parse({ duplicates: 'true', size: 100, ...query })
+const matches = (query: Record<string, unknown> = {}) =>
+  TrackMatchDiagnosticsQuerySchema.parse({
+    duplicates: 'true',
+    size: 100,
+    ...query,
+  })
+
+/** The rows a Matches page lists with the layout of the same query. */
+async function listed(query: Record<string, unknown> = {}) {
+  const page = await listTrackMatchDiagnostics(matches(query))
+  const layout = await readTrackDuplicateLayout(matches(query))
+  const ids = page.items.map((item) => item.id)
+  expect(layout.totalRows).toBe(page.totalCount)
+  expect(layout.totalRows).toBe(ids.length)
+  // The groups follow one another without gaps, each over its own rows.
+  let offset = 0
+  for (const group of layout.groups) {
+    expect(group.offset).toBe(offset)
+    const rows = ids.slice(group.offset, group.offset + group.rowCount)
+    expect(rows.every((id) => group.memberIds.includes(id))).toBe(true)
+    offset += group.rowCount
+  }
+  expect(offset).toBe(ids.length)
+  return { ids, layout }
+}
 
 /** Lets the maintenance tick claim a rebuild at once. */
 const allowRebuild = () =>
@@ -282,43 +305,99 @@ it('leaves other artists, versions of one record and large clusters apart', asyn
   expect(await groupOf(harbour.id)).toBeUndefined()
 })
 
-it('lists only grouped tracks in group order, with a matching layout', async () => {
-  const page = await listTrackBrowsePage(browse())
-  const layout = await readTrackDuplicateLayout(browse())
-  const ids = page.items.map((item) => item.id)
-  expect(layout.totalRows).toBe(ids.length)
+it('lists only grouped tracks in Matches, in group order, with a matching layout', async () => {
+  const { ids, layout } = await listed()
   expect(ids).toHaveLength(2 + 2 + 2 + 12 + 2)
   expect(ids).not.toContain(stranger.id)
-  expect(layout.groups.map((group) => group.offset)).toEqual(
-    layout.groups.reduce<number[]>(
-      (offsets, group, index) => [
-        ...offsets,
-        index
-          ? (offsets.at(-1) ?? 0) + (layout.groups[index - 1]?.rowCount ?? 0)
-          : 0,
-      ],
-      [],
-    ),
-  )
+  expect(ids).not.toContain('meridian-a')
   for (const group of layout.groups)
     expect(
       ids.slice(group.offset, group.offset + group.rowCount).sort(),
     ).toEqual([...group.memberIds].sort())
-  // Most played group first.
+  // Groups in rank order, the most played first.
+  const ranked = await fixture
+    .select({ id: schema.trackDuplicateGroup.id })
+    .from(schema.trackDuplicateGroup)
+    .orderBy(schema.trackDuplicateGroup.rank)
+  expect(layout.groups.map((group) => group.id)).toEqual(
+    ranked.map((group) => group.id),
+  )
   expect(layout.groups[0]?.memberIds).toContain(remaster.id)
 
+  // Without `duplicates`, Matches lists every track.
+  const all = await listTrackMatchDiagnostics(
+    TrackMatchDiagnosticsQuerySchema.parse({ size: 100 }),
+  )
+  expect(all.items.map((item) => item.id)).toContain(stranger.id)
+
   // Search and filters still apply, within the group order.
-  const searched = await listTrackBrowsePage(browse({ q: 'harbour' }))
-  expect(searched.items.map((item) => item.id).sort()).toEqual(
-    [harbour.id, withFriend.id].sort(),
-  )
-  const searchedLayout = await readTrackDuplicateLayout(
-    browse({ q: 'harbour' }),
-  )
-  expect(searchedLayout).toMatchObject({
+  const searched = await listed({ q: 'harbour' })
+  expect([...searched.ids].sort()).toEqual([harbour.id, withFriend.id].sort())
+  expect(searched.layout).toMatchObject({
     totalRows: 2,
     groups: [{ offset: 0, rowCount: 2, memberCount: 2 }],
   })
+
+  // A filter that hides one member leaves its group with the other row.
+  const filtered = await listed({
+    filters: [{ field: 'title', value: livePlain.title, mode: 'exclude' }],
+  })
+  expect(filtered.ids).toHaveLength(ids.length - 1)
+  expect(filtered.ids).not.toContain(livePlain.id)
+  const live = filtered.layout.groups.find((group) =>
+    group.memberIds.includes(liveDash.id),
+  )
+  expect(live).toMatchObject({ rowCount: 1, memberCount: 2 })
+  expect(live && filtered.ids[live.offset]).toBe(liveDash.id)
+  expect(filtered.layout.groups).toHaveLength(layout.groups.length)
+
+  // A limit on the results applies to the layout as it does to the page.
+  const limited = await listed({ limitResults: 3 })
+  expect(limited.ids).toEqual(ids.slice(0, 3))
+  expect(limited.layout.totalRows).toBe(3)
+})
+
+it('says what Merge does to each group, as the merge plan does', async () => {
+  const { layout } = await listed()
+  const linked = layout.groups.find((group) =>
+    group.memberIds.includes(remaster.id),
+  )
+  // A Spotify track and a Last.fm-only track with scrobbled names.
+  expect(linked?.merge).toEqual({
+    keep: { id: nightDrive.id, title: 'Night Drive', by: 'Fixture Artist' },
+    versions: 0,
+    removed: 1,
+    removedRecords: 1,
+  })
+  // Two Spotify tracks.
+  expect(
+    layout.groups.find((group) => group.memberIds.includes(liveDash.id))?.merge,
+  ).toMatchObject({ versions: 1, removed: 0, removedRecords: 0 })
+  expect((await groupOf(nightDrive.id))?.merge).toEqual(linked?.merge)
+
+  for (const group of layout.groups) {
+    const plan = await readTrackMergePlan(fixture, {
+      trackIds: group.memberIds,
+      targetId: group.memberIds[0],
+    })
+    const [kept] = plan.tracks
+    expect(group.merge).toEqual({
+      keep: { id: plan.targetId, title: kept?.title, by: kept?.by },
+      versions: plan.tracks.filter((track) => track.outcome === 'version')
+        .length,
+      removed: plan.tracks.filter((track) => track.outcome === 'merge').length,
+      removedRecords: plan.tracks.filter(
+        (track) => track.outcome === 'merge' && track.identity === null,
+      ).length,
+    })
+  }
+
+  // A member that can no longer be read leaves the group without a summary.
+  await fixture
+    .update(schema.mediaItem)
+    .set({ metadata: { legacyHidden: 'true' } })
+    .where(eq(schema.mediaItem.id, remaster.id))
+  expect((await groupOf(nightDrive.id))?.merge).toBeNull()
 })
 
 it('counts groups from stored state', async () => {
@@ -504,7 +583,7 @@ it('stores for each group the kept track and the cautions of its merge plan', as
         ? { ...caution, words: [...caution.words].sort() }
         : caution,
     )
-  const { groups } = await readTrackDuplicateLayout(browse())
+  const { groups } = await readTrackDuplicateLayout(matches())
   expect(groups.length).toBeGreaterThan(3)
   for (const group of groups) {
     const plan = await readTrackMergePlan(fixture, {

@@ -36,15 +36,18 @@ const EVIDENCE_LIMIT = 3
 /** Holds the published groups while one transaction rewrites them. */
 export const lockTrackDuplicates = sql`hashtextextended(current_schema() || ':track_duplicates', 0)`
 
-/** Tracks in a published group. For Browse's Possible duplicates view. */
-export const trackDuplicateMembership = sql`${mediaItem.id} in (select track_id from track_duplicate_member)`
+/**
+ * Joins the tracks in a published group to their group, for the Possible
+ * duplicates view of Matches. One join, not a lookup for each row.
+ */
+export const trackDuplicateMembership = sql`join track_duplicate_member duplicate_member
+    on duplicate_member.track_id = ${mediaItem.id}
+  join track_duplicate_group duplicate_group
+    on duplicate_group.id = duplicate_member.group_id`
 
 /** Group order first: most played group, then the track a merge keeps. */
-export const trackDuplicateOrder = sql`(select g.rank from track_duplicate_member m
-  join track_duplicate_group g on g.id = m.group_id
-  where m.track_id = ${mediaItem.id}) asc nulls last`
-export const trackDuplicatePosition = sql`(select m.position from track_duplicate_member m
-  where m.track_id = ${mediaItem.id}) asc nulls last`
+export const trackDuplicateOrder = sql`duplicate_group.rank asc`
+export const trackDuplicatePosition = sql`duplicate_member.position asc`
 
 const CandidateRowsSchema = z.array(
   z.object({

@@ -513,42 +513,16 @@ test('Show in Tracks carries the creator and the list settings', async () => {
 
 const member = (id: string, title: string) =>
   TrackListItemSchema.parse({ ...track, id, title })
-const members = [
-  member('track-a', 'Harbour Lights'),
-  member('track-b', 'Harbour Lights (Remastered 2011)'),
-  member('track-c', 'Longwave'),
-  member('track-d', 'Longwave (Demo)'),
-]
-const layoutGroup = (
-  id: string,
-  offset: number,
-  memberIds: string[],
-  evidence: string[],
-) => ({
-  id,
-  rule: 'key',
-  evidence,
-  cautions: [],
-  memberCount: memberIds.length,
-  scrobbles: 10,
-  memberIds,
-  offset,
-  rowCount: memberIds.length,
-})
 
-/** The Tracks page at `search`, with these rows and Possible duplicates reads cached. */
+/** The Tracks page at `search`, with these rows cached. */
 async function renderTracks(
   search: string,
   {
     items = [track],
     grouped = false,
-    layout,
-    duplicateCount,
   }: {
     items?: (typeof track)[]
     grouped?: boolean
-    layout?: { totalRows: number; groups: ReturnType<typeof layoutGroup>[] }
-    duplicateCount?: { count: number; ready: boolean }
   } = {},
 ) {
   const { default: TrackBrowser } = await import('./track-browser')
@@ -563,7 +537,6 @@ async function renderTracks(
     sortBy: params.get('sortBy') ?? 'dateAdded',
     direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
     ...(grouped ? { groupRecordings: true } : {}),
-    ...(params.get('duplicates') === 'true' ? { duplicates: true } : {}),
   })
   client.setQueryData(['ai-status'], { available: true, reason: null })
   client.setQueryData(['tracks', 'browse', identity, 1], {
@@ -573,10 +546,6 @@ async function renderTracks(
     hasMore: false,
     totalCount: items.length,
   })
-  if (layout)
-    client.setQueryData(['tracks', 'duplicates', 'layout', identity], layout)
-  if (duplicateCount)
-    client.setQueryData(['tracks', 'duplicates', 'count', null], duplicateCount)
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -600,112 +569,25 @@ async function renderTracks(
   }
 }
 
-test('the Possible duplicates toggle leads the toolbar with its group count once the groups are ready', async () => {
-  const html = await renderTracks('', {
-    duplicateCount: { count: 1234, ready: true },
+test('Tracks has no Possible duplicates view: no toggle, and the URL parameter changes neither the view nor the request', async () => {
+  // The rows are cached for the request without `duplicates`.
+  const html = await renderTracks('duplicates=true&view=grid', {
+    items: [member('track-a', 'Harbour Lights')],
   })
-  assert.match(
-    html,
-    /<div class="ds-toolbar"><button class="ds-btn" type="button" aria-pressed="false"><svg[^>]*>.*?<\/svg>Possible duplicates<span class="ds-count">1,234<\/span><\/button><div class="browse-find">/,
-  )
-  // Before the first rebuild the toggle has no count.
-  const building = await renderTracks('', {
-    duplicateCount: { count: 0, ready: false },
+  assert.match(html, />Harbour Lights<\/a>/)
+  assert.match(html, /data-view="grid"/)
+  assert.doesNotMatch(html, /Possible duplicates|data-group|ds-group-actions/)
+  // The table keeps its selection with the merge bar.
+  const table = await renderTracks('duplicates=true&view=table', {
+    items: [member('track-a', 'Harbour Lights')],
   })
-  assert.match(building, /<\/svg>Possible duplicates<\/button>/)
-  const unknown = await renderTracks('')
-  assert.match(unknown, /<\/svg>Possible duplicates<\/button>/)
-})
-
-test('Possible duplicates is pressed from the URL and shows the Table view, whatever view was chosen', async () => {
-  for (const search of [
-    'duplicates=true',
-    'duplicates=true&view=grid',
-    'duplicates=true&view=list&sortBy=scrobbles',
-  ]) {
-    const html = await renderTracks(search, {
-      items: [member('track-a', 'Harbour Lights')],
-      layout: { totalRows: 1, groups: [] },
-    })
-    // The rows come from the request that asks for duplicates only.
-    assert.match(html, />Harbour Lights<\/a>/, search)
-    assert.match(
-      html,
-      /aria-pressed="true"><svg[^>]*>.*?<\/svg>Possible duplicates/,
-    )
-    assert.match(html, /data-view="table"/, search)
-    assert.match(html, /aria-pressed="true" aria-label="Table view"/, search)
-    // Grouping by recording is off in this view.
-    assert.doesNotMatch(html, /ds-part-toggle|ds-part-slot/, search)
-  }
-  const off = await renderTracks('duplicates=false&view=grid')
+  assert.match(table, /aria-label="Select Harbour Lights"/)
+  assert.match(table, /aria-rowcount="2"/)
   assert.match(
-    off,
-    /aria-pressed="false"><svg[^>]*>.*?<\/svg>Possible duplicates/,
-  )
-  assert.match(off, /data-view="grid"/)
-})
-
-test('Possible duplicates draws a group row with Merge, Keep separate and the evidence above each group', async () => {
-  const html = await renderTracks('duplicates=true', {
-    items: members,
-    layout: {
-      totalRows: 4,
-      groups: [
-        layoutGroup(
-          'group-1',
-          0,
-          ['track-a', 'track-b'],
-          ['Same artist', 'Same title without “Remastered 2011”'],
-        ),
-        layoutGroup(
-          'group-2',
-          2,
-          ['track-c', 'track-d'],
-          ['Same title and artist'],
-        ),
-      ],
-    },
-  })
-  const rows = [...html.matchAll(/<tr ([^>]*)>/g)].map(
-    ([, attrs]) => attrs ?? '',
-  )
-  assert.deepEqual(
-    rows.filter((attrs) => /aria-rowindex/.test(attrs)),
-    [
-      'data-group="" aria-rowindex="2"',
-      'data-item-index="0" aria-rowindex="3"',
-      'data-item-index="1" aria-rowindex="4"',
-      'data-group="" aria-rowindex="5"',
-      'data-item-index="2" aria-rowindex="6"',
-      'data-item-index="3" aria-rowindex="7"',
-    ],
-  )
-  // The header, four tracks and two group rows.
-  assert.match(html, /aria-rowcount="7"/)
-  assert.match(
-    html,
-    /<tr data-group="" aria-rowindex="2"><td colSpan="9"><span class="ds-group-actions"><button class="ds-btn" data-size="xs">Merge<\/button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button><span class="ds-group-evidence" title="Same artist · Same title without “Remastered 2011”">Same artist · Same title without “Remastered 2011”<\/span><\/span><\/td><\/tr><tr data-item-index="0"/,
-  )
-  assert.match(
-    html,
-    /Harbour Lights \(Remastered 2011\)<\/a>.*?<\/tr><tr data-group="" aria-rowindex="5">.*?title="Same title and artist">/,
-  )
-  // Rows can still be ticked, and the merge bar waits for a selection.
-  assert.match(html, /aria-label="Select Longwave \(Demo\)"/)
-  assert.match(
-    html,
+    table,
     /<\/table><\/div><div class="ds-selectbar sec-selectbar"><\/div>/,
   )
-})
-
-test('Possible duplicates with no groups shows the empty state in one line', async () => {
-  const html = await renderTracks('duplicates=true', {
-    items: [],
-    layout: { totalRows: 0, groups: [] },
-  })
-  assert.match(html, /<strong>No possible duplicates<\/strong>/)
-  assert.doesNotMatch(html, /No tracks yet|data-group/)
+  assert.doesNotMatch(table, /Possible duplicates|data-group/)
 })
 
 test('a version row shows its provider mark, its title and Shown on the version the record is shown as', async () => {

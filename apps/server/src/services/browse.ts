@@ -79,11 +79,6 @@ import {
   trackSpotifyMatchExpression,
 } from './track-values'
 import {
-  trackDuplicateMembership,
-  trackDuplicateOrder,
-  trackDuplicatePosition,
-} from './track-duplicate-refresh'
-import {
   readRecordingBrowseOrder,
   recordingBrowseOrderRows,
   recordingCount,
@@ -1175,23 +1170,14 @@ async function browseQueries(
   const sortField = byKey.get(query.sortBy)
   if (!sortField)
     throw new ServerError({ statusCode: 422, message: 'Unknown sort field' })
-  // Possible duplicates: members of stored groups, most played group first.
-  // A Last.fm track hidden behind its match is one of them.
-  const duplicates =
-    mediaType === 'track' && 'duplicates' in query && query.duplicates === true
   const groupedTrackQuery =
-    mediaType === 'track' &&
-    'groupRecordings' in query &&
-    query.groupRecordings &&
-    !duplicates
+    mediaType === 'track' && 'groupRecordings' in query && query.groupRecordings
       ? query
       : undefined
   const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
-  if (duplicates) conditions.push(trackDuplicateMembership)
   // A playlist member already has a library identity.
   const hideRedundant =
     mediaType === 'track' &&
-    !duplicates &&
     !options.includeLastfmSourceRows &&
     !requestsLastfmSource(query) &&
     !query.filters.some(
@@ -1298,19 +1284,7 @@ async function browseQueries(
         !options.sort,
       versionId,
     )
-  const fieldSort = fieldOrder(
-    sort,
-    sortField.key,
-    query.direction,
-    options.sort,
-  )
-  // The chosen sort orders the tracks within each group.
-  const order = duplicates
-    ? sql.join(
-        [trackDuplicateOrder, fieldSort, trackDuplicatePosition],
-        sql`, `,
-      )
-    : fieldSort
+  const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
   // Library tracks always have a subtype row, also required by loadTracks.
   // The inner join lets their date ordering use an index before pagination.
   // Other libraries do not read track columns.
@@ -1422,7 +1396,6 @@ async function browseQueries(
   const offset = (query.page - 1) * query.size
   const useTrackRanks =
     mediaType === 'track' &&
-    !duplicates &&
     (trackRankSortFields.has(sortField.key) ||
       (sortField.key === 'scrobbles' && query.direction === 'asc')) &&
     options.sort?.field.key !== sortField.key
@@ -1563,7 +1536,6 @@ async function browseQueries(
     const firstFilteredFieldPage =
       mediaType === 'track' &&
       offset === 0 &&
-      !duplicates &&
       !creatorTrackScope &&
       options.sort?.field.key !== query.sortBy &&
       (query.q || query.filters.length || query.ranges.length) &&

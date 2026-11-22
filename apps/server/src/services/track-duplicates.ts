@@ -14,12 +14,11 @@ import {
   type TrackDuplicates,
   type TrackSeparationRequest,
 } from '@repo/schemas/track-duplicates'
-import type { TrackQuery } from '@repo/schemas/tracks'
+import type { TrackMatchDiagnosticsQuery } from '@repo/schemas/match-diagnostics'
 import { canReadDatabaseWithoutCache } from '@/lib/database-read-cache'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { lockLibraryTrackWrites } from './album-library-tracks'
-import { queryBrowseIds } from './browse'
 import { keptSeparateEntry, storeKeptSeparate } from './keep-separate-effects'
 import {
   getLibraryChange,
@@ -32,6 +31,8 @@ import {
   refreshTrackDuplicates,
   trackDuplicateBuilder,
 } from './track-duplicate-refresh'
+import { listTrackMatchDiagnosticIds } from './track-match-diagnostics'
+import { readTrackMergeSummaries } from './track-merge-plan'
 
 const GroupRowsSchema = z.array(
   z.object({
@@ -54,8 +55,9 @@ const CountRowSchema = z.object({
 const ClaimRowSchema = z.object({ lease: z.string() })
 const ReadyRowSchema = z.object({ ready: z.boolean() })
 
+/** The groups, with what Merge would do to each, read for all of them together. */
 async function readGroups(where: SQL): Promise<TrackDuplicateGroup[]> {
-  return GroupRowsSchema.parse(
+  const rows = GroupRowsSchema.parse(
     (
       await db.execute(sql`
         select g.id, g.rule, g.evidence, g.cautions, g.member_count, g.scrobbles,
@@ -64,7 +66,12 @@ async function readGroups(where: SQL): Promise<TrackDuplicateGroup[]> {
         from track_duplicate_group g where ${where}
         order by g.rank`)
     ).rows,
-  ).map((row) => ({
+  )
+  const merges = await readTrackMergeSummaries(
+    db,
+    rows.map((row) => row.member_ids),
+  )
+  return rows.map((row, index) => ({
     id: row.id,
     rule: row.rule,
     evidence: row.evidence,
@@ -72,6 +79,7 @@ async function readGroups(where: SQL): Promise<TrackDuplicateGroup[]> {
     memberCount: row.member_count,
     scrobbles: row.scrobbles,
     memberIds: row.member_ids,
+    merge: merges[index] ?? null,
   }))
 }
 
@@ -107,21 +115,18 @@ export async function countTrackDuplicateGroups({
 }
 
 /**
- * Where each group's rows are in the Possible duplicates view of a browse
- * query, with what the group row shows. Rows are in the order the browse page
+ * Where each group's rows are in the Possible duplicates view of a Matches
+ * query, with what the group row shows. Rows are in the order the Matches page
  * returns them with `duplicates`.
  */
 export async function readTrackDuplicateLayout(
-  query: TrackQuery,
+  query: TrackMatchDiagnosticsQuery,
+  userId?: string,
 ): Promise<TrackDuplicateLayout> {
-  const { ids, totalCount } = await queryBrowseIds('track', {
-    ...query,
-    duplicates: true,
-    groupRecordings: false,
-    limitResults: undefined,
-    page: 1,
-    size: Number.MAX_SAFE_INTEGER,
-  })
+  const { ids, totalCount } = await listTrackMatchDiagnosticIds(
+    { ...query, duplicates: true },
+    userId,
+  )
   if (!ids.length) return { totalRows: totalCount, groups: [] }
   const memberOf = new Map(
     MemberRowsSchema.parse(

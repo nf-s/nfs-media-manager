@@ -111,15 +111,25 @@ export function loadMatchDiagnosticsPage(
   )
 }
 
+/** The URL state of the Tracks Matches table: everything its requests send but the page. */
+export type TrackMatchDiagnosticsState = Omit<
+  TrackMatchDiagnosticsQuery,
+  'page' | 'size'
+>
+
 /** The URL state used by the diagnostic table, with the shared track filters and ranges. */
 export function trackMatchDiagnosticsQuery(
   params: URLSearchParams,
-): Omit<TrackMatchDiagnosticsQuery, 'page' | 'size'> {
+): TrackMatchDiagnosticsState {
   const { sortBy, direction } = matchDiagnosticsSort(params)
   const ranges = BrowseRangesParamSchema.safeParse(params.get('ranges'))
   const limit = TrackQuerySchema.shape.limitResults.safeParse(
     params.get('limitResults') ?? undefined,
   )
+  const duplicates =
+    TrackMatchDiagnosticsQuerySchema.shape.duplicates.safeParse(
+      params.get('duplicates') ?? undefined,
+    )
   const filters = parseTrackFilters(params.get('filters'))
   const explicit = TrackPlayabilitySchema.safeParse(params.get('playability'))
   // Existing Missing Spotify bookmarks are a work queue for recordings with no playable version.
@@ -141,19 +151,14 @@ export function trackMatchDiagnosticsQuery(
           : canonicalBrowseKey(sortBy),
     direction,
     limitResults: limit.success ? limit.data : undefined,
+    ...(duplicates.success && duplicates.data ? { duplicates: true } : {}),
     ...parseCreatorBrowseScope(params, 'track'),
   }
 }
 
-export function loadTrackMatchDiagnosticsPage(
-  apiBaseUrl: string,
-  input: TrackMatchDiagnosticsQuery,
-  signal?: AbortSignal,
-) {
-  const query = TrackMatchDiagnosticsQuerySchema.parse(input)
+/** The request parameters of a Tracks Matches query, but its page. */
+function trackMatchDiagnosticsRequest(query: TrackMatchDiagnosticsQuery) {
   const params = new URLSearchParams({
-    page: String(query.page),
-    size: String(query.size),
     sortBy: query.sortBy,
     direction: query.direction,
   })
@@ -174,6 +179,29 @@ export function loadTrackMatchDiagnosticsPage(
     params.set('listeningSort', JSON.stringify(query.listeningSort))
   if (query.limitResults !== undefined)
     params.set('limitResults', String(query.limitResults))
+  if (query.duplicates) params.set('duplicates', 'true')
+  return params
+}
+
+/** The parameters every request of the Tracks Matches table sends, without the page. */
+export function trackMatchDiagnosticsParams(input: TrackMatchDiagnosticsState) {
+  return trackMatchDiagnosticsRequest(
+    TrackMatchDiagnosticsQuerySchema.parse(input),
+  )
+}
+
+export function loadTrackMatchDiagnosticsPage(
+  apiBaseUrl: string,
+  input: TrackMatchDiagnosticsQuery,
+  signal?: AbortSignal,
+) {
+  const query = TrackMatchDiagnosticsQuerySchema.parse(input)
+  const params = new URLSearchParams({
+    page: String(query.page),
+    size: String(query.size),
+  })
+  for (const [key, value] of trackMatchDiagnosticsRequest(query))
+    params.set(key, value)
   return fetchApiData(
     apiBaseUrl,
     `/api/v1/tracks/match-diagnostics?${params}`,

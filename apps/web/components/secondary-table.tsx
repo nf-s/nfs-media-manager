@@ -755,10 +755,13 @@ export function SecondaryVirtualRows<Item>({
   window,
   colSpan,
   renderRow,
+  renderAfter,
 }: {
   window: SecondaryVirtualWindow<Item>
   colSpan: number
   renderRow: (item: Item, index: number) => ReactNode
+  /** Rows under the row at `index`, loaded or not, whose height `extraRowHeights` adds below it. */
+  renderAfter?: (index: number) => ReactNode
 }) {
   const { slots, padTop, padBottom, rowHeight } = window
   return (
@@ -771,23 +774,22 @@ export function SecondaryVirtualRows<Item>({
           />
         </tr>
       )}
-      {slots.map(({ item, index }) =>
-        item === undefined ? (
-          <tr
-            key={`slot-${index}`}
-            className="virtual-browse-placeholder"
-            aria-hidden="true"
-          >
-            {Array.from({ length: colSpan }, (_, column) => (
-              <td key={column} style={{ height: rowHeight }}>
-                <div className="virtual-browse-line virtual-browse-shimmer" />
-              </td>
-            ))}
-          </tr>
-        ) : (
-          <Fragment key={index}>{renderRow(item, index)}</Fragment>
-        ),
-      )}
+      {slots.map(({ item, index }) => (
+        <Fragment key={item === undefined ? `slot-${index}` : index}>
+          {item === undefined ? (
+            <tr className="virtual-browse-placeholder" aria-hidden="true">
+              {Array.from({ length: colSpan }, (_, column) => (
+                <td key={column} style={{ height: rowHeight }}>
+                  <div className="virtual-browse-line virtual-browse-shimmer" />
+                </td>
+              ))}
+            </tr>
+          ) : (
+            renderRow(item, index)
+          )}
+          {renderAfter?.(index)}
+        </Fragment>
+      ))}
       {padBottom > 0 && (
         <tr aria-hidden="true">
           <td

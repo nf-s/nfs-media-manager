@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, History, X } from 'lucide-react'
 import type { LibraryChange } from '@repo/schemas/library-changes'
@@ -15,22 +15,16 @@ import {
 import { describeLibraryChange } from '@/utils/library-changes'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import {
+  describeTrackDuplicateGroup,
   describeTrackDuplicateNotice,
-  formatTrackDuplicateEvidence,
   keepTracksSeparate,
   loadTrackDuplicates,
   trackDuplicatesKey,
 } from '@/utils/track-duplicates'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
-import {
-  LibraryChangeResult,
-  LibraryChangeUndo,
-  useMerge,
-  type RowSelection,
-} from './merge-bar'
+import { LibraryChangeResult, LibraryChangeUndo, useMerge } from './merge-bar'
 import { useConfig } from './providers'
 import { SecondaryTableSelectionBar } from './secondary-table'
-import { TrackMergeBar } from './track-merge-bar'
 import { trackMergeAdapter } from './track-merge-review'
 
 type DuplicateMembers = Pick<TrackDuplicateGroup, 'memberIds'>
@@ -107,14 +101,14 @@ function ChangeIcon({ change }: { change: LibraryChange }) {
   )
 }
 
-/** The group row above a group's first shown track: Merge, Keep separate and the evidence. */
+/** The group row above a group's first shown track: Merge, Keep separate, what Merge does and the evidence. */
 export function TrackDuplicateGroupRow({
   group,
   colSpan,
   rowIndex,
   actions,
 }: {
-  group: Pick<TrackDuplicateGroup, 'memberIds' | 'evidence'>
+  group: Pick<TrackDuplicateGroup, 'memberIds' | 'evidence' | 'merge'>
   colSpan: number
   rowIndex?: number
   actions: TrackDuplicateActions
@@ -122,7 +116,7 @@ export function TrackDuplicateGroupRow({
   return (
     <TableRow group aria-rowindex={rowIndex}>
       <TableCell colSpan={colSpan}>
-        <TableGroupActions evidence={formatTrackDuplicateEvidence(group)}>
+        <TableGroupActions evidence={describeTrackDuplicateGroup(group)}>
           <Button
             size="xs"
             disabled={actions.pending}
@@ -145,28 +139,19 @@ export function TrackDuplicateGroupRow({
 }
 
 /**
- * The bar under the Tracks table: the selection with Merge or, while nothing
- * is selected, the result of the last Merge or Keep separate from a group row
- * with Undo. Selecting a row hides that result.
+ * The bar under a table with group rows: the result of the last Merge or
+ * Keep separate from a group row with Undo, or why it failed. Hidden while
+ * there is nothing to report.
  */
-export function TrackDuplicateMergeBar({
+export function TrackDuplicateResultBar({
   actions,
-  selection,
-  total,
 }: {
-  actions: TrackDuplicateActions
-  selection: RowSelection
-  /** How many tracks the table lists. */
-  total?: number
+  actions: Pick<
+    TrackDuplicateActions,
+    'change' | 'error' | 'setChange' | 'setError' | 'dismiss'
+  >
 }) {
   const { change, error, dismiss } = actions
-  const selecting = selection.count > 0
-  const reporting = change !== null || error !== null
-  useEffect(() => {
-    if (selecting && reporting) dismiss()
-  }, [selecting, reporting, dismiss])
-  if (selecting || !reporting)
-    return <TrackMergeBar selection={selection} total={total} />
   return (
     <SecondaryTableSelectionBar selectedCount={0} hideWhenEmpty>
       {change ? (
@@ -182,14 +167,16 @@ export function TrackDuplicateMergeBar({
           onDismiss={dismiss}
         />
       ) : (
-        <>
-          <span role="alert">{error}</span>
-          <span className="ds-actions ds-toolbar-end">
-            <Button icon aria-label="Dismiss" onClick={dismiss}>
-              <X className="ds-i" aria-hidden="true" />
-            </Button>
-          </span>
-        </>
+        error !== null && (
+          <>
+            <span role="alert">{error}</span>
+            <span className="ds-actions ds-toolbar-end">
+              <Button icon aria-label="Dismiss" onClick={dismiss}>
+                <X className="ds-i" aria-hidden="true" />
+              </Button>
+            </span>
+          </>
+        )
       )}
     </SecondaryTableSelectionBar>
   )

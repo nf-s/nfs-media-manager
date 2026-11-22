@@ -34,6 +34,11 @@ import {
   spotifyAlternateValue,
 } from './recording-groups'
 import { loadTracks } from './tracks'
+import {
+  trackDuplicateMembership,
+  trackDuplicateOrder,
+  trackDuplicatePosition,
+} from './track-duplicate-refresh'
 import { trackSpotifyMatchExpression } from './track-values'
 import { createBrowseListening } from './browse-listening'
 
@@ -335,10 +340,15 @@ export async function trackMatchesSpotifySearchFreshness(
   return z.object({ eligible: z.boolean() }).parse(rows[0]).eligible
 }
 
-/** Include source-only rows here so a redundant or incorrect match can be repaired. */
-export async function listTrackMatchDiagnostics(
+/**
+ * The parts of a Matches statement that the page and the list of all its row
+ * IDs share: the leading common table expressions (each followed by a comma),
+ * the tables, joins and conditions of the rows, their order and the total.
+ */
+function trackMatchDiagnosticsRows(
   query: DiagnosticsQuery,
-  userId?: string,
+  userId: string | undefined,
+  now: Date,
 ) {
   const includeEvidence = !query.view || query.view === 'providers'
   const metadata = query.view === 'spotify-search-metadata'
@@ -346,7 +356,6 @@ export async function listTrackMatchDiagnostics(
   const sortBy = query.sortBy
   const usesHistory = metadata && (freshness || sortBy === 'spotifyLastSearch')
   const sortsByListening = sortBy === 'listeningScrobbles'
-  const now = new Date()
   const listening = createBrowseListening(
     query.listening,
     sortsByListening
@@ -359,21 +368,6 @@ export async function listTrackMatchDiagnostics(
   const listeningJoin = listeningSource
     ? sql`left join period_counts listening_counts on listening_counts.id = ${trackId}`
     : sql``
-  // A displayed count only needs to read the scrobbles of the returned rows.
-  const pageListening = createBrowseListening(
-    undefined,
-    sortsByListening ? undefined : query.listeningSort,
-    now,
-  )
-  const pageListeningSource = pageListening?.source(
-    'track',
-    sql`(select unnest(ids) as id from page_ids)`,
-  )
-  const pageListeningJoin = pageListeningSource
-    ? sql`left join ${pageListeningSource} on listening_counts.id = ${trackId}`
-    : listening?.sort
-      ? listeningJoin
-      : sql``
   const historyJoin = usesHistory
     ? sql`left join search_history on search_history.id = ${trackId}`
     : sql``
@@ -409,7 +403,16 @@ export async function listTrackMatchDiagnostics(
       statusCode: 422,
       message: 'Unknown track diagnostics sort.',
     })
-  const order = sql.join(ordering, sql`, `)
+  // Possible duplicates: most played group first, the chosen sort within each
+  // group, then the track a merge keeps.
+  const order = sql.join(
+    query.duplicates
+      ? ordering.flatMap((part, index) =>
+          index ? [part] : [trackDuplicateOrder, part, trackDuplicatePosition],
+        )
+      : ordering,
+    sql`, `,
+  )
   const filters = query.filters ?? []
   const words = [...new Set(query.q?.split(/\s+/).filter(Boolean))]
   const playability = playabilityCondition(query.playability)
@@ -485,19 +488,13 @@ export async function listTrackMatchDiagnostics(
     )`)
   }
   const where = sql`where ${sql.join(conditions, sql` and `)}`
-  const offset = (query.page - 1) * query.size
-  const remaining =
-    query.limitResults === undefined
-      ? query.size
-      : Math.max(0, query.limitResults - offset)
-  const count = sql`(select count(*)::int ${trackTables} ${coverageJoin} ${freshness ? historyJoin : sql``} ${listeningCondition ? listeningJoin : sql``} ${where})`
+  const duplicatesJoin = query.duplicates ? trackDuplicateMembership : sql``
+  const count = sql`(select count(*)::int ${trackTables} ${duplicatesJoin} ${coverageJoin} ${freshness ? historyJoin : sql``} ${listeningCondition ? listeningJoin : sql``} ${where})`
   const total =
     query.limitResults === undefined
       ? count
       : sql`least(${count}, ${query.limitResults})`
-  const reuseEvidence = allEvidenceProviders.size === supportingProviders.size
-  const result = await db.execute(sql`
-    with ${listeningSource ? sql`period_counts as materialized (select * from ${listeningSource}),` : sql``}
+  const prelude = sql`${listeningSource ? sql`period_counts as materialized (select * from ${listeningSource}),` : sql``}
     ${
       usesHistory
         ? sql`search_history as materialized (${spotifyTrackSearchHistory(userId ?? null)}),`
@@ -519,10 +516,8 @@ export async function listTrackMatchDiagnostics(
             { creatorId: query.creatorId },
           )},`
         : sql``
-    }
-    page_ids as (
-      select array(
-        select media_item.id ${trackTables} ${coverageJoin} ${historyJoin} ${listeningJoin}
+    }`
+  const rows = sql`${trackTables} ${duplicatesJoin} ${coverageJoin} ${historyJoin} ${listeningJoin}
         ${
           providerSort
             ? sql`left join (select id, min(lower(value)) as value
@@ -530,7 +525,64 @@ export async function listTrackMatchDiagnostics(
                 on provider_order.id = media_item.id`
             : sql``
         }
-        ${where}
+        ${where}`
+  return {
+    includeEvidence,
+    needsCoverageBeforePage,
+    reuseEvidence: allEvidenceProviders.size === supportingProviders.size,
+    sortsByListening,
+    listening,
+    listeningJoin,
+    prelude,
+    rows,
+    order,
+    total,
+  }
+}
+
+/** Include source-only rows here so a redundant or incorrect match can be repaired. */
+export async function listTrackMatchDiagnostics(
+  query: DiagnosticsQuery,
+  userId?: string,
+) {
+  const now = new Date()
+  const {
+    includeEvidence,
+    needsCoverageBeforePage,
+    reuseEvidence,
+    sortsByListening,
+    listening,
+    listeningJoin,
+    prelude,
+    rows,
+    order,
+    total,
+  } = trackMatchDiagnosticsRows(query, userId, now)
+  // A displayed count only needs to read the scrobbles of the returned rows.
+  const pageListening = createBrowseListening(
+    undefined,
+    sortsByListening ? undefined : query.listeningSort,
+    now,
+  )
+  const pageListeningSource = pageListening?.source(
+    'track',
+    sql`(select unnest(ids) as id from page_ids)`,
+  )
+  const pageListeningJoin = pageListeningSource
+    ? sql`left join ${pageListeningSource} on listening_counts.id = ${trackId}`
+    : listening?.sort
+      ? listeningJoin
+      : sql``
+  const offset = (query.page - 1) * query.size
+  const remaining =
+    query.limitResults === undefined
+      ? query.size
+      : Math.max(0, query.limitResults - offset)
+  const result = await db.execute(sql`
+    with ${prelude}
+    page_ids as (
+      select array(
+        select media_item.id ${rows}
         order by ${order} limit ${Math.min(query.size, remaining)} offset ${offset}
       ) as ids
     ),
@@ -590,6 +642,36 @@ export async function listTrackMatchDiagnostics(
     totalCount: page.total_count,
     pageCount: Math.ceil(page.total_count / query.size),
   })
+}
+
+const MatchIdsRowSchema = z.object({
+  total_count: z.number().int().nonnegative(),
+  ids: z.array(z.string()),
+})
+
+/**
+ * The IDs of every row the Matches query lists, in its order and up to
+ * `limitResults`, with its total. One statement; the page is ignored.
+ */
+export async function listTrackMatchDiagnosticIds(
+  query: DiagnosticsQuery,
+  userId?: string,
+) {
+  const { prelude, rows, order, total } = trackMatchDiagnosticsRows(
+    query,
+    userId,
+    new Date(),
+  )
+  const limit =
+    query.limitResults === undefined ? sql`` : sql`limit ${query.limitResults}`
+  const result = await db.execute(sql`
+    with ${prelude}
+    matching as (
+      select array(select media_item.id ${rows} order by ${order} ${limit}) as ids
+    )
+    select ${total} as total_count, (select ids from matching) as ids`)
+  const row = MatchIdsRowSchema.parse(result.rows[0])
+  return { ids: row.ids, totalCount: row.total_count }
 }
 
 const DiagnosticFacetRowsSchema = z.array(

@@ -36,7 +36,7 @@ import {
   formatDateTime,
   formatItemCount,
 } from '@repo/ui/lib/format'
-import { useVirtualTable } from '@/hooks/useVirtualTable'
+import { tableHeaderHeight, useVirtualTable } from '@/hooks/useVirtualTable'
 import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { fetchApiData } from '@/utils/api'
 import { defaultColumnWidth } from '@/utils/column-widths'
@@ -67,10 +67,16 @@ import {
   trackMatchDiagnosticsQuery,
 } from '@/utils/match-diagnostics'
 import { libraryMatchesHref, type LibraryView } from '@/utils/media-scope'
+import { clientQueryDefaults } from '@/utils/query-cache'
 import {
   orderedTrackMatchBrowseFields,
   withTrackFilter,
 } from '@/utils/track-browse'
+import {
+  loadTrackDuplicateLayout,
+  trackDuplicateLayoutKey,
+  trackDuplicateRows,
+} from '@/utils/track-duplicates'
 import { AlbumMatchHistory } from './album-match-history'
 import { BrowseItemsHead, ItemThumb } from './browse-items'
 import { ConfirmAction } from './confirm-action'
@@ -103,6 +109,11 @@ import TrackMatchesToolbar, {
   clearTrackMatchesFilters,
 } from './track-matches-toolbar'
 import { TrackBrowseValue } from './track-browse-cells'
+import {
+  TrackDuplicateGroupRow,
+  TrackDuplicateResultBar,
+  useTrackDuplicateActions,
+} from './track-duplicate-group'
 
 const libraryLabels = {
   album: { name: 'Album', creator: 'Library artist', plural: 'albums' },
@@ -115,6 +126,9 @@ const libraryLabels = {
   },
   track: { name: 'Track', creator: 'Library artist', plural: 'tracks' },
 }
+
+/** A group row of the Possible duplicates view is as tall as the header (--ds-head). */
+const groupRowHeight = tableHeaderHeight
 
 type Provider = MatchDiagnosticsPage['providers'][number]
 type Column = TableColumn & {
@@ -536,11 +550,29 @@ export default function MatchDiagnosticsWorkspace({
   const matchFields = orderedTrackMatchBrowseFields
   const [knownProviders, setKnownProviders] = useState<Provider[]>([])
   const [merge, setMerge] = useState<MergeSelection | null>(null)
+  // Possible duplicates lists only grouped tracks, under a row for each group.
+  const duplicates = tracks && trackQuery.duplicates === true
+  // The group rows, read with the same request as the rows they stand above.
+  const duplicateLayout = useQuery({
+    queryKey: trackDuplicateLayoutKey(trackQuery),
+    queryFn: ({ signal }) =>
+      loadTrackDuplicateLayout(apiBaseUrl, trackQuery, signal),
+    enabled: duplicates,
+    ...clientQueryDefaults,
+    retry: false,
+  })
+  const groupRows = trackDuplicateRows(
+    duplicates ? (duplicateLayout.data?.groups ?? []) : [],
+    groupRowHeight,
+  )
+  const duplicateActions = useTrackDuplicateActions()
   const query = useVirtualTable({
     queryKey: tracks
       ? [...matchDiagnosticsKey(library), trackQuery]
       : [...matchDiagnosticsKey(library), q, sortBy, direction],
     pageSize: matchDiagnosticsPageSize,
+    headerHeight: tableHeaderHeight + groupRows.leadingHeight,
+    extraRowHeights: groupRows.heights,
     loadPage: (page, size, signal) =>
       tracks
         ? loadTrackMatchDiagnosticsPage(
@@ -622,6 +654,25 @@ export default function MatchDiagnosticsWorkspace({
     trackQuery.creatorId ||
     trackQuery.limitResults,
   )
+
+  /** The aria-rowindex of the row at `index`, after the header and the group rows above it. */
+  function rowIndex(index: number) {
+    return index + 2 + groupRows.through(index)
+  }
+
+  /** The group row above the row at `index`, when a group starts there. */
+  function renderGroupRow(index: number) {
+    const group = groupRows.above(index)
+    return group ? (
+      <TrackDuplicateGroupRow
+        key={`group-${group.id}`}
+        group={group}
+        colSpan={shown.length}
+        rowIndex={rowIndex(index) - 1}
+        actions={duplicateActions}
+      />
+    ) : null
+  }
 
   function replaceParam(update: (params: URLSearchParams) => void) {
     const current = new URLSearchParams(window.location.search)
@@ -899,7 +950,9 @@ export default function MatchDiagnosticsWorkspace({
         <table
           className="ds-table"
           aria-label={title}
-          aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+          aria-rowcount={
+            query.hasTotal ? query.total + 1 + groupRows.count : undefined
+          }
           {...layout.table}
         >
           {layout.colgroup}
@@ -942,7 +995,9 @@ export default function MatchDiagnosticsWorkspace({
               <TableState colSpan={shown.length}>
                 {q || (tracks && hasTrackFilters)
                   ? 'No matching items.'
-                  : 'No library items.'}
+                  : duplicates
+                    ? 'No possible duplicates.'
+                    : 'No library items.'}
                 {tracks && hasTrackFilters && (
                   <Button
                     size="xs"
@@ -954,13 +1009,16 @@ export default function MatchDiagnosticsWorkspace({
                 )}
               </TableState>
             )}
+            {groupRows.leading && renderGroupRow(0)}
             <SecondaryVirtualRows
               window={query}
               colSpan={shown.length}
+              // The group row of the next group follows this row.
+              renderAfter={(index) => renderGroupRow(index + 1)}
               renderRow={(item, index) => (
                 <TableRow
                   key={item.id}
-                  aria-rowindex={index + 2}
+                  aria-rowindex={rowIndex(index)}
                   selected={
                     inspector?.root?.kind === library &&
                     inspector.root.id === item.id
@@ -1001,6 +1059,8 @@ export default function MatchDiagnosticsWorkspace({
           </TableBody>
         </table>
       </SecondaryTableScroll>
+      {tracks && <TrackDuplicateResultBar actions={duplicateActions} />}
+      {duplicateActions.dialog}
       {tracks && <DetailInspector track={{ onFilter: addTrackFilter }} />}
     </section>
   )

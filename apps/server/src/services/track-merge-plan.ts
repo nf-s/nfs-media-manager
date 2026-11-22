@@ -7,6 +7,7 @@ import type {
   TrackMergePlan,
   TrackMergePlanRequest,
 } from '@repo/schemas/library-changes'
+import type { TrackDuplicateMerge } from '@repo/schemas/track-duplicates'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { artistKeys, plainKey } from '@/lib/lastfm-album-matching'
@@ -363,6 +364,25 @@ export type TrackMergeOutline = {
 // The most track IDs one outline statement is given.
 const OUTLINE_BATCH = 2000
 
+/** Consecutive groups of up to `OUTLINE_BATCH` tracks; a larger group alone. */
+function outlineBatches(groups: string[][]) {
+  const batches: string[][][] = []
+  for (let start = 0; start < groups.length; ) {
+    let end = start
+    let size = 0
+    do {
+      size += groups[end]?.length ?? 0
+      end += 1
+    } while (
+      end < groups.length &&
+      size + (groups[end]?.length ?? 0) <= OUTLINE_BATCH
+    )
+    batches.push(groups.slice(start, end))
+    start = end
+  }
+  return batches
+}
+
 const GroupAlbumsSchema = z.array(
   z.object({ group_index: z.number().int(), title: z.string() }),
 )
@@ -378,18 +398,7 @@ export async function readTrackMergeOutlines(
   groups: string[][],
 ): Promise<(TrackMergeOutline | null)[]> {
   const outlines: (TrackMergeOutline | null)[] = []
-  for (let start = 0; start < groups.length; ) {
-    let end = start
-    let size = 0
-    do {
-      size += groups[end]?.length ?? 0
-      end += 1
-    } while (
-      end < groups.length &&
-      size + (groups[end]?.length ?? 0) <= OUTLINE_BATCH
-    )
-    const batch = groups.slice(start, end)
-    start = end
+  for (const batch of outlineBatches(groups)) {
     const trackIds = batch.flat()
     if (!trackIds.length) {
       outlines.push(...batch.map(() => null))
@@ -451,6 +460,53 @@ export async function readTrackMergeOutlines(
     })
   }
   return outlines
+}
+
+/**
+ * For each group of tracks, the first one kept, what merging the group into it
+ * does: how many of the others stay as versions and how many are removed, by
+ * the rule of `readTrackMergePlan`. Null where it would not find a track. One
+ * statement reads up to `OUTLINE_BATCH` tracks, whatever the number of groups.
+ */
+export async function readTrackMergeSummaries(
+  reader: Reader,
+  groups: string[][],
+): Promise<(TrackDuplicateMerge | null)[]> {
+  const summaries: (TrackDuplicateMerge | null)[] = []
+  for (const batch of outlineBatches(groups)) {
+    const trackIds = batch.flat()
+    const tracks = new Map(
+      (trackIds.length ? await readPlanTracks(reader, trackIds) : []).map(
+        (track) => [track.id, track],
+      ),
+    )
+    for (const ids of batch) {
+      const found = ids.flatMap((id) => {
+        const track = tracks.get(id)
+        return track ? [track] : []
+      })
+      const [target, ...others] = found
+      if (!target || found.length !== ids.length) {
+        summaries.push(null)
+        continue
+      }
+      const removed = others.filter(
+        (track) => outcomeOf(track, target) === 'merge',
+      )
+      summaries.push({
+        keep: {
+          id: target.id,
+          title: target.title,
+          by: target.artists.join(', '),
+        },
+        versions: others.length - removed.length,
+        removed: removed.length,
+        removedRecords: removed.filter((track) => blockOf(track) === null)
+          .length,
+      })
+    }
+  }
+  return summaries
 }
 
 /** What merging the selected tracks would do. See `readTrackMerge`. */

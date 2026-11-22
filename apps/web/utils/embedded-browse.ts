@@ -35,7 +35,6 @@ export const browseStateKeys: readonly string[] = [
   'editions',
   'limitResults',
   'groupRecordings',
-  'duplicates',
   'sortBy',
   'direction',
   'view',

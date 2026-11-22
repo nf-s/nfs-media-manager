@@ -59,6 +59,13 @@ export const TrackMatchDiagnosticsQuerySchema =
       .enum(['providers', 'spotify-coverage', 'spotify-search-metadata'])
       .optional(),
     playability: TrackPlayabilitySchema.optional(),
+    /** Only possible duplicates, grouped, most played group first. */
+    duplicates: z
+      .union([
+        z.boolean(),
+        z.enum(['true', 'false']).transform((value) => value === 'true'),
+      ])
+      .optional(),
     creatorId: TrackQuerySchema.shape.creatorId,
     filters: TrackQuerySchema.shape.filters,
     ranges: TrackQuerySchema.shape.ranges,

@@ -7,7 +7,12 @@ import {
   type TrackDuplicateLayoutGroup,
   type TrackDuplicates,
 } from '@repo/schemas/track-duplicates'
+import { formatCount } from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
+import {
+  trackMatchDiagnosticsParams,
+  type TrackMatchDiagnosticsState,
+} from './match-diagnostics'
 
 /*
  * The keys start with `tracks` and `track`, so a merge, Keep separate, Undo
@@ -22,12 +27,12 @@ export const trackDuplicateCountKey = (creatorId?: string) => [
   creatorId ?? null,
 ]
 
-/** The group rows of the Possible duplicates view, for the browse identity it draws. */
-export const trackDuplicateLayoutKey = (identity: string) => [
+/** The group rows of the Possible duplicates view, for the Matches request it draws. */
+export const trackDuplicateLayoutKey = (query: TrackMatchDiagnosticsState) => [
   'tracks',
   'duplicates',
   'layout',
-  identity,
+  query,
 ]
 
 /** The group an open track is in. */
@@ -52,15 +57,15 @@ export function loadTrackDuplicateCount(
   )
 }
 
-/** The groups among the rows the browse request `params` lists, in its order. */
+/** The groups among the rows the Matches request for `query` lists, in its order. */
 export function loadTrackDuplicateLayout(
   apiBaseUrl: string,
-  params: URLSearchParams,
+  query: TrackMatchDiagnosticsState,
   signal?: AbortSignal,
 ) {
   return fetchApiData(
     apiBaseUrl,
-    `/api/v1/tracks/duplicates/layout?${params}`,
+    `/api/v1/tracks/duplicates/layout?${trackMatchDiagnosticsParams(query)}`,
     TrackDuplicateLayoutSchema,
     { signal },
   )
@@ -96,7 +101,49 @@ export function formatTrackDuplicateEvidence(
   return group.evidence.join(' · ')
 }
 
-/** The notice on an open track: the other tracks of its group and the evidence. */
+/** What Merge does to a group, in one sentence without a full stop; null when a member can no longer be read. */
+export function describeTrackDuplicateMerge(
+  group: Pick<TrackDuplicateGroup, 'merge'>,
+) {
+  const { merge } = group
+  if (!merge) return null
+  const parts = [
+    ...(merge.versions === 1
+      ? ['1 other track stays under it as a version']
+      : merge.versions > 1
+        ? [
+            `${formatCount(merge.versions)} other tracks stay under it as versions`,
+          ]
+        : []),
+    ...(merge.removed === 0
+      ? []
+      : [
+          // A removed track with an album position or playlist entry is not a Last.fm record.
+          merge.removedRecords === merge.removed
+            ? merge.removed === 1
+              ? '1 Last.fm record is removed and its plays and names move to it'
+              : `${formatCount(merge.removed)} Last.fm records are removed and their plays and names move to it`
+            : merge.removed === 1
+              ? '1 other track is removed and its plays, names, album positions and playlist entries move to it'
+              : `${formatCount(merge.removed)} other tracks are removed and their plays, names, album positions and playlist entries move to it`,
+        ]),
+  ]
+  return `Merge keeps “${merge.keep.title}”${parts.length ? `: ${parts.join('; ')}` : ''}`
+}
+
+/** The text of a group row: what Merge does, then the evidence. */
+export function describeTrackDuplicateGroup(
+  group: Pick<TrackDuplicateGroup, 'evidence' | 'merge'>,
+) {
+  return [
+    describeTrackDuplicateMerge(group),
+    formatTrackDuplicateEvidence(group),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** The notice on an open track: the other tracks of its group, the evidence and what Merge does. */
 export function describeTrackDuplicateNotice(
   group: TrackDuplicates['items'][number],
 ) {
@@ -104,7 +151,8 @@ export function describeTrackDuplicateNotice(
     (track) => `“${track.title}”${track.by ? ` by ${track.by}` : ''}`,
   )
   const evidence = formatTrackDuplicateEvidence(group)
-  return `Possible duplicate: ${others.join(', ')}.${evidence ? ` ${evidence}` : ''}`
+  const merge = describeTrackDuplicateMerge(group)
+  return `Possible duplicate: ${others.join(', ')}.${evidence ? ` ${evidence}.` : ''}${merge ? ` ${merge}.` : ''}`
 }
 
 /**
@@ -127,7 +175,7 @@ export function trackDuplicateRows(
     /** The group at the first row, drawn before the rows. */
     leading: byOffset.get(0),
     leadingHeight: byOffset.has(0) ? rowHeight : 0,
-    /** Heights below rows, for `useVirtualBrowse`. */
+    /** Heights below rows, for `useVirtualTable`. */
     heights: new Map(
       offsets
         .filter((offset) => offset > 0)
@@ -147,15 +195,4 @@ export function trackDuplicateRows(
     },
     count: sorted.length,
   }
-}
-
-/** Maps of heights below rows as one; heights below the same row add up. */
-export function addRowHeights(
-  ...maps: (ReadonlyMap<number, number> | undefined)[]
-): ReadonlyMap<number, number> | undefined {
-  const merged = new Map<number, number>()
-  for (const map of maps)
-    for (const [row, height] of map ?? [])
-      merged.set(row, (merged.get(row) ?? 0) + height)
-  return merged.size ? merged : undefined
 }
