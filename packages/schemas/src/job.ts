@@ -265,6 +265,14 @@ export const JobSummarySchema = z.object({
 })
 export type JobSummary = z.infer<typeof JobSummarySchema>
 
+/** The library item a task job is about, read when the job is loaded. */
+export const JobSubjectSchema = z.object({
+  title: z.string(),
+  /** Its credited artists, joined; null when it has none. */
+  artists: z.string().nullable(),
+})
+export type JobSubject = z.infer<typeof JobSubjectSchema>
+
 export const JobSchema = z.object({
   id: z.string(),
   provider: z.string(),
@@ -281,6 +289,8 @@ export const JobSchema = z.object({
   /** Why a queued job has not started; null for other statuses. */
   waiting: ProviderWaitingSchema.nullable().optional(),
   progress: JobProgressCountSchema.nullable().optional(),
+  /** Set for task jobs whose options name a library item that still exists. */
+  subject: JobSubjectSchema.nullable().optional(),
   /** Returned by job detail only. */
   summary: JobSummarySchema.nullable().optional(),
 })
@@ -299,6 +309,11 @@ export const JobBatchEntrySchema = z.object({
   mediaType: JobLibrarySchema.nullable(),
   /** Where the batch came from when known, such as a library import. */
   label: z.string().nullable(),
+  /**
+   * The task every job in the batch runs; null when they are all item
+   * scrapes; absent when they differ.
+   */
+  task: z.string().nullable().optional(),
   importId: z.string().nullable(),
   /** Counts cover every job in the batch, not only those matching filters. */
   total: z.number().int().nonnegative(),

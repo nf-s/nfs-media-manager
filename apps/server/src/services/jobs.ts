@@ -130,6 +130,7 @@ import {
 import type { CloudJobOutcome } from '@/services/cloud-job-contract'
 import { withJobWaiting } from '@/services/job-waiting'
 import { describeJob } from '@/services/job-summary'
+import { withJobSubjects } from '@/services/job-subjects'
 import {
   prepareLastfmSyncRun,
   runLastfmSyncJob,
@@ -2264,11 +2265,13 @@ export async function jobSortField(query: JobListQuery) {
         then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
     when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${TIDAL_TRACK_MATCH_TASK} then concat_ws(' · ', 'TIDAL track match', nullif(btrim(${table.options}->>'trackTitle'), ''))
-    when ${SONOVAULT_TRACK_LOOKUP_TASK} then concat('Sonovault lookup · ', jsonb_array_length(${table.options}->'trackIds'), ' tracks')
+    when ${SONOVAULT_TRACK_LOOKUP_TASK} then concat_ws(' · ',
+      case when ${table.options}->>'refresh' = 'true' then 'Sonovault track refresh' else 'Sonovault track lookup' end,
+      jsonb_array_length(${table.options}->'trackIds'), nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${SONOVAULT_ALBUM_LOOKUP_TASK} then concat_ws(' · ', 'Sonovault album lookup', nullif(btrim(${table.options}->>'albumTitle'), ''))
-    when ${TIDAL_SIMILAR_TASK} then concat_ws(' · ', 'TIDAL similar', nullif(btrim(${table.options}->>'itemTitle'), ''))
-    when ${SPOTIFY_SIMILAR_LOOKUP_TASK} then 'Spotify similar lookup'
-    when ${SONOVAULT_SIMILAR_LOOKUP_TASK} then 'Sonovault similar lookup'
+    when ${TIDAL_SIMILAR_TASK} then concat_ws(' · ', concat('TIDAL similar ', coalesce(${table.options}->>'kind', 'track'), 's'), nullif(btrim(${table.options}->>'itemTitle'), ''))
+    when ${SPOTIFY_SIMILAR_LOOKUP_TASK} then 'Spotify search · similar'
+    when ${SONOVAULT_SIMILAR_LOOKUP_TASK} then 'Sonovault lookup · similar'
     else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
       where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
   const result = query.mediaItemId
@@ -2329,7 +2332,9 @@ export async function loadListedJobs(ids: string[]): Promise<Job[]> {
       mapJob(jobRecord, await getScrapePlugin(jobRecord.provider)),
     ),
   )
-  return mapped.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+  return withJobSubjects(
+    mapped.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)),
+  )
 }
 
 export async function listJobs(
@@ -2364,7 +2369,9 @@ export async function listJobs(
 
 export async function getJob(jobId: string): Promise<Job | null> {
   const job = await getJobRecord(jobId)
-  return job ? describeJob(job) : null
+  if (!job) return null
+  const [named = job] = await withJobSubjects([job])
+  return describeJob(named)
 }
 
 export async function markJobErrorBenign(

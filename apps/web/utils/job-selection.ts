@@ -26,6 +26,18 @@ import {
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
+import {
+  SONOVAULT_SIMILAR_LOOKUP_TASK,
+  SONOVAULT_TRACK_LOOKUP_TASK,
+  type SonovaultLookupInputType,
+} from '@repo/schemas/sonovault'
+import { SONOVAULT_ALBUM_LOOKUP_TASK } from '@repo/schemas/sonovault-album'
+import {
+  SPOTIFY_SIMILAR_LOOKUP_TASK,
+  TIDAL_SIMILAR_TASK,
+  TIDAL_TRACK_MATCH_TASK,
+} from '@repo/schemas/tidal'
+import { formatItemCount } from '@repo/ui/lib/format'
 import { playlistJobProgress } from './playlist-sync'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 
@@ -98,8 +110,111 @@ function filledText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+/** `Title — Artist` of a job's subject, else the title its options saved. */
+function subjectName(
+  job: Pick<Job, 'options' | 'subject'>,
+  savedTitle: unknown,
+): string | null {
+  if (job.subject)
+    return job.subject.artists
+      ? `${job.subject.title} — ${job.subject.artists}`
+      : job.subject.title
+  return filledText(savedTitle) ? savedTitle : null
+}
+
+function named(action: string, subject: string | null) {
+  return subject ? `${action} · ${subject}` : action
+}
+
+function listLength(value: unknown) {
+  return Array.isArray(value) ? value.length : 0
+}
+
+const lookupInputs: Record<SonovaultLookupInputType, string> = {
+  spotify_id: 'Spotify ID',
+  isrc: 'ISRC',
+  track_name: 'artist and title',
+}
+
+const similarNouns = {
+  album: { one: 'album', other: 'albums' },
+  track: { one: 'track', other: 'tracks' },
+}
+
+function similarNoun(kind: unknown) {
+  return kind === 'album' ? similarNouns.album : similarNouns.track
+}
+
+/**
+ * A bulk Sonovault lookup: whether it refreshes, how many tracks it sends
+ * and how, and the first of them.
+ */
+function sonovaultTrackLookupTitle(job: Pick<Job, 'options' | 'subject'>) {
+  const { options } = job
+  const refresh = options.refresh === true
+  const count = listLength(options.trackIds)
+  const input =
+    options.inputType === 'spotify_id' ||
+    options.inputType === 'isrc' ||
+    options.inputType === 'track_name'
+      ? lookupInputs[options.inputType]
+      : null
+  const tracks = count
+    ? formatItemCount(
+        count,
+        refresh
+          ? { one: 'track', other: 'tracks' }
+          : { one: 'selected track', other: 'selected tracks' },
+      )
+    : null
+  const first = subjectName(job, options.trackTitle)
+  return [
+    `Sonovault track ${refresh ? 'refresh' : 'lookup'}`,
+    tracks && input ? `${tracks} by ${input}` : tracks,
+    first && count > 1 ? `${first}, …` : first,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 /** Title for a job without media items, or null for media jobs. */
-export function jobTaskTitle(job: Pick<Job, 'options'>): string | null {
+export function jobTaskTitle(
+  job: Pick<Job, 'options'> & Partial<Pick<Job, 'subject'>>,
+): string | null {
+  const task = getJobTask(job.options)
+  if (task === SONOVAULT_TRACK_LOOKUP_TASK)
+    return sonovaultTrackLookupTitle(job)
+  if (task === SONOVAULT_ALBUM_LOOKUP_TASK)
+    return named(
+      'Sonovault album lookup',
+      subjectName(job, job.options.albumTitle),
+    )
+  if (task === TIDAL_TRACK_MATCH_TASK)
+    return named('TIDAL track match', subjectName(job, job.options.trackTitle))
+  if (task === TIDAL_SIMILAR_TASK)
+    return named(
+      `TIDAL similar ${similarNoun(job.options.kind).other}`,
+      subjectName(job, job.options.itemTitle),
+    )
+  if (
+    task === SPOTIFY_SIMILAR_LOOKUP_TASK ||
+    task === SONOVAULT_SIMILAR_LOOKUP_TASK
+  ) {
+    const spotify = task === SPOTIFY_SIMILAR_LOOKUP_TASK
+    const count = listLength(spotify ? job.options.codes : job.options.tracks)
+    const noun = similarNoun(spotify ? job.options.kind : 'track')
+    const subject = subjectName(job, null)
+    const items = count
+      ? formatItemCount(count, {
+          one: `similar ${noun.one}`,
+          other: `similar ${noun.other}`,
+        })
+      : `similar ${noun.other}`
+    return named(
+      spotify ? 'Spotify search' : 'Sonovault lookup',
+      subject ? `${items} of ${subject}` : items,
+    )
+  }
   if (isArtistEnrichmentJob(job))
     return filledText(job.options.artistName)
       ? `Artist enrichment · ${job.options.artistName}`

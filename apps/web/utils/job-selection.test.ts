@@ -17,6 +17,16 @@ import {
   type MixStation,
 } from '@repo/schemas/subscriptions'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
+import {
+  SONOVAULT_SIMILAR_LOOKUP_TASK,
+  SONOVAULT_TRACK_LOOKUP_TASK,
+} from '@repo/schemas/sonovault'
+import { SONOVAULT_ALBUM_LOOKUP_TASK } from '@repo/schemas/sonovault-album'
+import {
+  SPOTIFY_SIMILAR_LOOKUP_TASK,
+  TIDAL_SIMILAR_TASK,
+  TIDAL_TRACK_MATCH_TASK,
+} from '@repo/schemas/tidal'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
 import {
   activeJobProgressLabel,
@@ -483,5 +493,100 @@ test('station mix syncs are titled task jobs that resume on retry', () => {
   assert.equal(
     isMixSyncJob({ options: { task: SPOTIFY_PODCAST_SYNC_TASK } }),
     false,
+  )
+})
+
+test('Sonovault and TIDAL task jobs name their action and subject', () => {
+  const subject = { title: 'Fixture Song', artists: 'Fixture Band' }
+  const trackIds = Array.from({ length: 100 }, (_, index) => `track-${index}`)
+  assert.equal(
+    jobTaskTitle({
+      options: {
+        task: SONOVAULT_TRACK_LOOKUP_TASK,
+        trackIds,
+        inputType: 'spotify_id',
+        refresh: false,
+        trackTitle: 'Saved Song',
+      },
+      subject,
+    }),
+    'Sonovault track lookup · 100 selected tracks by Spotify ID · Fixture Song — Fixture Band, …',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: {
+        task: SONOVAULT_TRACK_LOOKUP_TASK,
+        trackIds: ['track-1'],
+        inputType: 'isrc',
+        refresh: true,
+        trackTitle: 'Saved Song',
+      },
+    }),
+    'Sonovault track refresh · 1 track by ISRC · Saved Song',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: {
+        task: SONOVAULT_TRACK_LOOKUP_TASK,
+        trackIds,
+        inputType: 'track_name',
+      },
+      subject: null,
+    }),
+    'Sonovault track lookup · 100 selected tracks by artist and title',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: {
+        task: SONOVAULT_ALBUM_LOOKUP_TASK,
+        albumId: 'album-1',
+        albumTitle: 'Saved Album',
+      },
+      subject: { title: 'Fixture Album', artists: 'Fixture Band' },
+    }),
+    'Sonovault album lookup · Fixture Album — Fixture Band',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: { task: SONOVAULT_ALBUM_LOOKUP_TASK, albumTitle: 'Saved Album' },
+      subject: null,
+    }),
+    'Sonovault album lookup · Saved Album',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: { task: TIDAL_TRACK_MATCH_TASK, trackTitle: 'Saved Song' },
+      subject,
+    }),
+    'TIDAL track match · Fixture Song — Fixture Band',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: { task: TIDAL_SIMILAR_TASK, kind: 'album', itemTitle: 'Saved' },
+      subject: { title: 'Fixture Album', artists: null },
+    }),
+    'TIDAL similar albums · Fixture Album',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: {
+        task: SPOTIFY_SIMILAR_LOOKUP_TASK,
+        kind: 'track',
+        codes: ['code-1', 'code-2'],
+      },
+      subject,
+    }),
+    'Spotify search · 2 similar tracks of Fixture Song — Fixture Band',
+  )
+  assert.equal(
+    jobTaskTitle({
+      options: {
+        task: SONOVAULT_SIMILAR_LOOKUP_TASK,
+        kind: 'track',
+        tracks: [{}],
+      },
+      subject: null,
+    }),
+    'Sonovault lookup · 1 similar track',
   )
 })

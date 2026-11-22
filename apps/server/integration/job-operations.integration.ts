@@ -484,6 +484,7 @@ describe('job entries', () => {
       providers: ['fixture-healthy'],
       mediaType: 'album',
       label: 'Library import',
+      task: null,
       importId: 'import-a',
       total: 3,
       matching: 3,
@@ -555,6 +556,86 @@ describe('job entries', () => {
       await listJobEntries({ sortBy: 'createdAt', direction: 'asc' }),
     )
     expect(keys(byCreated)).toEqual(['batch-a', 'solo', 'plain', 'batch-b'])
+  })
+
+  it('names the subject of task jobs and the task a batch runs', async () => {
+    await databaseClient.delete(schema.mediaItem)
+    await databaseClient.delete(schema.artist)
+    await databaseClient.insert(schema.mediaItem).values([
+      {
+        id: 'album-1',
+        slug: 'album-1',
+        title: 'Fixture Album',
+        mediaType: 'album',
+      },
+      {
+        id: 'track-1',
+        slug: 'track-1',
+        title: 'Fixture Song',
+        mediaType: 'track',
+      },
+    ])
+    await databaseClient.insert(schema.artist).values([
+      { id: 'artist-b', name: 'Second Band' },
+      { id: 'artist-a', name: 'First Band' },
+    ])
+    await databaseClient.insert(schema.mediaCredit).values([
+      {
+        mediaItemId: 'album-1',
+        artistId: 'artist-b',
+        role: 'artist',
+        billingOrder: 1,
+      },
+      { mediaItemId: 'album-1', artistId: 'artist-a', role: 'artist' },
+    ])
+    await seedJob('album-a', 'fixture-open', 'succeeded', {
+      batchId: 'albums',
+      options: { task: 'sonovault-album-lookup', albumId: 'album-1' },
+    })
+    await seedJob('album-b', 'fixture-open', 'queued', {
+      batchId: 'albums',
+      options: { task: 'sonovault-album-lookup', albumId: 'album-gone' },
+    })
+    await seedJob('tracks', 'fixture-open', 'succeeded', {
+      createdAt: base + 1000,
+      options: {
+        task: 'sonovault-track-lookup',
+        trackIds: ['track-1', 'track-2'],
+      },
+    })
+    await seedJob('mixed-1', 'fixture-open', 'succeeded', {
+      batchId: 'mixed',
+      options: { task: 'tidal-similar', itemId: 'track-1' },
+    })
+    await seedJob('mixed-2', 'fixture-open', 'succeeded', { batchId: 'mixed' })
+    const { listJobEntries } = await import('@/services/job-entries')
+    const { getJob, listJobs } = await import('@/services/jobs')
+    const page = JobEntryPageSchema.parse(await listJobEntries({}))
+    const batch = (id: string) =>
+      page.items.find((entry) => entry.kind === 'batch' && entry.batchId === id)
+    expect(batch('albums')).toMatchObject({ task: 'sonovault-album-lookup' })
+    expect(batch('mixed')).not.toHaveProperty('task')
+    const tracks = page.items.find(
+      (entry) => entry.kind === 'job' && entry.job.id === 'tracks',
+    )
+    expect(tracks?.kind === 'job' && tracks.job.subject).toEqual({
+      title: 'Fixture Song',
+      artists: null,
+    })
+    const jobs = JobPageSchema.parse(
+      await listJobs({ batchId: 'albums', sortBy: 'createdAt' }),
+    )
+    expect(
+      Object.fromEntries(jobs.items.map((job) => [job.id, job.subject])),
+    ).toEqual({
+      'album-a': { title: 'Fixture Album', artists: 'First Band, Second Band' },
+      'album-b': null,
+    })
+    expect((await getJob('album-a'))?.subject).toEqual({
+      title: 'Fixture Album',
+      artists: 'First Band, Second Band',
+    })
+    expect((await getJob('mixed-2'))?.subject).toBeUndefined()
   })
 
   it('keeps single-job batches in job order and counts entries past the last page', async () => {

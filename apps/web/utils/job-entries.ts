@@ -6,11 +6,15 @@ import {
   formatItemCount,
   formatTime,
 } from '@repo/ui/lib/format'
+import { SONOVAULT_TRACK_LOOKUP_TASK } from '@repo/schemas/sonovault'
+import { SPOTIFY_PLAYLIST_IMPORT_TASK } from '@repo/schemas/tracks'
 import { isSpotifyTrackSearchJob, jobTaskTitle } from './job-selection'
 import { isBlockingWait, waitingLabel } from './provider-health'
 
 /** A job's name: its task, else the items it targets. */
-export function jobTitle(job: Pick<Job, 'options' | 'items'>) {
+export function jobTitle(
+  job: Pick<Job, 'options' | 'items'> & Partial<Pick<Job, 'subject'>>,
+) {
   return (
     jobTaskTitle(job) ??
     (job.items
@@ -37,16 +41,35 @@ const batchNouns: Record<string, { one: string; other: string }> = {
   mix: { one: 'mix sync', other: 'mix syncs' },
 }
 
-/** `Library import`, else `Batch`; the target says how many items. */
-export function batchTitle(batch: Pick<JobBatchEntry, 'label'>) {
-  return batch.label ?? 'Batch'
+// Tasks whose jobs each cover several items, counted as jobs of their kind.
+const taskBatchNouns: Record<string, { one: string; other: string }> = {
+  [SONOVAULT_TRACK_LOOKUP_TASK]: { one: 'lookup', other: 'lookups' },
+  [SPOTIFY_PLAYLIST_IMPORT_TASK]: { one: 'playlist', other: 'playlists' },
 }
 
-export function batchTarget(batch: Pick<JobBatchEntry, 'total' | 'mediaType'>) {
-  const noun = (batch.mediaType && batchNouns[batch.mediaType]) || {
-    one: 'job',
-    other: 'jobs',
-  }
+/**
+ * `Library import`, else the task its jobs run, `Metadata lookup` for item
+ * scrapes, or `Batch` when they differ; the target says how many.
+ */
+export function batchTitle(
+  batch: Pick<JobBatchEntry, 'label'> & Partial<Pick<JobBatchEntry, 'task'>>,
+) {
+  if (batch.label) return batch.label
+  if (batch.task === null) return 'Metadata lookup'
+  return (
+    (batch.task && jobTaskTitle({ options: { task: batch.task } })) || 'Batch'
+  )
+}
+
+export function batchTarget(
+  batch: Pick<JobBatchEntry, 'total' | 'mediaType'> &
+    Partial<Pick<JobBatchEntry, 'task'>>,
+) {
+  const noun = (batch.task && taskBatchNouns[batch.task]) ||
+    (batch.mediaType && batchNouns[batch.mediaType]) || {
+      one: 'job',
+      other: 'jobs',
+    }
   return `${formatCount(batch.total)} ${batch.total === 1 ? noun.one : noun.other}`
 }
 

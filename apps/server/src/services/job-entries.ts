@@ -59,39 +59,62 @@ async function loadBatches(ids: string[], now: number) {
     MIX_SYNC_TASKS.map((task) => sql`${task}`),
     sql`, `,
   )
-  const task = sql`coalesce(${scrapeJob.options}->>'task', '')`
-  const scopeType = sql`${scrapeJob.scope}->>'mediaType'`
+  // Each job's options are read once: they can be large, and every further
+  // read of a field costs another detoast. `offset 0` keeps the subquery
+  // from being inlined into the aggregates.
+  const jobs = db
+    .select({
+      batchId: sql<string>`${batchKey}`.as('batch_id'),
+      task: sql<string | null>`${scrapeJob.options}->>'task'`.as('task'),
+      scopeType: sql<string | null>`${scrapeJob.scope}->>'mediaType'`.as(
+        'scope_type',
+      ),
+      provider: scrapeJob.provider,
+      status: scrapeJob.status,
+      createdAt: scrapeJob.createdAt,
+      startedAt: scrapeJob.startedAt,
+      finishedAt: scrapeJob.finishedAt,
+    })
+    .from(scrapeJob)
+    .where(inArray(batchKey, ids))
+    .offset(0)
+    .as('jobs')
+  const task = sql`coalesce(${jobs.task}, '')`
   const [rows, imports] = await Promise.all([
     db
       .select({
-        batchId: sql<string>`${batchKey}`,
+        batchId: jobs.batchId,
         total: sql<number>`count(*)::integer`,
-        queued: sql<number>`count(*) filter (where ${scrapeJob.status} = 'queued')::integer`,
-        running: sql<number>`count(*) filter (where ${scrapeJob.status} = 'running')::integer`,
-        succeeded: sql<number>`count(*) filter (where ${scrapeJob.status} = 'succeeded')::integer`,
-        failed: sql<number>`count(*) filter (where ${scrapeJob.status} = 'failed')::integer`,
-        cancelled: sql<number>`count(*) filter (where ${scrapeJob.status} = 'cancelled')::integer`,
+        queued: sql<number>`count(*) filter (where ${jobs.status} = 'queued')::integer`,
+        running: sql<number>`count(*) filter (where ${jobs.status} = 'running')::integer`,
+        succeeded: sql<number>`count(*) filter (where ${jobs.status} = 'succeeded')::integer`,
+        failed: sql<number>`count(*) filter (where ${jobs.status} = 'failed')::integer`,
+        cancelled: sql<number>`count(*) filter (where ${jobs.status} = 'cancelled')::integer`,
         providers: sql<
           string[]
-        >`array_agg(distinct ${scrapeJob.provider} order by ${scrapeJob.provider})`,
+        >`array_agg(distinct ${jobs.provider} order by ${jobs.provider})`,
         queuedProviders: sql<
           string[]
-        >`coalesce(array_agg(distinct ${scrapeJob.provider}) filter (where ${scrapeJob.status} = 'queued'), '{}')`,
+        >`coalesce(array_agg(distinct ${jobs.provider}) filter (where ${jobs.status} = 'queued'), '{}')`,
         mediaType: sql<string | null>`case
           when bool_and(${task} = ${ARTIST_ENRICHMENT_TASK}) then 'artist'
           when bool_and(${task} in (${subscriptionTasks})) then 'subscription'
           when bool_and(${task} in (${mixTasks})) then 'mix'
-          when count(${scopeType}) = count(*) and count(distinct ${scopeType}) = 1 then min(${scopeType})
+          when count(${jobs.scopeType}) = count(*) and count(distinct ${jobs.scopeType}) = 1 then min(${jobs.scopeType})
           end`,
-        createdAt: epochMs(sql`min(${scrapeJob.createdAt})`),
-        startedAt: epochMs(sql`min(${scrapeJob.startedAt})`),
+        // '' when every job is an item scrape; null when tasks differ.
+        task: sql<string | null>`case
+          when bool_and(${jobs.task} is null) then ''
+          when min(${task}) = max(${task}) then min(${jobs.task})
+          end`,
+        createdAt: epochMs(sql`min(${jobs.createdAt})`),
+        startedAt: epochMs(sql`min(${jobs.startedAt})`),
         finishedAt: epochMs(
-          sql`case when count(*) filter (where ${scrapeJob.status} in ('queued', 'running')) = 0 then max(${scrapeJob.finishedAt}) end`,
+          sql`case when count(*) filter (where ${jobs.status} in ('queued', 'running')) = 0 then max(${jobs.finishedAt}) end`,
         ),
       })
-      .from(scrapeJob)
-      .where(inArray(batchKey, ids))
-      .groupBy(batchKey),
+      .from(jobs)
+      .groupBy(jobs.batchId),
     db
       .select({
         id: libraryImport.id,
@@ -121,6 +144,7 @@ async function loadBatches(ids: string[], now: number) {
           providers: row.providers,
           mediaType: mediaType.success ? mediaType.data : null,
           label: importId ? 'Library import' : null,
+          ...(row.task === null ? {} : { task: row.task || null }),
           importId,
           total: row.total,
           matching: 0,

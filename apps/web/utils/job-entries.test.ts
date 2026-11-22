@@ -3,10 +3,14 @@ import { test } from 'node:test'
 import type { JobBatchEntry } from '@repo/schemas/job'
 import { ProviderOverviewItemSchema } from '@repo/schemas/provider'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
+import { SONOVAULT_TRACK_LOOKUP_TASK } from '@repo/schemas/sonovault'
+import { SONOVAULT_ALBUM_LOOKUP_TASK } from '@repo/schemas/sonovault-album'
+import { SPOTIFY_PLAYLIST_IMPORT_TASK } from '@repo/schemas/tracks'
 import {
   batchResult,
   batchStatus,
   batchTarget,
+  batchTitle,
   formatWhen,
   jobBatchHref,
   jobStatus,
@@ -192,5 +196,47 @@ test('Spotify track search jobs show the saved candidate count', () => {
       status: 'succeeded',
     }),
     'Search skipped',
+  )
+})
+
+test('batch rows name the task their jobs run and count its units', () => {
+  assert.equal(
+    batchTitle({ label: 'Library import', task: null }),
+    'Library import',
+  )
+  assert.equal(batchTitle({ label: null, task: null }), 'Metadata lookup')
+  assert.equal(batchTitle({ label: null }), 'Batch')
+  assert.equal(batchTitle({ label: null, task: 'unknown-task' }), 'Batch')
+  assert.equal(
+    batchTitle({ label: null, task: SONOVAULT_ALBUM_LOOKUP_TASK }),
+    'Sonovault album lookup',
+  )
+  assert.equal(
+    batchTitle({ label: null, task: SPOTIFY_TRACK_SEARCH_TASK }),
+    'Spotify track search',
+  )
+  assert.equal(
+    batchTarget({
+      total: 1200,
+      mediaType: 'album',
+      task: SONOVAULT_ALBUM_LOOKUP_TASK,
+    }),
+    '1,200 albums',
+  )
+  assert.equal(
+    batchTarget({
+      total: 12,
+      mediaType: 'track',
+      task: SONOVAULT_TRACK_LOOKUP_TASK,
+    }),
+    '12 lookups',
+  )
+  assert.equal(
+    batchTarget({
+      total: 4,
+      mediaType: 'album',
+      task: SPOTIFY_PLAYLIST_IMPORT_TASK,
+    }),
+    '4 playlists',
   )
 })
