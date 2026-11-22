@@ -64,6 +64,14 @@ export const PluginRequestTimeoutSchema = z
 export const PluginRateLimitSchema = z.object({
   maxConcurrent: z.number().int().positive(),
   concurrentRequests: z.boolean().optional(),
+  /**
+   * With `concurrentRequests`: space request starts from their reservations
+   * instead of holding the provider's dispatch lock until each request has
+   * started. A request must start within the 4 s dispatch window, so starts
+   * in any span of T ms are at most (T + 4000) / minTimeMs + 1. For a limit
+   * counted per minute only; a per-second limit should not use it.
+   */
+  paceFromReservation: z.boolean().optional(),
   fixedWindow: z
     .object({
       durationMs: z.number().int().positive(),

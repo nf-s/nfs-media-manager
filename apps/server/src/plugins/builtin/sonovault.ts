@@ -30,6 +30,9 @@ export const sonovaultPlugin: MediaProviderPlugin = {
       // shared gate, which starts them at least `minTimeMs` apart.
       maxConcurrent: 8,
       concurrentRequests: true,
+      // Starts are 1.1 s apart from their reservations, and each starts
+      // within the 4 s dispatch window: at most 59 in any 60 s.
+      paceFromReservation: true,
       minTimeMs: SONOVAULT_MIN_SPACING_MS,
       requestTimeoutMs: 60000,
       respectRateLimitHeaders: true,

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, count, eq, gt, gte, lt, min } from 'drizzle-orm'
+import { and, count, eq, gt, gte, lt, min, sql } from 'drizzle-orm'
 import {
   PluginRequestTimeoutSchema,
   ProviderRequestError,
@@ -467,6 +467,9 @@ async function reserve(
     await tx
       .insert(providerRequestEvent)
       .values({ id: token, provider, requestedAt: new Date(now), requestClass })
+    // Paced from reservations, a concurrent provider takes no dispatch lock:
+    // the next reservation waits on nextAllowedAt alone.
+    const paced = pacedFromReservation(plugin)
     await tx
       .update(providerRequestState)
       .set({
@@ -474,8 +477,8 @@ async function reserve(
         nextAllowedAt: new Date(now + plugin.manifest.rateLimit.minTimeMs),
         // Concurrent providers also hold this lock until actual dispatch pacing
         // is durable; their in-flight slots remain in requestLeases afterwards.
-        leaseId: token,
-        leaseUntil: new Date(expiresAt),
+        leaseId: paced ? null : token,
+        leaseUntil: paced ? null : new Date(expiresAt),
         requestLeases: plugin.manifest.rateLimit.concurrentRequests
           ? [...leases, { id: token, expiresAt }]
           : leases,
@@ -536,9 +539,20 @@ async function openProviderState(provider: string) {
   return state
 }
 
-async function checkDispatch(provider: string, reservation: ReadyReservation) {
-  const state = await openProviderState(provider)
-  if (state?.leaseId !== reservation.token) throw expiredReservation()
+/** Whether the provider's requests are paced from their reservations. */
+const pacedFromReservation = (plugin: MediaProviderPlugin) =>
+  plugin.manifest.rateLimit.concurrentRequests === true &&
+  plugin.manifest.rateLimit.paceFromReservation === true
+
+async function checkDispatch(
+  plugin: MediaProviderPlugin,
+  reservation: ReadyReservation,
+) {
+  const state = await openProviderState(plugin.manifest.id)
+  const held = pacedFromReservation(plugin)
+    ? state?.requestLeases.some((lease) => lease.id === reservation.token)
+    : state?.leaseId === reservation.token
+  if (!held) throw expiredReservation()
 }
 
 async function recordDispatch(
@@ -546,6 +560,15 @@ async function recordDispatch(
   reservation: ReadyReservation,
   startedAt: number,
 ) {
+  // Paced from its reservation, a request only records when it started; the
+  // provider's state, and so other jobs' reservations, are not held up.
+  if (pacedFromReservation(plugin)) {
+    await db
+      .update(providerRequestEvent)
+      .set({ requestedAt: new Date(startedAt) })
+      .where(eq(providerRequestEvent.id, reservation.token))
+    return
+  }
   await db.transaction(async (tx) => {
     const [state] = await tx
       .select()
@@ -1110,7 +1133,7 @@ export function createProviderRequest(
       }
     }
     try {
-      await checkDispatch(plugin.manifest.id, reservation)
+      await checkDispatch(plugin, reservation)
       configuration.beginResponseCapture?.assertStored()
       init?.signal?.throwIfAborted()
       // The local transport owns its execution deadline. Its response is
@@ -1451,55 +1474,67 @@ export function createProviderRequest(
         }
       throw recorded
     } finally {
-      await db.transaction(async (tx) => {
-        const [state] = await tx
-          .select()
-          .from(providerRequestState)
-          .where(eq(providerRequestState.provider, plugin.manifest.id))
-          .for('update')
-        if (state) {
-          const accountingAt = requestStartedAt
-          const recoverRemoteAccounting =
-            transport !== null &&
-            !remoteAccountingComplete &&
-            accountingAt !== undefined
-          if (recoverRemoteAccounting && accountingAt !== undefined)
-            await tx
-              .update(providerRequestEvent)
-              .set({ requestedAt: new Date(accountingAt) })
-              .where(eq(providerRequestEvent.id, token))
-          await tx
-            .update(providerRequestState)
-            .set({
-              ...(recoverRemoteAccounting && accountingAt !== undefined
-                ? {
-                    requests: state.requests.map((time, index) =>
-                      index === state.requests.lastIndexOf(reservedAt)
-                        ? Math.max(time, accountingAt)
-                        : time,
-                    ),
-                  }
-                : {}),
-              ...(requestStartedAt === undefined
-                ? {}
-                : {
-                    nextAllowedAt: new Date(
-                      Math.max(
-                        state.nextAllowedAt?.getTime() ?? 0,
-                        requestStartedAt + plugin.manifest.rateLimit.minTimeMs,
-                      ),
-                    ),
-                  }),
-              ...(state.leaseId === token
-                ? { leaseId: null, leaseUntil: null }
-                : {}),
-              requestLeases: state.requestLeases.filter(
-                (lease) => lease.id !== token && lease.expiresAt > Date.now(),
-              ),
-            })
+      if (pacedFromReservation(plugin) && transport === null)
+        // One statement frees this request's slot without locking the row
+        // across round trips; pacing was set when it was reserved.
+        await db.execute(sql`
+          update provider_request_state set request_leases = coalesce((
+              select jsonb_agg(lease) from jsonb_array_elements(request_leases) lease
+              where lease->>'id' <> ${token}
+                and (lease->>'expiresAt')::bigint > ${Date.now()}), '[]'::jsonb),
+            updated_at = now()
+          where provider = ${plugin.manifest.id}`)
+      else
+        await db.transaction(async (tx) => {
+          const [state] = await tx
+            .select()
+            .from(providerRequestState)
             .where(eq(providerRequestState.provider, plugin.manifest.id))
-        }
-      })
+            .for('update')
+          if (state) {
+            const accountingAt = requestStartedAt
+            const recoverRemoteAccounting =
+              transport !== null &&
+              !remoteAccountingComplete &&
+              accountingAt !== undefined
+            if (recoverRemoteAccounting && accountingAt !== undefined)
+              await tx
+                .update(providerRequestEvent)
+                .set({ requestedAt: new Date(accountingAt) })
+                .where(eq(providerRequestEvent.id, token))
+            await tx
+              .update(providerRequestState)
+              .set({
+                ...(recoverRemoteAccounting && accountingAt !== undefined
+                  ? {
+                      requests: state.requests.map((time, index) =>
+                        index === state.requests.lastIndexOf(reservedAt)
+                          ? Math.max(time, accountingAt)
+                          : time,
+                      ),
+                    }
+                  : {}),
+                ...(requestStartedAt === undefined
+                  ? {}
+                  : {
+                      nextAllowedAt: new Date(
+                        Math.max(
+                          state.nextAllowedAt?.getTime() ?? 0,
+                          requestStartedAt +
+                            plugin.manifest.rateLimit.minTimeMs,
+                        ),
+                      ),
+                    }),
+                ...(state.leaseId === token
+                  ? { leaseId: null, leaseUntil: null }
+                  : {}),
+                requestLeases: state.requestLeases.filter(
+                  (lease) => lease.id !== token && lease.expiresAt > Date.now(),
+                ),
+              })
+              .where(eq(providerRequestState.provider, plugin.manifest.id))
+          }
+        })
       if (captureFailure) throw captureFailure
     }
   }

@@ -324,6 +324,65 @@ describe('provider request dispatch timing', () => {
     ).toHaveLength(1)
   })
 
+  it('paces requests from their reservations without a dispatch lock', async () => {
+    const { createProviderRequest } =
+      await import('@/services/provider-requests')
+    const pacedPlugin: MediaProviderPlugin = {
+      ...plugin,
+      manifest: {
+        ...plugin.manifest,
+        rateLimit: {
+          ...plugin.manifest.rateLimit,
+          concurrentRequests: true,
+          paceFromReservation: true,
+          maxConcurrent: 3,
+          minTimeMs: 300,
+        },
+      },
+    }
+    const respond = latch()
+    const starts: number[] = []
+    const inFlight: { leaseId: string | null; leases: number }[] = []
+    fetchMock.mockImplementation(async () => {
+      starts.push(Date.now())
+      const [state] = await databaseClient
+        .select()
+        .from(schema.providerRequestState)
+      inFlight.push({
+        leaseId: state?.leaseId ?? null,
+        leases: state?.requestLeases.length ?? 0,
+      })
+      await respond.promise
+      return new Response('{}', { status: 200 })
+    })
+    const request = createProviderRequest(pacedPlugin)
+    const first = request('https://fixture.invalid/one')
+    const second = request('https://fixture.invalid/two')
+    // The second starts while the first is still waiting for its response.
+    await vi.waitFor(() => expect(starts).toHaveLength(2), { timeout: 5000 })
+    expect(inFlight).toEqual([
+      { leaseId: null, leases: 1 },
+      { leaseId: null, leases: 2 },
+    ])
+    const [firstStart = 0, secondStart = 0] = starts
+    expect(secondStart - firstStart).toBeGreaterThanOrEqual(290)
+    respond.release()
+    await Promise.all([first, second])
+    const [state] = await databaseClient
+      .select()
+      .from(schema.providerRequestState)
+    expect(state).toMatchObject({ leaseId: null, requestLeases: [] })
+    const events = await databaseClient
+      .select()
+      .from(schema.providerRequestEvent)
+      .orderBy(schema.providerRequestEvent.requestedAt)
+    expect(events).toHaveLength(2)
+    const [one, two] = events
+    expect(
+      (two?.requestedAt.getTime() ?? 0) - (one?.requestedAt.getTime() ?? 0),
+    ).toBeGreaterThanOrEqual(290)
+  })
+
   it('blocks a delayed reservation after an in-flight sibling persists a 429', async () => {
     const { createProviderRequest } =
       await import('@/services/provider-requests')
