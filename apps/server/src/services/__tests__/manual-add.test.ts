@@ -113,6 +113,7 @@ describe('manual provider search and library additions', () => {
           artworkUrl: 'https://i.scdn.co/image/example',
           url: `https://open.spotify.com/album/${spotifyAlbumId}`,
           mediaItemId: 'existing-album',
+          trackCount: 1,
         },
       ],
     })

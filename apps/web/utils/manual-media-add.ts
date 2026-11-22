@@ -8,7 +8,56 @@ import {
   type ManualMediaSearchItem,
   type ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
+import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
+
+/**
+ * Whether an album result has fewer tracks than `tracksPlayed`, the number
+ * of different tracks scrobbled from the album being looked for. Such a
+ * release cannot be that album: a single beside the EP of the same name.
+ */
+export function holdsFewerTracks(
+  item: ManualMediaSearchItem,
+  tracksPlayed: number | undefined,
+) {
+  return (
+    tracksPlayed !== undefined &&
+    item.trackCount !== undefined &&
+    item.trackCount < tracksPlayed
+  )
+}
+
+/** The results in the provider's order, those with too few tracks last. */
+export function orderSearchItems(
+  items: readonly ManualMediaSearchItem[],
+  tracksPlayed: number | undefined,
+) {
+  return [
+    ...items.filter((item) => !holdsFewerTracks(item, tracksPlayed)),
+    ...items.filter((item) => holdsFewerTracks(item, tracksPlayed)),
+  ]
+}
+
+/** The line under a result's title: who, the year, its tracks, In library. */
+export function describeSearchItem(
+  item: ManualMediaSearchItem,
+  { inLibrary, tracksPlayed }: { inLibrary: boolean; tracksPlayed?: number },
+) {
+  const tracks =
+    item.trackCount === undefined
+      ? null
+      : formatItemCount(item.trackCount, { one: 'track', other: 'tracks' })
+  return [
+    item.subtitle,
+    item.releaseDate?.slice(0, 4),
+    tracks && tracksPlayed !== undefined && holdsFewerTracks(item, tracksPlayed)
+      ? `${tracks}, fewer than the ${formatCount(tracksPlayed)} you played`
+      : tracks,
+    inLibrary ? 'In library' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
 
 /** Stored snapshots stay offline; explicit searches may load another page. */
 export async function loadManualSearchPage({
@@ -18,6 +67,7 @@ export async function loadManualSearchPage({
   page,
   stored,
   liveSearch,
+  tracksPlayed,
   signal,
 }: {
   apiBaseUrl: string
@@ -26,10 +76,15 @@ export async function loadManualSearchPage({
   page: number
   stored: ManualMediaSearchResult | undefined
   liveSearch: boolean
+  /** See `holdsFewerTracks`; each page is ordered by it. */
+  tracksPlayed?: number
   signal: AbortSignal
 }) {
   if (!liveSearch || (stored && stored.totalCount === undefined))
-    return { items: stored?.items ?? [], totalCount: stored?.items.length ?? 0 }
+    return {
+      items: orderSearchItems(stored?.items ?? [], tracksPlayed),
+      totalCount: stored?.items.length ?? 0,
+    }
   const result =
     stored?.page === page
       ? stored
@@ -46,7 +101,7 @@ export async function loadManualSearchPage({
           },
         )
   return {
-    items: result.items,
+    items: orderSearchItems(result.items, tracksPlayed),
     totalCount: result.totalCount ?? result.items.length,
   }
 }

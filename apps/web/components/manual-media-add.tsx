@@ -1,6 +1,13 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useVirtualRows, useVirtualTable } from '@/hooks/useVirtualTable'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
@@ -20,8 +27,10 @@ import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { fetchApiData } from '@/utils/api'
 import {
   addManualMediaItem,
+  describeSearchItem,
   loadManualSearchPage,
   invalidateManualMediaAddition,
+  orderSearchItems,
 } from '@/utils/manual-media-add'
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
@@ -53,6 +62,7 @@ export function ManualMediaSearch({
   initialResult,
   onSearchResult,
   onChoose,
+  tracksPlayed,
 }: {
   mediaType: ManualMediaSearchInput['mediaType']
   initialQuery?: string
@@ -64,6 +74,11 @@ export function ManualMediaSearch({
   initialResult?: ManualMediaSearchResult
   onSearchResult?: (query: string, result: ManualMediaSearchResult) => void
   onChoose?: (item: ManualMediaSearchItem) => void
+  /**
+   * How many different tracks were played from the album being looked for.
+   * Results with fewer tracks say so and are listed last.
+   */
+  tracksPlayed?: number
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -110,7 +125,12 @@ export function ManualMediaSearch({
       await onAdded(id)
     },
   })
-  const result = search.data ?? (showInitialResult ? initialResult : undefined)
+  const found = search.data ?? (showInitialResult ? initialResult : undefined)
+  const result = useMemo(
+    () =>
+      found && { ...found, items: orderSearchItems(found.items, tracksPlayed) },
+    [found, tracksPlayed],
+  )
   const liveSearch = search.isSuccess && result?.page === 1
   const { mutate: searchMedia } = search
   useEffect(() => {
@@ -198,6 +218,7 @@ export function ManualMediaSearch({
             revision={search.submittedAt}
             loading={search.isPending}
             liveSearch={liveSearch}
+            tracksPlayed={tracksPlayed}
             disabled={disabled || add.isPending}
             renderItem={(item) => {
               const inLibrary = Boolean(
@@ -229,13 +250,7 @@ export function ManualMediaSearch({
                       size={40}
                     />
                   }
-                  by={[
-                    item.subtitle,
-                    item.releaseDate?.slice(0, 4),
-                    inLibrary ? 'In library' : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
+                  by={describeSearchItem(item, { inLibrary, tracksPlayed })}
                   play={
                     <span className="ds-actions">
                       <ServiceIconLinks
@@ -297,6 +312,7 @@ function ManualSearchResults({
   revision,
   loading,
   liveSearch,
+  tracksPlayed,
   disabled,
   renderItem,
 }: {
@@ -306,6 +322,7 @@ function ManualSearchResults({
   revision: number
   loading: boolean
   liveSearch: boolean
+  tracksPlayed: number | undefined
   disabled: boolean
   renderItem: (item: ManualMediaSearchItem) => ReactNode
 }) {
@@ -342,6 +359,7 @@ function ManualSearchResults({
         page,
         stored: result,
         liveSearch,
+        tracksPlayed,
         signal,
       }),
   })

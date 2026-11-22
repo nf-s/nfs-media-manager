@@ -153,6 +153,7 @@ export function projectSpotifyCatalogAlbums(
       artworkUrl: item.images[0]?.url ?? null,
       url: `https://open.spotify.com/album/${item.id}`,
       mediaItemId: null,
+      trackCount: item.total_tracks,
     })),
     page: pageNumber,
     totalCount: Math.min(page.total, 500),

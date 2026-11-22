@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import type { ManualMediaSearchItem } from '@repo/schemas/manual-add'
-import { addManualMediaItem, loadManualSearchPage } from './manual-media-add'
+import {
+  addManualMediaItem,
+  describeSearchItem,
+  holdsFewerTracks,
+  loadManualSearchPage,
+  orderSearchItems,
+} from './manual-media-add'
 
 const item: ManualMediaSearchItem = {
   externalId: '1234567890123456789012',
@@ -137,6 +143,75 @@ test('failed additions propagate once and do not retry provider requests', async
       addManualMediaItem('http://localhost', 'album', item),
       { message: 'Spotify is cooling down' },
     )
+    assert.equal(request.mock.callCount(), 1)
+  } finally {
+    request.mock.restore()
+  }
+})
+
+test('album results say how many tracks they have, and a release with fewer than were played says so and is listed last', async () => {
+  const single = { ...item, externalId: 'single', trackCount: 1 }
+  const ep = { ...item, externalId: 'ep', trackCount: 6, releaseDate: '2014' }
+  const deluxe = { ...item, externalId: 'deluxe', trackCount: 9 }
+  // Stored results from before track counts were kept.
+  const unknown = { ...item, externalId: 'unknown' }
+  assert.equal(holdsFewerTracks(single, 6), true)
+  assert.equal(holdsFewerTracks(ep, 6), false)
+  assert.equal(holdsFewerTracks(unknown, 6), false)
+  assert.equal(holdsFewerTracks(single, undefined), false)
+  assert.deepEqual(
+    orderSearchItems([single, unknown, ep, deluxe], 6).map(
+      ({ externalId }) => externalId,
+    ),
+    ['unknown', 'ep', 'deluxe', 'single'],
+  )
+  // Without played tracks the provider's order stays.
+  assert.deepEqual(orderSearchItems([single, ep], undefined), [single, ep])
+  assert.equal(
+    describeSearchItem(single, { inLibrary: false, tracksPlayed: 6 }),
+    'Example artist · 1 track, fewer than the 6 you played',
+  )
+  assert.equal(
+    describeSearchItem(ep, { inLibrary: true, tracksPlayed: 6 }),
+    'Example artist · 2014 · 6 tracks · In library',
+  )
+  assert.equal(
+    describeSearchItem(single, { inLibrary: false }),
+    'Example artist · 1 track',
+  )
+  assert.equal(
+    describeSearchItem(unknown, { inLibrary: false, tracksPlayed: 6 }),
+    'Example artist',
+  )
+  const request = mock.method(globalThis, 'fetch', async () =>
+    Response.json({
+      statusCode: 200,
+      message: 'OK',
+      data: { items: [single, ep], page: 2, hasMore: false, totalCount: 12 },
+    }),
+  )
+  try {
+    const stored = { items: [single, ep], page: 1, hasMore: true }
+    // A stored page and a fetched page are both ordered.
+    for (const [page, liveSearch] of [
+      [1, false],
+      [2, true],
+    ] satisfies [number, boolean][]) {
+      const loaded = await loadManualSearchPage({
+        apiBaseUrl: 'http://localhost',
+        mediaType: 'album',
+        query: 'Example',
+        page,
+        stored: liveSearch ? { ...stored, totalCount: 12 } : stored,
+        liveSearch,
+        tracksPlayed: 6,
+        signal: new AbortController().signal,
+      })
+      assert.deepEqual(
+        loaded.items.map(({ externalId }) => externalId),
+        ['ep', 'single'],
+      )
+    }
     assert.equal(request.mock.callCount(), 1)
   } finally {
     request.mock.restore()

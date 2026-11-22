@@ -17,7 +17,7 @@ import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
 import { mediaItem, scrapeJob, scrapeJobLog } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
-import { getLastfmAccount } from './lastfm-scrobbles'
+import { getLastfmAccount, getLastfmGroupTracks } from './lastfm-scrobbles'
 import { prepareManualMediaSearch, searchManualMedia } from './manual-add'
 
 type SearchGroup = z.infer<typeof LastfmSpotifySearchGroupSchema>
@@ -265,11 +265,14 @@ export async function getLastfmSpotifySearch(input: SearchGroup) {
   const account = await requireAccount()
   const summaries = await getLastfmSpotifySearchJobs(account, [group])
   const job = summaries.get(lastfmSpotifyGroupKey(account, group)) ?? null
+  // The different tracks scrobbled under the name tell its releases apart.
+  const tracksPlayed = (await getLastfmGroupTracks(group)).items.length
   if (!job)
     return LastfmSpotifySearchSchema.parse({
       job: null,
       query: searchQuery(group),
       result: null,
+      tracksPlayed,
     })
   const logs =
     job.status === 'succeeded'
@@ -312,6 +315,7 @@ export async function getLastfmSpotifySearch(input: SearchGroup) {
                 : null,
           })),
         },
+        tracksPlayed,
       })
     }
   }
@@ -319,5 +323,6 @@ export async function getLastfmSpotifySearch(input: SearchGroup) {
     job,
     query: searchQuery(group),
     result: null,
+    tracksPlayed,
   })
 }

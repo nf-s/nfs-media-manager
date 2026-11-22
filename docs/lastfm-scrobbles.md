@@ -100,6 +100,8 @@ Filter to **Unlinked**, select the albums to investigate, then choose **Search S
 
 Searches use the existing Spotify dispatcher, request spacing, cooldowns and access limits. Their status is shown in the report's Spotify search column (Running while a search runs) and in Jobs, where they can be cancelled or explicitly retried. Each search saves its first page of candidates against the scrobbled artist/album group. Opening **Add new album** reads those candidates without repeating the search. No album is added or linked until you choose one.
 
+Each result says how many tracks the release has. A release with fewer tracks than the different tracks scrobbled under the name says so (“1 track, fewer than the 6 you played”) and is listed after the others, because it cannot be the album those plays came from. Results saved before track counts were kept show none until the search is run again.
+
 ## In the app
 
 Album **Listening → By track** combines scrobbled names that resolve to one recording on that album. The track picker includes all of those plays. Select a confirmed track title to open its Sources. The album’s own Last.fm Sources list keeps the original artist and album spellings so each can be reviewed separately.

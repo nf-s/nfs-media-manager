@@ -153,6 +153,7 @@ function ScrobbleSpotifySearch({
         initialResult={result}
         autoSearch={active && ready && !job && !result}
         existingActionLabel="Link"
+        tracksPlayed={stored.data?.tracksPlayed || undefined}
         disabled={disabled || !ready}
         onPendingChange={onPendingChange}
         onAdded={onAdded}

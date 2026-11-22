@@ -200,6 +200,8 @@ export const LastfmSpotifySearchSchema = z.object({
   job: LastfmSpotifySearchJobSchema.nullable(),
   query: z.string(),
   result: ManualMediaSearchResultSchema.nullable(),
+  /** How many different tracks were scrobbled under the artist and album name. */
+  tracksPlayed: z.number().int().nonnegative().default(0),
 })
 
 export const LastfmLinkQuerySchema = z.object({

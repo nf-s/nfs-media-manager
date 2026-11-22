@@ -267,6 +267,25 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
 
   it('persists candidates only on the originating job, reuses them without requests and never adds library albums', async () => {
     await addGroup()
+    // A second track scrobbled under the name, and one under another name.
+    await databaseClient.insert(schema.lastfmScrobble).values({
+      id: randomUUID(),
+      username: account,
+      listenedAt: new Date('2026-01-03T12:00:00Z'),
+      artistName: group.artistName,
+      albumName: group.albumName,
+      trackName: 'Closing',
+      artistKey: albumNameKey(group.artistName),
+      albumKey: albumNameKey(group.albumName),
+      trackKey: 'closing',
+    })
+    await addGroup('Another Album')
+    expect(await getLastfmSpotifySearch(group)).toEqual({
+      job: null,
+      query: 'Example Artist Example Album',
+      result: null,
+      tracksPlayed: 2,
+    })
     await queueLastfmSpotifySearches({ groups: [group] }, null)
     const id = await queuedId()
     await processQueuedJobs()
@@ -276,10 +295,12 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
     })
     expect(request).toHaveBeenCalledTimes(2)
     const stored = await getLastfmSpotifySearch(group)
+    // The candidate has one track where two were played: the panel can say so.
     expect(stored).toMatchObject({
       job: { jobId: id, status: 'succeeded', resultCount: 1 },
       query: 'Example Artist Example Album',
-      result: { items: [{ title: 'Example Album' }] },
+      result: { items: [{ title: 'Example Album', trackCount: 1 }] },
+      tracksPlayed: 2,
     })
     expect((await getJobData(id)).diagnostics[0]?.data).toMatchObject([
       {
