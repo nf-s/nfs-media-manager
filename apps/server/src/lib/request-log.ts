@@ -40,11 +40,24 @@ type RequestPhase =
   | 'facetBuild'
   | 'facetLive'
 
+export interface ListeningRuleProfile {
+  count: 'one' | 'multiple'
+  match: 'all' | 'any'
+  period: 'all' | 'dates' | 'rolling' | 'mixed'
+  threshold:
+    | 'present'
+    | 'absent'
+    | 'presentAndAbsent'
+    | 'count'
+    | 'presenceAndCount'
+}
+
 interface RequestBrowseProfile {
   grouped: boolean
   depth: 'first' | 'near' | 'deep'
   listening: boolean
   listeningUse?: 'filter' | 'column' | 'both'
+  listeningRules?: ListeningRuleProfile
   filtered: boolean
   searchTerms?: 'one' | 'multiple'
   creatorScoped?: boolean
@@ -199,6 +212,7 @@ export function setRequestBrowseProfile({
   depth,
   listening,
   listeningUse,
+  listeningRules,
   filtered,
   searchTerms,
   creatorScoped,
@@ -215,6 +229,15 @@ export function setRequestBrowseProfile({
       depth,
       listening,
       listeningUse,
+      listeningRules:
+        grouped && listeningRules
+          ? {
+              count: listeningRules.count,
+              match: listeningRules.match,
+              period: listeningRules.period,
+              threshold: listeningRules.threshold,
+            }
+          : undefined,
       filtered,
       searchTerms,
       creatorScoped,

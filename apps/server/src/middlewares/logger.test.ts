@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm'
 import pg from 'pg'
 import { afterEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { ListeningFilterSchema } from '@repo/schemas/listening'
 import { SONOS_PAGE_HEADER, SONOS_REASON_HEADER } from '@repo/schemas/sonos'
 import { db as cloudDb, withCloudDatabase } from '@/cloudflare/db'
 import { db as nodeDb } from '@/lib/db'
@@ -16,6 +17,7 @@ import {
   setRequestLogRoute,
 } from '@/lib/request-log'
 import { createSonosRequestFetch } from '@/lib/sonos-request-log'
+import { listeningRuleProfile } from '@/services/browse-listening'
 import { logger } from './logger'
 
 const runtime = vi.hoisted(() => ({
@@ -73,6 +75,20 @@ const RecordSchema = z.object({
       depth: z.enum(['first', 'near', 'deep']),
       listening: z.boolean(),
       listeningUse: z.enum(['filter', 'column', 'both']).optional(),
+      listeningRules: z
+        .object({
+          count: z.enum(['one', 'multiple']),
+          match: z.enum(['all', 'any']),
+          period: z.enum(['all', 'dates', 'rolling', 'mixed']),
+          threshold: z.enum([
+            'present',
+            'absent',
+            'presentAndAbsent',
+            'count',
+            'presenceAndCount',
+          ]),
+        })
+        .optional(),
       filtered: z.boolean(),
       searchTerms: z.enum(['one', 'multiple']).optional(),
       creatorScoped: z.boolean().optional(),
@@ -133,6 +149,12 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     depth: 'first',
     listening: true,
     listeningUse: 'both',
+    listeningRules: {
+      count: 'multiple',
+      match: 'any',
+      period: 'mixed',
+      threshold: 'presenceAndCount',
+    },
     filtered: false,
     creatorScoped: false,
     searchTerms: 'multiple',
@@ -149,6 +171,21 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     logApiRequest(request, async () => {
       setRequestBrowseProfile({
         ...browse,
+        listeningRules: listeningRuleProfile(
+          ListeningFilterSchema.parse({
+            match: 'any',
+            rules: [
+              {
+                period: { kind: 'rolling', amount: 17, unit: 'weeks' },
+                min: 1,
+              },
+              {
+                period: { kind: 'dates', from: '2001-05-17', to: '2001-05-29' },
+                min: 81_371,
+              },
+            ],
+          }),
+        ),
         filterFields: ['fixture-private-field', 'artistTag', 'artistTag'],
       })
       recordRecordingOrderLookup('hit')
@@ -210,7 +247,34 @@ it('counts Drizzle executions and phases separately across concurrent requests',
     Object.keys(logs.find(({ status }) => status === 200)?.phases ?? {}),
   ).toEqual(['count'])
   expect(JSON.stringify(info.mock.calls)).not.toMatch(/fixture[_-]/)
+  expect(JSON.stringify(info.mock.calls)).not.toMatch(
+    /2001-05-(17|29)|81371|"amount"|"weeks"|"min"|"max"/,
+  )
 })
+
+it.each([
+  { rules: [], threshold: undefined, count: undefined },
+  { rules: [{ min: 1 }], threshold: 'present', count: 'one' },
+  { rules: [{ max: 0 }], threshold: 'absent', count: 'one' },
+  {
+    rules: [{ min: 1 }, { max: 0 }],
+    threshold: 'presentAndAbsent',
+    count: 'multiple',
+  },
+  { rules: [{ min: 2 }, { max: 5 }], threshold: 'count', count: 'multiple' },
+])(
+  'classifies grouped rule thresholds as $threshold',
+  ({ rules, threshold, count }) => {
+    const filter = ListeningFilterSchema.parse({
+      match: 'all',
+      rules: rules.map((rule) => ({ ...rule, period: { kind: 'all' } })),
+    })
+    const profile = listeningRuleProfile(filter)
+    if (threshold === undefined) expect(profile).toBeUndefined()
+    else
+      expect(profile).toEqual({ count, match: 'all', period: 'all', threshold })
+  },
+)
 
 it('records only built-in sort and range fields', async () => {
   const info = vi.spyOn(console, 'info').mockImplementation(() => {})
@@ -223,6 +287,12 @@ it('records only built-in sort and range fields', async () => {
       sort: 'other',
       sortField: 'fixture-extension',
       rangeFields: ['fixture-extension'],
+      listeningRules: {
+        count: 'one',
+        match: 'all',
+        period: 'all',
+        threshold: 'present',
+      },
     })
     return new Response()
   })
@@ -230,6 +300,7 @@ it('records only built-in sort and range fields', async () => {
   const { browse } = RecordSchema.parse(JSON.parse(line))
   expect(browse?.sortField).toBe('other')
   expect(browse?.rangeFields).toEqual(['other'])
+  expect(browse?.listeningRules).toBeUndefined()
   expect(JSON.stringify(info.mock.calls)).not.toContain('fixture-extension')
 })
 

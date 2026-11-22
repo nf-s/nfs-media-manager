@@ -60,7 +60,11 @@ import { albumMatchRejectionField } from './album-match-rejections'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { tagAncestorRows, visibleSubtagCounts } from './tag-hierarchy'
 import { albumAddedDateExpression } from './album-added-dates'
-import { createBrowseListening, type BrowseListening } from './browse-listening'
+import {
+  createBrowseListening,
+  listeningRuleProfile,
+  type BrowseListening,
+} from './browse-listening'
 import {
   firstMusicTagRows,
   albumsWithEnoughTags,
@@ -1745,6 +1749,7 @@ export async function refreshRecordingBrowseOrderForMaintenance(
 type BrowseQuery = AlbumQuery | FilmQuery | TrackQuery
 
 function recordBrowseShape(query: BrowseQuery) {
+  const grouped = 'groupRecordings' in query && query.groupRecordings === true
   const hasListeningFilter =
     'listening' in query && query.listening !== undefined
   const hasListeningColumn =
@@ -1758,9 +1763,13 @@ function recordBrowseShape(query: BrowseQuery) {
     searchTerms:
       termCount === 0 ? undefined : termCount === 1 ? 'one' : 'multiple',
     playSort,
-    grouped: 'groupRecordings' in query && query.groupRecordings === true,
+    grouped,
     depth: query.page === 1 ? 'first' : query.page <= 4 ? 'near' : 'deep',
     listening: hasListeningFilter || hasListeningColumn,
+    listeningRules:
+      grouped && 'listening' in query
+        ? listeningRuleProfile(query.listening)
+        : undefined,
     listeningUse: hasListeningFilter
       ? hasListeningColumn
         ? 'both'

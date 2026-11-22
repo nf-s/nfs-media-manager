@@ -4,6 +4,7 @@ import type {
   ListeningPeriod,
   ListeningRule,
 } from '@repo/schemas/listening'
+import type { ListeningRuleProfile } from '@/lib/request-log'
 
 /** Calendar subtraction preserves UTC time and clamps month ends. */
 export function listeningPeriodBounds(period: ListeningPeriod, now: Date) {
@@ -71,6 +72,28 @@ type ScrobblePresence = (period: SQL) => SQL
 function presenceRule(rule: ListeningRule) {
   if (rule.max === 0) return 'absent'
   if (rule.min === 1 && rule.max === undefined) return 'present'
+}
+
+export function listeningRuleProfile(
+  filter?: ListeningFilter,
+): ListeningRuleProfile | undefined {
+  const first = filter?.rules[0]
+  if (!filter || !first) return undefined
+
+  const thresholds = new Set(filter.rules.map(presenceRule))
+  let threshold: ListeningRuleProfile['threshold']
+  if (thresholds.has(undefined))
+    threshold = thresholds.size === 1 ? 'count' : 'presenceAndCount'
+  else if (thresholds.size > 1) threshold = 'presentAndAbsent'
+  else threshold = thresholds.has('present') ? 'present' : 'absent'
+  return {
+    count: filter.rules.length === 1 ? 'one' : 'multiple',
+    match: filter.match,
+    period: filter.rules.every((rule) => rule.period.kind === first.period.kind)
+      ? first.period.kind
+      : 'mixed',
+    threshold,
+  }
 }
 
 /**
