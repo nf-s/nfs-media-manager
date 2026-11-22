@@ -8,6 +8,7 @@ import {
   PlaylistRemovalSchema,
   TrackAlbumLinkStrategySchema,
   TrackDetailSchema,
+  TrackIsrcSchema,
   TrackListItemSchema,
   TrackScrobbleLinkStrategySchema,
   TrackSourceSchema,
@@ -48,6 +49,7 @@ import {
   removeOrphanTracks,
 } from './album-library-tracks'
 import { artistTagsForItems } from './music-tags'
+import { trackIsrcsExpression } from './track-isrcs'
 import { getPlaylistSummary, playlistAlbumMembers } from './playlist-directory'
 import { setPlaylistSyncSchedule } from './spotify-playlist-sync'
 
@@ -283,6 +285,7 @@ const ListeningDetailSchema = z.object({
   scrobbled_albums: z.array(
     z.object({ id: z.string(), title: z.string(), scrobbles: z.number() }),
   ),
+  isrcs: z.array(TrackIsrcSchema),
 })
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
@@ -344,7 +347,8 @@ async function getTrackListeningDetail(id: string) {
       coalesce((select jsonb_agg(months order by month) from months), '[]'::jsonb) as months,
       coalesce((select jsonb_agg(sources order by count desc, artist_key, track_key) from sources), '[]'::jsonb) as sources,
       (select spotify_album_id from target) as spotify_album_id,
-      coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums
+      coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums,
+      ${trackIsrcsExpression(sql`${id}::text`)} as isrcs
     from linked`)
   return ListeningDetailSchema.parse(result.rows[0])
 }
@@ -371,6 +375,7 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
     lastfmSources,
     spotifyAlbumId: listening.spotify_album_id,
     scrobbledAlbums: listening.scrobbled_albums,
+    isrcs: listening.isrcs,
     listening: {
       total: listening.total,
       firstListenedAt: isoSeconds(listening.first),

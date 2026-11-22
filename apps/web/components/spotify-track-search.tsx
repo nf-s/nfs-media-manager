@@ -448,7 +448,7 @@ export function SpotifyTrackSearchJobCell(props: {
 type SearchTrack = Pick<
   TrackListItem,
   'id' | 'title' | 'artists' | 'albumName' | 'durationSec'
->
+> & { isrc?: string | null }
 
 function TrackIdentity({
   track,

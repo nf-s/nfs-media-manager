@@ -13,6 +13,7 @@ import {
   titleCredit,
 } from '@/lib/album-track-aliases'
 import type { db } from '@/lib/db'
+import { isrcPattern, normalizedIsrc } from '@/lib/isrc'
 import {
   artistKeys,
   artistNameKey,
@@ -591,10 +592,6 @@ export function spotifySearchSourceReasons(
   checkSpotifySearchAlternateVersion(recording, candidate, candidates, audit)
   return audit.reasons
 }
-
-const normalizedIsrc = (value: string) =>
-  value.trim().toUpperCase().replaceAll('-', '')
-const isrcPattern = /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/
 
 function displayIsrc(value: string | null) {
   if (!value) return ''

@@ -57,6 +57,7 @@ import {
   requirePlaylistAccess,
   storedSummary,
 } from './spotify-playlist-state'
+import { recordTrackIsrcs } from './track-isrcs'
 import { refreshTrackLinks } from './track-links'
 
 const WRITE_BATCH = 500
@@ -696,6 +697,15 @@ async function storeImport(
             updatedAt: new Date(),
           },
         })
+      await recordTrackIsrcs(
+        tx,
+        batch.map((track) => ({
+          mediaItemId: idForTrack(track.spotifyTrackId),
+          isrc: track.isrc,
+          provider: 'spotify',
+          source: { kind: 'spotify-playlist-import', jobId },
+        })),
+      )
       // The playlist records provider evidence and membership for all tracks.
       // A confirmed ID already has its own library metadata and display credits.
       const imports = batch.filter(
@@ -720,7 +730,7 @@ async function storeImport(
           set: {
             spotifyTrackId: sql`excluded.spotify_track_id`,
             spotifyUrl: sql`excluded.spotify_url`,
-            isrc: sql`excluded.isrc`,
+            isrc: sql`coalesce(excluded.isrc, ${libraryTrack.isrc})`,
             durationSec: sql`excluded.duration_sec`,
             albumName: sql`excluded.album_name`,
             spotifyAlbumId: sql`excluded.spotify_album_id`,
