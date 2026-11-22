@@ -3,10 +3,14 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import AlbumTitle from './album-title'
-import ServiceIconLinks, { AlbumSpotifyLink } from './service-icon-links'
+import ServiceIconLinks, {
+  AlbumSpotifyLink,
+  serviceLinks,
+} from './service-icon-links'
 import DetailProviderLinks from './detail-provider-links'
 import { albumBrowseFields, filmBrowseFields } from '@repo/schemas/browse'
 import { albumSpotifyDestination } from '../utils/album-links'
+import { providerLogoUrl } from '../utils/provider-logos'
 
 const album = {
   title: 'Fixture album',
@@ -130,4 +134,20 @@ test('a non-album Spotify link retains its icon and local title navigation', () 
   assert.match(html, /<button/)
   assert.match(html, /Open details for Fixture album/)
   assert.match(html, /Open Spotify/)
+})
+
+test('a TIDAL link is named TIDAL and drawn with the TIDAL mark', () => {
+  const tidal = 'https://tidal.com/browse/album/100001'
+  assert.equal(providerLogoUrl('tidal'), '/icons/logos/tidal.svg')
+  assert.deepEqual(
+    serviceLinks([{ provider: 'fixture', label: 'Fixture', url: tidal }]),
+    [{ provider: 'tidal', label: 'TIDAL', url: tidal }],
+  )
+  const html = renderToStaticMarkup(
+    <ServiceIconLinks
+      links={[{ provider: 'tidal', label: 'TIDAL', url: tidal }]}
+    />,
+  )
+  assert.match(html, /aria-label="Open TIDAL \(opens in a new tab\)"/)
+  assert.match(html, /--ds-logo:url\(&quot;\/icons\/logos\/tidal\.svg&quot;\)/)
 })

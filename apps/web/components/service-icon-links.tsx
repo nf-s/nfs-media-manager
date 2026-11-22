@@ -59,6 +59,7 @@ export function AlbumSpotifyLink({
 
 const serviceSites = [
   { provider: 'spotify', label: 'Spotify', domains: ['open.spotify.com'] },
+  { provider: 'tidal', label: 'TIDAL', domains: ['tidal.com'] },
   { provider: 'lastfm', label: 'Last.fm', domains: ['last.fm'] },
   {
     provider: 'musicbrainz',

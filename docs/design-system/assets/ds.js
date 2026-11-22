@@ -218,6 +218,7 @@
   const PUBLIC = '../../apps/web/public/'
   const PROVIDERS = {
     spotify: { name: 'Spotify', logo: `${PUBLIC}icons/services/spotify.svg` },
+    tidal: { name: 'TIDAL', logo: `${PUBLIC}icons/logos/tidal.svg` },
     lastfm: { name: 'Last.fm', logo: `${PUBLIC}icons/logos/lastfm.png` },
     discogs: { name: 'Discogs', logo: `${PUBLIC}icons/ratings/discogs.png` },
     musicbrainz: { name: 'MusicBrainz', logo: `${PUBLIC}img/mb.png` },

@@ -6,6 +6,7 @@ import { providerIconUrl } from './provider-ratings'
  */
 const logos: Readonly<Record<string, string>> = {
   spotify: '/icons/services/spotify.svg',
+  tidal: '/icons/logos/tidal.svg',
   lastfm: '/icons/logos/lastfm.png',
   musicbrainz: '/img/mb.png',
   discogs: '/icons/ratings/discogs.png',
