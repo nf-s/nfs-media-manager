@@ -13,6 +13,8 @@ export type TrackIsrcSource =
   | { kind: 'spotify-track-lookup'; responseId: string }
   | { kind: 'spotify-search-response'; responseId: string }
   | { kind: 'spotify-manual-add' }
+  // A raw Spotify playlist file stored by the legacy import.
+  | { kind: 'legacy-playlist-import'; snapshotId: string }
   // The value stored on the library track before references existed.
   | { kind: 'library-track' }
 
@@ -59,6 +61,9 @@ export async function recordTrackIsrcs(
         ...('jobId' in entry.source ? { jobId: entry.source.jobId } : {}),
         ...('responseId' in entry.source
           ? { responseId: entry.source.responseId }
+          : {}),
+        ...('snapshotId' in entry.source
+          ? { snapshotId: entry.source.snapshotId }
           : {}),
         recordedAt: recordedAt.toISOString(),
       },

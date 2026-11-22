@@ -17,6 +17,7 @@ const StoredPairsSchema = z.array(
       'spotify-track-lookup',
       'spotify-search-response',
       'spotify-track-search',
+      'legacy-playlist-import',
     ]),
     source_id: z.string().nullable(),
   }),
@@ -27,7 +28,8 @@ const spotifyCaptured = sql`provider = 'spotify' and body_state = 'captured'
   and pg_input_is_valid(${capturedText}, 'jsonb')`
 
 /**
- * Every Spotify track object already stored with an ISRC, matched to the
+ * Every Spotify track object already stored with an ISRC (job responses,
+ * saved track searches and the legacy raw playlist files), matched to the
  * library track that holds the same Spotify track ID. A search candidate gives
  * its ISRC only to the track with that ID, never to the track searched for.
  */
@@ -60,6 +62,14 @@ const storedSpotifyIsrcs = sql`
     cross join lateral jsonb_array_elements(
       case when jsonb_typeof(diagnostic->'candidates') = 'array' then diagnostic->'candidates' else '[]'::jsonb end) candidate
     where log.metadata ? 'diagnostics' and diagnostic->>'kind' = 'spotify-track-search'
+    union all
+    select item #>> '{track,id}', ${validIsrcSql(sql`item #>> '{track,external_ids,isrc}'`)},
+      'legacy-playlist-import', snapshot.id, 4
+    from provider_snapshot snapshot
+    cross join lateral jsonb_array_elements(
+      case when jsonb_typeof(snapshot.payload) = 'array' then snapshot.payload else '[]'::jsonb end) item
+    where snapshot.provider = 'spotify' and snapshot.media_item_id is null
+      and snapshot.source like 'legacy-import:%-raw.json'
   ) pairs
   join library_track lt on lt.spotify_track_id = pairs.spotify_id
   where pairs.isrc is not null
@@ -72,6 +82,8 @@ function sourceFor(
   if (!row.source_id) return null
   if (row.source === 'spotify-track-search')
     return { kind: 'spotify-track-search', jobId: row.source_id }
+  if (row.source === 'legacy-playlist-import')
+    return { kind: 'legacy-playlist-import', snapshotId: row.source_id }
   return { kind: row.source, responseId: row.source_id }
 }
 

@@ -42,6 +42,7 @@ import {
   providerSnapshot,
 } from '@/schemas/db'
 import { applyProviderResult } from '@/services/provider-state'
+import { preserveLegacyRawPlaylists } from '@/services/legacy-playlist-snapshots'
 
 export {
   normalizeOmdbPayload,
@@ -1396,6 +1397,10 @@ export async function preserveLibraryContext(): Promise<void> {
       })
       .onConflictDoNothing()
   }
+  await preserveLegacyRawPlaylists(
+    db,
+    resolveWorkspaceFile(env.LEGACY_SERVER_DATA_DIR, '.'),
+  )
 }
 
 export async function reconcileLibraryVisibility(): Promise<void> {

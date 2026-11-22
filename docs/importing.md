@@ -73,8 +73,9 @@ This section is only for installations with the earlier app's JSON exports. New 
 | Cleaned album browse values      | `apps/web/public/data/lib-music.json`         |
 | Cleaned film browse values       | `apps/web/public/data/lib-movie.json`         |
 | Optional saved views             | `LEGACY_SERVER_DATA_DIR/smart-playlists.json` |
+| Optional raw Spotify playlists   | `LEGACY_SERVER_DATA_DIR/*-raw.json`           |
 
-The raw directory defaults to `apps/server/data`. The cleaned files supply derived browse values; raw inputs preserve provider payloads and library context. Local plugins translate their own data. These folders are ignored by Git.
+The raw directory defaults to `apps/server/data`. Each raw playlist file is stored once as a Spotify snapshot; `recover:track-isrcs` reads the ISRCs in it. The cleaned files supply derived browse values; raw inputs preserve provider payloads and library context. Local plugins translate their own data. These folders are ignored by Git.
 
 Back up PostgreSQL first. Start with the **Legacy JSON library** import's two-album/two-film default, which starts at once, or use:
 

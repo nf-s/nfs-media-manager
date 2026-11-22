@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -227,5 +230,86 @@ it('records stored Spotify ISRCs as references and fills empty primary values on
     .select({ id: schema.providerReference.id })
     .from(schema.providerReference)
   expect(references).toHaveLength(6)
+  expect(request).not.toHaveBeenCalled()
+})
+
+it('stores raw legacy playlist files once and recovers their ISRCs', async () => {
+  const [{ preserveLegacyRawPlaylists }, { recoverStoredTrackIsrcs }] =
+    await Promise.all([
+      import('@/services/legacy-playlist-snapshots'),
+      import('@/services/track-isrc-recovery'),
+    ])
+  await track('track-playlist', spotifyId('g'), null)
+  await track('track-playlist-conflict', spotifyId('h'), 'ZZAAA2600008')
+  const directory = await mkdtemp(join(tmpdir(), 'legacy-playlists-'))
+  try {
+    await writeFile(
+      join(directory, 'fixture-raw.json'),
+      JSON.stringify([
+        {
+          added_at: '2021-01-01T00:00:00Z',
+          track: { id: spotifyId('g'), external_ids: { isrc: 'ZZAAA2600007' } },
+          audioFeatures: { tempo: 120 },
+        },
+        {
+          added_at: '2021-01-02T00:00:00Z',
+          track: { id: spotifyId('h'), external_ids: { isrc: 'ZZAAA2600010' } },
+        },
+        { added_at: '2021-01-03T00:00:00Z', track: null },
+      ]),
+    )
+    await writeFile(join(directory, 'fixture.json'), '[]')
+
+    expect(
+      await preserveLegacyRawPlaylists(fixture, directory, { apply: false }),
+    ).toEqual({
+      apply: false,
+      files: 1,
+      items: 3,
+      tracksWithIsrc: 2,
+      stored: 0,
+      created: 0,
+    })
+    expect(await preserveLegacyRawPlaylists(fixture, directory)).toMatchObject({
+      created: 1,
+      stored: 0,
+    })
+    expect(await preserveLegacyRawPlaylists(fixture, directory)).toMatchObject({
+      created: 0,
+      stored: 1,
+    })
+  } finally {
+    await rm(directory, { recursive: true })
+  }
+  const snapshots = await fixture
+    .select({
+      source: schema.providerSnapshot.source,
+      payload: schema.providerSnapshot.payload,
+    })
+    .from(schema.providerSnapshot)
+    .where(eq(schema.providerSnapshot.source, 'legacy-import:fixture-raw.json'))
+  expect(snapshots).toHaveLength(1)
+  expect(JSON.stringify(snapshots[0]?.payload)).not.toContain('tempo')
+
+  const applied = await recoverStoredTrackIsrcs(fixture, { apply: true })
+  expect(applied).toMatchObject({ primaryFilled: 1 })
+  expect(await isrcReferences('track-playlist')).toEqual([
+    expect.objectContaining({
+      provider: 'spotify',
+      isrc: 'ZZAAA2600007',
+      metadata: expect.objectContaining({
+        source: 'legacy-playlist-import',
+        snapshotId: expect.any(String),
+      }),
+    }),
+  ])
+  expect(await primary('track-playlist')).toBe('ZZAAA2600007')
+  // A stored primary value is kept; the differing code is listed beside it.
+  expect(await primary('track-playlist-conflict')).toBe('ZZAAA2600008')
+  expect(
+    (await isrcReferences('track-playlist-conflict'))
+      .map((row) => row.isrc)
+      .sort(),
+  ).toEqual(['ZZAAA2600008', 'ZZAAA2600010'])
   expect(request).not.toHaveBeenCalled()
 })
