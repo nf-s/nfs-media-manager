@@ -1061,6 +1061,14 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
   await pool.query('vacuum analyze lastfm_scrobble')
   const deep = { ...twoRules, page: 1100 }
   const cold = await listTrackBrowsePage(deep)
+  const rollingAbsencePages = []
+  for (const page of [1, 3]) {
+    const query = { ...lifetime, page, size: 100 }
+    const expected = await queryBrowsePageIds('track', query)
+    expect(expected.ids).toHaveLength(100)
+    expect(expected.hasMore).toBe(true)
+    rollingAbsencePages.push({ query, expected })
+  }
   await pool.query(`
     update recording_browse_order_state
     set retry_after = statement_timestamp() - interval '1 second'
@@ -1068,6 +1076,15 @@ it('bounds hydrated Track pages and exact totals with playlist, current artist t
   expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
   await pool.query('vacuum analyze recording_browse_order')
   await pool.query('vacuum analyze recording_browse_order_member')
+  for (const { query, expected } of rollingAbsencePages)
+    await checkBudget(
+      `warm browser-sized grouped rolling absence page ${query.page}`,
+      query.page === 1 ? 1_800 : 5_500,
+      1,
+      async () => {
+        expect(await queryBrowsePageIds('track', query)).toEqual(expected)
+      },
+    )
   await checkBudget(
     'warm deep lifetime grouped page with two listening rules',
     5_400,

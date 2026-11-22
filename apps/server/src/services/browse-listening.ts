@@ -272,13 +272,8 @@ export function createBrowseListening(
       condition((period) =>
         hasBrowseScrobbles(subject, id, period, collectPlayedGroups),
       ),
-    multiRulePresenceCondition(hasScrobbles: ScrobblePresence) {
-      if (
-        !filter ||
-        filter.rules.length < 2 ||
-        !filter.rules.every(presenceRule)
-      )
-        return undefined
+    prefixPresenceCondition(hasScrobbles: ScrobblePresence) {
+      if (!filter || !filter.rules.every(presenceRule)) return undefined
       return listeningCounts(filter, undefined, now, true)?.condition(
         hasScrobbles,
       )

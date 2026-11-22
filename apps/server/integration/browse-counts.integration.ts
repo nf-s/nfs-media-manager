@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { z } from 'zod'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import type { ListeningRule } from '@repo/schemas/listening'
 import { ArtistQuerySchema } from '@repo/schemas/creators'
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import {
@@ -1103,5 +1104,118 @@ it('refreshes a dirty grouped order on demand without racing maintenance or writ
       drop trigger fixture_pause_browse_publication on recording_browse_order;
       drop function fixture_pause_browse_publication();
     `)
+  }
+})
+
+it('shares the grouped library scope between filtered and unfiltered listening totals', async () => {
+  const {
+    queryBrowseCount,
+    queryBrowseCounts,
+    refreshRecordingBrowseOrderForMaintenance,
+  } = await import('@/services/browse')
+  await pool.query(`
+    insert into media_item (id, slug, media_type, title) values
+      ('count-edition-a', 'count-edition-a', 'track', 'Fixture count edition one'),
+      ('count-edition-b', 'count-edition-b', 'track', 'Fixture count edition two'),
+      ('count-unplayed', 'count-unplayed', 'track', 'Fixture unplayed');
+    insert into library_track (media_item_id, version_group_id) values
+      ('count-edition-a', 'fixture-count-group'),
+      ('count-edition-b', 'fixture-count-group'), ('count-unplayed', null);
+    insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+      ('count-fixture', 'fixture', 'count-edition-a', 'count-edition-a', 'name'),
+      ('count-fixture', 'fixture', 'count-edition-b', 'count-edition-b', 'name');
+    insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key)
+    select 'event-' || track_key, username, statement_timestamp() - interval '2 years',
+      artist_key, track_key, artist_key, track_key
+    from lastfm_track_link where username = 'count-fixture';
+    insert into recording_browse_order_state (singleton, builder, maintenance_only, retry_after)
+    values (true, current_user, true, statement_timestamp())
+    on conflict (singleton) do update set maintenance_only = true, retry_after = excluded.retry_after
+  `)
+  const absence: ListeningRule = {
+    period: { kind: 'rolling', amount: 1, unit: 'years' },
+    max: 0,
+  }
+  const makeQuery = (rules: ListeningRule[], limitResults?: number) =>
+    TrackQuerySchema.parse({
+      groupRecordings: true,
+      listening: { match: 'all', rules },
+      limitResults,
+    })
+  const absenceQuery = makeQuery([absence])
+  const cases = [
+    absenceQuery,
+    makeQuery([absence, { period: { kind: 'all' }, min: 2, max: 2 }]),
+    makeQuery([absence, { period: { kind: 'all' }, min: 1_000 }]),
+    makeQuery([absence], 1),
+  ]
+  const reference = async (query: typeof absenceQuery) => {
+    const { totalCount } = await queryBrowseCount('track', {
+      ...query,
+      limitResults: undefined,
+    })
+    const unfiltered = await queryBrowseCount(
+      'track',
+      TrackQuerySchema.parse({ groupRecordings: true }),
+      { preferStoredRecordingTotal: true },
+    )
+    return {
+      totalCount: Math.min(totalCount, query.limitResults ?? totalCount),
+      unfilteredCount: unfiltered.totalCount,
+    }
+  }
+  const assertCombined = async (
+    query: typeof absenceQuery,
+    expected: Awaited<ReturnType<typeof reference>>,
+    live: boolean,
+  ) => {
+    logQuery.mockClear()
+    expect(await queryBrowseCounts('track', query)).toEqual(expected)
+    expect(logQuery.mock.calls).toHaveLength(live ? 2 : 1)
+    const statements = logQuery.mock.calls.map(([sql]) => sql)
+    expect(
+      statements.join('\n').match(/recording_matches as materialized/g) ?? [],
+    ).toHaveLength(live ? 1 : 0)
+  }
+
+  expect(await refreshRecordingBrowseOrderForMaintenance()).toBe(true)
+  const expected = await Promise.all(cases.map(reference))
+  expect(expected[0]?.totalCount).toBeGreaterThan(1)
+  expect(expected[1]?.totalCount).toBeGreaterThan(0)
+  expect(expected[2]?.totalCount).toBe(0)
+  expect(expected[3]?.totalCount).toBe(1)
+  for (const [index, query] of cases.entries()) {
+    const counts = expected[index]
+    if (!counts) throw new Error('Missing expected counts')
+    await assertCombined(query, counts, false)
+  }
+
+  const original = await reference(absenceQuery)
+  const snapshot = await pool.connect()
+  try {
+    await snapshot.query('begin isolation level repeatable read')
+    requestDatabase = drizzle(snapshot, { schema, logger: { logQuery } })
+    await assertCombined(absenceQuery, original, false)
+    await pool.query(`
+      insert into media_item (id, slug, media_type, title) values
+        ('count-new-track', 'count-new-track', 'track', 'Fixture new unplayed track');
+      insert into library_track (media_item_id) values ('count-new-track');
+    `)
+
+    await assertCombined(absenceQuery, original, false)
+    requestDatabase = database
+    const after = await reference(absenceQuery)
+    expect(after).toEqual({
+      totalCount: original.totalCount + 1,
+      unfilteredCount: original.unfilteredCount + 1,
+    })
+    for (const query of cases) {
+      const counts = await reference(query)
+      await assertCombined(query, counts, true)
+    }
+  } finally {
+    requestDatabase = database
+    await snapshot.query('rollback')
+    snapshot.release()
   }
 })

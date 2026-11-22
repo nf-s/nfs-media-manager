@@ -14,6 +14,7 @@ import {
   albumBrowseFields,
   filmBrowseFields,
   trackBrowseFields,
+  BrowseCountSchema,
   BrowseFieldSchema,
   BrowseFacetQuerySchema,
   type BrowseFacetQuery,
@@ -107,6 +108,13 @@ const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
   maxValueBytes: 64,
 })
+const GroupedCountsSchema = BrowseCountSchema.required()
+const groupedCountsCache = createDatabaseReadCache<
+  z.infer<typeof GroupedCountsSchema>
+>({
+  maxEntries: 128,
+  maxValueBytes: 128,
+})
 const recordingPageCache = createDatabaseReadCache<RecordingGroupRow[]>({
   maxEntries: 32,
   maxValueBytes: 32 * 1024,
@@ -121,10 +129,11 @@ const histogramCache = createDatabaseReadCache<number[]>({
 })
 const dialect = new PgDialect()
 
-function readBrowseTotal(
+function readBrowseTotal<T>(
   query: BrowseQuery,
   predicate: SQL,
-  load: () => Promise<number>,
+  cache: (key: string, load: () => Promise<T>) => Promise<T>,
+  load: () => Promise<T>,
 ) {
   // Rolling rules bind the current instant and can change without a write.
   if (
@@ -133,7 +142,7 @@ function readBrowseTotal(
   ) {
     return load()
   }
-  return countCache(checksumJson(dialect.sqlToQuery(predicate)), load)
+  return cache(checksumJson(dialect.sqlToQuery(predicate)), load)
 }
 
 const trackSortAlbum = alias(mediaItem, 'track_sort_album')
@@ -853,10 +862,18 @@ function groupedTrackBrowse(
     limit: number
   }) {
     const needed = offset + limit
+    const rules = query.listening?.rules ?? []
+    const single = rules.length === 1
+    const rule = rules[0]
+    if (
+      single &&
+      (rule?.period.kind !== 'rolling' || rule.max !== 0 || listening?.sort)
+    )
+      return
     const maximumProbe = 1024
     if (needed > maximumProbe / 2 || !countedGroupCondition) return
     // Keep presence tests correlated to one stored rank and its members.
-    const presence = countedListening?.multiRulePresenceCondition(
+    const presence = countedListening?.prefixPresenceCondition(
       (period) => sql`exists (
         select 1 from (
           select g.id as id where g.version_count = 1
@@ -872,13 +889,27 @@ function groupedTrackBrowse(
     )
     if (!presence) return
 
-    const probe = Math.max(256, Math.min(maximumProbe, needed * 5))
+    const sampleSize = 32
+    const probe = single
+      ? Math.max(sampleSize, Math.ceil(needed * 1.75))
+      : Math.max(256, Math.min(maximumProbe, needed * 5))
+    // A sparse sample goes straight to the exact ranked read. The sample
+    // only decides how much work to try before that fallback.
+    const probeLimit =
+      single && probe > sampleSize
+        ? sql`case when (
+            select count(*) from (
+              select g.* from ${storedGroups} g order by ${storedRank} limit ${sampleSize}
+            ) g where ${presence}
+          ) >= ${sampleSize / 4} then ${probe} else 0 end`
+        : sql`${probe}`
+    const pageLimit = sql`order by rank limit ${limit} offset ${offset}`
     const prefix = sql`${storedMemberships},
       eligible_prefix as materialized (
         select g.*, ${storedRank} as rank
         from (
           select g.* from ${storedGroups} g
-          order by ${storedRank} limit ${probe}
+          order by ${storedRank} limit ${probeLimit}
         ) g where ${presence} order by ${storedRank} limit ${needed}
       ),
       prefix_filled as materialized (
@@ -888,14 +919,15 @@ function groupedTrackBrowse(
         select g.*, ${storedRank} as rank
         from ${storedGroups} g ${countedGroupListening}
         where not (select filled from prefix_filled) and ${countedGroupCondition}
+        ${single ? pageLimit : sql``}
       )`
-    // Compute the full set only when the prefix has too few matches. Apply
-    // the page limit afterwards to avoid a repeated scan of listening totals.
+    // Preserve the ranked fallback for one predicate. For several, form the
+    // eligible set before applying the limit so listening totals are read once.
     const selected = sql`
       (select * from eligible_prefix where (select filled from prefix_filled)
-        order by rank limit ${limit} offset ${offset})
+        ${pageLimit})
       union all
-      (select * from eligible_library order by rank limit ${limit} offset ${offset})`
+      (select * from eligible_library ${single ? sql`` : pageLimit})`
     return listening?.sort
       ? projectSelectedListening(prefix, selected)
       : sql`${prefix}
@@ -983,6 +1015,31 @@ function groupedTrackBrowse(
     }
   }
 
+  const storedListeningCount = countedGroupCondition
+    ? sql`${storedMemberships} select count(*)::int from ${storedGroups} g
+        ${countedGroupListening} where ${countedGroupCondition}`
+    : undefined
+  // With only listening rules, both toolbar counts have identical membership
+  // before the listening test. A miss must reconstruct the groups only once.
+  async function readLibraryListeningCounts() {
+    const cached = await readRecordingBrowseOrder(
+      undefined,
+      storedListeningCount,
+    )
+    if (cached?.total_count != null && cached.filtered_count != null)
+      return {
+        totalCount: cached.filtered_count,
+        unfilteredCount: cached.total_count,
+      }
+    const statement = sql`${members}
+      select (select count(*)::int from ${rangeGroups} g ${countedGroupListening}
+        where ${countedGroupCondition}) as "totalCount",
+        (${recordingCount}) as "unfilteredCount"`
+    return readBrowseTotal(query, statement, groupedCountsCache, async () =>
+      GroupedCountsSchema.parse((await db.execute(statement)).rows[0]),
+    )
+  }
+
   async function readCount(preferStoredTotal = false) {
     // The frontend strips sort controls from count requests.
     if (
@@ -992,12 +1049,13 @@ function groupedTrackBrowse(
         useStoredMembership ||
         countedListening)
     ) {
-      const predicate = countedGroupCondition
-        ? sql`${storedMemberships} select count(*)::int from ${storedGroups} g
-          ${countedGroupListening} where ${countedGroupCondition}`
-        : undefined
-      const cached = await readRecordingBrowseOrder(undefined, predicate)
-      const total = predicate ? cached?.filtered_count : cached?.total_count
+      const cached = await readRecordingBrowseOrder(
+        undefined,
+        storedListeningCount,
+      )
+      const total = storedListeningCount
+        ? cached?.filtered_count
+        : cached?.total_count
       if (total != null)
         return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
     }
@@ -1018,11 +1076,17 @@ function groupedTrackBrowse(
       ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
         ${countedGroupListening} where ${countedGroupCondition}`
       : sql`${memberships} ${recordingCount}`
-    const total = await readBrowseTotal(query, counted, async () => {
-      const { rows } = await db.execute(counted)
-      return z.object({ value: z.number().int().nonnegative() }).parse(rows[0])
-        .value
-    })
+    const total = await readBrowseTotal(
+      query,
+      counted,
+      countCache,
+      async () => {
+        const { rows } = await db.execute(counted)
+        return z
+          .object({ value: z.number().int().nonnegative() })
+          .parse(rows[0]).value
+      },
+    )
     return Math.min(total, query.limitResults ?? Number.MAX_SAFE_INTEGER)
   }
 
@@ -1194,6 +1258,10 @@ function groupedTrackBrowse(
   return {
     offset,
     readCount,
+    readLibraryListeningCounts:
+      useStoredScope && countedGroupCondition
+        ? readLibraryListeningCounts
+        : undefined,
     readPage,
     readPositions,
     readVersions,
@@ -1464,6 +1532,7 @@ async function browseQueries(
     const total = await readBrowseTotal(
       query,
       sql`${countSource ?? sql``} ${countWhere}`,
+      countCache,
       async () => {
         const query = database
           .select({ value: sql<number>`count(*)::int` })
@@ -1727,6 +1796,7 @@ async function browseQueries(
   return {
     offset,
     readCount,
+    readLibraryListeningCounts: undefined,
     readPage,
     readPositions,
     readVersions: undefined,
@@ -1931,21 +2001,31 @@ export async function queryBrowseCounts(
 ) {
   recordBrowseShape(query)
   const unfiltered = unfilteredBrowseQuery(query)
-  const [{ totalCount }, scope] = await measureRequestPhase('count', () =>
-    Promise.all([
-      queryBrowseCount(mediaType, { ...query, limitResults: undefined }),
-      unfiltered
-        ? queryBrowseCount(mediaType, unfiltered, {
-            includeLastfmSourceRows:
-              mediaType === 'track' && requestsLastfmSource(query),
-            preferStoredRecordingTotal: true,
-          })
-        : undefined,
-    ]),
+  const { totalCount, unfilteredCount } = await measureRequestPhase(
+    'count',
+    async () => {
+      const filtered = await browseQueries(mediaType, {
+        ...query,
+        limitResults: undefined,
+      })
+      if (filtered.readLibraryListeningCounts)
+        return filtered.readLibraryListeningCounts()
+      const [totalCount, scope] = await Promise.all([
+        filtered.readCount(),
+        unfiltered
+          ? queryBrowseCount(mediaType, unfiltered, {
+              includeLastfmSourceRows:
+                mediaType === 'track' && requestsLastfmSource(query),
+              preferStoredRecordingTotal: true,
+            })
+          : undefined,
+      ])
+      return { totalCount, unfilteredCount: scope?.totalCount ?? totalCount }
+    },
   )
   return {
     totalCount: Math.min(totalCount, query.limitResults ?? totalCount),
-    unfilteredCount: scope?.totalCount ?? totalCount,
+    unfilteredCount,
   }
 }
 
