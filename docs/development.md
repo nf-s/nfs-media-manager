@@ -28,7 +28,7 @@ apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test 
 corepack pnpm --filter @repo/server test:integration
 ```
 
-Integration tests create/drop uniquely named temporary databases on the configured PostgreSQL server. The test database role needs `CREATEDB`. Provider requests are mocked and outbound fetches are blocked; these tests do not scrape or import your library. CI runs the checks with a disposable PostgreSQL service.
+Integration tests create and drop uniquely named temporary databases on the configured PostgreSQL server. The test database role needs `CREATEDB`. Provider requests are mocked and outbound fetches are blocked. CI runs three integration shards concurrently, each with its own disposable PostgreSQL service. The `checks` job succeeds only after every integration shard and the unit tests and typechecks pass.
 
 Build the self-hosted Node application with `corepack pnpm build`. The web build writes `apps/web/.next`; stop the development web process before building in the same checkout, or use another checkout. Server runtime uses `corepack pnpm --filter @repo/server start`; the web uses `corepack pnpm --filter web start --port 3000`. See the [hosting notes](getting-started.md#hosting-beyond-your-computer) for origins, TLS and process limits.
 
