@@ -16,6 +16,11 @@ import { decryptSecretValue, encryptSecretValue } from '@/lib/crypto'
 import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import {
+  ProviderResponseStorageError,
+  createProviderResponseRecorder,
+  providerResponseSecretValues,
+} from '@/lib/provider-response-history'
+import {
   SPOTIFY_PLAYBACK_HISTORY_SCOPES,
   SPOTIFY_PLAYBACK_SCOPES,
   SPOTIFY_PLAYLIST_CHANGE_SCOPES,
@@ -33,6 +38,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import { saveProviderResponseCapture } from './provider-response-history'
 
 /** Where a connection returns to: saved albums, playlists, podcasts or the player. */
 const SpotifyReturnToSchema = z.enum([
@@ -158,16 +164,16 @@ async function writeSecret(
     })
 }
 
-async function settings() {
+async function configuredSecrets() {
   const rows = await db
     .select()
     .from(providerSecret)
     .where(eq(providerSecret.provider, 'spotify'))
-  const secrets = resolveProviderSecrets(
-    'spotify',
-    rows,
-    spotifyPlugin.manifest.secrets,
-  )
+  return resolveProviderSecrets('spotify', rows, spotifyPlugin.manifest.secrets)
+}
+
+async function settings() {
+  const secrets = await configuredSecrets()
   const clientId = secrets['clientId']
   const redirect = secrets['redirectUri']
   if (!clientId || !redirect) return null
@@ -178,15 +184,43 @@ async function settings() {
   }
 }
 
+/**
+ * Runs Spotify requests through the provider's request policy. Given a task
+ * job, the responses it receives are stored on that job; the recorder leaves
+ * out token exchanges and account paths.
+ */
 export async function spotifyOperation<T>(
   execute: (request: SpotifyRequest) => Promise<T>,
+  jobId?: string,
 ): Promise<T> {
   try {
-    const result = await execute(createProviderRequest(spotifyPlugin))
+    const recorder =
+      jobId === undefined
+        ? undefined
+        : createProviderResponseRecorder(
+            (capture) =>
+              saveProviderResponseCapture({
+                jobId,
+                provider: 'spotify',
+                attempt: 1,
+                capture,
+              }),
+            providerResponseSecretValues(await configuredSecrets()),
+          )
+    const result = await execute(
+      createProviderRequest(spotifyPlugin, undefined, {
+        beginResponseCapture: recorder?.('task'),
+      }),
+    )
+    recorder?.assertStored()
     await recordProviderSuccess('spotify')
     return result
   } catch (error) {
-    if (error instanceof ServerError) throw error
+    if (
+      error instanceof ServerError ||
+      error instanceof ProviderResponseStorageError
+    )
+      throw error
     await recordProviderFailure(spotifyPlugin, error)
     throw unavailable(
       error instanceof ProviderRequestError

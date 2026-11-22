@@ -384,7 +384,7 @@ async function fetchTracks(
         ...fetched,
       }
     )
-  })
+  }, context.jobId)
 }
 
 async function uniquePlaylistName(

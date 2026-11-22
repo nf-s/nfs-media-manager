@@ -235,6 +235,13 @@ a failed adapter match can appear here even when the job has no snapshot.
 Earlier jobs can still have adapter snapshots or error diagnostics. Those
 records are not reconstructed as original HTTP responses.
 
+Task jobs keep their responses on the job as well, including Spotify playlist
+imports, listings and additions, whose tasks cannot be replayed. Requests to
+sign-in and account paths are never stored: token exchanges, Spotify `/me`
+reads such as saved tracks and the account's playlist list, and Last.fm `auth`
+and `user` methods. A job made only of such requests has no saved responses.
+Fields naming who added or uploaded an item are removed before storage.
+
 Use the job and item or artist identifiers to scope an offline command. The
 command uses the configured database for reads. The following IDs are examples.
 

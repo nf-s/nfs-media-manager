@@ -114,12 +114,14 @@ export async function runSpotifyPlaylistListing(
   try {
     const options = OptionsSchema.parse(input)
     await context.assertActive()
-    const listed = await spotifyOperation(async (request) =>
-      listAccountPlaylists(
-        context,
-        request,
-        await spotifyPlaylistToken(options.userId, request),
-      ),
+    const listed = await spotifyOperation(
+      async (request) =>
+        listAccountPlaylists(
+          context,
+          request,
+          await spotifyPlaylistToken(options.userId, request),
+        ),
+      context.jobId,
     )
     if (!listed || !(await context.isActive())) return { outcome: 'stopped' }
     const listedAt = new Date()

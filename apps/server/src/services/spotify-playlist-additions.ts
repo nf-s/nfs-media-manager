@@ -329,7 +329,7 @@ export async function appendSpotifyPlaylistTracks(
       alreadyPresent: new Set(ids).size - adding,
       refreshNeeded: present.refreshNeeded || added > 0,
     }
-  })
+  }, context.jobId)
 }
 
 /**

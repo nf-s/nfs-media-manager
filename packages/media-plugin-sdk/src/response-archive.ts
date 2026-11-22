@@ -6,7 +6,7 @@ import {
 type CaptureBody = ProviderResponseBody
 
 const sensitive =
-  /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?$|credential|session|apikey|apiuser|privatekey|csrf|xsrf|signature|^auth$|^key$|^jwt$|^(?:email(?:address)?|username|userplaycount|userscrobblecount|(?:uploader|uploadedby|createdby)(?:name|username|id)?|owner(?:name|username|id)?|filepath|localpath|absolutepath|userid|accountid|ip(?:address)?)$/i
+  /secret|password|passwd|passkey|token|authorization|authentication|cookie|headers?$|credential|session|apikey|apiuser|privatekey|csrf|xsrf|signature|^auth$|^key$|^jwt$|^(?:email(?:address)?|username|userplaycount|userscrobblecount|(?:uploader|uploadedby|createdby|addedby)(?:name|username|id)?|owner(?:name|username|id)?|filepath|localpath|absolutepath|userid|accountid|ip(?:address)?)$/i
 const normalizedKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]/g, '')
 export const sensitiveKey = (value: string) =>

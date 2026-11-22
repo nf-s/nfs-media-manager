@@ -230,7 +230,7 @@ describe('provider response archive', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('omits auth/account traffic and removes uploaders, private collage names, paths and credentials', async () => {
+  it('omits auth/account traffic and removes uploaders, adders, private collage names, paths and credentials', async () => {
     const { capture, archive } = fixture()
     await capture(
       { state: 'captured', text: '{"access_token":"never-store"}' },
@@ -243,6 +243,7 @@ describe('provider response archive', () => {
       state: 'captured',
       text: JSON.stringify({
         uploader: { name: 'fixture-uploader' },
+        added_by: { id: 'fixture-adder' },
         filepath: '/home/example/library/album',
         note: '/Volumes/example/library',
         collages: [

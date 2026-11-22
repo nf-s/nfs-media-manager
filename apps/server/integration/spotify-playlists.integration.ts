@@ -46,6 +46,10 @@ const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
 const databaseClient = drizzle(pool, { schema, logger: { logQuery } })
 const request = vi.fn<typeof fetch>()
 const account = vi.hoisted(() => ({ playlistChanges: true }))
+// The job each Spotify operation stores its responses on.
+const operations = vi.hoisted(() => ({
+  jobIds: new Array<string | undefined>(),
+}))
 vi.mock('@/lib/db', () => ({
   get db() {
     return databaseClient
@@ -73,8 +77,13 @@ vi.mock('@/services/spotify-oauth', () => ({
   }),
   spotifyPlaylistToken: async () => 'fixture-token',
   spotifyPlaylistChangeToken: async () => 'fixture-change-token',
-  spotifyOperation: async (execute: (send: typeof fetch) => Promise<unknown>) =>
-    execute((input, init) => request(input, init)),
+  spotifyOperation: async (
+    execute: (send: typeof fetch) => Promise<unknown>,
+    jobId?: string,
+  ) => {
+    operations.jobIds.push(jobId)
+    return execute((input, init) => request(input, init))
+  },
 }))
 import {
   getSpotifyPlaylistImports,
@@ -2328,12 +2337,19 @@ describe('Spotify playlist imports', () => {
       ).job.jobId,
     ).toBe(queued.job.jobId)
     expect(request).not.toHaveBeenCalled()
+    operations.jobIds.length = 0
     await processQueuedJobs()
     expect(addedUris()).toEqual([[`spotify:track:${spotifyId('other')}`]])
-    expect(await getJob(queued.job.jobId)).toMatchObject({
+    const addition = await getJob(queued.job.jobId)
+    expect(addition).toMatchObject({
       status: 'succeeded',
       options: { added: 1, alreadyPresent: 0, importJobId: expect.any(String) },
     })
+    // The addition and the import it queued each keep their own responses.
+    expect(operations.jobIds).toEqual([
+      queued.job.jobId,
+      addition?.options.importJobId,
+    ])
     expect(
       (await getTrackDetail(item.id))?.playlists.map((item) => item.name),
     ).toEqual(['Morning', 'Shared'])

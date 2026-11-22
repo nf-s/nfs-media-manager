@@ -10,7 +10,6 @@ import {
   type ProviderResponseCapture,
 } from '@repo/schemas/provider-response'
 import { getJobTask } from '@repo/schemas/job'
-import { isProviderReplayTask } from '@/lib/provider-task-scope'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { providerResponse, scrapeJob, scrapeJobItem } from '@/schemas/db'
@@ -26,7 +25,10 @@ type CaptureInput = {
   capture: ProviderResponseCapture
 }
 
-/** A late callback can add evidence only to its original provider job and item. */
+/**
+ * A late callback can add evidence only to its original provider job and item.
+ * Any task job keeps its responses, whether or not its task can be replayed.
+ */
 export async function saveProviderResponseCapture(
   input: CaptureInput,
   database: Database = db,
@@ -64,7 +66,7 @@ export async function saveProviderResponseCapture(
       (jobItemId !== null ||
         input.artistId != null ||
         input.attempt !== 1 ||
-        !isProviderReplayTask(getJobTask(scope.options), input.provider)))
+        getJobTask(scope.options) === null))
   )
     throw new Error(
       'Provider response capture scope does not match the job attempt.',
