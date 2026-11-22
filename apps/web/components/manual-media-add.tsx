@@ -11,6 +11,7 @@ import {
   type ManualMediaSearchItem,
   type ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
+import { SPOTIFY_TRACK_SEARCH_LIMIT } from '@repo/schemas/spotify-track-search'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
@@ -31,6 +32,16 @@ import { DetailLink } from './detail-link'
 /** One result row: the 48px list row with its bottom border. */
 const RESULT_ROW_HEIGHT = 49
 
+const searchFields = {
+  album: { provider: 'Spotify', placeholder: 'Album or artist', pageSize: 10 },
+  film: { provider: 'TMDb', placeholder: 'Film title', pageSize: 20 },
+  track: {
+    provider: 'Spotify',
+    placeholder: 'Track or artist',
+    pageSize: SPOTIFY_TRACK_SEARCH_LIMIT,
+  },
+}
+
 export function ManualMediaSearch({
   mediaType,
   initialQuery = '',
@@ -43,7 +54,7 @@ export function ManualMediaSearch({
   onSearchResult,
   onChoose,
 }: {
-  mediaType: 'album' | 'film'
+  mediaType: ManualMediaSearchInput['mediaType']
   initialQuery?: string
   onAdded: (id: string) => void | Promise<void>
   existingActionLabel?: string
@@ -60,7 +71,7 @@ export function ManualMediaSearch({
   const addedIds = useRef(new Map<string, string>())
   const automaticallySearched = useRef(false)
   const [showInitialResult, setShowInitialResult] = useState(true)
-  const provider = mediaType === 'album' ? 'Spotify' : 'TMDb'
+  const { provider, placeholder } = searchFields[mediaType]
   const inputId = useId()
   const search = useMutation({
     retry: false,
@@ -149,9 +160,7 @@ export function ManualMediaSearch({
             controlSize="md"
             value={query}
             maxLength={200}
-            placeholder={
-              mediaType === 'album' ? 'Album or artist' : 'Film title'
-            }
+            placeholder={placeholder}
             disabled={busy}
             onChange={(event) => {
               setQuery(event.target.value)
@@ -291,7 +300,7 @@ function ManualSearchResults({
   disabled,
   renderItem,
 }: {
-  mediaType: 'album' | 'film'
+  mediaType: ManualMediaSearchInput['mediaType']
   query: string
   result: ManualMediaSearchResult | undefined
   revision: number
@@ -301,7 +310,7 @@ function ManualSearchResults({
   renderItem: (item: ManualMediaSearchItem) => ReactNode
 }) {
   const { apiBaseUrl } = useConfig()
-  const pageSize = mediaType === 'album' ? 10 : 20
+  const { pageSize, provider } = searchFields[mediaType]
   const rowHeight = RESULT_ROW_HEIGHT
   const storedOnly = Boolean(
     result && !loading && (!liveSearch || result.totalCount === undefined),
@@ -344,14 +353,20 @@ function ManualSearchResults({
         onScroll={window.onScroll}
         className="sec-bounded sec-results"
         role="region"
-        aria-label={`${mediaType === 'album' ? 'Spotify' : 'TMDb'} results`}
+        aria-label={`${provider} results`}
         aria-busy={!storedOnly && (loading || results.isFetching)}
         tabIndex={0}
       >
         {!loading && (storedOnly || results.hasTotal) && window.total === 0 && (
           <State
             size="sm"
-            title={`No ${mediaType === 'album' ? 'albums' : 'films'} match`}
+            title={
+              mediaType === 'track' &&
+              result &&
+              (result.hasMore || result.page > 1)
+                ? 'No available tracks on this page'
+                : `No ${mediaType}s match`
+            }
           />
         )}
         <List compact>
@@ -404,7 +419,7 @@ export default function ManualMediaAdd({
   onClose,
   onAdded,
 }: {
-  mediaType: 'album' | 'film'
+  mediaType: ManualMediaSearchInput['mediaType']
   onClose: () => void
   onAdded: (id: string) => void
 }) {

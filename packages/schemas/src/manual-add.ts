@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const ManualMediaSearchInputSchema = z
   .object({
-    mediaType: z.enum(['album', 'film']),
+    mediaType: z.enum(['album', 'film', 'track']),
     q: z.string().trim().min(1).max(200),
     page: z.number().int().min(1).max(50).default(1),
   })
@@ -29,6 +29,12 @@ export const ManualMediaAddInputSchema = z.discriminatedUnion('mediaType', [
   z
     .object({
       mediaType: z.literal('album'),
+      externalId: z.string().regex(/^[A-Za-z0-9]{22}$/),
+    })
+    .strict(),
+  z
+    .object({
+      mediaType: z.literal('track'),
       externalId: z.string().regex(/^[A-Za-z0-9]{22}$/),
     })
     .strict(),

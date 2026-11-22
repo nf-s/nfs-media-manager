@@ -27,7 +27,7 @@ import {
 } from '@/lib/provider-response-history'
 import { ServerError } from '@/lib/error'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
-import { normalizeSpotifyAlbum } from '@/lib/spotify-api'
+import { normalizeSpotifyAlbum, spotifyJson } from '@/lib/spotify-api'
 import { AlbumImportCandidateSchema } from '@/lib/album-import-candidates'
 import { spotifyClientToken } from '@/plugins/builtin/spotify'
 import { searchTmdbMovies, tmdbPosterUrl } from '@/plugins/builtin/tmdb'
@@ -44,10 +44,17 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-requests'
+import {
+  existingManualTrack,
+  findManualTrackMatches,
+  storeManualTrack,
+} from './spotify-track-recordings'
 import { saveProviderResponseCapture } from './provider-response-history'
 import {
+  normalizeSpotifyCatalogTrack,
   projectSpotifyCatalogAlbums,
   searchSpotifyCatalogAlbums,
+  searchSpotifyCatalogTrackPage,
   searchSpotifyCatalogTracks,
 } from './provider-search-task-replay'
 import {
@@ -270,6 +277,75 @@ export async function searchSpotifyTrackCandidates(
   )
 }
 
+async function manualSpotifyTrackOperation<T>(
+  userId: string | null,
+  operation: (
+    request: MediaPluginTestContext['request'],
+    token: string,
+    market: { market?: string },
+  ) => Promise<T>,
+) {
+  const { provider, params, account } = await spotifyTrackSearchAccess(userId)
+  return runProviderOperation(provider, async ({ secrets, request }) => {
+    const token = account
+      ? await spotifyAccountToken(account, request)
+      : await spotifyClientToken(secrets, request)
+    return operation(request, token, params)
+  })
+}
+
+async function searchManualSpotifyTracks(
+  query: string,
+  page: number,
+  userId: string | null,
+) {
+  const result = await manualSpotifyTrackOperation(
+    userId,
+    (request, token, market) =>
+      searchSpotifyCatalogTrackPage(request, token, { ...market, query, page }),
+  )
+  const matches = await findManualTrackMatches(
+    result.items.map((track) => track.spotifyTrackId),
+  )
+  return ManualMediaSearchResultSchema.parse({
+    items: result.items.map((track) => {
+      const match = matches.get(track.spotifyTrackId)
+      return {
+        externalId: track.spotifyTrackId,
+        title: track.title,
+        subtitle: [track.artists.join(', '), track.albumName]
+          .filter(Boolean)
+          .join(' · '),
+        releaseDate: track.releaseDate,
+        artworkUrl: track.artworkUrl,
+        url: track.spotifyUrl,
+        mediaItemId: match?.hidden ? null : (match?.id ?? null),
+      }
+    }),
+    page,
+    hasMore: result.hasMore,
+  })
+}
+
+async function addManualSpotifyTrack(spotifyId: string, userId: string | null) {
+  const match = (await findManualTrackMatches([spotifyId])).get(spotifyId)
+  const existing = existingManualTrack(match)
+  if (existing) return existing
+
+  const track = await manualSpotifyTrackOperation(
+    userId,
+    async (request, token, market) => {
+      const candidate = normalizeSpotifyCatalogTrack(
+        await spotifyJson(request, token, `tracks/${spotifyId}`, market),
+      )
+      if (candidate?.spotifyTrackId !== spotifyId)
+        throw new Error('Provider metadata does not match the selected item')
+      return candidate
+    },
+  )
+  return storeManualTrack(track)
+}
+
 function filmCandidate(
   externalId: string,
   title?: string,
@@ -289,10 +365,19 @@ function filmCandidate(
 
 export async function searchManualMedia(
   input: ManualMediaSearchInput,
-  assertActive?: () => Promise<void>,
-  jobId?: string,
+  {
+    assertActive,
+    jobId,
+    userId = null,
+  }: {
+    assertActive?: () => Promise<void>
+    jobId?: string
+    userId?: string | null
+  } = {},
 ) {
   const options = ManualMediaSearchInputSchema.parse(input)
+  if (options.mediaType === 'track')
+    return searchManualSpotifyTracks(options.q, options.page, userId)
   if (options.mediaType === 'album') {
     const page = await providerOperation(
       'spotify',
@@ -374,8 +459,11 @@ export async function searchManualMedia(
 
 export async function addManualMedia(
   input: ManualMediaAddInput,
+  userId: string | null = null,
 ): Promise<ManualMediaAddResult> {
   const options = ManualMediaAddInputSchema.parse(input)
+  if (options.mediaType === 'track')
+    return addManualSpotifyTrack(options.externalId, userId)
   const provider = options.mediaType === 'album' ? 'spotify' : 'tmdb'
   const referenceType = options.mediaType === 'album' ? 'album' : 'tmdb'
   const reference = {

@@ -124,6 +124,7 @@ async function render(
 
 test('Tracks start in the Table view; grid size is not on the toolbar', async () => {
   const html = await render()
+  assert.match(html, />Add track<\/button>/)
   assert.match(html, /data-view="table"/)
   assert.match(html, /aria-pressed="true" aria-label="Table view"/)
   const grid = await render('view=grid')

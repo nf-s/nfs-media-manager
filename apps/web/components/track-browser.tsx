@@ -8,6 +8,7 @@ import {
   type CreatorBrowseScope,
 } from '@/utils/creator-browse'
 
+import ManualMediaAdd from './manual-media-add'
 import { DetailInspector } from './detail-inspector'
 import { DetailListFrame } from './detail-list-frame'
 import { useDetailInspector } from './detail-inspector-context'
@@ -253,6 +254,7 @@ function TrackBrowse({
   const { embedded } = host
   const searchParams = host.params
   const restoreBrowsePreferences = useRestoreBrowsePreferences()
+  const [adding, setAdding] = useState(false)
   const [ready, setReady] = useState(embedded)
   const [scroll, setScroll] = useState({ identity: '', top: 0 })
   const [viewport, setViewport] = useState({ width: 1000, height: 800 })
@@ -893,6 +895,13 @@ function TrackBrowse({
     >
       <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
+          actions={
+            !embedded && (
+              <Button type="button" onClick={() => setAdding(true)}>
+                Add track
+              </Button>
+            )
+          }
           search={
             <TrackBrowseSearch
               fields={fields}
@@ -1263,6 +1272,16 @@ function TrackBrowse({
           )}
         </DetailListFrame>
       </div>
+      {adding && (
+        <ManualMediaAdd
+          mediaType="track"
+          onClose={() => setAdding(false)}
+          onAdded={(id) => {
+            setAdding(false)
+            openDetail(id)
+          }}
+        />
+      )}
       {!embedded && (
         <DetailInspector
           track={{ onFilter: addFilter, filterHref }}
