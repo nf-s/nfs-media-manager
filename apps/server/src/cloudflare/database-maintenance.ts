@@ -61,17 +61,26 @@ export async function runDatabaseMaintenance(scheduledTime: number) {
   const tick = new Date(scheduledTime)
   if (tick.getUTCHours() === 20 && tick.getUTCMinutes() === 0)
     await probeDatabase()
-  const outcomes = await Promise.allSettled([
-    refreshCache(
-      { event: 'database.facet-maintenance' },
-      refreshTrackFacetVocabularyForMaintenance,
-    ),
-    runRecordingOrderMaintenance('scheduled'),
-    refreshCache(
-      { event: 'database.duplicate-maintenance' },
-      refreshTrackDuplicatesForMaintenance,
-    ),
-  ])
-  for (const outcome of outcomes)
-    if (outcome.status === 'rejected') throw outcome.reason
+  const rebuilds = [
+    () =>
+      refreshCache(
+        { event: 'database.facet-maintenance' },
+        refreshTrackFacetVocabularyForMaintenance,
+      ),
+    () => runRecordingOrderMaintenance('scheduled'),
+    () =>
+      refreshCache(
+        { event: 'database.duplicate-maintenance' },
+        refreshTrackDuplicatesForMaintenance,
+      ),
+  ]
+  let firstFailure: { reason: unknown } | undefined
+  // Keep expensive rebuilds from competing within the same cron invocation.
+  for (const rebuild of rebuilds)
+    try {
+      await rebuild()
+    } catch (reason) {
+      firstFailure ??= { reason }
+    }
+  if (firstFailure) throw firstFailure.reason
 }

@@ -103,12 +103,39 @@ describe('scheduled database monitoring', () => {
     })
   })
 
+  it('finishes each scheduled rebuild before starting the next one', async () => {
+    const steps: string[] = []
+    for (const { name, refresh } of [
+      { name: 'facets', refresh: refreshFacets },
+      { name: 'recording order', refresh: refreshOrder },
+      { name: 'duplicates', refresh: refreshDuplicates },
+    ]) {
+      refresh.mockImplementation(async () => {
+        steps.push(`start ${name}`)
+        await Promise.resolve()
+        steps.push(`finish ${name}`)
+        return true
+      })
+    }
+
+    await runDatabaseMaintenance(dailyTick + 5 * 60_000)
+
+    expect(steps).toEqual([
+      'start facets',
+      'finish facets',
+      'start recording order',
+      'finish recording order',
+      'start duplicates',
+      'finish duplicates',
+    ])
+  })
+
   it('distinguishes refresh failure from a successful connection', async () => {
-    refreshFacets.mockRejectedValue(new Error('fixture refresh failure'))
+    const failure = new Error('fixture refresh failure')
+    refreshFacets.mockRejectedValue(failure)
     refreshOrder.mockResolvedValue(true)
-    await expect(runDatabaseMaintenance(dailyTick)).rejects.toThrow(
-      'fixture refresh failure',
-    )
+    refreshDuplicates.mockRejectedValue(new Error('fixture duplicate failure'))
+    await expect(runDatabaseMaintenance(dailyTick)).rejects.toBe(failure)
     expect(log).toHaveBeenCalledWith({
       event: 'database.facet-maintenance',
       outcome: 'failed',
@@ -118,6 +145,11 @@ describe('scheduled database monitoring', () => {
       event: 'database.recording-order-maintenance',
       source: 'scheduled',
       outcome: 'published',
+      durationMs: expect.any(Number),
+    })
+    expect(log).toHaveBeenCalledWith({
+      event: 'database.duplicate-maintenance',
+      outcome: 'failed',
       durationMs: expect.any(Number),
     })
   })

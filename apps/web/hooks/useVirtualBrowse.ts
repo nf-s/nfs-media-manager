@@ -70,6 +70,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
   countParams.sort()
   const countIdentity = countParams.toString()
   const client = useQueryClient()
+  const pageKey = [collection, 'browse', identity]
   const countOptions = queryOptions({
     queryKey: [collection, 'browse-count', countIdentity],
     queryFn: ({ signal }) =>
@@ -82,7 +83,14 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     ...clientQueryDefaults,
     retry: false,
   })
-  const count = useQuery({ ...countOptions, enabled })
+  // The first-page observer below rerenders this hook as the current view settles.
+  const firstPage = client.getQueryState([...pageKey, 1])
+  const count = useQuery({
+    ...countOptions,
+    enabled:
+      enabled &&
+      (firstPage?.data !== undefined || firstPage?.status === 'error'),
+  })
   async function loadPage(page: number, size: number, signal: AbortSignal) {
     const query = new URLSearchParams(params)
     query.set('page', String(page))
@@ -100,7 +108,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     }
   }
   const rows = useVirtualPages({
-    queryKey: [collection, 'browse', identity],
+    queryKey: pageKey,
     pageSize: browsePageSize,
     loadPage,
     enabled,

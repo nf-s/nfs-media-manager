@@ -29,6 +29,69 @@ function render(client: QueryClient, node: React.ReactNode) {
   }
 }
 
+test('Browse waits for the current first page before enabling the exact count', async () => {
+  const filteredParams = new URLSearchParams({ q: 'fixture' })
+  const filteredPage = ['tracks', 'browse', 'filtered view', 1]
+  const filteredCount = ['tracks', 'browse-count', filteredParams.toString()]
+
+  function View() {
+    const rows = useVirtualBrowse({
+      apiBaseUrl: 'https://example.test',
+      collection: 'tracks',
+      identity: 'filtered view',
+      params: filteredParams,
+      enabled: true,
+      columns: 1,
+      rowHeight: 32,
+      scrollTop: 0,
+      viewportHeight: 96,
+      headerHeight: 24,
+      itemSchema: z.string(),
+    })
+    return <div data-total={rows.hasTotal ? rows.total : 'unknown'} />
+  }
+
+  for (const status of ['pending', 'error', 'empty']) {
+    const client = new QueryClient()
+    // An earlier filter has settled and the second page for this query is cached.
+    client.setQueryData(firstKey, { items: ['Earlier filter'], hasMore: false })
+    client.setQueryData([...filteredPage.slice(0, -1), 2], {
+      items: ['Later page'],
+      hasMore: false,
+    })
+    if (status === 'error')
+      await assert.rejects(
+        client.fetchQuery({
+          queryKey: filteredPage,
+          queryFn: async () => {
+            throw new Error('Fixture page unavailable')
+          },
+        }),
+      )
+    if (status === 'empty')
+      client.setQueryData(filteredPage, {
+        items: [],
+        hasMore: false,
+        totalCount: 0,
+      })
+    try {
+      const html = renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <View />
+        </QueryClientProvider>,
+      )
+      const options = client
+        .getQueryCache()
+        .find({ queryKey: filteredCount })?.options
+      assert.ok(options && 'enabled' in options)
+      assert.equal(options.enabled, status !== 'pending', status)
+      if (status === 'empty') assert.match(html, /data-total="0"/)
+    } finally {
+      client.clear()
+    }
+  }
+})
+
 test('Browse renders ready rows before the count and reserves the full extent only when known', () => {
   function View() {
     const window = useVirtualBrowse({
