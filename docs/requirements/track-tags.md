@@ -1,6 +1,6 @@
 # Track tags
 
-Status: proposed, awaiting the owner. Nothing here is built. It answers SONO-15 in [Sonovault identifiers and track facts](sonovault.md) and follows the owner's decision of 2026-11-22: tracks get a tags field of their own holding Sonovault's genres and subgenres, the genre hierarchy takes the names it lacks, and a Tags filter can say whether it reads the track's, the album's or the artists' tags.
+Status: accepted by the owner on 2026-11-22 with the recommendations below; nothing is built yet. Stages are built in order, each released through `main` on its own. It answers SONO-15 in [Sonovault identifiers and track facts](sonovault.md) and follows the owner's decision of 2026-11-22: tracks get a tags field of their own holding Sonovault's genres and subgenres, the genre hierarchy takes the names it lacks, and a Tags filter can say whether it reads the track's, the album's or the artists' tags.
 
 ## What changes for the owner
 
@@ -155,9 +155,11 @@ The existing Tags filter on the same data took 93 / 34 / 29 ms (broad / narrow /
 
 Stages 2 and 3 both change `browse.ts` and the Tracks web screens, so they run one after the other. Adding the accepted Tag location component to the design system (`packages/ui`, `docs/design-system`) can run beside stage 1 or 2.
 
-## Decisions for the owner
+## Decisions
 
-1. **Auto.** Recommended: TTAG-21 as written (own tags decide the tags Sonovault speaks to; the album and artists decide the rest). The alternative is "own tags replace the album's", which drops nearly every tagged track from filters on album-only tags.
-2. **The Tag location control.** Recommended: Option A in [`concept-tag-location.html`](../design-system/concept-tag-location.html).
-3. **Unverified Sonovault tags.** Recommended: kept out of Browse and shown in track details, as SONO-17 does for tempo and key.
-4. **The hierarchy mapping** (stage 4) can wait; the proposal is ready for review whenever the owner wants it.
+The owner accepted the plan on 2026-11-22 as recommended:
+
+1. **Auto** is TTAG-21 as written: a track's own tags decide the tags Sonovault speaks to; the album and artists decide the rest.
+2. **The Tag location control** is Option A in [`concept-tag-location.html`](../design-system/concept-tag-location.html): a Tag location section with Auto and the Track, Album and Artist checkboxes. It joins the design system at the start of stage 3, and the concept page is then deleted.
+3. **Unverified Sonovault tags** stay out of Browse and are shown in track details, as SONO-17 does for tempo and key.
+4. **The hierarchy mapping** (stage 4) waits for the owner's review of the proposed mapping.
