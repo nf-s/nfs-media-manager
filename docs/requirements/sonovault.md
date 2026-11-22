@@ -1,6 +1,6 @@
 # Sonovault identifiers and track facts
 
-Status: stage 1 (SONO-01 to SONO-12) is built and released through `main`. The owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5, built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
+Status: stage 1 (SONO-01 to SONO-12) and stage 4 (SONO-23 to SONO-25) are built and released through `main`. The owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5, built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
 
 Sonovault is a paid lookup service. Given a track's ISRC or its ID on one service, it returns the same recording's IDs on the other services, with its ISRC, tempo, key, genre, label and releases. It is added as a provider that fills identifiers and track facts. It does not play music and it has no similar-track or recommendation endpoint, so TIDAL and Last.fm stay the sources of related music. If it stops being good enough, another lookup provider can take its place: everything it reports is stored under its own provider name and can be removed or replaced without touching what other providers reported.
 

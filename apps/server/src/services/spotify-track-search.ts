@@ -32,9 +32,14 @@ import {
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import {
+  lookupSpotifyTrackCandidates,
   prepareSpotifyCatalogTrackSearch,
   searchSpotifyTrackCandidates,
 } from './manual-add'
+import {
+  completeSonovaultSpotifyStep,
+  sonovaultSpotifyStepIsCurrent,
+} from './sonovault-track-candidates'
 import { closeChangeBatch, openChangeBatch } from './library-changes'
 import { reconcileSpotifyTrackSearchInTransaction } from './spotify-track-search-acceptance'
 import {
@@ -57,7 +62,20 @@ const SearchOptionsSchema = SpotifyTrackSearchParamsSchema.extend({
   market: SpotifyTrackSearchMarketSchema.optional(),
   query: SpotifyTrackSearchQuerySchema,
   reviewOnly: z.literal(true).optional(),
+  /**
+   * Read this one catalog track instead of searching: the Spotify ID of a
+   * Sonovault candidate accepted for the track (SONO-25).
+   */
+  spotifyTrackId: z
+    .string()
+    .regex(/^[A-Za-z0-9]{22}$/)
+    .optional(),
+  sonovaultTrackId: z.string().min(1).max(100).optional(),
 })
+const SonovaultStepSchema = SearchOptionsSchema.pick({
+  spotifyTrackId: true,
+  sonovaultTrackId: true,
+}).required()
 const StoredResultSchema = z.object({
   diagnostics: z.array(
     z.object({
@@ -155,8 +173,13 @@ export async function prepareSpotifyTrackSearch(
     SPOTIFY_TRACK_SEARCH_TASK,
     JSON.stringify([userId, trackId]),
   )
-  const reviewQuery =
-    input.reviewOnly === true
+  const sonovault =
+    input.sonovaultTrackId === undefined
+      ? undefined
+      : SonovaultStepSchema.parse(input)
+  const reviewQuery = sonovault
+    ? `spotify:track:${sonovault.spotifyTrackId}`
+    : input.reviewOnly === true
       ? SpotifyTrackSearchQuerySchema.parse(input.query)
       : undefined
   if (
@@ -173,7 +196,15 @@ export async function prepareSpotifyTrackSearch(
     trackId,
     groupKey,
     ...target,
-    ...(reviewQuery ? { query: reviewQuery, reviewOnly: true } : {}),
+    ...(sonovault
+      ? {
+          ...sonovault,
+          query: reviewQuery,
+          ...(input.reviewOnly === true ? { reviewOnly: true } : {}),
+        }
+      : reviewQuery
+        ? { query: reviewQuery, reviewOnly: true }
+        : {}),
     trackTitle: target.trackTitle.slice(0, 500),
     ...(market ? { market } : {}),
   })
@@ -256,13 +287,40 @@ export async function runSpotifyTrackSearch(
         message:
           'Search skipped: the track is missing or already has a Spotify match.',
       }
-    const candidates = await searchSpotifyTrackCandidates(
-      options.query,
-      context.requestedByUserId,
-      context.assertActive,
-      options.market,
-      context.jobId,
+    const sonovault =
+      options.sonovaultTrackId && options.spotifyTrackId
+        ? {
+            sonovaultTrackId: options.sonovaultTrackId,
+            spotifyTrackId: options.spotifyTrackId,
+          }
+        : null
+    if (
+      sonovault &&
+      !(await sonovaultSpotifyStepIsCurrent(db, {
+        trackId: options.trackId,
+        ...sonovault,
+      }))
     )
+      return {
+        outcome: 'complete',
+        message:
+          'Lookup skipped: the Sonovault candidate is no longer accepted.',
+      }
+    const candidates = sonovault
+      ? await lookupSpotifyTrackCandidates(
+          sonovault.spotifyTrackId,
+          context.requestedByUserId,
+          context.assertActive,
+          options.market,
+          context.jobId,
+        )
+      : await searchSpotifyTrackCandidates(
+          options.query,
+          context.requestedByUserId,
+          context.assertActive,
+          options.market,
+          context.jobId,
+        )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return {
       outcome: 'complete',
@@ -274,6 +332,15 @@ export async function runSpotifyTrackSearch(
         ],
       },
       persist: async (tx) => {
+        if (sonovault && context.requestedByUserId) {
+          await completeSonovaultSpotifyStep(tx, {
+            trackId: options.trackId,
+            jobId: context.jobId,
+            userId: context.requestedByUserId,
+            ...sonovault,
+          })
+          return
+        }
         if (options.reviewOnly || !context.requestedByUserId) return
         const batchId = await openChangeBatch(tx, 'spotify-search')
         await reconcileSpotifyTrackSearchInTransaction(

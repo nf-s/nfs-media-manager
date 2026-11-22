@@ -109,6 +109,36 @@ export async function searchSpotifyCatalogTracks(
   )
 }
 
+const TrackLookupInputSchema = z.strictObject({
+  spotifyTrackId: z.string().regex(/^[A-Za-z0-9]{22}$/),
+  market: SpotifyTrackSearchMarketSchema.optional(),
+})
+type TrackLookupInput = z.infer<typeof TrackLookupInputSchema>
+
+/**
+ * One catalog track by its Spotify ID, as a search candidate: the step that
+ * takes a Sonovault candidate's Spotify ID (SONO-25). Empty when Spotify
+ * marks it unavailable or has no such track.
+ */
+export async function lookupSpotifyCatalogTrack(
+  request: Request,
+  token: string,
+  input: TrackLookupInput,
+) {
+  const { spotifyTrackId, market } = TrackLookupInputSchema.parse(input)
+  const track = normalizeSpotifyCatalogTrack(
+    await spotifyJson(
+      request,
+      token,
+      `tracks/${spotifyTrackId}`,
+      market ? { market } : {},
+    ),
+  )
+  return track && track.spotifyTrackId === spotifyTrackId
+    ? [SpotifyTrackSearchCandidateSchema.parse(track)]
+    : []
+}
+
 export async function searchSpotifyCatalogAlbums(
   request: Request,
   token: string,
@@ -182,6 +212,14 @@ export async function replayProviderSearchTask(
       ),
     ]
   }
+  if (task === SPOTIFY_TRACK_SEARCH_TASK && step.operation === 'track-lookup')
+    return [
+      await lookupSpotifyCatalogTrack(
+        request,
+        token,
+        TrackLookupInputSchema.parse(step.args),
+      ),
+    ]
   if (
     task === LASTFM_SPOTIFY_SEARCH_TASK &&
     step.operation === 'album-search'

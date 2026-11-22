@@ -104,9 +104,16 @@ export const SonovaultResolveStatusSchema = z.enum([
   'skipped_no_credits',
 ])
 
+/** An artist-and-title input line, as sent and as echoed back. */
+export const SonovaultTrackNameInputSchema = z.object({
+  artist: z.string().max(2000),
+  title: z.string().max(2000),
+})
+
 /** One line of a bulk resolve response (OpenAPI `ResolveResult`). */
 export const SonovaultResolveResultSchema = z.object({
-  input: z.string().max(2000),
+  /** The input as sent: a string, or the artist and title of a `track_name` line. */
+  input: z.union([z.string().max(2000), SonovaultTrackNameInputSchema]),
   status: SonovaultResolveStatusSchema,
   track: SonovaultTrackSchema.nullable(),
   links: z.array(SonovaultLinkSchema).max(50),

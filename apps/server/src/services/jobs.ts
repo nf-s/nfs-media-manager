@@ -185,6 +185,7 @@ import {
   prepareSonovaultTrackLookup,
   runSonovaultTrackLookup,
 } from '@/services/sonovault-track-lookup'
+import { runSonovaultTrackNameLookup } from '@/services/sonovault-track-candidates'
 import {
   prepareSonovaultSimilarLookup,
   runSonovaultSimilarLookup,
@@ -1200,7 +1201,11 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     {
       provider: 'sonovault',
       prepare: prepareSonovaultTrackLookup,
-      run: runSonovaultTrackLookup,
+      // Tracks with neither ID are looked up by artist and title (stage 4).
+      run: (context, input) =>
+        input.inputType === 'track_name'
+          ? runSonovaultTrackNameLookup(context, input)
+          : runSonovaultTrackLookup(context, input),
     },
   ],
   [
@@ -1301,6 +1306,28 @@ function taskProvider(
   return typeof definition.provider === 'string'
     ? definition.provider
     : definition.provider(options)
+}
+
+/**
+ * Queues a task job within the caller's transaction, with the options its
+ * prepare step returned. It runs on the provider's next dispatch.
+ */
+export async function insertPreparedTaskJob(
+  tx: JobTransaction,
+  task: string,
+  userId: string | null,
+  prepared: Record<string, JsonValue>,
+) {
+  const definition = taskJobs.get(task)
+  const provider = definition && taskProvider(definition, prepared)
+  if (!provider) throw new Error('Unknown job task')
+  return insertTaskJob(
+    tx,
+    provider,
+    { task, ...prepared },
+    userId,
+    `Queued for ${provider}`,
+  )
 }
 
 const SimilarScopeSchema = z.object({

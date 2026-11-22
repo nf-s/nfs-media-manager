@@ -29,8 +29,15 @@ const id = z
 const trackId = z.string().trim().pipe(id)
 const dateTime = z.string().datetime()
 
-/** How a library track is sent to the bulk call. */
-export const SonovaultLookupInputTypeSchema = z.enum(['spotify_id', 'isrc'])
+/**
+ * How a library track is sent to the bulk call: by Spotify ID or ISRC
+ * (stage 1), or by artist and title for a track with neither (stage 4).
+ */
+export const SonovaultLookupInputTypeSchema = z.enum([
+  'spotify_id',
+  'isrc',
+  'track_name',
+])
 export type SonovaultLookupInputType = z.infer<
   typeof SonovaultLookupInputTypeSchema
 >

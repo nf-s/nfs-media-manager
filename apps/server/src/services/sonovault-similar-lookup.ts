@@ -221,7 +221,7 @@ export async function lookupSimilarTracksOnSonovault(
   sent.forEach(({ isrc, check }, index) => {
     const line = lookup.results[index]
     const result =
-      line && validIsrc(line.input) === isrc
+      line && typeof line.input === 'string' && validIsrc(line.input) === isrc
         ? sonovaultSimilarMatch(check, line)
         : 'not_found'
     if (typeof result === 'string') misses.set(isrc, result)

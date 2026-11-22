@@ -53,6 +53,7 @@ import {
 } from './spotify-track-recordings'
 import { saveProviderResponseCapture } from './provider-response-history'
 import {
+  lookupSpotifyCatalogTrack,
   normalizeSpotifyCatalogTrack,
   projectSpotifyCatalogAlbums,
   searchSpotifyCatalogAlbums,
@@ -335,6 +336,45 @@ export async function searchSpotifyTrackCandidates(
           )
         : request
       return searchSpotifyCatalogTracks(lookup, token, input)
+    },
+    assertActive,
+  )
+}
+
+/**
+ * Reads one catalog track by Spotify ID within a track search job, with the
+ * access and response storage of a search.
+ */
+export async function lookupSpotifyTrackCandidates(
+  spotifyTrackId: string,
+  userId: string | null,
+  assertActive: () => Promise<void>,
+  market: string | undefined,
+  jobId: string,
+) {
+  const { provider, params, account } = await spotifyTrackSearchAccess(
+    userId,
+    market,
+  )
+  return runProviderOperation(
+    provider,
+    async ({ secrets, request }, plugin) => {
+      const token = account
+        ? await spotifyAccountToken(account, request)
+        : await spotifyClientToken(secrets, request)
+      const input = {
+        spotifyTrackId,
+        ...(params.market ? { market: params.market } : {}),
+      }
+      const lookup = await catalogJobRequest(
+        jobId,
+        SPOTIFY_TRACK_SEARCH_TASK,
+        { operation: 'track-lookup', args: input },
+        plugin,
+        secrets,
+        assertActive,
+      )
+      return lookupSpotifyCatalogTrack(lookup, token, input)
     },
     assertActive,
   )

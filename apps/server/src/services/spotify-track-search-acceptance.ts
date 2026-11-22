@@ -459,100 +459,113 @@ export function reconcileSavedSpotifyTrackSearch(
 }
 
 /** A reviewed catalog identity can reuse a Spotify or corroborated album recording. */
-export async function acceptSpotifyTrackSearch(input: {
+export async function acceptSpotifyTrackSearch(input: AcceptanceInput) {
+  return db.transaction((tx) =>
+    acceptSpotifyTrackSearchInTransaction(tx, input),
+  )
+}
+
+type AcceptanceInput = {
   trackId: string
   jobId: string
   spotifyTrackId: string
   userId: string
-}) {
-  return db.transaction(async (tx) => {
-    await lockLibraryTrackWrites(tx)
-    const { trackId, jobId, spotifyTrackId } = input
-    const candidate = await readSpotifyTrackSearchCandidate(tx, input)
-    const [job] = await tx
-      .select({ options: scrapeJob.options })
-      .from(scrapeJob)
-      .where(eq(scrapeJob.id, jobId))
-    const previous = AcceptedSchema.safeParse(job?.options)
-    if (previous.success) {
-      const kept = await libraryRecording(tx, previous.data.acceptedTrackId)
-      if (
-        previous.data.acceptedSpotifyTrackId === spotifyTrackId &&
-        kept?.spotifyId === spotifyTrackId &&
-        !kept.hidden
-      )
-        return { targetId: kept.id }
-      throw new ServerError({
-        statusCode: 409,
-        message:
-          'This search was already used. Review the current track match.',
-      })
-    }
-    const source = await libraryRecording(tx, trackId)
-    if (!source || source.hidden)
-      throw new ServerError({
-        statusCode: 404,
-        message: 'Library track not found.',
-      })
+}
+
+/**
+ * The owner's acceptance of a saved search result, within the caller's
+ * transaction: also used when the owner accepted a Sonovault candidate and
+ * its Spotify ID was read (SONO-25).
+ */
+export async function acceptSpotifyTrackSearchInTransaction(
+  tx: Transaction,
+  input: AcceptanceInput,
+) {
+  await lockLibraryTrackWrites(tx)
+  const { trackId, jobId, spotifyTrackId } = input
+  const candidate = await readSpotifyTrackSearchCandidate(tx, input)
+  const [job] = await tx
+    .select({ options: scrapeJob.options })
+    .from(scrapeJob)
+    .where(eq(scrapeJob.id, jobId))
+  const previous = AcceptedSchema.safeParse(job?.options)
+  if (previous.success) {
+    const kept = await libraryRecording(tx, previous.data.acceptedTrackId)
     if (
-      source.spotifyId !== spotifyTrackId &&
-      !(await listTracksNeedingSpotifyMatch(tx, [trackId])).length
+      previous.data.acceptedSpotifyTrackId === spotifyTrackId &&
+      kept?.spotifyId === spotifyTrackId &&
+      !kept.hidden
     )
-      throw new ServerError({
-        statusCode: 409,
-        message:
-          'This recording already has a Spotify match. Refresh the track to review it.',
-      })
-    const targets = await resolveSpotifyTrackIds(tx, [candidate])
-    const targetId =
-      targets.get(spotifyTrackId) ?? newRecordingTarget(source, candidate)
-    const conflict = await spotifyRecordingTransferConflict(
-      tx,
-      source,
-      targetId,
-      candidate,
-    )
-    if (conflict)
-      throw new ServerError({
-        statusCode: 409,
-        message:
-          conflict === 'position'
-            ? 'This Spotify version conflicts with the stored album position. Choose the version on that release.'
-            : 'This track has independently saved metadata. Use Sources to link its scrobbled names individually.',
-      })
-    let albumFallbackArtistCreditCorrection:
-      | AlbumFallbackArtistCreditCorrection
-      | undefined
-    if (targetId !== trackId) {
-      const target = await spotifySearchRecordingEvidence(tx, targetId, {
-        includeScrobbles: false,
-      })
-      if (target && spotifySearchTargetConflicts(target, candidate)) {
-        albumFallbackArtistCreditCorrection =
-          await readSpotifyAlbumFallbackArtistCreditCorrection(
-            tx,
-            targetId,
-            candidate,
-            target,
-            { recordingIncludesScrobbles: false },
-          )
-        if (!albumFallbackArtistCreditCorrection)
-          throw new ServerError({
-            statusCode: 409,
-            message:
-              'This Spotify result conflicts with the library recording that would receive these scrobbles.',
-            data: SpotifyTrackSearchTargetConflictSchema.parse({
-              code: 'spotify-track-target-conflict',
-              trackId: targetId,
-              title:
-                target.title.trim().slice(0, 500).trimEnd() || 'Library track',
-            }),
-          })
-      }
-    }
-    await linkSpotifyRecording(tx, input, targetId, candidate, 'manual', {
-      albumFallbackArtistCreditCorrection,
+      return { targetId: kept.id }
+    throw new ServerError({
+      statusCode: 409,
+      message: 'This search was already used. Review the current track match.',
     })
-    return { targetId }
+  }
+  const source = await libraryRecording(tx, trackId)
+  if (!source || source.hidden)
+    throw new ServerError({
+      statusCode: 404,
+      message: 'Library track not found.',
+    })
+  if (
+    source.spotifyId !== spotifyTrackId &&
+    !(await listTracksNeedingSpotifyMatch(tx, [trackId])).length
+  )
+    throw new ServerError({
+      statusCode: 409,
+      message:
+        'This recording already has a Spotify match. Refresh the track to review it.',
+    })
+  const targets = await resolveSpotifyTrackIds(tx, [candidate])
+  const targetId =
+    targets.get(spotifyTrackId) ?? newRecordingTarget(source, candidate)
+  const conflict = await spotifyRecordingTransferConflict(
+    tx,
+    source,
+    targetId,
+    candidate,
+  )
+  if (conflict)
+    throw new ServerError({
+      statusCode: 409,
+      message:
+        conflict === 'position'
+          ? 'This Spotify version conflicts with the stored album position. Choose the version on that release.'
+          : 'This track has independently saved metadata. Use Sources to link its scrobbled names individually.',
+    })
+  let albumFallbackArtistCreditCorrection:
+    | AlbumFallbackArtistCreditCorrection
+    | undefined
+  if (targetId !== trackId) {
+    const target = await spotifySearchRecordingEvidence(tx, targetId, {
+      includeScrobbles: false,
+    })
+    if (target && spotifySearchTargetConflicts(target, candidate)) {
+      albumFallbackArtistCreditCorrection =
+        await readSpotifyAlbumFallbackArtistCreditCorrection(
+          tx,
+          targetId,
+          candidate,
+          target,
+          { recordingIncludesScrobbles: false },
+        )
+      if (!albumFallbackArtistCreditCorrection)
+        throw new ServerError({
+          statusCode: 409,
+          message:
+            'This Spotify result conflicts with the library recording that would receive these scrobbles.',
+          data: SpotifyTrackSearchTargetConflictSchema.parse({
+            code: 'spotify-track-target-conflict',
+            trackId: targetId,
+            title:
+              target.title.trim().slice(0, 500).trimEnd() || 'Library track',
+          }),
+        })
+    }
+  }
+  await linkSpotifyRecording(tx, input, targetId, candidate, 'manual', {
+    albumFallbackArtistCreditCorrection,
   })
+  return { targetId }
 }

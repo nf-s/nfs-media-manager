@@ -129,6 +129,11 @@ import {
   TidalTrackMatchReviewDialog,
   useTidalTrackMatchStatusForPages,
 } from './tidal-track-match'
+import {
+  SonovaultCandidateCell,
+  SonovaultCandidateReviewDialog,
+  useSonovaultCandidatesForPages,
+} from './sonovault-track-candidates'
 
 const libraryLabels = {
   album: { name: 'Album', creator: 'Library artist', plural: 'albums' },
@@ -145,6 +150,7 @@ const libraryLabels = {
 /** A group row of the Possible duplicates view is as tall as the header (--ds-head). */
 const groupRowHeight = tableHeaderHeight
 const tidalColumn = 'tidal'
+const sonovaultColumn = 'sonovault'
 
 type Provider = MatchDiagnosticsPage['providers'][number]
 type Column = TableColumn & {
@@ -192,6 +198,17 @@ function matchColumns(
         browseField: {
           key: tidalColumn,
           label: 'TIDAL',
+          type: 'text',
+          filterable: false,
+        },
+      },
+      // Candidates by artist and title, read like the TIDAL column.
+      {
+        key: sonovaultColumn,
+        label: 'Sonovault',
+        browseField: {
+          key: sonovaultColumn,
+          label: 'Sonovault',
           type: 'text',
           filterable: false,
         },
@@ -608,6 +625,9 @@ export default function MatchDiagnosticsWorkspace({
   const [knownProviders, setKnownProviders] = useState<Provider[]>([])
   const [merge, setMerge] = useState<MergeSelection | null>(null)
   const [tidalReview, setTidalReview] = useState<TrackListItem | null>(null)
+  const [sonovaultReview, setSonovaultReview] = useState<TrackListItem | null>(
+    null,
+  )
   // Possible duplicates lists only grouped tracks, under a row for each group.
   const duplicates = tracks && trackQuery.duplicates === true
   // The group rows, read with the same request as the rows they stand above.
@@ -679,6 +699,7 @@ export default function MatchDiagnosticsWorkspace({
       'album',
       ...providers.map(({ key }) => key),
       tidalColumn,
+      sonovaultColumn,
       'actions',
     ]),
   ]
@@ -689,10 +710,16 @@ export default function MatchDiagnosticsWorkspace({
     browseField ? [browseField] : [],
   )
   const trackSortFields = trackColumnFields.filter(
-    ({ key }) => key !== 'actions' && key !== tidalColumn,
+    ({ key }) =>
+      key !== 'actions' && key !== tidalColumn && key !== sonovaultColumn,
   )
   const tidal = useTidalTrackMatchStatusForPages(
     tracks && shown.some(({ key }) => key === tidalColumn)
+      ? query.windowPageItems
+      : [],
+  )
+  const sonovault = useSonovaultCandidatesForPages(
+    tracks && shown.some(({ key }) => key === sonovaultColumn)
       ? query.windowPageItems
       : [],
   )
@@ -842,6 +869,22 @@ export default function MatchDiagnosticsWorkspace({
           onReview={() => setTidalReview(track)}
         />
       ) : tidal.isError ? (
+        <EmptyValue />
+      ) : (
+        <Skeleton width={40} height={12} />
+      )
+    }
+    if (column.key === sonovaultColumn) {
+      const { track } = item
+      if (!track) return <EmptyValue />
+      const review = sonovault.byId.get(track.id)
+      return review ? (
+        <SonovaultCandidateCell
+          review={review}
+          track={track}
+          onReview={() => setSonovaultReview(track)}
+        />
+      ) : sonovault.isError ? (
         <EmptyValue />
       ) : (
         <Skeleton width={40} height={12} />
@@ -1192,6 +1235,12 @@ export default function MatchDiagnosticsWorkspace({
         <TidalTrackMatchReviewDialog
           track={tidalReview}
           onClose={() => setTidalReview(null)}
+        />
+      )}
+      {sonovaultReview && (
+        <SonovaultCandidateReviewDialog
+          track={sonovaultReview}
+          onClose={() => setSonovaultReview(null)}
         />
       )}
       {tracks && <DetailInspector track={{ onFilter: addTrackFilter }} />}

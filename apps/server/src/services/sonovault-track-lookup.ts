@@ -53,6 +53,7 @@ import {
   providerResponse,
   providerSecret,
   scrapeJob,
+  sonovaultTrackCandidate,
   sonovaultTrackLookup,
   spotifyCodeLookup,
   trackFact,
@@ -127,7 +128,7 @@ export function verifySonovaultRecord(
   )
 }
 
-type Target = {
+export type SonovaultTarget = {
   id: string
   title: string
   durationSec: number | null
@@ -136,6 +137,7 @@ type Target = {
   libraryIsrc: string | null
   lookup: {
     status: string
+    inputType: string
     lookedUpAt: Date
     primaryIsrc: string | null
   } | null
@@ -143,7 +145,10 @@ type Target = {
 }
 
 /** Visible library tracks with their identifiers, latest lookup and active job. */
-async function readTargets(database: Reader, ids: string[]): Promise<Target[]> {
+export async function readSonovaultTargets(
+  database: Reader,
+  ids: string[],
+): Promise<SonovaultTarget[]> {
   if (!ids.length) return []
   const rows = await database
     .select({
@@ -162,6 +167,7 @@ async function readTargets(database: Reader, ids: string[]): Promise<Target[]> {
             and r.provider <> ${PROVIDER}
           order by r.created_at, r.external_id limit 1)`,
       lookupStatus: sonovaultTrackLookup.status,
+      lookupInputType: sonovaultTrackLookup.inputType,
       lookedUpAt: sonovaultTrackLookup.lookedUpAt,
       // The primary ISRC only while it is still Sonovault's own.
       primaryIsrc: sql<string | null>`case when ${sonovaultPrimaryIsrcSql(
@@ -198,6 +204,7 @@ async function readTargets(database: Reader, ids: string[]): Promise<Target[]> {
       row.lookupStatus && row.lookedUpAt
         ? {
             status: row.lookupStatus,
+            inputType: row.lookupInputType ?? '',
             lookedUpAt: row.lookedUpAt,
             primaryIsrc: row.primaryIsrc,
           }
@@ -206,12 +213,22 @@ async function readTargets(database: Reader, ids: string[]): Promise<Target[]> {
   }))
 }
 
-/** Whether a track is due a lookup: never looked up, a miss over 30 days old, or a refresh. */
-function dueForLookup(target: Target, refresh: boolean, now: Date) {
+/**
+ * Whether a track is due a lookup: never looked up, a miss over 30 days old
+ * or by another input type, or a refresh.
+ */
+export function dueForSonovaultLookup(
+  target: SonovaultTarget,
+  inputType: SonovaultLookupInputType,
+  refresh: boolean,
+  now: Date,
+) {
   const { lookup } = target
   if (!lookup) return true
   if (lookup.status === 'not_found')
-    return lookup.lookedUpAt < missRetryCutoff(now)
+    return (
+      lookup.inputType !== inputType || lookup.lookedUpAt < missRetryCutoff(now)
+    )
   return refresh && lookup.lookedUpAt < refreshCutoff(now)
 }
 
@@ -221,7 +238,7 @@ export async function prepareSonovaultTrackLookup(
 ) {
   const options = JobOptionsSchema.parse(input)
   const trackIds = [...new Set(options.trackIds)]
-  const targets = await readTargets(db, trackIds)
+  const targets = await readSonovaultTargets(db, trackIds)
   const first = targets.find(({ id }) => id === trackIds[0])
   return {
     trackIds,
@@ -297,12 +314,26 @@ export async function storedSonovaultResponse(
   return { id: row.id, fetchedAt: row.receivedAt ?? new Date() }
 }
 
+/** How an artist-and-title line is stored as a lookup's input. */
+export const sonovaultTrackNameInput = (item: {
+  artist: string
+  title: string
+}) => JSON.stringify({ artist: item.artist, title: item.title })
+
 const sameInput = (
   inputType: SonovaultLookupInputType,
   sent: string,
-  echoed: string,
+  echoed: SonovaultResolveResult['input'],
 ) =>
-  inputType === 'isrc' ? validIsrc(echoed) === sent : echoed.trim() === sent
+  typeof echoed !== 'string'
+    ? inputType === 'track_name' &&
+      sonovaultTrackNameInput({
+        artist: echoed.artist.trim(),
+        title: echoed.title.trim(),
+      }) === sent
+    : inputType === 'isrc'
+      ? validIsrc(echoed) === sent
+      : echoed.trim() === sent
 
 type Written = {
   matched: number
@@ -315,15 +346,17 @@ type Written = {
 /**
  * Replaces each answered track's Sonovault references and lookup with what
  * this response says. A track Sonovault skipped for lack of credits keeps
- * what it had. Only Sonovault's own rows change (SONO-06).
+ * what it had. Only Sonovault's own rows change (SONO-06). `accepted` marks
+ * records the owner or the stage 4 rule accepted as the library recording.
  */
-async function writeLookups(
+export async function writeSonovaultLookups(
   tx: Transaction,
   input: {
     jobId: string
     inputType: SonovaultLookupInputType
-    sent: { target: Target; input: string }[]
+    sent: { target: SonovaultTarget; input: string }[]
     results: SonovaultResolveResult[]
+    accepted?: boolean
   },
 ): Promise<Written> {
   const response = await storedSonovaultResponse(tx, input.jobId)
@@ -331,7 +364,7 @@ async function writeLookups(
   // Read again under the lock: another job may have changed the tracks.
   const current = new Map(
     (
-      await readTargets(
+      await readSonovaultTargets(
         tx,
         input.sent.map(({ target }) => target.id),
       )
@@ -387,7 +420,8 @@ async function writeLookups(
       })
       continue
     }
-    const verified = verifySonovaultRecord(target, record)
+    const verified =
+      input.accepted === true || verifySonovaultRecord(target, record)
     // Tempo and key (SONO-13); an unverified record's are kept for details only.
     facts.push({
       mediaItemId: target.id,
@@ -542,13 +576,15 @@ export async function runSonovaultTrackLookup(
     const options = JobOptionsSchema.parse(input)
     await context.assertActive()
     const now = new Date()
-    const sent = (await readTargets(db, options.trackIds)).flatMap((target) => {
-      const lookup = sonovaultLookupInput(target)
-      return lookup?.inputType === options.inputType &&
-        dueForLookup(target, options.refresh, now)
-        ? [{ target, input: lookup.input }]
-        : []
-    })
+    const sent = (await readSonovaultTargets(db, options.trackIds)).flatMap(
+      (target) => {
+        const lookup = sonovaultLookupInput(target)
+        return lookup?.inputType === options.inputType &&
+          dueForSonovaultLookup(target, lookup.inputType, options.refresh, now)
+          ? [{ target, input: lookup.input }]
+          : []
+      },
+    )
     if (!sent.length)
       return {
         outcome: 'complete',
@@ -628,7 +664,7 @@ export async function runSonovaultTrackLookup(
       },
       persist: async (tx) => {
         await lockLibraryTrackWrites(tx)
-        written = await writeLookups(tx, {
+        written = await writeSonovaultLookups(tx, {
           jobId: context.jobId,
           inputType: options.inputType,
           sent,
@@ -664,9 +700,13 @@ export async function queueSonovaultTrackLookups(
   const unique = [...new Set(trackIds)]
   const now = new Date()
   const groups = new Map<SonovaultLookupInputType, string[]>()
-  for (const target of await readTargets(db, unique)) {
+  for (const target of await readSonovaultTargets(db, unique)) {
     const lookup = sonovaultLookupInput(target)
-    if (!lookup || target.active || !dueForLookup(target, refresh, now))
+    if (
+      !lookup ||
+      target.active ||
+      !dueForSonovaultLookup(target, lookup.inputType, refresh, now)
+    )
       continue
     groups.set(lookup.inputType, [
       ...(groups.get(lookup.inputType) ?? []),
@@ -857,7 +897,7 @@ async function readStates(
 
 export async function getSonovaultTrackState(trackId: string) {
   const { trackId: id } = SonovaultTrackParamsSchema.parse({ trackId })
-  const [target] = await readTargets(db, [id])
+  const [target] = await readSonovaultTargets(db, [id])
   if (!target)
     throw new ServerError({
       statusCode: 404,
@@ -957,6 +997,7 @@ export async function removeSonovaultData() {
       .where(eq(providerReference.provider, PROVIDER))
       .returning({ id: providerReference.id })
     const trackFacts = await removeProviderTrackFacts(tx, PROVIDER)
+    await tx.delete(sonovaultTrackCandidate)
     const lookups = await tx
       .delete(sonovaultTrackLookup)
       .returning({ id: sonovaultTrackLookup.mediaItemId })

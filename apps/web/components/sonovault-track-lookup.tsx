@@ -75,7 +75,11 @@ const referenceServices: Record<
 }
 const referenceOrder = Object.keys(referenceServices)
 
-const inputTypeLabels = { spotify_id: 'Spotify ID', isrc: 'ISRC' }
+const inputTypeLabels = {
+  spotify_id: 'Spotify ID',
+  isrc: 'ISRC',
+  track_name: 'artist and title',
+}
 
 export function isActiveSonovaultLookup(
   job: SonovaultTrackLookupJob | null | undefined,

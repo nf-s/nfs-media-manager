@@ -1223,6 +1223,51 @@ export const trackFact = pgTable(
 )
 
 /**
+ * A track Sonovault found for a library track by artist and title (SONO-23).
+ * It is a candidate until it is accepted, automatically or by the owner, or
+ * rejected; a rejected candidate is not offered again. `result` is the
+ * response line it was read from, so acceptance needs no new request.
+ */
+export const sonovaultTrackCandidate = pgTable(
+  'sonovault_track_candidate',
+  {
+    mediaItemId: text('media_item_id')
+      .notNull()
+      .references(() => mediaItem.id, { onDelete: 'cascade' }),
+    sonovaultTrackId: text('sonovault_track_id').notNull(),
+    // pending, accepted or rejected.
+    status: text('status').notNull(),
+    // automatic or owner, once accepted.
+    acceptedBy: text('accepted_by'),
+    input: text('input').notNull(),
+    result: jsonb('result').$type<Record<string, JsonValue>>().notNull(),
+    scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
+      onDelete: 'set null',
+    }),
+    responseId: text('response_id').references(() => providerResponse.id, {
+      onDelete: 'set null',
+    }),
+    // The Spotify job that takes the candidate's Spotify ID on acceptance.
+    spotifyJobId: text('spotify_job_id').references(() => scrapeJob.id, {
+      onDelete: 'set null',
+    }),
+    foundAt: timestamp('found_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    decidedAt: timestamp('decided_at', { mode: 'date', withTimezone: false }),
+    ...timestampColumns,
+  },
+  (table) => [
+    primaryKey({ columns: [table.mediaItemId, table.sonovaultTrackId] }),
+    index('sonovault_track_candidate_status_idx').on(
+      table.status,
+      table.foundAt,
+    ),
+  ],
+)
+
+/**
  * What a Spotify `isrc:` or `upc:` search found for one code, or a miss.
  * UPCs are stored without leading zeros.
  */

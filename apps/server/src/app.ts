@@ -33,6 +33,7 @@ import performance from '@/routes/performance'
 import spotify from '@/routes/spotify'
 import tidal from '@/routes/tidal'
 import sonovault from '@/routes/sonovault'
+import sonovaultCandidates from '@/routes/sonovault-candidates'
 import lastfm from '@/routes/lastfm'
 import youtube from '@/routes/youtube'
 import subscriptions from '@/routes/subscriptions'
@@ -135,6 +136,7 @@ v1ApiBase.route('/album-imports', albumImports)
 v1ApiBase.route('/spotify', spotify)
 v1ApiBase.route('/tidal', tidal)
 v1ApiBase.route('/sonovault', sonovault)
+v1ApiBase.route('/sonovault', sonovaultCandidates)
 v1ApiBase.route('/lastfm', lastfm)
 v1ApiBase.route('/youtube', youtube)
 v1ApiBase.route('/sonos', sonos)
