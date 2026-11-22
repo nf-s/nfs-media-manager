@@ -44,7 +44,7 @@ Show names are matched to stored shows as channel names are in Subscriptions: an
 - Interpretation: Cloudflare-hosted [`@cf/openai/gpt-oss-120b`](https://developers.cloudflare.com/workers-ai/models/gpt-oss-120b/), with high reasoning effort and JSON output.
 - Transcription: [`@cf/openai/whisper-large-v3-turbo`](https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/), with voice activity detection.
 
-The API Worker's Wrangler configuration includes an `AI` binding. An explicitly requested deployment of that configuration enables the binding; no browser token or additional provider key is needed. Ensure Workers AI is available on the target account. This feature does not itself deploy the application.
+The API Worker's Wrangler configuration includes an `AI` binding. Deploying that configuration enables the binding; no browser token or additional provider key is needed. Ensure Workers AI is available on the target account.
 
 For the Node server, configure `CLOUDFLARE_AI_ACCOUNT_ID` and `CLOUDFLARE_AI_API_TOKEN` through the existing server environment loading and restart. Use a token scoped to Workers AI on the intended account. Do not put either value in browser configuration or commit it. When neither a Worker binding nor Node configuration is available, AI search shows that it is unavailable and ordinary browsing continues to work.
 

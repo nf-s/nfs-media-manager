@@ -2,7 +2,7 @@
 
 Start with the [application architecture](docs/handoff.md), then read the relevant [requirements and guides](docs/README.md), READMEs and decision notes. Find the closest working example and search for existing helpers and shared types before writing code. Follow the surrounding structure and naming; extend a utility rather than creating a parallel version.
 
-Create new projects as local Git repositories; do not use Sites. Deploy only on explicit request to a specified or agreed destination.
+Create new projects as local Git repositories; do not use Sites. Production is released by CI: a push to `main` deploys that commit once its checks pass, as described in [production operations](docs/production-operations.md). Do not deploy by hand or to any other destination unless asked.
 
 Keep installation-specific Markdown in ignored `docs/.local/`. Do not publish library contents, measured library counts, deployment records, personal identifiers or real-library screenshots. Use synthetic examples instead.
 
@@ -33,4 +33,5 @@ The [design system](docs/design-system/README.md) is the only source of interfac
 - Reproduce bugs first. For a scraping failure, start with the specific job's saved request, response, error and snapshot, not a new search. Say when reproduction is not possible. Make one small change and verify it; if it fails, return your own change to a known working state instead of stacking speculative fixes.
 - Keep tests green. Use fixtures, mocked providers and a disposable database. Do not run live or full-library scrapes as tests. If a live check is explicitly requested, review the queue, select a tiny explicit subset, and preserve rate limits, cooldowns and concurrency controls.
 - Use the project's existing dotenv loading. Do not overwrite local configuration, export the environment in shell scripts or print keys. Never publish private plugin names, aliases, credentials, scraped payloads, backups or machine-specific paths.
-- Check Git status before editing or deploying. Keep pre-existing work intact. Review every changed line and its effect on callers and docs. Run relevant tests, use the configured formatter, verify the final diff, then commit and push completed changes unless asked not to. Preserve configured commit signing. Do not stage unrelated work.
+- Check Git status before editing or pushing. Keep pre-existing work intact. Review every changed line and its effect on callers and docs. Run relevant tests, use the configured formatter, verify the final diff, then commit and push completed changes unless asked not to. Preserve configured commit signing. Do not stage unrelated work.
+- Finished work goes to `main`, and that push is the release. Keep prototypes and unfinished work on a branch. The release does not run database migrations: run any migration the change depends on first. After pushing, wait for the run and confirm it published that commit; a failed check publishes nothing, so fix it or say the change is not live. The release tests signed-out pages only, so check the changed flow in the app yourself. Begin the final reply with what was pushed, whether it is live and what was checked.
