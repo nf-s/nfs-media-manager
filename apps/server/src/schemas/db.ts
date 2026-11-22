@@ -890,6 +890,16 @@ export const scrapeJob = pgTable(
       .where(
         sql`${table.provider} = 'tidal' and ${table.options}->>'task' = 'tidal-track-match'`,
       ),
+    index('scrape_job_similar_item_idx')
+      .on(
+        sql`(${table.options}->>'task')`,
+        sql`(${table.options}->>'itemId')`,
+        table.createdAt.desc(),
+        table.id.desc(),
+      )
+      .where(
+        sql`${table.options}->>'task' in ('tidal-similar', 'spotify-similar-lookup')`,
+      ),
     index('scrape_job_artist_created_idx')
       .on(
         table.provider,
@@ -1103,6 +1113,46 @@ export const providerCurrentState = pgTable(
       table.provider,
     ),
   ],
+)
+
+/**
+ * The similar albums or tracks TIDAL last returned for one library album or
+ * track, in TIDAL's order. The raw response is the job's stored response.
+ */
+export const tidalSimilar = pgTable('tidal_similar', {
+  mediaItemId: text('media_item_id')
+    .primaryKey()
+    .references(() => mediaItem.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  items: jsonb('items').$type<JsonValue>().notNull(),
+  scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
+    onDelete: 'set null',
+  }),
+  readAt: timestamp('read_at', { mode: 'date', withTimezone: false }).notNull(),
+  ...timestampColumns,
+})
+
+/**
+ * What a Spotify `isrc:` or `upc:` search found for one code, or a miss.
+ * UPCs are stored without leading zeros.
+ */
+export const spotifyCodeLookup = pgTable(
+  'spotify_code_lookup',
+  {
+    codeType: text('code_type').notNull(),
+    code: text('code').notNull(),
+    spotifyId: text('spotify_id'),
+    result: jsonb('result').$type<Record<string, JsonValue>>(),
+    scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
+      onDelete: 'set null',
+    }),
+    searchedAt: timestamp('searched_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    ...timestampColumns,
+  },
+  (table) => [primaryKey({ columns: [table.codeType, table.code] })],
 )
 
 export const artistProviderSnapshot = pgTable(

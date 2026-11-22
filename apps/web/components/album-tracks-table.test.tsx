@@ -161,7 +161,13 @@ test('an old Tracks link opens the album Overview with its saved table order', a
   const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],
   )
-  assert.deepEqual(tabs, ['Overview', 'Listening', 'Sources', 'Edit'])
+  assert.deepEqual(tabs, [
+    'Overview',
+    'Similar',
+    'Listening',
+    'Sources',
+    'Edit',
+  ])
   assert.match(html, /role="tab" aria-selected="true"[^>]*>Overview/)
   assert.match(html, /<h3>Tracks<\/h3>/)
   assert.match(html, /aria-label="Album tracks"/)

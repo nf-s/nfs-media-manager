@@ -68,10 +68,15 @@ import MetadataSourceControl from './metadata-source-control'
 import { TrackSpotifySource } from './track-spotify-source'
 import { TrackTidalSource } from './tidal-track-match'
 import TrackAppearsOn from './track-playlist-additions'
+import { SimilarItems } from './similar-items'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
-type TrackTab = 'overview' | 'sources'
-const trackTabs: readonly [TrackTab, ...TrackTab[]] = ['overview', 'sources']
+type TrackTab = 'overview' | 'similar' | 'sources'
+const trackTabs: readonly [TrackTab, ...TrackTab[]] = [
+  'overview',
+  'similar',
+  'sources',
+]
 /** Playlists and Listening were tabs before they joined the Overview. */
 const trackTabAliases = {
   playlists: 'overview',
@@ -488,6 +493,7 @@ export default function TrackDetailView({
         onChange={setTab}
         tabs={[
           { value: 'overview', label: 'Overview' },
+          { value: 'similar', label: 'Similar' },
           { value: 'sources', label: 'Sources' },
         ]}
       >
@@ -500,6 +506,9 @@ export default function TrackDetailView({
             showSources={() => setTab('sources')}
             sourcesHref={tabHref('sources')}
           />
+        </TabsContent>
+        <TabsContent value="similar">
+          <SimilarItems key={item.id} kind="track" id={item.id} />
         </TabsContent>
         <TabsContent value="sources">
           <TrackRecordParts

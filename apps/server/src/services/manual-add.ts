@@ -20,6 +20,7 @@ import {
   SpotifyTrackSearchMarketSchema,
 } from '@repo/schemas/spotify-track-search'
 import { LASTFM_SPOTIFY_SEARCH_TASK } from '@repo/schemas/lastfm'
+import { SPOTIFY_SIMILAR_LOOKUP_TASK } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import {
   ProviderResponseStorageError,
@@ -239,6 +240,59 @@ async function catalogJobRequest(
   return createProviderRequest(plugin, assertActive, {
     beginResponseCapture: recorder('task'),
   })
+}
+
+/**
+ * Runs a Spotify catalog task's searches with the access track search uses.
+ * Each search is a replay step whose responses are stored on the job.
+ */
+export async function runSpotifyCatalogSearches<T>(
+  userId: string | null,
+  jobId: string,
+  task: typeof SPOTIFY_SIMILAR_LOOKUP_TASK,
+  assertActive: () => Promise<void>,
+  execute: (search: {
+    token: string
+    market?: string
+    request: (
+      step: ProviderTaskReplayStep,
+    ) => Promise<MediaPluginTestContext['request']>
+  }) => Promise<T>,
+): Promise<T> {
+  const { provider, params, account } = await spotifyTrackSearchAccess(userId)
+  return runProviderOperation(
+    provider,
+    async ({ secrets, request }, plugin) => {
+      const token = account
+        ? await spotifyAccountToken(account, request)
+        : await spotifyClientToken(secrets, request)
+      // One recorder numbers every search's responses in order.
+      const recorder = createProviderResponseRecorder(
+        (capture) =>
+          saveProviderResponseCapture({
+            jobId,
+            provider: 'spotify',
+            attempt: 1,
+            capture,
+          }),
+        providerResponseSecretValues(secrets),
+      )
+      const recorded = createProviderRequest(plugin, assertActive, {
+        beginResponseCapture: recorder('task'),
+      })
+      const result = await execute({
+        token,
+        ...params,
+        request: async (step) => {
+          await appendProviderTaskReplayStep(jobId, 'spotify', task, step)
+          return recorded
+        },
+      })
+      recorder.assertStored()
+      return result
+    },
+    assertActive,
+  )
 }
 
 export async function searchSpotifyTrackCandidates(

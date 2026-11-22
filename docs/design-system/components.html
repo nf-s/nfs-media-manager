@@ -102,6 +102,149 @@
         { h: 'Made of', c: (r) => r.made },
       ]
       const partRows = (r) => (r.part ? { 'data-part': '' } : {})
+      /* Similar: TIDAL's suggestions for one album or track, in its drawer */
+      const suggestionOf =
+        (kind) =>
+        ([title, by, meta, state, seed]) => ({
+          kind,
+          title,
+          by,
+          meta,
+          state,
+          seed,
+        })
+      const SIM_ALBUMS = [
+        ['Pressure Systems', 'Halcyon Grid', '2023', 'library', 3],
+        ['Night Shift Utopia', 'Vela Rooms', '2024', 'spotify', 8],
+        ['Tunnel Vision EP', 'Oskar Brandt', '2022', 'spotify', 1],
+        ['Low Orbit Dubs', 'Sable & Rue', '2021', 'library', 10],
+        ['Concrete Bloom', 'Mirela Tan', '2025', 'none', 4],
+        ['Rotary Club Mixes', 'Dovetail Unit', '2020', 'spotify', 6],
+        ['Strobe Hymnal', 'Kessler & Moss', '2024', 'unsearched', 9],
+        ['Second Floor', 'Ayla Ren', '2023', 'library', 2],
+      ].map(suggestionOf('album'))
+      const SIM_TRACKS = [
+        ['Glass Arcade', 'Halcyon Grid', '5:48', 'library', 3],
+        ['Afterhours Telex', 'Vela Rooms', '6:30', 'spotify', 8],
+        ['Halogen', 'Oskar Brandt', '7:02', 'spotify', 1],
+        ['Wet Pavement', 'Lumen Drift', '5:15', 'library', 10],
+        ['Lantern Code', 'Mirela Tan', '6:44', 'none', 4],
+        ['Carousel Theory', 'Dovetail Unit', '4:58', 'spotify', 6],
+        ['Tape Echo Prayer', 'Kessler & Moss', '6:05', 'unsearched', 9],
+      ].map(suggestionOf('track'))
+      const SIM_ALBUM = { kind: 'album', seed: 7, title: 'Afterglow Circuit' }
+      const SIM_TRACK = { kind: 'track', seed: 7, title: 'Signal Fade' }
+      const simCounts = (list) => {
+        const n = (st) => list.filter((s) => s.state === st).length
+        return `${list.length} from TIDAL · ${n('library')} in library · ${n('spotify')} on Spotify`
+      }
+      const simList = (items, o = {}) =>
+        `<div class="ds-list" data-compact>${items.map((s, i) => D.suggestion(s, { state: i === o.hover ? 'hover' : undefined })).join('')}</div>`
+      const simSummary = (list) =>
+        `<div class="ds-filterline"><span class="ds-toolbar-count">${simCounts(list)}</span>${btn('', { icon: 'refresh', size: 'xs', variant: 'ghost', aria: 'Read again from TIDAL', title: 'Read again from TIDAL · updated 2026-11-20' })}</div>`
+      const simEmbedded = (html) =>
+        `<div style="margin-inline:calc(var(--ds-gutter) * -1)">${html}</div>`
+      const similar = (list, o = {}) =>
+        simEmbedded(simSummary(list) + simList(list, o))
+      const simAlbumHead = (o = {}) =>
+        D.detailHead({
+          item: SIM_ALBUM,
+          kind: 'Album',
+          by: 'by <a href="#">Lumen Drift</a>',
+          facts: ['2024-05-17', '9 tracks', '51:20', 'Northbound Audio'],
+          play: play('header'),
+          links: D.logoLinks(['spotify', 'lastfm', 'discogs']),
+          actions: o.phone ? undefined : D.headActions(),
+        })
+      const simTrackHead = (o = {}) =>
+        D.detailHead({
+          item: SIM_TRACK,
+          kind: 'Track',
+          by: 'by <a href="#">Lumen Drift</a> · on <a href="#">Afterglow Circuit</a>',
+          facts: ['6:12', 'Track 4 of 9', '2024'],
+          play: play('header'),
+          links: D.logoLinks(['spotify', 'lastfm']),
+          actions: o.phone ? undefined : D.headActions(),
+        })
+      const SIM_ALBUM_TABS = [
+        'Overview',
+        'Similar',
+        'Listening',
+        'Sources',
+        'Edit',
+      ]
+      const SIM_TRACK_TABS = ['Overview', 'Similar', 'Sources']
+      const simFrame = (html, h) =>
+        `<div class="g-inspector" style="--g-h:${h}px">${html}</div>`
+      const simAlbumDrawer = (body) =>
+        D.inspector({
+          crumbs: ['Albums', SIM_ALBUM.title],
+          head: simAlbumHead(),
+          tabs: SIM_ALBUM_TABS,
+          tab: 1,
+          body,
+        })
+      const simTrackDrawer = (body) =>
+        D.inspector({
+          crumbs: ['Tracks', SIM_TRACK.title],
+          head: simTrackHead(),
+          tabs: SIM_TRACK_TABS,
+          tab: 1,
+          body,
+        })
+      const simBox = (title, text, action) =>
+        D.state(title, text, { size: 'sm', action })
+      const simStates = [
+        [
+          `<div class="ds-filterline">${status('running', 'Reading from TIDAL')}</div><div class="ds-list" data-compact>${D.skelRow().repeat(3)}</div>`,
+          'Loading: the TIDAL match or read is queued or running. While matching, the status reads Matching on TIDAL.',
+        ],
+        [
+          `<div class="ds-filterline">${status('running', 'Finding on Spotify')}</div>${simList(SIM_ALBUMS.slice(4, 7))}`,
+          'Only the Spotify lookup is queued or running: the list, with the status in place of the counts',
+        ],
+        [
+          simBox(
+            'Not matched on TIDAL',
+            'Similar albums come from TIDAL.',
+            btn('Match on TIDAL', { size: 'xs' }),
+          ),
+          'Not matched: the button queues the TIDAL match. After a failed match, its error is the text.',
+        ],
+        [
+          simBox(
+            'TIDAL has no similar albums',
+            'Read 2026-11-20',
+            btn('Read again', { icon: 'refresh', size: 'xs' }),
+          ),
+          'Nothing found',
+        ],
+        [
+          simBox(
+            'Could not read from TIDAL',
+            'TIDAL is waiting until 14:20 after a rate limit.',
+            btn('Read again', { icon: 'refresh', size: 'xs' }),
+          ),
+          'The read failed and there is no earlier read: the job’s error is the text',
+        ],
+      ]
+      const simPhoneNow = `<div class="g-phone-now">${D.artBox({ kind: 'album', seed: 3 })}<div class="ds-row-main"><span class="ds-row-title">Glass Arcade</span><span class="ds-row-by">Halcyon Grid · Kitchen</span></div><span class="ds-actions ds-toolbar-end">${btn('', { icon: 'pause', variant: 'ghost', aria: 'Pause' })}${btn('', { icon: 'next', variant: 'ghost', aria: 'Next' })}</span></div>`
+      const simPhoneTabs = (current) =>
+        `<div class="g-phone-tabs">${[
+          ['disc', 'Albums'],
+          ['music', 'Tracks'],
+          ['user', 'Artists'],
+          ['film', 'Films'],
+          ['more', 'More'],
+        ]
+          .map(
+            ([ic, label]) =>
+              `<span${label === current ? ' aria-current="page"' : ''}>${icon(ic)}${label}</span>`,
+          )
+          .join('')}</div>`
+      const simPhone = (o) =>
+        `<div class="g-phone"><div class="ds-inspector-bar">${btn('', { icon: 'chevL', variant: 'ghost', aria: 'Back' })}<div class="ds-crumbs"><b>${D.esc(o.title)}</b></div>${btn('', { icon: 'more', variant: 'ghost', aria: 'More actions' })}</div><div class="g-phone-scroll" data-touch style="padding:var(--ds-5)">${o.body}</div>${simPhoneNow}${simPhoneTabs(o.nav)}</div>`
+
       const viewSection = `<div class="g-stack" style="justify-items:start">${seg(['Compact', 'Standard', 'Roomy'], 1, { label: 'Grid size' })}<span class="ds-label">On cards</span>${D.checkRow('Rating', true)}${D.checkRow('Sorted value', true)}${D.checkRow('Tags', true)}${D.checkRow('Include archived imports', false)}</div>`
 
       D.page({
@@ -967,6 +1110,56 @@
               g.note(
                 'Replaces',
                 'three-line album rows with a ragged rating line, 68px artist rows that hold one name, and track rows with the play icons at the far right.',
+              ),
+          },
+          {
+            id: 'similar',
+            title: 'Similar',
+            body:
+              `<div class="g-inspectors">${simFrame(simAlbumDrawer(similar(SIM_ALBUMS, { hover: 1 })), 800)}${simFrame(simTrackDrawer(similar(SIM_TRACKS)), 800)}</div>` +
+              g.rules([
+                '<b>A Similar tab after Overview</b> in the album and track drawers. Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
+                '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. The second line starts with where it can be played, then the artists, then the year (albums) or length (tracks).',
+                '<b>In library</b> (Pressure Systems): the title opens the library item; the play pair plays it. No trailing button.',
+                '<b>On Spotify</b> (Night Shift Utopia): the title is text; the play pair plays or queues it on Spotify; the trailing button opens it on Spotify.',
+                '<b>Not on Spotify</b> (Concrete Bloom): no play pair, its space kept so titles line up; the trailing button opens it on TIDAL.',
+                '<b>Not looked up on Spotify</b> (Strobe Hymnal): drawn as Not on Spotify until the Spotify lookup has run.',
+                '<b>The line above the list</b> counts the suggestions, those in the library and those on Spotify. The refresh button queues the TIDAL read again; its title gives the date of the last read.',
+                '<b>Nothing plays</b> until Play or Add to queue is pressed.',
+              ]) +
+              g.sub('States') +
+              `<div class="g-cols">${simStates.map(([html, caption]) => `<div>${g.spec(html)}<p class="ds-muted">${caption}</p></div>`).join('')}</div>` +
+              g.rules([
+                '<b>Reading happens in a job,</b> never when the tab opens. A matched item that has never been read queues the read when the tab first opens and shows Loading.',
+                '<b>Loading</b> is the running status and three skeleton rows.',
+              ]) +
+              g.sub('Phone') +
+              g.flow(
+                [
+                  g.item(
+                    simPhone({
+                      title: SIM_ALBUM.title,
+                      body:
+                        simAlbumHead({ phone: true }) +
+                        tabs(SIM_ALBUM_TABS, 1) +
+                        similar(SIM_ALBUMS),
+                      nav: 'Albums',
+                    }),
+                    'Album · Similar',
+                  ),
+                  g.item(
+                    simPhone({
+                      title: SIM_TRACK.title,
+                      body:
+                        simTrackHead({ phone: true }) +
+                        tabs(SIM_TRACK_TABS, 1) +
+                        similar(SIM_TRACKS),
+                      nav: 'Tracks',
+                    }),
+                    'Track · Similar',
+                  ),
+                ],
+                { top: true },
               ),
           },
           {

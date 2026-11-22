@@ -47,7 +47,10 @@ import {
   SpotifyTrackSearchParamsSchema,
 } from '@repo/schemas/spotify-track-search'
 import {
+  SPOTIFY_SIMILAR_LOOKUP_TASK,
+  TIDAL_SIMILAR_TASK,
   TIDAL_TRACK_MATCH_TASK,
+  TidalSimilarKindSchema,
   TidalTrackMatchParamsSchema,
 } from '@repo/schemas/tidal'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
@@ -172,6 +175,11 @@ import {
   prepareTidalTrackMatch,
   runTidalTrackMatch,
 } from '@/services/tidal-track-match'
+import { prepareTidalSimilar, runTidalSimilar } from '@/services/tidal-similar'
+import {
+  prepareSpotifySimilarLookup,
+  runSpotifySimilarLookup,
+} from '@/services/spotify-similar-lookup'
 import {
   collectAlbumArtistProfiles,
   prepareArtistEnrichment,
@@ -1175,6 +1183,22 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    TIDAL_SIMILAR_TASK,
+    {
+      provider: 'tidal',
+      prepare: prepareTidalSimilar,
+      run: runTidalSimilar,
+    },
+  ],
+  [
+    SPOTIFY_SIMILAR_LOOKUP_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifySimilarLookup,
+      run: runSpotifySimilarLookup,
+    },
+  ],
+  [
     SPOTIFY_PLAYLIST_IMPORT_TASK,
     {
       provider: 'spotify',
@@ -1250,6 +1274,11 @@ function taskProvider(
     : definition.provider(options)
 }
 
+const SimilarScopeSchema = z.object({
+  kind: TidalSimilarKindSchema,
+  itemId: z.string().min(1),
+})
+
 async function insertTaskJob(
   tx: JobTransaction,
   provider: string,
@@ -1269,13 +1298,27 @@ async function insertTaskJob(
       : options.task === TIDAL_TRACK_MATCH_TASK
         ? TidalTrackMatchParamsSchema.parse(options)
         : null
+  const similar =
+    options.task === TIDAL_SIMILAR_TASK ||
+    options.task === SPOTIFY_SIMILAR_LOOKUP_TASK
+      ? SimilarScopeSchema.parse(options)
+      : null
+  const scopeItem = similar
+    ? { id: similar.itemId, mediaType: similar.kind }
+    : trackSearch
+      ? { id: trackSearch.trackId, mediaType: 'track' }
+      : null
   await tx.insert(scrapeJob).values({
     id: jobId,
     provider,
     status: 'queued',
     scope: {
-      mediaItemIds: trackSearch ? [trackSearch.trackId] : [],
-      mediaType: trackSearch ? 'track' : nonMediaTask ? null : 'album',
+      mediaItemIds: scopeItem ? [scopeItem.id] : [],
+      mediaType: scopeItem
+        ? scopeItem.mediaType
+        : nonMediaTask
+          ? null
+          : 'album',
       limit: 1,
     },
     options,
@@ -2132,6 +2175,8 @@ export async function jobSortField(query: JobListQuery) {
         then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
     when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${TIDAL_TRACK_MATCH_TASK} then concat_ws(' · ', 'TIDAL track match', nullif(btrim(${table.options}->>'trackTitle'), ''))
+    when ${TIDAL_SIMILAR_TASK} then concat_ws(' · ', 'TIDAL similar', nullif(btrim(${table.options}->>'itemTitle'), ''))
+    when ${SPOTIFY_SIMILAR_LOOKUP_TASK} then 'Spotify similar lookup'
     else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
       where i.job_id = ${table.id} order by i.created_at, i.id limit 1) end`
   const result = query.mediaItemId
@@ -2494,7 +2539,9 @@ function jobsInMediaScope(
   const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
   if (mediaType === 'artist') return artistEnrichment
   if (mediaType === 'track')
-    return sql`${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK})`
+    return sql`(${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK})
+      or (${scrapeJob.options}->>'task' in (${TIDAL_SIMILAR_TASK}, ${SPOTIFY_SIMILAR_LOOKUP_TASK})
+        and ${scrapeJob.scope}->>'mediaType' = 'track'))`
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (
     select 1 from scrape_job_item scoped_item join media_item scoped_media on scoped_media.id = scoped_item.media_item_id
     where scoped_item.job_id = ${scrapeJob.id} and scoped_media.media_type = ${mediaType}

@@ -173,7 +173,7 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   const tabs = [...html.matchAll(/role="tab"[^>]*>([^<]+)</g)].map(
     (match) => match[1],
   )
-  assert.deepEqual(tabs, ['Overview', 'Sources'])
+  assert.deepEqual(tabs, ['Overview', 'Similar', 'Sources'])
   assert.match(html, /<h3>Listening<\/h3>/)
   assert.match(html, /<h3>Appears on<\/h3>/)
   assert.match(html, /No playlist memberships\./)

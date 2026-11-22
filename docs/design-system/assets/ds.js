@@ -468,6 +468,39 @@
     return `<div class="ds-row"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${thumb(item)}<div class="ds-row-main"><a class="ds-row-title" href="#">${esc(item.title)}</a><span class="ds-row-by">${esc(o.by || item.by || '')}</span></div>${playable ? play('row', { playing: o.state === 'playing' }) : '<span></span>'}<div class="ds-row-tags">${item.tags ? pills(item.tags, { max: o.maxTags || 3 }) : ''}</div><div class="ds-row-meta">${(o.meta || []).join('')}</div></div>`
   }
 
+  /* A similar album or track from TIDAL, in a compact list. s.state is
+     library, spotify, none or unsearched; s.meta is the year or length. In
+     the library the title opens the item; otherwise it is text and the
+     trailing button opens it on Spotify, or on TIDAL without a Spotify
+     match. Only library and Spotify suggestions have the play pair. */
+  const SUGGESTION = {
+    library: 'In library',
+    spotify: 'On Spotify',
+    none: 'Not on Spotify',
+    unsearched: 'Not looked up on Spotify',
+  }
+  function suggestion(s, o = {}) {
+    const linked = s.state === 'library'
+    const service = s.state === 'spotify' ? 'Spotify' : 'TIDAL'
+    const title = linked
+      ? `<a class="ds-row-title" href="#">${esc(s.title)}</a>`
+      : `<span class="ds-row-title">${esc(s.title)}</span>`
+    const open = linked
+      ? ''
+      : btn('', {
+          icon: 'external',
+          size: 'xs',
+          variant: 'ghost',
+          aria: `Open on ${service} (opens in a new tab)`,
+          title: `Open on ${service} (new tab)`,
+        })
+    const playable = linked || s.state === 'spotify'
+    return `<div class="ds-row" data-action${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))}</span></div>${playable ? play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${open}</div>`
+  }
+  /* A list row still loading, in a compact list with a trailing action */
+  const skelRow = () =>
+    `<div class="ds-row" data-action aria-hidden="true"><span class="ds-thumb ds-skel"></span><div class="ds-row-main ds-skel-lines"><span class="ds-skel" style="width:60%"></span><span class="ds-skel" style="width:38%"></span></div><span></span><span></span></div>`
+
   const listHead = (labels, o = {}) =>
     `<div class="ds-listhead"><span style="width:${o.thumb || 40}px"></span><span>${labels[0]}</span><span style="width:${o.play === undefined ? 50 : o.play}px"></span><span>${labels[1] || ''}</span><div class="ds-row-meta">${labels.slice(2).join('')}</div></div>`
 
@@ -1623,6 +1656,9 @@
     toolbarToggle,
     card,
     row,
+    suggestion,
+    SUGGESTION,
+    skelRow,
     listHead,
     facts,
     kv,

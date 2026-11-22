@@ -15,6 +15,12 @@ import { scrapeJob } from '@/schemas/db'
 import { mixStationCapturePolicy } from '@/lib/mix-station-archive'
 import { replayMixStationSteps } from './mix-station-replay'
 import { replayProviderSearchTask } from './provider-search-task-replay'
+import {
+  SPOTIFY_SIMILAR_LOOKUP_TASK,
+  TIDAL_SIMILAR_TASK,
+} from '@repo/schemas/tidal'
+import { replaySpotifyCodeSearches } from './spotify-code-search'
+import { replayTidalSimilar } from './tidal-similar-lookup'
 import { replayTidalTrackMatch } from './tidal-track-lookup'
 
 const stepSchema = z
@@ -81,8 +87,12 @@ export async function replayProviderTask(
     return station
       ? await replayMixStationSteps(station, steps, request)
       : provider === 'tidal'
-        ? await replayTidalTrackMatch(steps, request)
-        : await replayProviderSearchTask(task, steps, request)
+        ? task === TIDAL_SIMILAR_TASK
+          ? await replayTidalSimilar(steps, request)
+          : await replayTidalTrackMatch(steps, request)
+        : task === SPOTIFY_SIMILAR_LOOKUP_TASK
+          ? await replaySpotifyCodeSearches(steps, request)
+          : await replayProviderSearchTask(task, steps, request)
   } finally {
     replay.assertComplete()
   }

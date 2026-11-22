@@ -1342,6 +1342,13 @@ a:focus-visible > .ds-logo[data-none] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A row still loading: two skeleton lines in place of its two lines */
+.ds-row-main.ds-skel-lines {
+  gap: var(--ds-2);
+}
+.ds-skel-lines > .ds-skel {
+  height: var(--ds-4);
+}
 /* Trailing values sit in fixed tracks so they line up down the list */
 .ds-row-meta {
   display: grid;

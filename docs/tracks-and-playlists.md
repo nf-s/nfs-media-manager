@@ -78,7 +78,7 @@ Existing installations must apply the database migration that allows `library_tr
 
 ## Track details
 
-Track details use **Overview** and **Sources** tabs; older `listening` and `playlists` tab links open Overview. Overview contains counts, the **Listening** chart, playlist memberships with **Add to playlist**, and the album's tags. Sources explains the Spotify identity and retains the original Last.fm names, recorded albums and manual choices. The Spotify and Last.fm links sit at the end of the detail header; track rows and cards carry no provider icons. Last.fm links use recorded names where available, including after a merge.
+Track details use **Overview**, **Similar** and **Sources** tabs; Similar lists TIDAL's similar tracks with how each plays through Spotify ([similar items](album-providers.md#tidal)). Older `listening` and `playlists` tab links open Overview. Overview contains counts, the **Listening** chart, playlist memberships with **Add to playlist**, and the album's tags. Sources explains the Spotify identity and retains the original Last.fm names, recorded albums and manual choices. The Spotify and Last.fm links sit at the end of the detail header; track rows and cards carry no provider icons. Last.fm links use recorded names where available, including after a merge.
 
 Above the Spotify source, an **Album** section warns about the track's album. It appears only when one of these applies:
 

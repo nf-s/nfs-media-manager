@@ -193,3 +193,121 @@ export const TidalTrackMatchStatusSchema = z.object({
   items: z.array(TidalTrackMatchReviewSchema).max(100),
 })
 export type TidalTrackMatchStatus = z.infer<typeof TidalTrackMatchStatusSchema>
+
+/** The task that reads one album's or track's similar items from TIDAL. */
+export const TIDAL_SIMILAR_TASK = 'tidal-similar'
+/**
+ * The Spotify task that looks up, by ISRC or UPC, the similar items of one
+ * album or track that are not in the library.
+ */
+export const SPOTIFY_SIMILAR_LOOKUP_TASK = 'spotify-similar-lookup'
+/** TIDAL's first page of similar items, the only page read. */
+export const TIDAL_SIMILAR_LIMIT = 20
+
+export const TidalSimilarKindSchema = z.enum(['album', 'track'])
+export type TidalSimilarKind = z.infer<typeof TidalSimilarKindSchema>
+
+export const TidalSimilarParamsSchema = z.object({
+  kind: z.enum(['albums', 'tracks']),
+  id: trackId,
+})
+
+/** One similar album or track as TIDAL returned it, in TIDAL's order. */
+export const TidalSuggestionSchema = z.object({
+  tidalId: TidalIdSchema,
+  title: name,
+  /** A track's version label, such as a remix name. */
+  version: name.nullable(),
+  artists: z.array(name).max(20),
+  /** The track's ISRC or the album's barcode, as TIDAL wrote it. */
+  code: z.string().max(40).nullable(),
+  durationSec: z.number().int().nonnegative().nullable(),
+  /** Albums only. */
+  releaseDate: z.string().max(40).nullable(),
+  url: z.url({ protocol: /^https$/ }).max(2000),
+})
+export type TidalSuggestion = z.infer<typeof TidalSuggestionSchema>
+
+/** What a Spotify `isrc:` or `upc:` search found for one code. */
+export const SpotifyCodeMatchSchema = z.object({
+  spotifyId: z.string().regex(/^[A-Za-z0-9]{22}$/),
+  url: z.url({ protocol: /^https$/ }).max(2000),
+  title: name,
+  artists: z.array(name).max(50),
+  albumName: name.nullable(),
+  spotifyAlbumId: z
+    .string()
+    .regex(/^[A-Za-z0-9]{22}$/)
+    .nullable(),
+  artworkUrl: z
+    .url({ protocol: /^https$/ })
+    .max(2000)
+    .nullable(),
+  durationSec: z.number().int().nonnegative().nullable(),
+  /** Albums only. */
+  trackCount: z.number().int().nonnegative().nullable(),
+})
+export type SpotifyCodeMatch = z.infer<typeof SpotifyCodeMatchSchema>
+
+/**
+ * How a suggestion can be played: `library` opens the library item;
+ * `spotify` plays it on Spotify; `none` was searched on Spotify and not
+ * found; `unsearched` has not been searched on Spotify yet.
+ */
+export const TidalSuggestionStateSchema = z.enum([
+  'library',
+  'spotify',
+  'none',
+  'unsearched',
+])
+export type TidalSuggestionState = z.infer<typeof TidalSuggestionStateSchema>
+
+export const TidalSimilarItemSchema = TidalSuggestionSchema.extend({
+  state: TidalSuggestionStateSchema,
+  /** The library album or track, for `library`. */
+  library: z
+    .object({
+      id: z.string(),
+      title: name,
+      artworkUrl: z.string().url().nullable(),
+      spotifyId: z
+        .string()
+        .regex(/^[A-Za-z0-9]{22}$/)
+        .nullable(),
+      /** A library track's linked library album. */
+      album: z.object({ id: z.string(), title: name }).nullable(),
+      albumName: name.nullable(),
+      trackCount: z.number().int().nonnegative().nullable(),
+    })
+    .nullable(),
+  /** The Spotify album or track, for `spotify` (and `library` when known). */
+  spotify: SpotifyCodeMatchSchema.nullable(),
+})
+export type TidalSimilarItem = z.infer<typeof TidalSimilarItemSchema>
+
+export const TidalSimilarJobSchema = z.object({
+  jobId: z.string(),
+  status: JobStatusSchema,
+  errorMessage: z.string().nullable(),
+  createdAt: dateTime,
+  finishedAt: dateTime.nullable(),
+})
+export type TidalSimilarJob = z.infer<typeof TidalSimilarJobSchema>
+
+/**
+ * The Similar tab of one library album or track. `matched` is false until a
+ * TIDAL album job or track match has linked the item to TIDAL; `matchJob` is
+ * the latest of those, `job` the latest TIDAL similar read and `lookupJob` the
+ * latest Spotify lookup. `readAt` is null until a read has succeeded.
+ */
+export const TidalSimilarSchema = z.object({
+  kind: TidalSimilarKindSchema,
+  itemId: z.string(),
+  matched: z.boolean(),
+  matchJob: TidalSimilarJobSchema.nullable(),
+  job: TidalSimilarJobSchema.nullable(),
+  lookupJob: TidalSimilarJobSchema.nullable(),
+  readAt: dateTime.nullable(),
+  items: z.array(TidalSimilarItemSchema).max(TIDAL_SIMILAR_LIMIT),
+})
+export type TidalSimilar = z.infer<typeof TidalSimilarSchema>

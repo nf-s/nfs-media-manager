@@ -90,6 +90,7 @@ import { AlbumHeaderPlay } from './detail-play'
 import { DetailMore } from './detail-more'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { WatchedToggle } from './watched-button'
+import { SimilarItems } from './similar-items'
 import {
   DetailArt,
   DetailTabs,
@@ -102,10 +103,11 @@ import {
 const DetailSchema = z.union([AlbumDetailSchema, FilmDetailSchema])
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
 
-type AlbumTab = 'overview' | 'listening' | 'sources' | 'edit'
+type AlbumTab = 'overview' | 'similar' | 'listening' | 'sources' | 'edit'
 type FilmTab = 'overview' | 'sources' | 'edit'
 const albumTabs: readonly [AlbumTab, ...AlbumTab[]] = [
   'overview',
+  'similar',
   'listening',
   'sources',
   'edit',
@@ -1139,13 +1141,21 @@ export default function MediaDetail({
         tabs={[
           { value: 'overview', label: 'Overview' },
           ...(item.mediaType === 'album'
-            ? [{ value: 'listening', label: 'Listening' }]
+            ? [
+                { value: 'similar', label: 'Similar' },
+                { value: 'listening', label: 'Listening' },
+              ]
             : []),
           { value: 'sources', label: 'Sources' },
           { value: 'edit', label: 'Edit' },
         ]}
       >
         <TabsContent value="overview">{overview}</TabsContent>
+        {item.mediaType === 'album' && (
+          <TabsContent value="similar">
+            <SimilarItems key={item.id} kind="album" id={item.id} />
+          </TabsContent>
+        )}
         {item.mediaType === 'album' && (
           <TabsContent value="listening">
             <AlbumListening key={item.id} albumId={item.id} />

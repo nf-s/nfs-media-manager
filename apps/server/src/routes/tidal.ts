@@ -1,6 +1,8 @@
 import { createRoute } from '@hono/zod-openapi'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
 import {
+  TidalSimilarParamsSchema,
+  TidalSimilarSchema,
   TidalTrackMatchAcceptInputSchema,
   TidalTrackMatchInputSchema,
   TidalTrackMatchParamsSchema,
@@ -26,6 +28,7 @@ import {
   listTidalTrackMatchStatuses,
   queueTidalTrackMatches,
 } from '@/services/tidal-track-match'
+import { getTidalSimilar, queueTidalSimilar } from '@/services/tidal-similar'
 
 const app = createOpenAPIApp()
 
@@ -169,6 +172,66 @@ app.openapi(
       200,
     )
   },
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/similar/{kind}/{id}',
+    middleware: [authMiddleware()],
+    request: { params: TidalSimilarParamsSchema },
+    responses: {
+      200: {
+        description:
+          'Similar albums or tracks from TIDAL and how each can be played',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(TidalSimilarSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Album or track not found'),
+    },
+  }),
+  async (c) => {
+    requireOwnerUser(c)
+    return generateJsonResponse(
+      c,
+      await getTidalSimilar(c.req.valid('param')),
+      200,
+    )
+  },
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/similar/{kind}/{id}',
+    middleware: [authMiddleware(), mutationOriginMiddleware()],
+    request: { params: TidalSimilarParamsSchema },
+    responses: {
+      200: {
+        description:
+          'Queue the TIDAL match of an unmatched item, or else the read of its similar items',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(TidalSimilarSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse('Album or track not found'),
+      409: jsonErrorResponse('The album has no UPC or the track no ISRC'),
+      429: jsonErrorResponse('TIDAL is cooling down or halted'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await queueTidalSimilar(c.req.valid('param'), requireOwnerUser(c).id),
+      200,
+    ),
 )
 
 export default app

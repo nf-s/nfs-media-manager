@@ -150,6 +150,23 @@ const ItemIdentifierSchema = z.object({
     .optional(),
 })
 
+const ArtistsRelationshipSchema = z
+  .object({
+    data: z
+      .array(z.object({ id: TidalIdSchema, type: z.string() }).passthrough())
+      .max(100)
+      .optional(),
+  })
+  .passthrough()
+  .optional()
+
+export const TidalArtistResourceSchema = z.object({
+  id: TidalIdSchema,
+  type: z.literal('artists'),
+  attributes: z.object({ name: text }).passthrough(),
+})
+export type TidalArtistResource = z.infer<typeof TidalArtistResourceSchema>
+
 export const TidalTrackResourceSchema = z.object({
   id: TidalIdSchema,
   type: z.literal('tracks'),
@@ -173,6 +190,7 @@ export const TidalTrackResourceSchema = z.object({
         .object({ data: z.array(ItemIdentifierSchema).max(100).optional() })
         .passthrough()
         .optional(),
+      artists: ArtistsRelationshipSchema,
     })
     .passthrough()
     .optional(),
@@ -204,6 +222,7 @@ export const TidalAlbumResourceSchema = z.object({
         })
         .passthrough()
         .optional(),
+      artists: ArtistsRelationshipSchema,
     })
     .passthrough()
     .optional(),
@@ -216,6 +235,7 @@ const IncludedSchema = z
     z.union([
       TidalTrackResourceSchema,
       TidalAlbumResourceSchema,
+      TidalArtistResourceSchema,
       z.object({ id: z.string(), type: z.string() }).passthrough(),
     ]),
   )
@@ -242,6 +262,30 @@ export const TidalTracksDocumentSchema = z.object({
   included: IncludedSchema,
   links: LinksSchema.optional(),
 })
+
+/**
+ * `GET /albums/{id}/relationships/similarAlbums` or
+ * `GET /tracks/{id}/relationships/similarTracks`, with the similar items and
+ * their artists included.
+ */
+export const TidalSimilarDocumentSchema = z.object({
+  data: z
+    .array(z.object({ id: TidalIdSchema, type: z.string() }).passthrough())
+    .max(100),
+  included: IncludedSchema,
+  links: LinksSchema.optional(),
+})
+
+export function includedArtists(
+  included: z.infer<typeof IncludedSchema>,
+): Map<string, TidalArtistResource> {
+  const artists = new Map<string, TidalArtistResource>()
+  for (const resource of included) {
+    const artist = TidalArtistResourceSchema.safeParse(resource)
+    if (artist.success) artists.set(artist.data.id, artist.data)
+  }
+  return artists
+}
 
 export function includedTracks(
   included: z.infer<typeof IncludedSchema>,

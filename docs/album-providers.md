@@ -20,12 +20,12 @@ Google Custom Search is retired. Historical ratings and source links remain impo
 
 ## Request safety
 
-| Provider    | Concurrency / minimum spacing | Lookup requests per album before transient retries    |
-| ----------- | ----------------------------- | ----------------------------------------------------- |
-| MusicBrainz | 1 / 1000 ms                   | 1 direct; 2 name or barcode; 3 barcode miss then name |
-| Last.fm     | 1 / 200 ms                    | 1 normally; 2 with `options.includeTopTags: true`     |
-| Discogs     | 1 / 1050 ms                   | 1 release; 2 master; at most 4 with searches          |
-| TIDAL       | 1 / 1500 ms                   | 1 per 20 album tracks; 1 per track match              |
+| Provider    | Concurrency / minimum spacing | Lookup requests per album before transient retries       |
+| ----------- | ----------------------------- | -------------------------------------------------------- |
+| MusicBrainz | 1 / 1000 ms                   | 1 direct; 2 name or barcode; 3 barcode miss then name    |
+| Last.fm     | 1 / 200 ms                    | 1 normally; 2 with `options.includeTopTags: true`        |
+| Discogs     | 1 / 1050 ms                   | 1 release; 2 master; at most 4 with searches             |
+| TIDAL       | 1 / 1500 ms                   | 1 per 20 album tracks; 1 per track match or similar read |
 
 Every HTTP request, including searches, uses `context.request`. There are no client libraries, direct fetches, hidden retries, pagination walks, quota-discovery calls, or network activity on module import. The persistent server gate owns spacing, timeouts, cooldowns and shared budgets. Runtime account access is not proven by these offline tests. The MusicBrainz, Last.fm and Discogs plugins do not claim a connection-test hook; no credentials are tested on import. The separate [Last.fm scrobble sync](lastfm-scrobbles.md) runs as account-level Last.fm jobs outside the plugin; it pages `user.getRecentTracks` through the same Last.fm gate and repeats a page after a temporary failure. Last.fm sets `errorBackoffMs: 5000` and `failureCooldownMs: 0`: an HTTP 400 or 5xx delays the next request by five seconds without a provider cooldown, for album jobs as well.
 
@@ -44,6 +44,10 @@ Requests go through the request gate one at a time, 1.5 seconds apart. TIDAL pub
 **Tracks.** A TIDAL track match is a task job for one library track with an ISRC. It reads `GET /tracks?filter[isrc]=<ISRC>&include=albums`. When several TIDAL tracks carry the ISRC (the same recording on a single, an EP, an album and compilations), the job keeps those on a release whose barcode equals the UPC of a library album the track is on, then those whose duration is within two seconds, then those whose version agrees with the library title, then those that can be streamed. One left is stored as the track's `tidal` `track` reference with its ISRC. Several left are kept with the job for review in Tracks → Matches and the track's Sources, where choosing one stores it. None is a not-found.
 
 One request can carry 20 barcodes or 20 ISRCs, but a job is one item, so jobs send one each.
+
+**Similar.** The Similar tab of a matched album or track reads TIDAL's first page of 20 similar items in a TIDAL similar task job (`tidal-similar`) for that one item: `GET /albums/<id>/relationships/similarAlbums` or `GET /tracks/<id>/relationships/similarTracks`, with `include=similarAlbums,similarAlbums.artists` (or the track form) so titles, artists, version and the barcode or ISRC arrive in the same response. The suggestions are kept in TIDAL's order in `tidal_similar`, one row per library item, replaced by the next read; the raw response stays with the job. Opening the tab queues the read when the item has none; it is never read while the page loads. An item not yet matched on TIDAL queues its album job or track match instead.
+
+A suggestion is in the library when its ISRC is an `isrc` reference of a library track, or its barcode, leading zeros ignored, is a `upc` reference of a library album. This is worked out when the tab is read, so items added later count. For the rest, the TIDAL job queues one Spotify task job (`spotify-similar-lookup`) for the same item, with at most 20 codes: one `isrc:` or `upc:` search each through the Spotify request gate and Spotify's track-search access (a market, or the signed-in Spotify account). A UPC is searched as TIDAL wrote it. Of several Spotify tracks for one ISRC it keeps one that is already a library track, then the earliest release that is not a compilation, then Spotify's first. Each result, or a miss, is stored at once in `spotify_code_lookup` by code with the time of the search, and is reused for every item that suggests it; a miss is searched again after 30 days. A Spotify ID that belongs to a library item counts as in the library. When Spotify cannot search (no market and no connected account, a cooldown), the suggestions stay "Not looked up on Spotify" and the TIDAL job's message says why. Nothing is looked up library-wide, and nothing plays until Play or Add to queue is pressed.
 
 ## Provider Workspace
 
