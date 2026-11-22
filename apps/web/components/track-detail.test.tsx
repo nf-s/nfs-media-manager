@@ -66,6 +66,8 @@ const scrobbled = TrackDetailSchema.parse({
       keptSeparate: false,
     },
   ],
+  spotifyAlbumId: null,
+  scrobbledAlbums: [],
   listening: {
     total: 3,
     firstListenedAt: '2026-01-02T00:00:00.000Z',
@@ -473,5 +475,51 @@ test('Sources lists the recorded and scrobbled Last.fm names in tables', () => {
   assert.match(
     html,
     /https:\/\/www.last.fm\/music\/Example%20artist\/_\/Synthetic%20track/,
+  )
+})
+
+test('Sources offers to add a missing Spotify album and warns about albums that do not list the track', () => {
+  const html = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      albumName: 'Harbour Lights',
+      spotifyAlbumId: '1234567890ABCDEFGHIJKL',
+      scrobbledAlbums: [
+        { id: 'fixture-single', title: 'Harbour Lights', scrobbles: 115 },
+        { id: 'fixture-live', title: 'Live Set', scrobbles: 1 },
+      ],
+    }),
+    '',
+    'sources',
+  )
+  assert.equal(html.match(/is not in the library\./g)?.length, 1)
+  assert.equal(html.match(/<h3>Album<\/h3>/g)?.length, 1)
+  assert.match(
+    html,
+    /“Harbour Lights” is not in the library\.<\/span><button[^>]*>Add album<\/button>/,
+  )
+  assert.match(
+    html,
+    /data-tone="attention" role="status"><svg[^>]*>.*?<\/svg><span>115 plays of this track are counted on “<a[^>]*href="\/albums\/fixture-single"[^>]*>Harbour Lights<\/a>”, which does not list it\.<\/span><\/div>/,
+  )
+  assert.match(
+    html,
+    /1 play of this track is counted on “<a[^>]*href="\/albums\/fixture-live"[^>]*>Live Set<\/a>”, which does not list it\./,
+  )
+})
+
+test('Sources shows no album notices for a track on its library album', () => {
+  const html = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      album: { id: 'album-1', title: 'Library album' },
+      spotifyAlbumId: '1234567890ABCDEFGHIJKL',
+    }),
+    '',
+    'sources',
+  )
+  assert.doesNotMatch(
+    html,
+    /<h3>Album<\/h3>|not in the library|Add album|does not list it/,
   )
 })

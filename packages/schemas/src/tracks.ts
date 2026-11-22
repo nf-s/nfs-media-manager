@@ -301,6 +301,19 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
   spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
   /** Recorded names with strict Last.fm membership, most played first, up to 50. */
   lastfmSources: z.array(TrackLastfmSourceSchema),
+  /** The Spotify album the track was imported from, whether or not it is in the library. */
+  spotifyAlbumId: z.string().nullable(),
+  /**
+   * Library albums that scrobbles counted towards the track are linked to but
+   * that hold neither the track nor a version of it, most scrobbles first, up to 5.
+   */
+  scrobbledAlbums: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      scrobbles: z.number().int().positive(),
+    }),
+  ),
   listening: z.object({
     total: z.number().int().nonnegative(),
     firstListenedAt: z.string().datetime().nullable(),

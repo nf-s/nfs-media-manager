@@ -60,6 +60,7 @@ import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
 import { LibraryRecordChanges } from './library-changes'
+import { TrackAlbumNotices } from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
@@ -138,7 +139,10 @@ function FilterValues({
   )
 }
 
-/** The track's Spotify match and the Last.fm names that count towards it. */
+/**
+ * The track's album warnings, its Spotify match and the Last.fm names that
+ * count towards it.
+ */
 export function TrackSources({
   item,
   onResolved,
@@ -148,6 +152,7 @@ export function TrackSources({
 }) {
   return (
     <>
+      <TrackAlbumNotices key={`album-${item.id}`} item={item} />
       <TrackSpotifySource key={item.id} item={item} onResolved={onResolved} />
       <TrackLastfmSources item={item} onResolved={onResolved} />
     </>

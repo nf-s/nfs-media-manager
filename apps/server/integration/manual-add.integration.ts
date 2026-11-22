@@ -399,6 +399,37 @@ describe('manual Spotify tracks', () => {
     },
   )
 
+  it('links an imported track to its Spotify album when the album is added', async () => {
+    const added = await addManualMedia({
+      mediaType: 'track',
+      externalId: spotifyTrackId,
+    })
+    const [before] = await databaseClient.select().from(schema.libraryTrack)
+    expect(before).toMatchObject({
+      mediaItemId: added.mediaItemId,
+      spotifyAlbumId,
+      albumMediaItemId: null,
+    })
+    const albumAdded = await addManualMedia({
+      mediaType: 'album',
+      externalId: spotifyAlbumId,
+    })
+    expect(albumAdded.created).toBe(true)
+    const tracks = await databaseClient.select().from(schema.libraryTrack)
+    expect(tracks).toHaveLength(1)
+    expect(tracks[0]).toMatchObject({
+      mediaItemId: added.mediaItemId,
+      albumMediaItemId: albumAdded.mediaItemId,
+      albumLinkStrategy: 'album-track-list',
+    })
+    expect(
+      (await databaseClient.select().from(schema.track)).map((row) => ({
+        album: row.albumMediaItemId,
+        track: row.trackMediaItemId,
+      })),
+    ).toEqual([{ album: albumAdded.mediaItemId, track: added.mediaItemId }])
+  })
+
   it('rejects a provider response with a different track ID', async () => {
     await expect(
       addManualMedia({

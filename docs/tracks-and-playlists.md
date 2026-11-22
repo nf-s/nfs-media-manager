@@ -80,6 +80,11 @@ Existing installations must apply the database migration that allows `library_tr
 
 Track details use **Overview** and **Sources** tabs; older `listening` and `playlists` tab links open Overview. Overview contains counts, the **Listening** chart, playlist memberships with **Add to playlist**, and the album's tags. Sources explains the Spotify identity and retains the original Last.fm names, recorded albums and manual choices. The Spotify and Last.fm links sit at the end of the detail header; track rows and cards carry no provider icons. Last.fm links use recorded names where available, including after a merge.
 
+Above the Spotify source, an **Album** section warns about the track's album. It appears only when one of these applies:
+
+- A track imported from Spotify whose album is not in the library shows “Example EP” is not in the library. with **Add album**. It adds that Spotify album by its ID through the normal manual addition; the album's track list then takes in the library tracks with the same Spotify track IDs, and the track shows its album.
+- An album that the track's scrobbles are linked to but that holds neither the track nor a version of it shows, for example, 12 plays of this track are counted on “Example Single”, which does not list it. Up to five such albums are listed, most plays first. A version is a track joined as a version of this one or a recording with the same ISRC. To move those plays, link the scrobbled album name to the right album from that album's **Listening** tab or **Sources → Last.fm**; see [albums and editions](#albums-and-editions).
+
 ## Playlist drawer
 
 The Playlists directory reads bounded pages from `GET /api/v1/playlists/browse-page` and gets its matching count independently from `/browse-count`. Rows can appear before the count arrives. Search, source filters and every sort apply to the complete matching set on the server; pages contain at most 100 summaries. The table reserves the full matching height once counted, renders placeholders for unloaded rows and requests only pages near the viewport. Source is hidden by default. The legacy `/api/v1/playlists` array route also caps each response at 100 rows.

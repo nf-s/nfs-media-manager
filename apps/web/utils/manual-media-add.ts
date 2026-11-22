@@ -113,7 +113,7 @@ export async function loadManualSearchPage({
 export async function addManualMediaItem(
   apiBaseUrl: string,
   mediaType: ManualMediaSearchInput['mediaType'],
-  item: ManualMediaSearchItem,
+  item: Pick<ManualMediaSearchItem, 'externalId' | 'mediaItemId'>,
 ) {
   if (item.mediaItemId) return item.mediaItemId
   const result = await fetchApiData(

@@ -351,6 +351,59 @@ describe('Last.fm tracks library', () => {
     }
   })
 
+  it('lists the albums whose scrobbles of a track do not list it', async () => {
+    const id = 'fixture-ep-track'
+    await spotifyTrack(id, 'Second Song', { album: 'Example EP' })
+    await spotifyTrack('fixture-live-version', 'Second Song (Live)')
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyAlbumId: spotifyId('missing-ep') })
+      .where(eq(schema.libraryTrack.mediaItemId, id))
+    await album('fixture-single', 'Example EP', [{ title: 'Other Song' }])
+    await album('fixture-compilation', 'Example Compilation', [
+      { title: 'Second Song', spotifyId: spotifyId(id) },
+    ])
+    await album('fixture-live', 'Example Live', [
+      {
+        title: 'Second Song (Live)',
+        spotifyId: spotifyId('fixture-live-version'),
+      },
+    ])
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ versionGroupId: 'fixture-version-group' })
+      .where(
+        inArray(schema.libraryTrack.mediaItemId, [id, 'fixture-live-version']),
+      )
+    for (const albumId of [
+      'fixture-single',
+      'fixture-single',
+      'fixture-single',
+      'fixture-compilation',
+      'fixture-live',
+    ])
+      await scrobble('Second Song', { album: 'Example EP', albumId })
+    await scrobble('Second Song')
+    await refreshTrackLinks(LISTENER)
+
+    expect(await getTrackDetail(id)).toMatchObject({
+      album: { id: 'fixture-compilation' },
+      spotifyAlbumId: spotifyId('missing-ep'),
+      scrobbledAlbums: [
+        { id: 'fixture-single', title: 'Example EP', scrobbles: 3 },
+      ],
+      listening: { total: 6 },
+    })
+    // The version counts the same names; the compilation holds its version.
+    expect(await getTrackDetail('fixture-live-version')).toMatchObject({
+      album: { id: 'fixture-live' },
+      spotifyAlbumId: null,
+      scrobbledAlbums: [
+        { id: 'fixture-single', title: 'Example EP', scrobbles: 3 },
+      ],
+    })
+  })
+
   it('keeps an albumless scrobble as a playable catalog recording, then reuses it on a later release', async () => {
     await scrobble('02 - Test Recording')
     await scrobble('02 - Test Recording', { at: LAST_LISTEN })

@@ -279,6 +279,10 @@ const ListeningDetailSchema = z.object({
       strategy: TrackScrobbleLinkStrategySchema,
     }),
   ),
+  spotify_album_id: z.string().nullable(),
+  scrobbled_albums: z.array(
+    z.object({ id: z.string(), title: z.string(), scrobbles: z.number() }),
+  ),
 })
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
@@ -293,13 +297,38 @@ async function getTrackSpotifyAlternate(id: string) {
 }
 
 async function getTrackListeningDetail(id: string) {
-  // Share one item-scoped history read across the lifetime, monthly and source aggregates.
+  // Share one item-scoped history read across the lifetime, monthly, source
+  // and album aggregates.
   const result = await db.execute(sql`
     with linked as materialized (
-      select l.artist_key, l.track_key, l.strategy, s.artist_name, s.track_name, s.listened_at
+      select l.artist_key, l.track_key, l.strategy, s.artist_name, s.track_name, s.listened_at,
+        s.album_media_item_id
       from lastfm_track_link l join lastfm_scrobble s on s.username = l.username
         and s.artist_key = l.artist_key and s.track_key = l.track_key
       where l.track_media_item_id = ${id}
+    ), target as (
+      select album_media_item_id, version_group_id, isrc, spotify_album_id
+      from library_track where media_item_id = ${id}
+    ), album_counts as (
+      select album_media_item_id as id, count(*)::int as scrobbles
+      from linked where album_media_item_id is not null
+      group by album_media_item_id
+    ), scrobbled_albums as (
+      -- Albums the scrobbles are linked to that hold neither this track nor
+      -- a version of it: a stored version or a recording with the same ISRC.
+      select c.id, am.title, c.scrobbles
+      from album_counts c join media_item am on am.id = c.id
+      where c.id is distinct from (select album_media_item_id from target)
+        and not exists (
+          select 1 from (
+            select media_item_id as member_id from library_track where album_media_item_id = c.id
+            union all
+            select track_media_item_id from track where album_media_item_id = c.id
+          ) members join library_track v on v.media_item_id = members.member_id
+          where v.media_item_id = ${id}
+            or v.version_group_id = (select version_group_id from target)
+            or v.isrc = (select isrc from target))
+      order by c.scrobbles desc, am.title, c.id limit 5
     ), months as (
       select to_char(listened_at, 'YYYY-MM') as month, count(*) as count
       from linked group by 1
@@ -313,7 +342,9 @@ async function getTrackListeningDetail(id: string) {
       extract(epoch from min(listened_at))::float8 as first,
       extract(epoch from max(listened_at))::float8 as last,
       coalesce((select jsonb_agg(months order by month) from months), '[]'::jsonb) as months,
-      coalesce((select jsonb_agg(sources order by count desc, artist_key, track_key) from sources), '[]'::jsonb) as sources
+      coalesce((select jsonb_agg(sources order by count desc, artist_key, track_key) from sources), '[]'::jsonb) as sources,
+      (select spotify_album_id from target) as spotify_album_id,
+      coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums
     from linked`)
   return ListeningDetailSchema.parse(result.rows[0])
 }
@@ -338,6 +369,8 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
     ...item,
     ...(spotifyAlternate ? { spotifyAlternate } : {}),
     lastfmSources,
+    spotifyAlbumId: listening.spotify_album_id,
+    scrobbledAlbums: listening.scrobbled_albums,
     listening: {
       total: listening.total,
       firstListenedAt: isoSeconds(listening.first),
