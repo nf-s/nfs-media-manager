@@ -1268,6 +1268,48 @@ export const sonovaultTrackCandidate = pgTable(
 )
 
 /**
+ * One library album's latest Sonovault album lookup (SONO-18 to SONO-20):
+ * the release that an identifier confirmed, or why none was found.
+ */
+export const sonovaultAlbumLookup = pgTable(
+  'sonovault_album_lookup',
+  {
+    mediaItemId: text('media_item_id')
+      .primaryKey()
+      .references(() => mediaItem.id, { onDelete: 'cascade' }),
+    status: text('status').notNull(),
+    miss: text('miss'),
+    releaseId: text('release_id'),
+    editionId: text('edition_id'),
+    confirmedBy: jsonb('confirmed_by').$type<string[]>().default([]).notNull(),
+    seedTrackId: text('seed_track_id').references(() => mediaItem.id, {
+      onDelete: 'set null',
+    }),
+    aligned: integer('aligned').default(0).notNull(),
+    unaligned: integer('unaligned').default(0).notNull(),
+    isrcs: integer('isrcs').default(0).notNull(),
+    creditsUsed: integer('credits_used').default(0).notNull(),
+    scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
+      onDelete: 'set null',
+    }),
+    responseId: text('response_id').references(() => providerResponse.id, {
+      onDelete: 'set null',
+    }),
+    lookedUpAt: timestamp('looked_up_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    ...timestampColumns,
+  },
+  (table) => [
+    index('sonovault_album_lookup_looked_up_idx').on(
+      table.status,
+      table.lookedUpAt,
+    ),
+  ],
+)
+
+/**
  * What a Spotify `isrc:` or `upc:` search found for one code, or a miss.
  * UPCs are stored without leading zeros.
  */

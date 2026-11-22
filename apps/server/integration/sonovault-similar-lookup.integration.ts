@@ -80,9 +80,9 @@ vi.mock('@/lib/provider-secrets', () => ({
 
 import { getJob, processQueuedJobs } from '@/services/jobs'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
+import { queueSonovaultRefresh } from '@/services/sonovault-album-lookup'
 import {
   getSonovaultSummary,
-  queueSonovaultRefresh,
   removeSonovaultData,
 } from '@/services/sonovault-track-lookup'
 import {

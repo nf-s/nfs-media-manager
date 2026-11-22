@@ -32,6 +32,8 @@ For an album catalog that returns a title and artist list on the record itself, 
 
 In Albums, **Google Custom Search (legacy)** shows the saved Rate Your Music title first. When the search title is incomplete, the selected release page’s archived heading can supply the full title and artist. If punctuation or the word “by” makes the split ambiguous, the diagnostic uses the album and artist fields saved with that heading. Open the cell details to see the selected release URL and any saved Metacritic match. When only a link survives, the cell shows the URL. Selecting a match opens the Sources row for the import that supplied it.
 
+Where an album's confirmed Sonovault release has a Discogs master or MusicBrainz release group that the album lacks or holds a different one of, that provider's row shows it as a candidate, marked Sonovault, and its Sonovault row lists both values under Match review. See [Sonovault](album-providers.md#sonovault).
+
 An authenticated candidate preview at `POST /api/v1/find-match/preview` reads the tracks for one explicit Discogs or Last.fm album identifier. It returns the provider title, artists, track count and up to 500 ordered tracks. The provider's request limits apply. Previewing preserves the album's current match.
 
 For an incorrect album match, open the provider cell, choose **Mark incorrect**, and confirm the identifier. The decision is specific to that album and identity. **Match history** keeps the provider, identifier and date after a replacement arrives. The original snapshot stays available in Sources.

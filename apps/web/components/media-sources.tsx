@@ -171,6 +171,8 @@ export default function MediaSources({
     // Scrobble names are matched under Last.fm.
     ...(isAlbum ? ['lastfm'] : []),
   ])
+  // Sonovault has its own row, with its release lookup and match review.
+  ids.delete('sonovault')
   function queueRefresh(id: string) {
     return fetchApiData(
       apiBaseUrl,

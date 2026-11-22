@@ -18,6 +18,7 @@ export type TrackIsrcSource =
   | { kind: 'tidal-album'; jobId: string }
   | { kind: 'tidal-track-match'; jobId: string }
   | { kind: 'sonovault-track-lookup'; jobId: string; responseId: string }
+  | { kind: 'sonovault-album-lookup'; jobId: string; responseId: string }
   // The value stored on the library track before references existed.
   | { kind: 'library-track' }
 

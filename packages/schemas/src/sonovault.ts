@@ -43,6 +43,18 @@ export type SonovaultLookupInputType = z.infer<
 >
 
 /**
+ * How a track's record was reached: its own lookup, or its position on an
+ * album's confirmed Sonovault release (SONO-20).
+ */
+export const SonovaultRecordInputTypeSchema = z.enum([
+  ...SonovaultLookupInputTypeSchema.options,
+  'release',
+])
+export type SonovaultRecordInputType = z.infer<
+  typeof SonovaultRecordInputTypeSchema
+>
+
+/**
  * The reference types a Sonovault record gives a library track, each naming
  * the service and kind (SONO-05). The ISRC is an `isrc` reference instead.
  */
@@ -79,7 +91,7 @@ export const SonovaultReferenceMetadataSchema = z.object({
   /** The stored `provider_response` it was read from. */
   responseId: id,
   jobId: id,
-  inputType: SonovaultLookupInputTypeSchema,
+  inputType: SonovaultRecordInputTypeSchema,
   /**
    * On the `sonovault-track` reference: the record's ISRC (an unverified
    * record's ISRC is kept only here), title and duration, which the
@@ -148,7 +160,7 @@ export const SonovaultTrackStateSchema = z.object({
   lookup: z
     .object({
       status: SonovaultLookupStatusSchema,
-      inputType: SonovaultLookupInputTypeSchema,
+      inputType: SonovaultRecordInputTypeSchema,
       sonovaultTrackId: z.string().nullable(),
       verified: z.boolean().nullable(),
       /** The primary ISRC this lookup gave the track, while it is still its. */

@@ -71,6 +71,7 @@ import {
 } from '@/utils/provider-ratings'
 import { albumSpotifyDestination } from '@/utils/album-links'
 import MediaSources, { MediaEditHistory } from './media-sources'
+import { AlbumSonovaultSource } from './sonovault-album-lookup'
 import MetadataSourceControl from './metadata-source-control'
 import { BrowseFilterChips } from './browse-controls'
 import { FilterIndicator } from './filter-affordance'
@@ -1172,6 +1173,9 @@ export default function MediaDetail({
               await invalidateMediaItem(queryClient, mediaType, id)
             }}
           />
+          {item.mediaType === 'album' && (
+            <AlbumSonovaultSource key={`sonovault-${item.id}`} item={item} />
+          )}
           {item.mediaType === 'album' && (
             <LibraryRecordChanges
               key={`changes-${item.id}`}

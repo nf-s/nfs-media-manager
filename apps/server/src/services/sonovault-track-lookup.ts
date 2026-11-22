@@ -23,9 +23,11 @@ import {
   SonovaultTrackStatusInputSchema,
   SonovaultTrackStatusSchema,
   type SonovaultLookupInputType,
+  type SonovaultRecordInputType,
   type SonovaultReferenceMetadata,
   type SonovaultTrackLookupInput,
 } from '@repo/schemas/sonovault'
+import { SONOVAULT_ALBUM_LOOKUP_TASK } from '@repo/schemas/sonovault-album'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { validIsrc } from '@/lib/isrc'
@@ -42,7 +44,9 @@ import {
   sonovaultLinkUrl,
   sonovaultSettings,
   type SonovaultBulkResolveResponse,
+  type SonovaultLink,
   type SonovaultResolveResult,
+  type SonovaultTrack,
 } from '@/lib/sonovault-api'
 import { trackVersionKey } from '@/lib/track-matching'
 import { getScrapePlugin } from '@/plugins/registry'
@@ -53,6 +57,7 @@ import {
   providerResponse,
   providerSecret,
   scrapeJob,
+  sonovaultAlbumLookup,
   sonovaultTrackCandidate,
   sonovaultTrackLookup,
   spotifyCodeLookup,
@@ -138,6 +143,9 @@ export type SonovaultTarget = {
   lookup: {
     status: string
     inputType: string
+    input: string
+    responseId: string | null
+    verified: boolean | null
     lookedUpAt: Date
     primaryIsrc: string | null
   } | null
@@ -168,6 +176,9 @@ export async function readSonovaultTargets(
           order by r.created_at, r.external_id limit 1)`,
       lookupStatus: sonovaultTrackLookup.status,
       lookupInputType: sonovaultTrackLookup.inputType,
+      lookupInput: sonovaultTrackLookup.input,
+      lookupResponseId: sonovaultTrackLookup.responseId,
+      lookupVerified: sonovaultTrackLookup.verified,
       lookedUpAt: sonovaultTrackLookup.lookedUpAt,
       // The primary ISRC only while it is still Sonovault's own.
       primaryIsrc: sql<string | null>`case when ${sonovaultPrimaryIsrcSql(
@@ -205,6 +216,9 @@ export async function readSonovaultTargets(
         ? {
             status: row.lookupStatus,
             inputType: row.lookupInputType ?? '',
+            input: row.lookupInput ?? '',
+            responseId: row.lookupResponseId,
+            verified: row.lookupVerified,
             lookedUpAt: row.lookedUpAt,
             primaryIsrc: row.primaryIsrc,
           }
@@ -254,8 +268,10 @@ export async function prepareSonovaultTrackLookup(
 }
 
 /**
- * The credits the latest Sonovault response reported, from a track lookup or
- * a similar-track lookup (SONO-26), with whether it is this calendar month (UTC).
+ * The credits the latest job reported, with whether it is this calendar month
+ * (UTC): from a track lookup or a similar-track lookup (SONO-26), as their
+ * bulk response said, or from an album lookup, as that said or the previous
+ * report less the releases it fetched.
  */
 export async function reportedSonovaultCredits(database: Reader, now: Date) {
   const [latest] = await database
@@ -264,7 +280,7 @@ export async function reportedSonovaultCredits(database: Reader, now: Date) {
     .where(
       and(
         eq(scrapeJob.provider, PROVIDER),
-        sql`${scrapeJob.options}->>'task' in (${SONOVAULT_TRACK_LOOKUP_TASK}, ${SONOVAULT_SIMILAR_LOOKUP_TASK})`,
+        sql`${scrapeJob.options}->>'task' in (${SONOVAULT_TRACK_LOOKUP_TASK}, ${SONOVAULT_SIMILAR_LOOKUP_TASK}, ${SONOVAULT_ALBUM_LOOKUP_TASK})`,
         sql`${scrapeJob.options} ? 'creditsReportedAt'`,
       ),
     )
@@ -335,38 +351,60 @@ const sameInput = (
       ? validIsrc(echoed) === sent
       : echoed.trim() === sent
 
-type Written = {
+export type SonovaultRecordsWritten = {
   matched: number
   verified: number
   notFound: number
   skipped: number
   primaryIsrcs: number
+  /** Verified records given an `isrc` reference. */
+  isrcs: number
+}
+type Written = SonovaultRecordsWritten
+
+/** A record's fields a library track is given: a track or a release's track. */
+export type SonovaultTrackRecord = Omit<SonovaultTrack, 'releases'>
+
+/** What one response said about one library track. */
+export type SonovaultRecordEntry = {
+  trackId: string
+  /** What the track was reached by: its ID, ISRC, artist and title, or release. */
+  input: string
+  /** Null for a line Sonovault skipped for lack of credits. */
+  record: { track: SonovaultTrackRecord | null; links: SonovaultLink[] } | null
+  /** The owner or the stage 4 rule accepted the record as the library recording. */
+  accepted?: boolean
+  /**
+   * Whether a verified record may fill an empty primary ISRC (SONO-07): a
+   * lookup by Spotify ID, or a release track aligned on its duration.
+   */
+  fillsPrimaryIsrc: boolean
 }
 
 /**
  * Replaces each answered track's Sonovault references and lookup with what
- * this response says. A track Sonovault skipped for lack of credits keeps
- * what it had. Only Sonovault's own rows change (SONO-06). `accepted` marks
- * records the owner or the stage 4 rule accepted as the library recording.
+ * one stored response says, for every stage that reads a track's record. A
+ * track Sonovault skipped for lack of credits keeps what it had, and a
+ * release never replaces a track's own lookup. Only Sonovault's own rows
+ * change (SONO-06).
  */
-export async function writeSonovaultLookups(
+export async function writeSonovaultRecords(
   tx: Transaction,
   input: {
     jobId: string
-    inputType: SonovaultLookupInputType
-    sent: { target: SonovaultTarget; input: string }[]
-    results: SonovaultResolveResult[]
-    accepted?: boolean
+    inputType: SonovaultRecordInputType
+    response: { id: string; fetchedAt: Date }
+    entries: SonovaultRecordEntry[]
   },
 ): Promise<Written> {
-  const response = await storedSonovaultResponse(tx, input.jobId)
+  const { response } = input
   const fetchedAt = response.fetchedAt.toISOString()
   // Read again under the lock: another job may have changed the tracks.
   const current = new Map(
     (
       await readSonovaultTargets(
         tx,
-        input.sent.map(({ target }) => target.id),
+        input.entries.map(({ trackId }) => trackId),
       )
     ).map((target) => [target.id, target]),
   )
@@ -381,23 +419,23 @@ export async function writeSonovaultLookups(
     notFound: 0,
     skipped: 0,
     primaryIsrcs: 0,
+    isrcs: 0,
   }
-  input.sent.forEach(({ input: sent }, index) => {
-    const result = input.results[index]
-    if (!result || !sameInput(input.inputType, sent, result.input))
-      throw new Error('Sonovault answered the lines in a different order.')
-  })
-  for (const [
-    index,
-    { target: sentTarget, input: sent },
-  ] of input.sent.entries()) {
-    const result = input.results[index]
-    const target = current.get(sentTarget.id)
-    if (!result || !target || result.status === 'skipped_no_credits') {
+  for (const entry of input.entries) {
+    const sent = entry.input
+    const target = current.get(entry.trackId)
+    const ownLookup =
+      target?.lookup?.status === 'matched' &&
+      target.lookup.inputType !== 'release'
+    if (
+      !entry.record ||
+      !target ||
+      (input.inputType === 'release' && ownLookup)
+    ) {
       written.skipped += 1
       continue
     }
-    const record = result.status === 'matched' ? result.track : null
+    const record = entry.record.track
     const previousPrimary =
       target.lookup?.primaryIsrc &&
       target.libraryIsrc === target.lookup.primaryIsrc
@@ -421,7 +459,7 @@ export async function writeSonovaultLookups(
       continue
     }
     const verified =
-      input.accepted === true || verifySonovaultRecord(target, record)
+      entry.accepted === true || verifySonovaultRecord(target, record)
     // Tempo and key (SONO-13); an unverified record's are kept for details only.
     facts.push({
       mediaItemId: target.id,
@@ -468,7 +506,7 @@ export async function writeSonovaultLookups(
       title: record.title.slice(0, 2000),
       durationSec: record.duration,
     })
-    for (const link of result.links)
+    for (const link of entry.record.links)
       add(
         sonovaultLinkReferenceTypes[link.source],
         link.external_id.trim(),
@@ -476,21 +514,25 @@ export async function writeSonovaultLookups(
       )
     // An unverified record may be another version: its ISRC stays on the
     // Sonovault track reference and is not offered to other features.
-    if (verified && recordIsrc)
+    if (verified && recordIsrc) {
+      written.isrcs += 1
       isrcs.push({
         mediaItemId: target.id,
         isrc: recordIsrc,
         provider: PROVIDER,
         source: {
-          kind: SONOVAULT_TRACK_LOOKUP_TASK,
+          kind:
+            input.inputType === 'release'
+              ? SONOVAULT_ALBUM_LOOKUP_TASK
+              : SONOVAULT_TRACK_LOOKUP_TASK,
           jobId: input.jobId,
           responseId: response.id,
         },
       })
-    // SONO-07: only an empty primary ISRC, or one Sonovault gave, and only
-    // for a lookup by Spotify ID.
+    }
+    // SONO-07: only an empty primary ISRC, or one Sonovault gave.
     const fills =
-      input.inputType === 'spotify_id' &&
+      entry.fillsPrimaryIsrc &&
       verified &&
       recordIsrc !== null &&
       (target.libraryIsrc === null || previousPrimary !== null)
@@ -566,6 +608,52 @@ export async function writeSonovaultLookups(
       },
     })
   return written
+}
+
+/**
+ * Checks a bulk response's lines against what was sent, then writes them.
+ * `accepted` marks records the owner or the stage 4 rule accepted as the
+ * library recording.
+ */
+export async function writeSonovaultLookups(
+  tx: Transaction,
+  input: {
+    jobId: string
+    inputType: SonovaultLookupInputType
+    sent: { target: Pick<SonovaultTarget, 'id'>; input: string }[]
+    results: SonovaultResolveResult[]
+    accepted?: boolean
+    /** The stored response; the job's latest when not given. */
+    response?: { id: string; fetchedAt: Date }
+  },
+): Promise<Written> {
+  input.sent.forEach(({ input: sent }, index) => {
+    const result = input.results[index]
+    if (!result || !sameInput(input.inputType, sent, result.input))
+      throw new Error('Sonovault answered the lines in a different order.')
+  })
+  return writeSonovaultRecords(tx, {
+    jobId: input.jobId,
+    inputType: input.inputType,
+    response:
+      input.response ?? (await storedSonovaultResponse(tx, input.jobId)),
+    entries: input.sent.map(({ target, input: sent }, index) => {
+      const result = input.results[index]
+      return {
+        trackId: target.id,
+        input: sent,
+        record:
+          !result || result.status === 'skipped_no_credits'
+            ? null
+            : {
+                track: result.status === 'matched' ? result.track : null,
+                links: result.links,
+              },
+        ...(input.accepted ? { accepted: true } : {}),
+        fillsPrimaryIsrc: input.inputType === 'spotify_id',
+      }
+    }),
+  })
 }
 
 export async function runSonovaultTrackLookup(
@@ -733,8 +821,11 @@ export async function queueSonovaultTrackLookups(
   })
 }
 
-/** Queues every matched record older than 11 months again, 100 to a job. */
-export async function queueSonovaultRefresh(
+/**
+ * Queues every matched record older than 11 months again, 100 to a job.
+ * Records read from an album's release are refreshed by its album lookup.
+ */
+export async function queueSonovaultTrackRefresh(
   userId: string | null,
   batchId = nanoid(),
 ) {
@@ -744,6 +835,7 @@ export async function queueSonovaultRefresh(
     .where(
       and(
         eq(sonovaultTrackLookup.status, 'matched'),
+        sql`${sonovaultTrackLookup.inputType} <> 'release'`,
         sql`${sonovaultTrackLookup.lookedUpAt} < ${refreshCutoff(new Date()).toISOString()}::timestamp`,
       ),
     )
@@ -1005,13 +1097,16 @@ export async function removeSonovaultData() {
       .delete(spotifyCodeLookup)
       .where(eq(spotifyCodeLookup.source, PROVIDER))
       .returning({ code: spotifyCodeLookup.code })
+    const albums = await tx
+      .delete(sonovaultAlbumLookup)
+      .returning({ id: sonovaultAlbumLookup.mediaItemId })
     const responses = await tx
       .delete(providerResponse)
       .where(eq(providerResponse.provider, PROVIDER))
       .returning({ id: providerResponse.id })
     return SonovaultRemovalSchema.parse({
       references: references.length,
-      lookups: lookups.length + similarLookups.length,
+      lookups: lookups.length + similarLookups.length + albums.length,
       primaryIsrcs: cleared.rowCount ?? 0,
       responses: responses.length,
       trackFacts,

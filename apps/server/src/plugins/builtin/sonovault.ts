@@ -12,14 +12,15 @@ import {
 
 /**
  * Sonovault maps a track's ISRC or service ID to its IDs on other services.
- * Track lookups run as the `sonovault-track-lookup` task job.
+ * Track lookups run as the `sonovault-track-lookup` task job and album
+ * lookups, through one of the album's tracks, as `sonovault-album-lookup`.
  */
 export const sonovaultPlugin: MediaProviderPlugin = {
   manifest: {
     id: 'sonovault',
     displayName: 'Sonovault',
     description:
-      'Track identifiers on other services by Spotify ID or ISRC; paid lookups, one credit a track',
+      'Track and album identifiers on other services, by Spotify ID or ISRC; paid lookups, one credit a track and two or three an album',
     siteUrl: 'https://sonovault.now',
     mediaTypes: ['album'],
     requireExplicitSelection: true,
@@ -64,9 +65,11 @@ export const sonovaultPlugin: MediaProviderPlugin = {
     await testSonovaultKey(request, sonovaultSettings(secrets).apiKey)
   },
   // The hosted dispatcher runs a provider's task jobs only when it has an
-  // item scraper. Album lookups through releases are a later stage; until
-  // then the catalog does not offer this provider in album selection.
+  // item scraper. Album lookups are task jobs, so album metadata selection
+  // does not offer this provider and this is never called.
   async scrapeMediaItem() {
-    throw new Error('Sonovault album lookups are not available yet')
+    throw new Error(
+      'Sonovault album lookups run as sonovault-album-lookup jobs',
+    )
   },
 }

@@ -44,6 +44,7 @@
     "recover:track-isrcs": "tsx scripts/recover-track-isrcs.ts",
     "apply:sonovault-track-facts": "tsx scripts/apply-sonovault-track-facts.ts",
     "queue:sonovault-track-names": "tsx scripts/queue-sonovault-track-names.ts",
+    "queue:sonovault-albums": "tsx scripts/queue-sonovault-albums.ts",
     "review:spotify-tracks": "tsx scripts/local-spotify-review/export.ts"
   },
   "devDependencies": {

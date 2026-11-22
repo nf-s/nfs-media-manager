@@ -52,12 +52,14 @@ export type UnresolvedMatchQuery = z.infer<typeof UnresolvedMatchQuerySchema>
 /**
  * A provider whose latest lookup for the item failed to match: it found
  * nothing, or found several records. `candidates` holds the records an
- * ambiguous lookup kept, listed without a new request.
+ * ambiguous lookup kept, listed without a new request. `suggested` is a
+ * provider whose match another provider's confirmed record lacks or
+ * contradicts (SONO-22); `jobId` is then that record's job.
  */
 export const UnresolvedMatchSchema = z.object({
   provider: z.string(),
   jobId: z.string(),
-  outcome: z.enum(['not-found', 'ambiguous']),
+  outcome: z.enum(['not-found', 'ambiguous', 'suggested']),
   candidates: z.array(MatchCandidateSchema).max(20),
 })
 export type UnresolvedMatch = z.infer<typeof UnresolvedMatchSchema>

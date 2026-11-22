@@ -58,6 +58,7 @@ import ProviderConfiguration, {
 } from '../provider-configuration'
 import ProviderCredentials from '../provider-credentials'
 import SonovaultProviderSettings from '../sonovault-provider-settings'
+import { SonovaultAlbumSettings } from '../sonovault-album-lookup'
 import {
   ProviderCooldownConfirm,
   useProviderCooldown,
@@ -484,6 +485,7 @@ function ProviderDetail({
                 </Section>
               )}
               {id === 'sonovault' && <SonovaultProviderSettings />}
+              {id === 'sonovault' && <SonovaultAlbumSettings />}
               <ProviderReviewableErrors provider={provider} />
             </div>
           </div>

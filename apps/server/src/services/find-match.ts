@@ -34,6 +34,7 @@ import { readAlbumMatchRejections } from './album-match-rejections'
 import { identifierUrl } from './artist-provider-evidence'
 import { loadArtistProviderTarget } from './artist-profiles'
 import { providerOperation } from './manual-add'
+import { sonovaultAlbumMatchCandidates } from './sonovault-album-lookup'
 
 const SHARED_FILM_REFERENCES = ['imdb', 'tmdb']
 
@@ -299,8 +300,61 @@ function storedArtistCandidates(
 }
 
 /**
+ * SONO-22: the Discogs master or release and MusicBrainz release group of an
+ * album's confirmed Sonovault release, offered in that provider's Find match
+ * where the album has no match of that kind or a different one. Choosing one
+ * goes through the usual save and refresh.
+ */
+async function addSonovaultSuggestions(
+  items: UnresolvedMatchList['items'],
+  albumId: string,
+) {
+  const suggestions = await sonovaultAlbumMatchCandidates(albumId)
+  if (!suggestions.length) return
+  const rejections = await readAlbumMatchRejections(db, albumId)
+  for (const entry of suggestions) {
+    // An identity marked incorrect for this album is not offered again.
+    if (
+      createAlbumMatchRejectionPredicate(
+        entry.provider,
+        rejections,
+      )({ referenceType: entry.referenceType, externalId: entry.sonovault })
+    )
+      continue
+    const candidate: MatchCandidate = {
+      referenceType: entry.referenceType,
+      externalId: entry.sonovault,
+      title: entry.title,
+      subtitle: [entry.artist, 'Sonovault'].filter(Boolean).join(' · '),
+      releaseDate: null,
+      artworkUrl: null,
+      url: entry.url,
+      current: false,
+    }
+    const existing = items.find((item) => item.provider === entry.provider)
+    if (!existing)
+      items.push({
+        provider: entry.provider,
+        jobId: entry.jobId,
+        outcome: 'suggested',
+        candidates: [candidate],
+      })
+    else if (
+      existing.candidates.length < 20 &&
+      !existing.candidates.some(
+        (item) =>
+          item.referenceType === candidate.referenceType &&
+          item.externalId === candidate.externalId,
+      )
+    )
+      existing.candidates.push(candidate)
+  }
+}
+
+/**
  * The providers whose latest lookup for an item found nothing or found
- * several records, read from stored jobs without provider requests.
+ * several records, read from stored jobs without provider requests, and
+ * those a confirmed Sonovault release suggests a match for.
  */
 export async function listUnresolvedMatches(
   query: UnresolvedMatchQuery,
@@ -358,23 +412,24 @@ export async function listUnresolvedMatches(
             desc(scrapeJob.id),
           )
   const failed = latest.filter((job) => job.status === 'failed')
-  if (!failed.length) return { query: null, items: [] }
-  const logs = await db
-    .select({
-      jobId: scrapeJobLog.jobId,
-      metadata: scrapeJobLog.metadata,
-    })
-    .from(scrapeJobLog)
-    .where(
-      and(
-        inArray(
-          scrapeJobLog.jobId,
-          failed.map((job) => job.id),
-        ),
-        eq(scrapeJobLog.level, 'error'),
-      ),
-    )
-    .orderBy(desc(scrapeJobLog.createdAt), desc(scrapeJobLog.id))
+  const logs = !failed.length
+    ? []
+    : await db
+        .select({
+          jobId: scrapeJobLog.jobId,
+          metadata: scrapeJobLog.metadata,
+        })
+        .from(scrapeJobLog)
+        .where(
+          and(
+            inArray(
+              scrapeJobLog.jobId,
+              failed.map((job) => job.id),
+            ),
+            eq(scrapeJobLog.level, 'error'),
+          ),
+        )
+        .orderBy(desc(scrapeJobLog.createdAt), desc(scrapeJobLog.id))
   const items: UnresolvedMatchList['items'] = []
   for (const job of failed) {
     const failure = logs
@@ -408,6 +463,7 @@ export async function listUnresolvedMatches(
         : [],
     })
   }
+  if (kind === 'album') await addSonovaultSuggestions(items, id)
   if (!items.length) return { query: null, items }
   const text =
     kind === 'artist'

@@ -79,6 +79,7 @@ const inputTypeLabels = {
   spotify_id: 'Spotify ID',
   isrc: 'ISRC',
   track_name: 'artist and title',
+  release: 'its album’s Sonovault release',
 }
 
 export function isActiveSonovaultLookup(
@@ -366,7 +367,7 @@ export function SonovaultLookupJobStatus({
   )
 }
 
-function LookupTime({
+export function LookupTime({
   time,
   muted = false,
 }: {

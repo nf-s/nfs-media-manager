@@ -58,6 +58,10 @@ import {
   SONOVAULT_TRACK_LOOKUP_TASK,
   SonovaultTrackLookupParamsSchema,
 } from '@repo/schemas/sonovault'
+import {
+  SONOVAULT_ALBUM_LOOKUP_TASK,
+  SonovaultAlbumLookupParamsSchema,
+} from '@repo/schemas/sonovault-album'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   MIX_STATION_SYNC_TASKS,
@@ -190,6 +194,10 @@ import {
   prepareSonovaultSimilarLookup,
   runSonovaultSimilarLookup,
 } from '@/services/sonovault-similar-lookup'
+import {
+  prepareSonovaultAlbumLookup,
+  runSonovaultAlbumLookup,
+} from '@/services/sonovault-album-lookup'
 import {
   prepareSpotifySimilarLookup,
   runSpotifySimilarLookup,
@@ -1217,6 +1225,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    SONOVAULT_ALBUM_LOOKUP_TASK,
+    {
+      provider: 'sonovault',
+      prepare: prepareSonovaultAlbumLookup,
+      run: runSonovaultAlbumLookup,
+    },
+  ],
+  [
     TIDAL_SIMILAR_TASK,
     {
       provider: 'tidal',
@@ -1360,11 +1376,17 @@ async function insertTaskJob(
     options.task === SONOVAULT_SIMILAR_LOOKUP_TASK
       ? SimilarScopeSchema.parse(options)
       : null
+  const albumLookup =
+    options.task === SONOVAULT_ALBUM_LOOKUP_TASK
+      ? SonovaultAlbumLookupParamsSchema.parse(options)
+      : null
   const scopeItem = similar
     ? { id: similar.itemId, mediaType: similar.kind }
     : trackSearch
       ? { id: trackSearch.trackId, mediaType: 'track' }
-      : null
+      : albumLookup
+        ? { id: albumLookup.albumId, mediaType: 'album' }
+        : null
   // A Sonovault lookup is one bulk request for up to 100 tracks.
   const lookupTracks =
     options.task === SONOVAULT_TRACK_LOOKUP_TASK
@@ -2243,6 +2265,7 @@ export async function jobSortField(query: JobListQuery) {
     when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${TIDAL_TRACK_MATCH_TASK} then concat_ws(' · ', 'TIDAL track match', nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${SONOVAULT_TRACK_LOOKUP_TASK} then concat('Sonovault lookup · ', jsonb_array_length(${table.options}->'trackIds'), ' tracks')
+    when ${SONOVAULT_ALBUM_LOOKUP_TASK} then concat_ws(' · ', 'Sonovault album lookup', nullif(btrim(${table.options}->>'albumTitle'), ''))
     when ${TIDAL_SIMILAR_TASK} then concat_ws(' · ', 'TIDAL similar', nullif(btrim(${table.options}->>'itemTitle'), ''))
     when ${SPOTIFY_SIMILAR_LOOKUP_TASK} then 'Spotify similar lookup'
     when ${SONOVAULT_SIMILAR_LOOKUP_TASK} then 'Sonovault similar lookup'
