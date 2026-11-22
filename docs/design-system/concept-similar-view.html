@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Concept: Similar C · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <!--
+      Styles for the concepts go here while they are concepts. Use only the
+      tokens. The accepted concept's styles move to components.css.
+    -->
+    <style>
+      .g-item {
+        grid-template-columns: minmax(0, 1fr);
+        min-width: 0;
+        max-width: 100%;
+      }
+      .g-phone {
+        box-sizing: border-box;
+        max-width: 100%;
+      }
+      .c-skel-line {
+        height: var(--ds-4);
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-similar-view.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, esc, icon, status } = D
+
+      /* Shared by the three Similar concepts. TIDAL has no logo file in the
+         app yet, so its mark is the globe. All data is invented. */
+      D.PROVIDERS.tidal = { name: 'TIDAL' }
+      const ALBUM = { kind: 'album', seed: 7, title: 'Afterglow Circuit' }
+      const TRACK = { kind: 'track', seed: 7, title: 'Signal Fade' }
+      const suggestion =
+        (kind) =>
+        ([title, by, meta, state, seed]) => ({
+          kind,
+          title,
+          by,
+          meta,
+          state,
+          seed,
+        })
+      const SIM_ALBUMS = [
+        ['Pressure Systems', 'Halcyon Grid', '2023', 'library', 3],
+        ['Night Shift Utopia', 'Vela Rooms', '2024', 'spotify', 8],
+        ['Tunnel Vision EP', 'Oskar Brandt', '2022', 'spotify', 1],
+        ['Low Orbit Dubs', 'Sable & Rue', '2021', 'library', 10],
+        ['Concrete Bloom', 'Mirela Tan', '2025', 'none', 4],
+        ['Rotary Club Mixes', 'Dovetail Unit', '2020', 'spotify', 6],
+        ['Strobe Hymnal', 'Kessler & Moss', '2024', 'spotify', 9],
+        ['Second Floor', 'Ayla Ren', '2023', 'library', 2],
+      ].map(suggestion('album'))
+      const SIM_TRACKS = [
+        ['Glass Arcade', 'Halcyon Grid', '5:48', 'library', 3],
+        ['Afterhours Telex', 'Vela Rooms', '6:30', 'spotify', 8],
+        ['Halogen', 'Oskar Brandt', '7:02', 'spotify', 1],
+        ['Wet Pavement', 'Lumen Drift', '5:15', 'library', 10],
+        ['Lantern Code', 'Mirela Tan', '6:44', 'none', 4],
+        ['Carousel Theory', 'Dovetail Unit', '4:58', 'spotify', 6],
+        ['Tape Echo Prayer', 'Kessler & Moss', '6:05', 'spotify', 9],
+      ].map(suggestion('track'))
+      const STATE_TEXT = {
+        library: 'In library',
+        spotify: 'On Spotify',
+        none: 'Not on Spotify',
+      }
+      const counts = (list) => {
+        const n = (st) => list.filter((s) => s.state === st).length
+        return `${list.length} from TIDAL · ${n('library')} in library · ${n('spotify')} on Spotify`
+      }
+      /* In library: the title opens the library item. Otherwise the title is
+         text and the trailing button opens Spotify or TIDAL in a new tab. */
+      const outLink = (s) =>
+        s.state === 'library'
+          ? '<span></span>'
+          : btn('', {
+              icon: 'external',
+              size: 'xs',
+              variant: 'ghost',
+              aria: `Open on ${s.state === 'spotify' ? 'Spotify' : 'TIDAL'} (opens in a new tab)`,
+              title: `Open on ${s.state === 'spotify' ? 'Spotify' : 'TIDAL'} (new tab)`,
+            })
+      const titleOf = (s, cls) =>
+        s.state === 'library'
+          ? `<a class="${cls}" href="#">${esc(s.title)}</a>`
+          : `<span class="${cls}">${esc(s.title)}</span>`
+      const playable = (s) => s.state !== 'none'
+
+      const albumHead = (o = {}) =>
+        D.detailHead({
+          item: ALBUM,
+          kind: 'Album',
+          by: 'by <a href="#">Lumen Drift</a>',
+          facts: ['2024-05-17', '9 tracks', '51:20', 'Northbound Audio'],
+          play: D.play('header'),
+          links: D.logoLinks(['spotify', 'lastfm', 'discogs', 'tidal']),
+          actions: o.phone ? undefined : D.headActions(o),
+        })
+      const trackHead = (o = {}) =>
+        D.detailHead({
+          item: TRACK,
+          kind: 'Track',
+          by: 'by <a href="#">Lumen Drift</a> · on <a href="#">Afterglow Circuit</a>',
+          facts: ['6:12', 'Track 4 of 9', '2024'],
+          play: D.play('header'),
+          links: D.logoLinks(['spotify', 'lastfm', 'tidal']),
+          actions: o.phone ? undefined : D.headActions(o),
+        })
+      const frame = (html, h) =>
+        `<div class="g-inspector" style="--g-h:${h}px">${html}</div>`
+      const embedded = (html) =>
+        `<div style="margin-inline:calc(var(--ds-gutter) * -1)">${html}</div>`
+      const skelRow = `<div class="ds-row" data-action><span class="ds-thumb ds-skel"></span><div class="ds-row-main" style="gap:var(--ds-2)"><span class="ds-skel c-skel-line" style="width:60%"></span><span class="ds-skel c-skel-line" style="width:38%"></span></div><span></span><span></span></div>`
+      const phoneNow = `<div class="g-phone-now">${D.artBox({ kind: 'album', seed: 3 })}<div class="ds-row-main"><span class="ds-row-title">Glass Arcade</span><span class="ds-row-by">Halcyon Grid · Kitchen</span></div><span class="ds-actions ds-toolbar-end">${btn('', { icon: 'pause', variant: 'ghost', aria: 'Pause' })}${btn('', { icon: 'next', variant: 'ghost', aria: 'Next' })}</span></div>`
+      const phoneTabs = (current) =>
+        `<div class="g-phone-tabs">${[
+          ['disc', 'Albums'],
+          ['music', 'Tracks'],
+          ['user', 'Artists'],
+          ['film', 'Films'],
+          ['more', 'More'],
+        ]
+          .map(
+            ([ic, label]) =>
+              `<span${label === current ? ' aria-current="page"' : ''}>${icon(ic)}${label}</span>`,
+          )
+          .join('')}</div>`
+      const phone = (o) =>
+        `<div class="g-phone"><div class="ds-inspector-bar">${btn('', { icon: 'chevL', variant: 'ghost', aria: 'Back' })}<div class="ds-crumbs"><b>${esc(o.title)}</b></div>${btn('', { icon: 'more', variant: 'ghost', aria: 'More actions' })}</div><div class="g-phone-scroll" data-touch style="padding:var(--ds-5)">${o.body}</div>${o.now || phoneNow}${phoneTabs(o.nav)}</div>`
+
+      /* Option C: Similar is its own view, opened from the item's header and
+         played like a playlist. */
+      const { table } = D
+      const simButton = btn('Similar', { icon: 'layers', size: 'md' })
+      const simCell = (s) =>
+        `<span class="ds-cell-id">${D.thumb(s)}${titleOf(s, 'ds-cell-title')}${playable(s) ? D.play('row') : ''}</span>`
+      const number = {
+        h: '#',
+        w: 40,
+        end: true,
+        c: (s, i) => `<span class="ds-muted">${i + 1}</span>`,
+      }
+      const whereCol = {
+        h: 'Where',
+        w: 116,
+        c: (s) => `<span class="ds-muted">${STATE_TEXT[s.state]}</span>`,
+      }
+      const linkCol = { h: '', w: 36, c: outLink }
+      const albumCols = [
+        number,
+        { h: 'Album', c: simCell },
+        { h: 'Artist', w: 132, c: (s) => esc(s.by) },
+        { h: 'Year', w: 56, c: (s) => s.meta },
+        whereCol,
+        linkCol,
+      ]
+      const trackCols = [
+        number,
+        { h: 'Title', c: simCell },
+        { h: 'Artist', w: 132, c: (s) => esc(s.by) },
+        { h: 'Duration', end: true, w: 72, c: (s) => s.meta },
+        whereCol,
+        linkCol,
+      ]
+      const playableCount = (list) => list.filter(playable).length
+      const similarHead = (of, noun, list, o = {}) =>
+        D.detailHead({
+          item: of,
+          art: false,
+          kind: `Similar ${noun}`,
+          title: `Similar to ${of.title}`,
+          by: 'from <a href="#">TIDAL</a> · plays through Spotify',
+          facts: [
+            `${list.length} ${noun}`,
+            `${playableCount(list)} playable`,
+            'Updated 2026-11-20',
+          ],
+          play: D.play('header'),
+          actions: o.phone
+            ? undefined
+            : D.headActions({
+                lead: btn('', {
+                  icon: 'refresh',
+                  size: 'md',
+                  variant: 'ghost',
+                  aria: 'Read again from TIDAL',
+                  title: 'Read again from TIDAL',
+                }),
+              }),
+        })
+      const similarBody = (list, cols, noun) =>
+        embedded(
+          D.toolbar({
+            placeholder: `Search ${noun}`,
+            sort: ['TIDAL order'],
+            dir: 'up',
+            filters: false,
+            count: counts(list),
+          }) +
+            `<div class="ds-table-wrap">${table(cols, list, { row: (s, i) => ({ 'data-state': i === 1 ? 'playing' : undefined }) })}</div>`,
+        )
+      const albumView = D.inspector({
+        crumbs: ['Albums', ALBUM.title, 'Similar'],
+        head: similarHead(ALBUM, 'albums', SIM_ALBUMS),
+        body: similarBody(SIM_ALBUMS, albumCols, 'albums'),
+      })
+      const trackView = D.inspector({
+        crumbs: ['Tracks', TRACK.title, 'Similar'],
+        head: similarHead(TRACK, 'tracks', SIM_TRACKS),
+        body: similarBody(SIM_TRACKS, trackCols, 'tracks'),
+      })
+      const entry = `<div class="g-cols">${g.spec(albumHead({ lead: simButton }))}${g.spec(trackHead({ lead: simButton }))}</div>`
+
+      const states = [
+        [
+          `${btn('Similar', { icon: 'layers', size: 'md' })} ${status('running', 'Reading from TIDAL')}`,
+          'Loading: the button stays; the view shows the same status over skeleton rows',
+        ],
+        [
+          D.state('TIDAL has no similar albums', 'Read 2026-11-20', {
+            size: 'sm',
+            action: btn('Read again', { icon: 'refresh', size: 'xs' }),
+          }),
+          'Nothing found: the view opens to this, and Play is disabled',
+        ],
+        [
+          `${btn('Match on TIDAL', { icon: 'layers', size: 'md' })}`,
+          'No TIDAL match yet: the header button reads Match on TIDAL and queues the TIDAL job',
+        ],
+      ]
+
+      const nowFrom = `<div class="g-phone-now">${D.artBox({ kind: 'album', seed: 8 })}<div class="ds-row-main"><span class="ds-row-title">Afterhours Telex</span><span class="ds-row-by">Similar to Signal Fade · Kitchen</span></div><span class="ds-actions ds-toolbar-end">${btn('', { icon: 'pause', variant: 'ghost', aria: 'Pause' })}${btn('', { icon: 'next', variant: 'ghost', aria: 'Next' })}</span></div>`
+      const phoneFrom = (o) => phone({ ...o, now: nowFrom })
+
+      D.page({
+        title: 'Concept: Similar C · a view of its own, played as a source',
+        lede: 'Similar albums and tracks from TIDAL, played through Spotify. Option C adds a Similar button to the album and track headers. It opens a Similar view in the drawer, drawn like a playlist: its header Play plays every playable suggestion in TIDAL’s order, and the player names it as the source.',
+        sections: [
+          {
+            id: 'entry',
+            title: 'Header · the way in',
+            body:
+              entry +
+              g.rules([
+                '<b>Similar</b> sits in the header’s action row, before More. It pushes the Similar view onto the drawer’s history; Back returns to the album or track.',
+              ]),
+          },
+          {
+            id: 'desktop',
+            title: 'Similar view · album and track',
+            body:
+              `<div class="g-inspectors">${frame(albumView, 720)}${frame(trackView, 720)}</div>` +
+              g.rules([
+                '<b>Play and Add to queue in the header</b> take every suggestion that is in the library or on Spotify, in TIDAL’s order, and skip the rest. The player names the source: “Similar to Signal Fade”.',
+                '<b>In library</b> (Pressure Systems): the title opens the library album; the row’s play pair plays it.',
+                '<b>On Spotify</b> (Night Shift Utopia): the play pair plays or queues it; the trailing button opens it on Spotify.',
+                '<b>Not on Spotify</b> (Concrete Bloom): no play pair, and header Play skips it; the trailing button opens it on TIDAL.',
+                '<b>The one table</b> with search and sort, as on a playlist. TIDAL order is the default sort.',
+              ]),
+          },
+          {
+            id: 'states',
+            title: 'States',
+            body: `<div class="g-cols">${states.map(([html, caption]) => `<div>${g.spec(`<div style="display:flex;align-items:center;gap:var(--ds-4);flex-wrap:wrap">${html}</div>`)}<p class="ds-muted">${caption}</p></div>`).join('')}</div>`,
+          },
+          {
+            id: 'phone',
+            title: 'Phone',
+            body: g.flow(
+              [
+                g.item(
+                  phone({
+                    title: ALBUM.title,
+                    body:
+                      albumHead({ phone: true }).replace(
+                        '</div></header>',
+                        `<div class="ds-detail-actions">${simButton}</div></div></header>`,
+                      ) +
+                      D.tabs(['Overview', 'Listening', 'Sources', 'Edit'], 0) +
+                      D.section(
+                        'Tracks',
+                        `<div class="ds-table-wrap">${table(D.COLS.albumTracks, D.data.ALBUM_TRACKS.slice(0, 5))}</div>`,
+                        { note: '9 · 51:20' },
+                      ),
+                    nav: 'Albums',
+                  }),
+                  'Album · Similar in the header',
+                ),
+                g.item(
+                  phoneFrom({
+                    title: 'Similar to Signal Fade',
+                    body:
+                      similarHead(TRACK, 'tracks', SIM_TRACKS, {
+                        phone: true,
+                      }) + similarBody(SIM_TRACKS, trackCols, 'tracks'),
+                    nav: 'Tracks',
+                  }),
+                  'Track · Similar view playing; the table scrolls sideways',
+                ),
+              ],
+              { top: true },
+            ),
+          },
+          {
+            id: 'tradeoff',
+            title: 'Trade-off',
+            body: g.rules([
+              '<b>For:</b> the only option that plays the whole list: one press starts a run of related music, like a radio station built from the album or track, and the player says where it came from. The drawer’s Overview and tabs are unchanged.',
+              '<b>Against:</b> one more step than a tab, and a new kind of source for the player, which needs work in the play queue. The header gains a button on every album and track.',
+              '<b>New element:</b> none. Header button, detail header without artwork, toolbar and the one table exist.',
+            ]),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>

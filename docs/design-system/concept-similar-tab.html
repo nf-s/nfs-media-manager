@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Concept: Similar A · Media Manager design library</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/tokens.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui/src/design-system/components.css"
+    />
+    <link rel="stylesheet" href="assets/gallery.css" />
+    <!--
+      Styles for the concepts go here while they are concepts. Use only the
+      tokens. The accepted concept's styles move to components.css.
+    -->
+    <style>
+      .g-item {
+        grid-template-columns: minmax(0, 1fr);
+        min-width: 0;
+        max-width: 100%;
+      }
+      .g-phone {
+        box-sizing: border-box;
+        max-width: 100%;
+      }
+      .c-skel-line {
+        height: var(--ds-4);
+      }
+    </style>
+  </head>
+  <body class="ds g" data-page="concept-similar-tab.html">
+    <script src="assets/ds.js"></script>
+    <script>
+      const D = DS
+      const { g, btn, esc, icon, status } = D
+
+      /* Shared by the three Similar concepts. TIDAL has no logo file in the
+         app yet, so its mark is the globe. All data is invented. */
+      D.PROVIDERS.tidal = { name: 'TIDAL' }
+      const ALBUM = { kind: 'album', seed: 7, title: 'Afterglow Circuit' }
+      const TRACK = { kind: 'track', seed: 7, title: 'Signal Fade' }
+      const suggestion =
+        (kind) =>
+        ([title, by, meta, state, seed]) => ({
+          kind,
+          title,
+          by,
+          meta,
+          state,
+          seed,
+        })
+      const SIM_ALBUMS = [
+        ['Pressure Systems', 'Halcyon Grid', '2023', 'library', 3],
+        ['Night Shift Utopia', 'Vela Rooms', '2024', 'spotify', 8],
+        ['Tunnel Vision EP', 'Oskar Brandt', '2022', 'spotify', 1],
+        ['Low Orbit Dubs', 'Sable & Rue', '2021', 'library', 10],
+        ['Concrete Bloom', 'Mirela Tan', '2025', 'none', 4],
+        ['Rotary Club Mixes', 'Dovetail Unit', '2020', 'spotify', 6],
+        ['Strobe Hymnal', 'Kessler & Moss', '2024', 'spotify', 9],
+        ['Second Floor', 'Ayla Ren', '2023', 'library', 2],
+      ].map(suggestion('album'))
+      const SIM_TRACKS = [
+        ['Glass Arcade', 'Halcyon Grid', '5:48', 'library', 3],
+        ['Afterhours Telex', 'Vela Rooms', '6:30', 'spotify', 8],
+        ['Halogen', 'Oskar Brandt', '7:02', 'spotify', 1],
+        ['Wet Pavement', 'Lumen Drift', '5:15', 'library', 10],
+        ['Lantern Code', 'Mirela Tan', '6:44', 'none', 4],
+        ['Carousel Theory', 'Dovetail Unit', '4:58', 'spotify', 6],
+        ['Tape Echo Prayer', 'Kessler & Moss', '6:05', 'spotify', 9],
+      ].map(suggestion('track'))
+      const STATE_TEXT = {
+        library: 'In library',
+        spotify: 'On Spotify',
+        none: 'Not on Spotify',
+      }
+      const counts = (list) => {
+        const n = (st) => list.filter((s) => s.state === st).length
+        return `${list.length} from TIDAL · ${n('library')} in library · ${n('spotify')} on Spotify`
+      }
+      /* In library: the title opens the library item. Otherwise the title is
+         text and the trailing button opens Spotify or TIDAL in a new tab. */
+      const outLink = (s) =>
+        s.state === 'library'
+          ? '<span></span>'
+          : btn('', {
+              icon: 'external',
+              size: 'xs',
+              variant: 'ghost',
+              aria: `Open on ${s.state === 'spotify' ? 'Spotify' : 'TIDAL'} (opens in a new tab)`,
+              title: `Open on ${s.state === 'spotify' ? 'Spotify' : 'TIDAL'} (new tab)`,
+            })
+      const titleOf = (s, cls) =>
+        s.state === 'library'
+          ? `<a class="${cls}" href="#">${esc(s.title)}</a>`
+          : `<span class="${cls}">${esc(s.title)}</span>`
+      const playable = (s) => s.state !== 'none'
+
+      const albumHead = (o = {}) =>
+        D.detailHead({
+          item: ALBUM,
+          kind: 'Album',
+          by: 'by <a href="#">Lumen Drift</a>',
+          facts: ['2024-05-17', '9 tracks', '51:20', 'Northbound Audio'],
+          play: D.play('header'),
+          links: D.logoLinks(['spotify', 'lastfm', 'discogs', 'tidal']),
+          actions: o.phone ? undefined : D.headActions(o),
+        })
+      const trackHead = (o = {}) =>
+        D.detailHead({
+          item: TRACK,
+          kind: 'Track',
+          by: 'by <a href="#">Lumen Drift</a> · on <a href="#">Afterglow Circuit</a>',
+          facts: ['6:12', 'Track 4 of 9', '2024'],
+          play: D.play('header'),
+          links: D.logoLinks(['spotify', 'lastfm', 'tidal']),
+          actions: o.phone ? undefined : D.headActions(o),
+        })
+      const frame = (html, h) =>
+        `<div class="g-inspector" style="--g-h:${h}px">${html}</div>`
+      const embedded = (html) =>
+        `<div style="margin-inline:calc(var(--ds-gutter) * -1)">${html}</div>`
+      const skelRow = `<div class="ds-row" data-action><span class="ds-thumb ds-skel"></span><div class="ds-row-main" style="gap:var(--ds-2)"><span class="ds-skel c-skel-line" style="width:60%"></span><span class="ds-skel c-skel-line" style="width:38%"></span></div><span></span><span></span></div>`
+      const phoneNow = `<div class="g-phone-now">${D.artBox({ kind: 'album', seed: 3 })}<div class="ds-row-main"><span class="ds-row-title">Glass Arcade</span><span class="ds-row-by">Halcyon Grid · Kitchen</span></div><span class="ds-actions ds-toolbar-end">${btn('', { icon: 'pause', variant: 'ghost', aria: 'Pause' })}${btn('', { icon: 'next', variant: 'ghost', aria: 'Next' })}</span></div>`
+      const phoneTabs = (current) =>
+        `<div class="g-phone-tabs">${[
+          ['disc', 'Albums'],
+          ['music', 'Tracks'],
+          ['user', 'Artists'],
+          ['film', 'Films'],
+          ['more', 'More'],
+        ]
+          .map(
+            ([ic, label]) =>
+              `<span${label === current ? ' aria-current="page"' : ''}>${icon(ic)}${label}</span>`,
+          )
+          .join('')}</div>`
+      const phone = (o) =>
+        `<div class="g-phone"><div class="ds-inspector-bar">${btn('', { icon: 'chevL', variant: 'ghost', aria: 'Back' })}<div class="ds-crumbs"><b>${esc(o.title)}</b></div>${btn('', { icon: 'more', variant: 'ghost', aria: 'More actions' })}</div><div class="g-phone-scroll" data-touch style="padding:var(--ds-5)">${o.body}</div>${phoneNow}${phoneTabs(o.nav)}</div>`
+
+      /* Option A: a Similar tab in the drawer, one list row per suggestion */
+      function simRow(s, o = {}) {
+        return `<div class="ds-row" data-action${o.state ? ` data-state="${o.state}"` : ''}>${D.thumb(s)}<div class="ds-row-main">${titleOf(s, 'ds-row-title')}<span class="ds-row-by">${esc([STATE_TEXT[s.state], s.by, s.meta].join(' · '))}</span></div>${playable(s) ? D.play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${outLink(s)}</div>`
+      }
+      const simList = (items, o = {}) =>
+        `<div class="ds-list" data-compact>${items.map((s, i) => simRow(s, { state: i === o.hover ? 'hover' : undefined })).join('')}</div>`
+      const summary = (list) =>
+        `<div class="ds-filterline"><span class="ds-toolbar-count">${counts(list)}</span><span class="ds-spacer"></span>${btn('', { icon: 'refresh', size: 'xs', variant: 'ghost', aria: 'Read again from TIDAL', title: 'Read again from TIDAL · updated 2026-11-20' })}</div>`
+      const similar = (list, o = {}) =>
+        embedded(summary(list) + simList(list, o))
+
+      const ALBUM_TABS = ['Overview', 'Similar', 'Listening', 'Sources', 'Edit']
+      const TRACK_TABS = ['Overview', 'Similar', 'Sources']
+      const albumDrawer = (body) =>
+        D.inspector({
+          crumbs: ['Albums', ALBUM.title],
+          head: albumHead(),
+          tabs: ALBUM_TABS,
+          tab: 1,
+          body,
+        })
+      const trackDrawer = (body) =>
+        D.inspector({
+          crumbs: ['Tracks', TRACK.title],
+          head: trackHead(),
+          tabs: TRACK_TABS,
+          tab: 1,
+          body,
+        })
+
+      const box = (title, text, action) =>
+        D.state(title, text, { size: 'sm', action })
+      const states = [
+        [
+          `<div class="ds-filterline">${status('running', 'Reading from TIDAL')}</div><div class="ds-list" data-compact>${skelRow.repeat(3)}</div>`,
+          'Loading: the TIDAL job is queued or running',
+        ],
+        [
+          box(
+            'TIDAL has no similar albums',
+            'Read 2026-11-20',
+            btn('Read again', { icon: 'refresh', size: 'xs' }),
+          ),
+          'Nothing found',
+        ],
+        [
+          box(
+            'Not matched on TIDAL',
+            'Similar albums come from TIDAL.',
+            btn('Match on TIDAL', { size: 'xs' }),
+          ),
+          'No TIDAL match yet: the button queues the TIDAL job for this album',
+        ],
+      ]
+
+      D.page({
+        title: 'Concept: Similar A · a tab in the drawer',
+        lede: 'Similar albums and tracks from TIDAL, played through Spotify. Option A adds a Similar tab after Overview in the album and track drawers. Each suggestion is the existing list row, and its second line starts with In library, On Spotify or Not on Spotify.',
+        sections: [
+          {
+            id: 'desktop',
+            title: 'Drawer · album and track',
+            body:
+              `<div class="g-inspectors">${frame(albumDrawer(similar(SIM_ALBUMS, { hover: 1 })), 800)}${frame(trackDrawer(similar(SIM_TRACKS)), 800)}</div>` +
+              g.rules([
+                '<b>Tabs.</b> Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
+                '<b>In library</b> (Pressure Systems): the title opens the library album; the play pair plays it.',
+                '<b>On Spotify</b> (Night Shift Utopia): the play pair plays or queues it on Spotify; the trailing button opens it on Spotify.',
+                '<b>Not on Spotify</b> (Concrete Bloom): no play pair, its space kept so titles line up; the trailing button opens it on TIDAL.',
+                '<b>Order</b> is TIDAL’s. Nothing plays until Play or Add to queue is pressed. The refresh button queues the TIDAL job again.',
+              ]),
+          },
+          {
+            id: 'states',
+            title: 'States',
+            body: `<div class="g-cols">${states.map(([html, caption]) => `<div>${g.spec(html)}<p class="ds-muted">${caption}</p></div>`).join('')}</div>`,
+          },
+          {
+            id: 'phone',
+            title: 'Phone',
+            body: g.flow(
+              [
+                g.item(
+                  phone({
+                    title: ALBUM.title,
+                    body:
+                      albumHead({ phone: true }) +
+                      D.tabs(ALBUM_TABS, 1) +
+                      similar(SIM_ALBUMS),
+                    nav: 'Albums',
+                  }),
+                  'Album · Similar',
+                ),
+                g.item(
+                  phone({
+                    title: TRACK.title,
+                    body:
+                      trackHead({ phone: true }) +
+                      D.tabs(TRACK_TABS, 1) +
+                      similar(SIM_TRACKS),
+                    nav: 'Tracks',
+                  }),
+                  'Track · Similar',
+                ),
+              ],
+              { top: true },
+            ),
+          },
+          {
+            id: 'tradeoff',
+            title: 'Trade-off',
+            body: g.rules([
+              '<b>For:</b> Overview stays as it is. The same rows work in the drawer and on a phone. Nothing new to draw: tab, list row with a trailing button, filter line, status, state and skeleton all exist.',
+              '<b>Against:</b> suggestions are one click away, so they are easy to miss. There is no way to play the whole list; each suggestion is played or queued on its own.',
+              '<b>New element:</b> none. TIDAL’s mark is the globe until its logo file is added.',
+            ]),
+          },
+        ],
+      })
+    </script>
+  </body>
+</html>
