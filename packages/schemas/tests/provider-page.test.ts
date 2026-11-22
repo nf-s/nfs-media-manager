@@ -51,7 +51,7 @@ describe('provider request series', () => {
 })
 
 describe('provider library coverage', () => {
-  it('lists album and film coverage and allows none', () => {
+  it('lists album, film and track coverage and allows none', () => {
     expect(
       ProviderLibraryCoverageSchema.parse({
         provider: 'fixture',
@@ -65,9 +65,18 @@ describe('provider library coverage', () => {
       }).mediaTypes,
     ).toEqual([])
     expect(
+      ProviderLibraryCoverageSchema.parse({
+        provider: 'fixture',
+        mediaTypes: [
+          { mediaType: 'track', covered: 1, total: 2 },
+          { mediaType: 'album', covered: 0, total: 1, queueFrom: 'item' },
+        ],
+      }).mediaTypes.map((row) => row.queueFrom),
+    ).toEqual(['metadata', 'item'])
+    expect(
       ProviderLibraryCoverageSchema.safeParse({
         provider: 'fixture',
-        mediaTypes: [{ mediaType: 'track', covered: 1, total: 1 }],
+        mediaTypes: [{ mediaType: 'artist', covered: 1, total: 1 }],
       }).success,
     ).toBe(false)
   })

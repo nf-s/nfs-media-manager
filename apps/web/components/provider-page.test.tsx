@@ -17,6 +17,7 @@ import {
 } from '@repo/schemas/provider'
 import ProviderPageClient from './pages/provider-page-client'
 import { requestRanges } from './provider-activity'
+import { jobLimitText } from './provider-configuration'
 
 const until = new Date(Date.now() + 40 * 60_000).toISOString()
 
@@ -292,19 +293,85 @@ test('coverage shows each library the provider applies to', () => {
   const complete = render('', {
     libraryCoverage: {
       ...coverage,
-      mediaTypes: [{ mediaType: 'album', covered: 128, total: 128 }],
+      mediaTypes: [
+        {
+          mediaType: 'album',
+          covered: 128,
+          total: 128,
+          queueFrom: 'metadata',
+        },
+      ],
     },
   })
   assert.match(complete, /128 of 128<\/span><span[^>]*>Complete</)
   const empty = render('', {
     libraryCoverage: {
       ...coverage,
-      mediaTypes: [{ mediaType: 'album', covered: 0, total: 0 }],
+      mediaTypes: [
+        { mediaType: 'album', covered: 0, total: 0, queueFrom: 'metadata' },
+      ],
     },
   })
   assert.match(empty, /No albums in the library/)
   const account = render('', { provider: { ...summary, mediaTypes: [] } })
   assert.doesNotMatch(account, /<h3>Coverage<\/h3>/)
+})
+
+test('lookup rules state each job limit with its own noun', () => {
+  assert.equal(
+    jobLimitText({ maxItemsPerJob: 1, mediaTypes: ['album'] }),
+    ' 1 album per job.',
+  )
+  assert.equal(
+    jobLimitText({ maxItemsPerJob: 25, mediaTypes: ['album', 'film'] }),
+    ' Up to 25 items per job.',
+  )
+  assert.equal(
+    jobLimitText({
+      mediaTypes: ['album'],
+      taskLimits: [
+        {
+          label: 'Track lookups',
+          maxItems: 100,
+          noun: { one: 'track', other: 'tracks' },
+        },
+        {
+          label: 'Album lookups',
+          maxItems: 1,
+          noun: { one: 'album', other: 'albums' },
+        },
+      ],
+    }),
+    ' Track lookups: up to 100 tracks per job. Album lookups: 1 album per job.',
+  )
+  assert.equal(jobLimitText({ mediaTypes: ['album'] }), '')
+})
+
+test('coverage from lookups shows tracks and links only where Metadata can queue', () => {
+  const html = render('', {
+    libraryCoverage: {
+      ...coverage,
+      mediaTypes: [
+        {
+          mediaType: 'track',
+          covered: 40,
+          total: 120,
+          queueFrom: 'metadata',
+        },
+        { mediaType: 'album', covered: 2, total: 12, queueFrom: 'item' },
+      ],
+    },
+  })
+  const section = html.slice(html.indexOf('<h3>Coverage</h3>'))
+  assert.match(
+    section,
+    /<span>Tracks<\/span>.*40 of 120<\/span><a[^>]*href="\/jobs\/metadata\?mediaType=track"[^>]*>Metadata<\/a>/,
+  )
+  assert.match(
+    section,
+    /<span>Albums<\/span>.*2 of 12<\/span><span[^>]*>From each album page</,
+  )
+  assert.doesNotMatch(section, /mediaType=album"[^>]*>Metadata/)
 })
 
 test('the waiting reason shows on every tab with its action', () => {

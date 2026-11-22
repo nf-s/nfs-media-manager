@@ -42,6 +42,7 @@ vi.mock('@/plugins/registry', () => ({
     { id: 'fixture', mediaTypes: ['album'] },
     { id: 'fixture-films', mediaTypes: ['film', 'album'] },
     { id: 'fixture-account', mediaTypes: [] },
+    { id: 'sonovault', mediaTypes: ['album'] },
   ],
 }))
 
@@ -191,16 +192,72 @@ describe('provider library coverage', () => {
       ),
     ).toEqual({
       provider: 'fixture',
-      mediaTypes: [{ mediaType: 'album', covered: 1, total: 3 }],
+      mediaTypes: [
+        { mediaType: 'album', covered: 1, total: 3, queueFrom: 'metadata' },
+      ],
     })
     expect(await getProviderLibraryCoverage('fixture-films')).toEqual({
       provider: 'fixture-films',
       mediaTypes: [
-        { mediaType: 'film', covered: 1, total: 1 },
-        { mediaType: 'album', covered: 1, total: 3 },
+        { mediaType: 'film', covered: 1, total: 1, queueFrom: 'metadata' },
+        { mediaType: 'album', covered: 1, total: 3, queueFrom: 'metadata' },
       ],
     })
     expect(network).not.toHaveBeenCalled()
+  })
+
+  it('counts what a task-job provider looked up, not item scrapes', async () => {
+    await databaseClient
+      .insert(schema.mediaItem)
+      .values([
+        item('track-a', 'track'),
+        item('track-b', 'track'),
+        item('track-c', 'track'),
+        item('track-hidden', 'track', true),
+        item('album-a', 'album'),
+        item('album-b', 'album'),
+      ])
+    const lookedUpAt = new Date('2026-11-01T00:00:00.000Z')
+    await databaseClient.insert(schema.sonovaultTrackLookup).values([
+      {
+        mediaItemId: 'track-a',
+        inputType: 'isrc',
+        input: 'X',
+        status: 'matched',
+        lookedUpAt,
+      },
+      {
+        mediaItemId: 'track-b',
+        inputType: 'isrc',
+        input: 'Y',
+        status: 'not_found',
+        lookedUpAt,
+      },
+      {
+        mediaItemId: 'track-hidden',
+        inputType: 'isrc',
+        input: 'Z',
+        status: 'matched',
+        lookedUpAt,
+      },
+    ])
+    await databaseClient.insert(schema.sonovaultAlbumLookup).values([
+      { mediaItemId: 'album-a', status: 'confirmed', lookedUpAt },
+      { mediaItemId: 'album-b', status: 'not_found', lookedUpAt },
+    ])
+    // An item scrape state is not Sonovault coverage.
+    await databaseClient
+      .insert(schema.providerCurrentState)
+      .values([state('album-b', 'sonovault', lookedUpAt)])
+    const { getProviderLibraryCoverage } =
+      await import('@/services/provider-activity')
+    expect(await getProviderLibraryCoverage('sonovault')).toEqual({
+      provider: 'sonovault',
+      mediaTypes: [
+        { mediaType: 'track', covered: 1, total: 3, queueFrom: 'metadata' },
+        { mediaType: 'album', covered: 1, total: 2, queueFrom: 'item' },
+      ],
+    })
   })
 
   it('has no coverage for account-level providers and zero for an empty library', async () => {
@@ -212,7 +269,9 @@ describe('provider library coverage', () => {
     })
     expect(await getProviderLibraryCoverage('fixture')).toEqual({
       provider: 'fixture',
-      mediaTypes: [{ mediaType: 'album', covered: 0, total: 0 }],
+      mediaTypes: [
+        { mediaType: 'album', covered: 0, total: 0, queueFrom: 'metadata' },
+      ],
     })
     await expect(getProviderLibraryCoverage('unknown')).rejects.toThrow(
       'Provider not found',

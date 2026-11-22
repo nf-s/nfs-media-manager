@@ -17,6 +17,7 @@ import {
 import { providerSecret, providerRequestState } from '@/schemas/db'
 import { ServerError } from '@/lib/error'
 import { FAILURE_COOLDOWN_MS } from '@/lib/request-policy'
+import { providerTaskLimits } from '@/lib/provider-task-coverage'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
 import {
   clearProviderAccessHalt,
@@ -123,6 +124,7 @@ export async function listProviders(): Promise<ProviderSummary[]> {
         supportsLocalWorker:
           env.RUNTIME_KIND === 'cloudflare' && !!plugin?.manifest.localWorker,
         maxItemsPerJob: provider.maxItemsPerJob,
+        taskLimits: providerTaskLimits(provider.id),
         requireExplicitSelection: provider.requireExplicitSelection,
         identifierTypes: provider.identifierTypes ?? [],
         supportsNameLookup: provider.supportsNameLookup ?? false,

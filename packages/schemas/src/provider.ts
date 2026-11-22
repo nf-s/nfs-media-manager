@@ -147,9 +147,14 @@ export const ProviderLibraryCoverageSchema = z.object({
   /** One entry per media type in the provider's manifest; empty for account-level providers. */
   mediaTypes: z.array(
     z.object({
-      mediaType: z.enum(['album', 'film']),
+      mediaType: z.enum(['album', 'film', 'track']),
       covered: z.number().int().nonnegative(),
       total: z.number().int().nonnegative(),
+      /**
+       * Where the rest is looked up: Metadata selection, or each item's own
+       * page when Metadata cannot queue this provider for that library.
+       */
+      queueFrom: z.enum(['metadata', 'item']).default('metadata'),
     }),
   ),
 })
@@ -198,6 +203,15 @@ export const ProviderSiteUrlSchema = z
     message: 'Use an http or https URL',
   })
 
+/** How many items one of a provider's task jobs covers. */
+export const ProviderTaskLimitSchema = z.object({
+  /** The jobs it applies to, such as `Track lookups`. */
+  label: z.string(),
+  maxItems: z.number().int().positive(),
+  noun: z.object({ one: z.string(), other: z.string() }),
+})
+export type ProviderTaskLimit = z.infer<typeof ProviderTaskLimitSchema>
+
 export const ProviderSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -235,6 +249,7 @@ export const ProviderSummarySchema = z.object({
   supportsJobDispatchControl: z.boolean().default(false),
   supportsLocalWorker: z.boolean().optional(),
   maxItemsPerJob: z.number().int().positive().optional(),
+  taskLimits: z.array(ProviderTaskLimitSchema).default([]),
   requireExplicitSelection: z.boolean().optional(),
   identifierTypes: z.array(z.string()).default([]),
   supportsNameLookup: z.boolean().default(false),

@@ -142,7 +142,12 @@ export function ProviderRequests({
   )
 }
 
-const libraryLabels = { album: 'Albums', film: 'Films' }
+const libraryLabels = { album: 'Albums', film: 'Films', track: 'Tracks' }
+const itemPages = {
+  album: 'From each album page',
+  film: 'From each film page',
+  track: 'From each track page',
+}
 
 /**
  * How much of each library the provider has data for, with a link to the
@@ -198,13 +203,15 @@ export function ProviderCoverage({
           have={row.covered}
           total={row.total}
           action={
-            row.covered < row.total ? (
+            row.covered >= row.total ? undefined : row.queueFrom === 'item' ? (
+              <span className="ds-muted">{itemPages[row.mediaType]}</span>
+            ) : (
               <Button size="xs" asChild>
                 <Link href={scopedHref('/jobs/metadata', row.mediaType)}>
                   Metadata
                 </Link>
               </Button>
-            ) : undefined
+            )
           }
         />
       ))}

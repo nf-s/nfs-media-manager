@@ -11,9 +11,44 @@ import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
-import { formatCount, formatUntil } from '@repo/ui/lib/format'
+import { formatCount, formatItemCount, formatUntil } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+
+const itemNouns: Record<string, { one: string; other: string }> = {
+  album: { one: 'album', other: 'albums' },
+  film: { one: 'film', other: 'films' },
+  track: { one: 'track', other: 'tracks' },
+}
+
+function perJob(maxItems: number, noun: { one: string; other: string }) {
+  const items = formatItemCount(maxItems, noun)
+  return `${maxItems > 1 ? 'up to ' : ''}${items} per job`
+}
+
+/**
+ * How many items a job covers: the item-scrape limit, then each task job
+ * kind's own, such as `Track lookups: up to 100 tracks per job.`
+ */
+export function jobLimitText(
+  provider: Pick<ProviderSummary, 'maxItemsPerJob' | 'mediaTypes'> &
+    Partial<Pick<ProviderSummary, 'taskLimits'>>,
+) {
+  const [only] = provider.mediaTypes.length === 1 ? provider.mediaTypes : []
+  const noun = (only && itemNouns[only]) || { one: 'item', other: 'items' }
+  const item = provider.maxItemsPerJob
+    ? perJob(provider.maxItemsPerJob, noun)
+    : null
+  return [
+    item ? `${item.charAt(0).toUpperCase()}${item.slice(1)}.` : null,
+    ...(provider.taskLimits ?? []).map(
+      (limit) => `${limit.label}: ${perJob(limit.maxItems, limit.noun)}.`,
+    ),
+  ]
+    .filter(Boolean)
+    .map((text) => ` ${text}`)
+    .join('')
+}
 
 function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
   const { apiBaseUrl } = useConfig()
@@ -222,9 +257,7 @@ export default function ProviderConfiguration({
             {provider.requireExplicitSelection
               ? 'Exact-item lookups only. Select an item in the library to request an update.'
               : 'More than five item/provider operations require confirmation.'}
-            {provider.maxItemsPerJob
-              ? ` Up to ${provider.maxItemsPerJob} items per job.`
-              : ''}
+            {jobLimitText(provider)}
           </p>
           <p className="ds-help">
             Identifiers:{' '}

@@ -15,6 +15,7 @@ import { JobErrorReviewSchema } from '@repo/schemas/job'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { DAY_MS } from '@/lib/request-policy'
+import { providerTaskCoverageSources } from '@/lib/provider-task-coverage'
 import { listProviderCatalog } from '@/plugins/registry'
 import {
   mediaItem,
@@ -83,15 +84,51 @@ export async function getProviderRequestSeries(
   })
 }
 
+const TaskCoverageRowSchema = z.record(z.string(), z.number().int())
+
 /**
  * How many visible library items of each media type in the provider's
- * manifest it has data for. As in Metadata, only a successful scrape sets
+ * manifest it has data for; for a provider whose work runs as task jobs,
+ * of each library its lookups cover. As in Metadata, only a successful scrape sets
  * `last_scraped_at`, so imports and overrides do not count.
  */
 export async function getProviderLibraryCoverage(
   provider: string,
 ): Promise<ProviderLibraryCoverage> {
   const entry = await requireProvider(provider)
+  const taskSources = providerTaskCoverageSources(provider)
+  if (taskSources) {
+    const rows = z.array(TaskCoverageRowSchema).parse(
+      (
+        await db.execute(sql`select ${sql.join(
+          taskSources.map(
+            (source, index) => sql`
+              count(*) filter (where mi.media_type = ${source.mediaType})::integer
+                as ${sql.raw(`total_${index}`)},
+              count(*) filter (where mi.media_type = ${source.mediaType}
+                and ${source.covered})::integer as ${sql.raw(`covered_${index}`)}`,
+          ),
+          sql`, `,
+        )}
+          from media_item mi
+          where mi.media_type in (${sql.join(
+            taskSources.map((source) => sql`${source.mediaType}`),
+            sql`, `,
+          )})
+            and mi.metadata->>'legacyHidden' is distinct from 'true'`)
+      ).rows,
+    )
+    const [row] = rows
+    return ProviderLibraryCoverageSchema.parse({
+      provider,
+      mediaTypes: taskSources.map((source, index) => ({
+        mediaType: source.mediaType,
+        covered: row?.[`covered_${index}`] ?? 0,
+        total: row?.[`total_${index}`] ?? 0,
+        queueFrom: source.queueFrom,
+      })),
+    })
+  }
   if (!entry.mediaTypes.length) return { provider, mediaTypes: [] }
   const rows = await db
     .select({

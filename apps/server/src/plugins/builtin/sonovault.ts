@@ -24,7 +24,6 @@ export const sonovaultPlugin: MediaProviderPlugin = {
     siteUrl: 'https://sonovault.now',
     mediaTypes: ['album'],
     requireExplicitSelection: true,
-    maxItemsPerJob: 1,
     rateLimit: {
       // Up to eight jobs run at once, so a job's own start and finish time
       // overlaps others' requests. Every request still takes its turn in the
