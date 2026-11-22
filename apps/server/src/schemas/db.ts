@@ -881,6 +881,15 @@ export const scrapeJob = pgTable(
         table.id.desc(),
       )
       .where(sql`${table.options}->>'task' = 'spotify-track-search'`),
+    index('scrape_job_tidal_track_match_idx')
+      .on(
+        sql`(${table.options}->>'trackId')`,
+        table.createdAt.desc(),
+        table.id.desc(),
+      )
+      .where(
+        sql`${table.provider} = 'tidal' and ${table.options}->>'task' = 'tidal-track-match'`,
+      ),
     index('scrape_job_artist_created_idx')
       .on(
         table.provider,

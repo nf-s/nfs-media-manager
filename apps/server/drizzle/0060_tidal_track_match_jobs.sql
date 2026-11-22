@@ -1,0 +1,1 @@
+CREATE INDEX "scrape_job_tidal_track_match_idx" ON "scrape_job" USING btree (("options"->>'trackId'),"created_at" DESC NULLS LAST,"id" DESC NULLS LAST) WHERE "scrape_job"."provider" = 'tidal' and "scrape_job"."options"->>'task' = 'tidal-track-match';
