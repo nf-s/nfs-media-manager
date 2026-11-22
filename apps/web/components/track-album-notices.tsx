@@ -11,6 +11,7 @@ import {
 } from '@/utils/manual-media-add'
 import {
   describeScrobbledAlbum,
+  describeUnlistedAlbum,
   missingTrackAlbum,
 } from '@/utils/track-album-notices'
 import { DetailLink } from './detail-link'
@@ -20,6 +21,8 @@ import { useConfig } from './providers'
 /**
  * The track's Spotify album when it is not in the library, with Add album,
  * and the library albums its scrobbles are counted on that do not list it.
+ * When Add album answers with an album the track is still not on, the notice
+ * names that album in place of offering the same add again.
  */
 export function TrackAlbumNotices({
   item,
@@ -35,7 +38,7 @@ export function TrackAlbumNotices({
   const add = useMutation({
     retry: false,
     mutationFn: async (spotifyAlbumId: string) => {
-      await addManualMediaItem(apiBaseUrl, 'album', {
+      const albumId = await addManualMediaItem(apiBaseUrl, 'album', {
         externalId: spotifyAlbumId,
         mediaItemId: null,
       })
@@ -45,12 +48,24 @@ export function TrackAlbumNotices({
           client.invalidateQueries({ queryKey: [key] }),
         ),
       ])
+      return albumId
     },
   })
+  const unlisted = missing && add.isSuccess ? add.data : null
+  const unlistedText = describeUnlistedAlbum(item.albumName)
   if (!missing && !add.isError && item.scrobbledAlbums.length === 0) return null
   return (
     <Section title="Album">
-      {missing && (
+      {unlisted && (
+        <Notice tone="attention">
+          {unlistedText.before}
+          <DetailLink kind="album" id={unlisted}>
+            {unlistedText.title}
+          </DetailLink>
+          {unlistedText.after}
+        </Notice>
+      )}
+      {missing && !unlisted && (
         <Notice
           action={
             <Button

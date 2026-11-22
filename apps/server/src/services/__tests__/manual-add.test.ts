@@ -40,6 +40,7 @@ import {
   spotifyAlbumId,
   spotifyTokenFixture,
 } from '@/plugins/builtin/__tests__/fixtures/spotify'
+import { ProviderItemNotFoundError } from '@repo/media-plugin-sdk'
 import { addManualMedia, searchManualMedia } from '../manual-add'
 
 describe('manual provider search and library additions', () => {
@@ -237,7 +238,7 @@ describe('manual provider search and library additions', () => {
         }),
       }),
       undefined,
-      { snapshotSource: 'manual-add' },
+      { snapshotSource: 'manual-add', exactRelease: true },
     )
     expect(mocks.request).toHaveBeenCalledTimes(2)
   })
@@ -303,6 +304,29 @@ describe('manual provider search and library additions', () => {
     expect(mocks.addAlbum).not.toHaveBeenCalled()
     expect(mocks.addFilm).not.toHaveBeenCalled()
     expect(mocks.failure).toHaveBeenCalledTimes(1)
+  })
+
+  it('says when Spotify no longer has the chosen release without recording a provider failure', async () => {
+    mocks.request
+      .mockResolvedValueOnce(Response.json(spotifyTokenFixture))
+      .mockRejectedValueOnce(
+        new ProviderItemNotFoundError(
+          'Provider has no matching item (HTTP 404)',
+        ),
+      )
+    await expect(
+      addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
+    ).rejects.toMatchObject({
+      response: {
+        statusCode: 422,
+        message:
+          'Spotify no longer has this release. Choose another release with Add album in Albums.',
+      },
+    })
+    expect(mocks.request.mock.calls[0]?.[2]?.notFoundOn404).toBeUndefined()
+    expect(mocks.request.mock.calls[1]?.[2]).toEqual({ notFoundOn404: true })
+    expect(mocks.failure).not.toHaveBeenCalled()
+    expect(mocks.addAlbum).not.toHaveBeenCalled()
   })
 
   it('stops on malformed responses or provider errors with no retry', async () => {

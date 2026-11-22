@@ -36,6 +36,39 @@ const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
 const plugins = [spotifyPlugin, tmdbPlugin]
 const shorterPageTrackId = 'AAAAAAAAAAAAAAAAAAAAAA'
+/** A longer release with the title and artist of the fixture album. */
+const extendedAlbumId = 'CCCCCCCCCCCCCCCCCCCCCC'
+const extendedTrackId = 'DDDDDDDDDDDDDDDDDDDDDD'
+const extendedAlbum = {
+  ...spotifyAlbumFixture(),
+  id: extendedAlbumId,
+  external_ids: { upc: '012345678918' },
+  total_tracks: 2,
+  tracks: {
+    offset: 0,
+    total: 2,
+    next: null,
+    items: [
+      ...spotifyAlbumFixture().tracks.items,
+      {
+        id: extendedTrackId,
+        name: 'Second',
+        disc_number: 1,
+        track_number: 2,
+        duration_ms: 181000,
+        artists: [{ name: 'Example Artist' }],
+      },
+    ],
+  },
+}
+const extendedTrack = {
+  id: extendedTrackId,
+  name: 'Second',
+  artists: [{ id: 'BBBBBBBBBBBBBBBBBBBBBB', name: 'Example Artist' }],
+  duration_ms: 181000,
+  type: 'track',
+  album: extendedAlbum,
+}
 const catalogTrack = {
   id: spotifyTrackId,
   name: 'Opening',
@@ -50,6 +83,10 @@ const request = vi.fn(async (input: string | URL) => {
     return Response.json(spotifyTokenFixture)
   if (url.pathname === `/v1/albums/${spotifyAlbumId}`)
     return Response.json(spotifyAlbumFixture())
+  if (url.pathname === `/v1/albums/${extendedAlbumId}`)
+    return Response.json(extendedAlbum)
+  if (url.pathname === `/v1/tracks/${extendedTrackId}`)
+    return Response.json(extendedTrack)
   if (
     url.pathname === '/v1/search' &&
     url.searchParams.get('type') === 'track'
@@ -428,6 +465,58 @@ describe('manual Spotify tracks', () => {
         track: row.trackMediaItemId,
       })),
     ).toEqual([{ album: albumAdded.mediaItemId, track: added.mediaItemId }])
+  })
+
+  it('adds a release as its own album when the library has another release of the same name', async () => {
+    const single = await addManualMedia({
+      mediaType: 'album',
+      externalId: spotifyAlbumId,
+    })
+    const added = await addManualMedia({
+      mediaType: 'track',
+      externalId: extendedTrackId,
+    })
+    expect(
+      (await databaseClient.select().from(schema.libraryTrack)).find(
+        (row) => row.mediaItemId === added.mediaItemId,
+      ),
+    ).toMatchObject({
+      spotifyAlbumId: extendedAlbumId,
+      albumName: 'Example Album',
+      albumMediaItemId: null,
+    })
+    const extended = await addManualMedia({
+      mediaType: 'album',
+      externalId: extendedAlbumId,
+    })
+    expect(extended.created).toBe(true)
+    expect(extended.mediaItemId).not.toBe(single.mediaItemId)
+    expect(
+      (await databaseClient.select().from(schema.libraryTrack)).find(
+        (row) => row.mediaItemId === added.mediaItemId,
+      ),
+    ).toMatchObject({
+      albumMediaItemId: extended.mediaItemId,
+      albumLinkStrategy: 'album-track-list',
+    })
+    const references = await databaseClient
+      .select({
+        album: schema.providerReference.mediaItemId,
+        externalId: schema.providerReference.externalId,
+      })
+      .from(schema.providerReference)
+      .where(eq(schema.providerReference.referenceType, 'album'))
+    expect(
+      references.sort((a, b) => a.externalId.localeCompare(b.externalId)),
+    ).toEqual([
+      { album: single.mediaItemId, externalId: spotifyAlbumId },
+      { album: extended.mediaItemId, externalId: extendedAlbumId },
+    ])
+    request.mockClear()
+    expect(
+      await addManualMedia({ mediaType: 'album', externalId: extendedAlbumId }),
+    ).toEqual({ mediaItemId: extended.mediaItemId, created: false })
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('rejects a provider response with a different track ID', async () => {

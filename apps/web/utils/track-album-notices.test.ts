@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   describeScrobbledAlbum,
+  describeUnlistedAlbum,
   missingTrackAlbum,
 } from './track-album-notices'
 
@@ -52,4 +53,17 @@ test('counts the plays on an album that does not list the track', () => {
     describeScrobbledAlbum(1).before,
     '1 play of this track is counted on “',
   )
+})
+
+test('says the added album does not list the track', () => {
+  assert.deepEqual(describeUnlistedAlbum('Harbour Lights'), {
+    before: '“',
+    title: 'Harbour Lights',
+    after: '” is in the library but does not list this track.',
+  })
+  assert.deepEqual(describeUnlistedAlbum(null), {
+    before: '',
+    title: 'The album',
+    after: ' is in the library but does not list this track.',
+  })
 })

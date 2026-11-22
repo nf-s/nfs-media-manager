@@ -38,7 +38,7 @@ Second Example,Example Artist,2026-01-02
 
 Choose **UPC CSV** when the file also has a `upc` column. Barcodes are strings, so preserve leading zeroes. Optional Spotify values can be album IDs, album URIs or HTTPS album links in a `spotify`, `spotifyId` or `spotifyUrl` column. Dates must be ISO dates/timestamps. Artist is one complete artist name; quote a CSV value when it contains a comma.
 
-Album imports leave existing albums unchanged. Only newly created albums can queue the providers selected at import time. Matching uses available identifiers and falls back conservatively to title and artist.
+Album imports leave existing albums unchanged. Only newly created albums can queue the providers selected at import time. Matching uses available identifiers and falls back conservatively to title and artist. A Spotify release added by hand is the exception when the album of that title and artist holds another Spotify release: it is added beside that album (see [track details](tracks-and-playlists.md#track-details)).
 
 ## Spotify saved albums
 

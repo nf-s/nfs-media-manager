@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import {
   PluginResultSchema,
   ProviderRequestError,
+  isProviderItemNotFoundError,
   type MediaPluginTestContext,
   type MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
@@ -457,6 +458,27 @@ export async function searchManualMedia(
   })
 }
 
+const SPOTIFY_RELEASE_WITHDRAWN =
+  'Spotify no longer has this release. Choose another release with Add album in Albums.'
+
+/**
+ * Has Spotify's answer that the chosen album does not exist reported as a
+ * missing item, which is not a provider failure, in place of a failed request.
+ */
+function withdrawnReleaseRequest(
+  request: MediaPluginTestContext['request'],
+  spotifyAlbumId: string,
+): MediaPluginTestContext['request'] {
+  return (input, init, requestOptions) =>
+    request(
+      input,
+      init,
+      new URL(input).pathname === `/v1/albums/${spotifyAlbumId}`
+        ? { ...requestOptions, notFoundOn404: true }
+        : requestOptions,
+    )
+}
+
 export async function addManualMedia(
   input: ManualMediaAddInput,
   userId: string | null = null,
@@ -494,13 +516,29 @@ export async function addManualMedia(
     if (!plugin.scrapeMediaItem)
       throw new Error('Provider does not support metadata lookup')
     const result = PluginResultSchema.parse(
-      await plugin.scrapeMediaItem({
-        ...context,
-        mediaItemId: 'manual-add',
-        mediaType: options.mediaType,
-        existingReferences: [reference],
-        log: async () => {},
-      }),
+      await plugin
+        .scrapeMediaItem({
+          ...context,
+          request:
+            options.mediaType === 'album'
+              ? withdrawnReleaseRequest(context.request, options.externalId)
+              : context.request,
+          mediaItemId: 'manual-add',
+          mediaType: options.mediaType,
+          existingReferences: [reference],
+          log: async () => {},
+        })
+        .catch((error: unknown) => {
+          if (
+            options.mediaType !== 'album' ||
+            !isProviderItemNotFoundError(error)
+          )
+            throw error
+          throw new ServerError({
+            statusCode: 422,
+            message: SPOTIFY_RELEASE_WITHDRAWN,
+          })
+        }),
     )
     if (
       !result.normalized.mediaPatch?.title?.trim() ||
@@ -529,7 +567,7 @@ export async function addManualMedia(
     const outcome = await commitAlbumImportRecord(
       { ...candidate, action: 'new' },
       undefined,
-      { snapshotSource: 'manual-add' },
+      { snapshotSource: 'manual-add', exactRelease: true },
     )
     return { mediaItemId: outcome.id, created: outcome.created }
   }

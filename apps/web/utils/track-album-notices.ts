@@ -14,6 +14,17 @@ export function missingTrackAlbum(
   }
 }
 
+/**
+ * The words around the album link when Add album answered with a library
+ * album and the track is still not on it.
+ */
+export function describeUnlistedAlbum(albumName: string | null) {
+  const after = ' is in the library but does not list this track.'
+  return albumName
+    ? { before: '“', title: albumName, after: `”${after}` }
+    : { before: '', title: 'The album', after }
+}
+
 /** The words around the album link in a scrobbled album warning. */
 export function describeScrobbledAlbum(scrobbles: number) {
   const plays = formatItemCount(scrobbles, { one: 'play', other: 'plays' })

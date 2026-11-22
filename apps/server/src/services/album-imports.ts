@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid'
-import { and, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { FileImportFormatSchema } from '@repo/schemas/imports'
 import { JsonValueSchema } from '@repo/media-plugin-sdk'
@@ -20,6 +20,7 @@ import {
   albumCandidateNameKey,
   albumImportId,
   albumNameKey,
+  albumReleaseImportId,
   albumReferenceKey,
   collectAlbumCsv,
   type AlbumImportCandidate,
@@ -67,9 +68,13 @@ export const albumImportFormats: z.infer<typeof FileImportFormatSchema>[] = [
   },
 ]
 
-export async function matchAlbumCandidates(
+/**
+ * The library albums each candidate could be: those holding one of its
+ * references, and those with its title and artists.
+ */
+async function findAlbumCandidates(
   candidates: AlbumImportCandidate[],
-  database: Pick<typeof db, 'select'> = db,
+  database: Pick<typeof db, 'select'>,
 ) {
   const byReference = new Map<string, Set<string>>()
   const byName = new Map<string, Set<string>>()
@@ -146,24 +151,73 @@ export async function matchAlbumCandidates(
         id,
       )
   }
-  return candidates.map((candidate) => {
-    const identified = new Set(
-      albumCandidateKeys(candidate).flatMap((key) => [
-        ...(byReference.get(key) ?? []),
-      ]),
-    )
-    const found = identified.size
-      ? identified
-      : (byName.get(albumCandidateNameKey(candidate)) ?? new Set<string>())
-    const ids = [...found]
-    return {
-      id: ids[0] ?? null,
-      error:
-        ids.length > 1
-          ? 'Ambiguous album identity; resolve duplicates before importing'
-          : null,
-    }
-  })
+  return candidates.map((candidate) => ({
+    identified: [
+      ...new Set(
+        albumCandidateKeys(candidate).flatMap((key) => [
+          ...(byReference.get(key) ?? []),
+        ]),
+      ),
+    ],
+    named: [...(byName.get(albumCandidateNameKey(candidate)) ?? [])],
+  }))
+}
+
+function albumMatch(ids: string[]) {
+  return {
+    id: ids[0] ?? null,
+    error:
+      ids.length > 1
+        ? 'Ambiguous album identity; resolve duplicates before importing'
+        : null,
+  }
+}
+
+export async function matchAlbumCandidates(
+  candidates: AlbumImportCandidate[],
+  database: Pick<typeof db, 'select'> = db,
+) {
+  return (await findAlbumCandidates(candidates, database)).map((found) =>
+    albumMatch(found.identified.length ? found.identified : found.named),
+  )
+}
+
+/**
+ * Matches a release chosen by its Spotify album. A reference decides. An
+ * album with its title and artists is the same album only while it has no
+ * Spotify album of its own: a single in the library does not stand in for the
+ * EP of that name, which is added beside it.
+ */
+async function matchAlbumRelease(
+  candidate: AlbumImportCandidate,
+  database: Pick<typeof db, 'select'>,
+) {
+  const [found] = await findAlbumCandidates([candidate], database)
+  if (!found?.named.length || found.identified.length)
+    return { ...albumMatch(found?.identified ?? []), besideRelease: false }
+  const releases = new Set(
+    (
+      await database
+        .select({ id: providerReference.mediaItemId })
+        .from(providerReference)
+        .where(
+          and(
+            inArray(providerReference.mediaItemId, found.named),
+            or(
+              eq(providerReference.referenceType, 'spotify'),
+              and(
+                eq(providerReference.provider, 'spotify'),
+                eq(providerReference.referenceType, 'album'),
+              ),
+            ),
+          ),
+        )
+    ).map((row) => row.id),
+  )
+  return {
+    ...albumMatch(found.named.filter((id) => !releases.has(id))),
+    besideRelease: releases.size > 0,
+  }
 }
 
 export async function prepareAlbumCandidates(
@@ -258,20 +312,31 @@ export async function prepareAlbumCsv(
 export async function commitAlbumImportRecord(
   candidate: z.infer<typeof StoredCandidateSchema>,
   transaction?: ImportTransaction,
-  options: { snapshotSource?: 'manual-add' } = {},
+  options: {
+    snapshotSource?: 'manual-add'
+    /** The candidate is one Spotify release the owner chose. */
+    exactRelease?: boolean
+  } = {},
 ) {
   const commit = async (tx: ImportTransaction) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('album-file-import'))`,
     )
-    const [match] = await matchAlbumCandidates([candidate], tx)
-    if (match?.error) throw new Error(match.error)
-    if (match?.id) return { id: match.id, created: false }
+    const match = options.exactRelease
+      ? await matchAlbumRelease(candidate, tx)
+      : {
+          ...(await matchAlbumCandidates([candidate], tx))[0],
+          besideRelease: false,
+        }
+    if (match.error) throw new Error(match.error)
+    if (match.id) return { id: match.id, created: false }
     if (candidate.action !== 'new')
       throw new Error(
         'Album disappeared since preview; preview again before creating it',
       )
-    const id = albumImportId(candidate)
+    const id = match.besideRelease
+      ? albumReleaseImportId(candidate)
+      : albumImportId(candidate)
     const patch = candidate.result.normalized.mediaPatch
     const title = patch?.title ?? 'Untitled'
     const [created] = await tx

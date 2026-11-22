@@ -44,6 +44,7 @@ vi.mock('@/services/film-enrichment', () => ({
 import {
   collectAlbumCsv,
   albumImportId,
+  albumReleaseImportId,
   type AlbumImportCandidate,
 } from '@/lib/album-import-candidates'
 import {
@@ -84,6 +85,27 @@ function candidate(title: string): AlbumImportCandidate {
   }).records[0]
   if (!record) throw new Error('Missing test candidate')
   return record
+}
+/** A candidate identified by one Spotify album. */
+function release(title: string): AlbumImportCandidate {
+  const record = candidate(title)
+  return {
+    ...record,
+    provider: 'spotify',
+    result: {
+      ...record.result,
+      normalized: {
+        ...record.result.normalized,
+        references: [
+          {
+            referenceType: 'album',
+            externalId: '1234567890abcdefghijkl',
+            isPrimary: true,
+          },
+        ],
+      },
+    },
+  }
 }
 function stored(
   records: Array<AlbumImportCandidate & { action: 'new' | 'unchanged' }>,
@@ -262,6 +284,58 @@ describe('album preview and commit policies (mock persistence only)', () => {
       }),
       expect.anything(),
     )
+  })
+
+  it('adds a chosen release beside an album of the same name that holds another Spotify album', async () => {
+    const item = release('Album')
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(
+        query([{ id: 'single', title: 'Album', artist: 'Artist' }]),
+      )
+      .mockReturnValueOnce(query([{ id: 'single' }]))
+    mocks.values.mockReturnValue(query([{ id: albumReleaseImportId(item) }]))
+    expect(albumReleaseImportId(item)).not.toBe(albumImportId(item))
+    expect(
+      await commitAlbumImportRecord({ ...item, action: 'new' }, undefined, {
+        exactRelease: true,
+      }),
+    ).toEqual({ id: albumReleaseImportId(item), created: true })
+    expect(mocks.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaItemId: albumReleaseImportId(item) }),
+      expect.anything(),
+    )
+  })
+
+  it('keeps a chosen release on the album of the same name that has no Spotify album', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(
+        query([{ id: 'named', title: 'Album', artist: 'Artist' }]),
+      )
+      .mockReturnValueOnce(query([]))
+    expect(
+      await commitAlbumImportRecord(
+        { ...release('Album'), action: 'new' },
+        undefined,
+        { exactRelease: true },
+      ),
+    ).toEqual({ id: 'named', created: false })
+    expect(mocks.database.insert).not.toHaveBeenCalled()
+    expect(mocks.apply).not.toHaveBeenCalled()
+  })
+
+  it('treats an imported row as the album of the same name whatever its Spotify album', async () => {
+    mocks.database.select
+      .mockReturnValueOnce(query([]))
+      .mockReturnValueOnce(
+        query([{ id: 'single', title: 'Album', artist: 'Artist' }]),
+      )
+    expect(
+      await commitAlbumImportRecord({ ...release('Album'), action: 'new' }),
+    ).toEqual({ id: 'single', created: false })
+    expect(mocks.database.select).toHaveBeenCalledTimes(2)
+    expect(mocks.database.insert).not.toHaveBeenCalled()
   })
 
   it('claims a preview once and dispatches only newly-created album IDs to the mocked enrichment boundary', async () => {

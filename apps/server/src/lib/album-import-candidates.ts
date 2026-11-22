@@ -29,6 +29,16 @@ export function albumImportId(candidate: AlbumImportCandidate) {
   // Canonical identity is internal and remains independent of Spotify IDs.
   return createStableId('album', `import:${albumCandidateNameKey(candidate)}`)
 }
+/**
+ * The ID of a release added beside another release of the same title and
+ * artists, which may hold the ID above.
+ */
+export function albumReleaseImportId(candidate: AlbumImportCandidate) {
+  return createStableId(
+    'album',
+    `import:${albumCandidateNameKey(candidate)}:${albumCandidateKeys(candidate).sort().join(' ')}`,
+  )
+}
 export function albumReferenceKey(
   provider: string,
   referenceType: string,
