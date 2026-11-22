@@ -484,8 +484,8 @@ async function albumHasSpotifyUpc(id: string) {
     .where(
       and(
         eq(providerReference.mediaItemId, id),
+        eq(providerReference.provider, 'spotify'),
         eq(providerReference.referenceType, 'upc'),
-        sql`${providerReference.metadata}->>'sourceProvider' = 'spotify'`,
       ),
     )
     .limit(1)

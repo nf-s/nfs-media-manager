@@ -558,11 +558,11 @@ describe('TIDAL similar items through the queue, with offline HTTP', () => {
       queueTidalSimilar({ kind: 'albums', id: 'album-unmatched' }, userId),
     ).rejects.toMatchObject({ response: { statusCode: 409 } })
 
-    await databaseClient.insert(schema.providerReference).values(
-      reference('r5', 'album-unmatched', 'spotify', 'upc', '000000000066', {
-        sourceProvider: 'spotify',
-      }),
-    )
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(
+        reference('r5', 'album-unmatched', 'spotify', 'upc', '000000000066'),
+      )
     const album = await queueTidalSimilar(
       { kind: 'albums', id: 'album-unmatched' },
       userId,
