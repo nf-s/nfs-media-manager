@@ -1,0 +1,17 @@
+{
+  "description": "Table findings that existed before the table audit. Allowed, not endorsed: remove entries as the tables move to the shared component. Rewrite with `pnpm --filter @repo/ui audit:tables --update`.",
+  "files": [],
+  "findings": {
+    "apps/web/components/artist-identifier-sources.tsx": {
+      "raw-cell: <td> <SecondaryCell>{source.externalId}</SecondaryCell>": 1,
+      "raw-cell: <td> <div className=\"ds-cell-two\">": 1
+    },
+    "apps/web/components/metadata-source-list.tsx": {
+      "raw-cell: <td> <SecondaryCell": 1,
+      "raw-cell: <td> <div className=\"secondary-cell-actions\">": 1
+    },
+    "apps/web/components/secondary-table.tsx": {
+      "raw-cell: <td> <div className=\"virtual-browse-line virtual-browse-shimmer\"": 1
+    }
+  }
+}

@@ -18,7 +18,10 @@
   "scripts": {
     "ui": "pnpm dlx shadcn@latest",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:styles": "node scripts/check-styles.mjs",
+    "audit:tables": "node scripts/audit-tables.mjs",
+    "check:design": "node --test scripts/design-checks.test.mjs && node scripts/check-styles.mjs && node scripts/audit-tables.mjs"
   },
   "peerDependencies": {
     "react": "^19"

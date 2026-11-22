@@ -26,9 +26,17 @@ corepack pnpm --filter @repo/schemas test:unit
 corepack pnpm --filter @repo/server test:unit
 apps/server/node_modules/.bin/tsx --tsconfig apps/web/tsconfig.test.json --test apps/web/components/*.test.ts apps/web/components/*.test.tsx apps/web/hooks/*.test.ts apps/web/utils/*.test.ts
 corepack pnpm --filter @repo/server test:integration
+corepack pnpm --filter @repo/ui check:design
 ```
 
 Integration tests create and drop uniquely named temporary databases on the configured PostgreSQL server. The test database role needs `CREATEDB`. Provider requests are mocked and outbound fetches are blocked. CI runs three integration shards concurrently, each with its own disposable PostgreSQL service. The `checks` job succeeds only after every integration shard and the unit tests and typechecks pass.
+
+`check:design` runs the design-system checks, which the unit tests and typechecks job runs first. They read the source only, need no build and take under a second:
+
+- **Style check** (`packages/ui/scripts/check-styles.mjs`, or `check:styles`). Outside the design system (`packages/ui/src/design-system`, `components/ds`, `components/ui`, `lib` and `docs/design-system`) it fails on a literal colour, font family, shadow or corner radius, and on a literal size equal to a `--ds-*` token of its kind: a type size in a font size, a space step in a margin, padding, gap or offset, a control, row or layout size in a width or height, a leading in a line height. It reads page stylesheets, CSS modules, inline `style={{…}}` objects, class names (Tailwind colour, radius, shadow, font and spacing classes) and colour strings in components. It also fails on a style file outside `packages/ui/src/design-system` and `packages/ui/src/styles`.
+- **Table audit** (`packages/ui/scripts/audit-tables.mjs`, or `audit:tables`). It lists every table the app renders and fails on one that does not use the shared table: `<Table>` from `@repo/ui/components/ui/table`, or `<table className="ds-table">` with that file's `TableHead` and `TableCell`, as the Jobs table does. It also fails on a `<th>`, a `<td>` with content and a `role="table"` or `"grid"` element.
+
+Findings that existed when the checks began are allowed by `packages/ui/scripts/style-baseline.json` and `table-baseline.json`, keyed by file and the offending code rather than by line. A check fails only on findings beyond its baseline. Do not add to a baseline to pass a check: use a token or a shared component, or take a new visual element through the approval process in [AGENTS.md](../AGENTS.md#interface). After fixing baselined code, shrink the baseline with `corepack pnpm --filter @repo/ui check:styles --update` or `audit:tables --update`, and check that the diff only removes entries. `check:styles --report` gives the counts by file.
 
 Build the self-hosted Node application with `corepack pnpm build`. The web build writes `apps/web/.next`; stop the development web process before building in the same checkout, or use another checkout. Server runtime uses `corepack pnpm --filter @repo/server start`; the web uses `corepack pnpm --filter web start --port 3000`. See the [hosting notes](getting-started.md#hosting-beyond-your-computer) for origins, TLS and process limits.
 

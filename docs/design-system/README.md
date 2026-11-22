@@ -105,6 +105,10 @@ A new visual element, a variant with its own look, or a change to how an existin
 4. Add the accepted concept to the system: tokens if it needs them (with the reason on the Foundations page), its styles in `components.css`, its React component, and its section with rules on the components page. Delete the concept pages.
 5. Continue the feature with the new component.
 
+## Checks
+
+Two checks hold the app to these rules in CI: the style check fails on a literal colour, font, shadow or radius, or a literal size where a token exists, outside the design system, and on a style file outside the design system and `packages/ui/src/styles`; the table audit lists every table and fails on one that does not use the one table. Run both with `corepack pnpm --filter @repo/ui check:design`. Older code that breaks the rules is recorded in their baselines and allowed until it is fixed. [Development](../development.md#checks) describes what each one reads and how to shrink a baseline.
+
 ## Rules for changing this library
 
 - All names, titles, counts and dates are invented. Do not paste real library contents, measured counts, screenshots of a real library, private plugin names or machine paths into these files.
