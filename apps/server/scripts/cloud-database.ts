@@ -13,7 +13,10 @@ const namesSchema = z.array(z.object({ schema: z.string(), name: z.string() }))
 const userNamespaces =
   "n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'"
 
-export function databaseClient(value: Connection) {
+export function databaseClient(
+  value: Connection,
+  applicationName = 'cloud-migration-offline',
+) {
   return new pg.Client({
     host: value.host,
     port: value.port,
@@ -22,7 +25,7 @@ export function databaseClient(value: Connection) {
     password: value.password,
     ssl: value.ssl ? { rejectUnauthorized: true } : false,
     connectionTimeoutMillis: 15000,
-    application_name: 'cloud-migration-offline',
+    application_name: applicationName,
     options:
       '-c default_transaction_read_only=on -c timezone=UTC -c statement_timeout=300000 -c lock_timeout=10000',
   })

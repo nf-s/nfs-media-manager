@@ -6,6 +6,7 @@
   "scripts": {
     "worker:local": "pnpm --filter @repo/local-worker... build && pnpm --filter @repo/local-worker start",
     "worker:status": "pnpm --filter @repo/local-worker status",
+    "production:status": "pnpm --filter \"@repo/server^...\" build && pnpm --filter @repo/server production:status",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo lint",

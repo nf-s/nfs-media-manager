@@ -33,6 +33,39 @@ After the signed-out checks, the job opens Tracks Browse in the table view with 
 
 If any step fails or the job is cancelled, a final step reports the commit each Worker serves, in the log and the job summary, and warns when either is not serving the release commit. A failure after the API deploy can leave the two Workers on different revisions. Check the existing release's database and runtime compatibility before retrying or rolling either Worker back.
 
+## Production status
+
+`pnpm production:status` prints what production is running and what its job queue is doing. It changes nothing. Run it from a checkout and pass the files that hold the production settings:
+
+```bash
+corepack pnpm production:status --env-file <deploy settings file> --env-file <production database file> --ref <remote>/main
+```
+
+It loads the workspace `.env` and `.env.local` the usual way, then reads each `--env-file` in order into its own settings, which never enter the process environment. Relative paths are resolved from the directory the command was run in. It reads:
+
+| Setting                  | Used for                                                                                                                                                 |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_ACCOUNT_ID`  | The account Wrangler reads deployments from. Wrangler uses its own sign-in, or `CLOUDFLARE_API_TOKEN` when set.                                          |
+| `DATABASE_URL_UNPOOLED`  | A direct (not pooled) connection URL for the production database. Name another variable with `--database-url-env`. A role limited to `SELECT` is enough. |
+| `--ref` (default `HEAD`) | The commit the served commits are compared with. Fetch first.                                                                                            |
+
+The output has these sections:
+
+- **Workers**: for the API and web Workers, the deployment time and each served version's commit tag and traffic share. When the commit is in the checkout, it also shows the commit subject and how many commits it is behind `--ref`. A release run can succeed without publishing when `main` moved on during the build, so this, not the run status, says what is live.
+- **Jobs**: queued, running and failed `scrape_job` counts by provider and task, the oldest queued and longest running age per type, the oldest queued job's id, and the ids of the five latest failed jobs. Use those ids to find a failed job's saved request, response and snapshot.
+- **Paused or blocked providers**: providers whose requests are halted after an access denial or are cooling down. The dispatcher's own pause switch is held by the API Worker's coordinator and is not read; the app's queue controls show it.
+- **Syncs**: subscription and Last.fm sync states with their counts.
+- **Library imports**: queued or running imports.
+- **Slowest routes**: not read yet; see below.
+
+Built-in providers keep their names. Every other provider, and its task names, is shown as a stable hash such as `private-3fa1c2 / task-9b0e44`, so the output can be pasted without naming private plugins. The command prints counts, ages, statuses and job ids only. It never prints connection details, keys, job scopes, error messages or library contents.
+
+It is read-only by construction. Wrangler is called only for `deployments status` and `versions view`. The database session starts with `default_transaction_read_only=on`, runs its fixed `SELECT` statements inside a `READ ONLY` transaction with a 20-second statement timeout, checks that the transaction is read-only before the first query, and rolls back.
+
+Route timings are not read. They exist only as `api.request` events in Workers Logs (see [query performance](query-performance.md)). Querying Workers Logs needs a token with the Workers Observability permission, which Wrangler's sign-in does not include. Use the Query Builder in the meantime.
+
+The command exits with status 1 when a section could not be read and names that section, so a partial result is never shown as complete.
+
 ## Access and runtime
 
 Use separate production and development databases. Keep provider credentials server-side, disable public signup, and verify that unauthenticated requests cannot read the library or change jobs. Back up the database and its encryption key separately. Never run the development dispatcher or test suite against a production database.

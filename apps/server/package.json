@@ -22,6 +22,7 @@
     "deploy:cloudflare": "pnpm prepare:cloudflare && pnpm typecheck:cloudflare && tsx scripts/deploy-cloudflare.ts",
     "cloud:migrate": "tsx scripts/cloud-migrate.ts",
     "cloud:nfo-export": "tsx scripts/cloud-nfo-export.ts",
+    "production:status": "tsx scripts/production-status.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:watch": "tsc --noEmit --watch",
