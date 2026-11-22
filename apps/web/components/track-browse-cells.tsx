@@ -1,6 +1,10 @@
 'use client'
 
-import type { BrowseField, BrowseFilter } from '@repo/schemas/browse'
+import {
+  formatBrowseFilterValue,
+  type BrowseField,
+  type BrowseFilter,
+} from '@repo/schemas/browse'
 import { getTrackBrowseValues, type TrackListItem } from '@repo/schemas/tracks'
 import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
 import {
@@ -145,10 +149,10 @@ export function TrackBrowseValue({
                   )
                 : undefined)}
               type="button"
-              title={`Filter ${field.label}: ${value}`}
+              title={`Filter ${field.label}: ${formatBrowseFilterValue(field.key, value)}`}
               onClick={() => onFilter({ field: field.key, value })}
             >
-              <PillLabel>{value}</PillLabel>
+              <PillLabel>{formatBrowseFilterValue(field.key, value)}</PillLabel>
             </button>
           </Pill>
         ))}

@@ -1,5 +1,6 @@
 import {
   canonicalBrowseKey,
+  formatBrowseFilterValue,
   formatBrowseValue,
   type BrowseField,
   type BrowseFilter,
@@ -205,7 +206,8 @@ export function formatFieldValue(
 ) {
   if (value === null || value === undefined || value === '') return EMPTY_VALUE
   if (Array.isArray(value)) return value.length ? value.join(', ') : EMPTY_VALUE
-  if (typeof value !== 'number') return value
+  if (typeof value !== 'number')
+    return formatBrowseFilterValue(field.key, value)
   if (!Number.isFinite(value)) return EMPTY_VALUE
   if (field.type === 'date') return formatDate(value)
   if (field.format === 'seconds') return formatTrackLength(value * 1000)

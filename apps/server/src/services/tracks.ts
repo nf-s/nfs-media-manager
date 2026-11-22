@@ -8,6 +8,7 @@ import {
   PlaylistRemovalSchema,
   TrackAlbumLinkStrategySchema,
   TrackDetailSchema,
+  TrackFactSchema,
   TrackIsrcSchema,
   TrackListItemSchema,
   TrackScrobbleLinkStrategySchema,
@@ -50,6 +51,11 @@ import {
 } from './album-library-tracks'
 import { artistTagsForItems } from './music-tags'
 import { trackIsrcsExpression } from './track-isrcs'
+import {
+  trackFactsExpression,
+  verifiedTrackBpm,
+  verifiedTrackKey,
+} from './track-facts'
 import { getPlaylistSummary, playlistAlbumMembers } from './playlist-directory'
 import { setPlaylistSyncSchedule } from './spotify-playlist-sync'
 
@@ -72,6 +78,8 @@ const TrackRowsSchema = z.array(
     playlists: z.array(z.object({ id: z.string(), name: z.string() })),
     sources: z.array(TrackSourceSchema),
     duration_sec: z.number().int().nullable(),
+    bpm: z.number().nullable(),
+    musical_key: z.string().nullable(),
     date_added: z.string().nullable(),
     spotify_track_id: z.string().nullable(),
     spotify_match: TrackSpotifyMatchSchema,
@@ -108,6 +116,8 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
             where pi.media_item_id = mi.id), '[]'::jsonb) as playlists,
           ${trackSourcesExpression(sql`mi.id`, sql`mi.metadata`)} as sources,
           coalesce(lt.duration_sec, ${albumTrackDurationExpression(sql`lt.media_item_id`, sql`lt.album_media_item_id`)}) as duration_sec,
+          ${verifiedTrackBpm(sql`lt.media_item_id`)} as bpm,
+          ${verifiedTrackKey(sql`lt.media_item_id`)} as musical_key,
           lt.spotify_track_id,
           ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`)} as spotify_match,
           ${isoTimestamp(sql`lt.date_added`)} as date_added,
@@ -145,6 +155,8 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         playlists: row.playlists,
         sources: row.sources,
         durationSec: row.duration_sec,
+        bpm: row.bpm,
+        musicalKey: row.musical_key,
         dateAdded: row.date_added,
         spotifyTrackId,
         spotifyMatch: row.spotify_match,
@@ -286,6 +298,7 @@ const ListeningDetailSchema = z.object({
     z.object({ id: z.string(), title: z.string(), scrobbles: z.number() }),
   ),
   isrcs: z.array(TrackIsrcSchema),
+  facts: z.array(TrackFactSchema),
 })
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
@@ -348,7 +361,8 @@ async function getTrackListeningDetail(id: string) {
       coalesce((select jsonb_agg(sources order by count desc, artist_key, track_key) from sources), '[]'::jsonb) as sources,
       (select spotify_album_id from target) as spotify_album_id,
       coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums,
-      ${trackIsrcsExpression(sql`${id}::text`)} as isrcs
+      ${trackIsrcsExpression(sql`${id}::text`)} as isrcs,
+      ${trackFactsExpression(sql`${id}::text`)} as facts
     from linked`)
   return ListeningDetailSchema.parse(result.rows[0])
 }
@@ -376,6 +390,7 @@ export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
     spotifyAlbumId: listening.spotify_album_id,
     scrobbledAlbums: listening.scrobbled_albums,
     isrcs: listening.isrcs,
+    facts: listening.facts,
     listening: {
       total: listening.total,
       firstListenedAt: isoSeconds(listening.first),

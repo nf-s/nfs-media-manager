@@ -336,6 +336,16 @@ const references = (position: number, provider = 'sonovault') =>
       asc(schema.providerReference.externalId),
     )
 
+const trackFacts = (position: number) =>
+  databaseClient
+    .select({
+      bpm: schema.trackFact.bpm,
+      keyCamelot: schema.trackFact.keyCamelot,
+      verified: schema.trackFact.verified,
+    })
+    .from(schema.trackFact)
+    .where(eq(schema.trackFact.mediaItemId, trackId(position)))
+
 async function primaryIsrc(position: number) {
   const [row] = await databaseClient
     .select({ isrc: schema.libraryTrack.isrc })
@@ -497,6 +507,14 @@ describe('Sonovault track lookup through the queue, with offline HTTP', () => {
         ?.metadata,
     ).toMatchObject({ isrc: sonovaultIsrc(scenario.unverified) })
     expect(await primaryIsrc(scenario.unverified)).toBe(null)
+    // SONO-13, SONO-17: tempo and key are stored, marked as the record is.
+    expect(await trackFacts(scenario.unverified)).toEqual([
+      { bpm: 124, keyCamelot: '8A', verified: false },
+    ])
+    expect(await trackFacts(scenario.fills)).toEqual([
+      { bpm: 124, keyCamelot: '8A', verified: true },
+    ])
+    expect(await trackFacts(scenario.miss)).toEqual([])
     expect(await lookupRow(scenario.unverified)).toMatchObject({
       verified: false,
       primaryIsrc: null,
@@ -764,8 +782,11 @@ describe('Sonovault track lookup through the queue, with offline HTTP', () => {
       lookups: 5,
       primaryIsrcs: 1,
       responses: 2,
+      trackFacts: expect.any(Number),
     })
     expect(removal.references).toBeGreaterThan(0)
+    expect(removal.trackFacts).toBeGreaterThan(0)
+    expect(await databaseClient.select().from(schema.trackFact)).toEqual([])
     expect(await primaryIsrc(scenario.fills)).toBe(null)
     expect(await primaryIsrc(scenario.spotifyIsrc)).toBe(
       libraryIsrc(scenario.spotifyIsrc),

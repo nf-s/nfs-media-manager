@@ -26,6 +26,8 @@ export const trackFieldOrder = [
   'source',
   'spotifyMatch',
   'durationSec',
+  'bpm',
+  'musicalKey',
   'releaseDate',
   'dateAdded',
   'lastListenedAt',

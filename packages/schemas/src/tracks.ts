@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { musicDisplayTags } from './music-tags'
+import { CamelotKeySchema } from './musical-keys'
 import {
   BrowseFilterSchema,
   BrowseKeySchema,
@@ -171,6 +172,10 @@ export const TrackListItemSchema = z.object({
   playlists: z.array(TrackPlaylistSchema),
   sources: z.array(TrackSourceSchema).default([]),
   durationSec: z.number().int().nonnegative().nullable(),
+  /** Tempo in BPM from a verified provider record. */
+  bpm: z.number().positive().nullable().default(null),
+  /** Key from a verified provider record, as a Camelot key. */
+  musicalKey: CamelotKeySchema.nullable().default(null),
   dateAdded: z.string().nullable(),
   spotifyTrackId: z.string().nullable(),
   /** Required evidence for the effective ID; never inferred from listening links. */
@@ -303,6 +308,19 @@ export const TrackIsrcSchema = z.object({
 })
 export type TrackIsrc = z.infer<typeof TrackIsrcSchema>
 
+/** Tempo and key one provider reported for a track. */
+export const TrackFactSchema = z.object({
+  provider: z.string(),
+  bpm: z.number().positive().nullable(),
+  keyCamelot: z.string().nullable(),
+  keyMusical: z.string().nullable(),
+  keyOpen: z.string().nullable(),
+  /** False when the record's title or duration did not agree with the track: it may describe another version. */
+  verified: z.boolean(),
+  fetchedAt: z.string().datetime(),
+})
+export type TrackFact = z.infer<typeof TrackFactSchema>
+
 export const TrackDetailSchema = TrackListItemSchema.extend({
   /** Playback coverage from a confirmed version when this entry has no usable Spotify ID. */
   spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
@@ -323,6 +341,8 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
   ),
   /** Every ISRC recorded for the track, in code order. */
   isrcs: z.array(TrackIsrcSchema),
+  /** Tempo and key by provider, verified records first. */
+  facts: z.array(TrackFactSchema).default([]),
   listening: z.object({
     total: z.number().int().nonnegative(),
     firstListenedAt: z.string().datetime().nullable(),
@@ -439,6 +459,8 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     releaseDate: item.releaseDate ? Date.parse(item.releaseDate) : null,
     dateAdded: item.dateAdded ? Date.parse(item.dateAdded) : null,
     durationSec: item.durationSec,
+    bpm: item.bpm,
+    musicalKey: item.musicalKey,
     scrobbles: item.scrobbles,
     listeningScrobbles: item.listeningScrobbles ?? null,
     lastListenedAt: item.lastListenedAt

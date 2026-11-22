@@ -22,6 +22,7 @@ import {
   type BrowseFilter,
   type BrowseRange,
 } from '@repo/schemas/browse'
+import { parseMusicalKey } from '@repo/schemas/musical-keys'
 import type { AlbumQuery, FilmQuery } from '@repo/schemas/media'
 import {
   TrackQuerySchema,
@@ -83,6 +84,15 @@ import {
   trackSourcesExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
+import {
+  verifiedTrackBpm,
+  verifiedTrackBpmIds,
+  verifiedTrackFactOrderRows,
+  verifiedTrackKey,
+  verifiedTrackKeyIds,
+  verifiedTrackKeyPosition,
+  verifiedTrackKeyRows,
+} from './track-facts'
 import {
   readRecordingBrowseOrder,
   recordingBrowseOrderRows,
@@ -276,6 +286,10 @@ function trackValueExpression(key: string): SQL | null {
       return sql`to_jsonb(coalesce(${libraryTrack.albumName}, (select am.title from media_item am where am.id = ${libraryTrack.albumMediaItemId})))`
     case 'albumLink':
       return sql`to_jsonb(case when ${libraryTrack.albumMediaItemId} is null then ${trackAlbumLinkLabels.unlinked}::text else ${trackAlbumLinkLabels.linked}::text end)`
+    case 'bpm':
+      return sql`to_jsonb(${verifiedTrackBpm(sql`${mediaItem.id}`)})`
+    case 'musicalKey':
+      return sql`to_jsonb(${verifiedTrackKey(sql`${mediaItem.id}`)})`
     case 'albumTag':
       return sql`(select jsonb_agg(distinct t.name order by t.name) from media_item_tag mt join tag t on t.id = mt.tag_id where mt.media_item_id = ${libraryTrack.albumMediaItemId} and t.media_type = 'album' and not t.hidden)`
     default:
@@ -366,6 +380,9 @@ function numericExpression(key: string, mediaType: MediaType): SQL {
     case 'scrobbles':
       if (mediaType === 'track') return sql`${libraryTrack.scrobbleCount}`
       break
+    case 'bpm':
+      if (mediaType === 'track') return verifiedTrackBpm(sql`${mediaItem.id}`)
+      break
     case 'lastListenedAt':
       if (mediaType === 'track')
         return sql`extract(epoch from ${libraryTrack.lastListenedAt}) * 1000`
@@ -397,6 +414,10 @@ function matchesValue(key: string, value: string, mediaType: MediaType): SQL {
       case undefined:
         return sql`false`
     }
+  }
+  if (mediaType === 'track' && key === 'musicalKey') {
+    const ids = verifiedTrackKeyIds(value)
+    return ids ? sql`${mediaItem.id} in (${ids})` : sql`false`
   }
   if (['artist', 'director', 'actor', 'writer'].includes(key)) {
     return sql`exists (select 1 from media_credit c join artist a on a.id = c.artist_id where c.media_item_id = ${mediaItem.id} and c.role = ${key} and lower(a.name) = ${match})`
@@ -462,6 +483,18 @@ function browseFieldConditions(
         statusCode: 422,
         message: 'Unknown numeric filter',
       })
+    if (mediaType === 'track' && range.field === 'bpm') {
+      // Read the indexed facts once instead of probing them for every track.
+      const within = sql`${mediaItem.id} in (${verifiedTrackBpmIds(
+        rangeCondition({ ...range, includeMissing: false }, sql`f.bpm`),
+      )})`
+      conditions.push(
+        range.includeMissing
+          ? sql`(${within} or ${mediaItem.id} not in (${verifiedTrackBpmIds(sql`true`)}))`
+          : within,
+      )
+      continue
+    }
     const timestamp =
       range.field === 'releaseDate' && mediaType !== 'track'
         ? sql`${mediaItem.releaseDate}`
@@ -511,7 +544,9 @@ function browseTextSearchIds(
         !(
           (mediaType === 'album' || mediaType === 'track') &&
           field.key === 'genre'
-        ),
+        ) &&
+        // Keys are short codes such as 1A that ordinary words would match.
+        !(mediaType === 'track' && field.key === 'musicalKey'),
     )
     .map((field) => {
       if (field.key === 'artistTag' && mediaType !== 'film') {
@@ -1421,7 +1456,9 @@ async function browseQueries(
       : options.sort?.field.key === sortField.key
         ? options.sort.expression
         : orderRows
-          ? sql`lower(field_order.name)`
+          ? numericOrderRowFields.has(sortField.key)
+            ? sql`field_order.name`
+            : sql`lower(field_order.name)`
           : browseSortExpression(sortField, mediaType)
   const naturalOrder =
     mediaType === 'track' ? trackNaturalOrder(sortField.key) : []
@@ -2030,7 +2067,12 @@ export async function queryBrowseCounts(
 }
 
 /** Multi-valued fields sort by their first displayed label. Read memberships once. */
+// Order rows whose name is a number rather than text.
+const numericOrderRowFields = new Set(['bpm', 'musicalKey'])
+
 function browseOrderRows(mediaType: MediaType, key: string): SQL | undefined {
+  if (mediaType === 'track' && (key === 'bpm' || key === 'musicalKey'))
+    return verifiedTrackFactOrderRows(key)
   if (mediaType !== 'film' && key === 'genre')
     return firstMusicTagRows(mediaType)
   if (mediaType !== 'film' && key === 'artistTag')
@@ -2063,6 +2105,8 @@ function directSortExpression(key: string, mediaType: MediaType): SQL | null {
     if (key === 'dateAdded') return sql`${libraryTrack.dateAdded}`
     if (key === 'scrobbles') return sql`${libraryTrack.scrobbleCount}`
     if (key === 'lastListenedAt') return sql`${libraryTrack.lastListenedAt}`
+    if (key === 'bpm') return verifiedTrackBpm(id)
+    if (key === 'musicalKey') return verifiedTrackKeyPosition(id)
   }
   if (key === 'releaseDate' && mediaType !== 'track')
     return sql`${mediaItem.releaseDate}`
@@ -2196,6 +2240,8 @@ function textRows(
     return sql`select media_item.id, ${trackAlbumLinkLabels.linked}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is not null
       union all
       select media_item.id, ${trackAlbumLinkLabels.unlinked}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is null`
+  if (mediaType === 'track' && key === 'musicalKey')
+    return verifiedTrackKeyRows(visible)
   if (mediaType === 'track' && key === 'spotifyMatch')
     return sql`select media_item.id,
       ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`media_item.source_label`, true)} as value
@@ -2394,6 +2440,9 @@ export async function listBrowseFacets(
 }
 
 function facetValueMatches(field: BrowseField, query: BrowseFacetQuery) {
+  // A key is suggested in whichever notation it is typed.
+  const key = field.key === 'musicalKey' ? parseMusicalKey(query.q ?? '') : null
+  if (key) return sql`value = ${key}`
   const words = (query.q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const matches = words
     .filter(

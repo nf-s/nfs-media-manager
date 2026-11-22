@@ -75,6 +75,7 @@ const knownProviders: Record<string, string> = {
   omdb: 'OMDb',
   imdb: 'IMDb',
   tidal: 'TIDAL',
+  sonovault: 'Sonovault',
 }
 
 /** A provider's display name from the catalog, a known name, or its ID. */

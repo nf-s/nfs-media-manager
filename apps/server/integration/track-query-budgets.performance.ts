@@ -2012,3 +2012,99 @@ it('bounds the Possible duplicates view of Matches and its layout', async () => 
     expect(layout.groups.every((group) => group.merge)).toBe(true)
   })
 })
+
+/** Shared blocks the select statements of one read touch. */
+async function sharedBlocksOf(read: () => Promise<unknown>) {
+  logQuery.mockClear()
+  await read()
+  let blocks = 0
+  for (const [query, params] of logQuery.mock.calls.filter(([query]) =>
+    /^\s*(select|with)\b/i.test(query),
+  )) {
+    const result = await pool.query(
+      `explain (analyze, buffers, timing off, format json) ${query}`,
+      params,
+    )
+    const plan = ExplainSchema.parse(result.rows)[0]['QUERY PLAN'][0].Plan
+    blocks += plan['Shared Hit Blocks'] + plan['Shared Read Blocks']
+  }
+  return blocks
+}
+
+it('bounds Track pages sorted and filtered by tempo and key', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  try {
+    // Nine in ten of 18,000 records are verified; the rest stay hidden.
+    await pool.query(`
+      insert into track_fact (media_item_id, provider, bpm, key_camelot, verified, fetched_at)
+      select 'track-' || n, 'sonovault', 80 + (n * 7) % 100 + (n % 100) / 100.0,
+        (1 + n % 12) || case when n % 3 = 0 then 'B' else 'A' end,
+        n % 10 <> 0, timestamp '2026-11-01'
+      from generate_series(1, 18000) n`)
+    await pool.query('vacuum analyze track_fact')
+    const page = (input: Record<string, unknown>) =>
+      queryBrowsePageIds(
+        'track',
+        TrackQuerySchema.parse({ size: 50, ...input }),
+      )
+    // A first page sorted by tempo or key resolves the release order of every
+    // track, as the Duration sort does. It may cost no more than that sort.
+    const durationBlocks = await sharedBlocksOf(() =>
+      page({ sortBy: 'durationSec', direction: 'asc' }),
+    )
+    const sortBudget = Math.ceil(durationBlocks * 1.05)
+    await checkBudget('Track tempo page', sortBudget, 1, async () => {
+      const result = await page({ sortBy: 'bpm', direction: 'asc' })
+      expect(result.ids).toHaveLength(50)
+    })
+    await checkBudget('Track key page', sortBudget, 1, async () => {
+      const result = await page({ sortBy: 'musicalKey', direction: 'desc' })
+      expect(result.ids).toHaveLength(50)
+    })
+    // About one track in thirty in either range. Both walk the Added order
+    // until the page is full; tempo adds one index probe of track_fact per
+    // track walked, where duration reads a column of the same row.
+    const durationRangeBlocks = await sharedBlocksOf(() =>
+      page({
+        ranges: JSON.stringify([{ field: 'durationSec', min: 150, max: 150 }]),
+      }),
+    )
+    await checkBudget(
+      'Track tempo range page',
+      durationRangeBlocks * 5,
+      1,
+      async () => {
+        const result = await page({
+          ranges: JSON.stringify([{ field: 'bpm', min: 120, max: 122 }]),
+        })
+        expect(result.ids).toHaveLength(50)
+      },
+    )
+    await checkBudget('Track key filter page', 5_500, 1, async () => {
+      const result = await page({
+        sortBy: 'title',
+        filters: JSON.stringify([{ field: 'musicalKey', value: 'Am' }]),
+      })
+      expect(result.ids).toHaveLength(50)
+    })
+    const groupedDurationBlocks = await sharedBlocksOf(() =>
+      page({ sortBy: 'durationSec', direction: 'desc', groupRecordings: true }),
+    )
+    const groupedBudget = Math.ceil(groupedDurationBlocks * 1.05)
+    await checkBudget(
+      'grouped Track tempo page',
+      groupedBudget,
+      3,
+      async () => {
+        const result = await page({
+          sortBy: 'bpm',
+          direction: 'desc',
+          groupRecordings: true,
+        })
+        expect(result.ids).toHaveLength(50)
+      },
+    )
+  } finally {
+    await pool.query('delete from track_fact')
+  }
+})

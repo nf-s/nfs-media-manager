@@ -11,6 +11,9 @@ import { usePathname } from 'next/navigation'
 import { createContext, useContext, useLayoutEffect } from 'react'
 import { observeDocumentBrowsePath } from '@/hooks/useBrowsePerformance'
 import { clientQueryDefaults } from '@/utils/query-cache'
+import { initializeKeyNotation } from '@/utils/key-notation'
+
+initializeKeyNotation()
 
 type ServerErrorLike = {
   statusCode: number

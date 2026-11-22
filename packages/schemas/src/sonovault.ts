@@ -193,5 +193,6 @@ export const SonovaultRemovalSchema = z.object({
   lookups: z.number().int().nonnegative(),
   primaryIsrcs: z.number().int().nonnegative(),
   responses: z.number().int().nonnegative(),
+  trackFacts: z.number().int().nonnegative(),
 })
 export type SonovaultRemoval = z.infer<typeof SonovaultRemovalSchema>

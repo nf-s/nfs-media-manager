@@ -8,7 +8,9 @@ import { AudioLines, Disc3 } from 'lucide-react'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 import {
   formatBrowseFilterValue,
+  formatBrowseValue,
   sameBrowseFilter,
+  trackBrowseFields,
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import {
@@ -16,7 +18,9 @@ import {
   trackSourceLabels,
   trackSpotifyMatchLabels,
   type TrackDetail,
+  type TrackFact,
 } from '@repo/schemas/tracks'
+import { formatMusicalKey, type KeyNotation } from '@repo/schemas/musical-keys'
 import { Thumb } from '@repo/ui/components/ds/artwork'
 import {
   DetailActionsSpacer,
@@ -36,6 +40,7 @@ import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { providerLabel } from '@/utils/field-provenance'
 import { trackServiceLinks } from '@/utils/track-links'
+import { useKeyNotation } from '@/utils/key-notation'
 import {
   parseTrackFilters,
   trackFilter,
@@ -169,6 +174,54 @@ export function TrackSources({
   )
 }
 
+const tempoField = trackBrowseFields.find((field) => field.key === 'bpm')
+
+function factTempo(fact: TrackFact) {
+  if (fact.bpm === null) return null
+  return tempoField ? formatBrowseValue(tempoField, fact.bpm) : `${fact.bpm}`
+}
+
+function factKey(fact: TrackFact, notation: KeyNotation) {
+  if (!fact.keyCamelot) return null
+  const stored =
+    notation === 'musical'
+      ? fact.keyMusical
+      : notation === 'open'
+        ? fact.keyOpen
+        : fact.keyCamelot
+  return stored ?? formatMusicalKey(fact.keyCamelot, notation)
+}
+
+/** Each provider's value with its source; an unverified record is marked. */
+function TrackFactValues({
+  facts,
+  value,
+}: {
+  facts: TrackFact[]
+  value: (fact: TrackFact) => string | null
+}) {
+  const shown = facts.flatMap((fact) => {
+    const text = value(fact)
+    return text === null ? [] : [{ fact, text }]
+  })
+  if (!shown.length) return EMPTY_VALUE
+  return shown.map(({ fact, text }) => {
+    const source = fact.verified
+      ? providerLabel(fact.provider)
+      : `${providerLabel(fact.provider)} · may be another version`
+    return (
+      <div
+        key={fact.provider}
+        className="ds-truncate"
+        title={`${text} ${source}, fetched ${formatDate(fact.fetchedAt)}`}
+      >
+        <span className="ds-num">{text}</span>{' '}
+        <span className="ds-muted">{source}</span>
+      </div>
+    )
+  })
+}
+
 function TrackOverview({
   item,
   onFilter,
@@ -184,6 +237,24 @@ function TrackOverview({
   showSources: () => void
   sourcesHref: string
 }) {
+  const notation = useKeyNotation()
+  const facts = item.facts.length
+    ? [
+        {
+          label: 'Tempo',
+          value: <TrackFactValues facts={item.facts} value={factTempo} />,
+        },
+        {
+          label: 'Key',
+          value: (
+            <TrackFactValues
+              facts={item.facts}
+              value={(fact) => factKey(fact, notation)}
+            />
+          ),
+        },
+      ]
+    : []
   const artistTags = musicDisplayTags(item.albumTags, item.artistTags)
     .filter((tag) => tag.source === 'artist')
     .map((tag) => tag.name)
@@ -290,6 +361,7 @@ function TrackOverview({
                   item.durationSec === null ? null : item.durationSec * 1000,
                 ),
               },
+              ...facts,
               {
                 label: 'Released',
                 value: item.releaseDate?.slice(0, 10) ?? EMPTY_VALUE,

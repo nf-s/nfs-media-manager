@@ -1,6 +1,9 @@
 import { queryOptions } from '@tanstack/react-query'
 import { z } from 'zod'
-import { BrowseFacetQuerySchema } from '@repo/schemas/browse'
+import {
+  BrowseFacetQuerySchema,
+  formatBrowseFilterValue,
+} from '@repo/schemas/browse'
 import { FilmFilterOptionSchema } from '@repo/schemas/media'
 import { fetchApiData } from './api'
 import { clientQueryDefaults } from './query-cache'
@@ -22,6 +25,18 @@ function facetEndpoint(collection: BrowseFacetCollection): {
   return collection === 'mixes'
     ? { path: 'subscriptions', params: { library: collection } }
     : { path: collection, params: {} }
+}
+
+type FacetOption = z.infer<typeof FilmFilterOptionSchema>
+
+/** The server labels a key in Camelot; show it in the chosen notation. */
+function withKeyLabel(option: FacetOption): FacetOption {
+  if (option.field !== 'musicalKey') return option
+  const field = option.label.slice(0, option.label.indexOf(': ') + 2)
+  return {
+    ...option,
+    label: `${field}${formatBrowseFilterValue(option.field, option.value)}`,
+  }
 }
 
 export function browseFacetOptions(
@@ -47,6 +62,8 @@ export function browseFacetOptions(
         z.array(FilmFilterOptionSchema),
         { signal },
       ),
+    // Applied on read, so cached suggestions follow a change of notation.
+    select: (options: FacetOption[]) => options.map(withKeyLabel),
     ...clientQueryDefaults,
   })
 }

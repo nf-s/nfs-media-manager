@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -1165,6 +1166,57 @@ export const sonovaultTrackLookup = pgTable(
     index('sonovault_track_lookup_looked_up_idx').on(
       table.status,
       table.lookedUpAt,
+    ),
+  ],
+)
+
+/**
+ * Tempo and key a provider reported for a library track, one row per track
+ * and provider. Unverified rows may describe another version of the
+ * recording: they are shown only in track details.
+ */
+export const trackFact = pgTable(
+  'track_fact',
+  {
+    mediaItemId: text('media_item_id')
+      .notNull()
+      .references(() => libraryTrack.mediaItemId, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    bpm: doublePrecision('bpm'),
+    keyCamelot: text('key_camelot'),
+    keyMusical: text('key_musical'),
+    keyOpen: text('key_open'),
+    // The tool the provider names as having measured the key.
+    keySource: text('key_source'),
+    verified: boolean('verified').notNull(),
+    responseId: text('response_id').references(() => providerResponse.id, {
+      onDelete: 'set null',
+    }),
+    fetchedAt: timestamp('fetched_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    ...timestampColumns,
+  },
+  (table) => [
+    primaryKey({ columns: [table.mediaItemId, table.provider] }),
+    index('track_fact_verified_bpm_idx')
+      .on(table.provider, table.bpm)
+      .where(sql`${table.verified} and ${table.bpm} is not null`),
+    index('track_fact_verified_key_idx')
+      .on(table.provider, table.keyCamelot)
+      .where(sql`${table.verified} and ${table.keyCamelot} is not null`),
+    // Deleting a job's responses clears their IDs here.
+    index('track_fact_response_idx')
+      .on(table.responseId)
+      .where(sql`${table.responseId} is not null`),
+    check(
+      'track_fact_bpm_range',
+      sql`${table.bpm} is null or (${table.bpm} > 0 and ${table.bpm} <= 1000)`,
+    ),
+    check(
+      'track_fact_key_camelot',
+      sql`${table.keyCamelot} is null or ${table.keyCamelot} ~ '^(1[0-2]|[1-9])[AB]$'`,
     ),
   ],
 )

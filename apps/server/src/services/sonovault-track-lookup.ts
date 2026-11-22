@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, notInArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import type { JsonValue } from '@repo/media-plugin-sdk'
@@ -53,6 +53,7 @@ import {
   providerSecret,
   scrapeJob,
   sonovaultTrackLookup,
+  trackFact,
 } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
@@ -60,6 +61,11 @@ import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
 import { recordTrackIsrcs, sonovaultPrimaryIsrcSql } from './track-isrcs'
+import {
+  recordSonovaultTrackFacts,
+  removeProviderTrackFacts,
+  type SonovaultTrackFactsEntry,
+} from './track-facts'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'select'>
@@ -326,6 +332,7 @@ async function writeLookups(
   const references: (typeof providerReference.$inferInsert)[] = []
   const lookups: (typeof sonovaultTrackLookup.$inferInsert)[] = []
   const isrcs: Parameters<typeof recordTrackIsrcs>[1] = []
+  const facts: SonovaultTrackFactsEntry[] = []
   const primary: { id: string; isrc: string | null }[] = []
   const written: Written = {
     matched: 0,
@@ -373,6 +380,14 @@ async function writeLookups(
       continue
     }
     const verified = verifySonovaultRecord(target, record)
+    // Tempo and key (SONO-13); an unverified record's are kept for details only.
+    facts.push({
+      mediaItemId: target.id,
+      track: record,
+      verified,
+      responseId: response.id,
+      fetchedAt: response.fetchedAt,
+    })
     const recordIsrc = validIsrc(record.isrc)
     written.matched += 1
     if (verified) written.verified += 1
@@ -472,6 +487,18 @@ async function writeLookups(
       .values(references.slice(start, start + WRITE_BATCH))
       .onConflictDoNothing()
   await recordTrackIsrcs(tx, isrcs, response.fetchedAt)
+  // A track that is no longer found keeps no facts from an earlier record.
+  await tx.delete(trackFact).where(
+    and(
+      inArray(trackFact.mediaItemId, answered),
+      eq(trackFact.provider, PROVIDER),
+      notInArray(
+        trackFact.mediaItemId,
+        facts.map(({ mediaItemId }) => mediaItemId),
+      ),
+    ),
+  )
+  await recordSonovaultTrackFacts(tx, facts)
   if (primary.length)
     await tx.execute(sql`
       update library_track lt
@@ -909,6 +936,7 @@ export async function removeSonovaultData() {
       .delete(providerReference)
       .where(eq(providerReference.provider, PROVIDER))
       .returning({ id: providerReference.id })
+    const trackFacts = await removeProviderTrackFacts(tx, PROVIDER)
     const lookups = await tx
       .delete(sonovaultTrackLookup)
       .returning({ id: sonovaultTrackLookup.mediaItemId })
@@ -921,6 +949,7 @@ export async function removeSonovaultData() {
       lookups: lookups.length,
       primaryIsrcs: cleared.rowCount ?? 0,
       responses: responses.length,
+      trackFacts,
     })
   })
 }

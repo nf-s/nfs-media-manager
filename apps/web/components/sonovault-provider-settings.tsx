@@ -226,6 +226,11 @@ export default function SonovaultProviderSettings() {
           {formatItemCount(remove.data.primaryIsrcs, {
             one: 'primary ISRC',
             other: 'primary ISRCs',
+          })}
+          ,{' '}
+          {formatItemCount(remove.data.trackFacts, {
+            one: 'tempo and key record',
+            other: 'tempo and key records',
           })}{' '}
           and{' '}
           {formatItemCount(remove.data.responses, {
