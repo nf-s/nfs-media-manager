@@ -29,7 +29,7 @@ function render(client: QueryClient, node: React.ReactNode) {
   }
 }
 
-test('Browse waits for the current first page before enabling the exact count', async () => {
+test('Browse waits for the first visible page before enabling the exact count', async () => {
   const filteredParams = new URLSearchParams({ q: 'fixture' })
   const filteredPage = ['tracks', 'browse', 'filtered view', 1]
   const filteredCount = ['tracks', 'browse-count', filteredParams.toString()]
@@ -87,6 +87,91 @@ test('Browse waits for the current first page before enabling the exact count', 
       assert.equal(options.enabled, status !== 'pending', status)
       if (status === 'empty') assert.match(html, /data-total="0"/)
     } finally {
+      client.clear()
+    }
+  }
+})
+
+test('a stale count waits for a missing deep page but can refresh with cached visible rows or an error', async (t) => {
+  const visibleKey = [...firstKey.slice(0, -1), 2]
+  const page = {
+    page: 2,
+    size: 100,
+    hasMore: true,
+    items: Array.from({ length: 100 }, () => 'Visible row'),
+  }
+  const requests: string[] = []
+  t.mock.method(
+    globalThis,
+    'fetch',
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = new URL(String(input))
+      requests.push(
+        endpoint.pathname.endsWith('browse-count')
+          ? 'count'
+          : (endpoint.searchParams.get('page') ?? ''),
+      )
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(init.signal?.reason),
+        )
+      })
+    },
+  )
+  function View() {
+    useVirtualBrowse({
+      apiBaseUrl: 'https://example.test',
+      collection: 'tracks',
+      identity: 'fixture view',
+      params,
+      enabled: true,
+      columns: 1,
+      rowHeight: 32,
+      scrollTop: 105 * 32,
+      viewportHeight: 96,
+      headerHeight: 0,
+      itemSchema: z.string(),
+    })
+    return null
+  }
+  for (const status of ['missing', 'cached', 'error']) {
+    const client = new QueryClient()
+    client.setQueryData(firstKey, { ...page, page: 1 }, { updatedAt: 1 })
+    client.setQueryData(countKey, { totalCount: 400 }, { updatedAt: 1 })
+    if (status === 'cached')
+      client.setQueryData(visibleKey, page, { updatedAt: 1 })
+    if (status === 'error')
+      await assert.rejects(
+        client.fetchQuery({
+          queryKey: visibleKey,
+          queryFn: async () => {
+            throw new Error('Fixture page unavailable')
+          },
+        }),
+      )
+    requests.length = 0
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <View />
+      </QueryClientProvider>,
+    )
+    const observers = client
+      .getQueryCache()
+      .getAll()
+      .map((query) =>
+        new QueryObserver(client, {
+          ...query.options,
+          queryKey: query.queryKey,
+        }).subscribe(() => undefined),
+      )
+    try {
+      assert.deepEqual(
+        requests.sort(),
+        status === 'missing' ? ['2'] : ['2', 'count'],
+        status,
+      )
+    } finally {
+      observers.forEach((unsubscribe) => unsubscribe())
       client.clear()
     }
   }

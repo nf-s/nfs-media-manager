@@ -83,14 +83,6 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     ...clientQueryDefaults,
     retry: false,
   })
-  // The first-page observer below rerenders this hook as the current view settles.
-  const firstPage = client.getQueryState([...pageKey, 1])
-  const count = useQuery({
-    ...countOptions,
-    enabled:
-      enabled &&
-      (firstPage?.data !== undefined || firstPage?.status === 'error'),
-  })
   async function loadPage(page: number, size: number, signal: AbortSignal) {
     const query = new URLSearchParams(params)
     query.set('page', String(page))
@@ -119,8 +111,12 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     viewportHeight,
     headerHeight,
     extraRowHeights,
-    totalCount: count.data?.totalCount,
+    totalCount: client.getQueryData(countOptions.queryKey)?.totalCount,
     prioritizeVisible: true,
+  })
+  const count = useQuery({
+    ...countOptions,
+    enabled: enabled && rows.visiblePagesSettled,
   })
   const conflict =
     rows.conflictingPage === undefined
@@ -131,6 +127,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
   useEffect(() => {
     if (
       !enabled ||
+      !rows.visiblePagesSettled ||
       !conflict ||
       count.isFetching ||
       lastConflict.current === conflict
@@ -138,7 +135,13 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
       return
     lastConflict.current = conflict
     void refetchCount({ cancelRefetch: false })
-  }, [enabled, conflict, count.isFetching, refetchCount])
+  }, [
+    enabled,
+    rows.visiblePagesSettled,
+    conflict,
+    count.isFetching,
+    refetchCount,
+  ])
   return {
     ...rows,
     isCounting: isBrowseCounting({
@@ -340,6 +343,13 @@ export function useVirtualPages<Page extends VirtualPageData>({
     return { index, item: items?.[index % pageSize] }
   })
   const visible = pages.get(visiblePage)
+  const visiblePagesSettled = (
+    window.pages.length ? window.pages : [visiblePage]
+  ).every((page) => {
+    if (!isVisible(page)) return true
+    const state = client.getQueryState([...queryKey, page])
+    return state?.data !== undefined || state?.status === 'error'
+  })
   const visibleSlot = slots[window.firstVisibleIndex - window.start]
   useBrowsePerformance(performanceScreen, {
     identity: performanceScreen ? hashKey(queryKey) : '',
@@ -371,6 +381,7 @@ export function useVirtualPages<Page extends VirtualPageData>({
     }),
     total: total ?? loadedEnd,
     firstPage: first.data,
+    visiblePagesSettled,
     hasTotal: total !== undefined,
     conflictingPage,
     isPending:
