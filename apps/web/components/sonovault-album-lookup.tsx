@@ -51,8 +51,8 @@ const confirmationLabels: Record<SonovaultAlbumConfirmation, string> = {
 const missLabels: Record<SonovaultAlbumMiss, string> = {
   'no-track':
     'No track of the album has a Spotify ID, an ISRC or a Sonovault record.',
-  'track-not-found': 'The album track looked up is not on Sonovault.',
-  'no-release': 'The track’s Sonovault record lists no release.',
+  'track-not-found': 'No track of the album is on Sonovault.',
+  'no-release': 'The album’s Sonovault track records list no release.',
   'not-confirmed':
     'No release on the track’s record carries the album’s Spotify album ID, UPC or MusicBrainz release group.',
 }
@@ -258,7 +258,7 @@ function AlbumLookupBody({ state }: { state: SonovaultAlbumState }) {
         {!lookup ? (
           <p className="ds-help">
             {state.canLookUp
-              ? 'Sonovault finds an album through one of its tracks and confirms it by the album’s Spotify album ID, UPC or MusicBrainz release group. Up to seven credits.'
+              ? 'Sonovault finds an album through its tracks’ records and confirms it by the album’s Spotify album ID, UPC or MusicBrainz release group. Look up its tracks first; then one or two credits, at most six.'
               : 'No track of the album has a Spotify ID or ISRC to look up on Sonovault.'}
           </p>
         ) : lookup.status === 'not_found' ? (

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { z } from 'zod'
@@ -170,13 +170,15 @@ function mockSonovault() {
                   duration: libraryDuration(position),
                   isrc: releaseIsrc(position),
                 }),
-                releases: releaseOnTrack.map((id) => ({
-                  id,
-                  title: `Fixture Release ${id}`,
-                  artist: { id: 7001, name: 'Fixture Artist' },
-                  label: null,
-                  release_date: '2020-01-01',
-                })),
+                releases: releaseOnTrack
+                  .filter((id) => position === 1 || id !== 8101)
+                  .map((id) => ({
+                    id,
+                    title: `Fixture Release ${id}`,
+                    artist: { id: 7001, name: 'Fixture Artist' },
+                    label: null,
+                    release_date: '2020-01-01',
+                  })),
               },
               sonovaultLinksFixture(recordId(position), item),
             )
@@ -265,7 +267,10 @@ beforeEach(async () => {
   for (const position of positions)
     await databaseClient
       .update(schema.libraryTrack)
-      .set({ spotifyTrackId: spotifyId(position), isrc: null })
+      .set({
+        spotifyTrackId: position <= 2 ? spotifyId(position) : null,
+        isrc: null,
+      })
       .where(eq(schema.libraryTrack.mediaItemId, trackId(position)))
   await addAlbumReference('spotify', 'album', spotifyAlbum)
   await addAlbumReference('spotify', 'upc', '0123456789012')
@@ -299,7 +304,14 @@ async function runQueued() {
   throw new Error('Queued jobs did not finish')
 }
 
-async function lookUpAlbum() {
+/** Looks up the album's tracks, 100 to a request, as the album run does first. */
+async function lookUpTracks() {
+  await queueSonovaultTrackLookups({ trackIds: positions.map(trackId) }, userId)
+  await runQueued()
+}
+
+async function lookUpAlbum(tracksFirst = true) {
+  if (tracksFirst) await lookUpTracks()
   const result = await queueSonovaultAlbumLookups(
     { albumIds: [albumId] },
     userId,
@@ -316,6 +328,7 @@ const albumJobs = () =>
       and(
         eq(schema.scrapeJob.provider, 'sonovault'),
         eq(schema.scrapeJob.status, 'succeeded'),
+        sql`${schema.scrapeJob.options}->>'task' = ${SONOVAULT_ALBUM_LOOKUP_TASK}`,
       ),
     )
     .orderBy(asc(schema.scrapeJob.createdAt), asc(schema.scrapeJob.id))
@@ -352,18 +365,18 @@ async function primaryIsrc(position: number) {
 }
 
 describe('Sonovault album lookup through the queue, with offline HTTP', () => {
-  it('confirms the album by its identifiers and aligns its tracks through the track writer', async () => {
+  it("confirms the album from its tracks' records and aligns the tracks without their own", async () => {
     expect(await lookUpAlbum()).toMatchObject({ queued: 1, skipped: 0 })
-    // One lookup, the compilation (not confirmed), the album's release and
-    // its matched edition's numbering.
+    // One track lookup for every track with an ID, then the release most of
+    // the tracks list (not the compilation only track 1 lists) and its
+    // matched edition's numbering.
     expect(requested()).toEqual([
       '/v1/tracks/resolve',
-      '/v1/releases/8101',
       '/v1/releases/8102',
       '/v1/releases/8102?edition=501',
     ])
     expect(bodies).toEqual([
-      { input_type: 'spotify_id', items: [spotifyId(1)] },
+      { input_type: 'spotify_id', items: [spotifyId(1), spotifyId(2)] },
     ])
 
     const [job] = await albumJobs()
@@ -372,9 +385,10 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
       task: SONOVAULT_ALBUM_LOOKUP_TASK,
       albumId,
       albumTitle: 'Album fixture',
-      creditsUsed: 4,
-      // The resolve reported 30,000 before three release fetches.
-      creditsRemaining: 29997,
+      creditsUsed: 2,
+      // The track lookup reported 30,000 before two release fetches.
+      creditsRemaining: 29998,
+      releaseCandidates: 2,
       releaseId: '8102',
       confirmedBy: ['spotify-album', 'upc', 'musicbrainz-release-group'],
       confirmed: true,
@@ -393,64 +407,55 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
     expect(responses.map((row) => [row.status, row.bodyState])).toEqual([
       [200, 'captured'],
       [200, 'captured'],
-      [200, 'captured'],
-      [200, 'captured'],
     ])
     expect(JSON.stringify(responses)).not.toContain(apiKey)
-    const [resolveResponse, , releaseResponse, numberedResponse] = responses
-    if (!resolveResponse || !releaseResponse || !numberedResponse)
+    const [releaseResponse, numberedResponse] = responses
+    if (!releaseResponse || !numberedResponse)
       throw new Error('Missing responses')
 
-    // The seed keeps its own lookup with its links.
-    expect(await trackLookup(1)).toMatchObject({
-      inputType: 'spotify_id',
-      responseId: resolveResponse.id,
+    // Tracks with an ID keep their own lookups and links.
+    for (const position of [1, 2]) {
+      expect(await trackLookup(position)).toMatchObject({
+        inputType: 'spotify_id',
+        verified: true,
+      })
+      expect(
+        (await references(trackId(position))).map((row) => row.referenceType),
+      ).toContain('spotify-track')
+    }
+
+    // A track with no ID gets the same references and ISRC from the release.
+    expect(await trackLookup(3)).toMatchObject({
+      inputType: 'release',
+      input: '8102',
+      status: 'matched',
+      sonovaultTrackId: String(recordId(3)),
       verified: true,
+      primaryIsrc: releaseIsrc(3),
+      scrapeJobId: job.id,
+      responseId: numberedResponse.id,
+    })
+    const rows = await references(trackId(3))
+    expect(rows.map((row) => [row.referenceType, row.externalId])).toEqual([
+      ['isrc', releaseIsrc(3)],
+      ['sonovault-track', String(recordId(3))],
+    ])
+    expect(
+      rows.find((row) => row.referenceType === 'sonovault-track'),
+    ).toMatchObject({
+      isPrimary: true,
+      metadata: {
+        verified: true,
+        inputType: 'release',
+        jobId: job.id,
+        responseId: numberedResponse.id,
+        isrc: releaseIsrc(3),
+      },
     })
     expect(
-      (await references(trackId(1))).map((row) => row.referenceType),
-    ).toEqual([
-      'isrc',
-      'musicbrainz-recording',
-      'sonovault-track',
-      'spotify-track',
-      'tidal-track',
-    ])
-
-    // Aligned tracks get the same references and ISRC from the numbered release.
-    for (const position of [2, 3]) {
-      expect(await trackLookup(position)).toMatchObject({
-        inputType: 'release',
-        input: '8102',
-        status: 'matched',
-        sonovaultTrackId: String(recordId(position)),
-        verified: true,
-        primaryIsrc: releaseIsrc(position),
-        scrapeJobId: job.id,
-        responseId: numberedResponse.id,
-      })
-      const rows = await references(trackId(position))
-      expect(rows.map((row) => [row.referenceType, row.externalId])).toEqual([
-        ['isrc', releaseIsrc(position)],
-        ['sonovault-track', String(recordId(position))],
-      ])
-      expect(
-        rows.find((row) => row.referenceType === 'sonovault-track'),
-      ).toMatchObject({
-        isPrimary: true,
-        metadata: {
-          verified: true,
-          inputType: 'release',
-          jobId: job.id,
-          responseId: numberedResponse.id,
-          isrc: releaseIsrc(position),
-        },
-      })
-      expect(
-        rows.find((row) => row.referenceType === 'isrc')?.metadata,
-      ).toMatchObject({ source: SONOVAULT_ALBUM_LOOKUP_TASK, jobId: job.id })
-      expect(await primaryIsrc(position)).toBe(releaseIsrc(position))
-    }
+      rows.find((row) => row.referenceType === 'isrc')?.metadata,
+    ).toMatchObject({ source: SONOVAULT_ALBUM_LOOKUP_TASK, jobId: job.id })
+    expect(await primaryIsrc(3)).toBe(releaseIsrc(3))
     // Paired by position and title at another version's length: unverified.
     expect(await trackLookup(4)).toMatchObject({
       inputType: 'release',
@@ -495,8 +500,8 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
         releaseId: '8102',
         editionId: '501',
         aligned: 4,
-        isrcs: 2,
-        creditsUsed: 4,
+        isrcs: 1,
+        creditsUsed: 2,
       },
       review: [
         {
@@ -550,7 +555,15 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('starts from a stored track record without a lookup and offers missing matches', async () => {
+  it('waits, recording nothing, while its tracks are not looked up', async () => {
+    await lookUpAlbum(false)
+    expect(request).not.toHaveBeenCalled()
+    const [job] = await albumJobs()
+    expect(job?.options).toMatchObject({ creditsUsed: 0, tracksPending: true })
+    expect((await getSonovaultAlbumState(albumId)).lookup).toBeNull()
+  })
+
+  it('offers Sonovault IDs where the album has no Discogs or MusicBrainz match', async () => {
     await databaseClient
       .delete(schema.providerReference)
       .where(eq(schema.providerReference.provider, 'discogs'))
@@ -558,11 +571,10 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
       .delete(schema.providerReference)
       .where(eq(schema.providerReference.provider, 'musicbrainz'))
     releaseOnTrack = [8102]
-    await queueSonovaultTrackLookups({ trackIds: [trackId(3)] }, userId)
-    await runQueued()
+    await lookUpTracks()
     request.mockClear()
 
-    await lookUpAlbum()
+    await lookUpAlbum(false)
     expect(requested()).toEqual([
       '/v1/releases/8102',
       '/v1/releases/8102?edition=501',
@@ -590,8 +602,8 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
       },
     ])
     // The track looked up on its own keeps its lookup.
-    expect(await trackLookup(3)).toMatchObject({ inputType: 'spotify_id' })
-    expect(await trackLookup(2)).toMatchObject({ inputType: 'release' })
+    expect(await trackLookup(2)).toMatchObject({ inputType: 'spotify_id' })
+    expect(await trackLookup(3)).toMatchObject({ inputType: 'release' })
     const unresolved = await listUnresolvedMatches({
       kind: 'album',
       id: albumId,
@@ -639,31 +651,41 @@ describe('Sonovault album lookup through the queue, with offline HTTP', () => {
       miss: 'not-confirmed',
       releaseId: null,
       aligned: 0,
-      creditsUsed: 2,
+      creditsUsed: 1,
       retryAfter: expect.any(String),
     })
     expect(state.references).toEqual([])
-    expect(await trackLookup(2)).toBeNull()
+    expect(await trackLookup(3)).toBeNull()
     // A miss is not looked up again for 30 days.
     request.mockClear()
     expect(await lookUpAlbum()).toMatchObject({ queued: 0 })
     expect(request).not.toHaveBeenCalled()
+    // Unless asked to try it again now.
+    expect(
+      await queueSonovaultAlbumLookups(
+        { albumIds: [albumId], retry: true },
+        userId,
+      ),
+    ).toMatchObject({ queued: 1 })
   })
 
   it('stops before the reserve and removes album lookups with everything else', async () => {
-    secrets['creditReserve'] = '49995'
-    await lookUpAlbum()
+    await lookUpTracks()
+    request.mockClear()
+    // The track lookup reported 30,000 left.
+    secrets['creditReserve'] = '29995'
+    await lookUpAlbum(false)
     expect(request).not.toHaveBeenCalled()
     const [job] = await albumJobs()
     expect(job?.options).toMatchObject({ creditReserveReached: true })
     expect((await getSonovaultAlbumState(albumId)).lookup).toBeNull()
 
     delete secrets['creditReserve']
-    await lookUpAlbum()
+    await lookUpAlbum(false)
     expect((await getSonovaultAlbumState(albumId)).lookup?.status).toBe(
       'confirmed',
     )
-    expect((await getSonovaultSummary()).credits.remaining).toBe(29997)
+    expect((await getSonovaultSummary()).credits.remaining).toBe(29998)
     const removed = await removeSonovaultData()
     expect(removed.lookups).toBe(5)
     expect(await references(albumId)).toEqual([])

@@ -6,10 +6,10 @@ export const SONOVAULT_ALBUM_LOOKUP_TASK = 'sonovault-album-lookup'
 /** Releases on the seed track's record fetched at most, one credit each. */
 export const SONOVAULT_RELEASE_CANDIDATE_LIMIT = 5
 /**
- * Credits one album can use at most: a track lookup, every candidate release
- * and the matched edition's numbering.
+ * Credits one album job can use at most: every candidate release and the
+ * matched edition's numbering. Its tracks are looked up by track lookups.
  */
-export const SONOVAULT_ALBUM_MAX_CREDITS = SONOVAULT_RELEASE_CANDIDATE_LIMIT + 2
+export const SONOVAULT_ALBUM_MAX_CREDITS = SONOVAULT_RELEASE_CANDIDATE_LIMIT + 1
 
 const id = z
   .string()
@@ -38,9 +38,9 @@ export const SonovaultAlbumLookupStatusSchema = z.enum([
 export const SonovaultAlbumMissSchema = z.enum([
   /** No album track has a Spotify ID, an ISRC or a Sonovault record. */
   'no-track',
-  /** The track looked up is not on Sonovault. */
+  /** No looked-up track of the album is on Sonovault. */
   'track-not-found',
-  /** The track's record lists no release. */
+  /** The album's track records list no release. */
   'no-release',
   /** No candidate release carries one of the album's identifiers. */
   'not-confirmed',
@@ -90,6 +90,8 @@ export type SonovaultAlbumReferenceMetadata = z.infer<
 export const SonovaultAlbumLookupParamsSchema = z.object({
   albumId: id,
   refresh: z.boolean().default(false),
+  /** Look up an album not found in the last 30 days again now. */
+  retry: z.boolean().default(false),
 })
 
 export const SonovaultAlbumParamsSchema = z.object({ albumId: id })
@@ -101,6 +103,8 @@ export const SonovaultAlbumLookupInputSchema = z
     batchId: id.optional(),
     /** Look up albums whose lookup is older than 11 months again. */
     refresh: z.boolean().default(false),
+    /** Look up albums not found in the last 30 days again now. */
+    retry: z.boolean().default(false),
     confirmBroadRun: z.boolean().default(false),
   })
   .strict()

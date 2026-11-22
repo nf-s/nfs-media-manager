@@ -20,7 +20,7 @@ export const sonovaultPlugin: MediaProviderPlugin = {
     id: 'sonovault',
     displayName: 'Sonovault',
     description:
-      'Track and album identifiers on other services, by Spotify ID or ISRC; paid lookups, one credit a track and two or three an album',
+      'Track and album identifiers on other services, by Spotify ID or ISRC; paid lookups, one credit a track and one or two an album',
     siteUrl: 'https://sonovault.now',
     mediaTypes: ['album'],
     requireExplicitSelection: true,

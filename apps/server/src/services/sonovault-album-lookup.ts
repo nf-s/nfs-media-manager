@@ -44,11 +44,9 @@ import {
 } from '@/lib/sonovault-album-match'
 import {
   getSonovaultRelease,
-  resolveSonovaultTracks,
   SonovaultBulkResolveResponseSchema,
   sonovaultGatedPlugin,
   sonovaultSettings,
-  type SonovaultBulkResolveResponse,
   type SonovaultRelease,
   type SonovaultTrack,
 } from '@/lib/sonovault-api'
@@ -67,11 +65,11 @@ import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
 import {
+  dueForSonovaultLookup,
   queueSonovaultTrackRefresh,
   readSonovaultTargets,
   reportedSonovaultCredits,
   sonovaultLookupInput,
-  writeSonovaultLookups,
   writeSonovaultRecords,
   type SonovaultTarget,
 } from './sonovault-track-lookup'
@@ -215,12 +213,20 @@ async function readAlbumTargets(
   })
 }
 
-/** Whether an album is due a lookup: never looked up, a miss over 30 days old, or a refresh. */
-function dueForLookup(album: AlbumTarget, refresh: boolean, now: Date) {
+/**
+ * Whether an album is due a lookup: never looked up, a miss over 30 days old
+ * or asked to be tried again, or a refresh.
+ */
+function dueForLookup(
+  album: AlbumTarget,
+  refresh: boolean,
+  now: Date,
+  retry = false,
+) {
   const { lookup } = album
   if (!lookup) return true
   if (lookup.status === 'not_found')
-    return lookup.lookedUpAt < missRetryCutoff(now)
+    return retry || lookup.lookedUpAt < missRetryCutoff(now)
   return refresh && lookup.lookedUpAt < refreshCutoff(now)
 }
 
@@ -229,9 +235,43 @@ const StoredBodySchema = z.object({
   text: z.string(),
 })
 
+type StoredBulk = z.infer<typeof SonovaultBulkResolveResponseSchema> | null
+
+/** A stored bulk response, parsed once however many album tracks it answers. */
+async function storedBulk(
+  database: Reader,
+  cache: Map<string, StoredBulk>,
+  responseId: string,
+): Promise<StoredBulk> {
+  if (cache.has(responseId)) return cache.get(responseId) ?? null
+  const [row] = await database
+    .select({ body: providerResponse.body })
+    .from(providerResponse)
+    .where(
+      and(
+        eq(providerResponse.id, responseId),
+        eq(providerResponse.provider, PROVIDER),
+      ),
+    )
+  const body = StoredBodySchema.safeParse(row?.body)
+  let parsed: StoredBulk = null
+  if (body.success)
+    try {
+      const payload = SonovaultBulkResolveResponseSchema.safeParse(
+        JSON.parse(body.data.text),
+      )
+      parsed = payload.success ? payload.data : null
+    } catch {
+      parsed = null
+    }
+  cache.set(responseId, parsed)
+  return parsed
+}
+
 /** The record a track's own lookup stored, with the releases it is on. */
 async function storedRecord(
   database: Reader,
+  cache: Map<string, StoredBulk>,
   target: SonovaultTarget,
 ): Promise<SonovaultTrack | null> {
   const lookup = target.lookup
@@ -241,27 +281,9 @@ async function storedRecord(
     (lookup.inputType !== 'spotify_id' && lookup.inputType !== 'isrc')
   )
     return null
-  const [row] = await database
-    .select({ body: providerResponse.body })
-    .from(providerResponse)
-    .where(
-      and(
-        eq(providerResponse.id, lookup.responseId),
-        eq(providerResponse.provider, PROVIDER),
-      ),
-    )
-  const body = StoredBodySchema.safeParse(row?.body)
-  if (!body.success) return null
-  let raw: unknown
-  try {
-    raw = JSON.parse(body.data.text)
-  } catch {
-    return null
-  }
-  const payload = SonovaultBulkResolveResponseSchema.safeParse(raw)
-  if (!payload.success) return null
+  const payload = await storedBulk(database, cache, lookup.responseId)
   const sent = lookup.input
-  const line = payload.data.results.find(({ input }) =>
+  const line = payload?.results.find(({ input }) =>
     typeof input !== 'string'
       ? false
       : lookup.inputType === 'isrc'
@@ -271,24 +293,29 @@ async function storedRecord(
   return line?.status === 'matched' ? line.track : null
 }
 
-type Seed =
-  | { kind: 'stored'; trackId: string; record: SonovaultTrack }
+type Candidates =
   | {
-      kind: 'lookup'
+      kind: 'releases'
+      /** The first album track with a record. */
       trackId: string
-      inputType: 'spotify_id' | 'isrc'
-      input: string
+      /** Release IDs, most album tracks listing them first. */
+      releases: number[]
     }
+  /** Tracks that can be looked up have not been yet: nothing is decided. */
+  | { kind: 'pending' }
+  | { kind: 'miss'; miss: SonovaultAlbumMiss; trackId: string | null }
 
 /**
- * SONO-18: a track of the album with a stored record, a verified one first;
- * otherwise one to look up, by Spotify ID first, skipping recent misses.
+ * SONO-18: the releases listed on the album's stored track records, ranked by
+ * how many of its tracks list each, read from the track lookups' stored
+ * responses with no request of its own. An album whose tracks can still be
+ * looked up waits for those lookups.
  */
-async function chooseSeed(
+async function releaseCandidates(
   database: Reader,
   album: AlbumTarget,
   now: Date,
-): Promise<Seed | null> {
+): Promise<Candidates> {
   const byId = new Map(
     (
       await readSonovaultTargets(
@@ -300,28 +327,44 @@ async function chooseSeed(
   const ordered = album.tracks.flatMap(
     ({ trackMediaItemId }) => byId.get(trackMediaItemId) ?? [],
   )
-  const stored = [
-    ...ordered.filter(({ lookup }) => lookup?.verified === true),
-    ...ordered.filter(({ lookup }) => lookup?.verified !== true),
-  ]
-  for (const target of stored) {
-    const record = await storedRecord(database, target)
-    if (record) return { kind: 'stored', trackId: target.id, record }
+  const cache = new Map<string, StoredBulk>()
+  const counts = new Map<number, number>()
+  let first: string | null = null
+  for (const target of ordered) {
+    const record = await storedRecord(database, cache, target)
+    if (!record) continue
+    first ??= target.id
+    for (const id of new Set(record.releases.map((release) => release.id)))
+      counts.set(id, (counts.get(id) ?? 0) + 1)
   }
-  const askable = ordered.flatMap((target) => {
+  if (first)
+    return counts.size
+      ? {
+          kind: 'releases',
+          trackId: first,
+          // Map order keeps the first-listed release first among equals.
+          releases: [...counts]
+            .sort((left, right) => right[1] - left[1])
+            .map(([id]) => id),
+        }
+      : { kind: 'miss', miss: 'no-release', trackId: first }
+  const pending = ordered.some((target) => {
     const input = sonovaultLookupInput(target)
-    const recentMiss =
-      target.lookup?.status === 'not_found' &&
-      target.lookup.lookedUpAt >= missRetryCutoff(now)
-    if (!input || recentMiss || target.active) return []
-    const { inputType } = input
-    return inputType === 'spotify_id' || inputType === 'isrc'
-      ? [{ trackId: target.id, inputType, input: input.input }]
-      : []
+    return (
+      input !== null &&
+      (input.inputType === 'spotify_id' || input.inputType === 'isrc') &&
+      (target.active ||
+        dueForSonovaultLookup(target, input.inputType, false, now))
+    )
   })
-  const seed =
-    askable.find(({ inputType }) => inputType === 'spotify_id') ?? askable[0]
-  return seed ? { kind: 'lookup', ...seed } : null
+  if (pending) return { kind: 'pending' }
+  return {
+    kind: 'miss',
+    miss: ordered.some((target) => target.lookup?.status === 'not_found')
+      ? 'track-not-found'
+      : 'no-track',
+    trackId: null,
+  }
 }
 
 export async function prepareSonovaultAlbumLookup(
@@ -333,6 +376,7 @@ export async function prepareSonovaultAlbumLookup(
   return {
     albumId: options.albumId,
     refresh: options.refresh,
+    retry: options.retry,
     groupKey: createStableId(SONOVAULT_ALBUM_LOOKUP_TASK, options.albumId),
     ...(album ? { albumTitle: album.title.slice(0, 500) } : {}),
   }
@@ -350,8 +394,6 @@ type Run =
   | { kind: 'reserve'; remaining: number; reserve: number }
   | {
       kind: 'done'
-      resolved: SonovaultBulkResolveResponse | null
-      record: SonovaultTrack | null
       releases: number
       confirmed: Confirmed | null
       remainingBefore: number
@@ -409,8 +451,8 @@ type AlbumWritten = {
 }
 
 /**
- * Records what one album lookup found: the seed track's lookup, the album's
- * references and, for each aligned track, its record through the track
+ * Records what one album lookup found: the album's references and, for each
+ * aligned track without its own record, its record through the track
  * lookup's own writer.
  */
 async function writeAlbumLookup(
@@ -418,22 +460,14 @@ async function writeAlbumLookup(
   input: {
     jobId: string
     albumId: string
-    seed: Seed
+    seedTrackId: string
     run: Extract<Run, { kind: 'done' }>
     creditsUsed: number
   },
 ): Promise<AlbumWritten> {
-  const { jobId, seed, run } = input
+  const { jobId, run } = input
   const responses = await jobResponses(tx, jobId)
   const now = new Date()
-  if (seed.kind === 'lookup' && run.resolved)
-    await writeSonovaultLookups(tx, {
-      jobId,
-      inputType: seed.inputType,
-      sent: [{ target: { id: seed.trackId }, input: seed.input }],
-      results: run.resolved.results,
-      response: responseFor(responses, '/v1/tracks/resolve'),
-    })
   const [album] = await readAlbumTargets(tx, [input.albumId])
   const written: AlbumWritten = {
     confirmed: false,
@@ -456,11 +490,9 @@ async function writeAlbumLookup(
   const { confirmed } = run
   const miss: SonovaultAlbumMiss | null = confirmed
     ? null
-    : !run.record
-      ? 'track-not-found'
-      : run.releases === 0
-        ? 'no-release'
-        : 'not-confirmed'
+    : run.releases === 0
+      ? 'no-release'
+      : 'not-confirmed'
   let responseId: string | null = null
   if (confirmed) {
     const releaseResponse = responseFor(
@@ -570,7 +602,7 @@ async function writeAlbumLookup(
         ? String(confirmed.editionId)
         : null,
     confirmedBy: confirmed?.confirmedBy ?? [],
-    seedTrackId: seed.trackId,
+    seedTrackId: input.seedTrackId,
     aligned: written.aligned,
     unaligned: written.unaligned,
     isrcs: written.isrcs,
@@ -634,9 +666,9 @@ async function writeAlbumMiss(
 const missMessages: Record<SonovaultAlbumMiss, string> = {
   'no-track':
     'Not looked up: no track of the album has a Spotify ID, an ISRC or a Sonovault record.',
-  'track-not-found':
-    'Not found: the album track looked up is not on Sonovault.',
-  'no-release': 'Not found: the track’s Sonovault record lists no release.',
+  'track-not-found': 'Not found: no track of the album is on Sonovault.',
+  'no-release':
+    'Not found: the album’s Sonovault track records list no release.',
   'not-confirmed':
     'Not found: no candidate release carries the album’s Spotify album ID, UPC or MusicBrainz release group.',
 }
@@ -650,38 +682,33 @@ export async function runSonovaultAlbumLookup(
     await context.assertActive()
     const now = new Date()
     const [album] = await readAlbumTargets(db, [options.albumId])
-    if (!album || !dueForLookup(album, options.refresh, now))
+    if (!album || !dueForLookup(album, options.refresh, now, options.retry))
       return {
         outcome: 'complete',
         message: 'Nothing to look up: the album changed or was looked up.',
         noProviderRequests: true,
         options: { creditsUsed: 0 },
       }
-    const seed = await chooseSeed(db, album, now)
-    if (!seed)
+    const candidates = await releaseCandidates(db, album, now)
+    if (candidates.kind === 'pending')
       return {
         outcome: 'complete',
-        message: missMessages['no-track'],
+        message:
+          'Not looked up yet: look up the album’s tracks first; the album stays due.',
         noProviderRequests: true,
-        options: { creditsUsed: 0, miss: 'no-track' },
-        persist: (tx) =>
-          writeAlbumMiss(tx, album.id, context.jobId, 'no-track', null),
+        options: { creditsUsed: 0, tracksPending: true },
       }
-    if (seed.kind === 'stored' && !seed.record.releases.length)
+    if (candidates.kind === 'miss') {
+      const { miss, trackId } = candidates
       return {
         outcome: 'complete',
-        message: missMessages['no-release'],
+        message: missMessages[miss],
         noProviderRequests: true,
-        options: { creditsUsed: 0, miss: 'no-release' },
+        options: { creditsUsed: 0, miss },
         persist: (tx) =>
-          writeAlbumMiss(
-            tx,
-            album.id,
-            context.jobId,
-            'no-release',
-            seed.trackId,
-          ),
+          writeAlbumMiss(tx, album.id, context.jobId, miss, trackId),
       }
+    }
     const run = await providerOperation<Run>(
       PROVIDER,
       async ({ secrets }, plugin) => {
@@ -711,26 +738,12 @@ export async function runSonovaultAlbumLookup(
           context.assertActive,
           { beginResponseCapture: recorder('task') },
         )
-        let resolved: SonovaultBulkResolveResponse | null = null
-        let record: SonovaultTrack | null = null
-        if (seed.kind === 'lookup') {
-          resolved = await resolveSonovaultTracks(
-            request,
-            settings.apiKey,
-            seed.inputType,
-            [seed.input],
-          )
-          const [line] = resolved.results
-          if (line?.status === 'skipped_no_credits')
-            throw new Error('Sonovault skipped the track for lack of credits.')
-          record = line?.status === 'matched' ? line.track : null
-        } else record = seed.record
         let releases = 0
         let confirmed: Confirmed | null = null
-        const candidates = [
-          ...new Set((record?.releases ?? []).map(({ id }) => id)),
-        ].slice(0, SONOVAULT_RELEASE_CANDIDATE_LIMIT)
-        for (const candidate of candidates) {
+        for (const candidate of candidates.releases.slice(
+          0,
+          SONOVAULT_RELEASE_CANDIDATE_LIMIT,
+        )) {
           const release = await getSonovaultRelease(
             request,
             settings.apiKey,
@@ -757,14 +770,7 @@ export async function runSonovaultAlbumLookup(
           break
         }
         recorder.assertStored()
-        return {
-          kind: 'done',
-          resolved,
-          record,
-          releases,
-          confirmed,
-          remainingBefore: remaining,
-        }
+        return { kind: 'done', releases, confirmed, remainingBefore: remaining }
       },
       context.assertActive,
       'looking up albums',
@@ -777,23 +783,17 @@ export async function runSonovaultAlbumLookup(
         noProviderRequests: true,
         options: { creditsUsed: 0, creditReserveReached: true },
       }
-    const fetches = run.releases + (run.confirmed?.numbered ? 1 : 0)
-    const creditsUsed = (run.resolved?.credits_used ?? 0) + fetches
+    const creditsUsed = run.releases + (run.confirmed?.numbered ? 1 : 0)
     const creditOptions = {
       creditsUsed,
       // Release fetches report no credits: the last report less those fetched.
-      creditsRemaining: Math.max(
-        0,
-        (run.resolved?.credits_remaining ?? run.remainingBefore) - fetches,
-      ),
+      creditsRemaining: Math.max(0, run.remainingBefore - creditsUsed),
       creditsReportedAt: new Date().toISOString(),
     }
     const confirmedBy = run.confirmed?.confirmedBy ?? []
-    const miss: SonovaultAlbumMiss = !run.record
-      ? 'track-not-found'
-      : run.releases
-        ? 'not-confirmed'
-        : 'no-release'
+    const miss: SonovaultAlbumMiss = run.releases
+      ? 'not-confirmed'
+      : 'no-release'
     let written: AlbumWritten | undefined
     return {
       outcome: 'complete',
@@ -802,7 +802,8 @@ export async function runSonovaultAlbumLookup(
         : `${missMessages[miss]} ${creditsUsed} credits used.`,
       options: {
         ...creditOptions,
-        releasesFetched: fetches,
+        releasesFetched: creditsUsed,
+        releaseCandidates: candidates.releases.length,
         ...(run.confirmed
           ? {
               releaseId: String(run.confirmed.release.id),
@@ -816,7 +817,7 @@ export async function runSonovaultAlbumLookup(
         written = await writeAlbumLookup(tx, {
           jobId: context.jobId,
           albumId: album.id,
-          seed,
+          seedTrackId: candidates.trackId,
           run,
           creditsUsed,
         })
@@ -842,6 +843,7 @@ export async function queueSonovaultAlbumLookups(
   const {
     albumIds,
     refresh,
+    retry,
     batchId = nanoid(),
   } = SonovaultAlbumLookupInputSchema.parse(input)
   const unique = [...new Set(albumIds)]
@@ -849,9 +851,9 @@ export async function queueSonovaultAlbumLookups(
   let queued = 0
   for (const album of await readAlbumTargets(db, unique)) {
     if (album.active || !album.tracks.length) continue
-    if (!dueForLookup(album, refresh, now)) continue
+    if (!dueForLookup(album, refresh, now, retry)) continue
     await createTaskJob(SONOVAULT_ALBUM_LOOKUP_TASK, userId, {
-      taskOptions: { albumId: album.id, refresh, batchId },
+      taskOptions: { albumId: album.id, refresh, retry, batchId },
     })
     queued += 1
   }
