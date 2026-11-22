@@ -1,6 +1,6 @@
 # Sonovault identifiers and track facts
 
-Status: proposed on 2026-11-22. Nothing here is built, and no stage starts until the owner agrees to it.
+Status: the owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5, built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
 
 Sonovault is a paid lookup service. Given a track's ISRC or its ID on one service, it returns the same recording's IDs on the other services, with its ISRC, tempo, key, genre, label and releases. It is added as a provider that fills identifiers and track facts. It does not play music and it has no similar-track or recommendation endpoint, so TIDAL and Last.fm stay the sources of related music. If it stops being good enough, another lookup provider can take its place: everything it reports is stored under its own provider name and can be removed or replaced without touching what other providers reported.
 
@@ -10,7 +10,7 @@ The build has five stages, each released through `main` on its own:
 2. Tempo, key and genre on tracks.
 3. Albums, through Sonovault releases.
 4. Tracks with no identifier, by artist and title, for review.
-5. Later uses, each only when the owner asks for it.
+5. Later uses, each only when the owner asks for it. SONO-26 is asked for.
 
 ## What the service returns
 
@@ -95,8 +95,9 @@ Each is a separate piece of work, started only when the owner asks for it.
 
 Audio recognition (the library holds no audio files), radio stream monitoring and its webhooks, submitting genre corrections to Sonovault, and the all-releases feed. Sonovault is not a playback source and is not used to replace an identifier that another provider confirmed.
 
-## Decisions for the owner
+## Decisions
 
-- SONO-07: whether a Sonovault ISRC may become a track's primary ISRC. Proposed: yes, marked and replaceable. The alternative keeps it as a reference only, and recording groups and track search then do not see it.
-- SONO-17: whether tempo and key of unverified records are hidden in Browse (proposed) or shown with a mark.
-- Which stage 5 uses are wanted, and in what order.
+The owner asked for the build on 2026-11-22 without changing the proposals, so they stand:
+
+- SONO-07: a Sonovault ISRC may become a track's primary ISRC when it has none, marked and replaceable.
+- SONO-17: tempo and key of unverified records are hidden in Browse and marked in track details.
