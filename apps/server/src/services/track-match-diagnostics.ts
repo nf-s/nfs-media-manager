@@ -1,3 +1,4 @@
+import { SONOVAULT_TRACK_LOOKUP_TASK } from '@repo/schemas/sonovault'
 import { inArray, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
@@ -292,6 +293,7 @@ type DiagnosticsQuery = Omit<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'> &
 const freshnessHistories = {
   spotify: sql.raw('search_history'),
   tidal: sql.raw('tidal_history'),
+  sonovault: sql.raw('sonovault_history'),
 }
 type FreshnessProvider = keyof typeof freshnessHistories
 
@@ -318,7 +320,7 @@ function providerFreshness(filters: ProviderFreshnessFilter[], history: SQL) {
 /** Every filtered provider, each by any of its selected statuses. */
 function searchFreshness(filters: ProviderFreshnessFilter[]) {
   const providers = new Map<FreshnessProvider, SQL>()
-  for (const provider of ['spotify', 'tidal'] as const) {
+  for (const provider of ['spotify', 'tidal', 'sonovault'] as const) {
     const condition = providerFreshness(
       filters.filter((filter) => filter.provider === provider),
       freshnessHistories[provider],
@@ -348,6 +350,27 @@ function tidalTrackMatchHistory() {
       and options->>'task' = ${sql.raw(`'${TIDAL_TRACK_MATCH_TASK}'`)}
       and started_at is not null and (status <> 'succeeded' or options ? 'reason')
     group by ${recordingId}`
+}
+
+/**
+ * Each track's last Sonovault lookup (a match or a miss counts as a lookup)
+ * and the status of the latest lookup job that held it.
+ */
+function sonovaultLookupHistory() {
+  return sql`
+    select coalesce(lookups.media_item_id, attempts.id) as id,
+      lookups.looked_up_at as last_success,
+      attempts.latest_attempt_status
+    from sonovault_track_lookup lookups
+    full join (
+      select t.id,
+        (array_agg(j.status order by j.started_at desc, j.created_at desc, j.id desc))[1] as latest_attempt_status
+      from scrape_job j cross join jsonb_array_elements_text(j.options->'trackIds') as t(id)
+      where j.provider = 'sonovault'
+        and j.options->>'task' = ${sql.raw(`'${SONOVAULT_TRACK_LOOKUP_TASK}'`)}
+        and j.started_at is not null
+      group by t.id
+    ) attempts on attempts.id = lookups.media_item_id`
 }
 
 function spotifyTrackSearchHistory(userId: string | null, trackId?: string) {
@@ -405,6 +428,9 @@ function trackMatchDiagnosticsRows(
   const usesTidalHistory =
     metadata &&
     (freshness?.providers.has('tidal') || sortBy === 'tidalLastMatch')
+  const usesSonovaultHistory =
+    metadata &&
+    (freshness?.providers.has('sonovault') || sortBy === 'sonovaultLastLookup')
   const sortsByListening = sortBy === 'listeningScrobbles'
   const listening = createBrowseListening(
     query.listening,
@@ -426,6 +452,10 @@ function trackMatchDiagnosticsRows(
     usesTidalHistory
       ? sql`left join tidal_history on tidal_history.id = ${trackId}`
       : sql``
+  } ${
+    usesSonovaultHistory
+      ? sql`left join sonovault_history on sonovault_history.id = ${trackId}`
+      : sql``
   }`
   const providerSort =
     allEvidenceProviders.has(sortBy) ||
@@ -437,17 +467,19 @@ function trackMatchDiagnosticsRows(
       ? sql`search_history.last_success`
       : sortBy === 'tidalLastMatch' && metadata
         ? sql`tidal_history.last_success`
-        : listening?.sort
-          ? listening.sort
-          : sortBy === 'spotifyCoverage'
-            ? spotifyCoverageOrder
-            : sortBy === 'name'
-              ? sql`lower(media_item.title)`
-              : sortBy === 'creator'
-                ? sql`lower(${trackCreator})`
-                : sortBy === 'spotifyId'
-                  ? sql`lower(library_track.spotify_track_id)`
-                  : undefined
+        : sortBy === 'sonovaultLastLookup' && metadata
+          ? sql`sonovault_history.last_success`
+          : listening?.sort
+            ? listening.sort
+            : sortBy === 'spotifyCoverage'
+              ? spotifyCoverageOrder
+              : sortBy === 'name'
+                ? sql`lower(media_item.title)`
+                : sortBy === 'creator'
+                  ? sql`lower(${trackCreator})`
+                  : sortBy === 'spotifyId'
+                    ? sql`lower(library_track.spotify_track_id)`
+                    : undefined
   const direction = query.direction === 'desc' ? sql`desc` : sql`asc`
   const ordering = diagnosticSort
     ? [
@@ -567,6 +599,11 @@ function trackMatchDiagnosticsRows(
     ${
       usesTidalHistory
         ? sql`tidal_history as materialized (${tidalTrackMatchHistory()}),`
+        : sql``
+    }
+    ${
+      usesSonovaultHistory
+        ? sql`sonovault_history as materialized (${sonovaultLookupHistory()}),`
         : sql``
     }
     ${sharedArtistTags ? sql`browse_artist_tag_labels as materialized (${artistTagLabels()}),` : sql``} ${

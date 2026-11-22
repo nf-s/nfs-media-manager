@@ -1133,6 +1133,43 @@ export const tidalSimilar = pgTable('tidal_similar', {
 })
 
 /**
+ * The latest Sonovault lookup of one library track: what was sent, whether it
+ * matched, and the primary ISRC it gave the track (SONO-07, still Sonovault's
+ * while it equals `library_track.isrc`). A miss is not repeated for 30 days.
+ */
+export const sonovaultTrackLookup = pgTable(
+  'sonovault_track_lookup',
+  {
+    mediaItemId: text('media_item_id')
+      .primaryKey()
+      .references(() => mediaItem.id, { onDelete: 'cascade' }),
+    inputType: text('input_type').notNull(),
+    input: text('input').notNull(),
+    status: text('status').notNull(),
+    sonovaultTrackId: text('sonovault_track_id'),
+    verified: boolean('verified'),
+    primaryIsrc: text('primary_isrc'),
+    scrapeJobId: text('scrape_job_id').references(() => scrapeJob.id, {
+      onDelete: 'set null',
+    }),
+    responseId: text('response_id').references(() => providerResponse.id, {
+      onDelete: 'set null',
+    }),
+    lookedUpAt: timestamp('looked_up_at', {
+      mode: 'date',
+      withTimezone: false,
+    }).notNull(),
+    ...timestampColumns,
+  },
+  (table) => [
+    index('sonovault_track_lookup_looked_up_idx').on(
+      table.status,
+      table.lookedUpAt,
+    ),
+  ],
+)
+
+/**
  * What a Spotify `isrc:` or `upc:` search found for one code, or a miss.
  * UPCs are stored without leading zeros.
  */

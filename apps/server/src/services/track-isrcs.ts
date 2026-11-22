@@ -17,13 +17,14 @@ export type TrackIsrcSource =
   | { kind: 'legacy-playlist-import'; snapshotId: string }
   | { kind: 'tidal-album'; jobId: string }
   | { kind: 'tidal-track-match'; jobId: string }
+  | { kind: 'sonovault-track-lookup'; jobId: string; responseId: string }
   // The value stored on the library track before references existed.
   | { kind: 'library-track' }
 
 export type TrackIsrcEvidence = {
   mediaItemId: string
   isrc: string | null
-  provider: 'spotify' | 'tidal'
+  provider: 'spotify' | 'tidal' | 'sonovault'
   source: TrackIsrcSource
 }
 
@@ -88,3 +89,18 @@ export const trackIsrcsExpression = (mediaItemId: SQL) => sql`
       from provider_reference r
       where r.media_item_id = ${mediaItemId} and r.reference_type = 'isrc'
       group by r.external_id) codes), '[]'::jsonb)`
+
+/**
+ * Whether a library track's primary ISRC is the one a Sonovault lookup gave
+ * it (SONO-07) and no other service reports it. Spotify replaces such a
+ * value, and removing Sonovault's data clears it; nothing else does.
+ */
+export const sonovaultPrimaryIsrcSql = (mediaItemId: SQL, isrc: SQL) => sql`
+  (exists (select 1 from sonovault_track_lookup sonovault_primary
+    where sonovault_primary.media_item_id = ${mediaItemId}
+      and sonovault_primary.primary_isrc = ${isrc})
+  and not exists (select 1 from provider_reference sonovault_other
+    where sonovault_other.media_item_id = ${mediaItemId}
+      and sonovault_other.reference_type = 'isrc'
+      and sonovault_other.provider <> 'sonovault'
+      and sonovault_other.external_id = ${isrc}))`

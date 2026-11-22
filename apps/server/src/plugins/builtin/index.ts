@@ -8,6 +8,7 @@ import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { serplyPlugin } from '@/plugins/builtin/serply'
 import { tidalPlugin } from '@/plugins/builtin/tidal'
+import { sonovaultPlugin } from '@/plugins/builtin/sonovault'
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import { sonosPlugin } from '@/plugins/builtin/sonos'
 import {
@@ -26,6 +27,7 @@ const builtinScrapePlugins = [
   discogsPlugin,
   serplyPlugin,
   tidalPlugin,
+  sonovaultPlugin,
   youtubePlugin,
   sonosPlugin,
   rinsePlugin,

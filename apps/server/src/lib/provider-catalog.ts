@@ -10,6 +10,7 @@ import { lastfmPlugin } from '@/plugins/builtin/lastfm'
 import { discogsPlugin } from '@/plugins/builtin/discogs'
 import { serplyPlugin } from '@/plugins/builtin/serply'
 import { tidalPlugin } from '@/plugins/builtin/tidal'
+import { sonovaultPlugin } from '@/plugins/builtin/sonovault'
 import { youtubePlugin } from '@/plugins/builtin/youtube'
 import { sonosPlugin } from '@/plugins/builtin/sonos'
 import { mixStationPlugins } from '@/plugins/builtin/mix-stations'
@@ -91,6 +92,16 @@ const builtinProviders = [
     subscriptions: false,
     mixes: false,
     supportsScrape: true,
+    supportsLegacyImport: false,
+    pluginPath: null,
+  },
+  {
+    ...sonovaultPlugin.manifest,
+    surface: 'provider',
+    subscriptions: false,
+    mixes: false,
+    // Track lookups are task jobs; album lookups arrive in a later stage.
+    supportsScrape: false,
     supportsLegacyImport: false,
     pluginPath: null,
   },

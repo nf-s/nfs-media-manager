@@ -57,6 +57,7 @@ import ProviderConfiguration, {
   formatLimitDuration,
 } from '../provider-configuration'
 import ProviderCredentials from '../provider-credentials'
+import SonovaultProviderSettings from '../sonovault-provider-settings'
 import {
   ProviderCooldownConfirm,
   useProviderCooldown,
@@ -482,6 +483,7 @@ function ProviderDetail({
                   )}
                 </Section>
               )}
+              {id === 'sonovault' && <SonovaultProviderSettings />}
               <ProviderReviewableErrors provider={provider} />
             </div>
           </div>

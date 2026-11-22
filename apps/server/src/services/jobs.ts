@@ -53,6 +53,10 @@ import {
   TidalSimilarKindSchema,
   TidalTrackMatchParamsSchema,
 } from '@repo/schemas/tidal'
+import {
+  SONOVAULT_TRACK_LOOKUP_TASK,
+  SonovaultTrackLookupParamsSchema,
+} from '@repo/schemas/sonovault'
 import { YOUTUBE_SYNC_TASK } from '@repo/schemas/youtube'
 import {
   MIX_STATION_SYNC_TASKS,
@@ -176,6 +180,10 @@ import {
   runTidalTrackMatch,
 } from '@/services/tidal-track-match'
 import { prepareTidalSimilar, runTidalSimilar } from '@/services/tidal-similar'
+import {
+  prepareSonovaultTrackLookup,
+  runSonovaultTrackLookup,
+} from '@/services/sonovault-track-lookup'
 import {
   prepareSpotifySimilarLookup,
   runSpotifySimilarLookup,
@@ -1183,6 +1191,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    SONOVAULT_TRACK_LOOKUP_TASK,
+    {
+      provider: 'sonovault',
+      prepare: prepareSonovaultTrackLookup,
+      run: runSonovaultTrackLookup,
+    },
+  ],
+  [
     TIDAL_SIMILAR_TASK,
     {
       provider: 'tidal',
@@ -1308,17 +1324,27 @@ async function insertTaskJob(
     : trackSearch
       ? { id: trackSearch.trackId, mediaType: 'track' }
       : null
+  // A Sonovault lookup is one bulk request for up to 100 tracks.
+  const lookupTracks =
+    options.task === SONOVAULT_TRACK_LOOKUP_TASK
+      ? SonovaultTrackLookupParamsSchema.parse({
+          trackIds: options.trackIds,
+          inputType: options.inputType,
+        }).trackIds
+      : null
   await tx.insert(scrapeJob).values({
     id: jobId,
     provider,
     status: 'queued',
     scope: {
-      mediaItemIds: scopeItem ? [scopeItem.id] : [],
-      mediaType: scopeItem
-        ? scopeItem.mediaType
-        : nonMediaTask
-          ? null
-          : 'album',
+      mediaItemIds: lookupTracks ?? (scopeItem ? [scopeItem.id] : []),
+      mediaType: lookupTracks
+        ? 'track'
+        : scopeItem
+          ? scopeItem.mediaType
+          : nonMediaTask
+            ? null
+            : 'album',
       limit: 1,
     },
     options,
@@ -2175,6 +2201,7 @@ export async function jobSortField(query: JobListQuery) {
         then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
     when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${TIDAL_TRACK_MATCH_TASK} then concat_ws(' · ', 'TIDAL track match', nullif(btrim(${table.options}->>'trackTitle'), ''))
+    when ${SONOVAULT_TRACK_LOOKUP_TASK} then concat('Sonovault lookup · ', jsonb_array_length(${table.options}->'trackIds'), ' tracks')
     when ${TIDAL_SIMILAR_TASK} then concat_ws(' · ', 'TIDAL similar', nullif(btrim(${table.options}->>'itemTitle'), ''))
     when ${SPOTIFY_SIMILAR_LOOKUP_TASK} then 'Spotify similar lookup'
     else (select m.title from scrape_job_item i join media_item m on m.id = i.media_item_id
@@ -2539,7 +2566,7 @@ function jobsInMediaScope(
   const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
   if (mediaType === 'artist') return artistEnrichment
   if (mediaType === 'track')
-    return sql`(${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK})
+    return sql`(${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK}, ${SONOVAULT_TRACK_LOOKUP_TASK})
       or (${scrapeJob.options}->>'task' in (${TIDAL_SIMILAR_TASK}, ${SPOTIFY_SIMILAR_LOOKUP_TASK})
         and ${scrapeJob.scope}->>'mediaType' = 'track'))`
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (

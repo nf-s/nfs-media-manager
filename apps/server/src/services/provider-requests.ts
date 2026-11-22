@@ -739,8 +739,13 @@ export async function protectProviderFromLocalResponse(
         headers,
         Date.now(),
         plugin.manifest.rateLimit.rateLimitCooldownMs ?? 60000,
-        responseQuota(headers, Date.now()),
+        responseQuota(
+          headers,
+          Date.now(),
+          plugin.manifest.rateLimit.ietfRateLimitHeaders,
+        ),
         plugin.manifest.rateLimit.retryAfterIsAuthoritative,
+        plugin.manifest.rateLimit.ietfRateLimitHeaders,
       )
     : null
   await db.transaction(async (tx) => {
@@ -866,6 +871,7 @@ export function createDirectProviderRequest(
                   limits.rateLimitCooldownMs ?? 60000,
                   null,
                   limits.retryAfterIsAuthoritative,
+                  limits.ietfRateLimitHeaders,
                 )
             : (response.status === 400 || response.status >= 500) &&
                 (errorBackoff > 0 || retryAfter !== null)
@@ -1128,7 +1134,11 @@ export function createProviderRequest(
         ? pairedProviderResponseCapture(result)
         : undefined
       const quota = plugin.manifest.rateLimit.respectRateLimitHeaders
-        ? responseQuota(response.headers, Date.now())
+        ? responseQuota(
+            response.headers,
+            Date.now(),
+            plugin.manifest.rateLimit.ietfRateLimitHeaders,
+          )
         : null
       // Persist before reading the body: a parsing/size failure must not lose quota state.
       if (response.ok && quota?.exhausted && quota.resetAt !== null)
@@ -1324,6 +1334,7 @@ export function createProviderRequest(
               plugin.manifest.rateLimit.rateLimitCooldownMs ?? 60000,
               quota,
               plugin.manifest.rateLimit.retryAfterIsAuthoritative,
+              plugin.manifest.rateLimit.ietfRateLimitHeaders,
             )
           : (transient?.retryAt ??
             ((response.status === 400 || response.status >= 500) &&

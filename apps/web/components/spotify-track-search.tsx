@@ -355,7 +355,7 @@ export function SpotifyTrackSearchSelectionBar({
           )}
         {otherStatus}
         {selectedIds.length > 0 && (
-          <span className="ds-actions">
+          <span className="ds-actions flex-wrap">
             <Button
               size="xs"
               variant="ghost"

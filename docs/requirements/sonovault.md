@@ -1,6 +1,6 @@
 # Sonovault identifiers and track facts
 
-Status: the owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5, built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
+Status: stage 1 (SONO-01 to SONO-12) is built and released through `main`. The owner agreed on 2026-11-22 to stages 1 to 4 and to SONO-26 from stage 5, built side by side where they do not depend on each other, with a live run on one large playlist and the album library. The other stage 5 uses wait until asked for.
 
 Sonovault is a paid lookup service. Given a track's ISRC or its ID on one service, it returns the same recording's IDs on the other services, with its ISRC, tempo, key, genre, label and releases. It is added as a provider that fills identifiers and track facts. It does not play music and it has no similar-track or recommendation endpoint, so TIDAL and Last.fm stay the sources of related music. If it stops being good enough, another lookup provider can take its place: everything it reports is stored under its own provider name and can be removed or replaced without touching what other providers reported.
 
@@ -101,3 +101,5 @@ The owner asked for the build on 2026-11-22 without changing the proposals, so t
 
 - SONO-07: a Sonovault ISRC may become a track's primary ISRC when it has none, marked and replaceable.
 - SONO-17: tempo and key of unverified records are hidden in Browse and marked in track details.
+- SONO-08: an unverified record's ISRC is not written as an `isrc` reference, because other features read those references, and it does not fill the primary ISRC. It is kept on the `sonovault-track` reference and listed in track details.
+- SONO-02: the credits a response reports apply to the UTC calendar month of that response. A report from an earlier month counts as the full monthly credits setting.

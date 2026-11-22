@@ -15,7 +15,7 @@ import {
   resolveSpotifyTrackIds,
   spotifyTrackItemId,
 } from './spotify-playlists'
-import { recordTrackIsrcs } from './track-isrcs'
+import { recordTrackIsrcs, sonovaultPrimaryIsrcSql } from './track-isrcs'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -137,7 +137,10 @@ export async function storeConfirmedRecording(
             }
           : {}),
         durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
-        isrc: sql`coalesce(${libraryTrack.isrc}, excluded.isrc)`,
+        // Spotify's ISRC replaces one Sonovault gave (SONO-07), never another.
+        isrc: sql`case when ${sonovaultPrimaryIsrcSql(sql`library_track.media_item_id`, sql`library_track.isrc`)}
+          then coalesce(excluded.isrc, ${libraryTrack.isrc})
+          else coalesce(${libraryTrack.isrc}, excluded.isrc) end`,
         spotifyAlbumId: sql`coalesce(excluded.spotify_album_id, ${libraryTrack.spotifyAlbumId})`,
         albumName:
           matchMethod === 'automatic' || albumFallbackArtistCreditCorrection

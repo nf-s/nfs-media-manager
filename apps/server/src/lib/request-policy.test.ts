@@ -209,3 +209,89 @@ describe('request budgets', () => {
     expect(hourlyBudget([200], now, 2).retryAt).toBeNull()
   })
 })
+
+describe('IETF RateLimit headers', () => {
+  const now = Date.parse('2026-10-27T13:00:00Z')
+  const ietfHeaders = (remaining: string, reset: string) =>
+    new Headers({
+      'RateLimit-Limit': '60',
+      'RateLimit-Remaining': remaining,
+      'RateLimit-Reset': reset,
+    })
+
+  it('reads an exhausted allowance with reset in seconds from now', () => {
+    expect(responseQuota(ietfHeaders('0', '30'), now, true)).toEqual({
+      exhausted: true,
+      resetAt: now + 30000,
+    })
+    expect(responseQuota(ietfHeaders('12', '30'), now, true)).toEqual({
+      exhausted: false,
+      resetAt: now + 30000,
+    })
+  })
+  it.each(['0', '', 'bad', '-1', '1.5'])(
+    'ignores an invalid or zero reset: %s',
+    (reset) => {
+      expect(responseQuota(ietfHeaders('0', reset), now, true)).toEqual({
+        exhausted: false,
+        resetAt: null,
+      })
+    },
+  )
+  it('ignores X-RateLimit headers when reading IETF headers', () => {
+    const headers = new Headers({
+      'X-RateLimit-Limit': '1000',
+      'X-RateLimit-Remaining': '0',
+      'X-RateLimit-Reset': String(now / 1000 + 7200),
+    })
+    expect(responseQuota(headers, now, true)).toEqual({
+      exhausted: false,
+      resetAt: null,
+    })
+  })
+  it('still ignores RateLimit headers without ietf', () => {
+    const headers = ietfHeaders('0', '30')
+    expect(responseQuota(headers, now)).toEqual({
+      exhausted: false,
+      resetAt: null,
+    })
+    expect(responseQuota(headers, now, false)).toEqual({
+      exhausted: false,
+      resetAt: null,
+    })
+    expect(
+      rateLimitRetryAt(headers, now, 60000, responseQuota(headers, now), true),
+    ).toBe(now + 60000)
+  })
+  it('uses RateLimit-Reset as the cooldown of a 429 without Retry-After', () => {
+    const headers = ietfHeaders('0', '7')
+    expect(
+      rateLimitRetryAt(
+        headers,
+        now,
+        60000,
+        responseQuota(headers, now, true),
+        true,
+        true,
+      ),
+    ).toBe(now + 7000)
+    const withoutQuota = new Headers({ 'RateLimit-Reset': '7' })
+    expect(rateLimitRetryAt(withoutQuota, now, 60000, null, true, true)).toBe(
+      now + 7000,
+    )
+  })
+  it('prefers Retry-After over RateLimit-Reset', () => {
+    const headers = ietfHeaders('5', '7')
+    headers.set('Retry-After', '20')
+    expect(
+      rateLimitRetryAt(
+        headers,
+        now,
+        60000,
+        responseQuota(headers, now, true),
+        true,
+        true,
+      ),
+    ).toBe(now + 20000)
+  })
+})

@@ -67,6 +67,7 @@ import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
 import { TrackSpotifySource } from './track-spotify-source'
 import { TrackTidalSource } from './tidal-track-match'
+import { TrackSonovaultSource } from './sonovault-track-lookup'
 import TrackAppearsOn from './track-playlist-additions'
 import { SimilarItems } from './similar-items'
 
@@ -147,8 +148,8 @@ function FilterValues({
 }
 
 /**
- * The track's album warnings, its Spotify and TIDAL matches and the Last.fm
- * names that count towards it.
+ * The track's album warnings, its Spotify and TIDAL matches, its Sonovault
+ * references and the Last.fm names that count towards it.
  */
 export function TrackSources({
   item,
@@ -162,6 +163,7 @@ export function TrackSources({
       <TrackAlbumNotices key={`album-${item.id}`} item={item} />
       <TrackSpotifySource key={item.id} item={item} onResolved={onResolved} />
       <TrackTidalSource key={`tidal-${item.id}`} item={item} />
+      <TrackSonovaultSource key={`sonovault-${item.id}`} item={item} />
       <TrackLastfmSources item={item} onResolved={onResolved} />
     </>
   )

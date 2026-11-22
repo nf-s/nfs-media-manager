@@ -77,6 +77,12 @@ export const PluginRateLimitSchema = z.object({
   requestBudget: PluginRequestBudgetSchema.optional(),
   configurableRequestBudget: z.boolean().optional(),
   respectRateLimitHeaders: z.boolean().optional(),
+  /**
+   * Read `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`
+   * (seconds until the window resets) instead of the `X-RateLimit-*` headers.
+   * A 429 without `Retry-After` then waits the `RateLimit-Reset` seconds.
+   */
+  ietfRateLimitHeaders: z.boolean().optional(),
   retryAfterIsAuthoritative: z.boolean().optional(),
   rateLimitCooldownMs: z.number().int().positive().optional(),
   errorBackoffMs: z.number().int().nonnegative().optional(),

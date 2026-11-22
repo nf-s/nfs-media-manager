@@ -7,7 +7,10 @@ import {
   canonicalBrowseKey,
   type BrowseFilter,
 } from '@repo/schemas/browse'
-import { selectionQueryFields } from '@repo/schemas/film-selection'
+import {
+  selectionQueryFields,
+  type ProviderFreshnessFilter,
+} from '@repo/schemas/film-selection'
 import {
   TrackPlayabilitySchema,
   trackPlayabilityLabels,
@@ -87,6 +90,13 @@ import {
   useTidalTrackMatchSelection,
   useTidalTrackMatchStatusForPages,
 } from './tidal-track-match'
+import {
+  SonovaultTrackLookupCell,
+  hasSonovaultLookupInput,
+  sonovaultLookupDue,
+  useSonovaultLookupSelection,
+  useSonovaultTrackLookupStatusForPages,
+} from './sonovault-track-lookup'
 import { TrackBrowseValue } from './track-browse-cells'
 import { TrackBrowseSearch } from './track-browse-controls'
 
@@ -98,6 +108,8 @@ const searchColumnLabel = 'Spotify · Last searched'
 const searchColumnWidth = 260
 const tidalColumn = 'tidalLastMatch'
 const tidalColumnLabel = 'TIDAL · Last matched'
+const sonovaultColumn = 'sonovaultLastLookup'
+const sonovaultColumnLabel = 'Sonovault · Last looked up'
 const defaultColumns = ['title', 'artist', 'album', 'dateAdded']
 const trackNoun = { one: 'track', other: 'tracks' }
 const searchFreshnessOptions = providerFreshnessOptions.map((option) =>
@@ -110,9 +122,28 @@ const tidalFreshnessOptions = providerFreshnessOptions.map((option) =>
     ? { ...option, label: 'No successful match' }
     : option,
 )
+const sonovaultFreshnessOptions = providerFreshnessOptions.map((option) =>
+  option.value === 'unscraped'
+    ? { ...option, label: 'No successful lookup' }
+    : option,
+)
 const freshnessProviders = {
   spotify: { name: 'Spotify', options: searchFreshnessOptions },
   tidal: { name: 'TIDAL', options: tidalFreshnessOptions },
+  sonovault: { name: 'Sonovault', options: sonovaultFreshnessOptions },
+}
+
+/** A freshness chip in its provider's own words. */
+function freshnessChipLabel(filter: ProviderFreshnessFilter) {
+  const provider =
+    filter.provider === 'tidal' || filter.provider === 'sonovault'
+      ? freshnessProviders[filter.provider]
+      : freshnessProviders.spotify
+  const value = providerFreshnessValue(filter)
+  const label =
+    provider.options.find((option) => option.value === value)?.label ??
+    providerFreshnessLabel(filter)
+  return `${provider.name} · ${label}`
 }
 
 export default function TrackMetadataTable({
@@ -149,15 +180,23 @@ export default function TrackMetadataTable({
       required: true,
     },
     { key: tidalColumn, label: tidalColumnLabel, width: searchColumnWidth },
+    {
+      key: sonovaultColumn,
+      label: sonovaultColumnLabel,
+      width: searchColumnWidth,
+    },
   ])
   const visible = fields.filter((field) => columns.visible(field.key))
   const showTidal = columns.visible(tidalColumn)
-  const colSpan = visible.length + (showTidal ? 3 : 2)
+  const showSonovault = columns.visible(sonovaultColumn)
+  const colSpan =
+    visible.length + 2 + (showTidal ? 1 : 0) + (showSonovault ? 1 : 0)
   const layout = columns.layout([
     selectionWidth,
     ...visible.map((field) => field.key),
     searchColumn,
     ...(showTidal ? [tidalColumn] : []),
+    ...(showSonovault ? [sonovaultColumn] : []),
   ])
   const creator = parseCreatorBrowseScope(params, 'track')
   const q = params.get('q')?.slice(0, 200) ?? ''
@@ -170,7 +209,9 @@ export default function TrackMetadataTable({
   const freshness = freshParam.success
     ? freshParam.data.filter(
         (filter) =>
-          (filter.provider === 'spotify' || filter.provider === 'tidal') &&
+          (filter.provider === 'spotify' ||
+            filter.provider === 'tidal' ||
+            filter.provider === 'sonovault') &&
           filter.mode !== 'all',
       )
     : []
@@ -179,6 +220,9 @@ export default function TrackMetadataTable({
   )
   const tidalFreshness = freshness.filter(
     (filter) => filter.provider === 'tidal',
+  )
+  const sonovaultFreshness = freshness.filter(
+    (filter) => filter.provider === 'sonovault',
   )
   const playabilityParam = TrackPlayabilitySchema.safeParse(
     params.get('playability'),
@@ -194,6 +238,7 @@ export default function TrackMetadataTable({
   const sortBy =
     requestedSort === searchColumn ||
     requestedSort === tidalColumn ||
+    requestedSort === sonovaultColumn ||
     fields.some((field) => field.key === requestedSort)
       ? requestedSort
       : 'dateAdded'
@@ -235,8 +280,15 @@ export default function TrackMetadataTable({
     onSelect: (next) => select(next),
     onPendingChange: setPending,
   })
-  // A track can be selected while Spotify or TIDAL can match it; each action
-  // skips the selected tracks it cannot match.
+  const sonovault = useSonovaultTrackLookupStatusForPages(
+    tracks.windowPageItems,
+  )
+  const sonovaultSelection = useSonovaultLookupSelection({
+    onSelect: (next) => select(next),
+    onPendingChange: setPending,
+  })
+  // A track can be selected while Spotify or TIDAL can match it or Sonovault
+  // can look it up; each action skips the selected tracks it cannot act on.
   const ids = tracks.loadedSlots.flatMap(({ item }) => {
     const { track } = item
     if (!track) return []
@@ -252,7 +304,12 @@ export default function TrackMetadataTable({
       !tidalStatus?.match &&
       !tidalJob?.acceptedTidalTrackId &&
       !isActiveTidalTrackMatch(tidalJob)
-    return spotifyEligible || tidalEligible ? [track.id] : []
+    const sonovaultEligible =
+      hasSonovaultLookupInput(track) &&
+      sonovaultLookupDue(sonovault.byId.get(track.id)) !== null
+    return spotifyEligible || tidalEligible || sonovaultEligible
+      ? [track.id]
+      : []
   })
   const checked = ids.length > 0 && ids.every((id) => selected.includes(id))
   const mixed = !checked && ids.some((id) => selected.includes(id))
@@ -297,7 +354,7 @@ export default function TrackMetadataTable({
   const filterChips = [
     ...freshness.map((filter) => ({
       key: `${filter.provider}:${providerFreshnessValue(filter)}`,
-      label: `${filter.provider === 'tidal' ? freshnessProviders.tidal.name : freshnessProviders.spotify.name} · ${filter.mode === 'unscraped' ? (filter.provider === 'tidal' ? 'No successful match' : 'No successful search') : providerFreshnessLabel(filter)}`,
+      label: freshnessChipLabel(filter),
       remove: () =>
         setParams({
           freshness: JSON.stringify(
@@ -427,7 +484,11 @@ export default function TrackMetadataTable({
           }
         />
       </MetadataSelectionToolbar>
-      {(tracks.isError || status.isError || tidal.isError || matched) && (
+      {(tracks.isError ||
+        status.isError ||
+        tidal.isError ||
+        sonovault.isError ||
+        matched) && (
         <div className="ops-notice">
           {tracks.isError && (
             <Notice
@@ -465,6 +526,18 @@ export default function TrackMetadataTable({
               Could not load TIDAL matches.
             </Notice>
           )}
+          {sonovault.isError && (
+            <Notice
+              tone="danger"
+              action={
+                <Button size="xs" onClick={sonovault.retry}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load Sonovault lookups.
+            </Notice>
+          )}
           {matched && (
             <p className="ds-muted" role="status">
               Spotify match saved.{' '}
@@ -496,7 +569,7 @@ export default function TrackMetadataTable({
                   ref={selectAll}
                   type="checkbox"
                   className="ds-check"
-                  aria-label="Select all loaded tracks needing a Spotify or TIDAL match"
+                  aria-label="Select all loaded tracks needing a Spotify or TIDAL match or a Sonovault lookup"
                   checked={checked}
                   disabled={pending || tracks.isError || !ids.length}
                   onChange={() =>
@@ -572,6 +645,36 @@ export default function TrackMetadataTable({
                   }
                 />
               )}
+              {showSonovault && (
+                <SecondaryTableHead
+                  sortKey={sonovaultColumn}
+                  label={sonovaultColumnLabel}
+                  sortBy={sortBy}
+                  direction={direction}
+                  onSort={sort}
+                  disabled={pending}
+                  resizer={columns.resizer(sonovaultColumn)}
+                  filter={
+                    <SecondaryColumnFilter
+                      label="Sonovault lookup freshness"
+                      options={sonovaultFreshnessOptions}
+                      value={sonovaultFreshness.map(providerFreshnessValue)}
+                      onChange={(next) =>
+                        setParams({
+                          freshness: JSON.stringify(
+                            updateProviderFreshness(
+                              freshness,
+                              'sonovault',
+                              next,
+                            ),
+                          ),
+                        })
+                      }
+                      disabled={pending}
+                    />
+                  }
+                />
+              )}
             </TableRow>
           </thead>
           <tbody>
@@ -589,6 +692,7 @@ export default function TrackMetadataTable({
                   const tidalMatch = tidal.byId.get(track.id)
                   const tidalDate =
                     tidalMatch?.job?.finishedAt ?? tidalMatch?.job?.createdAt
+                  const lookup = sonovault.byId.get(track.id)
                   return (
                     <TableRow
                       key={track.id}
@@ -702,6 +806,22 @@ export default function TrackMetadataTable({
                           </div>
                         </TableCell>
                       )}
+                      {showSonovault && (
+                        <TableCell>
+                          {!lookup ? (
+                            sonovault.isError ? (
+                              EMPTY_VALUE
+                            ) : (
+                              <Skeleton width={40} height={12} />
+                            )
+                          ) : (
+                            <SonovaultTrackLookupCell
+                              status={lookup}
+                              canLookUp={hasSonovaultLookupInput(track)}
+                            />
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   )
                 }}
@@ -717,11 +837,20 @@ export default function TrackMetadataTable({
         freshness={spotifyFreshness.length ? spotifyFreshness : undefined}
         disabled={tracks.isError}
         total={tracks.hasTotal ? tracks.total : undefined}
-        otherStatus={tidalSelection.status}
-        otherActions={tidalSelection.action(
-          selected,
-          tracks.isError || pending,
-        )}
+        otherStatus={
+          tidalSelection.status || sonovaultSelection.status ? (
+            <>
+              {tidalSelection.status}
+              {sonovaultSelection.status}
+            </>
+          ) : null
+        }
+        otherActions={
+          <>
+            {tidalSelection.action(selected, tracks.isError || pending)}
+            {sonovaultSelection.action(selected, tracks.isError || pending)}
+          </>
+        }
       />
       {review && (
         <SpotifyTrackSearchReview

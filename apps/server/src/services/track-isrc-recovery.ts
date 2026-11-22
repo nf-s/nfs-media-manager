@@ -2,7 +2,11 @@ import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { validIsrc, validIsrcSql } from '@/lib/isrc'
-import { recordTrackIsrcs, type TrackIsrcEvidence } from './track-isrcs'
+import {
+  recordTrackIsrcs,
+  sonovaultPrimaryIsrcSql,
+  type TrackIsrcEvidence,
+} from './track-isrcs'
 
 type Database = Pick<typeof db, 'execute' | 'insert'>
 
@@ -144,7 +148,8 @@ export async function recoverStoredTrackIsrcs(
           and media_item_id = any(${sql.param(batch)}::text[])
         group by media_item_id having count(distinct external_id) = 1
       ) codes
-      where lt.media_item_id = codes.media_item_id and lt.isrc is null`)
+      where lt.media_item_id = codes.media_item_id
+        and (lt.isrc is null or ${sonovaultPrimaryIsrcSql(sql`lt.media_item_id`, sql`lt.isrc`)})`)
     counts.primaryFilled += result.rowCount ?? 0
   }
   return counts

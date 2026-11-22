@@ -68,11 +68,17 @@ export function unsignedHeaderInteger(value: string | null): number | null {
   return Number.isSafeInteger(number) ? number : null
 }
 
-export function responseQuota(headers: Headers, now: number) {
-  const limit = unsignedHeaderInteger(headers.get('x-ratelimit-limit'))
-  const remaining = unsignedHeaderInteger(headers.get('x-ratelimit-remaining'))
-  const resetSeconds = unsignedHeaderInteger(headers.get('x-ratelimit-reset'))
-  const resetMs = resetSeconds === null ? 0 : resetSeconds * 1000
+/**
+ * The remaining allowance a response reports. `X-RateLimit-Reset` is an epoch
+ * time in seconds; with `ietf`, `RateLimit-Reset` is the seconds until reset.
+ */
+export function responseQuota(headers: Headers, now: number, ietf = false) {
+  const prefix = ietf ? 'ratelimit' : 'x-ratelimit'
+  const limit = unsignedHeaderInteger(headers.get(`${prefix}-limit`))
+  const remaining = unsignedHeaderInteger(headers.get(`${prefix}-remaining`))
+  const resetSeconds = unsignedHeaderInteger(headers.get(`${prefix}-reset`))
+  const resetMs =
+    resetSeconds === null ? 0 : (ietf ? now : 0) + resetSeconds * 1000
   const resetAt =
     resetMs > now && Number.isFinite(new Date(resetMs).getTime())
       ? resetMs
@@ -107,15 +113,19 @@ export function rateLimitRetryAt(
   fallbackMs: number,
   quota: ReturnType<typeof responseQuota> | null,
   authoritative = false,
+  ietf = false,
 ) {
   // Some services report a daily reset even on short-window throttles.
   // Only an exhausted daily allowance should extend their Retry-After.
-  const retryAt = retryAfterTime(headers.get('retry-after'), now, 0)
+  // `RateLimit-Reset` counts seconds like `Retry-After` and stands in for it.
+  const header =
+    headers.get('retry-after') ?? (ietf ? headers.get('ratelimit-reset') : null)
+  const retryAt = retryAfterTime(header, now, 0)
   return Math.max(
     !authoritative || quota?.exhausted ? (quota?.resetAt ?? 0) : 0,
     authoritative && retryAt > now
       ? retryAt
-      : retryAfterTime(headers.get('retry-after'), now, fallbackMs),
+      : retryAfterTime(header, now, fallbackMs),
   )
 }
 

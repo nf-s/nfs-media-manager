@@ -68,14 +68,18 @@ export const trackDuplicateCautionsLabels: Record<
   some: 'Something against merging',
 }
 
-/** Track Metadata filters by Spotify search and TIDAL match freshness. */
-export const trackMatchFreshnessProviders = ['spotify', 'tidal'] as const
+/** Track Metadata filters by Spotify search, TIDAL match and Sonovault lookup freshness. */
+export const trackMatchFreshnessProviders = [
+  'spotify',
+  'tidal',
+  'sonovault',
+] as const
 export const TrackMatchFreshnessSchema = ProviderFreshnessFiltersSchema.refine(
   (filters) =>
     filters.every(({ provider }) =>
       trackMatchFreshnessProviders.some((item) => item === provider),
     ),
-  'Track freshness is available for Spotify and TIDAL',
+  'Track freshness is available for Spotify, TIDAL and Sonovault',
 )
 
 export const TrackMatchDiagnosticsQuerySchema =
