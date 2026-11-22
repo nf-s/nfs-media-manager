@@ -23,7 +23,7 @@ Keep installation-specific notes and records out of this repository. Do not publ
 - Use concise, functional interface copy. Preserve user-supplied wording. No slogans, decorative headings, taglines, filler or cute empty states. Add explanatory text only when it helps someone act or understand a real limitation. Follow the [UI guidelines](docs/dev-guidelines-ui.md).
 - Keep library interfaces consistent. Every primary Browse page, including Artists, must use the shared Tracks Browse pattern: Grid/List/Table views, sorting, full autocomplete search with field filters and AI search, filter modes, ranges and URL state. Metadata selection must use that same search control and filter semantics alongside provider freshness filters. Do not substitute a plain text search or secondary table for a primary Browse page. Reuse shared controls and verify parity before finishing.
 - Stay within scope. Do not silently refactor unrelated code, leave debug logging or keep commented-out implementations.
-- Providers and jobs: store the raw response. Recurring work is a job. Confirm with one item before a bulk run.
+- Every provider and every job stores every raw response it receives, with the job that made the request: item jobs, task jobs, syncs and imports alike. Later features are built from the stored responses, so nothing has to be fetched again. A new provider or job is not finished until its responses can be read back from the job. Recurring work is a job. Confirm with one item before a bulk run.
 - Speed: measure the time to the first visible rows in the signed-in app on production, before and after the change. Database timings alone do not count.
 
 ## Interface
