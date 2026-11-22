@@ -33,15 +33,11 @@ const builds = [
 ]
 /**
  * Ignored working files of the main checkout that a worktree shares through
- * a link: local documents, release and live-check scripts, private plugins,
- * the Neon project link and the preview launch settings. Data, backups,
- * legacy inputs and per-chat or per-worker state are left out.
+ * a link: release and live-check scripts, private plugins, the Neon project
+ * link and the preview launch settings. Data, backups, legacy inputs and
+ * per-chat or per-worker state are left out.
  */
 const sharedPaths = [
-  'docs/.local',
-  'docs/cloudflare-deployment.md',
-  'docs/local-worker.md',
-  'docs/mobile-home-screen.md',
   '.cloudflare',
   '.local-plugins',
   '.neon',

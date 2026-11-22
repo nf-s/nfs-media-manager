@@ -16,7 +16,7 @@ Start with [getting started](getting-started.md) to configure PostgreSQL, secret
 
 ## Worktrees
 
-Every chat that changes code works in its own Git worktree. Set a new worktree up from inside it:
+Set a new Git worktree up from inside it:
 
 ```sh
 corepack pnpm worktree:setup
@@ -25,7 +25,7 @@ corepack pnpm worktree:setup
 It needs Node 22 or later and is safe to run again. It:
 
 1. Finds the main checkout through `git rev-parse --git-common-dir` and refuses to run in the main checkout itself.
-2. Links the main checkout's ignored working files into the worktree, so there is one shared copy of each: `docs/.local`, `docs/cloudflare-deployment.md`, `docs/local-worker.md`, `docs/mobile-home-screen.md`, `.cloudflare`, `.local-plugins`, `.neon` and `.claude/launch.json` (the list is `sharedPaths` in the script). It skips a path the main checkout does not have and never replaces a file or folder the worktree already has. It then checks that Git ignores each link: an ignore pattern ending in `/` matches a folder but not a link to one. Local documents are therefore shared between the main checkout and every worktree, and what a chat writes there stays when the worktree is removed. Data, backups, legacy inputs, `.playwright-mcp` and per-chat or per-worker state are not linked.
+2. Links the main checkout's ignored working files into the worktree, so there is one shared copy of each: `.cloudflare`, `.local-plugins`, `.neon` and `.claude/launch.json` (the list is `sharedPaths` in the script). It skips a path the main checkout does not have and never replaces a file or folder the worktree already has. It then checks that Git ignores each link: an ignore pattern ending in `/` matches a folder but not a link to one. Data, backups, legacy inputs, `.playwright-mcp` and per-chat or per-worker state are not linked.
 3. Installs dependencies from the shared pnpm store (`pnpm install --frozen-lockfile --prefer-offline`).
 4. Builds `@repo/schemas`, `@repo/media-plugin-sdk` and the `@repo/server` types, which the typechecks need.
 5. Makes the main checkout's `.env` and `.env.local` visible to the workspace env loader. A worktree under `.claude/worktrees/` needs nothing, because the loader walks up to the main checkout. Elsewhere, such as Codex worktrees, the command links each file to the main checkout's, so they cannot drift. It never writes an env file of its own and never prints a setting. `packages/local-worker/.env` is not linked, so a worktree cannot start the local worker against the real library by accident.
@@ -35,8 +35,6 @@ It needs Node 22 or later and is safe to run again. It:
 A worktree must not get its own `.env.local`. The loader finds it first, and it replaces the main checkout's file instead of merging with it. Because it is loaded with override, a test suite or migration then reaches whatever database it names, or fails to find one. For a separate database, use `corepack pnpm preview`, which passes its own settings file through `MEDIA_MANAGER_ENV_FILE` and writes nothing in the checkout. The set-up command reports a worktree `.env.local` as missing work and does not remove it. Where it has linked `.env.local`, a tool that writes to that path writes to the main checkout's file.
 
 In a new Claude Code session, the committed `.claude/settings.json` adds a note to the session when `apps/server/node_modules` is missing, so the agent runs the command first. `.worktreeinclude` is not used because it copies files. A `WorktreeCreate` hook is not used because it replaces how Claude Code creates worktrees. Codex has no committed hook for this, so run the command by hand there.
-
-Claude Code worktree sessions refuse compound shell commands unless their permission mode allows them. Examples are a heredoc followed by other commands or steps joined with `&&`. Put a longer sequence in a script and run it as one command.
 
 ## Checks
 

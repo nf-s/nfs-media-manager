@@ -44,4 +44,4 @@ Back up the database and encryption key before migrations or repair commands.
 - [Job worker](job-worker.md)
 - [Feature requirements](requirements/README.md) and [verification checklist](requirements/verification.md)
 
-Keep installation-specific Markdown in ignored `docs/.local/`. Use only synthetic examples and screenshots in public documentation.
+Keep installation-specific notes and records out of this repository. Use only synthetic examples and screenshots in public documentation.
