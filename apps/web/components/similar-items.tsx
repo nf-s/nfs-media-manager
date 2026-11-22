@@ -287,6 +287,9 @@ export function SimilarBody({
   const { kind, matched, matchJob, job, lookupJob, readAt, source, items } =
     similar
   const noun = plural[kind]
+  // A track's read also maps its similar tracks through Sonovault.
+  const reading =
+    kind === 'track' ? 'Reading from TIDAL and Sonovault' : 'Reading from TIDAL'
   if (isActiveSimilarJob(matchJob) || (requesting && !matched))
     return <SimilarLoading label="Matching on TIDAL" />
   if (
@@ -294,7 +297,7 @@ export function SimilarBody({
     (requesting && !items.length) ||
     (matched && !job && !readAt && !requestFailed)
   )
-    return <SimilarLoading label="Reading from TIDAL" />
+    return <SimilarLoading label={reading} />
   const readAgain = (
     <Button size="xs" disabled={requesting} onClick={onRequest}>
       <RefreshCw className="ds-i" data-size="sm" aria-hidden />
@@ -349,7 +352,7 @@ export function SimilarBody({
       )}
       <FilterLine>
         {requesting ? (
-          <Status state="running">Reading from TIDAL</Status>
+          <Status state="running">{reading}</Status>
         ) : isActiveSimilarJob(lookupJob) ? (
           <Status state="running">Finding on Spotify</Status>
         ) : (
@@ -382,7 +385,8 @@ export function SimilarBody({
 /**
  * The Similar tab of an album or track: TIDAL's similar items, played
  * through Spotify. A matched item that was never read is read once when the
- * tab opens, in that request; the Spotify lookup of its suggestions is a job.
+ * tab opens, in that request, which also maps a track's suggestions through
+ * Sonovault; the Spotify search of the rest is a job.
  */
 export function SimilarItems({
   kind,

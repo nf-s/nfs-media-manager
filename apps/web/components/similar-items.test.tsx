@@ -172,6 +172,20 @@ test('a running Spotify lookup replaces the counts with its status', () => {
   assert.match(html, /Spotify album/)
 })
 
+test("a track's read names Sonovault, which maps it in the same request", () => {
+  const reading = (kind: TidalSimilar['kind'], items?: []) =>
+    render(
+      <SimilarBody
+        similar={similar({ kind, ...(items ? { items } : {}) })}
+        requesting
+        onRequest={() => assert.fail('Rendering must not request')}
+      />,
+    )
+  assert.match(reading('track'), /Reading from TIDAL and Sonovault/)
+  assert.match(reading('track', []), /Reading from TIDAL and Sonovault/)
+  assert.doesNotMatch(reading('album'), /Sonovault/)
+})
+
 test('the tab says what TIDAL is doing and what is missing', () => {
   assert.match(body({ matchJob: job('running') }), /Matching on TIDAL/)
   assert.match(

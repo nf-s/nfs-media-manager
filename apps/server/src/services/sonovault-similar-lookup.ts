@@ -1,6 +1,5 @@
-import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { SONOVAULT_SIMILAR_LOOKUP_TASK } from '@repo/schemas/sonovault'
+import type { JsonValue } from '@repo/schemas/common'
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   SpotifyCodeMatchSchema,
@@ -21,12 +20,13 @@ import {
   sonovaultSettings,
   type SonovaultResolveResult,
 } from '@/lib/sonovault-api'
-import { createStableId } from '@/lib/media-utils'
-import { mediaItem } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
-import { assertProviderConfigured, providerOperation } from './manual-add'
+import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
-import { saveProviderResponseCapture } from './provider-response-history'
+import {
+  nextTaskResponseOrdinal,
+  saveProviderResponseCapture,
+} from './provider-response-history'
 import {
   reportedSonovaultCredits,
   storedSonovaultResponse,
@@ -135,16 +135,28 @@ export function sonovaultSimilarMatch(
   return match.success ? match.data : 'no_spotify'
 }
 
+/** The job a Sonovault similar lookup runs in and stores its response with. */
+export type SonovaultSimilarContext = Pick<
+  TaskJobContext,
+  'jobId' | 'assertActive' | 'maxSlotWaitMs'
+> & {
+  /** The job's own provider when it is not Sonovault (a TIDAL similar read). */
+  jobProvider?: string
+}
+
 /**
  * SONO-26: sends the ISRCs of one track's similar tracks through one
  * Sonovault bulk resolve, storing the response with the job, and returns
  * the verified Spotify matches. Each ISRC comes with TIDAL's title and
- * duration, which the record is checked against. Returns `unavailable`, and
- * makes no request, when Sonovault is not configured or reachable or the
- * credit reserve would be crossed; the caller then searches Spotify.
+ * duration, which the record is checked against. The request takes its turn
+ * in Sonovault's request gate with every other Sonovault request, waiting at
+ * most `maxSlotWaitMs` for its slot when set. Returns `unavailable`, and
+ * makes no request, when Sonovault is not configured, cooling down, halted
+ * or busy past that wait, or the credit reserve would be crossed; the caller
+ * then searches Spotify.
  */
 export async function lookupSimilarTracksOnSonovault(
-  context: Pick<TaskJobContext, 'jobId' | 'assertActive'>,
+  context: SonovaultSimilarContext,
   checks: readonly SimilarTrackCheck[],
 ): Promise<SonovaultSimilarLookup> {
   const byIsrc = new Map<string, SimilarTrackCheck>()
@@ -180,16 +192,28 @@ export async function lookupSimilarTracksOnSonovault(
             saveProviderResponseCapture({
               jobId: context.jobId,
               provider: PROVIDER,
+              ...(context.jobProvider === undefined
+                ? {}
+                : { jobProvider: context.jobProvider }),
               attempt: 1,
               capture,
             }),
           providerResponseSecretValues({ apiKey: settings.apiKey }),
+          undefined,
+          undefined,
+          undefined,
+          { firstOrdinal: await nextTaskResponseOrdinal(context.jobId) },
         )
         const payload = await resolveSonovaultTracks(
           createProviderRequest(
             sonovaultGatedPlugin(plugin, settings),
             context.assertActive,
-            { beginResponseCapture: recorder('task') },
+            {
+              ...(context.maxSlotWaitMs === undefined
+                ? {}
+                : { maxSlotWaitMs: context.maxSlotWaitMs }),
+              beginResponseCapture: recorder('task'),
+            },
           ),
           settings.apiKey,
           'isrc',
@@ -238,35 +262,21 @@ export async function lookupSimilarTracksOnSonovault(
   }
 }
 
-const LookupParamsSchema = z.object({
+const LookupOptionsSchema = z.object({
   kind: z.literal('track'),
   itemId: z.string().trim().min(1).max(200),
   tracks: z.array(SimilarTrackCheckSchema).min(1).max(TIDAL_SIMILAR_LIMIT),
 })
-const LookupOptionsSchema = LookupParamsSchema.extend({
-  groupKey: z.string().min(1),
-})
 
-export async function prepareSonovaultSimilarLookup(
-  userId: string | null,
-  input: Record<string, unknown>,
-) {
-  const params = LookupParamsSchema.parse(input)
-  const [item] = await db
-    .select({ id: mediaItem.id })
-    .from(mediaItem)
-    .where(
-      and(eq(mediaItem.id, params.itemId), eq(mediaItem.mediaType, 'track')),
-    )
-  if (!item)
-    throw new ServerError({ statusCode: 404, message: 'Item not found.' })
-  await assertProviderConfigured(PROVIDER, 'looking up similar tracks')
-  return LookupOptionsSchema.parse({
-    ...params,
-    groupKey: createStableId(
-      SONOVAULT_SIMILAR_LOOKUP_TASK,
-      JSON.stringify([userId, params.itemId]),
-    ),
+/**
+ * New `sonovault-similar-lookup` jobs are refused: the lookup runs in the
+ * TIDAL similar read. Jobs queued before that still run.
+ */
+export async function prepareSonovaultSimilarLookup(): Promise<never> {
+  throw new ServerError({
+    statusCode: 409,
+    message:
+      'Similar tracks are looked up on Sonovault when they are read from TIDAL. Read them again from the Similar tab.',
   })
 }
 
@@ -288,12 +298,89 @@ async function queueSpotifyFallback(
   }
 }
 
+export type SonovaultSimilarMapping = {
+  message: string
+  /** Counts for the job's options, with the credits Sonovault reported. */
+  summary: Record<string, JsonValue>
+  /** Credits as reported, for `reportedSonovaultCredits`; none without a request. */
+  credits: { creditsRemaining: number; creditsReportedAt: string } | null
+}
+
 /**
  * SONO-26: maps one library track's similar tracks to Spotify through one
  * Sonovault bulk resolve by ISRC and stores each verified match where the
- * Similar tab reads Spotify lookups, marked as Sonovault's. A miss is not
- * "Not on Spotify": the ISRCs it does not map, and all of them when Sonovault
- * cannot be used, are queued for the existing Spotify search.
+ * Similar tab reads Spotify lookups, marked as Sonovault's with the stored
+ * response. A miss is not "Not on Spotify": the ISRCs it does not map, and
+ * all of them when Sonovault cannot be used, are queued for the existing
+ * Spotify search. Null when the job stopped.
+ */
+export async function mapSimilarTracksThroughSonovault(
+  context: SonovaultSimilarContext & Pick<TaskJobContext, 'isActive'>,
+  input: {
+    userId: string | null
+    itemId: string
+    tracks: readonly SimilarTrackCheck[]
+  },
+): Promise<SonovaultSimilarMapping | null> {
+  const lookup = await lookupSimilarTracksOnSonovault(context, input.tracks)
+  if (!(await context.isActive())) return null
+  if (lookup.kind === 'unavailable') {
+    const spotify = await queueSpotifyFallback(
+      input.userId,
+      input.itemId,
+      input.tracks.map(({ code }) => code),
+    )
+    return {
+      message: [`Sonovault not used: ${lookup.reason}.`, spotify]
+        .filter(Boolean)
+        .join(' '),
+      summary: { sent: 0, mapped: 0 },
+      credits: null,
+    }
+  }
+  for (const [key, match] of lookup.matches)
+    await storeSpotifyCodeLookup({
+      kind: 'track',
+      key,
+      match,
+      jobId: context.jobId,
+      sonovault: {
+        responseId: lookup.responseId,
+        fetchedAt: lookup.fetchedAt,
+      },
+    })
+  const missed = [...lookup.misses.keys()]
+  const spotify = await queueSpotifyFallback(input.userId, input.itemId, missed)
+  const missCount = (reason: SonovaultSimilarMiss) =>
+    [...lookup.misses.values()].filter((miss) => miss === reason).length
+  return {
+    message: [
+      `Mapped ${lookup.matches.size} of ${lookup.matches.size + missed.length} to Spotify through Sonovault.`,
+      spotify,
+      `${lookup.creditsRemaining} credits left.`,
+    ]
+      .filter(Boolean)
+      .join(' '),
+    summary: {
+      sent: lookup.matches.size + missed.length,
+      mapped: lookup.matches.size,
+      notFound: missCount('not_found'),
+      noSpotify: missCount('no_spotify'),
+      unverified: missCount('unverified'),
+      skipped: missCount('skipped_no_credits'),
+      creditsUsed: lookup.creditsUsed,
+      responseId: lookup.responseId,
+    },
+    credits: {
+      creditsRemaining: lookup.creditsRemaining,
+      creditsReportedAt: new Date().toISOString(),
+    },
+  }
+}
+
+/**
+ * A `sonovault-similar-lookup` job queued before the lookup moved into the
+ * TIDAL similar read: maps its tracks as that read does.
  */
 export async function runSonovaultSimilarLookup(
   context: TaskJobContext,
@@ -302,62 +389,17 @@ export async function runSonovaultSimilarLookup(
   try {
     const options = LookupOptionsSchema.parse(input)
     await context.assertActive()
-    const lookup = await lookupSimilarTracksOnSonovault(context, options.tracks)
-    if (!(await context.isActive())) return { outcome: 'stopped' }
-    if (lookup.kind === 'unavailable') {
-      const spotify = await queueSpotifyFallback(
-        context.requestedByUserId,
-        options.itemId,
-        options.tracks.map(({ code }) => code),
-      )
-      return {
-        outcome: 'complete',
-        message: [`Sonovault not used: ${lookup.reason}.`, spotify]
-          .filter(Boolean)
-          .join(' '),
-        noProviderRequests: true,
-        options: { mapped: 0, sent: 0 },
-      }
-    }
-    for (const [key, match] of lookup.matches)
-      await storeSpotifyCodeLookup({
-        kind: 'track',
-        key,
-        match,
-        jobId: context.jobId,
-        sonovault: {
-          responseId: lookup.responseId,
-          fetchedAt: lookup.fetchedAt,
-        },
-      })
-    const missed = [...lookup.misses.keys()]
-    const spotify = await queueSpotifyFallback(
-      context.requestedByUserId,
-      options.itemId,
-      missed,
-    )
-    const missCount = (reason: SonovaultSimilarMiss) =>
-      [...lookup.misses.values()].filter((miss) => miss === reason).length
+    const mapping = await mapSimilarTracksThroughSonovault(context, {
+      userId: context.requestedByUserId,
+      itemId: options.itemId,
+      tracks: options.tracks,
+    })
+    if (!mapping) return { outcome: 'stopped' }
     return {
       outcome: 'complete',
-      message: [
-        `Mapped ${lookup.matches.size} of ${lookup.matches.size + missed.length} to Spotify through Sonovault.`,
-        spotify,
-        `${lookup.creditsRemaining} credits left.`,
-      ]
-        .filter(Boolean)
-        .join(' '),
-      options: {
-        sent: lookup.matches.size + missed.length,
-        mapped: lookup.matches.size,
-        notFound: missCount('not_found'),
-        noSpotify: missCount('no_spotify'),
-        unverified: missCount('unverified'),
-        skipped: missCount('skipped_no_credits'),
-        creditsUsed: lookup.creditsUsed,
-        creditsRemaining: lookup.creditsRemaining,
-        creditsReportedAt: new Date().toISOString(),
-      },
+      message: mapping.message,
+      ...(mapping.credits ? {} : { noProviderRequests: true }),
+      options: { ...mapping.summary, ...mapping.credits },
     }
   } catch (error) {
     if (!(await context.isActive())) return { outcome: 'stopped' }

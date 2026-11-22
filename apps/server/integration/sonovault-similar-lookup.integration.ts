@@ -14,7 +14,10 @@ import {
   vi,
 } from 'vitest'
 import { SONOVAULT_SIMILAR_LOOKUP_TASK } from '@repo/schemas/sonovault'
-import { SPOTIFY_SIMILAR_LOOKUP_TASK } from '@repo/schemas/tidal'
+import {
+  SPOTIFY_SIMILAR_LOOKUP_TASK,
+  TIDAL_SIMILAR_TASK,
+} from '@repo/schemas/tidal'
 import { env } from '@/env'
 import { clearTidalTokenCache } from '@/lib/tidal-api'
 import { sonovaultPlugin } from '@/plugins/builtin/sonovault'
@@ -78,8 +81,12 @@ vi.mock('@/lib/provider-secrets', () => ({
           },
 }))
 
-import { getJob, processQueuedJobs } from '@/services/jobs'
+import { createTaskJob, processQueuedJobs, retryJob } from '@/services/jobs'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
+import {
+  ProviderTaskReplayStepsSchema,
+  replayProviderTask,
+} from '@/services/provider-task-replay'
 import { queueSonovaultRefresh } from '@/services/sonovault-album-lookup'
 import {
   getSonovaultSummary,
@@ -366,74 +373,162 @@ async function jobsByTask(task: string) {
     .where(sql`${schema.scrapeJob.options}->>'task' = ${task}`)
 }
 
-describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
-  it('maps verified records through one bulk call and leaves the rest to Spotify search', async () => {
-    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
-    await runQueued()
+async function sonovaultGate(values: {
+  nextAllowedAt?: Date
+  cooldownUntil?: Date
+  halted?: boolean
+}) {
+  await databaseClient
+    .insert(schema.providerRequestState)
+    .values({ provider: 'sonovault', ...values })
+    .onConflictDoUpdate({
+      target: schema.providerRequestState.provider,
+      set: values,
+    })
+}
 
-    // The library track is not sent; one Sonovault request for the other
-    // four, then a Spotify search only for the three it did not map.
+const sonovaultEvents = () =>
+  databaseClient
+    .select({
+      requestedAt: schema.providerRequestEvent.requestedAt,
+      requestClass: schema.providerRequestEvent.requestClass,
+    })
+    .from(schema.providerRequestEvent)
+    .where(eq(schema.providerRequestEvent.provider, 'sonovault'))
+
+/** The last line a job logged: its result message. */
+async function lastLog(jobId: string) {
+  const logs = await databaseClient
+    .select({ message: schema.scrapeJobLog.message })
+    .from(schema.scrapeJobLog)
+    .where(eq(schema.scrapeJobLog.jobId, jobId))
+    .orderBy(schema.scrapeJobLog.createdAt)
+  return logs.at(-1)?.message ?? ''
+}
+
+/** The TIDAL similar read's job, which also made the Sonovault request. */
+async function readJob() {
+  const [job] = await jobsByTask(TIDAL_SIMILAR_TASK)
+  if (!job) throw new Error('Missing TIDAL similar job')
+  return job
+}
+
+describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
+  it('maps verified records in the TIDAL read and leaves the rest to Spotify search', async () => {
+    const read = await refreshTidalSimilar(
+      { kind: 'tracks', id: trackId },
+      userId,
+    )
+
+    // The library track is not sent; the one Sonovault request is made in
+    // the read, before any queued job runs, and no Sonovault job is queued.
+    expect(requested()).toEqual([
+      `sonovault ${[2, 3, 4, 5].map(isrc).join(',')}`,
+    ])
+    expect(await jobsByTask(SONOVAULT_SIMILAR_LOOKUP_TASK)).toEqual([])
+    expect(read.items.map(({ state }) => state)).toEqual([
+      'library',
+      'spotify',
+      'unsearched',
+      'unsearched',
+      'unsearched',
+    ])
+    expect(read.items[1]?.spotify).toEqual({
+      spotifyId: spotifyId(20),
+      url: `https://open.spotify.com/track/${spotifyId(20)}`,
+      title: 'Afterhours Telex',
+      artists: ['Fixture Artist'],
+      albumName: null,
+      spotifyAlbumId: null,
+      artworkUrl: null,
+      durationSec: TIDAL_DURATION_SEC + 2,
+      trackCount: null,
+    })
+
+    const tidalJob = await readJob()
+    expect(tidalJob).toMatchObject({
+      provider: 'tidal',
+      status: 'succeeded',
+      options: {
+        itemId: trackId,
+        sonovault: {
+          sent: 4,
+          mapped: 1,
+          notFound: 1,
+          noSpotify: 1,
+          unverified: 1,
+          skipped: 0,
+          creditsUsed: 4,
+        },
+        creditsRemaining: 31000,
+      },
+    })
+    expect(await lastLog(tidalJob.id)).toMatch(
+      /Mapped 1 of 4 to Spotify through Sonovault\. 3 left for Spotify search\./,
+    )
+    // The request went through Sonovault's gate and is counted there.
+    expect(await sonovaultEvents()).toEqual([
+      { requestedAt: expect.any(Date), requestClass: 'write' },
+    ])
+
+    await runQueued()
     expect(requested()).toEqual([
       `sonovault ${[2, 3, 4, 5].map(isrc).join(',')}`,
       `spotify isrc:${isrc(3)}`,
       `spotify isrc:${isrc(4)}`,
       `spotify isrc:${isrc(5)}`,
     ])
-
-    const [sonovaultJob] = await jobsByTask(SONOVAULT_SIMILAR_LOOKUP_TASK)
     const [spotifyJob] = await jobsByTask(SPOTIFY_SIMILAR_LOOKUP_TASK)
-    if (!sonovaultJob || !spotifyJob) throw new Error('Missing jobs')
-    expect(sonovaultJob).toMatchObject({
-      provider: 'sonovault',
-      status: 'succeeded',
-      options: {
-        itemId: trackId,
-        sent: 4,
-        mapped: 1,
-        notFound: 1,
-        noSpotify: 1,
-        unverified: 1,
-        skipped: 0,
-        creditsUsed: 4,
-        creditsRemaining: 31000,
-      },
-    })
+    if (!spotifyJob) throw new Error('Missing Spotify job')
     expect(spotifyJob).toMatchObject({
       provider: 'spotify',
       status: 'succeeded',
       options: { codes: [isrc(3), isrc(4), isrc(5)] },
     })
-    expect((await getJob(sonovaultJob.id))?.scope).toEqual({
-      mediaType: 'track',
-      mediaItemIds: [trackId],
-      limit: 1,
-    })
 
-    // The response is stored with its job, without the key.
-    const captures = await readProviderResponseAttempt({
-      jobId: sonovaultJob.id,
-      attempt: 1,
-    })
-    expect(captures.map(({ capture }) => capture.request.url)).toEqual([
-      'https://api.sonovault.now/v1/tracks/resolve',
-    ])
-    expect(JSON.stringify(captures)).not.toContain(apiKey)
-    const [response] = await databaseClient
+    // The Sonovault response is stored with the TIDAL read, under Sonovault,
+    // numbered after TIDAL's own, without the key.
+    const responses = await databaseClient
       .select({
         id: schema.providerResponse.id,
         provider: schema.providerResponse.provider,
+        ordinal: schema.providerResponse.ordinal,
+        requestUrl: schema.providerResponse.requestUrl,
       })
       .from(schema.providerResponse)
-      .where(eq(schema.providerResponse.jobId, sonovaultJob.id))
-    expect(response?.provider).toBe('sonovault')
+      .where(eq(schema.providerResponse.jobId, tidalJob.id))
+      .orderBy(schema.providerResponse.ordinal)
+    expect(responses).toEqual([
+      {
+        id: expect.any(String),
+        provider: 'tidal',
+        ordinal: 1,
+        requestUrl: expect.stringContaining('/similarTracks'),
+      },
+      {
+        id: expect.any(String),
+        provider: 'sonovault',
+        ordinal: 2,
+        requestUrl: 'https://api.sonovault.now/v1/tracks/resolve',
+      },
+    ])
+    const sonovaultResponse = responses[1]
+    expect(
+      JSON.stringify(
+        await readProviderResponseAttempt({ jobId: tidalJob.id, attempt: 1 }),
+      ),
+    ).not.toContain(apiKey)
+    expect(tidalJob.options.sonovault).toMatchObject({
+      responseId: sonovaultResponse?.id,
+    })
 
     expect(await storedLookups()).toEqual([
       {
         code: isrc(2),
         spotifyId: spotifyId(20),
         source: 'sonovault',
-        responseId: response?.id,
-        scrapeJobId: sonovaultJob.id,
+        responseId: sonovaultResponse?.id,
+        scrapeJobId: tidalJob.id,
       },
       {
         code: isrc(3),
@@ -458,6 +553,38 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
       },
     ])
 
+    // Both jobs still replay from what they stored: the TIDAL read from its
+    // own provider's responses, the Spotify search from its own.
+    const tidalReplay = await replayProviderTask(
+      TIDAL_SIMILAR_TASK,
+      'tidal',
+      ProviderTaskReplayStepsSchema.parse(tidalJob.options.providerReplaySteps),
+      (
+        await readProviderResponseAttempt({
+          jobId: tidalJob.id,
+          attempt: 1,
+          provider: 'tidal',
+        })
+      ).map(({ capture }) => capture),
+    )
+    expect(tidalReplay).toEqual([
+      expect.arrayContaining([expect.objectContaining({ tidalId: '820002' })]),
+    ])
+    const spotifyReplay = await replayProviderTask(
+      SPOTIFY_SIMILAR_LOOKUP_TASK,
+      'spotify',
+      ProviderTaskReplayStepsSchema.parse(
+        spotifyJob.options.providerReplaySteps,
+      ),
+      (
+        await readProviderResponseAttempt({
+          jobId: spotifyJob.id,
+          attempt: 1,
+        })
+      ).map(({ capture }) => capture),
+    )
+    expect(spotifyReplay).toHaveLength(3)
+
     const result = await getTidalSimilar({ kind: 'tracks', id: trackId })
     expect(result.lookupJob).toMatchObject({
       jobId: spotifyJob.id,
@@ -470,17 +597,6 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
       'none',
       'spotify',
     ])
-    expect(result.items[1]?.spotify).toEqual({
-      spotifyId: spotifyId(20),
-      url: `https://open.spotify.com/track/${spotifyId(20)}`,
-      title: 'Afterhours Telex',
-      artists: ['Fixture Artist'],
-      albumName: null,
-      spotifyAlbumId: null,
-      artworkUrl: null,
-      durationSec: TIDAL_DURATION_SEC + 2,
-      trackCount: null,
-    })
 
     // The credits it reported are the provider's latest.
     expect((await getSonovaultSummary()).credits.remaining).toBe(31000)
@@ -504,6 +620,69 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
       isrc(5),
     ])
   }, 30000)
+
+  it('waits for its paced slot in the shared gate, then is counted', async () => {
+    const slot = Date.now() + 1500
+    await sonovaultGate({ nextAllowedAt: new Date(slot) })
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    const events = await sonovaultEvents()
+    expect(events).toHaveLength(1)
+    expect(events[0]?.requestedAt.getTime()).toBeGreaterThanOrEqual(slot - 5)
+    expect((await readJob()).options.sonovault).toMatchObject({ mapped: 1 })
+    const [gate] = await databaseClient
+      .select({ nextAllowedAt: schema.providerRequestState.nextAllowedAt })
+      .from(schema.providerRequestState)
+      .where(eq(schema.providerRequestState.provider, 'sonovault'))
+    // The next Sonovault request, from any job, starts 1.1 s after it.
+    expect(gate?.nextAllowedAt?.getTime()).toBeGreaterThanOrEqual(slot + 1095)
+  }, 30000)
+
+  it('falls back to Spotify search without waiting when no slot comes within the read', async () => {
+    await sonovaultGate({ nextAllowedAt: new Date(Date.now() + 60000) })
+    const started = Date.now()
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    expect(Date.now() - started).toBeLessThan(15000)
+    expect(requested()).toEqual([])
+    expect(await sonovaultEvents()).toEqual([])
+    expect(await lastLog((await readJob()).id)).toMatch(
+      /Sonovault not used: Sonovault is busy with other requests\. 4 left for Spotify search\./,
+    )
+    await runQueued()
+    expect(requested()).toEqual(
+      [2, 3, 4, 5].map((n) => `spotify isrc:${isrc(n)}`),
+    )
+  }, 30000)
+
+  it.each([
+    ['cooling down', { cooldownUntil: new Date(Date.now() + 3600000) }],
+    ['halted', { halted: true }],
+  ])(
+    'falls back to Spotify search while Sonovault is %s',
+    async (_, gate) => {
+      await sonovaultGate(gate)
+      const read = await refreshTidalSimilar(
+        { kind: 'tracks', id: trackId },
+        userId,
+      )
+      expect(read.items.map(({ state }) => state)).toEqual([
+        'library',
+        'unsearched',
+        'unsearched',
+        'unsearched',
+        'unsearched',
+      ])
+      expect(await sonovaultEvents()).toEqual([])
+      expect((await readJob()).options.sonovault).toEqual({
+        sent: 0,
+        mapped: 0,
+      })
+      await runQueued()
+      expect(requested()).toEqual(
+        [2, 3, 4, 5].map((n) => `spotify isrc:${isrc(n)}`),
+      )
+    },
+    30000,
+  )
 
   it('removes its matches with the rest of Sonovault data', async () => {
     await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
@@ -538,8 +717,56 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
     expect(requested()).toEqual(
       [2, 3, 4, 5].map((n) => `spotify isrc:${isrc(n)}`),
     )
-    const [sonovaultJob] = await jobsByTask(SONOVAULT_SIMILAR_LOOKUP_TASK)
-    expect(sonovaultJob?.status).toBe('succeeded')
-    expect(sonovaultJob?.options).toMatchObject({ mapped: 0, sent: 0 })
+    expect((await readJob()).options.sonovault).toEqual({ sent: 0, mapped: 0 })
+    expect(await lastLog((await readJob()).id)).toMatch(
+      /Sonovault not used: 4 credits would leave fewer than the 2000-credit reserve/,
+    )
+  }, 30000)
+
+  it('still runs a lookup job queued before the release, and makes no new ones', async () => {
+    const tracks = [
+      { code: isrc(2), title: 'Afterhours Telex', durationSec: 348 },
+    ]
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'queued-similar-lookup',
+      provider: 'sonovault',
+      status: 'queued',
+      scope: { mediaType: 'track', mediaItemIds: [trackId], limit: 1 },
+      options: {
+        task: SONOVAULT_SIMILAR_LOOKUP_TASK,
+        kind: 'track',
+        itemId: trackId,
+        tracks,
+        groupKey: 'queued-similar-lookup-group',
+        dispatchPriority: 2,
+      },
+      requestedByUserId: userId,
+    })
+    await runQueued()
+    const [job] = await jobsByTask(SONOVAULT_SIMILAR_LOOKUP_TASK)
+    expect(job).toMatchObject({
+      status: 'succeeded',
+      options: { mapped: 1, sent: 1, creditsRemaining: 31000 },
+    })
+    const captures = await readProviderResponseAttempt({
+      jobId: 'queued-similar-lookup',
+      attempt: 1,
+    })
+    expect(captures.map(({ capture }) => capture.ordinal)).toEqual([1])
+    expect(await storedLookups()).toEqual([
+      expect.objectContaining({
+        code: isrc(2),
+        source: 'sonovault',
+        scrapeJobId: 'queued-similar-lookup',
+      }),
+    ])
+    await expect(
+      createTaskJob(SONOVAULT_SIMILAR_LOOKUP_TASK, userId, {
+        taskOptions: { kind: 'track', itemId: trackId, tracks },
+      }),
+    ).rejects.toThrow(/looked up on Sonovault when they are read from TIDAL/)
+    await expect(
+      retryJob('queued-similar-lookup', userId, false),
+    ).rejects.toThrow(/looked up on Sonovault when they are read from TIDAL/)
   }, 30000)
 })

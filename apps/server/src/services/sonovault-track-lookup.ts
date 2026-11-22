@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, notInArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, notInArray, sql, type SQL } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import type { JsonValue } from '@repo/media-plugin-sdk'
@@ -28,6 +28,7 @@ import {
   type SonovaultTrackLookupInput,
 } from '@repo/schemas/sonovault'
 import { SONOVAULT_ALBUM_LOOKUP_TASK } from '@repo/schemas/sonovault-album'
+import { TIDAL_SIMILAR_TASK } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { validIsrc } from '@/lib/isrc'
@@ -276,26 +277,37 @@ export async function prepareSonovaultTrackLookup(
 
 /**
  * The credits the latest job reported, with whether it is this calendar month
- * (UTC): from a track lookup or a similar-track lookup (SONO-26), as their
- * bulk response said, or from an album lookup, as that said or the previous
- * report less the releases it fetched.
+ * (UTC): from a track lookup, a similar-track lookup (SONO-26, in a TIDAL
+ * similar read or an older queued job) as their bulk response said, or from
+ * an album lookup, as that said or the previous report less the releases it
+ * fetched.
  */
 export async function reportedSonovaultCredits(database: Reader, now: Date) {
-  const [latest] = await database
-    .select({ options: scrapeJob.options })
-    .from(scrapeJob)
-    .where(
+  const latestReport = (scope: SQL | undefined) =>
+    database
+      .select({ options: scrapeJob.options })
+      .from(scrapeJob)
+      .where(and(scope, sql`${scrapeJob.options} ? 'creditsReportedAt'`))
+      .orderBy(
+        desc(sql`${scrapeJob.options}->>'creditsReportedAt'`),
+        desc(scrapeJob.id),
+      )
+      .limit(1)
+  const [[sonovault], [similar]] = await Promise.all([
+    latestReport(
       and(
         eq(scrapeJob.provider, PROVIDER),
         sql`${scrapeJob.options}->>'task' in (${SONOVAULT_TRACK_LOOKUP_TASK}, ${SONOVAULT_SIMILAR_LOOKUP_TASK}, ${SONOVAULT_ALBUM_LOOKUP_TASK})`,
-        sql`${scrapeJob.options} ? 'creditsReportedAt'`,
       ),
-    )
-    .orderBy(
-      desc(sql`${scrapeJob.options}->>'creditsReportedAt'`),
-      desc(scrapeJob.id),
-    )
-    .limit(1)
+    ),
+    latestReport(sql`${scrapeJob.options}->>'task' = ${TIDAL_SIMILAR_TASK}`),
+  ])
+  const reportTime = (row: typeof sonovault) => {
+    const value = row?.options.creditsReportedAt
+    return typeof value === 'string' ? value : ''
+  }
+  const latest =
+    reportTime(similar) > reportTime(sonovault) ? similar : sonovault
   const report = CreditReportSchema.safeParse(latest?.options)
   if (!report.success) return null
   const reportedAt = new Date(report.data.creditsReportedAt)

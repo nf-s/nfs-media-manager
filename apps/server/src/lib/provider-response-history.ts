@@ -85,6 +85,11 @@ type RecorderOptions = {
   accountData?: boolean
   /** Called once, when the first response passes the per-attempt byte cap. */
   onCaptureLimit?: () => Promise<void>
+  /**
+   * The first response's ordinal. A second provider's request made by the
+   * same task job attempt numbers its responses after the job's own.
+   */
+  firstOrdinal?: number
 }
 
 function requestSecrets(
@@ -241,7 +246,7 @@ export function createProviderResponseRecorder(
   capturePolicy?: PublicProviderCapturePolicy,
   options: RecorderOptions = {},
 ) {
-  let ordinal = 0
+  let ordinal = (options.firstOrdinal ?? 1) - 1
   let retainedBytes = 0
   let limitReported = false
   let failure: ProviderResponseStorageError | undefined

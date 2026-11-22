@@ -41,6 +41,8 @@ A provider whose manifest sets `runsInRequest` (TIDAL) has no queue. `createJob`
 
 Every request still goes through the provider's request gate (`createProviderRequest`), which queued jobs, local workers and other in-request calls share, so together they never exceed its concurrency and spacing, and a 429 cooldown stops them all. A job run in the request waits at most `IN_REQUEST_SLOT_WAIT_MS` (10 seconds) for a slot (`maxSlotWaitMs`); then nothing is sent, nothing is recorded as a provider failure, and the job fails. A cooldown or halt before the run refuses it without a job; a cooldown, busy slot or 429 during it finishes the job as failed. Both answer 429 with "<Provider> is rate limited. Try again in N seconds."
 
+A job run in the request can also make another provider's request through that provider's gate, with the same wait. A TIDAL similar-tracks read sends its Sonovault bulk lookup this way (SONO-26) instead of queuing a Sonovault job, which could wait hours behind a bulk run. Its response is stored on the TIDAL job under provider `sonovault`, numbered after the job's own responses; replay reads the job's own provider's responses only (`readProviderResponseAttempt` with `provider`). When Sonovault is busy past the wait, cooling down or halted, nothing is sent and the read still succeeds: the suggestions go to the queued Spotify search.
+
 ## Hosted queue recovery
 
 In the hosted runtime, queued jobs can wait while their provider's dispatcher is

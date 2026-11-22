@@ -1,5 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import type { JsonValue } from '@repo/schemas/common'
 import { isProviderItemNotFoundError } from '@repo/media-plugin-sdk'
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
@@ -57,7 +58,10 @@ import {
   type SimilarLibraryItem,
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
-import { similarTrackCheck } from './sonovault-similar-lookup'
+import {
+  mapSimilarTracksThroughSonovault,
+  similarTrackCheck,
+} from './sonovault-similar-lookup'
 import { lookupTidalSimilar } from './tidal-similar-lookup'
 
 type Reader = Pick<typeof db, 'select' | 'execute'>
@@ -330,48 +334,87 @@ export async function suggestionsNeedingSpotify(
   })
 }
 
-/**
- * Queues the Spotify lookup of the suggestions that need one. Tracks go to
- * Sonovault first, which queues a Spotify search for what it does not map
- * (SONO-26); when Sonovault cannot take the job, and for albums, Spotify is
- * searched directly.
- */
-async function queueSpotifyLookup(
+/** Queues the Spotify search of the suggestions' codes. */
+async function queueSpotifySearch(
   userId: string | null,
-  input: {
-    kind: TidalSimilarKind
-    itemId: string
-    codes: { code: string; suggestion: TidalSuggestion }[]
-  },
+  input: { kind: TidalSimilarKind; itemId: string; codes: readonly string[] },
 ) {
-  if (!input.codes.length) return null
-  const tracks =
-    input.kind === 'track'
-      ? input.codes.flatMap(
-          ({ suggestion }) => similarTrackCheck(suggestion) ?? [],
-        )
-      : []
-  if (tracks.length)
-    try {
-      await createTaskJob(SONOVAULT_SIMILAR_LOOKUP_TASK, userId, {
-        taskOptions: { kind: 'track', itemId: input.itemId, tracks },
-      })
-      return `Looking up ${tracks.length} on Spotify through Sonovault.`
-    } catch (error) {
-      if (!(error instanceof ServerError)) throw error
-    }
   try {
     await createTaskJob(SPOTIFY_SIMILAR_LOOKUP_TASK, userId, {
       taskOptions: {
         kind: input.kind,
         itemId: input.itemId,
-        codes: input.codes.map(({ code }) => code),
+        codes: [...input.codes],
       },
     })
     return `Looking up ${input.codes.length} on Spotify.`
   } catch (error) {
     if (!(error instanceof ServerError)) throw error
     return `Not looked up on Spotify: ${error.message}`
+  }
+}
+
+type SpotifyMapping = {
+  message: string | null
+  options: Record<string, JsonValue>
+}
+
+/**
+ * Maps the suggestions that need a Spotify lookup. A track's go to Sonovault
+ * in this read, one bulk request through Sonovault's request gate (SONO-26),
+ * stored with this job; what it does not map, and all of them when Sonovault
+ * cannot be used, go to a queued Spotify search. Albums are searched on
+ * Spotify directly. Null when the job stopped.
+ */
+async function mapToSpotify(
+  context: TaskJobContext,
+  input: {
+    kind: TidalSimilarKind
+    itemId: string
+    codes: { code: string; suggestion: TidalSuggestion }[]
+  },
+): Promise<SpotifyMapping | null> {
+  if (!input.codes.length) return { message: null, options: {} }
+  const userId = context.requestedByUserId
+  const codes = input.codes.map(({ code }) => code)
+  const tracks =
+    input.kind === 'track'
+      ? input.codes.flatMap(
+          ({ suggestion }) => similarTrackCheck(suggestion) ?? [],
+        )
+      : []
+  if (!tracks.length)
+    return {
+      message: await queueSpotifySearch(userId, { ...input, codes }),
+      options: {},
+    }
+  try {
+    const mapping = await mapSimilarTracksThroughSonovault(
+      {
+        jobId: context.jobId,
+        jobProvider: PROVIDER,
+        assertActive: context.assertActive,
+        isActive: context.isActive,
+        ...(context.maxSlotWaitMs === undefined
+          ? {}
+          : { maxSlotWaitMs: context.maxSlotWaitMs }),
+      },
+      { userId, itemId: input.itemId, tracks },
+    )
+    if (!mapping) return null
+    return {
+      message: mapping.message,
+      options: { sonovault: mapping.summary, ...mapping.credits },
+    }
+  } catch (error) {
+    // The TIDAL read stands when the Sonovault step fails.
+    if (!(await context.isActive())) return null
+    const reason = error instanceof Error ? error.message : 'unknown error'
+    const spotify = await queueSpotifySearch(userId, { ...input, codes })
+    return {
+      message: `Sonovault lookup failed (${reason}). ${spotify}`,
+      options: { sonovault: { sent: 0, mapped: 0 } },
+    }
   }
 }
 
@@ -459,21 +502,22 @@ export async function runTidalSimilar(
         options: { tidalIdDead: true },
       }
     const noun = options.kind === 'album' ? 'albums' : 'tracks'
-    const spotify = await queueSpotifyLookup(context.requestedByUserId, {
+    const readAt = new Date()
+    const spotify = await mapToSpotify(context, {
       kind: options.kind,
       itemId: options.itemId,
       codes: await suggestionsNeedingSpotify(db, options.kind, suggestions),
     })
-    const readAt = new Date()
+    if (!spotify) return { outcome: 'stopped' }
     return {
       outcome: 'complete',
       message: [
         `Read ${suggestions.length} similar ${noun} from TIDAL${fromSonovault ? ' with the TIDAL ID from Sonovault' : ''}.`,
-        spotify,
+        spotify.message,
       ]
         .filter(Boolean)
         .join(' '),
-      options: { count: suggestions.length },
+      options: { count: suggestions.length, ...spotify.options },
       persist: async (tx) => {
         const [item] = await tx
           .select({ id: mediaItem.id })
@@ -526,8 +570,8 @@ const summarize = (job: JobRow | undefined): TidalSimilarJob | null =>
 
 /**
  * The latest job of the item among the similar tasks, in the partial index's
- * order. A track's Spotify lookup is either Sonovault's job or the Spotify
- * search it queues (SONO-26).
+ * order. A track's Spotify lookup is the Spotify search the read queues, or
+ * a Sonovault job queued before the read did the Sonovault lookup itself.
  */
 async function latestSimilarJob(
   database: Pick<typeof db, 'select'>,
@@ -684,7 +728,8 @@ async function albumHasSpotifyUpc(id: string) {
  * in this request through the request gate, and returns the Similar state.
  * A track with a verified Sonovault TIDAL ID is read without a match; when
  * TIDAL does not know that ID, the track is matched and then read, once
- * (SONO-27). The Spotify lookup of the suggestions stays a queued job.
+ * (SONO-27). A track's suggestions are mapped through Sonovault in the same
+ * read; the Spotify search of what is left stays a queued job.
  */
 export async function refreshTidalSimilar(
   input: { kind: 'albums' | 'tracks'; id: string },

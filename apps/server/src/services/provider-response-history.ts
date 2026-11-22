@@ -1,4 +1,4 @@
-import { and, count, eq, isNull } from 'drizzle-orm'
+import { and, count, eq, isNull, max } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import type { z } from 'zod'
 import type { PaginationQuerySchema } from '@repo/schemas/common'
@@ -33,6 +33,11 @@ type CaptureInput = {
   jobItemId?: string | null
   artistId?: string | null
   provider: string
+  /**
+   * The job's own provider when a task job stores another provider's
+   * response, as a TIDAL similar read does for its Sonovault lookup.
+   */
+  jobProvider?: string
   attempt: number
   capture: ProviderResponseCapture
 }
@@ -94,9 +99,10 @@ export async function saveProviderResponseCapture(
   const jobItemId = input.jobItemId ?? null
   const taskPhase = capture.phase === 'task'
 
+  const jobProvider = input.jobProvider ?? input.provider
   const jobFilter = and(
     eq(scrapeJob.id, input.jobId),
-    eq(scrapeJob.provider, input.provider),
+    eq(scrapeJob.provider, jobProvider),
   )
   const [scope] =
     jobItemId === null
@@ -119,6 +125,7 @@ export async function saveProviderResponseCapture(
           .where(jobFilter)
   if (
     !scope ||
+    (jobProvider !== input.provider && !taskPhase) ||
     (taskPhase &&
       (jobItemId !== null ||
         input.artistId != null ||
@@ -259,9 +266,37 @@ export async function getJobProviderResponse(
   return { ...formatSummary(summary), body, requestKey }
 }
 
-/** Offline replay reads the exact original attempt, with no live request or other fallback. */
+/**
+ * The ordinal a task job attempt's next stored response takes: after every
+ * response already stored for it, whichever provider answered.
+ */
+export async function nextTaskResponseOrdinal(
+  jobId: string,
+  attempt = 1,
+  database: Pick<typeof db, 'select'> = db,
+) {
+  const [row] = await database
+    .select({ last: max(providerResponse.ordinal) })
+    .from(providerResponse)
+    .where(
+      and(
+        eq(providerResponse.jobId, jobId),
+        isNull(providerResponse.jobItemId),
+        eq(providerResponse.attempt, attempt),
+      ),
+    )
+  return (row?.last ?? 0) + 1
+}
+
+/**
+ * Offline replay reads the exact original attempt, with no live request or
+ * other fallback. With `provider`, only that provider's responses: a task
+ * job's own come first, so they are numbered from 1 without gaps.
+ */
 export async function readProviderResponseAttempt(
-  scope: Pick<CaptureInput, 'jobId' | 'jobItemId' | 'attempt'>,
+  scope: Pick<CaptureInput, 'jobId' | 'jobItemId' | 'attempt'> & {
+    provider?: string
+  },
 ): Promise<
   Array<{ artistId: string | null; capture: ProviderResponseCapture }>
 > {
@@ -289,6 +324,9 @@ export async function readProviderResponseAttempt(
           ? isNull(providerResponse.jobItemId)
           : eq(providerResponse.jobItemId, item),
         eq(providerResponse.attempt, scope.attempt),
+        scope.provider === undefined
+          ? undefined
+          : eq(providerResponse.provider, scope.provider),
       ),
     )
     .orderBy(providerResponse.ordinal)
