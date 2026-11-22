@@ -2299,15 +2299,23 @@ it('bounds Track pages filtered, sorted and hydrated by Track tags', async () =>
       await checkBudget(label, Math.ceil(unfiltered * 1.5), 1, read, 10_000)
       await expectSetReads(label, read)
     }
-    await checkBudget('Track tags broad deep page', 4_600, 1, async () => {
-      const result = await page({
-        sortBy: 'title',
-        direction: 'asc',
-        page: 40,
-        filters: tagFilter('Fixture Tide'),
-      })
-      expect(result.ids).toHaveLength(100)
-    })
+    // Measured at 3,057 blocks on PostgreSQL 17.9 here and 14,011 in CI on
+    // 17 and 18 (another plan, about 30 ms either way); 1.5 times the larger.
+    await checkBudget(
+      'Track tags broad deep page',
+      21_100,
+      1,
+      async () => {
+        const result = await page({
+          sortBy: 'title',
+          direction: 'asc',
+          page: 40,
+          filters: tagFilter('Fixture Tide'),
+        })
+        expect(result.ids).toHaveLength(100)
+      },
+      10_000,
+    )
     // An exact count with a filter on library_track pays for the same
     // visibility reads; the tag set adds one read of the partial index.
     const rangeCountBlocks = await sharedBlocksOf(() =>
