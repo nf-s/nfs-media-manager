@@ -67,6 +67,10 @@ import {
   replayProviderTask,
 } from '@/services/provider-task-replay'
 import { getTidalSimilar, refreshTidalSimilar } from '@/services/tidal-similar'
+import {
+  acceptTidalTrackMatch,
+  getTidalTrackMatch,
+} from '@/services/tidal-track-match'
 
 const userId = 'fixture-owner'
 const albumId = 'album-seed'
@@ -227,13 +231,18 @@ function mockProviders() {
         { status: 404 },
       )
     // A track match by ISRC: TIDAL has the Sonovault track's recording as
-    // 800002 and nothing for isrc(61).
+    // 800002, two tracks for isrc(62) and nothing for isrc(61).
     if (url.pathname === '/v2/tracks' && url.searchParams.has('filter[isrc]'))
       return Response.json({
         data:
           url.searchParams.get('filter[isrc]') === isrc(60)
             ? [{ ...tidalTrack('800002', 'Signal Fade', isrc(60)) }]
-            : [],
+            : url.searchParams.get('filter[isrc]') === isrc(62)
+              ? [
+                  tidalTrack('800003', 'Twin Signal', isrc(62)),
+                  tidalTrack('800004', 'Twin Signal', isrc(62)),
+                ]
+              : [],
         included: [],
         links: { self: '/tracks' },
       })
@@ -855,4 +864,70 @@ describe('the TIDAL ID of a similar-tracks read (SONO-27)', () => {
       '/v2/tracks/899999/relationships/similarTracks',
     )
   }, 30000)
+})
+
+describe('why a track is not matched on TIDAL', () => {
+  it('counts the TIDAL tracks waiting for review until the owner chooses one', async () => {
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'track-review',
+      slug: 'track-review',
+      title: 'Twin Signal',
+      mediaType: 'track',
+    })
+    await databaseClient
+      .insert(schema.libraryTrack)
+      .values({ mediaItemId: 'track-review', isrc: isrc(62) })
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-review' },
+      userId,
+    )
+    expect(tidalPaths()).toEqual([`/v2/tracks?isrc=${isrc(62)}`])
+    expect(result).toMatchObject({
+      matched: false,
+      matchJob: { status: 'succeeded' },
+      unmatched: { reason: 'review', candidateCount: 2 },
+      job: null,
+    })
+    const review = await getTidalTrackMatch('track-review')
+    if (!review.job) throw new Error('Missing match job')
+    await acceptTidalTrackMatch({
+      trackId: 'track-review',
+      jobId: review.job.jobId,
+      tidalTrackId: '800004',
+    })
+    // Matched and not read yet: the tab reads it next.
+    expect(
+      await getTidalSimilar({ kind: 'tracks', id: 'track-review' }),
+    ).toMatchObject({ matched: true, unmatched: null, job: null, readAt: null })
+  })
+
+  it('says when a track has no ISRC or TIDAL has no track with it', async () => {
+    expect(
+      await getTidalSimilar({ kind: 'tracks', id: 'track-unmatched' }),
+    ).toMatchObject({
+      matched: false,
+      matchJob: null,
+      unmatched: { reason: 'no-isrc' },
+    })
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ isrc: isrc(61) })
+      .where(eq(schema.libraryTrack.mediaItemId, 'track-sonovault'))
+    expect(
+      await getTidalSimilar({ kind: 'tracks', id: 'track-sonovault' }),
+    ).toMatchObject({ matched: false, matchJob: null, unmatched: null })
+    const result = await refreshTidalSimilar(
+      { kind: 'tracks', id: 'track-sonovault' },
+      userId,
+    )
+    expect(result).toMatchObject({
+      matched: false,
+      matchJob: { status: 'failed' },
+      unmatched: { reason: 'not-found', isrc: isrc(61) },
+    })
+    expect(
+      (await getTidalSimilar({ kind: 'albums', id: 'album-unmatched' }))
+        .unmatched,
+    ).toBeNull()
+  })
 })

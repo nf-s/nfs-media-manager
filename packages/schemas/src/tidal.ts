@@ -338,9 +338,30 @@ export const TidalSimilarSourceSchema = z.object({
 export type TidalSimilarSource = z.infer<typeof TidalSimilarSourceSchema>
 
 /**
+ * Why a track is not matched on TIDAL: its latest track match left
+ * `candidateCount` TIDAL tracks for the owner to choose from (`review`), the
+ * track has no ISRC to match by (`no-isrc`), or TIDAL has no track with the
+ * ISRC the latest match used (`not-found`).
+ */
+export const TidalSimilarUnmatchedSchema = z.discriminatedUnion('reason', [
+  z.object({
+    reason: z.literal('review'),
+    candidateCount: z
+      .number()
+      .int()
+      .positive()
+      .max(TIDAL_TRACK_CANDIDATE_LIMIT),
+  }),
+  z.object({ reason: z.literal('no-isrc') }),
+  z.object({ reason: z.literal('not-found'), isrc: z.string().max(40) }),
+])
+export type TidalSimilarUnmatched = z.infer<typeof TidalSimilarUnmatchedSchema>
+
+/**
  * The Similar tab of one library album or track. `matched` is false until a
  * TIDAL album job or track match has linked the item to TIDAL; `matchJob` is
- * the latest of those, `job` the latest TIDAL similar read and `lookupJob` the
+ * the latest of those, and `unmatched` says why a track is not matched when
+ * it is known. `job` is the latest TIDAL similar read and `lookupJob` the
  * latest Spotify lookup. `readAt` is null until a read has succeeded, and
  * `source` says where the TIDAL ID of that read came from.
  */
@@ -349,6 +370,7 @@ export const TidalSimilarSchema = z.object({
   itemId: z.string(),
   matched: z.boolean(),
   matchJob: TidalSimilarJobSchema.nullable(),
+  unmatched: TidalSimilarUnmatchedSchema.nullable(),
   job: TidalSimilarJobSchema.nullable(),
   lookupJob: TidalSimilarJobSchema.nullable(),
   readAt: dateTime.nullable(),

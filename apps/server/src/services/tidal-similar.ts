@@ -13,11 +13,13 @@ import {
   TidalSimilarSchema,
   TidalSimilarSourceSchema,
   TidalSuggestionSchema,
+  TidalTrackMatchReasonSchema,
   type TidalSimilar,
   type TidalSimilarItem,
   type TidalSimilarJob,
   type TidalSimilarKind,
   type TidalSimilarSource,
+  type TidalSimilarUnmatched,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
 import {
@@ -39,6 +41,7 @@ import {
   providerReference,
   scrapeJob,
   scrapeJobItem,
+  scrapeJobLog,
   spotifyCodeLookup,
   tidalSimilar,
 } from '@/schemas/db'
@@ -63,6 +66,7 @@ import {
   similarTrackCheck,
 } from './sonovault-similar-lookup'
 import { lookupTidalSimilar } from './tidal-similar-lookup'
+import { matchTarget } from './tidal-track-match'
 
 type Reader = Pick<typeof db, 'select' | 'execute'>
 
@@ -628,6 +632,62 @@ async function latestMatchJob(
   return job
 }
 
+/** What a track match job's options and log say about its result. */
+const MatchOutcomeSchema = z.object({
+  isrc: z.string().max(40).optional(),
+  reason: TidalTrackMatchReasonSchema.optional(),
+  candidateCount: z.number().int().optional(),
+  acceptedTidalTrackId: z.string().optional(),
+})
+
+/**
+ * Why a track is not matched on TIDAL, from its latest track match and its
+ * ISRC: TIDAL tracks left for the owner's review, no ISRC to match by, or no
+ * TIDAL track with the ISRC. Null while a match runs and when not known.
+ */
+async function unmatchedTrack(
+  database: Pick<typeof db, 'select'>,
+  id: string,
+  matchJob: JobRow | undefined,
+): Promise<TidalSimilarUnmatched | null> {
+  if (matchJob?.status === 'queued' || matchJob?.status === 'running')
+    return null
+  const jobId = matchJob?.jobId ?? null
+  const [track, [job], [notFound]] = await Promise.all([
+    matchTarget(database, id),
+    jobId
+      ? database
+          .select({ options: scrapeJob.options })
+          .from(scrapeJob)
+          .where(eq(scrapeJob.id, jobId))
+      : [],
+    jobId && matchJob?.status === 'failed'
+      ? database
+          .select({ id: scrapeJobLog.id })
+          .from(scrapeJobLog)
+          .where(
+            and(
+              eq(scrapeJobLog.jobId, jobId),
+              sql`${scrapeJobLog.metadata}->>'classification' = 'not-found'`,
+            ),
+          )
+          .limit(1)
+      : [],
+  ])
+  const options = MatchOutcomeSchema.safeParse(job?.options)
+  const result = options.success ? options.data : {}
+  if (
+    matchJob?.status === 'succeeded' &&
+    result.reason === 'ambiguous' &&
+    !result.acceptedTidalTrackId &&
+    result.candidateCount
+  )
+    return { reason: 'review', candidateCount: result.candidateCount }
+  if (!track?.isrc) return { reason: 'no-isrc' }
+  if (notFound && result.isrc) return { reason: 'not-found', isrc: result.isrc }
+  return null
+}
+
 function stateOf(
   library: SimilarLibraryItem | undefined,
   lookup: typeof spotifyCodeLookup.$inferSelect | undefined,
@@ -688,11 +748,16 @@ async function readTidalSimilar(
     ),
     mapSuggestions(db, kind, target.items),
   ])
+  const unmatched =
+    kind === 'track' && target.tidalId === null
+      ? await unmatchedTrack(db, id, matchJob)
+      : null
   return TidalSimilarSchema.parse({
     kind,
     itemId: id,
     matched: target.tidalId !== null,
     matchJob: summarize(matchJob),
+    unmatched,
     job: summarize(job),
     lookupJob: summarize(lookupJob),
     readAt: target.readAt?.toISOString() ?? null,

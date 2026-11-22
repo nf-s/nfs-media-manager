@@ -7,7 +7,9 @@ import {
   TidalSimilarItemSchema,
   TidalSimilarSchema,
   type TidalSimilar,
+  type TidalSimilarUnmatched,
 } from '@repo/schemas/tidal'
+import { TrackDetailSchema } from '@repo/schemas/tracks'
 import { ConfigContext } from './providers'
 import {
   SimilarBody,
@@ -78,6 +80,7 @@ const similar = (values: Partial<TidalSimilar> = {}) =>
     itemId: 'example-album',
     matched: true,
     matchJob: null,
+    unmatched: null,
     job: job('succeeded'),
     lookupJob: null,
     readAt: createdAt,
@@ -227,6 +230,128 @@ test('the tab says what TIDAL is doing and what is missing', () => {
     />,
   )
   assert.match(tracks, /TIDAL has no similar tracks/)
+})
+
+test('an unmatched track says why, and what can be done', () => {
+  const unmatched = (values: Partial<TidalSimilar>, onReview?: () => void) =>
+    render(
+      <SimilarBody
+        similar={similar({
+          kind: 'track',
+          itemId: 'example-track',
+          matched: false,
+          matchJob: job('succeeded'),
+          job: null,
+          readAt: null,
+          items: [],
+          ...values,
+        })}
+        requesting={false}
+        onRequest={() => assert.fail('Rendering must not request')}
+        {...(onReview ? { onReview } : {})}
+      />,
+    )
+  const review: TidalSimilarUnmatched = { reason: 'review', candidateCount: 3 }
+  const reviewing = unmatched({ unmatched: review }, () => undefined)
+  assert.match(reviewing, /3 TIDAL tracks to review/)
+  assert.match(reviewing, /Choose one to read similar tracks\./)
+  assert.match(reviewing, /<button[^>]*aria-haspopup="dialog"[^>]*>Review</)
+  assert.doesNotMatch(reviewing, /disabled=""[^>]*>Review</)
+  assert.doesNotMatch(reviewing, /Match on TIDAL/)
+  // Until the track is loaded, the dialog cannot open.
+  assert.match(
+    unmatched({ unmatched: review }),
+    /<button[^>]*disabled=""[^>]*>Review</,
+  )
+  assert.match(
+    unmatched({ unmatched: { reason: 'review', candidateCount: 1 } }),
+    /1 TIDAL track to review/,
+  )
+  const noIsrc = unmatched({ matchJob: null, unmatched: { reason: 'no-isrc' } })
+  assert.match(noIsrc, /No ISRC/)
+  assert.match(noIsrc, /TIDAL matches tracks by ISRC\./)
+  assert.doesNotMatch(noIsrc, /<button/)
+  const notFound = unmatched({
+    matchJob: job('failed'),
+    unmatched: { reason: 'not-found', isrc: 'QZFX22800001' },
+  })
+  assert.match(notFound, /Not on TIDAL/)
+  assert.match(notFound, /TIDAL has no track with ISRC QZFX22800001/)
+  assert.match(notFound, /href="[^"]*example-failed[^"]*"[^>]*>Match job</)
+  assert.match(notFound, />Match on TIDAL</)
+  const running = unmatched({ matchJob: job('running'), unmatched: null })
+  assert.match(running, /Matching on TIDAL/)
+  assert.doesNotMatch(running, /<button/)
+  const never = unmatched({ matchJob: null })
+  assert.match(never, /Not matched on TIDAL/)
+  assert.match(never, /Similar tracks come from TIDAL\./)
+})
+
+test("the review opens from the track's loaded detail", () => {
+  const client = new QueryClient()
+  client.setQueryData(
+    ['tidal-similar', 'track', 'example-track'],
+    similar({
+      kind: 'track',
+      itemId: 'example-track',
+      matched: false,
+      matchJob: job('succeeded'),
+      unmatched: { reason: 'review', candidateCount: 2 },
+      job: null,
+      readAt: null,
+      items: [],
+    }),
+  )
+  client.setQueryData(
+    ['track', 'example-track'],
+    TrackDetailSchema.parse({
+      id: 'example-track',
+      mediaType: 'track',
+      title: 'Example track',
+      artworkUrl: null,
+      releaseDate: null,
+      artists: ['Example artist'],
+      artistCredits: [{ id: 'example-artist', name: 'Example artist' }],
+      albumName: 'Example album',
+      album: null,
+      albumLinkStrategy: null,
+      albumTags: [],
+      playlists: [],
+      sources: ['spotify'],
+      durationSec: 348,
+      dateAdded: createdAt,
+      spotifyTrackId: null,
+      spotifyMatch: 'unmatched',
+      spotifyUrl: null,
+      isrc: 'QZFX22800002',
+      scrobbles: 0,
+      lastListenedAt: null,
+      lastfmSources: [],
+      spotifyAlbumId: null,
+      scrobbledAlbums: [],
+      isrcs: [],
+      listening: {
+        total: 0,
+        firstListenedAt: null,
+        lastListenedAt: null,
+        months: [],
+        sources: [],
+      },
+    }),
+  )
+  const original = globalThis.fetch
+  globalThis.fetch = () => assert.fail('Rendering must not fetch')
+  try {
+    const html = render(
+      <SimilarItems kind="track" id="example-track" />,
+      client,
+    )
+    assert.match(html, /2 TIDAL tracks to review/)
+    assert.match(html, /<button[^>]*aria-haspopup="dialog"[^>]*>Review</)
+    assert.doesNotMatch(html, /disabled=""[^>]*>Review</)
+  } finally {
+    globalThis.fetch = original
+  }
 })
 
 test('the tab shows the stored result without fetching again', () => {

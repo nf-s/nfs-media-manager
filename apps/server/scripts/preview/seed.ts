@@ -2293,6 +2293,84 @@ async function main() {
     await credit(track.id, [track.artist])
   }
 
+  // TIDAL track matches for the Similar tab: one left two TIDAL tracks for
+  // review, and TIDAL had no track for another's ISRC. The rest have no ISRC.
+  const tidalMatches = [
+    { track: standalone[0], isrc: 'QZFX22600001', review: true },
+    { track: standalone[1], isrc: 'QZFX22600002', review: false },
+  ]
+  for (const [index, { track, isrc, review }] of tidalMatches.entries()) {
+    if (!track) continue
+    await db
+      .update(schema.libraryTrack)
+      .set({ isrc })
+      .where(eq(schema.libraryTrack.mediaItemId, track.id))
+    const candidate = (n: number, version: string | null) => {
+      const tidalTrackId = String(910000 + index * 10 + n)
+      return {
+        tidalTrackId,
+        title: track.title,
+        isrc,
+        url: `https://tidal.com/browse/track/${tidalTrackId}`,
+        version,
+        durationSec: track.durationSec + n * 6,
+        popularity: 0.4,
+        streamable: true,
+        albums: [
+          {
+            tidalAlbumId: String(920000 + index * 10 + n),
+            title: version
+              ? `${track.albumName} (${version})`
+              : track.albumName,
+            albumType: n === 1 ? 'SINGLE' : 'ALBUM',
+            barcodeId: null,
+            releaseDate: n === 1 ? '2021-03-05' : '2022-06-10',
+          },
+        ],
+      }
+    }
+    const candidates = review
+      ? [candidate(1, null), candidate(2, 'Extended Mix')]
+      : []
+    await addJob({
+      provider: 'tidal',
+      status: review ? 'succeeded' : 'failed',
+      mediaType: null,
+      options: {
+        task: 'tidal-track-match',
+        trackId: track.id,
+        isrc,
+        trackTitle: track.title,
+        ...(review ? { reason: 'ambiguous', candidateCount: 2 } : {}),
+      },
+      createdAt: daysAgo(2),
+      ...(review ? {} : { errorMessage: 'TIDAL has no track with this ISRC.' }),
+      logs: ({ finishedAt }) =>
+        finishedAt
+          ? [
+              {
+                level: review ? 'info' : 'error',
+                message: review
+                  ? '2 TIDAL tracks share the ISRC. Choose one in review.'
+                  : 'ProviderItemNotFoundError: TIDAL has no track with this ISRC.',
+                metadata: {
+                  diagnostics: [
+                    {
+                      kind: 'tidal-track-match',
+                      isrc,
+                      reason: review ? 'ambiguous' : 'none',
+                      candidates,
+                    },
+                  ],
+                  ...(review ? {} : { classification: 'not-found' }),
+                },
+                at: finishedAt,
+              },
+            ]
+          : [],
+    })
+  }
+
   // ------------------------------------------------------------- playlists
   const albumTrackRows = await db
     .select({

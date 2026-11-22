@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import {
@@ -11,6 +11,7 @@ import {
   type TidalSimilarKind,
   type TidalSimilarSource,
 } from '@repo/schemas/tidal'
+import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { List, RowTitle } from '@repo/ui/components/ds/list-row'
 import { PlayPair } from '@repo/ui/components/ds/play'
@@ -22,7 +23,7 @@ import {
 } from '@repo/ui/components/ds/suggestion'
 import { FilterLine, ToolbarCount } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
-import { formatCount, formatDate } from '@repo/ui/lib/format'
+import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
 import type { PlayableItem } from '@/utils/playback'
@@ -38,6 +39,11 @@ import {
 } from './play-controls'
 import { usePlayback, usePlaybackControls } from './playback-provider'
 import { useConfig } from './providers'
+import {
+  TidalTrackMatchReviewDialog,
+  useTidalTrackMatch,
+  type TidalReviewTrack,
+} from './tidal-track-match'
 
 const similarPath = (kind: TidalSimilarKind, id: string) =>
   `/api/v1/tidal/similar/${kind === 'album' ? 'albums' : 'tracks'}/${encodeURIComponent(id)}`
@@ -47,6 +53,7 @@ const similarKey = (kind: TidalSimilarKind, id: string) => [
   id,
 ]
 const plural = { album: 'albums', track: 'tracks' }
+const TIDAL_TRACKS = { one: 'TIDAL track', other: 'TIDAL tracks' }
 
 export function isActiveSimilarJob(job: TidalSimilarJob | null | undefined) {
   return job?.status === 'queued' || job?.status === 'running'
@@ -270,12 +277,79 @@ function SimilarSource({ source }: { source: TidalSimilarSource }) {
   )
 }
 
+/** Why the item is not matched on TIDAL, with what can be done about it. */
+function UnmatchedState({
+  similar,
+  requesting,
+  onRequest,
+  onReview,
+}: {
+  similar: TidalSimilar
+  requesting: boolean
+  onRequest: () => void
+  onReview?: () => void
+}) {
+  const { kind, matchJob, unmatched } = similar
+  const match = (
+    <Button size="xs" disabled={requesting} onClick={onRequest}>
+      Match on TIDAL
+    </Button>
+  )
+  if (unmatched?.reason === 'review')
+    return (
+      <State
+        size="sm"
+        title={`${formatItemCount(unmatched.candidateCount, TIDAL_TRACKS)} to review`}
+        action={
+          <Button
+            size="xs"
+            aria-haspopup="dialog"
+            disabled={!onReview}
+            onClick={onReview}
+          >
+            Review
+          </Button>
+        }
+      >
+        Choose one to read similar tracks.
+      </State>
+    )
+  if (unmatched?.reason === 'no-isrc')
+    return (
+      <State size="sm" title="No ISRC">
+        TIDAL matches tracks by ISRC.
+      </State>
+    )
+  if (unmatched?.reason === 'not-found')
+    return (
+      <State size="sm" title="Not on TIDAL" action={match}>
+        TIDAL has no track with ISRC {unmatched.isrc}
+        {matchJob && (
+          <>
+            {' · '}
+            <DetailLink kind="job" id={matchJob.jobId} title="Open job">
+              Match job
+            </DetailLink>
+          </>
+        )}
+      </State>
+    )
+  return (
+    <State size="sm" title="Not matched on TIDAL" action={match}>
+      {matchJob?.status === 'failed' && matchJob.errorMessage
+        ? matchJob.errorMessage
+        : `Similar ${plural[kind]} come from TIDAL.`}
+    </State>
+  )
+}
+
 /** The tab's content for one loaded `TidalSimilar`. */
 export function SimilarBody({
   similar,
   requesting,
   requestFailed = false,
   onRequest,
+  onReview,
 }: {
   similar: TidalSimilar
   /** The match or read is running in a request. */
@@ -283,6 +357,8 @@ export function SimilarBody({
   /** The request failed: an unread item stops showing Loading. */
   requestFailed?: boolean
   onRequest: () => void
+  /** Opens the review of the TIDAL tracks a match left; none until it can. */
+  onReview?: () => void
 }) {
   const { kind, matched, matchJob, job, lookupJob, readAt, source, items } =
     similar
@@ -306,19 +382,12 @@ export function SimilarBody({
   )
   if (!matched)
     return (
-      <State
-        size="sm"
-        title="Not matched on TIDAL"
-        action={
-          <Button size="xs" disabled={requesting} onClick={onRequest}>
-            Match on TIDAL
-          </Button>
-        }
-      >
-        {matchJob?.status === 'failed' && matchJob.errorMessage
-          ? matchJob.errorMessage
-          : `Similar ${noun} come from TIDAL.`}
-      </State>
+      <UnmatchedState
+        similar={similar}
+        requesting={requesting}
+        onRequest={onRequest}
+        {...(onReview ? { onReview } : {})}
+      />
     )
   if (!readAt)
     return (
@@ -382,11 +451,33 @@ export function SimilarBody({
   )
 }
 
+/** The track as the TIDAL review shows it, from its cached detail. */
+function useReviewTrack(id: string, enabled: boolean) {
+  const { apiBaseUrl } = useConfig()
+  const detail = useQuery({
+    queryKey: ['track', id],
+    enabled,
+    queryFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/tracks/${encodeURIComponent(id)}`,
+        TrackDetailSchema,
+      ),
+  })
+  return detail.data ? reviewTrack(detail.data) : null
+}
+
+function reviewTrack(item: TrackDetail): TidalReviewTrack {
+  return { ...item, isrc: item.isrc ?? item.isrcs[0]?.isrc ?? null }
+}
+
 /**
  * The Similar tab of an album or track: TIDAL's similar items, played
  * through Spotify. A matched item that was never read is read once when the
  * tab opens, in that request, which also maps a track's suggestions through
- * Sonovault; the Spotify search of the rest is a job.
+ * Sonovault; the Spotify search of the rest is a job. A track whose match
+ * left TIDAL tracks for review opens that review here, and is read once the
+ * owner has chosen one.
  */
 export function SimilarItems({
   kind,
@@ -395,6 +486,7 @@ export function SimilarItems({
   kind: TidalSimilarKind
   id: string
 }) {
+  const client = useQueryClient()
   const similar = useTidalSimilar(kind, id)
   const refresh = useRefreshTidalSimilar(kind, id)
   const requested = useRef(false)
@@ -406,6 +498,19 @@ export function SimilarItems({
     requested.current = true
     mutate()
   }, [unread, mutate])
+  const [reviewing, setReviewing] = useState(false)
+  const track = useReviewTrack(
+    id,
+    kind === 'track' && data?.unmatched?.reason === 'review',
+  )
+  // The dialog's choice matches the track: load the tab again to read it.
+  const chosen =
+    useTidalTrackMatch(id, kind === 'track' && reviewing).data?.match
+      ?.tidalTrackId ?? null
+  useEffect(() => {
+    if (chosen)
+      void client.invalidateQueries({ queryKey: similarKey(kind, id) })
+  }, [chosen, client, kind, id])
   if (!data) {
     if (similar.isError)
       return (
@@ -432,11 +537,18 @@ export function SimilarItems({
         requesting={refresh.isPending}
         requestFailed={refresh.isError}
         onRequest={() => refresh.mutate()}
+        {...(track ? { onReview: () => setReviewing(true) } : {})}
       />
       {refresh.isError && (
         <Notice tone="danger">
           {errorMessage(refresh.error, 'Could not reach TIDAL.')}
         </Notice>
+      )}
+      {reviewing && track && (
+        <TidalTrackMatchReviewDialog
+          track={track}
+          onClose={() => setReviewing(false)}
+        />
       )}
     </>
   )

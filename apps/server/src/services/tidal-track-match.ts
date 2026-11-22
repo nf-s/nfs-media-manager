@@ -93,7 +93,10 @@ const jobColumns = {
 type MatchJob = Pick<typeof scrapeJob.$inferSelect, keyof typeof jobColumns>
 
 /** A visible library track, its ISRC and the UPCs of its library albums. */
-async function matchTarget(database: Pick<typeof db, 'select'>, id: string) {
+export async function matchTarget(
+  database: Pick<typeof db, 'select'>,
+  id: string,
+) {
   const [target] = await database
     .select({
       title: mediaItem.title,
