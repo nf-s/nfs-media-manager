@@ -38,7 +38,10 @@ export function orderSearchItems(
   ]
 }
 
-/** The line under a result's title: who, the year, its tracks, In library. */
+/**
+ * The line under a result's title: its tracks, who, the year, In library. The
+ * tracks come first, so a narrow row cuts off the rest instead.
+ */
 export function describeSearchItem(
   item: ManualMediaSearchItem,
   { inLibrary, tracksPlayed }: { inLibrary: boolean; tracksPlayed?: number },
@@ -48,11 +51,11 @@ export function describeSearchItem(
       ? null
       : formatItemCount(item.trackCount, { one: 'track', other: 'tracks' })
   return [
+    tracks && tracksPlayed !== undefined && holdsFewerTracks(item, tracksPlayed)
+      ? `${tracks}, you played ${formatCount(tracksPlayed)}`
+      : tracks,
     item.subtitle,
     item.releaseDate?.slice(0, 4),
-    tracks && tracksPlayed !== undefined && holdsFewerTracks(item, tracksPlayed)
-      ? `${tracks}, fewer than the ${formatCount(tracksPlayed)} you played`
-      : tracks,
     inLibrary ? 'In library' : null,
   ]
     .filter(Boolean)

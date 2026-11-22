@@ -169,15 +169,15 @@ test('album results say how many tracks they have, and a release with fewer than
   assert.deepEqual(orderSearchItems([single, ep], undefined), [single, ep])
   assert.equal(
     describeSearchItem(single, { inLibrary: false, tracksPlayed: 6 }),
-    'Example artist · 1 track, fewer than the 6 you played',
+    '1 track, you played 6 · Example artist',
   )
   assert.equal(
     describeSearchItem(ep, { inLibrary: true, tracksPlayed: 6 }),
-    'Example artist · 2014 · 6 tracks · In library',
+    '6 tracks · Example artist · 2014 · In library',
   )
   assert.equal(
     describeSearchItem(single, { inLibrary: false }),
-    'Example artist · 1 track',
+    '1 track · Example artist',
   )
   assert.equal(
     describeSearchItem(unknown, { inLibrary: false, tracksPlayed: 6 }),
