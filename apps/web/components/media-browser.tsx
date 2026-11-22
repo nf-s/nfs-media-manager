@@ -1287,7 +1287,7 @@ function MediaBrowse({
     >
       <div className={embedded ? undefined : 'browse-column'}>
         <BrowseToolbar
-          actions={
+          addActions={
             !embedded && (
               <>
                 <Button type="button" onClick={() => setAdding(true)}>

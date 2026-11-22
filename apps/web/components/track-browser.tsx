@@ -895,7 +895,7 @@ function TrackBrowse({
     >
       <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
-          actions={
+          addActions={
             !embedded && (
               <Button type="button" onClick={() => setAdding(true)}>
                 Add track

@@ -98,6 +98,7 @@ export function BrowseViewSection({
  */
 export default function BrowseToolbar<Key extends string>({
   actions,
+  addActions,
   search,
   sort,
   filters,
@@ -112,6 +113,8 @@ export default function BrowseToolbar<Key extends string>({
   activeFilters,
 }: {
   actions?: ReactNode
+  /** Library additions share the search row on phones. */
+  addActions?: ReactNode
   search: ReactNode
   sort: BrowseSort<Key>
   /** The sections of the Filters drawer after View. */
@@ -137,14 +140,20 @@ export default function BrowseToolbar<Key extends string>({
     nextDirection === 'asc' ? 'Sort ascending' : 'Sort descending'
   const hasView = Boolean((density && view === 'grid') || viewOptions)
   const line = compact && Boolean(end || activeFilters)
+  const find = <div className="browse-find">{search}</div>
 
   return (
     <>
       <Toolbar>
-        <div className="browse-toolbar-start">
-          {actions}
-          <div className="browse-find">{search}</div>
-        </div>
+        {actions}
+        {addActions ? (
+          <div className="browse-toolbar-start">
+            {addActions}
+            {find}
+          </div>
+        ) : (
+          find
+        )}
         <SortPicker
           value={sort.key}
           options={sort.options}
