@@ -8,6 +8,7 @@ import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import { TrackQuerySchema, type TrackQuery } from '@repo/schemas/tracks'
 import { env } from '@/env'
+import { sonovaultReleaseFixture } from '@/plugins/builtin/__tests__/fixtures/sonovault/releases'
 import * as schema from '@/schemas/db'
 
 const name = 'track_query_budgets_' + randomUUID().replaceAll('-', '')
@@ -3218,6 +3219,7 @@ it('bounds Track and Album pages filtered and sorted by tag location', async () 
 it('bounds genre hydration for a full page of Similar albums', async () => {
   const { getTidalSimilar } = await import('@/services/tidal-similar')
   const spotifyAlbumId = String(877733).padStart(22, '0')
+  const externalBarcode = '0123456789012'
   await pool.query(`
     insert into tag (id, media_type, name, kind) values
       ('similar-album-genre', 'album', 'Fixture Similar Album Genre', 'genre'),
@@ -3267,7 +3269,8 @@ it('bounds genre hydration for a full page of Similar albums', async () => {
         title: `Fixture Similar album ${index}`,
         version: null,
         artists: ['Fixture artist 1'],
-        code: index === 18 ? '000000877733' : null,
+        code:
+          index === 18 ? '000000877733' : index === 19 ? externalBarcode : null,
         durationSec: null,
         releaseDate: null,
         url: `https://tidal.com/browse/album/${tidalId}`,
@@ -3282,4 +3285,77 @@ it('bounds genre hydration for a full page of Similar albums', async () => {
       'artist',
     ])
   })
+  const jobId = 'fixture-similar-sonovault'
+  const responseId = 'fixture-similar-sonovault-edition'
+  const edition = sonovaultReleaseFixture({
+    id: 451,
+    title: 'Fixture Similar album 19',
+    edition: 450,
+    editions: [
+      {
+        id: 450,
+        source: 'spotify',
+        externalId: 'fixture-album',
+        barcode: externalBarcode,
+      },
+    ],
+    tracks: [
+      { id: 452, title: 'Fixture Edition Track', duration: 180, number: 1 },
+    ],
+  })
+  const text = JSON.stringify({
+    ...edition,
+    tracks: edition.tracks.map((track) => ({
+      ...track,
+      genre: ['Fixture External Genre'],
+    })),
+  })
+  await database.insert(schema.scrapeJob).values({
+    id: jobId,
+    provider: 'tidal',
+    status: 'succeeded',
+    scope: {},
+    options: {
+      task: 'tidal-similar',
+      kind: 'album',
+      itemId: 'album-1',
+      tidalId: '870000',
+      sonovaultAlbumResponses: [
+        { responseId, barcode: externalBarcode, tidalId: '870020' },
+      ],
+    },
+  })
+  await database.insert(schema.providerResponse).values({
+    id: responseId,
+    jobId,
+    provider: 'sonovault',
+    attempt: 1,
+    ordinal: 2,
+    phase: 'task',
+    method: 'GET',
+    status: 200,
+    receivedAt: new Date(),
+    requestUrl: 'https://api.sonovault.now/v1/releases/451',
+    bodyState: 'captured',
+    retainedBytes: Buffer.byteLength(text),
+    body: { state: 'captured', text },
+  })
+  await pool.query(
+    'update tidal_similar set scrape_job_id = $1 where media_item_id = $2',
+    [jobId, 'album-1'],
+  )
+  await checkBudget(
+    'Similar albums with a saved Sonovault edition',
+    500,
+    11,
+    async () => {
+      const result = await getTidalSimilar({ kind: 'albums', id: 'album-1' })
+      expect(result.items.at(-1)).toMatchObject({
+        library: null,
+        genreSource: 'sonovault-album-tracks',
+        genres: ['Fixture External Genre'],
+        genreEvidence: { jobId, responseId },
+      })
+    },
+  )
 })

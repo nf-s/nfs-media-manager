@@ -65,6 +65,7 @@ const similarGenreLabels = {
   tidal: 'TIDAL genres',
   spotify: 'Spotify genres',
   sonovault: 'Sonovault genres',
+  'sonovault-album-tracks': 'Sonovault track genres',
 }
 const TIDAL_TRACKS = { one: 'TIDAL track', other: 'TIDAL tracks' }
 
@@ -255,7 +256,17 @@ export function SimilarRow({
         badges={
           item.genres.length > 0 && (
             <Pills wrap label={`${genreLabel} for ${title}`}>
-              {item.genreSource === 'artist' && item.genreArtist ? (
+              {item.genreEvidence ? (
+                <DetailLink
+                  kind="job"
+                  id={item.genreEvidence.jobId}
+                  tab="data"
+                  view={{ jobResponse: item.genreEvidence.responseId }}
+                  title="Open saved genre evidence"
+                >
+                  {genreLabel}
+                </DetailLink>
+              ) : item.genreSource === 'artist' && item.genreArtist ? (
                 <DetailLink
                   kind="artist"
                   id={item.genreArtist.id}

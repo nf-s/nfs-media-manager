@@ -30,6 +30,7 @@ import {
 } from '@repo/schemas/sonovault'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { validIsrc } from '@/lib/isrc'
 import { createStableId } from '@/lib/media-utils'
 import { sonovaultLinkReferenceTypes } from '@/lib/sonovault-api'
 import {
@@ -66,8 +67,13 @@ import {
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
 import {
+  lookupSimilarAlbumGenres,
+  readSimilarSonovaultAlbums,
+  SimilarAlbumResponsesSchema,
+} from './sonovault-similar-albums'
+import {
   mapSimilarTracksThroughSonovault,
-  readSimilarSonovaultGenres,
+  readSimilarSonovaultTracks,
   similarTrackCheck,
 } from './sonovault-similar-lookup'
 import { lookupTidalSimilar } from './tidal-similar-lookup'
@@ -105,7 +111,16 @@ const ReadSourceSchema = z.object({
   tidalId: TidalIdSchema,
   tidalIdSource: TidalIdSourceSchema.default('tidal'),
   tidalIdJobId: z.string().nullable().default(null),
+})
+const SimilarTrackResponsesSchema = z.object({
   sonovault: z.object({ responseId: z.string().optional() }).optional(),
+  sonovaultTrackResponses: z
+    .array(z.string())
+    .max(TIDAL_SIMILAR_LIMIT)
+    .default([]),
+})
+const SimilarAlbumReadSchema = z.object({
+  sonovaultAlbumResponses: SimilarAlbumResponsesSchema,
 })
 const StoredItemsSchema = z
   .array(TidalSuggestionSchema)
@@ -222,6 +237,8 @@ async function similarTarget(
   const tidalId = TidalIdSchema.safeParse(target.tidalId)
   const items = StoredItemsSchema.safeParse(target.items)
   const read = ReadSourceSchema.safeParse(target.readOptions)
+  const tracks = SimilarTrackResponsesSchema.safeParse(target.readOptions)
+  const albums = SimilarAlbumReadSchema.safeParse(target.readOptions)
   const source: IdSource | null = tidalId.success
     ? {
         kind: 'tidal',
@@ -238,9 +255,17 @@ async function similarTarget(
     source,
     items: items.success ? items.data : [],
     readAt: target.readAt,
-    sonovaultResponseId: read.success
-      ? (read.data.sonovault?.responseId ?? null)
-      : null,
+    sonovaultTrackResponses: tracks.success
+      ? [
+          ...(tracks.data.sonovault?.responseId
+            ? [tracks.data.sonovault.responseId]
+            : []),
+          ...tracks.data.sonovaultTrackResponses,
+        ]
+      : [],
+    sonovaultAlbumResponses: albums.success
+      ? albums.data.sonovaultAlbumResponses
+      : [],
     readSource:
       target.readAt && read.success
         ? TidalSimilarSourceSchema.parse({
@@ -391,22 +416,42 @@ async function mapToSpotify(
     kind: TidalSimilarKind
     itemId: string
     codes: { code: string; suggestion: TidalSuggestion }[]
+    items: readonly MappedSimilarItem[]
+    previousTrackResponses: readonly string[]
   },
 ): Promise<SpotifyMapping | null> {
-  if (!input.codes.length) return { message: null, options: {} }
   const userId = context.requestedByUserId
   const codes = input.codes.map(({ code }) => code)
-  const tracks =
-    input.kind === 'track'
-      ? input.codes.flatMap(
-          ({ suggestion }) => similarTrackCheck(suggestion) ?? [],
-        )
-      : []
-  if (!tracks.length)
+  const spotifyOnly = (pending: readonly string[]) =>
+    pending.length
+      ? queueSpotifySearch(userId, { ...input, codes: pending })
+      : null
+  if (input.kind === 'album')
     return {
-      message: await queueSpotifySearch(userId, { ...input, codes }),
+      message: await spotifyOnly(codes),
       options: {},
     }
+  const cached = await readSimilarSonovaultTracks(
+    db,
+    sonovaultTrackCandidates(input.items, input.previousTrackResponses),
+  )
+  const spotifyCodes = new Set(codes.flatMap((code) => validIsrc(code) ?? []))
+  const tracks = input.items.flatMap((item) => {
+    const check = similarTrackCheck(item)
+    if (!check || cached.has(item.tidalId)) return []
+    return spotifyCodes.has(check.code) ||
+      (!item.library && !item.genres.length)
+      ? [check]
+      : []
+  })
+  const pending = new Set(tracks.map(({ code }) => code))
+  const cachedResponses = {
+    sonovaultTrackResponses: [
+      ...new Set([...cached.values()].map(({ responseId }) => responseId)),
+    ],
+  }
+  if (!tracks.length)
+    return { message: await spotifyOnly(codes), options: cachedResponses }
   try {
     const mapping = await mapSimilarTracksThroughSonovault(
       {
@@ -418,21 +463,35 @@ async function mapToSpotify(
           ? {}
           : { maxSlotWaitMs: context.maxSlotWaitMs }),
       },
-      { userId, itemId: input.itemId, tracks },
+      {
+        userId,
+        itemId: input.itemId,
+        tracks,
+        spotifyCodes,
+        spotifyOnlyCodes: [...spotifyCodes].filter(
+          (code) => !pending.has(code),
+        ),
+      },
     )
     if (!mapping) return null
     return {
       message: mapping.message,
-      options: { sonovault: mapping.summary, ...mapping.credits },
+      options: {
+        ...cachedResponses,
+        sonovault: mapping.summary,
+        ...mapping.credits,
+      },
     }
   } catch (error) {
     // The TIDAL read stands when the Sonovault step fails.
     if (!(await context.isActive())) return null
     const reason = error instanceof Error ? error.message : 'unknown error'
-    const spotify = await queueSpotifySearch(userId, { ...input, codes })
+    const spotify = await spotifyOnly(codes)
     return {
-      message: `Sonovault lookup failed (${reason}). ${spotify}`,
-      options: { sonovault: { sent: 0, mapped: 0 } },
+      message: [`Sonovault lookup failed (${reason}).`, spotify]
+        .filter(Boolean)
+        .join(' '),
+      options: { ...cachedResponses, sonovault: { sent: 0, mapped: 0 } },
     }
   }
 }
@@ -522,21 +581,41 @@ export async function runTidalSimilar(
       }
     const noun = options.kind === 'album' ? 'albums' : 'tracks'
     const readAt = new Date()
+    const [items, codes] = await Promise.all([
+      mapSuggestions(db, options.kind, suggestions),
+      suggestionsNeedingSpotify(db, options.kind, suggestions),
+    ])
     const spotify = await mapToSpotify(context, {
       kind: options.kind,
       itemId: options.itemId,
-      codes: await suggestionsNeedingSpotify(db, options.kind, suggestions),
+      codes,
+      items,
+      previousTrackResponses: target.sonovaultTrackResponses,
     })
     if (!spotify) return { outcome: 'stopped' }
+    const albums =
+      options.kind === 'album'
+        ? await lookupSimilarAlbumGenres(
+            context,
+            items,
+            target.sonovaultAlbumResponses,
+          )
+        : null
+    if (!(await context.isActive())) return { outcome: 'stopped' }
     return {
       outcome: 'complete',
       message: [
         `Read ${suggestions.length} similar ${noun} from TIDAL${fromSonovault ? ' with the TIDAL ID from Sonovault' : ''}.`,
         spotify.message,
+        albums?.message,
       ]
         .filter(Boolean)
         .join(' '),
-      options: { count: suggestions.length, ...spotify.options },
+      options: {
+        count: suggestions.length,
+        ...spotify.options,
+        ...albums?.options,
+      },
       persist: async (tx) => {
         const [item] = await tx
           .select({ id: mediaItem.id })
@@ -717,6 +796,19 @@ type MappedSimilarItem = TidalSimilarItem & {
   sonovaultResponseId: string | null
 }
 
+function sonovaultTrackCandidates(
+  items: readonly MappedSimilarItem[],
+  responseIds: readonly string[],
+) {
+  return items.flatMap((suggestion) => {
+    if (suggestion.genres.length) return []
+    const ids = suggestion.sonovaultResponseId
+      ? [...responseIds, suggestion.sonovaultResponseId]
+      : responseIds
+    return ids.length ? [{ suggestion, responseIds: ids }] : []
+  })
+}
+
 /** The stored suggestions with what each maps to now. */
 async function mapSuggestions(
   database: Reader,
@@ -754,6 +846,7 @@ async function mapSuggestions(
       genres: suggestion.genres ?? [],
       genreSource: suggestion.genres?.length ? 'tidal' : null,
       genreArtist: null,
+      genreEvidence: null,
       state: stateOf(library, lookup),
       library: library ?? null,
       spotify:
@@ -771,13 +864,15 @@ async function mapSimilarGenres(
   database: Reader,
   kind: TidalSimilarKind,
   items: readonly MappedSimilarItem[],
-  readResponseId: string | null,
+  evidence: Pick<
+    NonNullable<Awaited<ReturnType<typeof similarTarget>>>,
+    'sonovaultTrackResponses' | 'sonovaultAlbumResponses'
+  >,
 ): Promise<TidalSimilarItem[]> {
   const trackIds: string[] = []
   const albumIds: string[] = []
   const spotifyAlbumIds: string[] = []
   const billedArtists: string[] = []
-  const sonovaultCandidates = []
   const spotifyAlbumId = (item: MappedSimilarItem) =>
     item.spotify?.spotifyId ?? item.library?.spotifyId
   for (const item of items) {
@@ -785,13 +880,6 @@ async function mapSimilarGenres(
       if (item.library) {
         trackIds.push(item.library.id)
         if (item.library.album) albumIds.push(item.library.album.id)
-      }
-      if (!item.genres.length) {
-        const responseIds = [item.sonovaultResponseId, readResponseId].filter(
-          (id) => id !== null,
-        )
-        if (responseIds.length)
-          sonovaultCandidates.push({ suggestion: item, responseIds })
       }
     } else {
       if (item.library) albumIds.push(item.library.id)
@@ -803,11 +891,23 @@ async function mapSimilarGenres(
       }
     }
   }
-  const [library, sonovault, artistGenres] = await Promise.all([
-    librarySimilarGenres(database, { trackIds, albumIds, spotifyAlbumIds }),
-    readSimilarSonovaultGenres(database, sonovaultCandidates),
-    artistGenresByBilledName(database, billedArtists),
-  ])
+  const [library, sonovault, artistGenres, sonovaultAlbums] = await Promise.all(
+    [
+      librarySimilarGenres(database, { trackIds, albumIds, spotifyAlbumIds }),
+      readSimilarSonovaultTracks(
+        database,
+        kind === 'track'
+          ? sonovaultTrackCandidates(items, evidence.sonovaultTrackResponses)
+          : [],
+      ),
+      artistGenresByBilledName(database, billedArtists),
+      readSimilarSonovaultAlbums(
+        database,
+        kind === 'album' ? items : [],
+        kind === 'album' ? evidence.sonovaultAlbumResponses : [],
+      ),
+    ],
+  )
   return items.map((item) => {
     const direct = item.library ? library[kind].get(item.library.id) : undefined
     if (direct?.length)
@@ -817,8 +917,16 @@ async function mapSimilarGenres(
       const external = sonovault.get(item.tidalId)
       // A hidden or owner-removed library tag stays hidden when a provider
       // response has the same recording's genres.
-      if (external?.length && direct === undefined)
-        return { ...item, genres: external, genreSource: 'sonovault' }
+      if (external?.genres.length && direct === undefined)
+        return {
+          ...item,
+          genres: external.genres,
+          genreSource: 'sonovault',
+          genreEvidence: {
+            jobId: external.jobId,
+            responseId: external.responseId,
+          },
+        }
       const album =
         item.library?.album && library.album.get(item.library.album.id)
       if (album?.length)
@@ -827,6 +935,17 @@ async function mapSimilarGenres(
     }
     if (item.spotify?.genres?.length)
       return { ...item, genres: item.spotify.genres, genreSource: 'spotify' }
+    const external = sonovaultAlbums.get(item.tidalId)
+    if (external?.genres.length && direct === undefined)
+      return {
+        ...item,
+        genres: external.genres,
+        genreSource: 'sonovault-album-tracks',
+        genreEvidence: {
+          jobId: external.jobId,
+          responseId: external.ref.responseId,
+        },
+      }
     const id = spotifyAlbumId(item)
     const members = id ? library['member-tracks'].get(id) : undefined
     if (members?.length)
@@ -875,7 +994,7 @@ async function readTidalSimilar(
       id,
     ),
     mapSuggestions(db, kind, target.items).then((mapped) =>
-      mapSimilarGenres(db, kind, mapped, target.sonovaultResponseId),
+      mapSimilarGenres(db, kind, mapped, target),
     ),
   ])
   const unmatched =

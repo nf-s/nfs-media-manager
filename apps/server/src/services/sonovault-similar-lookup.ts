@@ -1,7 +1,5 @@
 import { z } from 'zod'
-import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import type { JsonValue } from '@repo/schemas/common'
-import { SONOVAULT_REFRESH_MONTHS } from '@repo/schemas/sonovault'
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   SpotifyCodeMatchSchema,
@@ -25,7 +23,6 @@ import {
   sonovaultSettings,
   type SonovaultResolveResult,
 } from '@/lib/sonovault-api'
-import { providerResponse } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
@@ -39,6 +36,10 @@ import {
   verifySonovaultRecord,
 } from './sonovault-track-lookup'
 import { storeSpotifyCodeLookup } from './spotify-similar-lookup'
+import {
+  parseSimilarSonovaultResponse,
+  readSimilarSonovaultResponses,
+} from './similar-sonovault-responses'
 
 const PROVIDER = 'sonovault'
 const spotifyTrackIdPattern = /^[A-Za-z0-9]{22}$/
@@ -95,67 +96,60 @@ export function similarTrackCheck(
 }
 
 /** Reuse verified records in the saved Similar bulk responses, without a request. */
-export async function readSimilarSonovaultGenres(
+export async function readSimilarSonovaultTracks(
   database: Pick<typeof db, 'select'>,
   candidates: ReadonlyArray<{
     suggestion: TidalSuggestion
     responseIds: readonly string[]
   }>,
 ) {
-  const responseIds = [
-    ...new Set(candidates.flatMap((candidate) => candidate.responseIds)),
-  ]
-  const genres = new Map<string, string[]>()
-  if (!responseIds.length) return genres
-  const cutoff = new Date()
-  cutoff.setUTCMonth(cutoff.getUTCMonth() - SONOVAULT_REFRESH_MONTHS)
-  const rows = await database
-    .select({
-      id: providerResponse.id,
-      text: sql<string | null>`${providerResponse.body}->>'text'`,
-    })
-    .from(providerResponse)
-    .where(
-      and(
-        inArray(providerResponse.id, responseIds),
-        eq(providerResponse.provider, PROVIDER),
-        eq(providerResponse.status, 200),
-        eq(providerResponse.bodyState, 'captured'),
-        gte(providerResponse.receivedAt, cutoff),
-      ),
-    )
-  const lookups = new Map<string, Map<string, SonovaultResolveResult>>()
+  const responses = new Map<
+    string,
+    { genres: string[]; jobId: string; responseId: string }
+  >()
+  const rows = await readSimilarSonovaultResponses(
+    database,
+    candidates.flatMap(({ responseIds }) => responseIds),
+  )
+  const lookups = new Map<
+    string,
+    { jobId: string; records: Map<string, SonovaultResolveResult> }
+  >()
   for (const row of rows) {
-    if (!row.text) continue
-    let body: unknown
-    try {
-      body = JSON.parse(row.text)
-    } catch {
-      continue
-    }
-    const parsed = SonovaultBulkResolveResponseSchema.safeParse(body)
-    if (!parsed.success) continue
+    if (row.status !== 200) continue
+    const payload = parseSimilarSonovaultResponse(
+      SonovaultBulkResolveResponseSchema,
+      row.text,
+    )
+    if (!payload) continue
     const records = new Map<string, SonovaultResolveResult>()
-    for (const line of parsed.data.results) {
+    for (const line of payload.results) {
       const isrc = typeof line.input === 'string' && validIsrc(line.input)
-      if (isrc && line.status === 'matched') records.set(isrc, line)
+      if (isrc && (line.status === 'matched' || line.status === 'not_found'))
+        records.set(isrc, line)
     }
-    lookups.set(row.id, records)
+    lookups.set(row.id, { jobId: row.jobId, records })
   }
   for (const { suggestion, responseIds } of candidates) {
     const check = similarTrackCheck(suggestion)
     if (!check) continue
     for (const id of responseIds) {
-      const track = lookups.get(id)?.get(check.code)?.track
-      if (!track || !verifySonovaultRecord(check, track)) continue
-      genres.set(
-        suggestion.tidalId,
-        normalizeSimilarGenres([...track.genre, ...track.subgenre]),
-      )
+      const lookup = lookups.get(id)
+      const line = lookup?.records.get(check.code)
+      if (!lookup || !line) continue
+      const track = line.status === 'matched' ? line.track : null
+      responses.set(suggestion.tidalId, {
+        jobId: lookup.jobId,
+        responseId: id,
+        genres:
+          track && verifySonovaultRecord(check, track)
+            ? normalizeSimilarGenres([...track.genre, ...track.subgenre])
+            : [],
+      })
       break
     }
   }
-  return genres
+  return responses
 }
 
 /**
@@ -384,16 +378,19 @@ export async function mapSimilarTracksThroughSonovault(
     userId: string | null
     itemId: string
     tracks: readonly SimilarTrackCheck[]
+    /** Existing Spotify matches and recent misses do not need remapping. */
+    spotifyCodes?: ReadonlySet<string>
+    spotifyOnlyCodes?: readonly string[]
   },
 ): Promise<SonovaultSimilarMapping | null> {
   const lookup = await lookupSimilarTracksOnSonovault(context, input.tracks)
+  const needsSpotify = (isrc: string) => input.spotifyCodes?.has(isrc) ?? true
   if (!(await context.isActive())) return null
   if (lookup.kind === 'unavailable') {
-    const spotify = await queueSpotifyFallback(
-      input.userId,
-      input.itemId,
-      input.tracks.map(({ code }) => code),
-    )
+    const spotify = await queueSpotifyFallback(input.userId, input.itemId, [
+      ...input.tracks.map(({ code }) => code).filter(needsSpotify),
+      ...(input.spotifyOnlyCodes ?? []),
+    ])
     return {
       message: [`Sonovault not used: ${lookup.reason}.`, spotify]
         .filter(Boolean)
@@ -402,7 +399,8 @@ export async function mapSimilarTracksThroughSonovault(
       credits: null,
     }
   }
-  for (const [key, match] of lookup.matches)
+  for (const [key, match] of lookup.matches) {
+    if (!needsSpotify(key)) continue
     await storeSpotifyCodeLookup({
       kind: 'track',
       key,
@@ -413,8 +411,12 @@ export async function mapSimilarTracksThroughSonovault(
         fetchedAt: lookup.fetchedAt,
       },
     })
+  }
   const missed = [...lookup.misses.keys()]
-  const spotify = await queueSpotifyFallback(input.userId, input.itemId, missed)
+  const spotify = await queueSpotifyFallback(input.userId, input.itemId, [
+    ...missed.filter(needsSpotify),
+    ...(input.spotifyOnlyCodes ?? []),
+  ])
   const missCount = (reason: SonovaultSimilarMiss) =>
     [...lookup.misses.values()].filter((miss) => miss === reason).length
   return {

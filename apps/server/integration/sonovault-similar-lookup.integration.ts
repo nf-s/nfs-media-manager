@@ -30,6 +30,7 @@ import {
   sonovaultMissLine,
   sonovaultTrackFixture,
 } from '@/plugins/builtin/__tests__/fixtures/sonovault'
+import { sonovaultReleaseFixture } from '@/plugins/builtin/__tests__/fixtures/sonovault/releases'
 import { spotifyTokenFixture } from '@/plugins/builtin/__tests__/fixtures/spotify'
 import * as schema from '@/schemas/db'
 
@@ -100,6 +101,8 @@ import {
 
 const userId = 'fixture-owner'
 const trackId = 'track-seed'
+const albumId = 'album-seed'
+const barcode = '0123456789012'
 const apiKey = 'offline-fixture-sonovault-key'
 const spotifyId = (n: number) => `fixturespotify${String(n).padStart(8, '0')}`
 const isrc = (n: number) => `QZFX2${2800000 + n}`
@@ -142,6 +145,54 @@ const similarTracks = {
   data: tidalTracks.map(({ id, type }) => ({ id, type })),
   included: [...tidalTracks, artist('700001', 'Halcyon Grid')],
   links: { self: '/similar' },
+}
+
+const externalAlbum = {
+  id: '830001',
+  type: 'albums',
+  attributes: { title: 'Quiet Transmissions', barcodeId: barcode },
+  relationships: { artists: { data: [{ id: '700002', type: 'artists' }] } },
+}
+const missingAlbum = {
+  ...externalAlbum,
+  id: '830002',
+  attributes: { title: 'Missing Edition', barcodeId: '1123456789012' },
+}
+const similarAlbums = {
+  data: [externalAlbum, missingAlbum].map(({ id, type }) => ({ id, type })),
+  included: [
+    externalAlbum,
+    missingAlbum,
+    artist('700002', 'External Fixture Artist'),
+  ],
+}
+const releaseForAlbum = (edition: number | null) => {
+  const release = sonovaultReleaseFixture({
+    id: 301,
+    title: externalAlbum.attributes.title,
+    editions: [
+      {
+        id: 310,
+        source: 'spotify',
+        externalId: spotifyId(301),
+        barcode,
+      },
+    ],
+    tracks: [
+      { id: 302, title: 'Night Radio', duration: 300, number: 1 },
+      { id: 303, title: 'Bonus Track', duration: 270 },
+    ],
+    edition,
+    digitalUpc: barcode,
+  })
+  return {
+    ...release,
+    tracks: release.tracks.map((track) => ({
+      ...track,
+      genre: track.id === 302 ? ['Ambient'] : ['Rock'],
+      subgenre: track.id === 302 ? ['Dark Ambient'] : [],
+    })),
+  }
 }
 
 const sonovaultLines = new Map([
@@ -234,6 +285,34 @@ function mockProviders() {
       return Response.json(spotifyTokenFixture)
     if (url.pathname === '/v2/tracks/800002/relationships/similarTracks')
       return Response.json(similarTracks)
+    if (url.pathname === '/v2/albums/800001/relationships/similarAlbums')
+      return Response.json(similarAlbums)
+    if (url.pathname === `/v1/releases/upc/${barcode}`)
+      return Response.json({
+        upc: barcode,
+        results: [
+          {
+            id: 301,
+            title: externalAlbum.attributes.title,
+            artist: { id: 7001, name: 'External Fixture Artist' },
+            label: null,
+            release_date: null,
+            digital_upc: barcode,
+            formats: ['digital'],
+          },
+        ],
+      })
+    if (
+      url.pathname === `/v1/releases/upc/${missingAlbum.attributes.barcodeId}`
+    )
+      return Response.json(
+        { message: 'No release for this barcode' },
+        { status: 404 },
+      )
+    if (url.pathname === '/v1/releases/301')
+      return Response.json(
+        releaseForAlbum(url.searchParams.has('edition') ? 310 : null),
+      )
     if (url.href === 'https://api.sonovault.now/v1/tracks/resolve') {
       if (new Headers(init?.headers).get('x-api-key') !== apiKey)
         return Response.json({ message: 'Unauthorized' }, { status: 401 })
@@ -253,6 +332,7 @@ function mockProviders() {
         return Response.json({
           tracks: { items: trackSearches.get(code), offset: 0, total: 1 },
         })
+      if (field === 'upc') return Response.json({ albums: { items: [] } })
     }
     throw new Error(`Unexpected request ${url.href}`)
   })
@@ -422,6 +502,109 @@ async function readJob() {
 }
 
 describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
+  it('fills external track genres even with recent Spotify matches and misses', async () => {
+    delete sonovaultSecrets['apiKey']
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    await runQueued()
+    const before = await getTidalSimilar({ kind: 'tracks', id: trackId })
+    expect(before.items[4]).toMatchObject({
+      state: 'spotify',
+      library: null,
+      genres: [],
+    })
+    expect(before.items[3]?.state).toBe('none')
+    sonovaultSecrets['apiKey'] = apiKey
+    const after = await refreshTidalSimilar(
+      { kind: 'tracks', id: trackId },
+      userId,
+    )
+    expect(after.items[4]).toMatchObject({
+      state: 'spotify',
+      library: null,
+      spotify: { spotifyId: spotifyId(51) },
+      genres: ['Electronic'],
+      genreSource: 'sonovault',
+    })
+    expect(after.items[3]).toMatchObject({ state: 'none', genres: [] })
+    const refreshed = await refreshTidalSimilar(
+      { kind: 'tracks', id: trackId },
+      userId,
+    )
+    expect(refreshed.items[4]).toMatchObject({
+      genres: ['Electronic'],
+      genreEvidence: after.items[4]?.genreEvidence,
+    })
+    expect(await sonovaultEvents()).toHaveLength(1)
+    await databaseClient
+      .update(schema.providerResponse)
+      .set({ receivedAt: new Date(Date.now() - 31 * 86400_000) })
+      .where(eq(schema.providerResponse.provider, 'sonovault'))
+    const stale = await getTidalSimilar({ kind: 'tracks', id: trackId })
+    expect(stale.items[4]).toMatchObject({
+      state: 'spotify',
+      genres: [],
+      genreEvidence: null,
+    })
+  }, 30000)
+
+  it('uses and reuses a confirmed external edition, skips a miss and loses removed evidence', async () => {
+    await databaseClient.insert(schema.mediaItem).values({
+      id: albumId,
+      slug: albumId,
+      title: 'Fixture Seed Album',
+      mediaType: 'album',
+    })
+    await databaseClient.insert(schema.album).values({ mediaItemId: albumId })
+    await databaseClient.insert(schema.providerReference).values({
+      id: 'album-ref',
+      mediaItemId: albumId,
+      provider: 'tidal',
+      referenceType: 'album',
+      externalId: '800001',
+      metadata: {},
+    })
+    const read = await refreshTidalSimilar(
+      { kind: 'albums', id: albumId },
+      userId,
+    )
+    await runQueued()
+    expect(read.items[0]).toMatchObject({
+      library: null,
+      genres: ['Ambient', 'Dark Ambient'],
+      genreSource: 'sonovault-album-tracks',
+      genreEvidence: {
+        jobId: expect.any(String),
+        responseId: expect.any(String),
+      },
+    })
+    expect(read.items[1]).toMatchObject({
+      library: null,
+      genres: [],
+      genreEvidence: null,
+    })
+    const job = await readJob()
+    const stored = await readProviderResponseAttempt({
+      jobId: job.id,
+      attempt: 1,
+    })
+    expect(stored.map(({ capture }) => capture.response.status)).toEqual([
+      200, 200, 200, 200, 404,
+    ])
+    expect(job.options).toMatchObject({ creditsUsed: 4 })
+    const again = await refreshTidalSimilar(
+      { kind: 'albums', id: albumId },
+      userId,
+    )
+    expect(again.items[0]).toMatchObject({
+      genres: ['Ambient', 'Dark Ambient'],
+      genreEvidence: { jobId: job.id, responseId: expect.any(String) },
+    })
+    expect(await sonovaultEvents()).toHaveLength(4)
+    await removeSonovaultData()
+    const removed = await getTidalSimilar({ kind: 'albums', id: albumId })
+    expect(removed.items[0]).toMatchObject({ genres: [], genreEvidence: null })
+  }, 30000)
+
   it('maps verified records in the TIDAL read and leaves the rest to Spotify search', async () => {
     const read = await refreshTidalSimilar(
       { kind: 'tracks', id: trackId },

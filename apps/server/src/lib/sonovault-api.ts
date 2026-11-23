@@ -219,6 +219,11 @@ export const SonovaultReleaseSchema = z.object({
 })
 export type SonovaultRelease = z.infer<typeof SonovaultReleaseSchema>
 
+export const SonovaultBarcodeResponseSchema = z.object({
+  upc: z.string().regex(/^\d{8,14}$/),
+  results: z.array(z.object({ id: z.number().int().positive() })).max(25),
+})
+
 /** `GET /v1/releases/search`: list entries carry no catalogue number or UPC. */
 export const SonovaultReleaseSearchResponseSchema = z.object({
   results: z
@@ -344,23 +349,28 @@ async function sonovaultJson(
     method?: 'GET' | 'POST'
     params?: [string, string][]
     body?: unknown
+    notFoundOn404?: boolean
   } = {},
 ): Promise<unknown> {
   if (!path.startsWith('/v1/')) throw new Error('Invalid Sonovault path')
   const url = new URL(`${SONOVAULT_API_BASE}${path}`)
   for (const [key, value] of init.params ?? [])
     url.searchParams.append(key, value)
-  const response = await request(url, {
-    method: init.method ?? 'GET',
-    headers: {
-      Accept: 'application/json',
-      'x-api-key': apiKey,
-      ...(init.body === undefined
-        ? {}
-        : { 'Content-Type': 'application/json' }),
+  const response = await request(
+    url,
+    {
+      method: init.method ?? 'GET',
+      headers: {
+        Accept: 'application/json',
+        'x-api-key': apiKey,
+        ...(init.body === undefined
+          ? {}
+          : { 'Content-Type': 'application/json' }),
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     },
-    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-  })
+    init.notFoundOn404 ? { notFoundOn404: true } : undefined,
+  )
   if (!response.ok)
     throw new Error(`Sonovault request failed (HTTP ${response.status})`)
   try {
@@ -368,6 +378,23 @@ async function sonovaultJson(
   } catch {
     throw new Error('Sonovault returned an invalid response')
   }
+}
+
+/** Find release IDs by exact barcode. A missing barcode is a catalog miss. */
+export async function findSonovaultReleasesByBarcode(
+  request: SonovaultRequest,
+  apiKey: string,
+  barcode: string,
+) {
+  const code = z
+    .string()
+    .regex(/^\d{8,14}$/)
+    .parse(barcode)
+  return SonovaultBarcodeResponseSchema.parse(
+    await sonovaultJson(request, apiKey, `/v1/releases/upc/${code}`, {
+      notFoundOn404: true,
+    }),
+  )
 }
 
 /**

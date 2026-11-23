@@ -25,6 +25,7 @@ import { openLocalResponseArchive } from '@/utils/local-response-archive'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
 import { canCancelJob } from '@/utils/job-selection'
+import { useDetailView } from './detail-inspector-context'
 import { useConfig } from './providers'
 import { SecondaryTableScroll, SecondaryVirtualRows } from './secondary-table'
 
@@ -160,50 +161,55 @@ function LocalResponseArchive({
 
 function StoredResponse({
   base,
-  row,
+  jobId,
+  responseId,
 }: {
   base: string
-  row: ProviderResponseSummary
+  jobId: string
+  responseId: string
 }) {
   const { apiBaseUrl } = useConfig()
   const result = useQuery({
-    queryKey: ['jobs', 'provider-response', row.jobId, row.id],
+    queryKey: ['jobs', 'provider-response', jobId, responseId],
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `${base}/${encodeURIComponent(row.id)}`,
+        `${base}/${encodeURIComponent(responseId)}`,
         ProviderResponseSchema,
         { signal },
       ),
     retry: false,
     staleTime: Infinity,
   })
+  const row = result.data
   return (
-    <Section title={requestLabel(row)}>
-      <KeyValues
-        items={[
-          { label: 'Provider', value: row.provider },
-          {
-            label: 'Request',
-            value: (
-              <span className="break-all">
-                {[row.method, row.requestUrl].filter(Boolean).join(' ')}
-              </span>
-            ),
-          },
-          {
-            label: 'Status',
-            value:
-              row.status === null ? 'No HTTP status' : `HTTP ${row.status}`,
-          },
-          ...(row.receivedAt
-            ? [{ label: 'Received', value: formatDateTime(row.receivedAt) }]
-            : []),
-          ...(row.contentType
-            ? [{ label: 'Content type', value: row.contentType }]
-            : []),
-        ]}
-      />
+    <Section title={row ? requestLabel(row) : 'Saved response'}>
+      {row && (
+        <KeyValues
+          items={[
+            { label: 'Provider', value: row.provider },
+            {
+              label: 'Request',
+              value: (
+                <span className="break-all">
+                  {[row.method, row.requestUrl].filter(Boolean).join(' ')}
+                </span>
+              ),
+            },
+            {
+              label: 'Status',
+              value:
+                row.status === null ? 'No HTTP status' : `HTTP ${row.status}`,
+            },
+            ...(row.receivedAt
+              ? [{ label: 'Received', value: formatDateTime(row.receivedAt) }]
+              : []),
+            ...(row.contentType
+              ? [{ label: 'Content type', value: row.contentType }]
+              : []),
+          ]}
+        />
+      )}
       {result.isPending && (
         <p role="status" className="ds-help">
           Loading saved response…
@@ -221,14 +227,15 @@ function StoredResponse({
           Could not read the saved response.
         </Notice>
       )}
-      {result.data && <JobProviderResponseBody body={result.data.body} />}
+      {row && <JobProviderResponseBody body={row.body} />}
     </Section>
   )
 }
 
 export function JobProviderResponses({ job }: { job: DataJob }) {
   const { apiBaseUrl } = useConfig()
-  const [selected, setSelected] = useState<ProviderResponseSummary | null>(null)
+  const view = useDetailView()
+  const selected = view.params.get('jobResponse')
   const base = `/api/v1/scrape/jobs/${encodeURIComponent(job.id)}/data/responses`
   const rows = useVirtualTable({
     queryKey: ['jobs', 'provider-responses', job.id, job.status],
@@ -299,8 +306,12 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
                       <Button
                         variant="link"
                         size="xs"
-                        aria-pressed={selected?.id === row.id}
-                        onClick={() => setSelected(row)}
+                        aria-pressed={selected === row.id}
+                        onClick={() => {
+                          const params = new URLSearchParams(view.params)
+                          params.set('jobResponse', row.id)
+                          view.replace(params)
+                        }}
                       >
                         {requestLabel(row)}
                       </Button>
@@ -317,8 +328,13 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
           </table>
         </SecondaryTableScroll>
       )}
-      {selected?.jobId === job.id && (
-        <StoredResponse key={selected.id} base={base} row={selected} />
+      {selected && (
+        <StoredResponse
+          key={selected}
+          base={base}
+          jobId={job.id}
+          responseId={selected}
+        />
       )}
     </Section>
   )

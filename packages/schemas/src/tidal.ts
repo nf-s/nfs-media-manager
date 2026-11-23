@@ -317,6 +317,7 @@ export type TidalSuggestionState = z.infer<typeof TidalSuggestionStateSchema>
 export const SimilarGenreSourceSchema = z.enum([
   'library',
   'sonovault',
+  'sonovault-album-tracks',
   'tidal',
   'spotify',
   'album-tracks',
@@ -329,6 +330,10 @@ export const TidalSimilarItemSchema = TidalSuggestionSchema.extend({
   genres: SimilarGenreNamesSchema.default([]),
   genreSource: SimilarGenreSourceSchema.nullable().default(null),
   genreArtist: z.object({ id, name }).nullable().default(null),
+  genreEvidence: z
+    .object({ jobId: id, responseId: id })
+    .nullable()
+    .default(null),
   state: TidalSuggestionStateSchema,
   /** The library album or track, for `library`. */
   library: z
