@@ -58,6 +58,7 @@ import { appendProviderTaskReplayStep } from './provider-task-replay'
 import {
   libraryItemsByCode,
   libraryItemsBySpotifyId,
+  libraryItemsByTidalId,
   type SimilarLibraryItem,
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
@@ -706,7 +707,12 @@ async function mapSuggestions(
   const keyOf = (suggestion: TidalSuggestion) =>
     suggestion.code ? codeKey(kind, suggestion.code) : null
   const keys = [...new Set(suggestions.flatMap((item) => keyOf(item) ?? []))]
-  const [byCode, lookups] = await Promise.all([
+  const [byTidalId, byCode, lookups] = await Promise.all([
+    libraryItemsByTidalId(
+      database,
+      kind,
+      suggestions.map(({ tidalId }) => tidalId),
+    ),
     libraryItemsByCode(database, kind, keys),
     spotifyLookups(database, kind, keys),
   ])
@@ -721,6 +727,7 @@ async function mapSuggestions(
     const lookup = key ? lookups.get(key) : undefined
     const spotify = SpotifyCodeMatchSchema.safeParse(lookup?.result)
     const library =
+      byTidalId.get(suggestion.tidalId) ??
       (key ? byCode.get(key) : undefined) ??
       (lookup?.spotifyId ? bySpotifyId.get(lookup.spotifyId) : undefined)
     return {
@@ -730,6 +737,21 @@ async function mapSuggestions(
       spotify: lookup?.spotifyId && spotify.success ? spotify.data : null,
     }
   })
+}
+
+/** Find one suggestion from the source's saved read using current library matches. */
+export async function findStoredTidalSuggestion(
+  database: Reader,
+  kind: TidalSimilarKind,
+  sourceId: string,
+  tidalId: string,
+): Promise<TidalSimilarItem | null | undefined> {
+  const target = await similarTarget(database, kind, sourceId)
+  if (!target) return undefined
+  const suggestion = target.items.find((item) => item.tidalId === tidalId)
+  if (!suggestion) return null
+  const [mapped] = await mapSuggestions(database, kind, [suggestion])
+  return mapped ?? null
 }
 
 async function readTidalSimilar(

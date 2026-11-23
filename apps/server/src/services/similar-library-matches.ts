@@ -137,3 +137,39 @@ export async function libraryItemsBySpotifyId(
           order by m.created_at, m.id`)
   return collect(result.rows)
 }
+
+/** Library items with a TIDAL reference to this exact suggestion. */
+export async function libraryItemsByTidalId(
+  database: Reader,
+  kind: TidalSimilarKind,
+  tidalIds: readonly string[],
+): Promise<Map<string, SimilarLibraryItem>> {
+  if (!tidalIds.length) return new Map()
+  const ids = sql.param([...tidalIds])
+  const result =
+    kind === 'track'
+      ? await database.execute(sql`
+          select r.external_id as code, m.id, m.title,
+            coalesce(m.artwork_url, am.artwork_url) as artwork_url,
+            lt.spotify_track_id as spotify_id, am.id as album_id,
+            am.title as album_title, lt.album_name,
+            null::integer as track_count
+          from provider_reference r
+          join media_item m on m.id = r.media_item_id and m.media_type = 'track'
+          join library_track lt on lt.media_item_id = m.id
+          left join media_item am on am.id = lt.album_media_item_id
+          where r.provider = 'tidal' and r.reference_type = 'track'
+            and r.external_id = any(${ids}::text[]) and ${visible('m')}
+          order by m.created_at, m.id`)
+      : await database.execute(sql`
+          select r.external_id as code, m.id, m.title, m.artwork_url,
+            ${spotifyAlbumIdFromUrl} as spotify_id, null as album_id,
+            null as album_title, null as album_name, a.track_count
+          from provider_reference r
+          join media_item m on m.id = r.media_item_id and m.media_type = 'album'
+          join album a on a.media_item_id = m.id
+          where r.provider = 'tidal' and r.reference_type = 'album'
+            and r.external_id = any(${ids}::text[]) and ${visible('m')}
+          order by m.created_at, m.id`)
+  return collect(result.rows)
+}
