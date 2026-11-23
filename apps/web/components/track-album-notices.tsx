@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { TrackDetail } from '@repo/schemas/tracks'
 import { Section } from '@repo/ui/components/ds/facts'
@@ -15,26 +16,24 @@ import {
   missingTrackAlbum,
 } from '@/utils/track-album-notices'
 import { DetailLink } from './detail-link'
+import { useDetailInspector } from './detail-inspector-context'
 import { errorMessage } from './lastfm-sync'
+import ManualMediaAdd from './manual-media-add'
 import { useConfig } from './providers'
 
-/**
- * The track's Spotify album when it is not in the library, with Add album,
- * and the library albums its scrobbles are counted on that do not list it.
- * When Add album answers with an album the track is still not on, the notice
- * names that album in place of offering the same add again.
- */
-export function TrackAlbumNotices({
-  item,
-}: {
-  item: Pick<
-    TrackDetail,
-    'album' | 'albumName' | 'spotifyAlbumId' | 'scrobbledAlbums'
-  >
-}) {
+/** Overview and Sources share the add result while the track detail stays open. */
+export function useTrackAlbumAddition(item: TrackDetail) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const inspector = useDetailInspector()
   const missing = missingTrackAlbum(item)
+  const [searchQuery, setSearchQuery] = useState<string | null>(null)
+  const refreshTrackAlbums = () =>
+    Promise.all(
+      ['track', 'tracks', 'album'].map((key) =>
+        client.invalidateQueries({ queryKey: [key] }),
+      ),
+    )
   const add = useMutation({
     retry: false,
     mutationFn: async (spotifyAlbumId: string) => {
@@ -44,16 +43,62 @@ export function TrackAlbumNotices({
       })
       await Promise.all([
         invalidateManualMediaAddition(client, 'album'),
-        ...['track', 'tracks', 'album'].map((key) =>
-          client.invalidateQueries({ queryKey: [key] }),
-        ),
+        refreshTrackAlbums(),
       ])
       return albumId
     },
   })
-  const unlisted = missing && add.isSuccess ? add.data : null
+  const unlisted =
+    missing?.kind === 'id' &&
+    add.isSuccess &&
+    add.variables === missing.spotifyAlbumId
+      ? add.data
+      : null
+  const error = add.isError
+    ? errorMessage(add.error, 'Could not add album.')
+    : null
+  const action =
+    missing && !unlisted ? (
+      <Button
+        type="button"
+        size="xs"
+        disabled={add.isPending}
+        aria-haspopup={missing.kind === 'search' ? 'dialog' : undefined}
+        onClick={() => {
+          if (missing.kind === 'id') add.mutate(missing.spotifyAlbumId)
+          else setSearchQuery(missing.query)
+        }}
+      >
+        {add.isPending ? 'Adding…' : 'Add to Library'}
+      </Button>
+    ) : undefined
+  const dialog = searchQuery !== null && (
+    <ManualMediaAdd
+      mediaType="album"
+      initialQuery={searchQuery}
+      onClose={() => setSearchQuery(null)}
+      onAdded={async (id) => {
+        await refreshTrackAlbums()
+        setSearchQuery(null)
+        if (inspector) inspector.open({ kind: 'album', id })
+        else window.location.assign(`/albums/${encodeURIComponent(id)}`)
+      }}
+    />
+  )
+  return { missing, unlisted, action, error, dialog }
+}
+
+/** Shows the release and any library albums counting scrobbles from this track. */
+export function TrackAlbumNotices({
+  item,
+  addition,
+}: {
+  item: TrackDetail
+  addition: ReturnType<typeof useTrackAlbumAddition>
+}) {
+  const { missing, unlisted, action, error } = addition
   const unlistedText = describeUnlistedAlbum(item.albumName)
-  if (!missing && !add.isError && item.scrobbledAlbums.length === 0) return null
+  if (!missing && !error && item.scrobbledAlbums.length === 0) return null
   return (
     <Section title="Album">
       {unlisted && (
@@ -66,25 +111,9 @@ export function TrackAlbumNotices({
         </Notice>
       )}
       {missing && !unlisted && (
-        <Notice
-          action={
-            <Button
-              size="xs"
-              disabled={add.isPending}
-              onClick={() => add.mutate(missing.spotifyAlbumId)}
-            >
-              {add.isPending ? 'Adding…' : 'Add album'}
-            </Button>
-          }
-        >
-          {missing.message}
-        </Notice>
+        <Notice action={action}>{missing.message}</Notice>
       )}
-      {add.isError && (
-        <Notice tone="danger">
-          {errorMessage(add.error, 'Could not add album.')}
-        </Notice>
-      )}
+      {error && <Notice tone="danger">{error}</Notice>}
       {item.scrobbledAlbums.map((album) => {
         const text = describeScrobbledAlbum(album.scrobbles)
         return (

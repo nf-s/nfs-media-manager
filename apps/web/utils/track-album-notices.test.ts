@@ -7,13 +7,16 @@ import {
 } from './track-album-notices'
 
 test('names the missing Spotify album only when the track has no library album', () => {
+  const artists = ['Example artist']
   assert.deepEqual(
     missingTrackAlbum({
       album: null,
       albumName: 'Harbour Lights',
+      artists,
       spotifyAlbumId: '1234567890ABCDEFGHIJKL',
     }),
     {
+      kind: 'id',
       spotifyAlbumId: '1234567890ABCDEFGHIJKL',
       message: '“Harbour Lights” is not in the library.',
     },
@@ -22,6 +25,7 @@ test('names the missing Spotify album only when the track has no library album',
     missingTrackAlbum({
       album: null,
       albumName: null,
+      artists,
       spotifyAlbumId: '1234567890ABCDEFGHIJKL',
     })?.message,
     'The album is not in the library.',
@@ -30,14 +34,41 @@ test('names the missing Spotify album only when the track has no library album',
     missingTrackAlbum({
       album: { id: 'album-1', title: 'Harbour Lights' },
       albumName: 'Harbour Lights',
+      artists,
       spotifyAlbumId: '1234567890ABCDEFGHIJKL',
     }),
     null,
   )
+})
+
+test('uses the artist and album name for a search when no Spotify release ID is known', () => {
+  assert.deepEqual(
+    missingTrackAlbum({
+      album: null,
+      albumName: 'Recorded album',
+      artists: ['Example artist'],
+      spotifyAlbumId: null,
+    }),
+    {
+      kind: 'search',
+      query: 'Example artist Recorded album',
+      message: '“Recorded album” has no linked library album.',
+    },
+  )
   assert.equal(
     missingTrackAlbum({
       album: null,
-      albumName: 'Recorded',
+      albumName: 'Recorded album',
+      artists: [],
+      spotifyAlbumId: null,
+    })?.kind,
+    'search',
+  )
+  assert.equal(
+    missingTrackAlbum({
+      album: null,
+      albumName: null,
+      artists: ['Example artist'],
       spotifyAlbumId: null,
     }),
     null,

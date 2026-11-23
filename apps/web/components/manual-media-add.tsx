@@ -434,12 +434,14 @@ function ManualSearchResults({
 
 export default function ManualMediaAdd({
   mediaType,
+  initialQuery,
   onClose,
   onAdded,
 }: {
   mediaType: ManualMediaSearchInput['mediaType']
+  initialQuery?: string
   onClose: () => void
-  onAdded: (id: string) => void
+  onAdded: (id: string) => void | Promise<void>
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -489,6 +491,7 @@ export default function ManualMediaAdd({
         <div className="ds-inspector-body">
           <ManualMediaSearch
             mediaType={mediaType}
+            initialQuery={initialQuery}
             onAdded={onAdded}
             onPendingChange={setPending}
           />

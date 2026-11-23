@@ -28,6 +28,7 @@ import {
   DetailHeader,
 } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
+import { Notice } from '@repo/ui/components/ds/feedback'
 import { Pill, PillLabel } from '@repo/ui/components/ds/pill'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Button } from '@repo/ui/components/ui/button'
@@ -68,7 +69,7 @@ import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
 import { LibraryRecordChanges } from './library-changes'
-import { TrackAlbumNotices } from './track-album-notices'
+import { TrackAlbumNotices, useTrackAlbumAddition } from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
@@ -160,16 +161,18 @@ function FilterValues({
  * The track's album warnings, its Spotify and TIDAL matches, its Sonovault
  * references and the Last.fm names that count towards it.
  */
-export function TrackSources({
+function TrackSources({
   item,
+  albumAddition,
   onResolved,
 }: {
   item: TrackDetail
+  albumAddition: ReturnType<typeof useTrackAlbumAddition>
   onResolved?: (targetId: string) => void
 }) {
   return (
     <>
-      <TrackAlbumNotices key={`album-${item.id}`} item={item} />
+      <TrackAlbumNotices item={item} addition={albumAddition} />
       <TrackSpotifySource key={item.id} item={item} onResolved={onResolved} />
       <TrackTidalSource key={`tidal-${item.id}`} item={item} />
       <TrackSonovaultSource key={`sonovault-${item.id}`} item={item} />
@@ -338,6 +341,7 @@ function TrackTags({
 
 function TrackOverview({
   item,
+  albumAddition,
   onFilter,
   filterHref,
   onResolved,
@@ -345,6 +349,7 @@ function TrackOverview({
   sourcesHref,
 }: {
   item: TrackDetail
+  albumAddition: ReturnType<typeof useTrackAlbumAddition>
   onFilter?: OnFilter
   filterHref: BrowseFilterHref
   onResolved: (id: string) => void
@@ -352,6 +357,8 @@ function TrackOverview({
   sourcesHref: string
 }) {
   const notation = useKeyNotation()
+  const albumId = item.album?.id ?? albumAddition.unlisted
+  const albumTitle = item.album?.title ?? item.albumName ?? 'Album'
   const facts = item.facts.length
     ? [
         {
@@ -405,7 +412,7 @@ function TrackOverview({
         </Section>
         <ListeningTrend kind="track" id={item.id} />
         <TrackAppearsOn track={item} onResolved={onResolved}>
-          {(item.album || item.albumName) && (
+          {(albumId || albumAddition.missing) && (
             <List compact>
               <ListRow
                 thumb={
@@ -418,10 +425,10 @@ function TrackOverview({
                   </Thumb>
                 }
                 title={
-                  item.album ? (
+                  albumId ? (
                     <RowTitle>
-                      <DetailLink kind="album" id={item.album.id}>
-                        {item.album.title}
+                      <DetailLink kind="album" id={albumId}>
+                        {albumTitle}
                       </DetailLink>
                     </RowTitle>
                   ) : (
@@ -431,13 +438,23 @@ function TrackOverview({
                         ? albumShortcut(item.albumName, filterHref)
                         : undefined)}
                     >
-                      {item.albumName}
+                      {albumTitle}
                     </span>
                   )
                 }
-                by={item.album ? 'Album' : 'Album, not in the library'}
+                by={
+                  item.album
+                    ? 'Album'
+                    : albumId
+                      ? 'Album does not list this track'
+                      : 'Album, not in the library'
+                }
+                action={albumAddition.action}
               />
             </List>
+          )}
+          {albumAddition.error && (
+            <Notice tone="danger">{albumAddition.error}</Notice>
           )}
           <PlaylistPills playlists={item.playlists} />
         </TrackAppearsOn>
@@ -554,10 +571,6 @@ export default function TrackDetailView({
   onMerged?: (targetId: string, tab?: 'sources') => void
 }) {
   const { apiBaseUrl } = useConfig()
-  const { tab, setTab, tabHref } = useDetailTab(trackTabs, {
-    aliases: trackTabAliases,
-  })
-  const [merging, setMerging] = useState(false)
   const detail = useQuery({
     queryKey: ['track', id],
     queryFn: () =>
@@ -576,7 +589,39 @@ export default function TrackDetailView({
         subject="track"
       />
     )
-  const item = detail.data
+  return (
+    <TrackDetailContent
+      key={detail.data.id}
+      item={detail.data}
+      onFilter={onFilter}
+      filterHref={filterHref}
+      onMerged={onMerged}
+      stale={detail.isRefetchError}
+      retry={() => detail.refetch()}
+    />
+  )
+}
+
+function TrackDetailContent({
+  item,
+  onFilter,
+  filterHref,
+  onMerged,
+  stale,
+  retry,
+}: {
+  item: TrackDetail
+  onFilter?: OnFilter
+  filterHref: BrowseFilterHref
+  onMerged?: (targetId: string, tab?: 'sources') => void
+  stale: boolean
+  retry: () => void
+}) {
+  const { tab, setTab, tabHref } = useDetailTab(trackTabs, {
+    aliases: trackTabAliases,
+  })
+  const [merging, setMerging] = useState(false)
+  const albumAddition = useTrackAlbumAddition(item)
   function openResolvedTrack(targetId: string, tab?: 'sources') {
     if (onMerged) onMerged(targetId, tab)
     else
@@ -587,13 +632,7 @@ export default function TrackDetailView({
   const links = serviceLinks(trackServiceLinks(item))
   return (
     <article className="dtl-detail">
-      {detail.isRefetchError && (
-        <CreatorDetailState
-          stale
-          retry={() => detail.refetch()}
-          subject="track"
-        />
-      )}
+      {stale && <CreatorDetailState stale retry={retry} subject="track" />}
       <DetailHeader
         art={
           <DetailArt
@@ -689,6 +728,7 @@ export default function TrackDetailView({
         <TabsContent value="overview">
           <TrackOverview
             item={item}
+            albumAddition={albumAddition}
             onFilter={onFilter}
             filterHref={filterHref}
             onResolved={openResolvedTrack}
@@ -708,6 +748,7 @@ export default function TrackDetailView({
           <TrackSources
             key={item.id}
             item={item}
+            albumAddition={albumAddition}
             onResolved={(targetId) => openResolvedTrack(targetId, 'sources')}
           />
           <LibraryRecordChanges
@@ -718,6 +759,7 @@ export default function TrackDetailView({
           />
         </TabsContent>
       </DetailTabs>
+      {albumAddition.dialog}
     </article>
   )
 }

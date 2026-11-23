@@ -1,21 +1,33 @@
 import type { TrackDetail } from '@repo/schemas/tracks'
 import { formatItemCount } from '@repo/ui/lib/format'
 
-/** The Spotify album to add, when the track has one and no library album. */
+/** A release that can be added by Spotify ID or looked up from the recorded name. */
 export function missingTrackAlbum(
-  item: Pick<TrackDetail, 'album' | 'albumName' | 'spotifyAlbumId'>,
-) {
-  if (item.album || !item.spotifyAlbumId) return null
+  item: Pick<TrackDetail, 'album' | 'albumName' | 'artists' | 'spotifyAlbumId'>,
+):
+  | { kind: 'id'; spotifyAlbumId: string; message: string }
+  | { kind: 'search'; query: string; message: string }
+  | null {
+  if (item.album) return null
+  const albumName = item.albumName?.trim()
+  if (item.spotifyAlbumId)
+    return {
+      kind: 'id',
+      spotifyAlbumId: item.spotifyAlbumId,
+      message: albumName
+        ? `“${albumName}” is not in the library.`
+        : 'The album is not in the library.',
+    }
+  if (!albumName) return null
   return {
-    spotifyAlbumId: item.spotifyAlbumId,
-    message: item.albumName
-      ? `“${item.albumName}” is not in the library.`
-      : 'The album is not in the library.',
+    kind: 'search',
+    query: [item.artists[0], albumName].filter(Boolean).join(' '),
+    message: `“${albumName}” has no linked library album.`,
   }
 }
 
 /**
- * The words around the album link when Add album answered with a library
+ * The words around the album link when the addition returned a library
  * album and the track is still not on it.
  */
 export function describeUnlistedAlbum(albumName: string | null) {

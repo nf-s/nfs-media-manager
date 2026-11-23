@@ -21,11 +21,9 @@ require.extensions['.css'] = (module) => {
   module.exports = {}
 }
 let TrackDetailView: typeof import('./track-detail').default
-let TrackSources: typeof import('./track-detail').TrackSources
 before(async () => {
   const detail = await import('./track-detail')
   TrackDetailView = detail.default
-  TrackSources = detail.TrackSources
 })
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -107,6 +105,8 @@ function render(
     resultJob,
     earlierResults,
   })
+  const params = new URLSearchParams(filters)
+  if (view === 'sources') params.set('tab', 'sources')
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
@@ -116,7 +116,7 @@ function render(
             apiBaseUrl: 'http://localhost:4001',
           }}
         >
-          <SearchParamsContext.Provider value={new URLSearchParams(filters)}>
+          <SearchParamsContext.Provider value={params}>
             <PlaybackViewContext.Provider
               value={{
                 ...idlePlaybackState,
@@ -124,11 +124,7 @@ function render(
                 connection: 'connected',
               }}
             >
-              {view === 'sources' ? (
-                <TrackSources item={item} />
-              ) : (
-                <TrackDetailView id={item.id} />
-              )}
+              <TrackDetailView id={item.id} />
             </PlaybackViewContext.Provider>
           </SearchParamsContext.Provider>
         </ConfigContext.Provider>
@@ -176,6 +172,10 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   assert.deepEqual(tabs, ['Overview', 'Similar', 'Sources'])
   assert.match(html, /<h3>Listening<\/h3>/)
   assert.match(html, /<h3>Appears on<\/h3>/)
+  assert.match(
+    html,
+    /Recorded album<\/span><span class="ds-row-by">Album, not in the library<\/span>.*aria-haspopup="dialog"[^>]*>Add to Library<\/button>/,
+  )
   assert.match(html, /No playlist memberships\./)
   assert.match(html, /Match this track to Spotify to add it to a playlist/)
   assert.match(
@@ -219,6 +219,7 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   })
   const html = render(matched)
   assert.match(html, /href="\/albums\/album-1">Library album<\/a>/)
+  assert.doesNotMatch(html, />Add to Library<\/button>/)
   assert.deepEqual(pillHref(html, 'Electronic'), [
     { field: 'albumTag', value: 'Electronic' },
   ])
@@ -575,7 +576,7 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
   assert.equal(html.match(/<h3>Album<\/h3>/g)?.length, 1)
   assert.match(
     html,
-    /“Harbour Lights” is not in the library\.<\/span><button[^>]*>Add album<\/button>/,
+    /“Harbour Lights” is not in the library\.<\/span><button(?![^>]*aria-haspopup)[^>]*>Add to Library<\/button>/,
   )
   assert.match(
     html,
@@ -584,6 +585,27 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
   assert.match(
     html,
     /1 play of this track is counted on “<a[^>]*href="\/albums\/fixture-live"[^>]*>Live Set<\/a>”, which does not list it\./,
+  )
+})
+
+test('offers an exact Spotify album add on Overview even without an album name', () => {
+  const html = render(
+    TrackDetailSchema.parse({
+      ...scrobbled,
+      albumName: null,
+      spotifyAlbumId: '1234567890ABCDEFGHIJKL',
+    }),
+  )
+  assert.match(
+    html,
+    />Album<\/span><span class="ds-row-by">Album, not in the library<\/span>.*<button(?![^>]*aria-haspopup)[^>]*>Add to Library<\/button>/,
+  )
+})
+
+test('offers an album search from Sources when only the recorded name is known', () => {
+  assert.match(
+    render(scrobbled, '', 'sources'),
+    /“Recorded album” has no linked library album\.<\/span><button[^>]*aria-haspopup="dialog"[^>]*>Add to Library<\/button>/,
   )
 })
 
@@ -599,6 +621,6 @@ test('Sources shows no album notices for a track on its library album', () => {
   )
   assert.doesNotMatch(
     html,
-    /<h3>Album<\/h3>|not in the library|Add album|does not list it/,
+    /<h3>Album<\/h3>|not in the library|Add to Library|does not list it/,
   )
 })
