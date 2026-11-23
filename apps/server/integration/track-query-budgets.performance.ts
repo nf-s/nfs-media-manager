@@ -2769,8 +2769,8 @@ it('bounds Track and Album pages filtered and sorted by tag location', async () 
     'track Tags track live suggestions': 267_200,
     'track Tags album live suggestions': 203_300,
     'track Tags artist live suggestions': 203_300,
-    'track Tags track+album live suggestions': 429_400,
-    'track Tags all live suggestions': 455_200,
+    'track Tags track+album live suggestions': 205_100,
+    'track Tags all live suggestions': 205_100,
     'album Tags auto live suggestions': 7_400,
     'album Tags track live suggestions': 132_300,
     'album Tags album live suggestions': 5_500,
@@ -2785,10 +2785,10 @@ it('bounds Track and Album pages filtered and sorted by tag location', async () 
     'track Tags album stored suggestions, nothing typed': 200,
     'track Tags artist stored suggestions': 900,
     'track Tags artist stored suggestions, nothing typed': 200,
-    'track Tags track+album stored suggestions': 309_200,
-    'track Tags track+album stored suggestions, nothing typed': 382_600,
-    'track Tags all stored suggestions': 319_800,
-    'track Tags all stored suggestions, nothing typed': 386_400,
+    'track Tags track+album stored suggestions': 900,
+    'track Tags track+album stored suggestions, nothing typed': 200,
+    'track Tags all stored suggestions': 900,
+    'track Tags all stored suggestions, nothing typed': 200,
   }
   const budget = (label: string) => budgets[label] ?? Number.MAX_SAFE_INTEGER
   // track_tag is read in one pass over a partial index, a hashed SubPlan or

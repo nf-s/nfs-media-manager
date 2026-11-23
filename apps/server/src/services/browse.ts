@@ -21,6 +21,7 @@ import {
   type BrowseField,
   type BrowseFilter,
   type BrowseRange,
+  type TagLevel,
   type TagLevels,
 } from '@repo/schemas/browse'
 import { parseMusicalKey } from '@repo/schemas/musical-keys'
@@ -2560,13 +2561,14 @@ const trackTagFacetRows = sql`select tt.media_item_id as id, labels.value from t
 
 /**
  * Tag counts for Tracks: Album tags, Artist tags and Tags, each a count of
- * tracks. Tags counts at Auto (TTAG-21) when `auto`: a track's own tags,
- * plus the album's and artists' tags of tracks without tags of their own,
- * and of every track for a value no verified Sonovault tag rolls up to.
+ * tracks. With `ownTags`, Tags also counts at Auto (TTAG-21: a track's own
+ * tags, plus the album's and artists' tags of tracks without tags of their
+ * own, and of every track for a value no verified Sonovault tag rolls up to)
+ * and at each combination of levels (TTAG-29).
  */
 function trackMusicFacetSources(
   includeLastfmSourceRows?: boolean,
-  auto = false,
+  ownTags = false,
 ) {
   const visibility = includeLastfmSourceRows
     ? sql``
@@ -2579,7 +2581,7 @@ function trackMusicFacetSources(
         dense_rank() over (order by album_id, artist_ids, has_own) as group_id
       from (
         select m.id, lt.album_media_item_id as album_id,
-          ${auto ? sql`lt.has_own_tags` : sql`false`} as has_own,
+          ${ownTags ? sql`lt.has_own_tags` : sql`false`} as has_own,
           array_agg(c.artist_id order by c.artist_id) filter (where c.artist_id is not null) as artist_ids
         from media_item m join library_track lt on lt.media_item_id = m.id
         left join media_credit c on c.media_item_id = m.id and c.role = 'artist'
@@ -2610,7 +2612,7 @@ function trackMusicFacetSources(
   ]
   // The labels a track inherits: its album's, or its artists' on a sparse album.
   const inherited = sql`(labels.release_tag or dense.media_item_id is null)`
-  if (!auto)
+  if (!ownTags)
     return [
       ...sources,
       sql`browse_track_facet_counts as materialized (
@@ -2646,88 +2648,43 @@ function trackMusicFacetSources(
       where own.value not in (select value from browse_track_sonovault_values) and ${inherited}
       group by own.value
     )`,
+    // Each own tag value with how many of those tracks lack it at the album
+    // or artist level of their group, for the counts at a combination.
+    sql`browse_track_own_counts as materialized (
+      select own.value, count(*) as own,
+        count(*) filter (where not coalesce(labels.release_tag, false)) as without_album,
+        count(*) filter (where not coalesce(labels.artist_tag, false)) as without_artist,
+        count(*) filter (where labels.id is null) as without_either
+      from browse_track_own_facet_rows own
+      join browse_track_facet_tracks t on t.id = own.id
+      left join browse_track_facet_hits labels on labels.id = t.group_id and labels.value = own.value
+      group by own.value
+    )`,
+    sql`browse_track_group_counts as materialized (
+      select labels.value,
+        sum(g.weight) filter (where labels.release_tag) as album_tag,
+        sum(g.weight) filter (where labels.artist_tag) as artist_tag,
+        sum(g.weight) as either,
+        coalesce(sum(g.weight) filter (where ${inherited} and (not g.has_own
+          or labels.value not in (select value from browse_track_sonovault_values))), 0) as inherited
+      from browse_track_facet_hits labels join browse_track_facet_groups g on g.id = labels.id
+      left join browse_track_dense_albums dense on dense.media_item_id = g.album_id
+      group by labels.value
+    )`,
+    // A group with the value at a ticked album or artist level counts all its
+    // tracks; otherwise only its tracks that carry the value themselves.
     sql`browse_track_facet_counts as materialized (
-      select value, max(album_tag) as album_tag, max(artist_tag) as artist_tag,
-        nullif(sum(genre), 0) as genre
-      from (
-        select labels.value,
-          sum(g.weight) filter (where labels.release_tag) as album_tag,
-          sum(g.weight) filter (where labels.artist_tag) as artist_tag,
-          coalesce(sum(g.weight) filter (where ${inherited} and (not g.has_own
-            or labels.value not in (select value from browse_track_sonovault_values))), 0) as genre
-        from browse_track_facet_hits labels join browse_track_facet_groups g on g.id = labels.id
-        left join browse_track_dense_albums dense on dense.media_item_id = g.album_id
-        group by labels.value
-        union all
-        select value, null, null, count(*) from browse_track_own_facet_rows group by value
-        union all
-        select value, null, null, -tracks from browse_track_own_overlap
-      ) parts group by value
+      select coalesce(g.value, o.value) as value, g.album_tag, g.artist_tag,
+        nullif(coalesce(g.inherited, 0) + coalesce(o.own, 0) - coalesce(x.tracks, 0), 0) as genre,
+        nullif(coalesce(g.album_tag, 0) + coalesce(o.without_album, 0), 0) as track_album,
+        nullif(coalesce(g.artist_tag, 0) + coalesce(o.without_artist, 0), 0) as track_artist,
+        g.either as album_artist,
+        nullif(coalesce(g.either, 0) + coalesce(o.without_either, 0), 0) as all_levels
+      from browse_track_group_counts g
+      full join browse_track_own_counts o on o.value = g.value
+      left join browse_track_own_overlap x on x.value = coalesce(g.value, o.value)
     )`,
   ]
-}
-
-/**
- * TTAG-29: tracks per tag value at a combination of levels, a track counted
- * once however many levels carry the value. Reads the facet key sources, so
- * it counts only the values they hold.
- */
-function trackTagLocationFacetCounts(
-  levels: TagLevels,
-  includeLastfmSourceRows?: boolean,
-): SQL {
-  const visibility = includeLastfmSourceRows
-    ? sql``
-    : sql`and m.id not in (select id from redundant_lastfm_tracks)`
-  return sql`select value, count(*) as count from (
-      select distinct hits.id, hits.value from (${tagLocationFacetHits(levels)}) hits
-    ) located join media_item m on m.id = located.id
-    join library_track lt on lt.media_item_id = m.id
-    where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true'
-      and value is not null and value <> '' ${visibility}
-    group by value`
-}
-
-/**
- * The same counts for at most 63 values, each with its own bit in
- * `location_candidates (value, bit)`: one mask per track holds every value
- * it has at any level, so memory grows with the tracks, not with each track
- * and value.
- */
-function trackTagLocationCandidateCounts(levels: TagLevels) {
-  return {
-    // Masks are built once; every candidate then tests its bit in them.
-    source: sql`location_masks as materialized (
-      select located.id, located.mask from (
-        select hits.id, bit_or(1::bigint << c.bit) as mask
-        from (${tagLocationFacetHits(levels)}) hits
-        join location_candidates c on c.value = hits.value group by hits.id
-      ) located join media_item m on m.id = located.id
-      join library_track lt on lt.media_item_id = m.id
-      where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true'
-        and m.id not in (select id from redundant_lastfm_tracks)
-    )`,
-    counts: sql`select c.value, count(*) as count
-      from location_masks located cross join location_candidates c
-      where located.mask & (1::bigint << c.bit) <> 0 group by c.value`,
-  }
-}
-
-/** Track and tag value pairs at each of the levels, read from the facet keys. */
-function tagLocationFacetHits(levels: TagLevels): SQL {
-  const rows: SQL[] = []
-  if (levels.includes('track'))
-    rows.push(sql`select tt.media_item_id as id, labels.value from track_tag tt
-      join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
-      where tt.in_browse`)
-  if (levels.includes('album'))
-    rows.push(sql`select lt.media_item_id as id, labels.value from media_item_tag mt
-      join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
-      join library_track lt on lt.album_media_item_id = mt.media_item_id`)
-  if (levels.includes('artist'))
-    rows.push(sql`select c.media_item_id as id, labels.value from browse_artist_facet_keys labels
-      join media_credit c on c.artist_id = labels.artist_id and c.role = 'artist'`)
-  return sql.join(rows, sql` union all `)
 }
 
 /** The level of a location with one level. */
@@ -2743,20 +2700,50 @@ const tagLevelFacetFields = {
   artist: 'artistTag',
 } as const
 
+/** The counts column of Tags at a location; Track alone is `trackTag`'s. */
+function tagLocationCountColumn(levels: readonly TagLevel[] | undefined) {
+  switch (levels?.join(',')) {
+    case undefined:
+      return 'genre'
+    case 'album':
+      return 'album_tag'
+    case 'artist':
+      return 'artist_tag'
+    case 'track,album':
+      return 'track_album'
+    case 'track,artist':
+      return 'track_artist'
+    case 'album,artist':
+      return 'album_artist'
+    default:
+      return 'all_levels'
+  }
+}
+
+/** Stored Tracks vocabulary fields of Tags at each combination of levels. */
+const tagLevelCombinations: (readonly TagLevel[])[] = [
+  ['track', 'album'],
+  ['track', 'artist'],
+  ['album', 'artist'],
+  ['track', 'album', 'artist'],
+]
+function tagCombinationFacetField(levels: readonly TagLevel[]) {
+  return `genre:${levels.join(',')}`
+}
+
 function trackMusicFacetRows(
   field: BrowseField,
   query: BrowseFacetQuery,
   limit: number | undefined,
 ) {
   // Tags at one level counts what that level's own field counts.
-  const single = field.key === 'genre' && singleTagLevel(query.tagLevels)
-  const level = single ? tagLevelFacetFields[single] : field.key
-  const count =
-    level === 'albumTag'
-      ? sql`album_tag`
-      : level === 'artistTag'
-        ? sql`artist_tag`
-        : sql`genre`
+  const count = sql.raw(
+    field.key === 'albumTag'
+      ? 'album_tag'
+      : field.key === 'artistTag'
+        ? 'artist_tag'
+        : tagLocationCountColumn(query.tagLevels),
+  )
   const matches = facetValueMatches(field, query)
   return sql`(select ${field.key}::text as field, value, ${count}::int as count
     from browse_track_facet_counts
@@ -2873,7 +2860,7 @@ function browseFacetQuery(
       sources.push(
         ...trackMusicFacetSources(
           options.includeLastfmSourceRows,
-          !query.tagLevels &&
+          !singleTagLevel(query.tagLevels) &&
             musicFields.some((field) => field.key === 'genre'),
         ),
       )
@@ -2887,13 +2874,6 @@ function browseFacetQuery(
       mediaType === 'track' && field.key === 'genre'
         ? query.tagLevels
         : undefined
-    if (trackLevels && !singleTagLevel(trackLevels)) {
-      const matches = facetValueMatches(field, query)
-      return sql`(select ${field.key}::text as field, value, count::int as count
-        from (${trackTagLocationFacetCounts(trackLevels, options.includeLastfmSourceRows)}) located
-        ${matches ? sql`where ${matches}` : sql``}
-        ${facetOrder(query, limit)})`
-    }
     if (
       mediaType === 'track' &&
       musicTagFacet &&
@@ -2901,7 +2881,8 @@ function browseFacetQuery(
     )
       return trackMusicFacetRows(field, query, limit)
     const trackTagFacet =
-      mediaType === 'track' && (field.key === 'trackTag' || !!trackLevels)
+      mediaType === 'track' &&
+      (field.key === 'trackTag' || singleTagLevel(trackLevels) === 'track')
     const source =
       musicTagFacet && !trackTagFacet
         ? albumTagFacetRows(field.key, query.tagLevels)
@@ -2938,6 +2919,18 @@ function browseFacetQuery(
           : 'distinctItems',
     )
   })
+  // The stored vocabulary also holds Tags at each combination of levels.
+  if (
+    completeVocabulary &&
+    mediaType === 'track' &&
+    fields.some((field) => field.key === 'genre')
+  )
+    for (const levels of tagLevelCombinations) {
+      const count = sql.raw(tagLocationCountColumn(levels))
+      queries.push(sql`(select ${tagCombinationFacetField(levels)}::text as field,
+        value, ${count}::int as count from browse_track_facet_counts
+        where ${count} is not null and value is not null and value <> '')`)
+    }
   const withSources = sources.length
     ? sql`with ${sql.join(sources, sql`, `)}`
     : sql``
@@ -2968,39 +2961,21 @@ const trackFacetBuilder = sql`current_user || ':' || ${checksumJson(dialect.sqlT
 
 function readTrackFacetQuery(fields: BrowseField[], query: BrowseFacetQuery) {
   const limit = facetFieldLimit(query, fields.length)
-  const priority = query.q
-    ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
-    : sql``
   const facets = fields.map((field) => {
+    const priority = query.q
+      ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
+      : sql``
     const matches = facetValueMatches(field, query)
+    // TTAG-29: Tags at a location reads the counts stored for it.
     const levels = field.key === 'genre' ? query.tagLevels : undefined
     const single = singleTagLevel(levels)
-    if (levels && !single) {
-      // TTAG-29: count the values these levels list most, live, and only those.
-      const candidates = sql`select value, (row_number() over () - 1)::int as bit from (
-          select value from track_facet_value
-          where field in (${sql.join(
-            levels.map((level) => sql`${tagLevelFacetFields[level]}`),
-            sql`, `,
-          )}) ${matches ? sql`and ${matches}` : sql``}
-          group by value order by ${priority}max(count) desc, value
-          limit ${Math.min(limit, 63)}
-        ) listed`
-      const wanted = sql`value in (select value from location_candidates)`
-      const located = trackTagLocationCandidateCounts(levels)
-      return sql`(with location_candidates as materialized (${candidates}),
-          ${redundantTrackFacetSource},
-          ${sql.join(
-            levels.includes('artist')
-              ? musicFacetSources('track', wanted)
-              : [releaseFacetKeysSource(wanted)],
-            sql`, `,
-          )}, ${located.source}
-        select ${field.key}::text as field, value, count::int as count
-        from (${located.counts}) located)`
-    }
+    const stored = !levels
+      ? field.key
+      : single
+        ? tagLevelFacetFields[single]
+        : tagCombinationFacetField(levels)
     return sql`(select ${field.key}::text as field, value, count from track_facet_value
-      where field = ${single ? tagLevelFacetFields[single] : field.key}
+      where field = ${stored}
         ${matches ? sql`and ${matches}` : sql``}
       order by ${priority}rank limit ${limit})`
   })
