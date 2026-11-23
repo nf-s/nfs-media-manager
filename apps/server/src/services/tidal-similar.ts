@@ -329,13 +329,19 @@ export async function suggestionsNeedingSpotify(
     refreshBefore.getUTCMonth() - SONOVAULT_REFRESH_MONTHS,
   )
   const keys = [...new Set(keyed.map(({ key }) => key))]
-  const [library, lookups] = await Promise.all([
+  const [byTidalId, byCode, lookups] = await Promise.all([
+    libraryItemsByTidalId(
+      database,
+      kind,
+      keyed.map(({ suggestion }) => suggestion.tidalId),
+    ),
     libraryItemsByCode(database, kind, keys),
     spotifyLookups(database, kind, keys),
   ])
   const seen = new Set<string>()
-  return keyed.filter(({ key }) => {
-    if (seen.has(key) || library.has(key)) return false
+  return keyed.filter(({ key, suggestion }) => {
+    if (seen.has(key) || byCode.has(key) || byTidalId.has(suggestion.tidalId))
+      return false
     seen.add(key)
     const lookup = lookups.get(key)
     return (

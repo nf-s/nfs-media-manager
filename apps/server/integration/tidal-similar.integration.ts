@@ -66,7 +66,11 @@ import {
   ProviderTaskReplayStepsSchema,
   replayProviderTask,
 } from '@/services/provider-task-replay'
-import { getTidalSimilar, refreshTidalSimilar } from '@/services/tidal-similar'
+import {
+  getTidalSimilar,
+  refreshTidalSimilar,
+  suggestionsNeedingSpotify,
+} from '@/services/tidal-similar'
 import {
   acceptTidalTrackMatch,
   getTidalTrackMatch,
@@ -710,6 +714,27 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       genres: ['Acid House'],
       genreSource: 'artist',
     })
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(
+        reference(
+          'fixture-tidal-no-upc',
+          'album-unmatched',
+          'tidal',
+          'album',
+          '810002',
+        ),
+      )
+    await databaseClient
+      .delete(schema.spotifyCodeLookup)
+      .where(eq(schema.spotifyCodeLookup.code, '48'))
+    expect(
+      await suggestionsNeedingSpotify(
+        databaseClient,
+        'album',
+        result.items.filter(({ tidalId }) => tidalId === '810002'),
+      ),
+    ).toEqual([])
   }, 30000)
 
   it('chooses Spotify tracks by library, then the earliest release that is not a compilation', async () => {
