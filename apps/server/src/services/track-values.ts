@@ -1,17 +1,40 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import {
   trackSourceLabels,
   trackSpotifyMatchLabels,
 } from '@repo/schemas/tracks'
+import { libraryTrack, mediaItem } from '@/schemas/db'
 
 const lastfmPlaceholderSources = sql`from lastfm_track_source s
   join library_track placeholder on placeholder.media_item_id = s.track_media_item_id
   join media_item mi on mi.id = s.track_media_item_id`
 
-const lastfmPlaceholderOnly = sql`mi.source_label = 'lastfm' and placeholder.spotify_track_id is null
-  and placeholder.album_media_item_id is null and nullif(trim(placeholder.album_name), '') is null
-  and not exists (select 1 from track t where t.track_media_item_id = mi.id)
-  and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)`
+function lastfmPlaceholder({
+  id,
+  source,
+  spotifyTrackId,
+  albumId,
+  albumName,
+}: {
+  id: SQLWrapper
+  source: SQLWrapper
+  spotifyTrackId: SQLWrapper
+  albumId: SQLWrapper
+  albumName: SQLWrapper
+}) {
+  return sql`${source} = 'lastfm' and ${spotifyTrackId} is null
+    and ${albumId} is null and nullif(trim(${albumName}), '') is null
+    and not exists (select 1 from track t where t.track_media_item_id = ${id})
+    and not exists (select 1 from playlist_item pi where pi.media_item_id = ${id})`
+}
+
+const lastfmPlaceholderOnly = lastfmPlaceholder({
+  id: sql`mi.id`,
+  source: sql`mi.source_label`,
+  spotifyTrackId: sql`placeholder.spotify_track_id`,
+  albumId: sql`placeholder.album_media_item_id`,
+  albumName: sql`placeholder.album_name`,
+})
 
 const linkedTrackIsPlayable = sql`pm.metadata->>'legacyHidden' is distinct from 'true'
   and (peer.spotify_track_id is not null or exists (
@@ -20,6 +43,31 @@ const linkedTrackIsPlayable = sql`pm.metadata->>'legacyHidden' is distinct from 
 const exactPlayableTrackLinks = sql`from lastfm_track_link l
   join library_track peer on peer.media_item_id = l.track_media_item_id
   join media_item pm on pm.id = peer.media_item_id`
+
+const hasExactPlayablePeer = sql`exists (
+  select 1 ${exactPlayableTrackLinks}
+  where l.username = s.username and l.artist_key = s.artist_key and l.track_key = s.track_key
+    and l.strategy = 'exact' and ${linkedTrackIsPlayable}
+  offset 0
+)`
+
+const lastfmSourceProbeLimit = 1024
+export const manyLastfmTrackSources = sql`exists (
+  select 1 from lastfm_track_source offset ${lastfmSourceProbeLimit} limit 1
+)`
+
+/** The title walk already has the library track and its media item. */
+export const trackTitleVisibility = sql`case when ${lastfmPlaceholder({
+  id: mediaItem.id,
+  source: mediaItem.sourceLabel,
+  spotifyTrackId: libraryTrack.spotifyTrackId,
+  albumId: libraryTrack.albumMediaItemId,
+  albumName: libraryTrack.albumName,
+})} then not exists (
+  select 1 from lastfm_track_source s where s.track_media_item_id = ${mediaItem.id}
+  group by s.track_media_item_id
+  having bool_and(case when s.manually_matched then false else ${hasExactPlayablePeer} end)
+) else true end`
 
 /** Source rows retained for match review whose history already appears in Browse. */
 export function redundantLastfmTrackIds(id?: SQL) {
@@ -43,7 +91,7 @@ export function redundantLastfmTrackIds(id?: SQL) {
       ${lastfmPlaceholderSources} where ${lastfmPlaceholderOnly}
     ),
     probe_names as materialized (
-      select count(*) <= 1024 as bounded from placeholder_sources
+      select count(*) <= ${lastfmSourceProbeLimit} as bounded from placeholder_sources
     ),
     wanted_links as materialized (
       select l.username, l.artist_key, l.track_key, l.track_media_item_id
@@ -63,12 +111,7 @@ export function redundantLastfmTrackIds(id?: SQL) {
     group by s.track_media_item_id
     having bool_and(case
       when s.manually_matched then false
-      when (select bounded from probe_names) then exists (
-        select 1 ${exactPlayableTrackLinks}
-        where l.username = s.username and l.artist_key = s.artist_key and l.track_key = s.track_key
-          and l.strategy = 'exact' and ${linkedTrackIsPlayable}
-        offset 0
-      )
+      when (select bounded from probe_names) then ${hasExactPlayablePeer}
       else (s.username, s.artist_key, s.track_key) in (
         select username, artist_key, track_key from matched_names
       )

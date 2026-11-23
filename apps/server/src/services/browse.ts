@@ -85,9 +85,11 @@ import {
 } from './music-tags'
 import {
   albumTrackDurationExpression,
+  manyLastfmTrackSources,
   redundantLastfmTrackIds,
   trackSourcesExpression,
   trackSpotifyMatchExpression,
+  trackTitleVisibility,
 } from './track-values'
 import {
   verifiedTrackBpm,
@@ -1586,14 +1588,19 @@ async function browseQueries(
     query.sortBy === 'dateAdded' && query.direction === 'desc'
       ? scopedTrackVisibility
       : visibleTrack
+  const titleTrackVisibility =
+    hideRedundant && query.sortBy === 'title' && !creatorTrackScope
+      ? trackTitleVisibility
+      : undefined
   const pageMembership = itemConditions(listening)
   const pageWhere = and(
     pageMembership,
-    creatorTrackScope
-      ? scopedTrackVisibility
-      : query.filters.length
-        ? visibleTrack
-        : addedTrackVisibility,
+    titleTrackVisibility ??
+      (creatorTrackScope
+        ? scopedTrackVisibility
+        : query.filters.length
+          ? visibleTrack
+          : addedTrackVisibility),
   )
   const pageSource = listening?.source(listeningSubject)
   const countWhere = and(
@@ -1677,7 +1684,7 @@ async function browseQueries(
   async function readTrackRanks(
     ranks: number[] | { first: number; last: number },
     firstArtistTagWhere?: SQL,
-    rankVisibility = visibleTrack,
+    visibility = visibleTrack,
   ) {
     const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
     const requested = Array.isArray(ranks)
@@ -1687,14 +1694,24 @@ async function browseQueries(
       ? sql`in (select rank from primary_tracks where ordinal ${requested})`
       : sql`between (select rank from primary_tracks where ordinal = ${ranks.first}::bigint)
           and ${last}::bigint`
-    const prefix = base({
-      rank: sql<number>`rank() over (order by ${order})`,
-      ordinal: sql<number>`row_number() over (order by ${order})`,
-    })
-      .where(
-        firstArtistTagWhere ?? and(itemConditions(listening), rankVisibility),
-      )
-      .orderBy(order)
+    const prefix = (condition: SQL | undefined) =>
+      sql`(${base({
+        rank: sql<number>`rank() over (order by ${order})`,
+        ordinal: sql<number>`row_number() over (order by ${order})`,
+      })
+        .where(firstArtistTagWhere ?? and(itemConditions(listening), condition))
+        .orderBy(order)} fetch first (${last}) rows with ties)`
+    // With many source names, visibility checks can stop with the title
+    // index. With few names, table scans and a compact visibility set can
+    // read fewer pages at the end of a deep result.
+    const primaryTracks = titleTrackVisibility
+      ? sql`with title_scope as materialized (select ${manyLastfmTrackSources} as many)
+        select * from ${prefix(visibility)} sparse
+          where not (select many from title_scope)
+        union all
+        select * from ${prefix(scopedTrackVisibility)} dense
+          where (select many from title_scope)`
+      : prefix(visibility)
     const releaseJoins = firstArtistTagWhere
       ? trackReleaseLookups(sql`p.id`)
       : sql`join ${mediaItem} on ${mediaItem.id} = p.id
@@ -1705,7 +1722,7 @@ async function browseQueries(
     // rows. Every row tied with a requested rank must be available, including
     // ties before the first requested rank and after the last one.
     const result = await db.execute(sql`with primary_tracks as materialized (
-        ${prefix} fetch first (${last}) rows with ties
+        ${primaryTracks}
       ), selected_tracks as materialized (
         select id, listening_scrobbles, rank as first_rank from primary_tracks
         where rank ${primaryRanks}

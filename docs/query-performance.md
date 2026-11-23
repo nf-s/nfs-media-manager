@@ -112,6 +112,8 @@ Albums, Films, Tracks, Artists and Subscriptions expose `/api/v1/{library}/brows
 
 `GET /api/v1/tracks/positions` returns the tracks at up to 50 given positions of a track query's order. It numbers the ordered rows once, as far as the deepest position asked for, and hydrates only the rows at those positions. Shuffled playback uses it because a page per random position orders the whole result again for every track; on a large list one such read costs about as much as a single deep page.
 
+Ungrouped Title pages check redundant Last.fm sources as they read the tracks. Deep Title pages and position lookups can apply visibility during the primary title index scan, then resolve artist, album and track-position order only for the titles tied with the requested ranks. The page and position reads use the same visibility rules as the independent count.
+
 Browse can display the first page and expand the scroll area when the total arrives. A first page with `hasMore: false` already gives the total. Later pages skip counting, including when a requested page is empty. A failed count can be retried while the loaded page remains available.
 
 Grouped Tracks Browse checks full titles, artist credits and durations only for tracks that could share a recording. Tracks without a possible match use their stored listening totals directly. Sorting by listening or Added first identifies rows within the requested rank, including ties. The usual release ordering then resolves those ties. Expanding one recording reads candidates for its title. The server caches a bounded page of grouped IDs and listening totals and checks the database snapshot before reuse, including after another process imports or edits a track.

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
+import { TrackQuerySchema, type TrackQuery } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 
@@ -1614,9 +1614,15 @@ it('bounds grouped lifetime Browse with a broad genre and two listening rules', 
   }
 })
 
-it('bounds first Added pages with artist tags and unrelated Last.fm placeholders', async () => {
-  const { queryBrowseCount, queryBrowsePageIds, queryBrowsePositions } =
-    await import('@/services/browse')
+it('bounds Added and Title queries with artist tags and Last.fm placeholders', async () => {
+  const {
+    queryBrowseCount,
+    queryBrowseCounts,
+    queryBrowsePageIds,
+    queryBrowsePositions,
+  } = await import('@/services/browse')
+  const { listTrackBrowsePage, listTracksAtPositions } =
+    await import('@/services/tracks')
   await pool.query(`
     insert into media_item (id, slug, media_type, title, source_label)
     select 'placeholder-' || n, 'placeholder-' || n, 'track', 'Fixture placeholder ' || n, 'lastfm'
@@ -1821,6 +1827,20 @@ it('bounds first Added pages with artist tags and unrelated Last.fm placeholders
   expect(await queryBrowseCount('track', populousCreator)).toEqual({
     totalCount: 4_000,
   })
+  for (const direction of ['asc', 'desc'] satisfies TrackQuery['direction'][]) {
+    const firstTie = direction === 'asc' ? 99 : 3899
+    const positions = await listTracksAtPositions({
+      ...populousCreator,
+      direction,
+      positions: [firstTie, firstTie + 1],
+    })
+    expect(
+      positions.items.map(({ item, position }) => [item.id, position]),
+    ).toEqual([
+      ['track-4101', firstTie],
+      ['track-4100', firstTie + 1],
+    ])
+  }
 
   // Exercise global duplicate visibility through a first title page. A
   // placeholder remains visible if any of its source names must be retained.
@@ -1865,6 +1885,47 @@ it('bounds first Added pages with artist tags and unrelated Last.fm placeholders
     },
     500_000,
   )
+
+  const deepTitlePage = TrackQuerySchema.parse({
+    ...titlePage,
+    direction: 'desc',
+    page: 125,
+  })
+  const deepPage = await checkBudget(
+    'deep descending Track title page',
+    80_000,
+    2,
+    () => listTrackBrowsePage(deepTitlePage),
+  )
+  expect(deepPage.items).toHaveLength(100)
+  expect(deepPage.hasMore).toBe(true)
+  const bookmarked = await checkBudget(
+    'deep Track title positions',
+    80_000,
+    2,
+    () =>
+      listTracksAtPositions({ ...deepTitlePage, positions: [12400, 12499] }),
+  )
+  expect(
+    bookmarked.items.map(({ item, position }) => [item.id, position]),
+  ).toEqual([
+    [deepPage.items[0]?.id, 12400],
+    [deepPage.items[99]?.id, 12499],
+  ])
+  const count = await checkBudget(
+    'independent Track title count',
+    370_000,
+    3,
+    () => queryBrowseCounts('track', deepTitlePage),
+  )
+  expect(
+    logQuery.mock.calls.some(([statement]) =>
+      statement.includes('primary_tracks'),
+    ),
+  ).toBe(false)
+  expect(count.totalCount).toBeGreaterThan(12_500)
+  expect(count.totalCount).toBe(count.unfilteredCount)
+  expect(await queryBrowseCounts('track', titlePage)).toEqual(count)
 
   await pool.query(`
     update library_track set album_name = 'Fixture existing album label'
