@@ -2592,9 +2592,13 @@ function textRows(
     mediaType === 'track'
       ? sql`left join library_track on library_track.media_item_id = media_item.id`
       : sql``
+  const present =
+    mediaType === 'album' && key === 'country'
+      ? sql`and media_item.metadata->'browse' ? 'country'`
+      : sql``
   return sql`select media_item.id, v.value from media_item left join film on film.media_item_id = media_item.id ${trackColumns}
     cross join lateral jsonb_array_elements_text(case when jsonb_typeof(${value}) = 'array' then ${value} else jsonb_build_array(${value}) end) v(value)
-    where ${visible}`
+    where ${visible} ${present}`
 }
 
 const FacetRowSchema = z.object({
@@ -2603,7 +2607,7 @@ const FacetRowSchema = z.object({
   count: z.coerce.number().int().positive(),
 })
 type FacetRow = z.infer<typeof FacetRowSchema> & { subtags?: number }
-const CachedTrackFacetsSchema = z.object({
+const CachedFacetsSchema = z.object({
   ready: z.boolean(),
   rows: z.array(FacetRowSchema),
 })
@@ -2989,13 +2993,13 @@ function browseFacetQuery(
     mediaType === 'track'
       ? fields.filter((field) => field.key === 'trackTag')
       : []
+  // Restrict expansion to labels wanted by any of the requested tag fields.
+  const matches = or(
+    ...[...musicFields, ...trackTagFields].map(
+      (field) => facetValueMatches(field, query) ?? sql`true`,
+    ),
+  )
   if (mediaType === 'track' && (musicFields.length || trackTagFields.length)) {
-    // Restrict expansion to labels wanted by any of the requested tag fields.
-    const matches = or(
-      ...[...musicFields, ...trackTagFields].map(
-        (field) => facetValueMatches(field, query) ?? sql`true`,
-      ),
-    )
     if (musicFields.length) {
       sources.push(...musicFacetSources(mediaType, matches))
       sources.push(
@@ -3007,7 +3011,7 @@ function browseFacetQuery(
       )
     } else sources.push(releaseFacetKeysSource(matches))
   } else if (mediaType === 'album' && musicFields.length) {
-    sources.push(...musicFacetSources(mediaType))
+    sources.push(...musicFacetSources(mediaType, matches))
   }
   const queries = fields.map((field) => {
     const musicTagFacet = music && musicTagFacetFields.includes(field.key)
@@ -3056,7 +3060,9 @@ function browseFacetQuery(
       options.includeLastfmSourceRows && mediaType === 'track'
         ? sql`and id in (select media_item_id from library_track)`
         : visibility,
-      musicTagFacet || trackTagFacet
+      musicTagFacet ||
+        trackTagFacet ||
+        (mediaType === 'album' && field.key === 'playlist')
         ? 'deduplicateRows'
         : uniqueValuePerItem
           ? 'uniqueRows'
@@ -3089,65 +3095,95 @@ function facetFieldLimit(query: BrowseFacetQuery, fieldCount: number) {
   )
 }
 
-/** Store the exact order as a rank so long labels need no B-tree text key. */
-const trackFacetBuildQuery = sql`select field,
+function facetVocabulary(library: 'track' | 'album', fields: BrowseField[]) {
+  // Store the exact order as a rank so long labels need no B-tree text key.
+  const build = sql`select field,
   row_number() over (partition by field order by count desc, value asc) as rank, value, count
-  from (${browseFacetQuery(
-    'track',
-    trackBrowseFields.filter(
-      (field) => field.type === 'text' && field.filterable,
-    ),
-    BrowseFacetQuerySchema.parse({}),
-    {},
-    true,
-  )}) facet`
-// Only readers with the same database role and counting rules share values.
-const trackFacetBuilder = sql`current_user || ':' || ${checksumJson(dialect.sqlToQuery(trackFacetBuildQuery))}::text`
+  from (${browseFacetQuery(library, fields, BrowseFacetQuerySchema.parse({}), {}, true)}) facet`
+  return {
+    library,
+    build,
+    // Readers must share the database role and counting rules of the builder.
+    builder: sql`current_user || ':' || ${checksumJson(dialect.sqlToQuery(build))}::text`,
+    dirty: sql.raw(`${library}_facet_dirty`),
+    state: sql.raw(`${library}_facet_state`),
+    value: sql.raw(`${library}_facet_value`),
+    ready: sql.raw(`ready_${library}_facet_vocabulary`),
+    lock: `:${library}_facet_vocabulary`,
+  }
+}
 
-function readTrackFacetQuery(
+type FacetVocabulary = ReturnType<typeof facetVocabulary>
+const trackFacetVocabulary = facetVocabulary(
+  'track',
+  trackBrowseFields.filter(
+    (field) => field.type === 'text' && field.filterable,
+  ),
+)
+
+function albumFacetVocabulary(fields: BrowseField[]) {
+  // Providers can share a key. Its counts are stored once, while each field
+  // descriptor still applies its own label and limit when read.
+  const distinctFields = [
+    ...new Map(fields.map((field) => [field.key, field])).values(),
+  ]
+  return facetVocabulary('album', distinctFields)
+}
+
+function readFacetVocabularyQuery(
+  vocabulary: FacetVocabulary,
   fields: BrowseField[],
   query: BrowseFacetQuery,
   providerNames: ReadonlyMap<string, string>,
 ) {
+  const { state, value, dirty, ready, builder } = vocabulary
   const limit = facetFieldLimit(query, fields.length)
   const facets = fields.map((field) => {
+    // Album tag locations change only Tags. Count that one field live when
+    // a location is selected, using the limit of the full suggestion list.
+    if (
+      vocabulary.library === 'album' &&
+      field.key === 'genre' &&
+      query.tagLevels
+    )
+      return sql`(${browseFacetQuery('album', [field], { ...query, limitPerField: limit }, {})})`
     const priority = query.q
       ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
       : sql``
     const matches = facetValueMatches(field, query, providerNames)
     // TTAG-29: Tags at a location reads the counts stored for it.
-    const levels = field.key === 'genre' ? query.tagLevels : undefined
+    const levels =
+      vocabulary.library === 'track' && field.key === 'genre'
+        ? query.tagLevels
+        : undefined
     const single = singleTagLevel(levels)
     const stored = !levels
       ? field.key
       : single
         ? tagLevelFacetFields[single]
         : tagCombinationFacetField(levels)
-    return sql`(select ${field.key}::text as field, value, count from track_facet_value
+    return sql`(select ${field.key}::text as field, value, count from ${value}
       where field = ${stored}
         ${matches ? sql`and ${matches}` : sql``}
       order by ${priority}rank limit ${limit})`
   })
-  return sql`with ready_track_facet_vocabulary as materialized (
+  return sql`with ${ready} as materialized (
       select exists (
-        select 1 from track_facet_state where singleton and ready and builder = ${trackFacetBuilder}
-      ) and not exists (select 1 from track_facet_dirty) as ready
+        select 1 from ${state} where singleton and ready and builder = ${builder}
+      ) and not exists (select 1 from ${dirty}) as ready
     )
     select ready, case when ready
       then coalesce((select jsonb_agg(facet) from (${sql.join(facets, sql` union all `)}) facet), '[]'::jsonb)
       else '[]'::jsonb end as rows
-    from ready_track_facet_vocabulary`
+    from ${ready}`
 }
 
-const foregroundTrackFacetBudget = 5_000
+const foregroundFacetBudget = 5_000
 const FacetClaimSchema = z.object({ lease: z.string() })
 const FacetRefreshErrorSchema = z.object({
   code: z.string(),
   message: z.string(),
 })
-const staleTrackFacetState = sql`(not track_facet_state.ready
-  or track_facet_state.builder <> ${trackFacetBuilder}
-  or exists (select 1 from track_facet_dirty))`
 
 function facetRefreshError(error: unknown) {
   const cause = error instanceof Error ? (error.cause ?? error) : error
@@ -3155,23 +3191,28 @@ function facetRefreshError(error: unknown) {
   if (parsed.success) return parsed.data
 }
 
-async function claimTrackFacetRefresh(maintenance: boolean) {
+async function claimFacetRefresh(
+  { state, dirty, builder }: FacetVocabulary,
+  maintenance: boolean,
+) {
+  const stale = sql`(not ${state}.ready or ${state}.builder <> ${builder}
+    or exists (select 1 from ${dirty}))`
   return db.transaction(async (tx) => {
     await tx.execute(sql`set local lock_timeout = '100ms'`)
     const result = await tx.execute(
       maintenance
-        ? sql`update track_facet_state
+        ? sql`update ${state}
           set retry_after = statement_timestamp() + interval '120 seconds'
-          where singleton and retry_after <= statement_timestamp() and ${staleTrackFacetState}
+          where singleton and retry_after <= statement_timestamp() and ${stale}
           returning retry_after::text as lease, maintenance_only`
-        : sql`insert into track_facet_state (singleton, builder, retry_after)
-          select true, ${trackFacetBuilder}, statement_timestamp() + interval '30 seconds'
-          where not exists (select 1 from track_facet_state
+        : sql`insert into ${state} (singleton, builder, retry_after)
+          select true, ${builder}, statement_timestamp() + interval '30 seconds'
+          where not exists (select 1 from ${state}
             where singleton and (maintenance_only or retry_after > statement_timestamp()))
           on conflict (singleton) do update set retry_after = excluded.retry_after
-          where not track_facet_state.maintenance_only
-            and track_facet_state.retry_after <= statement_timestamp()
-            and ${staleTrackFacetState}
+          where not ${state}.maintenance_only
+            and ${state}.retry_after <= statement_timestamp()
+            and ${stale}
           returning retry_after::text as lease`,
     )
     const row = result.rows[0]
@@ -3179,11 +3220,11 @@ async function claimTrackFacetRefresh(maintenance: boolean) {
   })
 }
 
-async function deferTrackFacetRefreshToMaintenance(lease: string) {
+async function deferFacetRefreshToMaintenance(state: SQL, lease: string) {
   try {
     await db.transaction(async (tx) => {
       await tx.execute(sql`set local lock_timeout = '100ms'`)
-      await tx.execute(sql`update track_facet_state
+      await tx.execute(sql`update ${state}
         set maintenance_only = true, retry_after = clock_timestamp()
         where singleton and retry_after = ${lease}::timestamptz`)
     })
@@ -3192,23 +3233,26 @@ async function deferTrackFacetRefreshToMaintenance(lease: string) {
   }
 }
 
-async function refreshTrackFacets(maintenance = false): Promise<boolean> {
-  const expired = new Error('Track facet refresh exceeded its budget')
+async function refreshFacetVocabulary(
+  vocabulary: FacetVocabulary,
+  maintenance = false,
+): Promise<boolean> {
+  const { state, dirty, value, build, builder, lock } = vocabulary
+  const expired = new Error('Facet refresh exceeded its budget')
   let lease: string | undefined
   try {
-    lease = await claimTrackFacetRefresh(maintenance)
+    lease = await claimFacetRefresh(vocabulary, maintenance)
     if (!lease) return false
     const claimed = sql`singleton and retry_after = ${lease}::timestamptz`
     const started = performance.now()
-    const deadline =
-      started + (maintenance ? 60_000 : foregroundTrackFacetBudget)
+    const deadline = started + (maintenance ? 60_000 : foregroundFacetBudget)
     return await db.transaction(
       async (tx) => {
         const guard =
           await tx.execute(sql`select set_config('lock_timeout', '100ms', true),
         set_config('jit', 'off', true),
-        pg_try_advisory_xact_lock(hashtextextended(current_schema() || ':track_facet_vocabulary', 0))
-          and exists (select 1 from track_facet_state where ${claimed}) as ready`)
+        pg_try_advisory_xact_lock(hashtextextended(current_schema() || ${lock}, 0))
+          and exists (select 1 from ${state} where ${claimed}) as ready`)
         if (!z.object({ ready: z.boolean() }).parse(guard.rows[0]).ready)
           return false
 
@@ -3223,15 +3267,14 @@ async function refreshTrackFacets(maintenance = false): Promise<boolean> {
 
         // Claim visible markers before the build so concurrent writers skip them.
         // Later commits still leave their own markers to invalidate this snapshot.
-        await executeWithinBudget(sql`delete from track_facet_dirty where transaction_id in (
-        select transaction_id from track_facet_dirty for update skip locked)`)
-        await executeWithinBudget(sql`delete from track_facet_value`)
-        await executeWithinBudget(sql`insert into track_facet_value (field, rank, value, count)
-        ${trackFacetBuildQuery}`)
-        const tookTooLong =
-          performance.now() - started >= foregroundTrackFacetBudget
-        await executeWithinBudget(sql`update track_facet_state set ready = true,
-        builder = ${trackFacetBuilder}, retry_after = clock_timestamp() + interval '5 seconds',
+        await executeWithinBudget(sql`delete from ${dirty} where transaction_id in (
+        select transaction_id from ${dirty} for update skip locked)`)
+        await executeWithinBudget(sql`delete from ${value}`)
+        await executeWithinBudget(sql`insert into ${value} (field, rank, value, count)
+        ${build}`)
+        const tookTooLong = performance.now() - started >= foregroundFacetBudget
+        await executeWithinBudget(sql`update ${state} set ready = true,
+        builder = ${builder}, retry_after = clock_timestamp() + interval '5 seconds',
         maintenance_only = maintenance_only or ${tookTooLong}
         where ${claimed}`)
         return true
@@ -3247,7 +3290,7 @@ async function refreshTrackFacets(maintenance = false): Promise<boolean> {
         (failure?.code === '57014' &&
           failure.message.includes('statement timeout')))
     )
-      await deferTrackFacetRefreshToMaintenance(lease)
+      await deferFacetRefreshToMaintenance(state, lease)
     // The optional claim column may be absent during a rolling upgrade.
     if (
       error === expired ||
@@ -3261,19 +3304,40 @@ async function refreshTrackFacets(maintenance = false): Promise<boolean> {
 
 /** Refresh an already requested vocabulary outside the foreground latency budget. */
 export async function refreshTrackFacetVocabularyForMaintenance(): Promise<boolean> {
-  return refreshTrackFacets(true)
+  return refreshFacetVocabulary(trackFacetVocabulary, true)
 }
 
-async function readTrackFacetsFromVocabulary(query: SQL, broad: boolean) {
+export async function refreshAlbumFacetVocabularyForMaintenance(): Promise<boolean> {
+  const fields = (await listBrowseFields('album')).filter(
+    (field) => field.type === 'text' && field.filterable,
+  )
+  return refreshFacetVocabulary(albumFacetVocabulary(fields), true)
+}
+
+async function readFacetsFromVocabulary(
+  vocabulary: FacetVocabulary,
+  fields: BrowseField[],
+  query: BrowseFacetQuery,
+  providerNames: ReadonlyMap<string, string>,
+) {
+  const statement = readFacetVocabularyQuery(
+    vocabulary,
+    fields,
+    query,
+    providerNames,
+  )
+  const broad = (query.q ?? '').split(/\s+/).every((word) => word.length < 3)
   const read = async () =>
-    CachedTrackFacetsSchema.parse((await db.execute(query)).rows[0])
+    CachedFacetsSchema.parse((await db.execute(statement)).rows[0])
   try {
     const result = await measureRequestPhase('facetRead', read)
     if (result.ready) return result.rows
     // Selective queries can use indexed live rows until a broad query builds the vocabulary.
     if (
       broad &&
-      (await measureRequestPhase('facetBuild', () => refreshTrackFacets()))
+      (await measureRequestPhase('facetBuild', () =>
+        refreshFacetVocabulary(vocabulary),
+      ))
     ) {
       const refreshed = await measureRequestPhase('facetRead', read)
       if (refreshed.ready) return refreshed.rows
@@ -3295,16 +3359,17 @@ async function queryBrowseFacets(
   providerNames: ReadonlyMap<string, string>,
 ): Promise<FacetRow[]> {
   if (!fields.length) return []
-  const cached =
-    mediaType === 'track' &&
-    !options.includeLastfmSourceRows &&
-    !options.includeArchived &&
-    !options.fields
-      ? await readTrackFacetsFromVocabulary(
-          readTrackFacetQuery(fields, query, providerNames),
-          (query.q ?? '').split(/\s+/).every((word) => word.length < 3),
-        )
+  const vocabulary =
+    !options.includeArchived && !options.fields
+      ? mediaType === 'track' && !options.includeLastfmSourceRows
+        ? trackFacetVocabulary
+        : mediaType === 'album'
+          ? albumFacetVocabulary(fields)
+          : undefined
       : undefined
+  const cached = vocabulary
+    ? await readFacetsFromVocabulary(vocabulary, fields, query, providerNames)
+    : undefined
   const rows: FacetRow[] =
     cached ??
     z

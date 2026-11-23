@@ -6,6 +6,7 @@ import { db } from '@/lib/db'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
 import {
+  refreshAlbumFacetVocabularyForMaintenance,
   refreshRecordingBrowseOrderForMaintenance,
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
@@ -194,10 +195,17 @@ export async function startJobWorker({
       await queueDueSpotifyPlaylistSyncs()
       if (!maintenance) {
         maintenance = Promise.all([
-          refreshTrackFacetVocabularyForMaintenance().catch(() => {
-            console.error('Tracks autocomplete maintenance failed.')
-            return false
-          }),
+          refreshTrackFacetVocabularyForMaintenance()
+            .catch(() => {
+              console.error('Tracks autocomplete maintenance failed.')
+              return false
+            })
+            .then(() =>
+              refreshAlbumFacetVocabularyForMaintenance().catch(() => {
+                console.error('Albums autocomplete maintenance failed.')
+                return false
+              }),
+            ),
           refreshRecordingBrowseOrderForMaintenance().catch(() => {
             console.error('Grouped Tracks order maintenance failed.')
             return false

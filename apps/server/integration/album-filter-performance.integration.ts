@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { AlbumSelectionQuerySchema } from '@repo/schemas/album-selection'
 import { AlbumQuerySchema } from '@repo/schemas/media'
@@ -32,7 +33,7 @@ const fetchMock = vi.fn(() => {
 const fixturePlugin: MediaProviderPlugin = {
   manifest: {
     id: 'fixture-provider',
-    displayName: 'Fixture provider',
+    displayName: 'Sample Catalogue',
     description: '',
     mediaTypes: ['album'],
     identifierTypes: ['album'],
@@ -304,3 +305,210 @@ it('evaluates album freshness against stored job history', async () => {
     ),
   ).toEqual([])
 })
+
+it('keeps Album suggestions exact and bounded across playlist fan-out, editions and edits', async () => {
+  await pool.query(`
+    insert into playlist_item (playlist_id, media_item_id, position)
+    select 'playlist-' || ((n + shift - 1) % 100 + 1), 'track-' || n, n
+    from generate_series(1, 20000) n cross join generate_series(1, 15) shift;
+    insert into media_item (id, slug, media_type, title, metadata) values
+      ('facet-primary', 'facet-primary', 'album', 'Facet edition fixture', '{"browse":{"country":["Belgium","Belgium","Canada"]}}'),
+      ('facet-edition', 'facet-edition', 'album', 'Facet edition fixture', '{"browse":{"country":"Belgium"}}'),
+      ('facet-archived', 'facet-archived', 'album', 'Facet edition fixture', '{"legacyHidden":true}');
+    insert into album (media_item_id) values ('facet-primary'), ('facet-archived');
+    insert into album (media_item_id, edition_of_id) values ('facet-edition', 'facet-primary');
+    insert into provider_reference (id, media_item_id, provider, reference_type, external_id) values
+      ('facet-provider-primary', 'facet-primary', 'fixture-provider', 'album', 'fixture-primary'),
+      ('facet-provider-edition', 'facet-edition', 'fixture-provider', 'album', 'fixture-edition');
+    insert into playlist (id, name, kind, source) values ('facet-playlist', 'Facet playlist fixture', 'playlist', 'fixture');
+    insert into playlist_item (playlist_id, media_item_id, position) values
+      ('facet-playlist', 'facet-primary', 1), ('facet-playlist', 'track-1', 2),
+      ('facet-playlist', 'facet-edition', 3), ('facet-playlist', 'facet-archived', 4);
+    insert into track (id, track_media_item_id, album_media_item_id, title, position)
+    values ('facet-linked-track', 'track-1', 'facet-primary', 'Facet track fixture', 1);
+    analyze playlist_item;
+    analyze media_item;
+    analyze album;
+    analyze track;
+  `)
+  const { listAlbumFilterOptions } = await import('@/services/media')
+  const {
+    listBrowseFacets,
+    listBrowseFields,
+    queryBrowseCount,
+    refreshAlbumFacetVocabularyForMaintenance,
+  } = await import('@/services/browse')
+  const fields = await listBrowseFields('album')
+  await listAlbumFilterOptions({ q: '', limitPerField: 25 })
+  const queries = [
+    { q: '' },
+    { q: 'a' },
+    { q: 'Spectralneedle' },
+    { q: 'Facet edition fixture' },
+    { q: 'Facet playlist fixture' },
+    { q: 'Belgium' },
+    { q: 'catalogue' },
+  ]
+  for (const input of queries) {
+    const query = { ...input, limitPerField: 25 }
+    const live = await listBrowseFacets('album', query, { fields })
+    await pool.query('select pg_current_xact_id()')
+    logQuery.mockClear()
+    expect(await listAlbumFilterOptions(query)).toEqual(live)
+    const [statement, params] = loggedQuery((sql) =>
+      sql.includes('ready_album_facet_vocabulary'),
+    )
+    expect(
+      logQuery.mock.calls.some(([sql]) => sql.includes('values_for_field')),
+    ).toBe(false)
+    const plan = await pool.query(
+      'explain (analyze, buffers, timing off, format json) ' + statement,
+      params,
+    )
+    const [row] = z
+      .tuple([
+        z.object({
+          'QUERY PLAN': z.tuple([
+            z.object({
+              Plan: z.object({
+                'Shared Hit Blocks': z.number(),
+                'Shared Read Blocks': z.number(),
+              }),
+            }),
+          ]),
+        }),
+      ])
+      .parse(plan.rows)
+    const buffers = row['QUERY PLAN'][0].Plan
+    expect(
+      buffers['Shared Hit Blocks'] + buffers['Shared Read Blocks'],
+    ).toBeLessThan(query.q ? 700 : 200)
+  }
+
+  const editionSearch = { q: 'Facet edition fixture', limitPerField: 25 }
+  expect(await listAlbumFilterOptions(editionSearch)).toContainEqual(
+    expect.objectContaining({
+      field: 'title',
+      value: 'Facet edition fixture',
+      count: 2,
+    }),
+  )
+  expect(
+    await listAlbumFilterOptions({ ...editionSearch, includeArchived: 'true' }),
+  ).toContainEqual(
+    expect.objectContaining({
+      field: 'title',
+      value: 'Facet edition fixture',
+      count: 3,
+    }),
+  )
+  expect(
+    await queryBrowseCount('album', AlbumQuerySchema.parse(editionSearch)),
+  ).toEqual({ totalCount: 1 })
+  expect(
+    await queryBrowseCount(
+      'album',
+      AlbumQuerySchema.parse({ ...editionSearch, editions: 'true' }),
+    ),
+  ).toEqual({ totalCount: 2 })
+  expect(
+    await listAlbumFilterOptions({
+      q: 'Facet playlist fixture',
+      limitPerField: 25,
+    }),
+  ).toContainEqual(
+    expect.objectContaining({
+      field: 'playlist',
+      value: 'Facet playlist fixture',
+      count: 3,
+    }),
+  )
+  expect(
+    await listAlbumFilterOptions({ q: 'Belgium', limitPerField: 25 }),
+  ).toContainEqual(
+    expect.objectContaining({ field: 'country', value: 'Belgium', count: 2 }),
+  )
+  expect(
+    await listAlbumFilterOptions({ q: 'catalogue', limitPerField: 25 }),
+  ).toContainEqual(
+    expect.objectContaining({
+      field: 'provider',
+      value: 'fixture-provider',
+      label: 'Provider: Sample Catalogue',
+      count: 2,
+    }),
+  )
+  const editionFacet = { q: 'another album', limitPerField: 25 }
+  expect(await listAlbumFilterOptions(editionFacet)).toContainEqual(
+    expect.objectContaining({
+      field: 'edition',
+      value: 'Edition of another album',
+      count: 1,
+    }),
+  )
+
+  const located = {
+    q: 'Spectralneedle',
+    limitPerField: 25,
+    tagLevels: ['artist'],
+  } satisfies Parameters<typeof listAlbumFilterOptions>[0]
+  expect(await listAlbumFilterOptions(located)).toEqual(
+    await listBrowseFacets('album', located, { fields }),
+  )
+  await pool.query(`
+    update media_item set title = 'Facet revised release' where id = 'facet-edition';
+    update album set edition_of_id = null where media_item_id = 'facet-edition';
+    update playlist set name = 'Facet revised playlist' where id = 'facet-playlist';
+    update artist_provider_snapshot set normalized_data = '{"tags":[]}'
+    where artist_id = 'artist-500';
+  `)
+  const renamed = { q: 'Facet revised', limitPerField: 25 }
+  const fresh = await listAlbumFilterOptions(renamed)
+  expect(fresh).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        field: 'title',
+        value: 'Facet revised release',
+        count: 1,
+      }),
+      expect.objectContaining({
+        field: 'playlist',
+        value: 'Facet revised playlist',
+        count: 3,
+      }),
+    ]),
+  )
+  expect(await listAlbumFilterOptions(editionFacet)).not.toContainEqual(
+    expect.objectContaining({
+      field: 'edition',
+      value: 'Edition of another album',
+    }),
+  )
+  expect(
+    await listAlbumFilterOptions({ q: 'Spectralneedle', limitPerField: 25 }),
+  ).toContainEqual(
+    expect.objectContaining({
+      field: 'artistTag',
+      value: 'spectralneedle',
+      count: 5,
+    }),
+  )
+
+  await pool.query(
+    "update album_facet_state set retry_after = now() - interval '1 second'",
+  )
+  expect(await refreshAlbumFacetVocabularyForMaintenance()).toBe(true)
+  await pool.query(
+    "update media_item set title = title where id = 'facet-edition'",
+  )
+  logQuery.mockClear()
+  expect(await listAlbumFilterOptions(renamed)).toEqual(fresh)
+  expect(
+    logQuery.mock.calls.some(([sql]) =>
+      sql.includes('ready_album_facet_vocabulary'),
+    ),
+  ).toBe(true)
+  expect(
+    logQuery.mock.calls.some(([sql]) => sql.includes('values_for_field')),
+  ).toBe(false)
+}, 120000)

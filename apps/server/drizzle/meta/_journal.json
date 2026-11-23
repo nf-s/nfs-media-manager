@@ -491,6 +491,13 @@
       "when": 1795396945701,
       "tag": "0069_track_provider_facet",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1795400411720,
+      "tag": "0070_album_facet_vocabulary",
+      "breakpoints": true
     }
   ]
 }

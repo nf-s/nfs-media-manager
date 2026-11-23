@@ -4,18 +4,26 @@ import {
   runRecordingOrderMaintenance,
 } from './database-maintenance'
 
-const { execute, log, refreshDuplicates, refreshFacets, refreshOrder } =
-  vi.hoisted(() => ({
-    execute: vi.fn(),
-    log: vi.fn(),
-    refreshDuplicates: vi.fn(),
-    refreshFacets: vi.fn(),
-    refreshOrder: vi.fn(),
-  }))
+const {
+  execute,
+  log,
+  refreshDuplicates,
+  refreshFacets,
+  refreshAlbumFacets,
+  refreshOrder,
+} = vi.hoisted(() => ({
+  execute: vi.fn(),
+  log: vi.fn(),
+  refreshDuplicates: vi.fn(),
+  refreshFacets: vi.fn(),
+  refreshAlbumFacets: vi.fn(),
+  refreshOrder: vi.fn(),
+}))
 vi.mock('@/lib/db', () => ({ db: { execute } }))
 vi.mock('@/lib/request-log', () => ({ writeRequestLog: log }))
 vi.mock('@/services/browse', () => ({
   refreshTrackFacetVocabularyForMaintenance: refreshFacets,
+  refreshAlbumFacetVocabularyForMaintenance: refreshAlbumFacets,
   refreshRecordingBrowseOrderForMaintenance: refreshOrder,
 }))
 vi.mock('@/services/track-duplicates', () => ({
@@ -33,6 +41,7 @@ describe('scheduled database monitoring', () => {
     'records a healthy probe and the maintenance result',
     async (published, outcome) => {
       refreshFacets.mockResolvedValue(published)
+      refreshAlbumFacets.mockResolvedValue(published)
       refreshOrder.mockResolvedValue(published)
       refreshDuplicates.mockResolvedValue(published)
       await runDatabaseMaintenance(dailyTick)
@@ -45,6 +54,11 @@ describe('scheduled database monitoring', () => {
         },
         {
           event: 'database.facet-maintenance',
+          outcome,
+          durationMs: expect.any(Number),
+        },
+        {
+          event: 'database.album-facet-maintenance',
           outcome,
           durationMs: expect.any(Number),
         },
@@ -67,11 +81,17 @@ describe('scheduled database monitoring', () => {
     await runDatabaseMaintenance(dailyTick + 5 * 60_000)
     expect(execute).not.toHaveBeenCalled()
     expect(refreshFacets).toHaveBeenCalledOnce()
+    expect(refreshAlbumFacets).toHaveBeenCalledOnce()
     expect(refreshOrder).toHaveBeenCalledOnce()
     expect(refreshDuplicates).toHaveBeenCalledOnce()
     expect(log.mock.calls.map(([event]) => event)).toEqual([
       {
         event: 'database.facet-maintenance',
+        outcome: 'skipped',
+        durationMs: expect.any(Number),
+      },
+      {
+        event: 'database.album-facet-maintenance',
         outcome: 'skipped',
         durationMs: expect.any(Number),
       },
@@ -94,6 +114,7 @@ describe('scheduled database monitoring', () => {
     execute.mockRejectedValue(failure)
     await expect(runDatabaseMaintenance(dailyTick)).rejects.toBe(failure)
     expect(refreshFacets).not.toHaveBeenCalled()
+    expect(refreshAlbumFacets).not.toHaveBeenCalled()
     expect(refreshOrder).not.toHaveBeenCalled()
     expect(refreshDuplicates).not.toHaveBeenCalled()
     expect(log).toHaveBeenCalledExactlyOnceWith({
@@ -107,6 +128,7 @@ describe('scheduled database monitoring', () => {
     const steps: string[] = []
     for (const { name, refresh } of [
       { name: 'facets', refresh: refreshFacets },
+      { name: 'album facets', refresh: refreshAlbumFacets },
       { name: 'recording order', refresh: refreshOrder },
       { name: 'duplicates', refresh: refreshDuplicates },
     ]) {
@@ -123,6 +145,8 @@ describe('scheduled database monitoring', () => {
     expect(steps).toEqual([
       'start facets',
       'finish facets',
+      'start album facets',
+      'finish album facets',
       'start recording order',
       'finish recording order',
       'start duplicates',

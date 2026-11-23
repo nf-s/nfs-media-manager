@@ -96,6 +96,7 @@ type RequestEvent =
   | {
       event:
         | 'database.facet-maintenance'
+        | 'database.album-facet-maintenance'
         | 'database.recording-order-maintenance'
         | 'database.duplicate-maintenance'
       source?: 'scheduled' | 'browse'

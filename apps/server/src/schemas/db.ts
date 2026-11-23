@@ -368,6 +368,31 @@ export const trackFacetValue = pgTable(
   (table) => [primaryKey({ columns: [table.field, table.rank] })],
 )
 
+export const albumFacetDirty = pgTable('album_facet_dirty', {
+  transactionId: bigint('transaction_id', { mode: 'bigint' }).primaryKey(),
+})
+
+export const albumFacetState = pgTable('album_facet_state', {
+  singleton: boolean('singleton').primaryKey(),
+  builder: text('builder').notNull(),
+  ready: boolean('ready').default(false).notNull(),
+  maintenanceOnly: boolean('maintenance_only').default(false).notNull(),
+  retryAfter: timestamp('retry_after', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+})
+
+export const albumFacetValue = pgTable(
+  'album_facet_value',
+  {
+    field: text('field').notNull(),
+    rank: bigint('rank', { mode: 'bigint' }).notNull(),
+    value: text('value').notNull(),
+    count: integer('count').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.field, table.rank] })],
+)
+
 export const artist = pgTable(
   'artist',
   {

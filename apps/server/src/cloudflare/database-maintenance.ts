@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { writeRequestLog } from '@/lib/request-log'
 import {
+  refreshAlbumFacetVocabularyForMaintenance,
   refreshRecordingBrowseOrderForMaintenance,
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
@@ -27,6 +28,7 @@ async function probeDatabase() {
 async function refreshCache(
   event:
     | { event: 'database.facet-maintenance' }
+    | { event: 'database.album-facet-maintenance' }
     | { event: 'database.duplicate-maintenance' }
     | {
         event: 'database.recording-order-maintenance'
@@ -66,6 +68,11 @@ export async function runDatabaseMaintenance(scheduledTime: number) {
       refreshCache(
         { event: 'database.facet-maintenance' },
         refreshTrackFacetVocabularyForMaintenance,
+      ),
+    () =>
+      refreshCache(
+        { event: 'database.album-facet-maintenance' },
+        refreshAlbumFacetVocabularyForMaintenance,
       ),
     () => runRecordingOrderMaintenance('scheduled'),
     () =>
