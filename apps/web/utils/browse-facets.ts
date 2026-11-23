@@ -48,6 +48,8 @@ export function browseFacetOptions(
   matches = false,
   /** Where the Tags suggestions are counted; left out for Auto. */
   tagLevels?: TagLevels,
+  /** Albums and Films: count archived items, as the list does. */
+  includeArchived = false,
 ) {
   // Bound suggestion requests, not the user's full-text filter draft.
   const query = BrowseFacetQuerySchema.parse({ q: search.trim().slice(0, 200) })
@@ -58,6 +60,7 @@ export function browseFacetOptions(
     limitPerField: String(query.limitPerField),
     ...endpoint.params,
     ...(levels ? { tagLevels: levels } : {}),
+    ...(includeArchived ? { includeArchived: 'true' } : {}),
   })
   return queryOptions({
     queryKey: [
@@ -65,6 +68,7 @@ export function browseFacetOptions(
       matches ? 'match-facets' : 'facets',
       query.q ?? '',
       ...(levels ? [levels] : []),
+      ...(includeArchived ? ['archived'] : []),
     ],
     queryFn: ({ signal }) =>
       fetchApiData(

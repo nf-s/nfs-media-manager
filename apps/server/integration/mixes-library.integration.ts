@@ -6,6 +6,8 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { ArtistMixQuerySchema } from '@repo/schemas/creators'
 import {
+  getSubscriptionBrowseValues,
+  SubscriptionFacetQuerySchema,
   SubscriptionItemQuerySchema,
   type MixSort,
   type SubscriptionItem,
@@ -69,6 +71,7 @@ type Item = {
   url?: string
   audioUrl?: string
   artworkUrl?: string
+  live?: 'none' | 'live' | 'upcoming'
   publishedAt: string
   durationSec: number
 }
@@ -157,6 +160,7 @@ const subscriptionItems: Item[] = [
     type: 'youtube',
     title: 'Night Shift w/ Synthetic DJ',
     tags: ['House', 'Rare Dub'],
+    live: 'upcoming',
     publishedAt: '2026-04-01T00:00:00Z',
     durationSec: 600,
   },
@@ -237,6 +241,7 @@ beforeAll(async () => {
         url: item.url ?? null,
         audioUrl: item.audioUrl ?? null,
         artworkUrl: item.artworkUrl ?? null,
+        live: item.live ?? 'none',
         publishedAt: new Date(item.publishedAt),
         durationSec: item.durationSec,
         search: subscriptionSearchVector(
@@ -461,6 +466,104 @@ describe('library isolation', () => {
       getSubscriptionSource(NIGHT_SHIFT, {
         ...SubscriptionItemQuerySchema.parse({}),
         sortBy: 'viewCount',
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 422 } })
+  })
+})
+
+describe('the Live state and Has recording fields', () => {
+  const subscriptions = (input: Record<string, unknown>) =>
+    list({ library: 'subscriptions', ...input })
+  const values = async (library: string, q: string, field: string) => {
+    const { listSubscriptionFacets } =
+      await import('@/services/subscription-library')
+    return (
+      await listSubscriptionFacets(
+        SubscriptionFacetQuerySchema.parse({ library, q }),
+      )
+    )
+      .filter((row) => row.field === field)
+      .map(({ value, count, label }) => ({ value, count, label }))
+  }
+
+  it('filters Subscriptions by Live state in each mode', async () => {
+    const live = (value: string, mode?: string) => ({
+      filters: [{ field: 'live', value, ...(mode ? { mode } : {}) }],
+    })
+    expect((await subscriptions(live('Upcoming'))).ids).toEqual([VIDEO])
+    expect((await subscriptions(live('not live', 'required'))).ids).toEqual([
+      EPISODE,
+    ])
+    expect((await subscriptions(live('Upcoming', 'exclude'))).ids).toEqual([
+      EPISODE,
+    ])
+    expect((await subscriptions(live('Live'))).ids).toEqual([])
+    const { items } = await subscriptions({})
+    expect(items.map((item) => getSubscriptionBrowseValues(item).live)).toEqual(
+      ['Not live', 'Upcoming'],
+    )
+  })
+
+  it('suggests Live state values with whole-library counts', async () => {
+    expect(await values('subscriptions', 'live state', 'live')).toEqual([
+      { value: 'Not live', count: 1, label: 'Live state: Not live' },
+      { value: 'Upcoming', count: 1, label: 'Live state: Upcoming' },
+    ])
+    expect(await values('mixes', 'live state', 'live')).toEqual([])
+  })
+
+  it('filters Mixes by Has recording in each mode', async () => {
+    const recording = (value: string, mode?: string) => ({
+      filters: [{ field: 'hasRecording', value, ...(mode ? { mode } : {}) }],
+    })
+    expect((await list(recording('Yes'))).ids).toEqual(['nts.night-shift-1'])
+    const without = await list(recording('no', 'required'))
+    expect(without.totalCount).toBe(mixes.length - 1)
+    expect(without.ids).not.toContain('nts.night-shift-1')
+    expect((await list(recording('Yes', 'exclude'))).totalCount).toBe(
+      mixes.length - 1,
+    )
+    const { items } = await list({ size: 2 })
+    expect(
+      items.map((item) => getSubscriptionBrowseValues(item).hasRecording),
+    ).toEqual(['Yes', 'No'])
+  })
+
+  it('suggests Has recording values with whole-library counts', async () => {
+    expect(await values('mixes', 'has recording', 'hasRecording')).toEqual([
+      {
+        value: 'No',
+        count: mixes.length - 1,
+        label: 'Has recording: No',
+      },
+      { value: 'Yes', count: 1, label: 'Has recording: Yes' },
+    ])
+    expect(
+      await values('subscriptions', 'has recording', 'hasRecording'),
+    ).toEqual([])
+  })
+
+  it('rejects each field in the other library (SEARCH-09)', async () => {
+    const { listSubscriptionItems } = await library()
+    expect(() =>
+      query({ filters: [{ field: 'live', value: 'Live' }] }),
+    ).toThrow('Text filter is not part of this library')
+    expect(() =>
+      query({
+        library: 'subscriptions',
+        filters: [{ field: 'hasRecording', value: 'Yes' }],
+      }),
+    ).toThrow('Text filter is not part of this library')
+    await expect(
+      listSubscriptionItems({
+        ...query(),
+        filters: [{ field: 'live', value: 'Live' }],
+      }),
+    ).rejects.toMatchObject({ response: { statusCode: 422 } })
+    await expect(
+      listSubscriptionItems({
+        ...query({ library: 'subscriptions' }),
+        filters: [{ field: 'hasRecording', value: 'Yes' }],
       }),
     ).rejects.toMatchObject({ response: { statusCode: 422 } })
   })

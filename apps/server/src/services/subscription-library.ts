@@ -29,6 +29,7 @@ import {
   subscriptionLibraryOf,
   subscriptionLibraryTypes,
   subscriptionSourceUrl,
+  subscriptionLiveLabels,
   subscriptionTypeLabels,
   type SubscriptionFacetQuery,
   type SubscriptionItem,
@@ -364,6 +365,10 @@ const textValues: Record<z.infer<typeof SubscriptionTextFieldSchema>, SQL> = {
   genre: sql`item_values.value`,
   // Yes or No, as the film Watched field.
   watched: sql`(case when i.watched_at is null then 'No'::text else 'Yes'::text end)`,
+  live: sql`(case i.live when 'live' then ${subscriptionLiveLabels.live}::text
+    when 'upcoming' then ${subscriptionLiveLabels.upcoming}::text
+    else ${subscriptionLiveLabels.none}::text end)`,
+  hasRecording: sql`(case when nullif(i.audio_url, '') is null then 'No'::text else 'Yes'::text end)`,
 }
 
 const textArrays: Partial<

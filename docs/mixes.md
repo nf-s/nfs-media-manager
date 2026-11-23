@@ -84,16 +84,16 @@ Search uses the same syntax and ranking as [Subscriptions](subscriptions.md#sear
 
 Filters follow the [browse filter rules](requirements/search.md):
 
-- Text filters match a whole value, ignoring case: **Title**, **Show**, **Station**, **Artist**, **Tags** and **Listened** (`Yes` or `No`). Tags also match subtags, as above.
+- Text filters match a whole value, ignoring case: **Title**, **Show**, **Station**, **Artist**, **Tags**, **Listened** (`Yes` or `No`) and **Has recording** (`Yes` when the station gives the recording itself, so details show **Open recording**). Tags also match subtags, as above.
 - Ranges include both bounds: **Broadcast** (UTC), **Duration** and **Listened** (UTC). NTS mixes have no duration and match a Duration range only when missing values are included.
 - Sorting is by relevance while searching and otherwise by newest first. It can also sort by broadcast date, title, show, duration or listened date. Missing values sort last, and ties are ordered by ID.
 
 ## Pages
 
-`/mixes` works like the other Browse pages: Grid, List and Table views, suggestions with counts for titles, shows, stations, artists and tags, filter chips, ranges, AI search and URL state (`q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view`, `columns`, `item`).
+`/mixes` works like the other Browse pages: Grid, List and Table views, suggestions with counts for titles, shows, stations, artists, tags, Listened and Has recording, filter chips, ranges, AI search and URL state (`q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view`, `columns`, `item`).
 
 - **Grid** is the default: square artwork with the length as a badge, then title, show, broadcast date and tags. A mix without artwork uses its show's.
-- **Table** columns default to Title, Show, Station, Artist, Broadcast, Duration and Listened; Tags can be added.
+- **Table** columns default to Title, Show, Station, Artist, Broadcast, Duration and Listened; Has recording and Tags can be added.
 - Selecting a mix opens details: its show (which opens show details), station, broadcast date, length, artists, tags (each a filter), description, **Open on** the station and, when there is a recording link, **Open recording**. The header leads with **Listened**, which records or clears the current time. `/mixes/:id` is the standalone page.
 - With nothing synced, the page says "No mixes yet" with Open Imports.
 
@@ -103,18 +103,18 @@ Filters follow the [browse filter rules](requirements/search.md):
 
 Mixes are served by the Subscriptions endpoints with `library=mixes`; without it the endpoints read Subscriptions. A row belongs to exactly one library. Every endpoint requires the owner session.
 
-| Endpoint                                                                                                   | Purpose                                                                                  |
-| ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `GET /api/v1/subscriptions?library=mixes&q&fields&filters&ranges&sortBy&direction&page&size`               | A page of mixes. Filters are `title`, `source`, `type`, `artist`, `genre` and `watched`. |
-| `GET /api/v1/subscriptions/facets?library=mixes&q&limitPerField`                                           | Title, show, station, artist and tag suggestions with counts.                            |
-| `GET /api/v1/subscriptions/fields?library=mixes`                                                           | The Mixes browse fields.                                                                 |
-| `GET /api/v1/subscriptions/sources?library=mixes&type`                                                     | Stored shows with their mix counts; `type` is one station.                               |
-| `GET /api/v1/subscriptions/:id`                                                                            | One mix, with `artists`, `audioUrl` and the `libraryArtists` its names match.            |
-| `PATCH /api/v1/subscriptions/:id`                                                                          | Sets or clears the listened date (`watchedAt`).                                          |
-| `GET` and `POST /api/v1/subscriptions/sync/:provider`, `PUT /api/v1/subscriptions/sync/:provider/settings` | Sync status, start or resume a sync, and the schedule, for `rinse`, `nts` or `lotradio`. |
-| `GET /api/v1/artists/:id/mixes?q&sortBy&direction&page&size`                                               | The mixes that bill the artist or whose show carries the artist's name.                  |
+| Endpoint                                                                                                   | Purpose                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/subscriptions?library=mixes&q&fields&filters&ranges&sortBy&direction&page&size`               | A page of mixes. Filters are `title`, `source`, `type`, `artist`, `genre`, `watched` and `hasRecording`. |
+| `GET /api/v1/subscriptions/facets?library=mixes&q&limitPerField`                                           | Title, show, station, artist and tag suggestions with counts.                                            |
+| `GET /api/v1/subscriptions/fields?library=mixes`                                                           | The Mixes browse fields.                                                                                 |
+| `GET /api/v1/subscriptions/sources?library=mixes&type`                                                     | Stored shows with their mix counts; `type` is one station.                                               |
+| `GET /api/v1/subscriptions/:id`                                                                            | One mix, with `artists`, `audioUrl` and the `libraryArtists` its names match.                            |
+| `PATCH /api/v1/subscriptions/:id`                                                                          | Sets or clears the listened date (`watchedAt`).                                                          |
+| `GET` and `POST /api/v1/subscriptions/sync/:provider`, `PUT /api/v1/subscriptions/sync/:provider/settings` | Sync status, start or resume a sync, and the schedule, for `rinse`, `nts` or `lotradio`.                 |
+| `GET /api/v1/artists/:id/mixes?q&sortBy&direction&page&size`                                               | The mixes that bill the artist or whose show carries the artist's name.                                  |
 
-A filter, range or sort that the selected library does not have, such as `artist` in Subscriptions or `viewCount` in Mixes, is rejected with HTTP 422. Pages of mixes leave `libraryArtists` empty; it is filled when one mix is read.
+A filter, range or sort that the selected library does not have, such as `artist` or `hasRecording` in Subscriptions, or `live` or `viewCount` in Mixes, is rejected with HTTP 422. Pages of mixes leave `libraryArtists` empty; it is filled when one mix is read.
 
 A show's ID is `<station>.<the station's identifier>`, as is a mix's.
 

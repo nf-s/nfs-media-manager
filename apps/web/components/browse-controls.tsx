@@ -37,6 +37,7 @@ import {
 import { formatTagName } from '@repo/schemas/tags'
 import type { BrowseFilterHref } from '@/utils/browse-items'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
 
 const views = [
   {
@@ -276,6 +277,9 @@ export function BrowseFilterChips({
   filterHref?: BrowseFilterHref
   storedTagNames?: boolean
 }) {
+  const providerName = useProviderDisplayName(
+    filters.some((filter) => filter.field === 'provider'),
+  )
   return filters.map((filter, index) => {
     const label =
       filter.mode === 'required'
@@ -293,7 +297,9 @@ export function BrowseFilterChips({
       fields.find((field) => field.key === filter.field)?.label ?? filter.field
     const value = storedTagNames
       ? filter.value
-      : formatBrowseFilterValue(filter.field, filter.value)
+      : filter.field === 'provider'
+        ? providerName(filter.value)
+        : formatBrowseFilterValue(filter.field, filter.value)
     return (
       <BrowseFilterPill
         key={`${filter.field}:${filter.value}`}

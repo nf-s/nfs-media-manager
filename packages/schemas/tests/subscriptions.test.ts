@@ -221,6 +221,9 @@ describe('subscription item query', () => {
       viewCount: null,
       watched: 'No',
       watchedAt: null,
+      // A podcast episode is never live and has no station recording.
+      live: 'Not live',
+      hasRecording: null,
     })
   })
 
@@ -456,6 +459,7 @@ describe('Mixes library', () => {
       durationSec: 'Duration',
       watched: 'Listened',
       watchedAt: 'Listened',
+      hasRecording: 'Has recording',
     })
   })
 
@@ -468,6 +472,7 @@ describe('Mixes library', () => {
           { field: 'type', value: 'NTS' },
           { field: 'genre', value: 'house', mode: 'exclude' },
           { field: 'watched', value: 'No' },
+          { field: 'hasRecording', value: 'Yes' },
         ]),
         ranges: JSON.stringify([
           { field: 'publishedAt', min: 0 },
@@ -483,6 +488,7 @@ describe('Mixes library', () => {
         { field: 'type', value: 'NTS' },
         { field: 'genre', value: 'house', mode: 'exclude' },
         { field: 'watched', value: 'No' },
+        { field: 'hasRecording', value: 'Yes' },
       ],
       sortBy: 'durationSec',
     })
@@ -499,6 +505,14 @@ describe('Mixes library', () => {
     {
       library: 'subscriptions',
       filters: JSON.stringify([{ field: 'artist', value: 'x' }]),
+    },
+    {
+      library: 'subscriptions',
+      filters: JSON.stringify([{ field: 'hasRecording', value: 'Yes' }]),
+    },
+    {
+      library: 'mixes',
+      filters: JSON.stringify([{ field: 'live', value: 'Live' }]),
     },
   ])(
     'rejects fields outside the library: $library $ranges$sortBy$filters',

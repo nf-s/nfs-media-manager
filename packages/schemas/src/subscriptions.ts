@@ -284,6 +284,13 @@ export type SubscriptionSourceDetail = z.infer<
   typeof SubscriptionSourceDetailSchema
 >
 
+/** The Subscriptions Live state values, as the duration column shows them. */
+export const subscriptionLiveLabels = {
+  none: 'Not live',
+  live: 'Live',
+  upcoming: 'Upcoming',
+} as const
+
 /** What each library calls the fields both share. */
 export const subscriptionLibraryLabels: Record<
   SubscriptionLibrary,
@@ -321,6 +328,13 @@ export const mixBrowseFields: BrowseField[] = [
   },
   { key: 'watched', label: 'Listened', type: 'text', filterable: true },
   { key: 'watchedAt', label: 'Listened', type: 'date', filterable: true },
+  /** Yes when the station gives the recording itself (`audioUrl`). */
+  {
+    key: 'hasRecording',
+    label: 'Has recording',
+    type: 'text',
+    filterable: true,
+  },
 ]
 
 export function subscriptionBrowseFieldsFor(
@@ -346,6 +360,8 @@ export const subscriptionBrowseFields: BrowseField[] = [
   /** Watched or not, as for films; `watchedAt` holds the date. */
   { key: 'watched', label: 'Watched', type: 'text', filterable: true },
   { key: 'watchedAt', label: 'Watched', type: 'date', filterable: true },
+  /** A YouTube live stream or premiere; podcast episodes are never live. */
+  { key: 'live', label: 'Live state', type: 'text', filterable: true },
   {
     key: 'viewCount',
     label: 'Views',
@@ -414,6 +430,8 @@ export function getSubscriptionBrowseValues(
     durationSec: item.durationSec,
     watched: item.watchedAt ? 'Yes' : 'No',
     watchedAt: item.watchedAt ? Date.parse(item.watchedAt) : null,
+    live: subscriptionLiveLabels[item.type === 'youtube' ? item.live : 'none'],
+    hasRecording: 'audioUrl' in item ? (item.audioUrl ? 'Yes' : 'No') : null,
     viewCount: item.type === 'youtube' ? item.viewCount : null,
     likeCount: item.type === 'youtube' ? item.likeCount : null,
     commentCount: item.type === 'youtube' ? item.commentCount : null,
@@ -427,6 +445,8 @@ export const SubscriptionTextFieldSchema = z.enum([
   'artist',
   'genre',
   'watched',
+  'live',
+  'hasRecording',
 ])
 export const SubscriptionRangeFieldSchema = z.enum([
   'publishedAt',
@@ -497,7 +517,8 @@ export const SubscriptionItemQuerySchema = PaginationQuerySchema.extend({
   fields: SubscriptionSearchFieldsSchema.default('all'),
   /**
    * JSON `BrowseFilter[]` over title, source, type, genre, watched (`Yes` or
-   * `No`) and, for Mixes only, artist.
+   * `No`), for Subscriptions only live (`Live`, `Upcoming` or `Not live`) and,
+   * for Mixes only, artist and hasRecording (`Yes` or `No`).
    */
   filters: SubscriptionFiltersParamSchema,
   /**

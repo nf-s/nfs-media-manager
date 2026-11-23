@@ -103,6 +103,7 @@ import {
   type EmbeddedBrowse,
 } from '@/utils/embedded-browse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
+import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
 import {
   listRowHeight,
   tableHeaderHeight,
@@ -217,6 +218,7 @@ const albumFieldOrder = [
   'country',
   'source',
   'provider',
+  'edition',
   'durationSec',
   'releaseDate',
   'dateAdded',
@@ -518,6 +520,9 @@ function MediaBrowse({
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
+  const providerName = useProviderDisplayName(
+    view === 'table' && columnKeys.includes('provider'),
+  )
   const sortField = fields.find((field) => field.key === sortBy)
   // Description is a long text field; it is offered last, not first.
   const listedFields = [
@@ -786,6 +791,7 @@ function MediaBrowse({
     ready,
     false,
     tagLevels,
+    includeArchived,
   )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
@@ -912,19 +918,22 @@ function MediaBrowse({
         ? [value]
         : []
     const onlyValue = values.length === 1 ? values[0] : undefined
+    // A Provider value is an ID; the cell names it as the filter chip does.
+    const shown = (value: string) =>
+      field.key === 'provider' ? providerName(value) : value
     if (onlyValue !== undefined)
       return (
         <button
           {...workspaceTabLinkProps(
             itemFilterHref(item, { field: field.key, value: onlyValue }),
-            onlyValue,
+            shown(onlyValue),
           )}
           type="button"
           className="browse-open"
           onClick={() => addFilter({ field: field.key, value: onlyValue })}
-          title={`Filter ${field.label}: ${onlyValue}`}
+          title={`Filter ${field.label}: ${shown(onlyValue)}`}
         >
-          {onlyValue}
+          {shown(onlyValue)}
         </button>
       )
     return (
@@ -934,13 +943,13 @@ function MediaBrowse({
             <button
               {...workspaceTabLinkProps(
                 itemFilterHref(item, { field: field.key, value }),
-                value,
+                shown(value),
               )}
               type="button"
               onClick={() => addFilter({ field: field.key, value })}
-              title={`Filter ${field.label}: ${value}`}
+              title={`Filter ${field.label}: ${shown(value)}`}
             >
-              <PillLabel>{value}</PillLabel>
+              <PillLabel>{shown(value)}</PillLabel>
             </button>
           </Pill>
         ))}

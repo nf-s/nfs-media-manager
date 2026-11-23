@@ -14,6 +14,7 @@ import {
   SubscriptionTypeSchema,
   subscriptionLibraryLabels,
   subscriptionLibraryTypes,
+  subscriptionLiveLabels,
   subscriptionTypeLabels,
   type SubscriptionItem,
   type SubscriptionLibrary,
@@ -109,6 +110,7 @@ export const subscriptionFieldOrders: Record<SubscriptionLibrary, string[]> = {
     'type',
     'publishedAt',
     'durationSec',
+    'live',
     'watchedAt',
     'viewCount',
     'likeCount',
@@ -122,6 +124,7 @@ export const subscriptionFieldOrders: Record<SubscriptionLibrary, string[]> = {
     'artist',
     'publishedAt',
     'durationSec',
+    'hasRecording',
     'watchedAt',
     'genre',
   ],
@@ -346,8 +349,8 @@ export function subscriptionArtworkUrl(item: SubscriptionItem) {
 
 /** Live and upcoming streams instead of a length; an en dash when unknown. */
 export function formatSubscriptionDuration(item: SubscriptionItem) {
-  if (item.type === 'youtube' && item.live === 'live') return 'Live'
-  if (item.type === 'youtube' && item.live === 'upcoming') return 'Upcoming'
+  if (item.type === 'youtube' && item.live !== 'none')
+    return subscriptionLiveLabels[item.live]
   return item.durationSec === null
     ? EMPTY_VALUE
     : formatVideoDuration(item.durationSec)

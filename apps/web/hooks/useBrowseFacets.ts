@@ -15,6 +15,7 @@ export function useBrowseFacets(
   enabled = true,
   matches = false,
   tagLevels?: TagLevels,
+  includeArchived = false,
 ) {
   const [search, setSearch] = useState('')
   const [activated, setActivated] = useState(false)
@@ -27,7 +28,14 @@ export function useBrowseFacets(
   const active = enabled && (activated || Boolean(query))
   const current = active && !isDebouncing
   const result = useQuery({
-    ...browseFacetOptions(apiBaseUrl, collection, search, matches, tagLevels),
+    ...browseFacetOptions(
+      apiBaseUrl,
+      collection,
+      search,
+      matches,
+      tagLevels,
+      includeArchived,
+    ),
     enabled: current,
   })
   return {

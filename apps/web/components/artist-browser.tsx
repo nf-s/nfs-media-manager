@@ -54,6 +54,7 @@ import {
   getArtistBrowseValues,
 } from '@repo/schemas/artist-browse'
 import { useConfig } from './providers'
+import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
@@ -204,6 +205,7 @@ export default function ArtistBrowser() {
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
+  const providerName = useProviderDisplayName(columnKeys.includes('provider'))
   const widths = useColumnWidths(collection, (field: BrowseField) =>
     field.key === 'name' ? 260 : field.type === 'text' ? 180 : 110,
   )
@@ -516,6 +518,9 @@ export default function ArtistBrowser() {
     if (field.type === 'text' && field.filterable) {
       const values = textValues(value)
       if (!values.length) return <EmptyValue />
+      // A Provider value is an ID; the cell names it as the filter chip does.
+      const shown = (value: string) =>
+        field.key === 'provider' ? providerName(value) : value
       return (
         <Pills max={2} label={field.label}>
           {values.map((value) => (
@@ -523,13 +528,13 @@ export default function ArtistBrowser() {
               <button
                 {...workspaceTabLinkProps(
                   filterHref({ field: field.key, value }),
-                  value,
+                  shown(value),
                 )}
                 type="button"
-                title={`Filter ${field.label}: ${value}`}
+                title={`Filter ${field.label}: ${shown(value)}`}
                 onClick={() => addFilter({ field: field.key, value })}
               >
-                <PillLabel>{value}</PillLabel>
+                <PillLabel>{shown(value)}</PillLabel>
               </button>
             </Pill>
           ))}

@@ -189,6 +189,53 @@ it('searches across fields and escapes substring wildcard characters', async () 
   })
 })
 
+it('names providers in suggestions and finds them by display name or ID', async () => {
+  const { listArtistBrowseFacets } = await import('@/services/artist-browse')
+  const providerRows = async (q: string) =>
+    (await listArtistBrowseFacets({ q, limitPerField: 25 })).filter(
+      (row) => row.field === 'provider',
+    )
+  for (const q of ['MusicBrainz', 'musicbrainz'])
+    expect(await providerRows(q)).toEqual([
+      {
+        field: 'provider',
+        value: 'musicbrainz',
+        label: 'Provider: MusicBrainz',
+        count: 3,
+      },
+    ])
+  await database.insert(schema.artistProviderSnapshot).values({
+    id: 'profile-lastfm-artist-2',
+    artistId: 'artist-2',
+    provider: 'lastfm',
+    normalizedData: {},
+    payload: {},
+  })
+  await database.insert(schema.artistProviderCurrentState).values({
+    artistId: 'artist-2',
+    provider: 'lastfm',
+    latestSnapshotId: 'profile-lastfm-artist-2',
+  })
+  try {
+    // "last.fm" is only in the display name; the filter value is the ID.
+    expect(await providerRows('last.fm')).toEqual([
+      {
+        field: 'provider',
+        value: 'lastfm',
+        label: 'Provider: Last.fm',
+        count: 1,
+      },
+    ])
+  } finally {
+    await pool.query(
+      "delete from artist_provider_current_state where artist_id = 'artist-2' and provider = 'lastfm'",
+    )
+    await pool.query(
+      "delete from artist_provider_snapshot where id = 'profile-lastfm-artist-2'",
+    )
+  }
+})
+
 it('offers whole-library facets and playlist filters beyond the loaded page', async () => {
   const { listArtistBrowseFacets, listArtistBrowsePage, countArtistBrowse } =
     await import('@/services/artist-browse')

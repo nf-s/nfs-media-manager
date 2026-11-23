@@ -28,6 +28,7 @@ import {
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import {
   albumBrowseFields,
+  albumEditionLabels,
   filmBrowseFields,
   sameBrowseFilter,
   trackBrowseFields,
@@ -147,6 +148,24 @@ function tagLevelRule(
   return '- tagLevels is always null.'
 }
 
+// Text fields with a fixed set of values: a plan must use one of them.
+const fixedFilterValues: Partial<
+  Record<AiMediaLibrary, Record<string, string[]>>
+> = {
+  album: { edition: Object.values(albumEditionLabels) },
+  track: { hasTrackTags: ['Yes', 'No'] },
+}
+
+// Tracks Matches shares the Tracks fields, these among them.
+function fixedValuesRule(mediaType: AiMediaLibrary) {
+  const fields = fixedFilterValues[mediaType]
+  if (!fields) return ''
+  const values = Object.entries(fields)
+    .map(([key, options]) => `${key} ${JSON.stringify(options)}`)
+    .join('; ')
+  return `\n- These filter fields take only these exact values: ${values}.`
+}
+
 export function aiSearchStatus() {
   const available = aiAvailable()
   return {
@@ -182,7 +201,7 @@ ${sharedRules}
 - Search only the current library (${mediaType}). If the request requires another library, unavailable data, recommendations from outside the library, unsupported boolean grouping, or actions, return plan:null and explain the limitation or ask one concise clarification question. Never silently drop a requested condition.
 - A plan replaces the current search. Include every required key; use q:"", filters:[], ranges:[], listening:null, listeningSort:null, limitResults:null, tagLevels:null${matches ? ', playability:"all"' : ''} when unused. Use ${matches ? 'title asc' : defaultSorts[mediaType]} by default.
 - filters are exact, case-insensitive text matches. Genre/tag/keyword all use genre. Use canonical natural tag names without inventing matches or synonyms. All required filters are ANDed; all any filters form ONE OR group across fields; exclude means NOT. That OR group is ANDed with required, excluded, ranges and listening. Use required for 'rock and highly rated', any only for alternatives. Do not put a full natural-language sentence in q. q is a substring search for a residual title/name.
-${tagLevelRule(mediaType, context)}
+${tagLevelRule(mediaType, context)}${fixedValuesRule(mediaType)}
 - ranges have inclusive min/max and includeMissing:false unless explicitly requested. Do not turn missing ratings into zero. All ranges are ANDed. Use each field only once. Date range values are UTC epoch milliseconds, with an end date at 23:59:59.999. Respect each rating's scale. 'High RYM score' defaults to at least 3.5 out of 5, explained as an assumption. Other vague ratings default to 70% of their scale, explained. 'Top/best' sorts that rating descending; only cap results if a count was requested.
 ${listeningRules(mediaType, context)}
 ${

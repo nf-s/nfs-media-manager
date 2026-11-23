@@ -12,6 +12,7 @@ import { alias, PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import {
   albumBrowseFields,
+  albumEditionLabels,
   filmBrowseFields,
   trackBrowseFields,
   BrowseCountSchema,
@@ -51,6 +52,7 @@ import {
   createDatabaseReadCache,
 } from '@/lib/database-read-cache'
 import { checksumJson } from '@/lib/media-utils'
+import { providerDisplayNames, providerWordMatch } from './provider-names'
 import {
   mediaItem,
   album,
@@ -302,6 +304,8 @@ function trackValueExpression(key: string): SQL | null {
       return sql`to_jsonb(coalesce(${libraryTrack.albumName}, (select am.title from media_item am where am.id = ${libraryTrack.albumMediaItemId})))`
     case 'albumLink':
       return sql`to_jsonb(case when ${libraryTrack.albumMediaItemId} is null then ${trackAlbumLinkLabels.unlinked}::text else ${trackAlbumLinkLabels.linked}::text end)`
+    case 'hasTrackTags':
+      return sql`to_jsonb(case when ${libraryTrack.hasOwnTags} then 'Yes'::text else 'No'::text end)`
     case 'bpm':
       return sql`to_jsonb(${verifiedTrackBpm(sql`${mediaItem.id}`)})`
     case 'musicalKey':
@@ -315,9 +319,15 @@ function trackValueExpression(key: string): SQL | null {
   }
 }
 
+// Albums Edition: the album points at the first album of its record.
+const albumIsEdition = sql`exists (select 1 from album e
+  where e.media_item_id = ${mediaItem.id} and e.edition_of_id is not null)`
+
 function valueExpression(key: string, mediaType: MediaType): SQL {
   const trackValue = mediaType === 'track' ? trackValueExpression(key) : null
   if (trackValue) return trackValue
+  if (mediaType === 'album' && key === 'edition')
+    return sql`to_jsonb(case when ${albumIsEdition} then ${albumEditionLabels.edition}::text else ${albumEditionLabels.notEdition}::text end)`
   if (mediaType === 'album' && key === 'playlist')
     return sql`(select jsonb_agg(p.name order by p.name) from playlist p where p.kind = 'playlist' and p.id in ${albumPlaylistIds})`
   switch (key) {
@@ -450,6 +460,31 @@ function trackProviderMatch(value: string, trackId: SQL): SQL {
   return sql`coalesce(${trackId} in (${trackIdsWithProvider(value)}), false)`
 }
 
+/**
+ * Has track tags: TTAG-03 keeps library_track.has_own_tags, true while the
+ * track has a visible tag of its own in Browse. `tagged` tests it.
+ */
+function hasTrackTagsMatch(value: string, tagged: SQL): SQL {
+  const answer = value.toLowerCase()
+  if (answer === 'yes') return tagged
+  if (answer === 'no') return sql`not ${tagged}`
+  return sql`false`
+}
+
+/**
+ * Has track tags on a Title page: a hashed set of the tagged tracks tested on
+ * the walked media_item, as trackTagMatch. A test of the joined
+ * library_track column read 1.5 times the blocks of an unfiltered page.
+ */
+function titlePageHasTrackTags(value: string): SQL {
+  return hasTrackTagsMatch(
+    value,
+    sql`coalesce(${mediaItem.id} in (
+      select lt.media_item_id from library_track lt where lt.has_own_tags
+    ), false)`,
+  )
+}
+
 function matchesValue(
   key: string,
   value: string,
@@ -477,6 +512,19 @@ function matchesValue(
       case undefined:
         return sql`false`
     }
+  }
+  if (mediaType === 'track' && key === 'hasTrackTags')
+    return hasTrackTagsMatch(
+      value,
+      sql`coalesce(${libraryTrack.hasOwnTags}, false)`,
+    )
+  if (mediaType === 'album' && key === 'edition') {
+    const label = value.toLowerCase()
+    if (label === albumEditionLabels.edition.toLowerCase())
+      return albumIsEdition
+    if (label === albumEditionLabels.notEdition.toLowerCase())
+      return sql`not ${albumIsEdition}`
+    return sql`false`
   }
   if (mediaType === 'track' && key === 'musicalKey') {
     const ids = verifiedTrackKeyIds(value)
@@ -625,7 +673,10 @@ function browseTextSearchIds(
         // Keys are short codes such as 1A that ordinary words would match.
         !(mediaType === 'track' && field.key === 'musicalKey') &&
         // A provider is chosen as a filter; its name is not text of a track.
-        !(mediaType === 'track' && field.key === 'provider'),
+        !(mediaType === 'track' && field.key === 'provider') &&
+        // Fixed labels such as "Not an edition" or "No" would match ordinary words.
+        !(mediaType === 'album' && field.key === 'edition') &&
+        !(mediaType === 'track' && field.key === 'hasTrackTags'),
     )
     .map((field) => {
       if (field.key === 'artistTag' && mediaType !== 'film') {
@@ -1485,10 +1536,12 @@ async function browseQueries(
     conditions.push(
       sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
     )
-  // An edition is listed under the first album of its record unless asked for.
+  // An edition is listed under the first album of its record unless asked
+  // for, as rows or by an Edition filter.
   if (
     mediaType === 'album' &&
-    (!('editions' in query) || query.editions !== 'true')
+    (!('editions' in query) || query.editions !== 'true') &&
+    !query.filters.some((filter) => filter.field === 'edition')
   )
     conditions.push(sql`not exists (select 1 from ${album} edition
       where edition.media_item_id = ${mediaItem.id}
@@ -1540,13 +1593,15 @@ async function browseQueries(
             ? trackTagMatch(filter.value, sql`${mediaItem.id}`)
             : filter.field === 'provider'
               ? trackProviderMatch(filter.value, sql`${mediaItem.id}`)
-              : filter.field === 'genre' || filter.field === 'albumTag'
-                ? tagLocationMatch(
-                    filter.value,
-                    filter.field === 'albumTag' ? ['album'] : tagLevels,
-                    sql`${mediaItem.id}`,
-                  )
-                : undefined
+              : filter.field === 'hasTrackTags'
+                ? titlePageHasTrackTags(filter.value)
+                : filter.field === 'genre' || filter.field === 'albumTag'
+                  ? tagLocationMatch(
+                      filter.value,
+                      filter.field === 'albumTag' ? ['album'] : tagLevels,
+                      sql`${mediaItem.id}`,
+                    )
+                  : undefined
       : undefined,
   )
   const orderRows =
@@ -1822,8 +1877,8 @@ async function browseQueries(
     // Keep positive artist tags as a set of keys. A broad tag must not be
     // nested-loop joined against the date index, and release ordering only
     // needs to resolve the primary date ties at the page boundary. Tags,
-    // Track tags, Album tags and Provider filters in any mode take the same
-    // path: their hashed set is tested on the date index, and the visibility
+    // Track tags, Has track tags, Album tags and Provider filters in any mode
+    // take the same path: their test is on the date index, and the visibility
     // probe below keeps media_item a lookup per walked track instead of a
     // materialised scan.
     const firstArtistTagPage =
@@ -1835,6 +1890,7 @@ async function browseQueries(
       query.filters.some(
         (chip) =>
           chip.field === 'trackTag' ||
+          chip.field === 'hasTrackTags' ||
           chip.field === 'genre' ||
           chip.field === 'albumTag' ||
           chip.field === 'provider' ||
@@ -2453,6 +2509,15 @@ function textRows(
     return sql`select media_item.id, ${trackAlbumLinkLabels.linked}::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is not null
       union all
       select media_item.id, ${trackAlbumLinkLabels.unlinked}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is null`
+  if (mediaType === 'album' && key === 'edition')
+    return sql`select media_item.id, ${albumEditionLabels.edition}::text as value from media_item join album a on a.media_item_id = media_item.id where ${visible} and a.edition_of_id is not null
+      union all
+      select media_item.id, ${albumEditionLabels.notEdition}::text as value from media_item left join album a on a.media_item_id = media_item.id where ${visible} and a.edition_of_id is null`
+  // Literal labels let PostgreSQL drop a branch whose label cannot match.
+  if (mediaType === 'track' && key === 'hasTrackTags')
+    return sql`select media_item.id, 'Yes'::text as value from media_item join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.has_own_tags
+      union all
+      select media_item.id, 'No'::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.has_own_tags is not true`
   if (mediaType === 'track' && key === 'musicalKey')
     return verifiedTrackKeyRows(visible)
   if (mediaType === 'track' && key === 'provider')
@@ -2549,8 +2614,14 @@ const releaseTagFacetKeys = sql`select t.id as tag_id, ${normalizedTagSql(sql`t.
   from tag t where t.media_type = 'album' and not t.hidden
   union all select tag_id, ancestor_key from (${tagAncestorRows('album')}) ancestors`
 
-function albumTagFacetRows(key: string, tagLevels?: TagLevels) {
-  const visible = sql`media_item.media_type = 'album'
+function albumTagFacetRows(
+  key: string,
+  tagLevels?: TagLevels,
+  includeArchived = false,
+) {
+  const visible = includeArchived
+    ? sql`media_item.media_type = 'album'`
+    : sql`media_item.media_type = 'album'
     and media_item.metadata->>'legacyHidden' is distinct from 'true'`
   const release = sql`select media_item.id, labels.value from media_item
     join media_item_tag mt on mt.media_item_id = media_item.id
@@ -2799,27 +2870,47 @@ const redundantTrackFacetSource = sql`redundant_lastfm_tracks as materialized ($
 export async function listBrowseFacets(
   mediaType: MediaType,
   input: Partial<BrowseFacetQuery> = {},
-  options: { includeLastfmSourceRows?: boolean; fields?: BrowseField[] } = {},
+  options: {
+    includeLastfmSourceRows?: boolean
+    fields?: BrowseField[]
+    /** Albums and Films: count archived items, as the list does with Include archived. */
+    includeArchived?: boolean
+  } = {},
 ) {
   const query = BrowseFacetQuerySchema.parse(input)
   const fields = (options.fields ?? (await listBrowseFields(mediaType))).filter(
     (field) => field.type === 'text' && field.filterable,
   )
+  const providerNames = fields.some((field) => field.key === 'provider')
+    ? await providerDisplayNames()
+    : new Map<string, string>()
   const rows = await measureRequestPhase('facets', () =>
-    facetCache(JSON.stringify([mediaType, fields, query, options]), () =>
-      queryBrowseFacets(mediaType, fields, query, options),
+    facetCache(
+      JSON.stringify([mediaType, fields, query, options, [...providerNames]]),
+      () => queryBrowseFacets(mediaType, fields, query, options, providerNames),
     ),
   )
   return rows
     .map((row) => ({
       ...row,
-      // A tag value is its normalized name; the label shows the display name.
-      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${tagFacetFields.includes(row.field) ? formatTagName(row.value) : row.value}`,
+      // A tag value is its normalized name and a provider value its ID; the
+      // label shows the display name.
+      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${
+        tagFacetFields.includes(row.field)
+          ? formatTagName(row.value)
+          : row.field === 'provider'
+            ? (providerNames.get(row.value) ?? row.value)
+            : row.value
+      }`,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }
 
-function facetValueMatches(field: BrowseField, query: BrowseFacetQuery) {
+function facetValueMatches(
+  field: BrowseField,
+  query: BrowseFacetQuery,
+  providerNames?: ReadonlyMap<string, string>,
+) {
   // A key is suggested in whichever notation it is typed.
   const key = field.key === 'musicalKey' ? parseMusicalKey(query.q ?? '') : null
   if (key) return sql`value = ${key}`
@@ -2830,7 +2921,12 @@ function facetValueMatches(field: BrowseField, query: BrowseFacetQuery) {
         field.key === 'title' ||
         !`${field.label}:`.toLowerCase().includes(word),
     )
-    .map((word) => sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`)
+    .map((word) => {
+      const matches = sql`value ilike ${`%${word.replace(/[\\%_]/g, '\\$&')}%`}`
+      return field.key === 'provider' && providerNames
+        ? providerWordMatch(sql`value`, word, matches, providerNames)
+        : matches
+    })
   return and(...matches)
 }
 
@@ -2852,8 +2948,9 @@ export function browseFacetRows(
     | 'distinctItems'
     | 'uniqueRows'
     | 'deduplicateRows' = 'distinctItems',
+  providerNames?: ReadonlyMap<string, string>,
 ) {
-  const search = facetValueMatches(field, query)
+  const search = facetValueMatches(field, query, providerNames)
   const values = sql`from (${source}) values_for_field
     where value is not null and value <> '' ${search ? sql`and ${search}` : sql``} ${visibility}`
   // Music tag rows can overlap through several source tags or credits. Let
@@ -2874,8 +2971,9 @@ function browseFacetQuery(
   mediaType: MediaType,
   fields: BrowseField[],
   query: BrowseFacetQuery,
-  options: { includeLastfmSourceRows?: boolean },
+  options: { includeLastfmSourceRows?: boolean; includeArchived?: boolean },
   completeVocabulary = false,
+  providerNames?: ReadonlyMap<string, string>,
 ) {
   const limit = completeVocabulary
     ? undefined
@@ -2928,10 +3026,11 @@ function browseFacetQuery(
       (field.key === 'trackTag' || singleTagLevel(trackLevels) === 'track')
     const source =
       musicTagFacet && !trackTagFacet
-        ? albumTagFacetRows(field.key, query.tagLevels)
+        ? albumTagFacetRows(field.key, query.tagLevels, options.includeArchived)
         : trackTagFacet
           ? trackTagFacetRows
           : textRows(field.key, mediaType, {
+              includeArchived: options.includeArchived,
               normalizeTags: true,
               rollUpTags: true,
             })
@@ -2945,8 +3044,10 @@ function browseFacetQuery(
     const uniqueValuePerItem =
       field.key === 'title' ||
       (mediaType === 'track'
-        ? ['album', 'albumLink', 'spotifyMatch'].includes(field.key)
-        : field.key === 'source')
+        ? ['album', 'albumLink', 'hasTrackTags', 'spotifyMatch'].includes(
+            field.key,
+          )
+        : ['source', 'edition'].includes(field.key))
     return browseFacetRows(
       field,
       source,
@@ -2960,6 +3061,7 @@ function browseFacetQuery(
         : uniqueValuePerItem
           ? 'uniqueRows'
           : 'distinctItems',
+      providerNames,
     )
   })
   // The stored vocabulary also holds Tags at each combination of levels.
@@ -3002,13 +3104,17 @@ const trackFacetBuildQuery = sql`select field,
 // Only readers with the same database role and counting rules share values.
 const trackFacetBuilder = sql`current_user || ':' || ${checksumJson(dialect.sqlToQuery(trackFacetBuildQuery))}::text`
 
-function readTrackFacetQuery(fields: BrowseField[], query: BrowseFacetQuery) {
+function readTrackFacetQuery(
+  fields: BrowseField[],
+  query: BrowseFacetQuery,
+  providerNames: ReadonlyMap<string, string>,
+) {
   const limit = facetFieldLimit(query, fields.length)
   const facets = fields.map((field) => {
     const priority = query.q
       ? sql`case when lower(value) = ${query.q.toLowerCase()} then 0 else 1 end, `
       : sql``
-    const matches = facetValueMatches(field, query)
+    const matches = facetValueMatches(field, query, providerNames)
     // TTAG-29: Tags at a location reads the counts stored for it.
     const levels = field.key === 'genre' ? query.tagLevels : undefined
     const single = singleTagLevel(levels)
@@ -3181,13 +3287,21 @@ async function queryBrowseFacets(
   mediaType: MediaType,
   fields: BrowseField[],
   query: BrowseFacetQuery,
-  options: { includeLastfmSourceRows?: boolean; fields?: BrowseField[] },
+  options: {
+    includeLastfmSourceRows?: boolean
+    fields?: BrowseField[]
+    includeArchived?: boolean
+  },
+  providerNames: ReadonlyMap<string, string>,
 ): Promise<FacetRow[]> {
   if (!fields.length) return []
   const cached =
-    mediaType === 'track' && !options.includeLastfmSourceRows && !options.fields
+    mediaType === 'track' &&
+    !options.includeLastfmSourceRows &&
+    !options.includeArchived &&
+    !options.fields
       ? await readTrackFacetsFromVocabulary(
-          readTrackFacetQuery(fields, query),
+          readTrackFacetQuery(fields, query, providerNames),
           (query.q ?? '').split(/\s+/).every((word) => word.length < 3),
         )
       : undefined
@@ -3198,7 +3312,16 @@ async function queryBrowseFacets(
       .parse(
         (
           await measureRequestPhase('facetLive', async () =>
-            db.execute(browseFacetQuery(mediaType, fields, query, options)),
+            db.execute(
+              browseFacetQuery(
+                mediaType,
+                fields,
+                query,
+                options,
+                false,
+                providerNames,
+              ),
+            ),
           )
         ).rows,
       )

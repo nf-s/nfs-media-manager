@@ -4,7 +4,7 @@ import {
   queryBrowsePageIds,
   type BrowseQueryOptions,
 } from './browse'
-import type { BrowseFacetQuery } from '@repo/schemas/browse'
+import type { ArchivableBrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
@@ -383,10 +383,20 @@ function reorderRecords<TRecord extends { id: string }>(
   })
 }
 
-export const listAlbumFilterOptions = (query: BrowseFacetQuery) =>
-  listBrowseFacets('album', query)
-export const listFilmFilterOptions = (query: BrowseFacetQuery) =>
-  listBrowseFacets('film', query)
+export const listAlbumFilterOptions = ({
+  includeArchived,
+  ...query
+}: ArchivableBrowseFacetQuery) =>
+  listBrowseFacets('album', query, {
+    includeArchived: includeArchived === 'true',
+  })
+export const listFilmFilterOptions = ({
+  includeArchived,
+  ...query
+}: ArchivableBrowseFacetQuery) =>
+  listBrowseFacets('film', query, {
+    includeArchived: includeArchived === 'true',
+  })
 
 export async function listAlbums(
   query: AlbumQuery,

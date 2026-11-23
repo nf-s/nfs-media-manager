@@ -94,6 +94,13 @@ export const BrowseFacetQuerySchema = z.object({
   tagLevels: TagLevelsParamSchema,
 })
 export type BrowseFacetQuery = z.infer<typeof BrowseFacetQuerySchema>
+/** Albums and Films: suggestions count archived items when the list includes them. */
+export const ArchivableBrowseFacetQuerySchema = BrowseFacetQuerySchema.extend({
+  includeArchived: z.enum(['true', 'false']).optional(),
+})
+export type ArchivableBrowseFacetQuery = z.infer<
+  typeof ArchivableBrowseFacetQuerySchema
+>
 
 export const BrowsePageSliceSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
   z.object({
@@ -147,6 +154,12 @@ const rating = (
   rating: { provider, scale, votesKey },
 })
 
+/** Albums Edition: whether an album is an edition of another album. */
+export const albumEditionLabels = {
+  edition: 'Edition of another album',
+  notEdition: 'Not an edition',
+}
+
 export const albumBrowseFields: BrowseField[] = [
   text('title', 'Title'),
   text('artist', 'Artists'),
@@ -158,6 +171,7 @@ export const albumBrowseFields: BrowseField[] = [
   text('collection', 'Collections'),
   text('source', 'Source'),
   text('provider', 'Provider'),
+  text('edition', 'Edition'),
   date('releaseDate', 'Released'),
   date('dateAdded', 'Added'),
   number('durationSec', 'Duration', 'seconds'),
@@ -202,6 +216,8 @@ export const trackBrowseFields: BrowseField[] = [
   text('albumTag', 'Album tags'),
   text('artistTag', 'Artist tags'),
   text('albumLink', 'Library album'),
+  // Yes when the track has tags of its own in Browse (has_own_tags).
+  text('hasTrackTags', 'Has track tags'),
   date('releaseDate', 'Released'),
   date('dateAdded', 'Added'),
   number('durationSec', 'Duration', 'seconds'),
@@ -407,6 +423,9 @@ export function getBrowseValues(
     provider: [...new Set(item.providerReferences.map((p) => p.provider))],
     ...(item.mediaType === 'album'
       ? {
+          edition: item.editionOfId
+            ? albumEditionLabels.edition
+            : albumEditionLabels.notEdition,
           albumTag: item.tags.map((tag) => tag.name),
           artistTag: item.artistTags,
           dateAdded: item.dateAdded ? Date.parse(item.dateAdded) : null,

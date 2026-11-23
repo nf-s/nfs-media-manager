@@ -35,6 +35,7 @@ import {
   artistLastScrapedAt,
   loadArtistMetadata,
 } from './artist-metadata'
+import { providerDisplayNames, providerWordMatch } from './provider-names'
 import {
   createArtistBrowseListening,
   type ArtistBrowseListening,
@@ -600,36 +601,47 @@ export async function artistListeningHistogram(
 
 export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
   const fields = artistBrowseFields.filter((field) => field.type === 'text')
-  const rows = await facetCache(JSON.stringify(query), async () => {
-    const queries = fields.map((field) => {
-      const words = (query.q ?? '')
-        .split(/\s+/)
-        .filter(Boolean)
-        .filter(
-          (word) =>
-            field.key === 'name' ||
-            !`${field.label}:`.toLowerCase().includes(word.toLowerCase()),
-        )
-      const matchWords = (value: SQL) =>
-        and(...words.map((word) => sql`${value} ilike ${pattern(word)}`))
-      const playlistFilter =
-        field.key === 'playlist' ? matchWords(sql`playlist.name`) : undefined
-      const matches = playlistFilter
-        ? undefined
-        : matchWords(sql`values_for_field.value`)
-      // Tags are grouped by normalized name; a tag is also counted under
-      // each visible album tag above it, as its filter matches them.
-      const tags = field.key === 'genre'
-      const group = tags
-        ? sql`values_for_field.value`
-        : sql`lower(values_for_field.value)`
-      const source = tags
-        ? sql`select id, value from artist_tag_keys
+  const providerNames = await providerDisplayNames()
+  const rows = await facetCache(
+    JSON.stringify([query, [...providerNames]]),
+    async () => {
+      const queries = fields.map((field) => {
+        const words = (query.q ?? '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .filter(
+            (word) =>
+              field.key === 'name' ||
+              !`${field.label}:`.toLowerCase().includes(word.toLowerCase()),
+          )
+        // A provider is also found by its display name.
+        const matchWords = (value: SQL) =>
+          and(
+            ...words.map((word) => {
+              const matches = sql`${value} ilike ${pattern(word)}`
+              return field.key === 'provider'
+                ? providerWordMatch(value, word, matches, providerNames)
+                : matches
+            }),
+          )
+        const playlistFilter =
+          field.key === 'playlist' ? matchWords(sql`playlist.name`) : undefined
+        const matches = playlistFilter
+          ? undefined
+          : matchWords(sql`values_for_field.value`)
+        // Tags are grouped by normalized name; a tag is also counted under
+        // each visible album tag above it, as its filter matches them.
+        const tags = field.key === 'genre'
+        const group = tags
+          ? sql`values_for_field.value`
+          : sql`lower(values_for_field.value)`
+        const source = tags
+          ? sql`select id, value from artist_tag_keys
           union all
           select artist_tag_keys.id, ancestor.ancestor_key as value from artist_tag_keys
           join (${tagAncestorKeys('album', true)}) ancestor on ancestor.descendant_key = artist_tag_keys.value`
-        : textRows(field.key, { playlistFilter, distinctPlaylists: true })
-      return sql`(select ${field.key}::text as field, min(artist_values.value) as value, count(*)::int as count
+          : textRows(field.key, { playlistFilter, distinctPlaylists: true })
+        return sql`(select ${field.key}::text as field, min(artist_values.value) as value, count(*)::int as count
         from (
           select ${group} as value_key, min(values_for_field.value) as value
           from (${source}) values_for_field join visible_artists a on a.id = values_for_field.id
@@ -638,9 +650,9 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
         ) artist_values
         group by artist_values.value_key
         order by case when lower(min(artist_values.value)) = ${(query.q ?? '').toLowerCase()} then 0 else 1 end, count desc, value asc limit ${query.limitPerField})`
-    })
-    // Normalize a stored label once across the artists and providers using it.
-    const result = await db.execute(sql`with visible_artists as materialized (
+      })
+      // Normalize a stored label once across the artists and providers using it.
+      const result = await db.execute(sql`with visible_artists as materialized (
       select a.id from artist a where ${visibleArtist}
     ), raw_artist_tags as materialized (
       select distinct id, value from (${textRows('genre')}) artist_tags
@@ -651,22 +663,29 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
       select raw.id, labels.value from raw_artist_tags raw
       join normalized_tag_labels labels on labels.raw_name = raw.value
     ) ${sql.join(queries, sql` union all `)}`)
-    const facets: Facet[] = z.array(FacetSchema).parse(result.rows)
-    // A tag with subtags is counted over all of them; say how many there are.
-    const subtags = await visibleSubtagCounts('album', [
-      ...new Set(
-        facets.filter((row) => row.field === 'genre').map((row) => row.value),
-      ),
-    ])
-    return facets.map((row) => {
-      const count = row.field === 'genre' ? subtags.get(row.value) : undefined
-      return count === undefined ? row : { ...row, subtags: count }
-    })
-  })
+      const facets: Facet[] = z.array(FacetSchema).parse(result.rows)
+      // A tag with subtags is counted over all of them; say how many there are.
+      const subtags = await visibleSubtagCounts('album', [
+        ...new Set(
+          facets.filter((row) => row.field === 'genre').map((row) => row.value),
+        ),
+      ])
+      return facets.map((row) => {
+        const count = row.field === 'genre' ? subtags.get(row.value) : undefined
+        return count === undefined ? row : { ...row, subtags: count }
+      })
+    },
+  )
   return rows
     .map((row) => ({
       ...row,
-      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${row.field === 'genre' ? formatTagName(row.value) : row.value}`,
+      label: `${fields.find((field) => field.key === row.field)?.label ?? row.field}: ${
+        row.field === 'genre'
+          ? formatTagName(row.value)
+          : row.field === 'provider'
+            ? (providerNames.get(row.value) ?? row.value)
+            : row.value
+      }`,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }

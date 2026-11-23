@@ -1,6 +1,6 @@
 import {
+  ArchivableBrowseFacetQuerySchema,
   BrowseCountSchema,
-  BrowseFacetQuerySchema,
   BrowseFieldSchema,
   BrowsePageSliceSchema,
 } from '@repo/schemas/browse'
@@ -430,7 +430,7 @@ app
       method: 'get',
       path: '/facets',
       middleware: [authMiddleware()],
-      request: { query: BrowseFacetQuerySchema },
+      request: { query: ArchivableBrowseFacetQuerySchema },
       responses: {
         422: validationErrorResponse,
         200: {

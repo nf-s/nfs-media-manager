@@ -505,6 +505,7 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     albumLink: item.album
       ? trackAlbumLinkLabels.linked
       : trackAlbumLinkLabels.unlinked,
+    hasTrackTags: item.trackTags.length ? 'Yes' : 'No',
     releaseDate: item.releaseDate ? Date.parse(item.releaseDate) : null,
     dateAdded: item.dateAdded ? Date.parse(item.dateAdded) : null,
     durationSec: item.durationSec,

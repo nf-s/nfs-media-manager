@@ -13,6 +13,7 @@ import {
   type BrowseFilterHref,
 } from '@/utils/browse-items'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
 import { BrowseTagBadges } from './browse-controls'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
@@ -94,6 +95,8 @@ export function TrackBrowseValue({
   onFilter: (filter: BrowseFilter, keepOpen?: boolean) => void
   filterHref?: BrowseFilterHref
 }) {
+  // A Provider value is an ID; the cell names it as the filter chip does.
+  const providerName = useProviderDisplayName(field.key === 'provider')
   if (field.key === 'artist')
     return (
       <TrackArtistLinks
@@ -144,6 +147,10 @@ export function TrackBrowseValue({
   if (field.type === 'text' && field.filterable) {
     const values = textValues(value)
     if (!values.length) return <EmptyValue />
+    const shown = (value: string) =>
+      field.key === 'provider'
+        ? providerName(value)
+        : formatBrowseFilterValue(field.key, value)
     return (
       <Pills max={2} label={field.label}>
         {values.map((value) => (
@@ -152,14 +159,14 @@ export function TrackBrowseValue({
               {...(filterHref
                 ? workspaceTabLinkProps(
                     filterHref({ field: field.key, value }),
-                    value,
+                    shown(value),
                   )
                 : undefined)}
               type="button"
-              title={`Filter ${field.label}: ${formatBrowseFilterValue(field.key, value)}`}
+              title={`Filter ${field.label}: ${shown(value)}`}
               onClick={() => onFilter({ field: field.key, value })}
             >
-              <PillLabel>{formatBrowseFilterValue(field.key, value)}</PillLabel>
+              <PillLabel>{shown(value)}</PillLabel>
             </button>
           </Pill>
         ))}

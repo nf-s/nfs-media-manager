@@ -175,11 +175,12 @@ async function suggestions(q: string) {
     },
   )
   expect(response.status).toBe(200)
-  const body: { data: { field: string; value: string; count: number }[] } =
-    await response.json()
+  const body: {
+    data: { field: string; value: string; count: number; label: string }[]
+  } = await response.json()
   return body.data
     .filter((row) => row.field === 'provider')
-    .map(({ value, count }) => ({ value, count }))
+    .map(({ value, count, label }) => ({ value, count, label }))
 }
 
 describe('the Provider field on Tracks', () => {
@@ -260,10 +261,14 @@ describe('the Provider field on Tracks', () => {
   })
 
   it('suggests providers with whole-library counts, live and stored', async () => {
+    // The value is the ID; the label names the provider as the catalog does,
+    // and typing the display name finds it.
     const expected = {
-      tidal: [{ value: 'tidal', count: 1 }],
-      sonovault: [{ value: 'sonovault', count: 1 }],
-      spotify: [{ value: 'spotify', count: 1 }],
+      tidal: [{ value: 'tidal', count: 1, label: 'Provider: TIDAL' }],
+      Sonovault: [
+        { value: 'sonovault', count: 1, label: 'Provider: Sonovault' },
+      ],
+      spotify: [{ value: 'spotify', count: 1, label: 'Provider: Spotify' }],
     }
     // The stored vocabulary is not built yet, so these are read live.
     for (const [q, rows] of Object.entries(expected))
@@ -314,7 +319,7 @@ describe('the Provider field on Tracks', () => {
         .filter((row) => row.field === 'provider')
         .map(({ value, count, label }) => ({ value, count, label })),
     ).toEqual([
-      { value: 'sonovault', count: 1, label: 'Provider ID: sonovault' },
+      { value: 'sonovault', count: 1, label: 'Provider ID: Sonovault' },
     ])
   })
 })

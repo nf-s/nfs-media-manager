@@ -2484,6 +2484,99 @@ it('bounds Track pages filtered, sorted and hydrated by Track tags', async () =>
         })
       },
     )
+    // Has track tags tests library_track.has_own_tags, a column of the row
+    // the page joins or walks: no set, so no materialised nested loop.
+    const hasTagsFilter = (value: string, mode?: string) =>
+      JSON.stringify([
+        { field: 'hasTrackTags', value, ...(mode ? { mode } : {}) },
+      ])
+    // A Title page walks the title index as an unfiltered one does: 1.5 times
+    // its cost. Added pages take the first-page path of Track tags filters:
+    // 1.5 times the shared blocks measured when these workloads were added.
+    const unfilteredTitleBlocks = await sharedBlocksOf(() =>
+      page({ sortBy: 'title', direction: 'asc' }),
+    )
+    process.stdout.write(
+      `Has track tags: an unfiltered Title page reads ${unfilteredTitleBlocks} shared blocks\n`,
+    )
+    const hasTagsBudgets: Record<string, number> = {
+      'Yes title': Math.ceil(unfilteredTitleBlocks * 1.5),
+      'No title': Math.ceil(unfilteredTitleBlocks * 1.5),
+      'Yes added': 20_200,
+      'No added': 4_300,
+    }
+    for (const answer of ['Yes', 'No'] as const)
+      for (const [sort, sortBy, direction] of [
+        ['title', 'title', 'asc'],
+        ['added', 'dateAdded', 'desc'],
+      ] as const)
+        await checkBudget(
+          `Has track tags ${answer} ${sort} page`,
+          hasTagsBudgets[`${answer} ${sort}`] ?? 0,
+          1,
+          async () => {
+            const result = await page({
+              sortBy,
+              direction,
+              filters: hasTagsFilter(answer),
+            })
+            expect(result.ids).toHaveLength(100)
+          },
+          10_000,
+        )
+    await checkBudget(
+      'Has track tags count',
+      Math.ceil(rangeCountBlocks * 1.5),
+      3,
+      async () => {
+        const { totalCount } = await queryBrowseCount(
+          'track',
+          TrackQuerySchema.parse({ filters: hasTagsFilter('No') }),
+        )
+        expect(totalCount).toBeGreaterThan(0)
+      },
+    )
+    await checkBudget(
+      'Has track tags sort page',
+      Math.ceil(durationBlocks * 1.05),
+      1,
+      async () => {
+        const result = await page({ sortBy: 'hasTrackTags', direction: 'asc' })
+        expect(result.ids).toHaveLength(100)
+      },
+    )
+    // Before the vocabulary is built: one row per track, as Library album.
+    const albumLinkSuggestionBlocks = await sharedBlocksOf(() =>
+      listBrowseFacets(
+        'track',
+        { q: 'library' },
+        {
+          fields: trackBrowseFields.filter(
+            (field) => field.key === 'albumLink',
+          ),
+        },
+      ),
+    )
+    process.stdout.write(
+      `Has track tags live suggestions: Library album reads ${albumLinkSuggestionBlocks} shared blocks\n`,
+    )
+    await checkBudget(
+      'Has track tags live suggestions',
+      Math.ceil(albumLinkSuggestionBlocks * 1.5),
+      4,
+      async () => {
+        const facets = await listBrowseFacets(
+          'track',
+          { q: 'has track tags' },
+          {
+            fields: trackBrowseFields.filter(
+              (field) => field.key === 'hasTrackTags',
+            ),
+          },
+        )
+        expect(facets.map(({ value }) => value).sort()).toEqual(['No', 'Yes'])
+      },
+    )
     const { refreshTrackFacetVocabularyForMaintenance } =
       await import('@/services/browse')
     const built = performance.now()

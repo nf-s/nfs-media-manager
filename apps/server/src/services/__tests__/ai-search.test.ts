@@ -115,6 +115,19 @@ describe('AI search interpretation', () => {
     expect(mocks.database).not.toHaveBeenCalled()
   })
 
+  it('names the exact values of the fixed-value filter fields', () => {
+    expect(aiSearchPrompt('album', now)).toContain(
+      'edition ["Edition of another album","Not an edition"]',
+    )
+    expect(aiSearchPrompt('track', now)).toContain('hasTrackTags ["Yes","No"]')
+    expect(aiSearchPrompt('track', now, 'matches')).toContain(
+      'hasTrackTags ["Yes","No"]',
+    )
+    expect(aiSearchPrompt('film', now)).not.toContain(
+      'take only these exact values',
+    )
+  })
+
   it('applies Spotify playability alongside provider evidence in Tracks Matches only', async () => {
     const expected: AiSearchPlan = {
       ...plan({

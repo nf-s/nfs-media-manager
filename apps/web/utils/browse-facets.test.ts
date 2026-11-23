@@ -86,3 +86,38 @@ test('a tag location is sent with the suggestions and keys them apart from Auto'
     client.clear()
   }
 })
+
+test('Include archived is sent with the suggestions and keys them apart', async (t) => {
+  const requests: (RequestInfo | URL)[] = []
+  t.mock.method(globalThis, 'fetch', (input: RequestInfo | URL) => {
+    requests.push(input)
+    return new Promise<Response>(() => {})
+  })
+  const archived = browseFacetOptions(
+    '/backend',
+    'albums',
+    'tide',
+    false,
+    undefined,
+    true,
+  )
+  assert.deepEqual(browseFacetOptions('', 'albums', 'tide').queryKey, [
+    'albums',
+    'facets',
+    'tide',
+  ])
+  assert.deepEqual(archived.queryKey, ['albums', 'facets', 'tide', 'archived'])
+  const client = new QueryClient()
+  const observer = new QueryObserver(client, archived)
+  const close = observer.subscribe(() => {})
+  try {
+    assert.equal(
+      requests[0],
+      '/backend/api/v1/albums/facets?q=tide&limitPerField=25&includeArchived=true',
+    )
+  } finally {
+    close()
+    observer.destroy()
+    client.clear()
+  }
+})

@@ -323,6 +323,126 @@ describe('the Track tags field (TTAG-13)', () => {
   })
 })
 
+describe('the Has track tags field', () => {
+  const hasTags = (value: string, mode?: string) =>
+    filters({ field: 'hasTrackTags', value, ...(mode ? { mode } : {}) })
+  const counts = async (q: string) => {
+    const { listTrackFilterOptions } = await import('@/services/tracks')
+    return (await listTrackFilterOptions({ q }))
+      .filter((option) => option.field === 'hasTrackTags')
+      .map(({ value, count, label }) => ({ value, count, label }))
+  }
+
+  it('filters on tags of the track’s own in Browse, in each mode', async () => {
+    // track-3's only tag was removed by the owner; track-5 has its album's.
+    expect(ids(await page({ filters: hasTags('Yes') }))).toEqual([
+      'track-1',
+      'track-2',
+      'track-4',
+    ])
+    expect(ids(await page({ filters: hasTags('no', 'required') }))).toEqual([
+      'track-3',
+      'track-5',
+    ])
+    expect(ids(await page({ filters: hasTags('Yes', 'exclude') }))).toEqual([
+      'track-3',
+      'track-5',
+    ])
+    expect(ids(await page({ filters: hasTags('Maybe') }))).toEqual([])
+    // Any: either value of this field or a value of another field.
+    expect(
+      ids(
+        await page({
+          filters: filters(
+            { field: 'hasTrackTags', value: 'No' },
+            { field: 'trackTag', value: 'Harbour Bass' },
+          ),
+        }),
+      ),
+    ).toEqual(['track-2', 'track-3', 'track-5'])
+  })
+
+  it('sorts No before Yes and shows the value as a column', async () => {
+    const sorted = await page({ sortBy: 'hasTrackTags', direction: 'asc' })
+    // Ties keep the Tracks natural order: the album track first.
+    expect(ids(sorted)).toEqual([
+      'track-5',
+      'track-3',
+      'track-1',
+      'track-2',
+      'track-4',
+    ])
+    const { getTrackBrowseValues } = await import('@repo/schemas/tracks')
+    expect(
+      sorted.items.map((item) => getTrackBrowseValues(item).hasTrackTags),
+    ).toEqual(['No', 'No', 'Yes', 'Yes', 'Yes'])
+    expect(
+      ids(await page({ sortBy: 'hasTrackTags', direction: 'desc' })).slice(
+        0,
+        3,
+      ),
+    ).toEqual(['track-1', 'track-2', 'track-4'])
+  })
+
+  it('is not matched by the ordinary words of a free-text search', async () => {
+    expect(ids(await page({ q: 'yes' }))).toEqual([])
+  })
+
+  it('suggests both values from live rows and from the stored vocabulary', async () => {
+    const expected = [
+      { value: 'Yes', count: 3, label: 'Has track tags: Yes' },
+      { value: 'No', count: 2, label: 'Has track tags: No' },
+    ]
+    await pool.query('delete from track_facet_state')
+    // A selective request reads live rows while the vocabulary is not built.
+    expect(await counts('track tags')).toEqual(expected)
+    expect(
+      (await pool.query('select 1 from track_facet_state where ready'))
+        .rowCount,
+    ).toBe(0)
+    // A broad request builds the vocabulary and reads it.
+    expect(await counts('')).toEqual(expected)
+    expect(
+      (await pool.query('select 1 from track_facet_state where ready'))
+        .rowCount,
+    ).toBe(1)
+    expect(
+      (
+        await pool.query(
+          `select value, count from track_facet_value
+            where field = 'hasTrackTags' order by rank`,
+        )
+      ).rows,
+    ).toEqual([
+      { value: 'Yes', count: 3 },
+      { value: 'No', count: 2 },
+    ])
+  })
+
+  it('marks the stored counts stale when a track gains its own tag', async () => {
+    await counts('')
+    try {
+      await pool.query(`insert into track_tag (media_item_id, tag_id, owner, owner_changed_at)
+        values ('track-5', 'tag-quiet', 'added', now())`)
+      expect(
+        (await pool.query('select 1 from track_facet_dirty')).rowCount,
+      ).toBeGreaterThan(0)
+      expect(await counts('')).toEqual([
+        { value: 'Yes', count: 4, label: 'Has track tags: Yes' },
+        { value: 'No', count: 1, label: 'Has track tags: No' },
+      ])
+    } finally {
+      await pool.query(
+        `delete from track_tag where media_item_id = 'track-5' and tag_id = 'tag-quiet'`,
+      )
+    }
+    expect(await counts('')).toEqual([
+      { value: 'Yes', count: 3, label: 'Has track tags: Yes' },
+      { value: 'No', count: 2, label: 'Has track tags: No' },
+    ])
+  })
+})
+
 describe('track details and tag pages (TTAG-11, TTAG-15)', () => {
   it('lists own, unverified and removed tags apart', async () => {
     const { getTrackDetail } = await import('@/services/tracks')
