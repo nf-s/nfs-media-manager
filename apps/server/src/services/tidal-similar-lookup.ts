@@ -76,8 +76,9 @@ function artistNames(
 function albumSuggestion(
   album: TidalAlbumResource,
   artists: Map<string, TidalArtistResource>,
-  genres: ReadonlyMap<string, string>,
+  genreResources: ReadonlyMap<string, string>,
 ): TidalSuggestion {
+  const genres = genreNames(album, genreResources)
   return TidalSuggestionSchema.parse({
     tidalId: album.id,
     title: album.attributes.title,
@@ -87,15 +88,16 @@ function albumSuggestion(
     durationSec: tidalDurationSec(album.attributes.duration),
     releaseDate: album.attributes.releaseDate?.trim() || null,
     url: tidalUrl('album', album),
-    genres: genreNames(album, genres),
+    ...(genres.length ? { genres } : {}),
   })
 }
 
 function trackSuggestion(
   track: TidalTrackResource,
   artists: Map<string, TidalArtistResource>,
-  genres: ReadonlyMap<string, string>,
+  genreResources: ReadonlyMap<string, string>,
 ): TidalSuggestion {
+  const genres = genreNames(track, genreResources)
   return TidalSuggestionSchema.parse({
     tidalId: track.id,
     title: track.attributes.title,
@@ -105,7 +107,7 @@ function trackSuggestion(
     durationSec: tidalDurationSec(track.attributes.duration),
     releaseDate: null,
     url: tidalUrl('track', track),
-    genres: genreNames(track, genres),
+    ...(genres.length ? { genres } : {}),
   })
 }
 

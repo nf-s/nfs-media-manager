@@ -3214,3 +3214,72 @@ it('bounds Track and Album pages filtered and sorted by tag location', async () 
     await clearTagLocationFixture()
   }
 })
+
+it('bounds genre hydration for a full page of Similar albums', async () => {
+  const { getTidalSimilar } = await import('@/services/tidal-similar')
+  const spotifyAlbumId = String(877733).padStart(22, '0')
+  await pool.query(`
+    insert into tag (id, media_type, name, kind) values
+      ('similar-album-genre', 'album', 'Fixture Similar Album Genre', 'genre'),
+      ('similar-member-genre', 'album', 'Fixture Similar Member Genre', 'genre'),
+      ('similar-artist-genre', 'album', 'Fixture Similar Artist Genre', 'genre');
+    insert into media_item_tag (media_item_id, tag_id)
+    select 'album-' || (n + 1), 'similar-album-genre' from generate_series(1, 18) n;
+    insert into provider_reference (id, media_item_id, provider, reference_type, external_id)
+    select 'similar-tidal-' || n, 'album-' || (n + 1), 'tidal', 'album', (870000 + n)::text
+    from generate_series(1, 18) n;
+    insert into track_tag (media_item_id, tag_id, sonovault, verified)
+    values ('track-1', 'similar-member-genre', true, true);
+    insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+    values ('fixture-similar-snapshot', 'artist-1', 'fixture-similar', '{}', '{"tags":["Fixture Similar Artist Genre"]}');
+    insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    values ('artist-1', 'fixture-similar', 'fixture-similar-snapshot');
+  `)
+  await pool.query(
+    'update library_track set spotify_album_id = $1 where media_item_id = $2',
+    [spotifyAlbumId, 'track-1'],
+  )
+  await database.insert(schema.spotifyCodeLookup).values({
+    codeType: 'upc',
+    code: '877733',
+    spotifyId: spotifyAlbumId,
+    searchedAt: new Date(),
+    result: {
+      spotifyId: spotifyAlbumId,
+      url: `https://open.spotify.com/album/${spotifyAlbumId}`,
+      title: 'Fixture Similar album',
+      artists: ['Fixture artist 1'],
+      artworkUrl: null,
+      albumName: null,
+      spotifyAlbumId,
+      durationSec: null,
+      trackCount: 10,
+    },
+  })
+  await database.insert(schema.tidalSimilar).values({
+    mediaItemId: 'album-1',
+    kind: 'album',
+    readAt: new Date(),
+    items: Array.from({ length: 20 }, (_, index) => {
+      const tidalId = String(870001 + index)
+      return {
+        tidalId,
+        title: `Fixture Similar album ${index}`,
+        version: null,
+        artists: ['Fixture artist 1'],
+        code: index === 18 ? '000000877733' : null,
+        durationSec: null,
+        releaseDate: null,
+        url: `https://tidal.com/browse/album/${tidalId}`,
+      }
+    }),
+  })
+  await checkBudget('Similar albums with genres', 500, 10, async () => {
+    const result = await getTidalSimilar({ kind: 'albums', id: 'album-1' })
+    expect(result.items.map(({ genreSource }) => genreSource)).toEqual([
+      ...Array.from({ length: 18 }, () => 'library'),
+      'album-tracks',
+      'artist',
+    ])
+  })
+})

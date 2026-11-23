@@ -130,14 +130,32 @@ const similar = (items: { id: string; type: string }[]) => ({
   links: { self: '/similar' },
 })
 
+const externalAlbumGenre = {
+  id: 'synthetic-album-genre',
+  type: 'genres',
+  attributes: { genreName: 'Ambient' },
+}
+const concreteBloom = tidalAlbum('810003', 'Concrete Bloom', '000000000055')
+const externalAlbum = {
+  ...concreteBloom,
+  relationships: {
+    ...concreteBloom.relationships,
+    genres: { data: [{ id: externalAlbumGenre.id, type: 'genres' }] },
+  },
+}
+
 // Albums: one in the library by UPC (13 digits there, 12 here), one on
 // Spotify, one Spotify does not have and one without a barcode.
-const similarAlbums = similar([
+const albumList = similar([
   tidalAlbum('810001', 'Pressure Systems', '000000000031'),
   tidalAlbum('810002', 'Night Shift Utopia', '0000000000048'),
-  tidalAlbum('810003', 'Concrete Bloom', '000000000055'),
+  externalAlbum,
   tidalAlbum('810004', 'Tunnel Vision EP', null),
 ])
+const similarAlbums = {
+  ...albumList,
+  included: [...albumList.included, externalAlbumGenre],
+}
 // Tracks: one in the library by ISRC reference, one whose Spotify tracks
 // include a library track, one on Spotify only and one Spotify lacks.
 const similarTracks = similar([
@@ -197,6 +215,7 @@ const albumSearches = new Map<string, unknown[]>([
         artists: [{ id: spotifyId(901), name: 'Vela Rooms' }],
         images: [{ url: 'https://i.scdn.co/image/fixture48' }],
         total_tracks: 9,
+        genres: [' House ', 'house', 'Deep House'],
       },
     ],
   ],
@@ -312,6 +331,8 @@ beforeEach(async () => {
   mockProviders()
   await databaseClient.delete(schema.scrapeJob)
   await databaseClient.delete(schema.mediaItem)
+  await databaseClient.delete(schema.artist)
+  await databaseClient.delete(schema.tag)
   await databaseClient.delete(schema.spotifyCodeLookup)
   await databaseClient.delete(schema.providerRequestState)
   await databaseClient.delete(schema.providerRequestEvent)
@@ -426,6 +447,36 @@ const searches = () =>
 
 describe('TIDAL similar items in the request, with offline HTTP', () => {
   it('reads similar albums, maps them to the library and Spotify, and keeps the responses', async () => {
+    await databaseClient.insert(schema.tag).values([
+      {
+        id: 'fixture-album-genre',
+        mediaType: 'album',
+        name: 'Synth Pop',
+        kind: 'genre',
+      },
+      {
+        id: 'fixture-hidden-genre',
+        mediaType: 'album',
+        name: 'Hidden Genre',
+        kind: 'genre',
+        hidden: true,
+      },
+      {
+        id: 'fixture-collection-tag',
+        mediaType: 'album',
+        name: 'Do not include',
+        kind: 'general',
+      },
+    ])
+    await databaseClient
+      .insert(schema.mediaItemTag)
+      .values(
+        [
+          'fixture-album-genre',
+          'fixture-hidden-genre',
+          'fixture-collection-tag',
+        ].map((tagId) => ({ mediaItemId: 'album-library', tagId })),
+      )
     const read = await refreshTidalSimilar(
       { kind: 'albums', id: albumId },
       userId,
@@ -439,6 +490,15 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       lookupJob: { status: 'queued' },
     })
     expect(read.items).toHaveLength(4)
+    expect(read.items[0]).toMatchObject({
+      genres: ['Synth Pop'],
+      genreSource: 'library',
+    })
+    expect(read.items[2]).toMatchObject({
+      genres: ['Ambient'],
+      genreSource: 'tidal',
+    })
+    expect(read.items[3]).toMatchObject({ genres: [], genreSource: null })
     await runQueued()
     const result = await getTidalSimilar({ kind: 'albums', id: albumId })
     expect(result.job?.status).toBe('succeeded')
@@ -475,6 +535,11 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       artworkUrl: 'https://i.scdn.co/image/fixture48',
       durationSec: null,
       trackCount: 9,
+      genres: ['House', 'Deep House'],
+    })
+    expect(result.items[1]).toMatchObject({
+      genres: ['House', 'Deep House'],
+      genreSource: 'spotify',
     })
     expect(result.items[2]).toMatchObject({
       url: 'https://tidal.com/browse/album/810003',
@@ -544,6 +609,107 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       spotifyResponses.map(({ capture }) => capture),
     )
     expect(spotifyReplay).toHaveLength(2)
+  }, 30000)
+
+  it('uses exact Spotify album membership and separately identifies artist genres', async () => {
+    await databaseClient.insert(schema.artist).values({
+      id: 'fixture-artist',
+      name: 'Halcyon Grid',
+    })
+    await databaseClient.insert(schema.artistProviderSnapshot).values({
+      id: 'fixture-artist-snapshot',
+      artistId: 'fixture-artist',
+      provider: 'fixture',
+      payload: {},
+      normalizedData: { tags: ['Acid House', 'Not a genre'] },
+    })
+    await databaseClient.insert(schema.artistProviderCurrentState).values({
+      artistId: 'fixture-artist',
+      provider: 'fixture',
+      latestSnapshotId: 'fixture-artist-snapshot',
+    })
+    await databaseClient.insert(schema.tag).values([
+      {
+        id: 'fixture-artist-genre',
+        mediaType: 'album',
+        name: 'Acid House',
+        kind: 'genre',
+      },
+      {
+        id: 'fixture-artist-tag',
+        mediaType: 'album',
+        name: 'Not a genre',
+        kind: 'general',
+      },
+      {
+        id: 'fixture-track-genre',
+        mediaType: 'album',
+        name: 'Deep House',
+        kind: 'subgenre',
+      },
+      {
+        id: 'fixture-unverified-genre',
+        mediaType: 'album',
+        name: 'Unverified',
+        kind: 'genre',
+      },
+    ])
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyAlbumId: spotifyId(48) })
+      .where(eq(schema.libraryTrack.mediaItemId, 'track-library'))
+    await databaseClient.insert(schema.trackTag).values([
+      {
+        mediaItemId: 'track-library',
+        tagId: 'fixture-track-genre',
+        sonovault: true,
+        verified: true,
+      },
+      {
+        mediaItemId: 'track-library',
+        tagId: 'fixture-unverified-genre',
+        sonovault: true,
+        verified: false,
+      },
+    ])
+    await refreshTidalSimilar({ kind: 'albums', id: albumId }, userId)
+    await runQueued()
+    // Lookup results saved before genre hydration have no genres property.
+    await databaseClient
+      .update(schema.spotifyCodeLookup)
+      .set({ result: sql`${schema.spotifyCodeLookup.result} - 'genres'` })
+      .where(eq(schema.spotifyCodeLookup.code, '48'))
+    const result = await getTidalSimilar({ kind: 'albums', id: albumId })
+    expect(result.items[1]).toMatchObject({
+      state: 'spotify',
+      genres: ['Deep House'],
+      genreSource: 'album-tracks',
+      genreArtist: null,
+    })
+    expect(result.items[3]).toMatchObject({
+      genres: ['Acid House'],
+      genreSource: 'artist',
+      genreArtist: { id: 'fixture-artist', name: 'Halcyon Grid' },
+    })
+    // A TIDAL reference without a barcode still marks the suggestion as saved.
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(
+        reference(
+          'fixture-tidal-only',
+          'album-unmatched',
+          'tidal',
+          'album',
+          '810004',
+        ),
+      )
+    const added = await getTidalSimilar({ kind: 'albums', id: albumId })
+    expect(added.items[3]).toMatchObject({
+      state: 'library',
+      library: { id: 'album-unmatched' },
+      genres: ['Acid House'],
+      genreSource: 'artist',
+    })
   }, 30000)
 
   it('chooses Spotify tracks by library, then the earliest release that is not a compilation', async () => {

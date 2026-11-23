@@ -149,11 +149,15 @@ const sonovaultLines = new Map([
     isrc(2),
     sonovaultMatchedLine(
       isrc(2),
-      sonovaultTrackFixture(2, {
-        title: 'Afterhours Telex',
-        duration: TIDAL_DURATION_SEC + 2,
-        isrc: isrc(2),
-      }),
+      {
+        ...sonovaultTrackFixture(2, {
+          title: 'Afterhours Telex',
+          duration: TIDAL_DURATION_SEC + 2,
+          isrc: isrc(2),
+        }),
+        genre: [' House ', 'house'],
+        subgenre: ['Acid House'],
+      },
       sonovaultLinksFixture(2, spotifyId(20)),
     ),
   ],
@@ -175,11 +179,15 @@ const sonovaultLines = new Map([
     isrc(5),
     sonovaultMatchedLine(
       isrc(5),
-      sonovaultTrackFixture(5, {
-        title: 'Quiet Relay',
-        duration: TIDAL_DURATION_SEC,
-        isrc: isrc(5),
-      }),
+      {
+        ...sonovaultTrackFixture(5, {
+          title: 'Quiet Relay',
+          duration: TIDAL_DURATION_SEC,
+          isrc: isrc(5),
+        }),
+        genre: ['Electronic'],
+        subgenre: [],
+      },
       sonovaultLinksFixture(5, spotifyId(50)).filter(
         ({ source }) => source !== 'spotify',
       ),
@@ -444,6 +452,15 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
       durationSec: TIDAL_DURATION_SEC + 2,
       trackCount: null,
     })
+    expect(read.items[1]).toMatchObject({
+      genres: ['House', 'Acid House'],
+      genreSource: 'sonovault',
+    })
+    expect(read.items[2]).toMatchObject({ genres: [], genreSource: null })
+    expect(read.items[4]).toMatchObject({
+      genres: ['Electronic'],
+      genreSource: 'sonovault',
+    })
 
     const tidalJob = await readJob()
     expect(tidalJob).toMatchObject({
@@ -694,7 +711,64 @@ describe('SONO-26: similar tracks mapped to Spotify through Sonovault', () => {
       (await storedLookups()).every(({ source }) => source === 'spotify'),
     ).toBe(true)
     const result = await getTidalSimilar({ kind: 'tracks', id: trackId })
-    expect(result.items[1]?.state).toBe('unsearched')
+    expect(result.items[1]).toMatchObject({
+      state: 'unsearched',
+      genres: [],
+      genreSource: null,
+    })
+    expect(result.items[4]).toMatchObject({ genres: [], genreSource: null })
+  }, 30000)
+
+  it('keeps a Sonovault genre after adding and prefers visible library genres', async () => {
+    await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
+    const newId = 'track-added'
+    await databaseClient.insert(schema.mediaItem).values({
+      id: newId,
+      title: 'Afterhours Telex',
+      slug: newId,
+      mediaType: 'track',
+    })
+    await databaseClient
+      .insert(schema.libraryTrack)
+      .values({ mediaItemId: newId })
+    await databaseClient.insert(schema.providerReference).values({
+      id: 'fixture-added-track-tidal',
+      mediaItemId: newId,
+      provider: 'tidal',
+      referenceType: 'track',
+      externalId: '820002',
+    })
+    const requestCount = request.mock.calls.length
+    const added = await getTidalSimilar({ kind: 'tracks', id: trackId })
+    expect(added.items[1]).toMatchObject({
+      state: 'library',
+      library: { id: newId },
+      genres: ['House', 'Acid House'],
+      genreSource: 'sonovault',
+    })
+    await databaseClient.insert(schema.tag).values({
+      id: 'fixture-track-genre',
+      mediaType: 'album',
+      name: 'West Coast House',
+      kind: 'subgenre',
+    })
+    await databaseClient.insert(schema.trackTag).values({
+      mediaItemId: newId,
+      tagId: 'fixture-track-genre',
+      owner: 'added',
+    })
+    const edited = await getTidalSimilar({ kind: 'tracks', id: trackId })
+    expect(edited.items[1]).toMatchObject({
+      genres: ['West Coast House'],
+      genreSource: 'library',
+    })
+    await databaseClient
+      .update(schema.trackTag)
+      .set({ owner: 'removed' })
+      .where(eq(schema.trackTag.mediaItemId, newId))
+    const removed = await getTidalSimilar({ kind: 'tracks', id: trackId })
+    expect(removed.items[1]).toMatchObject({ genres: [], genreSource: null })
+    expect(request.mock.calls).toHaveLength(requestCount)
   }, 30000)
 
   it('searches Spotify for every suggestion when Sonovault is not configured', async () => {

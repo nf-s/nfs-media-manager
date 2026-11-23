@@ -136,6 +136,7 @@ async function searchAlbum(
     )
   const [album] = albums.items
   if (!album) return null
+  const genres = normalizeSimilarGenres(album.genres ?? [])
   return SpotifyCodeMatchSchema.parse({
     spotifyId: album.id,
     url: `https://open.spotify.com/album/${album.id}`,
@@ -146,7 +147,7 @@ async function searchAlbum(
     artworkUrl: spotifyArtworkUrl(album.images),
     durationSec: null,
     trackCount: album.total_tracks ?? null,
-    genres: normalizeSimilarGenres(album.genres ?? []),
+    ...(genres.length ? { genres } : {}),
   })
 }
 
