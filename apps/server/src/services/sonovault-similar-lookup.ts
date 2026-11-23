@@ -1,9 +1,12 @@
 import { z } from 'zod'
+import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import type { JsonValue } from '@repo/schemas/common'
+import { SONOVAULT_REFRESH_MONTHS } from '@repo/schemas/sonovault'
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   SpotifyCodeMatchSchema,
   TIDAL_SIMILAR_LIMIT,
+  normalizeSimilarGenres,
   type SpotifyCodeMatch,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
@@ -15,11 +18,13 @@ import {
   providerResponseSecretValues,
 } from '@/lib/provider-response-history'
 import {
+  SonovaultBulkResolveResponseSchema,
   resolveSonovaultTracks,
   sonovaultGatedPlugin,
   sonovaultSettings,
   type SonovaultResolveResult,
 } from '@/lib/sonovault-api'
+import { providerResponse } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
@@ -92,6 +97,70 @@ export function similarTrackCheck(
         durationSec: suggestion.durationSec,
       }
     : null
+}
+
+/** Reuse verified records in the saved Similar bulk responses, without a request. */
+export async function readSimilarSonovaultGenres(
+  database: Pick<typeof db, 'select'>,
+  candidates: ReadonlyArray<{
+    suggestion: TidalSuggestion
+    responseIds: readonly string[]
+  }>,
+) {
+  const responseIds = [
+    ...new Set(candidates.flatMap((candidate) => candidate.responseIds)),
+  ]
+  const genres = new Map<string, string[]>()
+  if (!responseIds.length) return genres
+  const cutoff = new Date()
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - SONOVAULT_REFRESH_MONTHS)
+  const rows = await database
+    .select({
+      id: providerResponse.id,
+      text: sql<string | null>`${providerResponse.body}->>'text'`,
+    })
+    .from(providerResponse)
+    .where(
+      and(
+        inArray(providerResponse.id, responseIds),
+        eq(providerResponse.provider, PROVIDER),
+        eq(providerResponse.status, 200),
+        eq(providerResponse.bodyState, 'captured'),
+        gte(providerResponse.receivedAt, cutoff),
+      ),
+    )
+  const lookups = new Map<string, Map<string, SonovaultResolveResult>>()
+  for (const row of rows) {
+    if (!row.text) continue
+    let body: unknown
+    try {
+      body = JSON.parse(row.text)
+    } catch {
+      continue
+    }
+    const parsed = SonovaultBulkResolveResponseSchema.safeParse(body)
+    if (!parsed.success) continue
+    const records = new Map<string, SonovaultResolveResult>()
+    for (const line of parsed.data.results) {
+      const isrc = typeof line.input === 'string' && validIsrc(line.input)
+      if (isrc && line.status === 'matched') records.set(isrc, line)
+    }
+    lookups.set(row.id, records)
+  }
+  for (const { suggestion, responseIds } of candidates) {
+    const check = similarTrackCheck(suggestion)
+    if (!check) continue
+    for (const id of responseIds) {
+      const track = lookups.get(id)?.get(check.code)?.track
+      if (!track || !verifySonovaultRecord(check, track)) continue
+      genres.set(
+        suggestion.tidalId,
+        normalizeSimilarGenres([...track.genre, ...track.subgenre]),
+      )
+      break
+    }
+  }
+  return genres
 }
 
 /**

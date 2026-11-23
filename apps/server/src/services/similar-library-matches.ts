@@ -1,6 +1,9 @@
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import type { TidalSimilarKind } from '@repo/schemas/tidal'
+import {
+  normalizeSimilarGenres,
+  type TidalSimilarKind,
+} from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { upcVariants } from './spotify-code-search'
 
@@ -172,4 +175,71 @@ export async function libraryItemsByTidalId(
             and r.external_id = any(${ids}::text[]) and ${visible('m')}
           order by m.created_at, m.id`)
   return collect(result.rows)
+}
+
+const GenreRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    source: z.enum(['track', 'album', 'member-tracks']),
+    names: z.array(z.string()),
+  }),
+)
+
+/** Read genre tags for the matched library items and exact Spotify album members. */
+export async function librarySimilarGenres(
+  database: Reader,
+  input: {
+    trackIds: readonly string[]
+    albumIds: readonly string[]
+    spotifyAlbumIds: readonly string[]
+  },
+) {
+  const genres = {
+    track: new Map<string, string[]>(),
+    album: new Map<string, string[]>(),
+    'member-tracks': new Map<string, string[]>(),
+  }
+  const { trackIds, albumIds, spotifyAlbumIds } = input
+  if (!trackIds.length && !albumIds.length && !spotifyAlbumIds.length)
+    return genres
+  const exactKinds = sql`('genre', 'subgenre', 'style')`
+  const result = await database.execute(sql`
+    select tt.media_item_id as id, 'track' as source,
+      coalesce(array_agg(distinct t.name order by t.name)
+        filter (where tt.in_browse and not t.hidden), '{}') as names
+    from track_tag tt
+    join tag t on t.id = tt.tag_id
+    where tt.media_item_id = any(${sql.param([...trackIds])}::text[])
+      and (tt.owner = 'removed' or (
+        tt.in_browse and (t.kind in ${exactKinds} or (tt.sonovault and tt.verified))
+      ))
+    group by tt.media_item_id
+    union all
+    select mt.media_item_id, 'album',
+      array_agg(distinct t.name order by t.name)
+    from media_item_tag mt
+    join tag t on t.id = mt.tag_id
+    join media_item m on m.id = mt.media_item_id
+    where mt.media_item_id = any(${sql.param([...albumIds])}::text[])
+      and not t.hidden and ${visible('m')}
+      and (t.kind in ${exactKinds} or exists (
+        select 1 from tag_occurrence o
+        where o.tag_id = t.id and o.media_item_id = mt.media_item_id
+          and o.kind in ${exactKinds}
+      ))
+    group by mt.media_item_id
+    union all
+    select lt.spotify_album_id, 'member-tracks',
+      array_agg(distinct t.name order by t.name)
+    from library_track lt
+    join media_item m on m.id = lt.media_item_id
+    join track_tag tt on tt.media_item_id = lt.media_item_id
+    join tag t on t.id = tt.tag_id
+    where lt.spotify_album_id = any(${sql.param([...spotifyAlbumIds])}::text[])
+      and ${visible('m')} and not t.hidden and tt.in_browse
+      and tt.sonovault and tt.verified
+    group by lt.spotify_album_id`)
+  for (const row of GenreRowsSchema.parse(result.rows))
+    genres[row.source].set(row.id, normalizeSimilarGenres(row.names))
+  return genres
 }

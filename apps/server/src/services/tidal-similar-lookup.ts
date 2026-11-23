@@ -5,6 +5,7 @@ import {
   TidalIdSchema,
   TidalSimilarKindSchema,
   TidalSuggestionSchema,
+  normalizeSimilarGenres,
   type TidalSimilarKind,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
@@ -34,6 +35,31 @@ export type TidalSimilarLookup = z.infer<typeof TidalSimilarLookupSchema>
 const relationship = (kind: TidalSimilarKind) =>
   kind === 'album' ? 'similarAlbums' : 'similarTracks'
 
+const GenreResourceSchema = z.object({
+  id: z.string(),
+  type: z.literal('genres'),
+  attributes: z.object({ genreName: z.string().max(500) }),
+})
+const GenreRelationshipSchema = z.object({
+  data: z
+    .array(z.object({ id: z.string(), type: z.literal('genres') }))
+    .max(100),
+})
+
+function genreNames(
+  resource: TidalAlbumResource | TidalTrackResource,
+  genres: ReadonlyMap<string, string>,
+) {
+  const relationship = GenreRelationshipSchema.safeParse(
+    resource.relationships?.['genres'],
+  )
+  return relationship.success
+    ? normalizeSimilarGenres(
+        relationship.data.data.flatMap(({ id }) => genres.get(id) ?? []),
+      )
+    : []
+}
+
 function artistNames(
   resource: TidalAlbumResource | TidalTrackResource,
   artists: Map<string, TidalArtistResource>,
@@ -50,6 +76,7 @@ function artistNames(
 function albumSuggestion(
   album: TidalAlbumResource,
   artists: Map<string, TidalArtistResource>,
+  genres: ReadonlyMap<string, string>,
 ): TidalSuggestion {
   return TidalSuggestionSchema.parse({
     tidalId: album.id,
@@ -60,12 +87,14 @@ function albumSuggestion(
     durationSec: tidalDurationSec(album.attributes.duration),
     releaseDate: album.attributes.releaseDate?.trim() || null,
     url: tidalUrl('album', album),
+    genres: genreNames(album, genres),
   })
 }
 
 function trackSuggestion(
   track: TidalTrackResource,
   artists: Map<string, TidalArtistResource>,
+  genres: ReadonlyMap<string, string>,
 ): TidalSuggestion {
   return TidalSuggestionSchema.parse({
     tidalId: track.id,
@@ -76,6 +105,7 @@ function trackSuggestion(
     durationSec: tidalDurationSec(track.attributes.duration),
     releaseDate: null,
     url: tidalUrl('track', track),
+    genres: genreNames(track, genres),
   })
 }
 
@@ -107,6 +137,14 @@ export async function lookupTidalSimilar(
   const artists = includedArtists(document.included)
   const albums = includedAlbums(document.included)
   const tracks = includedTracks(document.included)
+  // TIDAL's public token cannot request the genres relationship, but the
+  // documented resource can be read if the response already includes it.
+  const genres = new Map<string, string>()
+  for (const resource of document.included) {
+    const genre = GenreResourceSchema.safeParse(resource)
+    if (genre.success)
+      genres.set(genre.data.id, genre.data.attributes.genreName)
+  }
   const seen = new Set<string>([tidalId])
   const suggestions: TidalSuggestion[] = []
   for (const { id } of document.data) {
@@ -114,8 +152,8 @@ export async function lookupTidalSimilar(
     seen.add(id)
     const album = kind === 'album' ? albums.get(id) : undefined
     const track = kind === 'track' ? tracks.get(id) : undefined
-    if (album) suggestions.push(albumSuggestion(album, artists))
-    else if (track) suggestions.push(trackSuggestion(track, artists))
+    if (album) suggestions.push(albumSuggestion(album, artists, genres))
+    else if (track) suggestions.push(trackSuggestion(track, artists, genres))
     if (suggestions.length >= TIDAL_SIMILAR_LIMIT) break
   }
   return suggestions

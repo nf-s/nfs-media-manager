@@ -4,6 +4,7 @@ import { SpotifyTrackSearchMarketSchema } from '@repo/schemas/spotify-track-sear
 import {
   SpotifyCodeMatchSchema,
   TidalSimilarKindSchema,
+  normalizeSimilarGenres,
   type SpotifyCodeMatch,
 } from '@repo/schemas/tidal'
 import { validIsrc } from '@/lib/isrc'
@@ -145,6 +146,7 @@ async function searchAlbum(
     artworkUrl: spotifyArtworkUrl(album.images),
     durationSec: null,
     trackCount: album.total_tracks ?? null,
+    genres: normalizeSimilarGenres(album.genres ?? []),
   })
 }
 

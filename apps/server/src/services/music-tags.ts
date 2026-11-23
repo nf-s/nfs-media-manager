@@ -2,6 +2,7 @@ import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import type { TagLevel } from '@repo/schemas/browse'
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
+import { normalizeSimilarGenres } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { normalizedTagSql } from '@/lib/tag-sql'
 import { descendantTagNames, tagAncestorKeys } from './tag-hierarchy'
@@ -307,6 +308,57 @@ export function artistTagsForItems(ids: SQL): SQL {
       where c.media_item_id = ${ids}
       group by c.media_item_id, a.name_key
     ) labels group by media_item_id`
+}
+
+/** Visible genre labels for exact billed names, including retained artist names. */
+export async function artistGenresByBilledName(
+  database: Pick<typeof db, 'execute'>,
+  names: readonly string[],
+) {
+  const result = new Map<
+    string,
+    { artist: { id: string; name: string }; genres: string[] }
+  >()
+  if (!names.length) return result
+  const profiles = sql`${currentArtistProfiles}
+    where state.artist_id in (select id from credited)`
+  const rows = z
+    .array(
+      z.object({
+        billed: z.string(),
+        id: z.string(),
+        name: z.string(),
+        genres: z.array(z.string()),
+      }),
+    )
+    .parse(
+      (
+        await database.execute(sql`
+          with credited as materialized (
+            select source.name as billed, target.id, target.name
+            from artist source
+            join artist target on target.id = coalesce(source.merged_into_id, source.id)
+            where source.name = any(${sql.param([...names])}::text[])
+              and target.merged_into_id is null
+          )
+          select c.billed, c.id, c.name,
+            array_agg(distinct p.name order by p.name) as genres
+          from credited c
+          join (${projectedArtistTags(profiles, true)}) p on p.artist_id = c.id
+          where exists (
+            select 1 from tag t
+            where t.media_type = 'album' and t.name = p.name and not t.hidden
+              and t.kind in ('genre', 'subgenre', 'style')
+          )
+          group by c.billed, c.id, c.name`)
+      ).rows,
+    )
+  for (const { billed, id, name, genres } of rows)
+    result.set(billed, {
+      artist: { id, name },
+      genres: normalizeSimilarGenres(genres),
+    })
+  return result
 }
 
 export async function loadArtistTags(

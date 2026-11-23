@@ -14,6 +14,7 @@ import {
   TidalSimilarSourceSchema,
   TidalSuggestionSchema,
   TidalTrackMatchReasonSchema,
+  type SpotifyCodeLookupSource,
   type TidalSimilar,
   type TidalSimilarItem,
   type TidalSimilarJob,
@@ -52,6 +53,7 @@ import {
   type TaskJobResult,
 } from './jobs'
 import { providerOperation } from './manual-add'
+import { artistGenresByBilledName } from './music-tags'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
 import { appendProviderTaskReplayStep } from './provider-task-replay'
@@ -59,11 +61,13 @@ import {
   libraryItemsByCode,
   libraryItemsBySpotifyId,
   libraryItemsByTidalId,
+  librarySimilarGenres,
   type SimilarLibraryItem,
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
 import {
   mapSimilarTracksThroughSonovault,
+  readSimilarSonovaultGenres,
   similarTrackCheck,
 } from './sonovault-similar-lookup'
 import { lookupTidalSimilar } from './tidal-similar-lookup'
@@ -101,6 +105,7 @@ const ReadSourceSchema = z.object({
   tidalId: TidalIdSchema,
   tidalIdSource: TidalIdSourceSchema.default('tidal'),
   tidalIdJobId: z.string().nullable().default(null),
+  sonovault: z.object({ responseId: z.string().optional() }).optional(),
 })
 const StoredItemsSchema = z
   .array(TidalSuggestionSchema)
@@ -233,6 +238,9 @@ async function similarTarget(
     source,
     items: items.success ? items.data : [],
     readAt: target.readAt,
+    sonovaultResponseId: read.success
+      ? (read.data.sonovault?.responseId ?? null)
+      : null,
     readSource:
       target.readAt && read.success
         ? TidalSimilarSourceSchema.parse({
@@ -698,12 +706,17 @@ function stateOf(
   return lookup.spotifyId ? 'spotify' : 'none'
 }
 
+type MappedSimilarItem = TidalSimilarItem & {
+  spotifySource: SpotifyCodeLookupSource | null
+  sonovaultResponseId: string | null
+}
+
 /** The stored suggestions with what each maps to now. */
 async function mapSuggestions(
   database: Reader,
   kind: TidalSimilarKind,
   suggestions: readonly TidalSuggestion[],
-): Promise<TidalSimilarItem[]> {
+): Promise<MappedSimilarItem[]> {
   const keyOf = (suggestion: TidalSuggestion) =>
     suggestion.code ? codeKey(kind, suggestion.code) : null
   const keys = [...new Set(suggestions.flatMap((item) => keyOf(item) ?? []))]
@@ -732,10 +745,97 @@ async function mapSuggestions(
       (lookup?.spotifyId ? bySpotifyId.get(lookup.spotifyId) : undefined)
     return {
       ...suggestion,
+      genres: suggestion.genres ?? [],
+      genreSource: suggestion.genres?.length ? 'tidal' : null,
+      genreArtist: null,
       state: stateOf(library, lookup),
       library: library ?? null,
-      spotify: lookup?.spotifyId && spotify.success ? spotify.data : null,
+      spotify:
+        spotify.success && spotify.data.spotifyId === lookup?.spotifyId
+          ? spotify.data
+          : null,
+      spotifySource: lookup?.source ?? null,
+      sonovaultResponseId:
+        lookup?.source === 'sonovault' ? lookup.responseId : null,
     }
+  })
+}
+
+async function mapSimilarGenres(
+  database: Reader,
+  kind: TidalSimilarKind,
+  items: readonly MappedSimilarItem[],
+  readResponseId: string | null,
+): Promise<TidalSimilarItem[]> {
+  const trackIds: string[] = []
+  const albumIds: string[] = []
+  const spotifyAlbumIds: string[] = []
+  const billedArtists: string[] = []
+  const sonovaultCandidates = []
+  const spotifyAlbumId = (item: MappedSimilarItem) =>
+    item.spotify?.spotifyId ?? item.library?.spotifyId
+  for (const item of items) {
+    if (kind === 'track') {
+      if (item.library) {
+        trackIds.push(item.library.id)
+        if (item.library.album) albumIds.push(item.library.album.id)
+      }
+      if (!item.genres.length) {
+        const responseIds = [item.sonovaultResponseId, readResponseId].filter(
+          (id) => id !== null,
+        )
+        if (responseIds.length)
+          sonovaultCandidates.push({ suggestion: item, responseIds })
+      }
+    } else {
+      if (item.library) albumIds.push(item.library.id)
+      if (!item.genres.length && !item.spotify?.genres?.length) {
+        const id = spotifyAlbumId(item)
+        if (id) spotifyAlbumIds.push(id)
+        const [artist] = item.artists
+        if (artist && item.artists.length === 1) billedArtists.push(artist)
+      }
+    }
+  }
+  const [library, sonovault, artistGenres] = await Promise.all([
+    librarySimilarGenres(database, { trackIds, albumIds, spotifyAlbumIds }),
+    readSimilarSonovaultGenres(database, sonovaultCandidates),
+    artistGenresByBilledName(database, billedArtists),
+  ])
+  return items.map((item) => {
+    const direct = item.library ? library[kind].get(item.library.id) : undefined
+    if (direct?.length)
+      return { ...item, genres: direct, genreSource: 'library' }
+    if (item.genres.length) return item
+    if (kind === 'track') {
+      const external = sonovault.get(item.tidalId)
+      // A hidden or owner-removed library tag stays hidden when a provider
+      // response has the same recording's genres.
+      if (external?.length && direct === undefined)
+        return { ...item, genres: external, genreSource: 'sonovault' }
+      const album =
+        item.library?.album && library.album.get(item.library.album.id)
+      if (album?.length)
+        return { ...item, genres: album, genreSource: 'track-album' }
+      return item
+    }
+    if (item.spotify?.genres?.length)
+      return { ...item, genres: item.spotify.genres, genreSource: 'spotify' }
+    const id = spotifyAlbumId(item)
+    const members = id ? library['member-tracks'].get(id) : undefined
+    if (members?.length)
+      return { ...item, genres: members, genreSource: 'album-tracks' }
+    const [artist] = item.artists
+    const profile =
+      artist && item.artists.length === 1 ? artistGenres.get(artist) : undefined
+    return profile?.genres.length
+      ? {
+          ...item,
+          genres: profile.genres,
+          genreSource: 'artist',
+          genreArtist: profile.artist,
+        }
+      : item
   })
 }
 
@@ -745,7 +845,7 @@ export async function findStoredTidalSuggestion(
   kind: TidalSimilarKind,
   sourceId: string,
   tidalId: string,
-): Promise<TidalSimilarItem | null | undefined> {
+): Promise<MappedSimilarItem | null | undefined> {
   const target = await similarTarget(database, kind, sourceId)
   if (!target) return undefined
   const suggestion = target.items.find((item) => item.tidalId === tidalId)
@@ -768,7 +868,9 @@ async function readTidalSimilar(
       [SPOTIFY_SIMILAR_LOOKUP_TASK, SONOVAULT_SIMILAR_LOOKUP_TASK],
       id,
     ),
-    mapSuggestions(db, kind, target.items),
+    mapSuggestions(db, kind, target.items).then((mapped) =>
+      mapSimilarGenres(db, kind, mapped, target.sonovaultResponseId),
+    ),
   ])
   const unmatched =
     kind === 'track' && target.tidalId === null

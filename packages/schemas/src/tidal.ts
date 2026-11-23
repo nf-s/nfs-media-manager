@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { JobStatusSchema } from './job'
+import { normalizeTagName } from './tags'
 
 /** The task that matches one library track to TIDAL by its ISRC. */
 export const TIDAL_TRACK_MATCH_TASK = 'tidal-track-match'
@@ -234,6 +235,22 @@ export const TidalSimilarParamsSchema = z.object({
   id: trackId,
 })
 
+const SIMILAR_GENRE_LIMIT = 100
+export const SimilarGenreNamesSchema = z.array(name).max(SIMILAR_GENRE_LIMIT)
+
+/** Keep the spelling and order from the source, with one entry per name. */
+export function normalizeSimilarGenres(values: readonly string[]): string[] {
+  const genres = new Map<string, string>()
+  for (const value of values) {
+    const genre = name.safeParse(value)
+    if (!genre.success) continue
+    const key = normalizeTagName(genre.data)
+    if (!genres.has(key)) genres.set(key, genre.data)
+    if (genres.size === SIMILAR_GENRE_LIMIT) break
+  }
+  return [...genres.values()]
+}
+
 /** One similar album or track as TIDAL returned it, in TIDAL's order. */
 export const TidalSuggestionSchema = z.object({
   tidalId: TidalIdSchema,
@@ -247,6 +264,8 @@ export const TidalSuggestionSchema = z.object({
   /** Albums only. */
   releaseDate: z.string().max(40).nullable(),
   url: z.url({ protocol: /^https$/ }).max(2000),
+  /** The genres included in TIDAL's response, when available. */
+  genres: SimilarGenreNamesSchema.optional(),
 })
 export type TidalSuggestion = z.infer<typeof TidalSuggestionSchema>
 
@@ -268,6 +287,8 @@ export const SpotifyCodeMatchSchema = z.object({
   durationSec: z.number().int().nonnegative().nullable(),
   /** Albums only. */
   trackCount: z.number().int().nonnegative().nullable(),
+  /** Album genres in Spotify's catalogue response, when available. */
+  genres: SimilarGenreNamesSchema.optional(),
 })
 export type SpotifyCodeMatch = z.infer<typeof SpotifyCodeMatchSchema>
 
@@ -293,7 +314,21 @@ export const TidalSuggestionStateSchema = z.enum([
 ])
 export type TidalSuggestionState = z.infer<typeof TidalSuggestionStateSchema>
 
+export const SimilarGenreSourceSchema = z.enum([
+  'library',
+  'sonovault',
+  'tidal',
+  'spotify',
+  'album-tracks',
+  'track-album',
+  'artist',
+])
+export type SimilarGenreSource = z.infer<typeof SimilarGenreSourceSchema>
+
 export const TidalSimilarItemSchema = TidalSuggestionSchema.extend({
+  genres: SimilarGenreNamesSchema.default([]),
+  genreSource: SimilarGenreSourceSchema.nullable().default(null),
+  genreArtist: z.object({ id, name }).nullable().default(null),
   state: TidalSuggestionStateSchema,
   /** The library album or track, for `library`. */
   library: z
