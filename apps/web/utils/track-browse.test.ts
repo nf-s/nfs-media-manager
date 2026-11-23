@@ -6,6 +6,8 @@ import {
   defaultTrackColumns,
   formatTrackDuration,
   loadTrackTitleMatches,
+  orderedTrackBrowseFields,
+  orderedTrackMatchBrowseFields,
   parseTrackFilters,
   trackTitleSuggestions,
   tracksHref,
@@ -26,6 +28,28 @@ test('source and match columns default to hidden while source filters still work
     { field: 'source', value: 'Last.fm' },
     { field: 'source', value: 'Spotify playlists', mode: 'exclude' },
   ])
+})
+
+test('the Provider column follows Spotify match and is hidden by default', () => {
+  assert.ok(!defaultTrackColumns.includes('provider'))
+  const keys = orderedTrackBrowseFields.map((field) => field.key)
+  assert.equal(keys.indexOf('provider'), keys.indexOf('spotifyMatch') + 1)
+  assert.deepEqual(
+    orderedTrackBrowseFields.find((field) => field.key === 'provider'),
+    {
+      key: 'provider',
+      label: 'Provider',
+      type: 'text',
+      filterable: true,
+    },
+  )
+  // Matches also has Provider match, the evidence on each entry.
+  assert.deepEqual(
+    orderedTrackMatchBrowseFields
+      .filter((field) => ['provider', 'matchProvider'].includes(field.key))
+      .map((field) => field.label),
+    ['Provider ID', 'Provider match'],
+  )
 })
 
 test('playlist filters added from the table intersect', () => {

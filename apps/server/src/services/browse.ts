@@ -87,6 +87,9 @@ import {
   albumTrackDurationExpression,
   manyLastfmTrackSources,
   redundantLastfmTrackIds,
+  trackIdsWithProvider,
+  trackProviderRows,
+  trackProvidersExpression,
   trackSourcesExpression,
   trackSpotifyMatchExpression,
   trackTitleVisibility,
@@ -290,6 +293,11 @@ function trackValueExpression(key: string): SQL | null {
       )
     case 'spotifyMatch':
       return sql`to_jsonb(${trackSpotifyMatchExpression(sql`${libraryTrack.spotifyTrackId}`, sql`${mediaItem.sourceLabel}`, true)})`
+    case 'provider':
+      return trackProvidersExpression(
+        sql`${mediaItem.id}`,
+        sql`${libraryTrack.spotifyTrackId}`,
+      )
     case 'album':
       return sql`to_jsonb(coalesce(${libraryTrack.albumName}, (select am.title from media_item am where am.id = ${libraryTrack.albumMediaItemId})))`
     case 'albumLink':
@@ -434,6 +442,14 @@ function tagLocationMatch(
   return sql`coalesce(${trackId} in (${trackIdsWithTag(normalizeTagName(value), levels)}), false)`
 }
 
+/**
+ * Tracks a provider knows, as one hashed set of IDs tested on the table the
+ * sort order walks (see trackTagMatch).
+ */
+function trackProviderMatch(value: string, trackId: SQL): SQL {
+  return sql`coalesce(${trackId} in (${trackIdsWithProvider(value)}), false)`
+}
+
 function matchesValue(
   key: string,
   value: string,
@@ -473,6 +489,8 @@ function matchesValue(
     return sql`${mediaType === 'track' ? libraryTrack.mediaItemId : mediaItem.id} in (${mediaIdsWithArtistTag(normalizeTagName(value))})`
   if (mediaType === 'track' && key === 'trackTag')
     return trackTagMatch(value, sql`${libraryTrack.mediaItemId}`)
+  if (mediaType === 'track' && key === 'provider')
+    return trackProviderMatch(value, sql`${libraryTrack.mediaItemId}`)
   if (mediaType === 'track' && (key === 'genre' || key === 'albumTag'))
     return tagLocationMatch(
       value,
@@ -605,7 +623,9 @@ function browseTextSearchIds(
           field.key === 'genre'
         ) &&
         // Keys are short codes such as 1A that ordinary words would match.
-        !(mediaType === 'track' && field.key === 'musicalKey'),
+        !(mediaType === 'track' && field.key === 'musicalKey') &&
+        // A provider is chosen as a filter; its name is not text of a track.
+        !(mediaType === 'track' && field.key === 'provider'),
     )
     .map((field) => {
       if (field.key === 'artistTag' && mediaType !== 'film') {
@@ -1518,13 +1538,15 @@ async function browseQueries(
       ? (filter) =>
           filter.field === 'trackTag'
             ? trackTagMatch(filter.value, sql`${mediaItem.id}`)
-            : filter.field === 'genre' || filter.field === 'albumTag'
-              ? tagLocationMatch(
-                  filter.value,
-                  filter.field === 'albumTag' ? ['album'] : tagLevels,
-                  sql`${mediaItem.id}`,
-                )
-              : undefined
+            : filter.field === 'provider'
+              ? trackProviderMatch(filter.value, sql`${mediaItem.id}`)
+              : filter.field === 'genre' || filter.field === 'albumTag'
+                ? tagLocationMatch(
+                    filter.value,
+                    filter.field === 'albumTag' ? ['album'] : tagLevels,
+                    sql`${mediaItem.id}`,
+                  )
+                : undefined
       : undefined,
   )
   const orderRows =
@@ -1800,9 +1822,10 @@ async function browseQueries(
     // Keep positive artist tags as a set of keys. A broad tag must not be
     // nested-loop joined against the date index, and release ordering only
     // needs to resolve the primary date ties at the page boundary. Tags,
-    // Track tags and Album tags filters in any mode take the same path: their
-    // hashed set is tested on the date index, and the visibility probe below
-    // keeps media_item a lookup per walked track instead of a materialised scan.
+    // Track tags, Album tags and Provider filters in any mode take the same
+    // path: their hashed set is tested on the date index, and the visibility
+    // probe below keeps media_item a lookup per walked track instead of a
+    // materialised scan.
     const firstArtistTagPage =
       mediaType === 'track' &&
       offset === 0 &&
@@ -1814,6 +1837,7 @@ async function browseQueries(
           chip.field === 'trackTag' ||
           chip.field === 'genre' ||
           chip.field === 'albumTag' ||
+          chip.field === 'provider' ||
           (chip.field === 'artistTag' && chip.mode !== 'exclude'),
       )
     const firstArtistTagWhere = firstArtistTagPage
@@ -2248,7 +2272,7 @@ function browseOrderRows(
     key === 'collection' ||
     key === 'albumTag' ||
     (mediaType === 'film' && (key === 'genre' || key === 'keyword')) ||
-    (mediaType === 'track' && key === 'source')
+    (mediaType === 'track' && (key === 'source' || key === 'provider'))
   )
     return sql`select id as media_item_id, min(value) as name from (
       ${textRows(key, mediaType, { includeArchived: true })}
@@ -2431,6 +2455,8 @@ function textRows(
       select media_item.id, ${trackAlbumLinkLabels.unlinked}::text as value from media_item left join library_track lt on lt.media_item_id = media_item.id where ${visible} and lt.album_media_item_id is null`
   if (mediaType === 'track' && key === 'musicalKey')
     return verifiedTrackKeyRows(visible)
+  if (mediaType === 'track' && key === 'provider')
+    return trackProviderRows(visible)
   if (mediaType === 'track' && key === 'spotifyMatch')
     return sql`select media_item.id,
       ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`media_item.source_label`, true)} as value

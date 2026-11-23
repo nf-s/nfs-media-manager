@@ -157,3 +157,42 @@ export function trackSpotifyMatchExpression(
     when ${sourceLabel} = 'spotify-search' then ${labels ? trackSpotifyMatchLabels['spotify-search'] : 'spotify-search'}::text
     else ${labels ? trackSpotifyMatchLabels['album-track-list'] : 'album-track-list'}::text end`
 }
+
+// A provider knows a track when it has given the track an ID of its own. An
+// ISRC a provider reported is a fact about the recording, not such an ID.
+const trackProviderReferences = sql`from provider_reference r
+  where r.reference_type <> 'isrc'`
+
+/**
+ * The providers that know a track: each provider with an ID for it, and
+ * Spotify when the track has a Spotify track ID, which the track itself holds.
+ */
+export function trackProvidersExpression(id: SQL, spotifyTrackId: SQL) {
+  return sql`coalesce((select jsonb_agg(p.value order by p.value) from (
+    select r.provider as value ${trackProviderReferences} and r.media_item_id = ${id}
+    union
+    select 'spotify'::text where ${spotifyTrackId} is not null
+  ) p), '[]'::jsonb)`
+}
+
+/** Browse values for suggestions and sorting: a row per track and provider. */
+export function trackProviderRows(visible: SQL) {
+  return sql`select media_item.id, r.provider as value from media_item
+      join provider_reference r on r.media_item_id = media_item.id
+      where ${visible} and r.reference_type <> 'isrc'
+    union all
+    select media_item.id, 'spotify'::text as value from media_item
+      join library_track lt on lt.media_item_id = media_item.id
+      where ${visible} and lt.spotify_track_id is not null`
+}
+
+/** The tracks one provider knows, as one set of IDs. */
+export function trackIdsWithProvider(provider: string) {
+  const name = provider.toLowerCase()
+  const referenced = sql`select r.media_item_id ${trackProviderReferences}
+    and lower(r.provider) = ${name}`
+  return name === 'spotify'
+    ? sql`${referenced} union all
+      select lt.media_item_id from library_track lt where lt.spotify_track_id is not null`
+    : referenced
+}

@@ -32,6 +32,7 @@ import { ServerError } from '@/lib/error'
 import { measureRequestPhase } from '@/lib/request-log'
 import {
   albumTrackDurationExpression,
+  trackProvidersExpression,
   trackSourcesExpression,
   trackSpotifyMatchExpression,
 } from './track-values'
@@ -109,6 +110,7 @@ const TrackRowsSchema = z.array(
     date_added: z.string().nullable(),
     spotify_track_id: z.string().nullable(),
     spotify_match: TrackSpotifyMatchSchema,
+    providers: z.array(z.string()),
     spotify_url: z.string().nullable(),
     isrc: z.string().nullable(),
     scrobble_count: z.number().int(),
@@ -147,6 +149,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
           ${verifiedTrackKey(sql`lt.media_item_id`)} as musical_key,
           lt.spotify_track_id,
           ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`)} as spotify_match,
+          ${trackProvidersExpression(sql`mi.id`, sql`lt.spotify_track_id`)} as providers,
           ${isoTimestamp(sql`lt.date_added`)} as date_added,
           lt.spotify_url, lt.isrc, lt.scrobble_count,
           ${isoTimestamp(sql`lt.last_listened_at`)} as last_listened_at
@@ -189,6 +192,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         dateAdded: row.date_added,
         spotifyTrackId,
         spotifyMatch: row.spotify_match,
+        providers: row.providers,
         spotifyUrl:
           row.spotify_url ??
           (spotifyTrackId

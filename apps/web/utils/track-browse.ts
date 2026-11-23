@@ -25,6 +25,7 @@ export const trackFieldOrder = [
   'albumLink',
   'source',
   'spotifyMatch',
+  'provider',
   'durationSec',
   'bpm',
   'musicalKey',

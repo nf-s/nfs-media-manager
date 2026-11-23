@@ -183,6 +183,8 @@ export const TrackListItemSchema = z.object({
   spotifyTrackId: z.string().nullable(),
   /** Required evidence for the effective ID; never inferred from listening links. */
   spotifyMatch: TrackSpotifyMatchSchema,
+  /** Providers with an ID for the track, Spotify among them when it has one. */
+  providers: z.array(z.string()).default([]),
   spotifyUrl: z.string().url().nullable(),
   isrc: z.string().nullable(),
   scrobbles: z.number().int().nonnegative(),
@@ -491,6 +493,7 @@ export function getTrackBrowseValues(item: TrackListItem): BrowseValues {
     playlist: item.playlists.map((playlist) => playlist.name),
     source: item.sources.map((source) => trackSourceLabels[source]),
     spotifyMatch: trackSpotifyMatchLabels[item.spotifyMatch],
+    provider: item.providers,
     genre: musicDisplayTags(
       item.albumTags,
       item.artistTags,

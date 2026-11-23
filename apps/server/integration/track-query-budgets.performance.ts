@@ -2512,6 +2512,88 @@ it('bounds Track pages filtered, sorted and hydrated by Track tags', async () =>
   }
 })
 
+it('bounds Track pages filtered and sorted by provider', async () => {
+  const { queryBrowsePageIds } = await import('@/services/browse')
+  // An ISRC on every track, a TIDAL track ID on two in three, a Sonovault
+  // match on every tenth and TIDAL and Sonovault IDs on every album: the
+  // ISRC and album rows are read past, never matched.
+  await pool.query(`
+    insert into provider_reference (id, media_item_id, provider, reference_type, external_id)
+    select 'pref-isrc-' || n, 'track-' || n, 'spotify', 'isrc', 'ZZFIX' || n
+    from generate_series(1, 20000) n
+    union all
+    select 'pref-tidal-' || n, 'track-' || n, 'tidal', 'track', n::text
+    from generate_series(1, 20000) n where n % 3 <> 0
+    union all
+    select 'pref-sonovault-' || n, 'track-' || n, 'sonovault', 'sonovault-track', 'sv-' || n
+    from generate_series(10, 20000, 10) n
+    union all
+    select 'pref-album-' || provider || '-' || n, 'album-' || n, provider, 'album', provider || n
+    from generate_series(1, 1000) n cross join (values ('tidal'), ('sonovault')) p(provider);
+  `)
+  await pool.query('vacuum analyze provider_reference')
+  const page = (input: Record<string, unknown>) =>
+    queryBrowsePageIds('track', TrackQuerySchema.parse({ size: 100, ...input }))
+  const providerFilter = (value: string, mode?: string) =>
+    JSON.stringify([{ field: 'provider', value, ...(mode ? { mode } : {}) }])
+  try {
+    // 1.5 times the shared blocks measured when these workloads were added.
+    const budgets: Record<string, number> = {
+      'tidal title': 79_600,
+      'tidal exclude title': 39_700,
+      'sonovault title': 18_400,
+      'sonovault exclude title': 100_900,
+      'tidal added': 20_800,
+      'tidal exclude added': 5_000,
+      'sonovault added': 20_800,
+      'sonovault exclude added': 5_000,
+    }
+    for (const provider of ['tidal', 'sonovault'])
+      for (const mode of ['required', 'exclude'])
+        for (const [sort, sortBy, direction] of [
+          ['title', 'title', 'asc'],
+          ['added', 'dateAdded', 'desc'],
+        ] as const) {
+          const workload = `${provider}${mode === 'exclude' ? ' exclude' : ''} ${sort}`
+          await checkBudget(
+            `Provider ${workload} page`,
+            budgets[workload] ?? 0,
+            1,
+            async () => {
+              const result = await page({
+                sortBy,
+                direction,
+                filters: providerFilter(provider, mode),
+              })
+              expect(result.ids).toHaveLength(100)
+            },
+            10_000,
+          )
+        }
+    // A first page sorted by provider resolves every track's providers, as
+    // the Duration sort resolves every track's release order.
+    const durationBlocks = await sharedBlocksOf(() =>
+      page({ sortBy: 'durationSec', direction: 'asc' }),
+    )
+    process.stdout.write(
+      `Provider sort page: a Duration sort reads ${durationBlocks} shared blocks\n`,
+    )
+    for (const direction of ['asc', 'desc'])
+      await checkBudget(
+        `Provider sort ${direction} page`,
+        Math.ceil(durationBlocks * 1.05),
+        1,
+        async () => {
+          const result = await page({ sortBy: 'provider', direction })
+          expect(result.ids).toHaveLength(100)
+        },
+      )
+  } finally {
+    await pool.query("delete from provider_reference where id like 'pref-%'")
+    await pool.query('vacuum analyze provider_reference')
+  }
+})
+
 /**
  * Stage 3 of track tags: tags read from the track, its album or its artists.
  * About two own tags on each of 18,000 tracks (Sonovault rows, a tenth

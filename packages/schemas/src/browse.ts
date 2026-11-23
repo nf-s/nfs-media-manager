@@ -193,6 +193,7 @@ export const trackBrowseFields: BrowseField[] = [
   text('title', 'Title'),
   text('source', 'Source'),
   text('spotifyMatch', 'Spotify match'),
+  text('provider', 'Provider'),
   text('artist', 'Artists'),
   text('album', 'Album'),
   text('playlist', 'Playlists'),

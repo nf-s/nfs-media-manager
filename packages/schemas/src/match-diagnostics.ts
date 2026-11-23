@@ -128,10 +128,14 @@ const diagnosticText = (key: string, label: string): BrowseField => ({
 })
 
 export const trackMatchDiagnosticFields: BrowseField[] = [
+  // Beside Provider match, which is evidence on the entry, the providers
+  // with an ID for the track read as Provider ID.
   ...trackBrowseFields.map((field) =>
     field.key === 'spotifyMatch'
       ? { ...field, label: 'Spotify match on this entry' }
-      : field,
+      : field.key === 'provider'
+        ? { ...field, label: 'Provider ID' }
+        : field,
   ),
   diagnosticText('matchProvider', 'Provider match'),
   diagnosticText('spotifyName', 'Spotify track name'),

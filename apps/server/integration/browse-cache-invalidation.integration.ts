@@ -207,6 +207,41 @@ describe('stored Track Browse invalidation', () => {
     await expectMarkers(0)
   })
 
+  describe('provider references', () => {
+    beforeEach(async () => {
+      await pool.query(`
+        insert into provider_reference (id, media_item_id, provider, reference_type, external_id)
+        values ('track-reference', 'track', 'tidal', 'track', '1000001'),
+          ('release-reference', 'release', 'tidal', 'album', '2000001'),
+          ('film-reference', 'film', 'tmdb', 'tmdb', '3000001');
+      `)
+      await clearMarkers()
+    })
+
+    it.each([
+      "insert into provider_reference (id, media_item_id, provider, reference_type, external_id) values ('new', 'release', 'sonovault', 'album', 'sv-1')",
+      "insert into provider_reference (id, media_item_id, provider, reference_type, external_id) values ('new', 'film', 'imdb', 'imdb', 'tt0000001')",
+      "update provider_reference set external_id = '1000002', is_primary = true, metadata = '{}' where id = 'track-reference'",
+      "update provider_reference set provider = 'discogs' where id = 'release-reference'",
+      "delete from provider_reference where id = 'film-reference'",
+    ])('preserves both caches for %s', async (statement) => {
+      await pool.query(statement)
+      await expectMarkers(0)
+    })
+
+    it.each([
+      "insert into provider_reference (id, media_item_id, provider, reference_type, external_id) values ('new', 'track', 'sonovault', 'sonovault-track', 'sv-1')",
+      "update provider_reference set provider = 'sonovault' where id = 'track-reference'",
+      "update provider_reference set media_item_id = 'track' where id = 'release-reference'",
+      "update provider_reference set media_item_id = 'release' where id = 'track-reference'",
+      "delete from provider_reference where id = 'track-reference'",
+      'truncate provider_reference',
+    ])('marks only facets for %s', async (statement) => {
+      await pool.query(statement)
+      await expectMarkers(1, 0)
+    })
+  })
+
   it('marks only recording order for changed scrobble counts', async () => {
     await pool.query(
       "update library_track set scrobble_count = 1 where media_item_id = 'track'",
