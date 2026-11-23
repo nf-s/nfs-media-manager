@@ -2293,6 +2293,64 @@ async function main() {
     await credit(track.id, [track.artist])
   }
 
+  // Saved Similar reads, including one Spotify match and one TIDAL-only track.
+  const similarKinds: ('album' | 'track')[] = ['album', 'track']
+  for (const kind of similarKinds) {
+    const album = kind === 'album'
+    const parent = album ? albums[0] : standalone[2]
+    if (!parent) continue
+    const tidalId = album ? '930010' : '930020'
+    const title = album ? 'Evening Transmissions' : 'Tidal Basin Edit'
+    const artists = ['Halden Row']
+    const code = album ? '9123456789012' : null
+    await db.insert(schema.providerReference).values({
+      id: `pv-similar-${kind}`,
+      mediaItemId: parent.id,
+      provider: 'tidal',
+      referenceType: kind,
+      externalId: album ? '930001' : '930002',
+    })
+    await db.insert(schema.tidalSimilar).values({
+      mediaItemId: parent.id,
+      kind,
+      readAt: daysAgo(1),
+      items: [
+        {
+          tidalId,
+          title,
+          artists,
+          code,
+          version: null,
+          url: `https://tidal.com/browse/${kind}/${tidalId}`,
+          durationSec: album ? null : 263,
+          releaseDate: album ? '2025-10-04' : null,
+          genres: album ? [] : ['Deep House'],
+        },
+      ],
+    })
+    if (code) {
+      const id = spotifyId('similar-album')
+      await db.insert(schema.spotifyCodeLookup).values({
+        codeType: 'upc',
+        code,
+        spotifyId: id,
+        searchedAt: daysAgo(1),
+        result: {
+          spotifyId: id,
+          url: `https://open.spotify.com/album/${id}`,
+          title,
+          artists,
+          albumName: null,
+          spotifyAlbumId: null,
+          artworkUrl: null,
+          durationSec: null,
+          trackCount: 8,
+          genres: ['Ambient', 'Dub'],
+        },
+      })
+    }
+  }
+
   // TIDAL track matches for the Similar tab: one left two TIDAL tracks for
   // review, and TIDAL had no track for another's ISRC. The rest have no ISRC.
   const tidalMatches = [

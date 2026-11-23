@@ -1326,7 +1326,22 @@ a:focus-visible > .ds-logo[data-none] {
     );
 }
 .ds-list[data-compact] .ds-row[data-action] {
-  grid-template-columns: auto minmax(0, 1fr) auto var(--ds-h-xs);
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(
+      var(--ds-h-xs),
+      max-content
+    );
+}
+.ds-list:has(> .ds-suggestion) {
+  container-type: inline-size;
+}
+@container (max-width: 480px) {
+  .ds-list[data-compact] .ds-suggestion[data-action] {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: var(--ds-2);
+  }
+  .ds-suggestion > .ds-actions {
+    grid-column: 2 / -1;
+  }
 }
 .ds-list[data-compact] .ds-row-tags,
 .ds-list[data-compact] .ds-row-meta {

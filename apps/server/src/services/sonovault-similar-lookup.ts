@@ -7,6 +7,7 @@ import {
   SpotifyCodeMatchSchema,
   TIDAL_SIMILAR_LIMIT,
   normalizeSimilarGenres,
+  tidalSuggestionTitle,
   type SpotifyCodeMatch,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
@@ -79,12 +80,6 @@ type Lookup =
       creditsRemaining: number
     }
 
-/** A suggestion's title with its version, as a library title would read. */
-const suggestionTitle = (suggestion: TidalSuggestion) =>
-  suggestion.version && !suggestion.title.includes(suggestion.version)
-    ? `${suggestion.title} (${suggestion.version})`
-    : suggestion.title
-
 /** What a similar track's Sonovault record is checked against (SONO-08). */
 export function similarTrackCheck(
   suggestion: TidalSuggestion,
@@ -93,7 +88,7 @@ export function similarTrackCheck(
   return code
     ? {
         code,
-        title: suggestionTitle(suggestion),
+        title: tidalSuggestionTitle(suggestion),
         durationSec: suggestion.durationSec,
       }
     : null

@@ -21,9 +21,9 @@ export const suggestionPlaceLabels: Record<SuggestionPlace, string> = {
 /**
  * One similar album or track in a compact `List`. Its second line starts
  * with where it can be played, then `details` (artists, then the year or
- * length). In the library the title opens the item and there is no `open`
- * link; otherwise the title is text and `open` is a `SuggestionLink` to
- * Spotify, or to the source without a Spotify match. Leave `play` out where
+ * length), followed by available genre badges. In the library the title
+ * opens the item. External suggestions have their service link and add
+ * button in the trailing actions. Leave `play` out where
  * the suggestion cannot be played: its slot is kept so titles line up.
  */
 export function SuggestionRow({
@@ -31,26 +31,31 @@ export function SuggestionRow({
   thumb,
   title,
   details,
+  badges,
   play,
-  open,
+  actions,
 }: {
   place: SuggestionPlace
   thumb: ReactNode
   title: ReactNode
   details: readonly (string | null | undefined)[]
+  badges?: ReactNode
   play?: ReactNode
-  open?: ReactNode
+  actions?: ReactNode
 }) {
   return (
     <ListRow
+      className="ds-suggestion"
       thumb={thumb}
       title={title}
       by={[suggestionPlaceLabels[place], ...details]
         .filter((part) => part)
         .join(' · ')}
       play={play}
-      action={open ?? null}
-    />
+      action={actions}
+    >
+      {badges}
+    </ListRow>
   )
 }
 

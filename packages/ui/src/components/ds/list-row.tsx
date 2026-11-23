@@ -11,6 +11,7 @@ export function ListRow({
   thumb,
   title,
   by,
+  children,
   play,
   tags,
   meta,
@@ -43,6 +44,7 @@ export function ListRow({
       <div className="ds-row-main">
         {title}
         <span className="ds-row-by">{by}</span>
+        {children}
       </div>
       {play ?? <span />}
       <div className="ds-row-tags">{tags}</div>

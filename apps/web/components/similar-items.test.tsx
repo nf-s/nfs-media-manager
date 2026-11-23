@@ -7,6 +7,7 @@ import {
   TidalSimilarItemSchema,
   TidalSimilarSchema,
   type TidalSimilar,
+  type TidalSimilarItem,
   type TidalSimilarUnmatched,
 } from '@repo/schemas/tidal'
 import { TrackDetailSchema } from '@repo/schemas/tracks'
@@ -145,6 +146,53 @@ test('each suggestion says where it plays and links where it opens', () => {
     html,
     /Not on Spotify · Example artist · 2023<\/span><\/div><span><\/span>/,
   )
+})
+
+test('every external album and track offers Add to Library beside its service link', () => {
+  const kinds: TidalSimilar['kind'][] = ['album', 'track']
+  for (const kind of kinds) {
+    const html = body({ kind })
+    assert.equal(html.match(/>Add to Library<\/button>/g)?.length, 3)
+    for (const item of items) {
+      const action = `aria-label="Add to Library · ${item.title}"`
+      if (item.library) {
+        assert.ok(!html.includes(action))
+      } else {
+        const url = item.spotify?.url ?? item.url
+        const link = html.indexOf(`href="${url}"`)
+        assert.ok(link >= 0)
+        assert.match(
+          html.slice(link, html.indexOf('</button>', link)),
+          new RegExp(action),
+        )
+      }
+    }
+  }
+})
+
+test('similar details show available genre badges and identify an album or track fallback', () => {
+  const examples: [
+    TidalSimilar['kind'],
+    TidalSimilarItem['genreSource'],
+    string,
+  ][] = [
+    ['album', 'album-tracks', 'Track genres'],
+    ['track', 'track-album', 'Album genres'],
+  ]
+  for (const [kind, source, label] of examples) {
+    const item = suggestion('100005', 'none', 'External suggestion')
+    const html = body({
+      kind,
+      items: [{ ...item, genreSource: source, genres: ['Ambient', 'Dub'] }],
+    })
+    assert.match(
+      html,
+      new RegExp(`aria-label="${label} for External suggestion"`),
+    )
+    assert.match(html, /class="ds-pill-label">Ambient</)
+    assert.match(html, /class="ds-pill-label">Dub</)
+    assert.doesNotMatch(body({ kind, items: [item] }), /class="ds-pills"/)
+  }
 })
 
 test('the counts say which TIDAL ID the list was read with', () => {

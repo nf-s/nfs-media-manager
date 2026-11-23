@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import {
+  TidalSimilarAddResultSchema,
   TidalSimilarSchema,
+  tidalSuggestionTitle,
   type TidalSimilar,
   type TidalSimilarItem,
   type TidalSimilarJob,
@@ -14,6 +16,7 @@ import {
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { List, RowTitle } from '@repo/ui/components/ds/list-row'
+import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { PlayPair } from '@repo/ui/components/ds/play'
 import { Status } from '@repo/ui/components/ds/status'
 import {
@@ -26,6 +29,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
+import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import type { PlayableItem } from '@/utils/playback'
 import { formatTrackDuration } from '@/utils/track-browse'
 import { DetailLink } from './detail-link'
@@ -53,6 +57,15 @@ const similarKey = (kind: TidalSimilarKind, id: string) => [
   id,
 ]
 const plural = { album: 'albums', track: 'tracks' }
+const similarGenreLabels = {
+  'album-tracks': 'Track genres',
+  'track-album': 'Album genres',
+  artist: 'Artist genres',
+  library: 'Library genres',
+  tidal: 'TIDAL genres',
+  spotify: 'Spotify genres',
+  sonovault: 'Sonovault genres',
+}
 const TIDAL_TRACKS = { one: 'TIDAL track', other: 'TIDAL tracks' }
 
 export function isActiveSimilarJob(job: TidalSimilarJob | null | undefined) {
@@ -94,13 +107,6 @@ export function useRefreshTidalSimilar(kind: TidalSimilarKind, id: string) {
       }),
     onSuccess: (similar) => client.setQueryData(similarKey(kind, id), similar),
   })
-}
-
-function suggestionTitle(item: TidalSimilarItem) {
-  if (item.library) return item.library.title
-  return item.version && !item.title.includes(item.version)
-    ? `${item.title} (${item.version})`
-    : item.title
 }
 
 /** A suggestion on Spotify only, as an item the player can start. */
@@ -161,6 +167,9 @@ function suggestionPlay(
   title: string,
 ) {
   const library = item.library
+  // A track added from TIDAL can still play through its cached Spotify match.
+  const playable = library?.spotifyId ? null : spotifyPlayable(kind, item)
+  if (playable) return <SpotifyPlayButton item={playable} />
   if (item.state === 'library' && library)
     return kind === 'album' ? (
       <AlbumReferencePlayButton id={library.id} title={title} />
@@ -177,59 +186,124 @@ function suggestionPlay(
         }}
       />
     )
-  const playable = item.state === 'spotify' ? spotifyPlayable(kind, item) : null
-  return playable ? <SpotifyPlayButton item={playable} /> : undefined
+  return undefined
 }
 
 export function SimilarRow({
   kind,
+  itemId,
   item,
 }: {
   kind: TidalSimilarKind
+  itemId: string
   item: TidalSimilarItem
 }) {
-  const title = suggestionTitle(item)
-  const library = item.state === 'library' ? item.library : null
+  const client = useQueryClient()
+  const { apiBaseUrl } = useConfig()
+  const add = useMutation({
+    retry: false,
+    mutationFn: () =>
+      fetchApiData(
+        apiBaseUrl,
+        `${similarPath(kind, itemId)}/${encodeURIComponent(item.tidalId)}/library`,
+        TidalSimilarAddResultSchema,
+        { method: 'POST' },
+      ),
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ['tidal-similar', kind] }),
+        invalidateManualMediaAddition(client, kind),
+      ]),
+  })
+  const title = item.library?.title ?? tidalSuggestionTitle(item)
+  const libraryId = item.library?.id ?? add.data?.id
+  const genreLabel = item.genreSource
+    ? similarGenreLabels[item.genreSource]
+    : 'Genres'
   return (
-    <SuggestionRow
-      place={item.state}
-      thumb={
-        <MediaThumb
-          kind={kind}
-          src={item.library?.artworkUrl ?? item.spotify?.artworkUrl ?? null}
-          size={40}
-        />
-      }
-      title={
-        library ? (
-          <RowTitle>
-            <DetailLink kind={kind} id={library.id} title={title}>
+    <>
+      <SuggestionRow
+        place={libraryId ? 'library' : item.state}
+        thumb={
+          <MediaThumb
+            kind={kind}
+            src={item.library?.artworkUrl ?? item.spotify?.artworkUrl ?? null}
+            size={40}
+          />
+        }
+        title={
+          libraryId ? (
+            <RowTitle>
+              <DetailLink kind={kind} id={libraryId} title={title}>
+                {title}
+              </DetailLink>
+            </RowTitle>
+          ) : (
+            <span className="ds-row-title" title={title}>
               {title}
-            </DetailLink>
-          </RowTitle>
-        ) : (
-          <span className="ds-row-title" title={title}>
-            {title}
-          </span>
-        )
-      }
-      details={[
-        item.artists.join(', '),
-        kind === 'album'
-          ? item.releaseDate?.slice(0, 4)
-          : item.durationSec !== null
-            ? formatTrackDuration(item.durationSec)
-            : null,
-      ]}
-      play={suggestionPlay(kind, item, title)}
-      open={
-        library ? undefined : item.state === 'spotify' && item.spotify ? (
-          <SuggestionLink href={item.spotify.url} service="Spotify" />
-        ) : (
-          <SuggestionLink href={item.url} service="TIDAL" />
-        )
-      }
-    />
+            </span>
+          )
+        }
+        details={[
+          item.artists.join(', '),
+          kind === 'album'
+            ? item.releaseDate?.slice(0, 4)
+            : item.durationSec !== null
+              ? formatTrackDuration(item.durationSec)
+              : null,
+        ]}
+        badges={
+          item.genres.length > 0 && (
+            <Pills wrap label={`${genreLabel} for ${title}`}>
+              {item.genreSource === 'artist' && item.genreArtist ? (
+                <DetailLink
+                  kind="artist"
+                  id={item.genreArtist.id}
+                  title={item.genreArtist.name}
+                >
+                  {genreLabel}
+                </DetailLink>
+              ) : (
+                (item.genreSource === 'album-tracks' ||
+                  item.genreSource === 'track-album') && (
+                  <span className="ds-row-by">{genreLabel}</span>
+                )
+              )}
+              {item.genres.map((genre) => (
+                <Pill key={genre} title={`${genreLabel} · ${genre}`}>
+                  {genre}
+                </Pill>
+              ))}
+            </Pills>
+          )
+        }
+        play={suggestionPlay(kind, item, title)}
+        actions={
+          libraryId ? undefined : (
+            <span className="ds-actions">
+              {item.state === 'spotify' && item.spotify ? (
+                <SuggestionLink href={item.spotify.url} service="Spotify" />
+              ) : (
+                <SuggestionLink href={item.url} service="TIDAL" />
+              )}
+              <Button
+                size="xs"
+                aria-label={`Add to Library · ${title}`}
+                disabled={add.isPending}
+                onClick={() => add.mutate()}
+              >
+                {add.isPending ? 'Adding…' : 'Add to Library'}
+              </Button>
+            </span>
+          )
+        }
+      />
+      {add.isError && (
+        <Notice tone="danger">
+          {errorMessage(add.error, `Could not add ${title} to the library.`)}
+        </Notice>
+      )}
+    </>
   )
 }
 
@@ -444,7 +518,12 @@ export function SimilarBody({
       </FilterLine>
       <List compact aria-label={`Similar ${noun}`}>
         {items.map((item) => (
-          <SimilarRow key={item.tidalId} kind={kind} item={item} />
+          <SimilarRow
+            key={item.tidalId}
+            kind={kind}
+            itemId={similar.itemId}
+            item={item}
+          />
         ))}
       </List>
     </div>

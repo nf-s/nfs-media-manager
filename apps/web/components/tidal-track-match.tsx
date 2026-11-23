@@ -320,6 +320,7 @@ export function TidalTrackMatchJobStatus({ job }: { job: TidalTrackMatchJob }) {
 const matchSources = {
   'tidal-album': 'Album track list',
   'tidal-track-match': 'ISRC match',
+  'tidal-similar': 'Similar suggestion',
 }
 
 /** The track's current TIDAL track, with its link and how it was found. */

@@ -505,7 +505,13 @@
           title: `Open on ${service} (new tab)`,
         })
     const playable = linked || s.state === 'spotify'
-    return `<div class="ds-row" data-action${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))}</span></div>${playable ? play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${open}</div>`
+    const badges = s.genres?.length
+      ? `<span class="ds-pills" data-wrap>${s.genres.map((genre) => pill(genre, { static: true })).join('')}</span>`
+      : ''
+    const actions = linked
+      ? ''
+      : `<span class="ds-actions">${open}${btn('Add to Library', { size: 'xs' })}</span>`
+    return `<div class="ds-row ds-suggestion"${linked ? '' : ' data-action'}${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))}</span>${badges}</div>${playable ? play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${actions}</div>`
   }
   /* A list row still loading, in a compact list with a trailing action */
   const skelRow = () =>

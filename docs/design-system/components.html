@@ -105,17 +105,25 @@
       /* Similar: TIDAL's suggestions for one album or track, in its drawer */
       const suggestionOf =
         (kind) =>
-        ([title, by, meta, state, seed]) => ({
+        ([title, by, meta, state, seed, genres]) => ({
           kind,
           title,
           by,
           meta,
           state,
           seed,
+          genres,
         })
       const SIM_ALBUMS = [
-        ['Pressure Systems', 'Halcyon Grid', '2023', 'library', 3],
-        ['Night Shift Utopia', 'Vela Rooms', '2024', 'spotify', 8],
+        ['Pressure Systems', 'Halcyon Grid', '2023', 'library', 3, ['Ambient']],
+        [
+          'Night Shift Utopia',
+          'Vela Rooms',
+          '2024',
+          'spotify',
+          8,
+          ['House', 'Deep House'],
+        ],
         ['Tunnel Vision EP', 'Oskar Brandt', '2022', 'spotify', 1],
         ['Low Orbit Dubs', 'Sable & Rue', '2021', 'library', 10],
         ['Concrete Bloom', 'Mirela Tan', '2025', 'none', 4],
@@ -1198,6 +1206,7 @@
               g.rules([
                 '<b>A Similar tab after Overview</b> in the album and track drawers. Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
                 '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. The second line starts with where it can be played, then the artists, then the year (albums) or length (tracks).',
+                'Show available genres as small pills below the details. Label genres drawn from the album or its tracks. For every external suggestion, place <b>Add to Library</b> immediately after its service link.',
                 '<b>In library</b> (Pressure Systems): the title opens the library item; the play pair plays it. No trailing button.',
                 '<b>On Spotify</b> (Night Shift Utopia): the title is text; the play pair plays or queues it on Spotify; the trailing button opens it on Spotify.',
                 '<b>Not on Spotify</b> (Concrete Bloom): no play pair, its space kept so titles line up; the trailing button opens it on TIDAL.',
