@@ -12,12 +12,12 @@ function canonicalTagRows(
   normalizedName?: SQL,
 ): SQL {
   const originalName = normalizedTagSql(sql`original.name`)
-  return sql`select i.normalized_name, target.name, target.hidden
+  return sql`select i.normalized_name, target.name, target.hidden, target.kind
     from tag_identity i join tag target on target.id = i.tag_id
     where i.media_type = ${mediaType} and target.media_type = ${mediaType}
     ${normalizedName ? sql`and i.normalized_name = ${normalizedName}` : sql``}
     union all
-    select ${originalName} as normalized_name, target.name, target.hidden from tag original
+    select ${originalName} as normalized_name, target.name, target.hidden, target.kind from tag original
     left join tag_alias a on a.source_tag_id = original.id
     join tag target on target.id = coalesce(a.target_tag_id, original.id)
     where original.media_type = ${mediaType} and target.media_type = ${mediaType}
@@ -155,10 +155,18 @@ function profileTagRows(profiles: SQL, includeEvidence = false): SQL {
 }
 
 /** Read artist evidence once per provider profile and resolve aliases once per label. */
-function projectedArtistTags(profiles: SQL, pageOnly = false): SQL {
-  const canonical = pageOnly
-    ? sql`left join lateral (${canonicalTagRows('album', sql`l.normalized_name`)}) canonical on true`
-    : sql`left join (${canonicalTagRows('album')}) canonical using (normalized_name)`
+function projectedArtistTags(
+  profiles: SQL,
+  scope: 'all' | 'page' | 'genres' = 'all',
+): SQL {
+  const genreKeys =
+    scope === 'genres'
+      ? sql`any(array(select normalized_name from normalized_labels))`
+      : undefined
+  const canonical =
+    scope === 'page'
+      ? sql`left join lateral (${canonicalTagRows('album', sql`l.normalized_name`)}) canonical on true`
+      : sql`left join (${canonicalTagRows('album', genreKeys)}) canonical using (normalized_name)`
   return sql`with artist_labels as materialized (
     select distinct artist_id, name from (${profileTagRows(profiles)}) tags
   ), normalized_labels as materialized (
@@ -170,6 +178,12 @@ function projectedArtistTags(profiles: SQL, pageOnly = false): SQL {
     from (select distinct normalized_name from normalized_labels where normalized_name <> '') l
     ${canonical}
     group by l.normalized_name
+    ${
+      scope === 'genres'
+        ? sql`having min(canonical.name) = min(canonical.name)
+          filter (where canonical.kind in ('genre', 'subgenre', 'style'))`
+        : sql``
+    }
   )
   select a.artist_id, coalesce(l.name, a.name) as name,
     coalesce(l.name_key, n.normalized_name) as name_key
@@ -303,7 +317,7 @@ export function artistTagsForItems(ids: SQL): SQL {
   )`
   return sql`select media_item_id, jsonb_agg(name order by name) as tags from (
       select c.media_item_id, min(a.name) as name
-      from (${projectedArtistTags(profiles, true)}) a
+      from (${projectedArtistTags(profiles, 'page')}) a
       join media_credit c on c.artist_id = a.artist_id and c.role = 'artist'
       where c.media_item_id = ${ids}
       group by c.media_item_id, a.name_key
@@ -338,18 +352,13 @@ export async function artistGenresByBilledName(
             select source.name as billed, target.id, target.name
             from artist source
             join artist target on target.id = coalesce(source.merged_into_id, source.id)
-            where source.name = any(${sql.param([...names])}::text[])
+            where source.name = any(${sql.param([...new Set(names)])}::text[])
               and target.merged_into_id is null
           )
           select c.billed, c.id, c.name,
             array_agg(distinct p.name order by p.name) as genres
           from credited c
-          join (${projectedArtistTags(profiles, true)}) p on p.artist_id = c.id
-          where exists (
-            select 1 from tag t
-            where t.media_type = 'album' and t.name = p.name and not t.hidden
-              and t.kind in ('genre', 'subgenre', 'style')
-          )
+          join (${projectedArtistTags(profiles, 'genres')}) p on p.artist_id = c.id
           group by c.billed, c.id, c.name`)
       ).rows,
     )
