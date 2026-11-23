@@ -167,6 +167,11 @@ it('uses indexed default ordering and bounded job history lookups for the return
     ArtistMetadataQuerySchema.parse({ size: 50 }),
   )
   expect(page.items).toHaveLength(50)
+  expect(logQuery.mock.calls).toHaveLength(4)
+  expect(page.items[0]?.listeningMonths).toBeUndefined()
+  expect(
+    logQuery.mock.calls.some(([query]) => query.includes('lastfm_scrobble')),
+  ).toBe(false)
   expect(
     page.items
       .find(({ id }) => id === 'artist-6')
@@ -338,6 +343,7 @@ it('counts artist listening periods in one grouped read of the scrobbles', async
     scrobbleCount: 60,
     listeningScrobbles: 60,
   })
+  expect(page.items[0]?.listeningMonths?.some((count) => count > 0)).toBe(true)
   expect(await countArtistBrowse(query)).toEqual({ totalCount: 5000 })
   expect(
     await artistListeningHistogram(
@@ -357,3 +363,49 @@ it('counts artist listening periods in one grouped read of the scrobbles', async
     expect(plan).toMatch(/CTE plays\n.*loops=1/)
   }
 })
+
+it('bounds broad search and playlist sorting work with repeated playlist memberships', async () => {
+  await pool.query(`
+    insert into playlist_item (playlist_id, media_item_id, position)
+    select 'playlist-' || ((n + shift - 1) % 100 + 1), 'track-' || n, n
+    from generate_series(1, 20000) n cross join generate_series(1, 15) shift
+  `)
+  await pool.query('vacuum analyze playlist_item')
+  const { listArtistMetadataBrowsePage, countArtistBrowse } =
+    await import('@/services/artist-browse')
+  const search = ArtistMetadataQuerySchema.parse({
+    q: 'playlist',
+    page: 48,
+    size: 50,
+  })
+  const page = await listArtistMetadataBrowsePage(search)
+  expect(page.items.map(({ id }) => id)).toEqual(
+    Array.from({ length: 50 }, (_, index) => 'artist-' + (2351 + index)),
+  )
+  expect(page.hasMore).toBe(true)
+  expect(await countArtistBrowse(search)).toEqual({ totalCount: 5000 })
+  for (const statement of [
+    'select a.id from',
+    'select count(*)::int as count from',
+  ]) {
+    const plan = await explainServiceQuery(statement)
+    expect(plan).not.toMatch(/Materialize .*loops=[1-9][0-9]{2,}/)
+  }
+
+  logQuery.mockClear()
+  const sorted = await listArtistMetadataBrowsePage(
+    ArtistMetadataQuerySchema.parse({
+      sortBy: 'playlistCount',
+      direction: 'desc',
+      freshness: [{ provider: 'spotify', mode: 'never' }],
+      size: 50,
+    }),
+  )
+  expect(sorted.items).toHaveLength(50)
+  expect(sorted.items.every(({ playlistCount }) => playlistCount === 16)).toBe(
+    true,
+  )
+  const sortPlan = await explainServiceQuery('select a.id from')
+  expect(sortPlan).not.toMatch(/Materialize .*loops=[1-9][0-9]{2,}/)
+  expect(sortPlan).not.toContain('Sort Method: external merge')
+}, 30000)

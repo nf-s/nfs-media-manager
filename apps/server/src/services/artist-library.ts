@@ -97,16 +97,12 @@ export function artistPlaylistCount(id: SQLWrapper) {
 
 /** Sorting by playlist count needs every count, so build them in one pass. */
 export function artistPlaylistCounts() {
-  const artistId = sql<string>`memberships.artist_id`
-  return db
-    .select({
-      artistId: artistId.as('artist_id'),
-      count: sql<number>`count(distinct ${playlist.id})::int`.as(
-        'playlist_count',
-      ),
-    })
-    .from(sql`(${artistPlaylistCredits()}) memberships`)
-    .innerJoin(playlist, sql`${playlist.id} = memberships.playlist_id`)
-    .where(visiblePlaylist)
-    .groupBy(artistId)
+  return sql`select membership.artist_id, count(*)::int as playlist_count
+    from (
+      select distinct artist_id, playlist_id
+      from (${artistPlaylistCredits()}) credits
+    ) membership
+    join ${playlist} on ${playlist.id} = membership.playlist_id
+    where ${visiblePlaylist}
+    group by membership.artist_id`
 }

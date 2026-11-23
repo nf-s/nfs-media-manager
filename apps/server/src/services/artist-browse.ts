@@ -1,4 +1,4 @@
-import { and, or, sql, type SQL } from 'drizzle-orm'
+import { and, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { ArtistProfileSchema } from '@repo/schemas/artist-profiles'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
@@ -23,6 +23,7 @@ import {
 import { rangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
+import { measureRequestPhase } from '@/lib/request-log'
 import {
   artistPlaylistCredits,
   artistArtwork,
@@ -137,13 +138,13 @@ function textRows(
     join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id`
 }
 
-function textMatch(field: string, value: string, substring = false): SQL {
+function textMatchRows(field: string, value: string, substring = false): SQL {
   const name = pattern(value, substring)
   if (field === 'playlist') {
-    return sql`${id} in (select artist_id from (${artistPlaylistCredits(
+    return sql`select artist_id as id from (${artistPlaylistCredits(
       undefined,
       sql`playlist.name ilike ${name}`,
-    )}) matching_playlists)`
+    )}) matching_playlists`
   }
   const source = textRows(field)
   const condition =
@@ -151,7 +152,14 @@ function textMatch(field: string, value: string, substring = false): SQL {
       ? // A tag also matches the visible tags beneath it in the album hierarchy.
         sql`${normalizedTagSql(sql`value`)} in (${matchingTagNames(normalizeTagName(value), 'album')})`
       : sql`value ilike ${name}`
-  return sql`${id} in (select id from (${source}) matching_values where ${condition})`
+  return sql`select id from (${source}) matching_values where ${condition}`
+}
+
+/** Keep disjunctions inside the matching set so PostgreSQL can use a semi join. */
+function anyTextMatch(sources: SQL[]) {
+  return sql`${id} in (
+    select distinct id from (${sql.join(sources, sql` union all `)}) matches
+  )`
 }
 
 function numericValue(field: string): SQL {
@@ -213,23 +221,26 @@ function membership(query: Query, listening?: ArtistBrowseListening): SQL {
       sql`playlist.id = any(${sql.param(query.playlistIds)}::text[])`,
     )}) memberships)`)
   for (const word of (query.q ?? '').split(/\s+/).filter(Boolean)) {
-    const matches = or(
-      ...artistBrowseFields
-        .filter((field) => field.type === 'text')
-        .map((field) => textMatch(field.key, word, true)),
-      sql`a.sort_name ilike ${pattern(word)}`,
+    conditions.push(
+      anyTextMatch([
+        ...artistBrowseFields
+          .filter((field) => field.type === 'text')
+          .map((field) => textMatchRows(field.key, word, true)),
+        sql`select id from artist where sort_name ilike ${pattern(word)}`,
+      ]),
     )
-    if (matches) conditions.push(matches)
   }
   const any: SQL[] = []
   for (const filter of query.filters) {
-    const match = textMatch(filter.field, filter.value)
-    if (filter.mode === 'required') conditions.push(match)
-    else if (filter.mode === 'exclude') conditions.push(sql`not (${match})`)
+    const match = textMatchRows(filter.field, filter.value)
+    if (filter.mode === 'required') conditions.push(sql`${id} in (${match})`)
+    else if (filter.mode === 'exclude')
+      conditions.push(
+        sql`not exists (select 1 from (${match}) excluded where excluded.id = ${id})`,
+      )
     else any.push(match)
   }
-  const anyCondition = or(...any)
-  if (anyCondition) conditions.push(anyCondition)
+  if (any.length) conditions.push(anyTextMatch(any))
   for (const range of query.ranges)
     conditions.push(rangeCondition(range, numericValue(range.field)))
   if ('freshness' in query)
@@ -324,7 +335,7 @@ async function loadArtistListening(ids: string[], requested: SQL, now: Date) {
 async function loadArtists(
   ids: string[],
   listeningScrobbles?: Map<string, number>,
-  now = new Date(),
+  { includeListeningMonths = true } = {},
 ) {
   if (!ids.length) return []
   const requested = sql`any(${sql.param(ids)}::text[])`
@@ -349,7 +360,9 @@ async function loadArtists(
     db.execute(sql`select state.artist_id as id, state.provider, snapshot.normalized_data as profile
       from artist_provider_current_state state join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id
       where state.artist_id = ${requested} order by snapshot.created_at desc, snapshot.id desc`),
-    loadArtistListening(ids, requested, now),
+    includeListeningMonths
+      ? loadArtistListening(ids, requested, new Date())
+      : undefined,
   ])
   const parsedProfiles = z
     .array(
@@ -372,7 +385,9 @@ async function loadArtists(
           ...(listeningScrobbles
             ? { listeningScrobbles: listeningScrobbles.get(row.id) ?? 0 }
             : {}),
-          listeningMonths: listening.get(row.id) ?? [],
+          ...(listening
+            ? { listeningMonths: listening.get(row.id) ?? [] }
+            : {}),
           browse: {
             ...row.browse,
             genre: uniqueMusicTags(
@@ -430,7 +445,7 @@ export function artistBrowseIdsQuery(
     ${offset === undefined ? sql`` : sql`offset ${offset}`}`
 }
 
-export async function listArtistBrowsePage(query: Query) {
+async function readArtistBrowsePage(query: Query) {
   const offset = (query.page - 1) * query.size
   const remaining =
     query.limitResults === undefined
@@ -444,14 +459,22 @@ export async function listArtistBrowsePage(query: Query) {
   const listeningScrobbles = listeningSortPeriod(query)
     ? new Map(items.map((row) => [row.id, row.listeningScrobbles ?? 0]))
     : undefined
+  return {
+    ids: items.map((row) => row.id),
+    listeningScrobbles,
+    page: {
+      page: query.page,
+      size: query.size,
+      hasMore: rows.length > query.size,
+    },
+  }
+}
+
+export async function listArtistBrowsePage(query: Query) {
+  const { ids, listeningScrobbles, page } = await readArtistBrowsePage(query)
   return BrowsePageSliceSchema(ArtistSummarySchema).parse({
-    items: await loadArtists(
-      items.map((row) => row.id),
-      listeningScrobbles,
-    ),
-    page: query.page,
-    size: query.size,
-    hasMore: rows.length > query.size,
+    ...page,
+    items: await loadArtists(ids, listeningScrobbles),
   })
 }
 
@@ -524,11 +547,19 @@ export async function artistBrowseCounts(query: ArtistQuery) {
 }
 
 export async function listArtistMetadataBrowsePage(query: ArtistMetadataQuery) {
-  const page = await listArtistBrowsePage(query)
-  const metadata = await loadArtistMetadata(page.items.map((item) => item.id))
+  const { ids, listeningScrobbles, page } = await measureRequestPhase(
+    'ids',
+    () => readArtistBrowsePage(query),
+  )
+  const [artists, metadata] = await measureRequestPhase('hydrate', () =>
+    Promise.all([
+      loadArtists(ids, listeningScrobbles, { includeListeningMonths: false }),
+      loadArtistMetadata(ids),
+    ]),
+  )
   return BrowsePageSliceSchema(ArtistMetadataItemSchema).parse({
     ...page,
-    items: page.items.map((item) => ({
+    items: artists.map((item) => ({
       ...item,
       providers: metadata.filter((row) => row.artistId === item.id),
     })),
