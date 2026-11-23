@@ -309,6 +309,12 @@ export async function prepareAlbumCsv(
   })
 }
 
+export async function lockAlbumImportWrites(tx: ImportTransaction) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext('album-file-import'))`,
+  )
+}
+
 export async function commitAlbumImportRecord(
   candidate: z.infer<typeof StoredCandidateSchema>,
   transaction?: ImportTransaction,
@@ -319,9 +325,7 @@ export async function commitAlbumImportRecord(
   } = {},
 ) {
   const commit = async (tx: ImportTransaction) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext('album-file-import'))`,
-    )
+    await lockAlbumImportWrites(tx)
     const match = options.exactRelease
       ? await matchAlbumRelease(candidate, tx)
       : {

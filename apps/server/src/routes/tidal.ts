@@ -1,5 +1,7 @@
 import { createRoute } from '@hono/zod-openapi'
 import {
+  TidalSimilarAddParamsSchema,
+  TidalSimilarAddResultSchema,
   TidalSimilarParamsSchema,
   TidalSimilarSchema,
   TidalTrackMatchAcceptInputSchema,
@@ -29,6 +31,7 @@ import {
   matchTidalTracks,
 } from '@/services/tidal-track-match'
 import { getTidalSimilar, refreshTidalSimilar } from '@/services/tidal-similar'
+import { addTidalSimilarToLibrary } from '@/services/tidal-similar-library'
 
 const app = createOpenAPIApp()
 
@@ -235,6 +238,39 @@ app.openapi(
       await refreshTidalSimilar(c.req.valid('param'), requireOwnerUser(c).id),
       200,
     ),
+)
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/similar/{kind}/{id}/{tidalId}/library',
+    middleware: [authMiddleware(), mutationOriginMiddleware()],
+    request: { params: TidalSimilarAddParamsSchema },
+    responses: {
+      200: {
+        description: 'Library ID of the stored suggestion',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(TidalSimilarAddResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      404: jsonErrorResponse(
+        'The library item or stored suggestion was not found',
+      ),
+      409: jsonErrorResponse('The selected item is hidden in the library'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) => {
+    requireOwnerUser(c)
+    return generateJsonResponse(
+      c,
+      await addTidalSimilarToLibrary(c.req.valid('param')),
+      200,
+    )
+  },
 )
 
 export default app

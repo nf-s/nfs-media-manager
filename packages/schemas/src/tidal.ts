@@ -130,7 +130,7 @@ export const TidalAlbumTrackAlignmentSchema = z.enum([
  */
 export const TidalTrackMatchSchema = TidalTrackDataSchema.extend({
   tidalTrackId: TidalIdSchema,
-  source: z.enum(['tidal-album', 'tidal-track-match']),
+  source: z.enum(['tidal-album', 'tidal-track-match', 'tidal-similar']),
   matchReason: TidalTrackMatchReasonSchema.nullable(),
   alignment: TidalAlbumTrackAlignmentSchema.nullable(),
 })
@@ -413,3 +413,17 @@ export const TidalSimilarSchema = z.object({
   items: z.array(TidalSimilarItemSchema).max(TIDAL_SIMILAR_LIMIT),
 })
 export type TidalSimilar = z.infer<typeof TidalSimilarSchema>
+
+/** The displayed title of a suggestion, including its version once. */
+export function tidalSuggestionTitle({
+  title,
+  version,
+}: Pick<TidalSuggestion, 'title' | 'version'>): string {
+  return version && !title.includes(version) ? `${title} (${version})` : title
+}
+
+export const TidalSimilarAddParamsSchema = TidalSimilarParamsSchema.extend({
+  tidalId: TidalIdSchema,
+})
+
+export const TidalSimilarAddResultSchema = z.object({ id: trackId })

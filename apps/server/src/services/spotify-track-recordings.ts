@@ -18,6 +18,9 @@ import {
 import { recordTrackIsrcs, sonovaultPrimaryIsrcSql } from './track-isrcs'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type SpotifyRecording = Omit<SpotifyTrackSearchCandidate, 'durationSec'> & {
+  durationSec: number | null
+}
 
 export async function libraryRecording(tx: Transaction, id: string) {
   const [row] = await tx
@@ -38,7 +41,7 @@ export async function libraryRecording(tx: Transaction, id: string) {
 export async function storeConfirmedRecording(
   tx: Transaction,
   targetId: string,
-  candidate: SpotifyTrackSearchCandidate,
+  candidate: SpotifyRecording,
   provenance:
     | {
         jobId: string
@@ -214,18 +217,25 @@ export async function storeManualTrack(
 ): Promise<ManualMediaAddResult> {
   return db.transaction(async (tx) => {
     await lockLibraryTrackWrites(tx)
-    const spotifyId = candidate.spotifyTrackId
-    const match = (await findManualTrackMatches([spotifyId], tx)).get(spotifyId)
-    const existing = existingManualTrack(match)
-    if (existing) return existing
-    const resolved = (await resolveSpotifyTrackIds(tx, [candidate])).get(
-      spotifyId,
-    )
-    const id = resolved ?? spotifyTrackItemId(spotifyId)
-    await storeConfirmedRecording(tx, id, candidate, {
-      addedAt: new Date(),
-      releaseDate: candidate.releaseDate,
-    })
-    return { mediaItemId: id, created: resolved === undefined }
+    return storeManualTrackInTransaction(tx, candidate)
   })
+}
+
+export async function storeManualTrackInTransaction(
+  tx: Transaction,
+  candidate: SpotifyRecording & { releaseDate: string | null },
+): Promise<ManualMediaAddResult> {
+  const spotifyId = candidate.spotifyTrackId
+  const match = (await findManualTrackMatches([spotifyId], tx)).get(spotifyId)
+  const existing = existingManualTrack(match)
+  if (existing) return existing
+  const resolved = (await resolveSpotifyTrackIds(tx, [candidate])).get(
+    spotifyId,
+  )
+  const id = resolved ?? spotifyTrackItemId(spotifyId)
+  await storeConfirmedRecording(tx, id, candidate, {
+    addedAt: new Date(),
+    releaseDate: candidate.releaseDate,
+  })
+  return { mediaItemId: id, created: resolved === undefined }
 }

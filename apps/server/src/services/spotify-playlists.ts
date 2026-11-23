@@ -595,7 +595,10 @@ export async function refreshTrackAddedDates(
       ) dates group by media_item_id
     ) m on m.media_item_id = base.media_item_id
     left join lateral (
-      select (mi.metadata->>'spotifyTrackManualAddedAt')::timestamptz at time zone 'UTC' as added_at
+      select least(
+        (mi.metadata->>'spotifyTrackManualAddedAt')::timestamptz,
+        (mi.metadata->>'tidalSimilarTrackAddedAt')::timestamptz
+      ) at time zone 'UTC' as added_at
       from media_item mi where mi.id = base.media_item_id
     ) manual on true
     where lt.media_item_id = base.media_item_id
