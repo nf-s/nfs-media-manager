@@ -794,6 +794,8 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
         storedItems: 0,
         latestItemAt: null,
         historyComplete: true,
+        inLibrary: true,
+        subscribed: true,
       },
       expect.objectContaining({
         id: ORBITAL,
@@ -816,6 +818,7 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     expect(stored.items[1]).toEqual({
       type: 'youtube',
       id: videoId('a1'),
+      inLibrary: true,
       sourceId: ORBITAL,
       sourceTitle: 'Kepler Mechanics Lab',
       sourceThumbnailUrl: `https://yt3.example/${ORBITAL}.jpg`,

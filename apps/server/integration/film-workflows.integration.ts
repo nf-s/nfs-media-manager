@@ -1082,6 +1082,91 @@ describe('reviewed film import and enrichment', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('promotes each independent film candidate once under concurrent adds', async () => {
+    const { listCatalogObservations, promoteCatalogMedia } =
+      await import('@/services/catalog-discoveries')
+    const { observeFilmCandidate } =
+      await import('@/services/film-catalog-observations')
+    const ownerId = 'film-catalog-fixture-owner'
+    await databaseClient.insert(schema.user).values({
+      id: ownerId,
+      name: 'Fixture Owner',
+      email: 'film-catalog@example.test',
+    })
+    const candidates = await databaseClient.transaction(async (tx) => {
+      const observed: string[] = []
+      for (const externalId of ['73103', '73104']) {
+        const id = await observeFilmCandidate(
+          tx,
+          { referenceType: 'tmdb', externalId, title: 'Shared Film Fixture' },
+          {
+            provider: 'tmdb',
+            operation: 'film-search',
+            occurrenceKey: externalId,
+          },
+        )
+        if (!id) throw new Error('Expected a film candidate')
+        observed.push(id)
+      }
+      return observed
+    })
+    expect(new Set(candidates).size).toBe(2)
+    expect(
+      await databaseClient
+        .select({ inLibrary: schema.mediaItem.inLibrary })
+        .from(schema.mediaItem),
+    ).toEqual([{ inLibrary: false }, { inLibrary: false }])
+
+    const results = await Promise.all(
+      candidates.flatMap((id) => [
+        promoteCatalogMedia(id, ownerId),
+        promoteCatalogMedia(id, ownerId),
+      ]),
+    )
+    expect(
+      results
+        .filter((result) => result.created)
+        .map((result) => result.mediaItemId)
+        .sort(),
+    ).toEqual([...candidates].sort())
+    expect(
+      results
+        .filter((result) => !result.created)
+        .map((result) => result.mediaItemId)
+        .sort(),
+    ).toEqual([...candidates].sort())
+    expect(
+      await databaseClient
+        .select({ inLibrary: schema.mediaItem.inLibrary })
+        .from(schema.mediaItem),
+    ).toEqual([{ inLibrary: true }, { inLibrary: true }])
+    const added = await databaseClient
+      .select({
+        id: schema.catalogAddition.mediaItemId,
+        ownerId: schema.catalogAddition.ownerId,
+        addedAt: schema.catalogAddition.addedAt,
+        filmAddedAt: schema.film.dateAdded,
+      })
+      .from(schema.catalogAddition)
+      .innerJoin(
+        schema.film,
+        eq(schema.film.mediaItemId, schema.catalogAddition.mediaItemId),
+      )
+    expect(added.map(({ id }) => id).sort()).toEqual([...candidates].sort())
+    for (const addition of added) {
+      expect(addition.ownerId).toBe(ownerId)
+      expect(addition.addedAt).toEqual(addition.filmAddedAt)
+      expect(
+        (await listCatalogObservations(addition.id, { page: 1, size: 10 }))
+          .items,
+      ).toMatchObject([
+        { targetId: addition.id, provider: 'tmdb', operation: 'film-search' },
+      ])
+    }
+    expect(await databaseClient.select().from(schema.scrapeJob)).toHaveLength(0)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('recovers legacy NFO relationships from raw snapshots without applying personal state', async () => {
     const { runNonMusicCatalogBackfill } =
       await import('@/services/nonmusic-catalog-backfill')
