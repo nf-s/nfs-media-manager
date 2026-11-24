@@ -25,7 +25,8 @@ import {
   TableRow,
   TableState,
 } from '@repo/ui/components/ui/table'
-import { useDetailInspector } from './detail-inspector-context'
+import { useDetailInspector, useDetailView } from './detail-inspector-context'
+import {readLibraryScope, libraryScopeQuery, libraryScopeUpdates, type LibraryScopeState} from '@/utils/library-scope'
 import { DetailLink } from './detail-link'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
@@ -52,6 +53,17 @@ export default function CollectionsWorkspace() {
 
 function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
   const { apiBaseUrl } = useConfig()
+  const view = useDetailView()
+  const scope = readLibraryScope(view.params)
+  const scopeParams = libraryScopeQuery(scope)
+  function changeScope(next: LibraryScopeState) {
+    const params = new URLSearchParams(view.params)
+    for (const [key,value] of Object.entries(libraryScopeUpdates(next))) {
+      if (value) params.set(key,value)
+      else params.delete(key)
+    }
+    view.replace(params)
+  }
   const album = mediaType === 'album'
   const endpoint = album ? '/api/v1/album-collections' : '/api/v1/collections'
   const collectionLabel = album ? 'Album collections' : 'Film collections'
@@ -90,7 +102,7 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     (inspector.root.mediaType ?? 'film') === mediaType
       ? inspector.root.id
       : null
-  const viewportKey = [directoryKey, 'browse', q, sortBy, direction]
+  const viewportKey = [directoryKey, 'browse', q, sortBy, direction, scopeParams]
   const {
     window: query,
     isCounting,
@@ -100,11 +112,11 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     performanceScreen: 'collections',
     viewportKey,
     queryKey: [...viewportKey, includeSources],
-    countKey: [directoryKey, 'browse-count', q],
+    countKey: [directoryKey, 'browse-count', q, scopeParams],
     loadCount: (signal) =>
       fetchApiData(
         apiBaseUrl,
-        `${endpoint}/browse-count?${new URLSearchParams({ q })}`,
+        `${endpoint}/browse-count?${new URLSearchParams({ q, ...scopeParams })}`,
         BrowseCountSchema,
         { signal },
       ),
@@ -116,6 +128,7 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
         page: String(page),
         size: String(size),
         includeSources: String(includeSources),
+        ...scopeParams,
       })
       return fetchApiData(
         apiBaseUrl,
@@ -144,6 +157,7 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     <section className="browse-workspace" aria-label="Collections">
       <PageHead title="Collections" />
       <SecondaryTableToolbar
+        libraryScope={{value:scope,onChange:changeScope}}
         search={
           <SecondaryTableSearch
             label="Search collections"

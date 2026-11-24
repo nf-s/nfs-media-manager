@@ -194,6 +194,11 @@ async function collectionLinks(
   return links
 }
 
+function collectionMemberStatus(mediaType: CollectionMediaType) {
+  const qualifying = collectionMembers(mediaType, {}).where(and(eq(playlistItem.playlistId, playlist.id), visibleMember(mediaType, {})))
+  return sql<boolean>`(${playlist.addedToLibrary} or (${playlist.catalogProvider} is null and exists (${qualifying})))`
+}
+
 function matchingCollections(
   mediaType: CollectionMediaType,
   query: CollectionQuery,
@@ -201,13 +206,14 @@ function matchingCollections(
   const matchingMember = collectionMembers(mediaType, {}).where(
     and(
       eq(playlistItem.playlistId, playlist.id),
-      visibleMember(mediaType, query),
+      visibleMember(mediaType, {libraryScope:'all'}),
     ),
   )
   return and(
     eq(playlist.kind, 'collection'),
     query.q ? ilike(playlist.name, containsPattern(query.q)) : undefined,
     exists(matchingMember),
+    catalogScopeCondition(sql`${playlist.id}`, collectionMemberStatus(mediaType),query,'collection'),
   )
 }
 
@@ -248,7 +254,7 @@ async function listCollectionBrowsePage(
   }
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
   const rows = await db
-    .select({ ...collectionColumns, memberCount })
+    .select({ ...collectionColumns, memberCount, inLibrary: collectionMemberStatus(mediaType) })
     .from(playlist)
     .where(matchingCollections(mediaType, query))
     .orderBy(
@@ -317,6 +323,7 @@ async function getCollectionPage<T extends SelectedFields>(
   const [summary] = await db
     .select({
       ...collectionColumns,
+      inLibrary: collectionMemberStatus(mediaType),
       memberCount: sql<number>`(${memberCountQuery})`.mapWith(Number),
     })
     .from(playlist)

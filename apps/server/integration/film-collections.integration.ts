@@ -304,18 +304,24 @@ beforeAll(async () => {
   await databaseClient.insert(schema.catalogObservation).values([
     {
       id: 'outside-source',
+      targetKind: 'film',
+      targetId: 'outside-film',
       mediaItemId: 'outside-film',
       provider: 'fixture',
       operation: 'provider-result',
     },
     {
       id: 'outside-search',
+      targetKind: 'film',
+      targetId: 'outside-film',
       mediaItemId: 'outside-film',
       provider: 'fixture',
       operation: 'catalog-search',
     },
     {
       id: 'other-outside-source',
+      targetKind: 'film',
+      targetId: 'other-outside-film',
       mediaItemId: 'other-outside-film',
       provider: 'fixture',
       operation: 'catalog-search',

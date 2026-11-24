@@ -4,6 +4,7 @@ import { SourceNavigationLinkSchema } from './tags'
 import { CatalogScopeQuerySchema } from './catalog'
 
 export const CollectionSummarySchema = z.object({
+  inLibrary: z.boolean().optional(),
   id: z.string(),
   name: z.string(),
   sourceLinks: z.array(SourceNavigationLinkSchema).default([]),

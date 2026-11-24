@@ -1,0 +1,1 @@
+CREATE INDEX "album_spotify_url_native_idx" ON "album" USING btree (substring("spotify_url" from '/album/([A-Za-z0-9]{22})')) WHERE "album"."spotify_url" is not null;

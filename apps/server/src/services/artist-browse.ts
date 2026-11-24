@@ -57,15 +57,13 @@ const musicCredits = sql`media_credit credit
 const visibleMusic = sql`credit.role = 'artist' and item.metadata->>'legacyHidden' is distinct from 'true'
   and (release.media_item_id is not null or recording.media_item_id is not null)`
 // A merged artist is a name another artist keeps, not an artist of its own.
-const visibleArtist = sql`a.merged_into_id is null and exists (select 1 from ${musicCredits}
-  where credit.artist_id = a.id and ${visibleMusic} and item.in_library)`
+const observedArtist = sql`exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = a.id)`
+const memberArtist = sql`(exists (select 1 from ${musicCredits}
+  where credit.artist_id = a.id and ${visibleMusic} and item.in_library) or (a.added_to_library and ${observedArtist}))`
 function scopedArtists(query: CatalogScopeQuery) {
-  if (memberScope(query)) return visibleArtist
-  const outsideCredits = sql`exists (select 1 from ${musicCredits} where credit.artist_id = a.id
-    and ${visibleMusic} and ${catalogScopeCondition(sql`item.id`, sql`item.in_library`, { ...query, libraryScope: 'outside' })})`
-  return query.libraryScope === 'outside'
-    ? sql`a.merged_into_id is null and not (${visibleArtist}) and ${outsideCredits}`
-    : sql`a.merged_into_id is null and (${visibleArtist} or ${outsideCredits})`
+  if (memberScope(query)) return sql`a.merged_into_id is null and ${memberArtist}`
+  const known = sql`(${observedArtist} or exists (select 1 from ${musicCredits} where credit.artist_id = a.id and ${visibleMusic}))`
+  return sql`a.merged_into_id is null and ${known} and ${catalogScopeCondition(id, memberArtist,query,'artist')}`
 }
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
@@ -364,7 +362,7 @@ async function loadArtists(
     ) select a.id, a.name, a.sort_name as "sortName", a.created_at at time zone 'UTC' as "createdAt",
       a.scrobble_count as "scrobbleCount",
       coalesce(counts.albums,0) as "albumCount", coalesce(counts.tracks,0) as "trackCount",
-      counts.artist_id is not null as "inLibrary",
+      (counts.artist_id is not null or (a.added_to_library and ${observedArtist})) as "inLibrary",
       coalesce(playlists.count,0) as "playlistCount", ${artistArtwork(id)} as "artworkUrl",
       jsonb_build_object('playlist',coalesce(playlists.names,'{}'::text[])) as browse
       from artist a left join counts on counts.artist_id = a.id left join playlists on playlists.artist_id = a.id

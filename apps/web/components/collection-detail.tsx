@@ -71,6 +71,7 @@ import BrowseToolbar, {
   BrowseColumnsSection,
 } from './browse-toolbar'
 import { useDetailView } from './detail-inspector-context'
+import { CatalogLibraryAction, CatalogDiscoveries } from './catalog-detail'
 import { LibraryScopePills } from './library-scope-controls'
 import {
   NestedMediaCard,
@@ -615,6 +616,7 @@ export function CollectionEntries({
         actions={
           summary && (
             <>
+              <CatalogLibraryAction key={summary.id} id={summary.id} title={summary.name} kind="collection" inLibrary={summary.inLibrary ?? true} />
               <DetailActionsSpacer />
               <DetailMore
                 crumb={{ title: summary.name }}
@@ -656,6 +658,7 @@ export function CollectionEntries({
           </Section>
         </TabsContent>
         <TabsContent value="sources">
+          {summary && <CatalogDiscoveries id={summary.id} kind="collection" />}
           <ProviderSources
             rows={destinations.map((link) => ({
               id: `${link.provider}:${link.url}`,

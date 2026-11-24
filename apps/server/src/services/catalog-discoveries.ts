@@ -75,7 +75,7 @@ async function existingMedia(tx: Transaction, media: CatalogMedia, aliases: stri
   if (references.length === 1) return references[0]?.id
   if (references.length === 0 && media.provider === 'spotify' && media.kind === 'album') {
     const byUrl = await tx.select({ id: album.mediaItemId }).from(album)
-      .where(sql`substring(${album.spotifyUrl} from '/album/([A-Za-z0-9]{22})') = ${media.externalId}`).limit(2)
+      .where(sql`${album.spotifyUrl} is not null and substring(${album.spotifyUrl} from '/album/([A-Za-z0-9]{22})') = ${media.externalId}`).limit(2)
     if (byUrl.length === 1) return byUrl[0]?.id
   }
 }
@@ -169,8 +169,8 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
       await tx.insert(album).values({ mediaItemId: id, spotifyUrl: media.spotifyUrl, trackCount: media.trackCount }).onConflictDoUpdate({
         target: album.mediaItemId, set: {
           spotifyUrl: sql`coalesce(${album.spotifyUrl}, excluded.spotify_url)`,
-          trackCount: sql`coalesce(${album.trackCount}, excluded.track_count)`,
-        }, setWhere: sql`(${album.spotifyUrl} is null and excluded.spotify_url is not null) or (${album.trackCount} is null and excluded.track_count is not null)`,
+          trackCount: sql`case when ${album.trackCount} = 0 then excluded.track_count else ${album.trackCount} end`,
+        }, setWhere: sql`(${album.spotifyUrl} is null and excluded.spotify_url is not null) or (${album.trackCount} = 0 and excluded.track_count > 0)`,
       })
     if (media.kind === 'film')
       await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()

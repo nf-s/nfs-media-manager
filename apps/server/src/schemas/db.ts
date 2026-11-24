@@ -119,7 +119,10 @@ export const album = pgTable(
     ),
     ...timestampColumns,
   },
-  (table) => [index('album_edition_of_idx').on(table.editionOfId)],
+  (table) => [
+    index('album_edition_of_idx').on(table.editionOfId),
+    index('album_spotify_url_native_idx').on(sql`substring(${table.spotifyUrl} from '/album/([A-Za-z0-9]{22})')`).where(sql`${table.spotifyUrl} is not null`),
+  ],
 )
 
 export const film = pgTable('film', {
