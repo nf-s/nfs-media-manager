@@ -9,6 +9,7 @@ import {
 } from '@/lib/music-provider-discoveries'
 import { artist, mediaItem, providerResponse } from '@/schemas/db'
 import { observeNamedArtistIdentities } from './catalog-artist-identities'
+import { currentArtistId } from './artist-names'
 import {
   observeCatalogMedia,
   observeCatalogOccurrence,
@@ -68,7 +69,7 @@ async function observeArtist(
     node.title,
   ]
   const id = createStableId('catalog-artist', JSON.stringify(key))
-  await tx
+  const inserted = await tx
     .insert(artist)
     .values({
       id,
@@ -78,7 +79,8 @@ async function observeArtist(
       catalogExternalId: node.externalId,
     })
     .onConflictDoNothing()
-  return id
+    .returning({ id: artist.id })
+  return inserted.length ? id : currentArtistId(tx, id)
 }
 
 /** Observations are addressable through the same album, track and artist pages as members. */

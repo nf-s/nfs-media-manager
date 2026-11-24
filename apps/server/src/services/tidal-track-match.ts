@@ -46,6 +46,7 @@ import {
 } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { observeCatalogMedia } from './catalog-discoveries'
+import { reconcileTidalJobArtists } from './tidal-artist-reconciliation'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
 import { latestCatalogResponseId } from './music-catalog-observations'
@@ -523,6 +524,7 @@ export async function runTidalTrackMatch(
           })
         }
         await observeTidalLookup(tx, context.jobId, options.trackId, pages)
+        if (chosen) await reconcileTidalJobArtists(tx, context.jobId)
       },
     }
   } catch (error) {
@@ -800,6 +802,7 @@ export async function acceptTidalTrackMatch(input: {
       jobId,
       matchReason: 'manual',
     })
+    await reconcileTidalJobArtists(tx, jobId)
     await tx
       .update(scrapeJob)
       .set({

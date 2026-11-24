@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { repairMatchedTidalArtists } from '@/services/tidal-artist-reconciliation'
 import {
   reconcileExactCatalogArtists,
   repairStoredSimilarArtists,
@@ -11,11 +12,17 @@ async function main() {
     throw new Error('Usage: repair:catalog-artists [--dry-run | --apply]')
   const apply = mode === '--apply'
   const exactProfiles = await reconcileExactCatalogArtists(apply)
+  const matchedRecordings = await repairMatchedTidalArtists(apply)
   const similarArtists = await repairStoredSimilarArtists(apply)
   const scopedCredits = await repairScopedSpotifyCredits(apply)
   process.stdout.write(
-    JSON.stringify({ apply, exactProfiles, similarArtists, scopedCredits }) +
-      '\n',
+    JSON.stringify({
+      apply,
+      exactProfiles,
+      matchedRecordings,
+      similarArtists,
+      scopedCredits,
+    }) + '\n',
   )
 }
 

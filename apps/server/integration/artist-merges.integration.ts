@@ -34,9 +34,13 @@ vi.mock('@/lib/db', () => ({
 
 import { mergeArtists } from '@/services/artist-merges'
 import { observeTidalSuggestion } from '@/services/music-catalog-observations'
+import { repairMatchedTidalArtists } from '@/services/tidal-artist-reconciliation'
 import { observeCatalogMedia } from '@/services/catalog-discoveries'
 import { storeSpotifyCodeLookup } from '@/services/spotify-similar-lookup'
-import { reconcileSimilarArtistCredits } from '@/services/catalog-artist-reconciliation'
+import {
+  reconcileSimilarArtistCredits,
+  repairScopedSpotifyCredits,
+} from '@/services/catalog-artist-reconciliation'
 import {
   TidalSuggestionSchema,
   SpotifyCodeMatchSchema,
@@ -304,14 +308,12 @@ it('keeps a discovered TIDAL artist separate until a first-party recording match
     })
     .returning({ id: schema.scrapeJob.id })
   if (!job) throw new Error('Expected lookup job')
-  await fixture
-    .insert(schema.tidalSimilar)
-    .values({
-      mediaItemId: spotifyTrack,
-      kind: 'track',
-      items: [suggestion],
-      readAt: new Date(),
-    })
+  await fixture.insert(schema.tidalSimilar).values({
+    mediaItemId: spotifyTrack,
+    kind: 'track',
+    items: [suggestion],
+    readAt: new Date(),
+  })
   const lookup = {
     kind: 'track',
     key: code,
@@ -398,6 +400,152 @@ it('keeps a manually merged provisional artist credit on the survivor when its r
       .map((c) => c.artistId),
   ).toEqual([keptId])
   expect((await getArtist(credit.artistId)).inLibrary).toBe(true)
+  expect(await promoteNativeResource('artist', keptId)).toEqual({
+    mediaItemId: keptId,
+    created: false,
+  })
+})
+
+it('repairs an old TIDAL artist link using sole billing on a different, directly matched library recording', async () => {
+  const nativeId = 'F'.repeat(22)
+  const item = TidalSuggestionSchema.parse({
+    title: 'Discovered fixture',
+    artists: [KEPT],
+    artistCredits: [{ id: '901', name: KEPT }],
+    tidalId: '902',
+    code: null,
+    version: null,
+    durationSec: null,
+    releaseDate: null,
+    url: 'https://tidal.com/track/902',
+  })
+  const shadow = createStableId(
+    'catalog-artist',
+    JSON.stringify(['tidal', '901']),
+  )
+  const outside = await fixture.transaction((tx) =>
+    observeTidalSuggestion(tx, 'track', item, {
+      operation: 'similar',
+      key: 'fixture',
+      position: 1,
+    }),
+  )
+  const [recording] = await fixture
+    .select()
+    .from(schema.mediaItem)
+    .where(eq(schema.mediaItem.id, spotifyTrack))
+  if (!recording) throw new Error('Missing fixture recording')
+  await fixture
+    .update(schema.mediaItem)
+    .set({ metadata: { spotifyArtistCredits: [{ id: nativeId, name: KEPT }] } })
+    .where(eq(schema.mediaItem.id, spotifyTrack))
+  await fixture
+    .update(schema.artistProviderSnapshot)
+    .set({ normalizedData: { tags: [], externalId: nativeId } })
+    .where(eq(schema.artistProviderSnapshot.artistId, keptId))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ spotifyTrackId: 'G'.repeat(22) })
+    .where(eq(schema.libraryTrack.mediaItemId, spotifyTrack))
+  await fixture.insert(schema.scrapeJob).values({
+    id: 'fixture-tidal-evidence',
+    provider: 'tidal',
+    scope: {},
+    options: {},
+    status: 'succeeded',
+  })
+  const text = JSON.stringify({
+    data: [],
+    included: [
+      {
+        type: 'tracks',
+        id: '903',
+        attributes: { title: recording.title },
+        relationships: { artists: { data: [{ id: '901', type: 'artists' }] } },
+      },
+      { id: '901', type: 'artists', attributes: { name: KEPT } },
+    ],
+  })
+  await fixture.insert(schema.providerResponse).values({
+    id: 'fixture-tidal-capture',
+    jobId: 'fixture-tidal-evidence',
+    provider: 'tidal',
+    attempt: 1,
+    ordinal: 1,
+    phase: 'task',
+    method: 'GET',
+    status: 200,
+    bodyState: 'captured',
+    retainedBytes: Buffer.byteLength(text),
+    body: { state: 'captured', text },
+  })
+  expect(await repairMatchedTidalArtists(false, fixture)).toBe(0)
+  await fixture.insert(schema.providerReference).values({
+    id: 'fixture-accepted-tidal',
+    mediaItemId: spotifyTrack,
+    provider: 'tidal',
+    referenceType: 'track',
+    externalId: '903',
+    isPrimary: true,
+    metadata: { source: 'tidal-track-match' },
+  })
+  expect(await repairMatchedTidalArtists(false, fixture)).toBe(1)
+  expect((await artistOf(shadow))?.mergedIntoId).toBeNull()
+  expect(await repairMatchedTidalArtists(true, fixture)).toBe(1)
+  expect((await getArtist(shadow)).id).toBe(keptId)
+  expect(
+    (await credits()).find((c) => c.mediaItemId === outside)?.artistId,
+  ).toBe(keptId)
+  expect(
+    (await listCatalogObservations(shadow, { page: 1, size: 20 }, 'artist'))
+      .items,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        responseId: 'fixture-tidal-capture',
+        subjectId: spotifyTrack,
+      }),
+    ]),
+  )
+  expect(await repairMatchedTidalArtists(true, fixture)).toBe(0)
+})
+
+it('previews and journals a scoped name-only discovery only when the exact recording supplies its artist identifier', async () => {
+  const media = {
+    kind: 'track',
+    provider: 'spotify',
+    title: 'Fixture source',
+    referenceType: 'track',
+    externalId: 'D'.repeat(22),
+    credits: [{ name: KEPT }],
+  } satisfies Parameters<typeof observeCatalogMedia>[1]
+  const source = {
+    provider: 'spotify',
+    operation: 'playback',
+    occurrenceKey: 'fixture-repair',
+  }
+  const track = await fixture.transaction((tx) =>
+    observeCatalogMedia(tx, media, source),
+  )
+  const [credit] = (await credits()).filter((c) => c.mediaItemId === track)
+  if (!credit) throw new Error('Expected provisional credit')
+  expect(await repairScopedSpotifyCredits(false, fixture)).toBe(0)
+  const externalId = 'E'.repeat(22)
+  await fixture
+    .update(schema.mediaItem)
+    .set({
+      metadata: { spotifyArtistCredits: [{ id: externalId, name: KEPT }] },
+    })
+    .where(eq(schema.mediaItem.id, track))
+  await fixture
+    .update(schema.artistProviderSnapshot)
+    .set({ normalizedData: { tags: [], externalId } })
+    .where(eq(schema.artistProviderSnapshot.artistId, keptId))
+  expect(await repairScopedSpotifyCredits(false, fixture)).toBe(1)
+  expect((await artistOf(credit.artistId))?.mergedIntoId).toBeNull()
+  expect(await repairScopedSpotifyCredits(true, fixture)).toBe(1)
+  expect((await getArtist(credit.artistId)).id).toBe(keptId)
+  expect(await repairScopedSpotifyCredits(true, fixture)).toBe(0)
 })
 
 it('merges, undoes and makes the merge again', async () => {

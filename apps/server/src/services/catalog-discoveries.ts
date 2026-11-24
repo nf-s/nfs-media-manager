@@ -324,6 +324,7 @@ async function observeCredits(
     if (billing.success && billing.data[0].name === sole.name)
       credits = [{ ...sole, externalId: billing.data[0].id }]
   }
+  const observedNativeIds = new Map<string, string>()
   const native = await observeNamedArtistIdentities(
     tx,
     media.provider,
@@ -334,6 +335,7 @@ async function observeCredits(
           : [],
       ),
     ),
+    observedNativeIds,
   )
   for (const [position, credit] of credits.entries()) {
     const role = credit.role ?? 'artist'
@@ -369,7 +371,13 @@ async function observeCredits(
         .onConflictDoNothing()
     await observeCatalogOccurrence(
       tx,
-      { kind: media.kind === 'film' ? 'person' : 'artist', id: observedId },
+      {
+        kind: media.kind === 'film' ? 'person' : 'artist',
+        id:
+          (credit.externalId
+            ? observedNativeIds.get(credit.externalId)
+            : undefined) ?? observedId,
+      },
       {
         ...origin,
         subjectKind: media.kind,
@@ -640,6 +648,23 @@ export async function promoteNativeResource(
       .for('update')
     if (!resource)
       throw new ServerError({ statusCode: 404, message: 'Resource not found' })
+    if (table === artist) {
+      const aliases = tx
+        .select({ id: artist.id })
+        .from(artist)
+        .where(eq(artist.mergedIntoId, id))
+      const [prior] = await tx
+        .select({ id: catalogNativeAddition.targetId })
+        .from(catalogNativeAddition)
+        .where(
+          and(
+            eq(catalogNativeAddition.targetKind, kind),
+            inArray(catalogNativeAddition.targetId, aliases),
+          ),
+        )
+        .limit(1)
+      if (prior) return { mediaItemId: id, created: false }
+    }
     const [row] = await tx
       .insert(catalogNativeAddition)
       .values({ targetKind: kind, targetId: id, ownerId })

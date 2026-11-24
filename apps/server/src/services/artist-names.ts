@@ -11,12 +11,14 @@ const WRITE_BATCH = 500
 
 /** Explicit additions and discoveries stay on the identity that received them so undo restores its membership. */
 export function artistFamilyAdded(id: SQL) {
-  return sql`exists (select 1 from artist n where (n.id = ${id} or n.merged_into_id = ${id}) and n.added_to_library)`
+  return sql`(${id} in (select n.id from artist n where n.added_to_library)
+    or ${id} in (select n.merged_into_id from artist n where n.merged_into_id is not null and n.added_to_library))`
 }
 
 export function artistFamilyObserved(id: SQL) {
-  return sql`exists (select 1 from catalog_observation o where o.target_kind = 'artist' and
-    (o.target_id = ${id} or o.target_id in (select n.id from artist n where n.merged_into_id = ${id})))`
+  return sql`(exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = ${id})
+    or ${id} in (select n.merged_into_id from artist n where n.merged_into_id is not null and
+      exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = n.id)))`
 }
 
 const ResolvedRowsSchema = z.array(

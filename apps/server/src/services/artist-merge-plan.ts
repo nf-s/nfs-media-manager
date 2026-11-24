@@ -25,7 +25,7 @@ export type ArtistMergeReading = {
 }
 
 // Last.fm keys an artist profile by its name, so two spellings always differ.
-const NAME_KEYED_PROVIDERS = new Set(['lastfm'])
+const mbid = z.string().uuid()
 
 const SelectedRowsSchema = z.array(
   z.object({ id: z.string(), current_id: z.string() }),
@@ -109,7 +109,11 @@ export function differentProfiles(
   const ids = new Map<string, Set<string>>()
   for (const artist of artists)
     for (const { provider, externalId } of artist.profiles) {
-      if (externalId === null || NAME_KEYED_PROVIDERS.has(provider)) continue
+      if (
+        externalId === null ||
+        (provider === 'lastfm' && !mbid.safeParse(externalId).success)
+      )
+        continue
       const known = ids.get(provider) ?? new Set<string>()
       known.add(externalId)
       ids.set(provider, known)

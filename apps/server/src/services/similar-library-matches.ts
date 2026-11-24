@@ -206,7 +206,7 @@ const SimilarTrackRowsSchema = z.array(
 export async function similarTrackDetails(
   database: Reader,
   trackIds: readonly string[],
-) {
+): Promise<Map<string, z.infer<typeof TidalSimilarTrackSchema>>> {
   if (!trackIds.length) return new Map()
   const result = await database.execute(sql`
     select requested.id as "requestedId", jsonb_build_object(

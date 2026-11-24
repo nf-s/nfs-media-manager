@@ -233,6 +233,13 @@ export const libraryChangeRuleLabels: ReadonlyMap<string, string> = new Map([
   ['album-history', 'Album listening history'],
   ['spotify-album-recording', 'Same Spotify track on the album'],
   ['album-track-list', 'No longer on the album’s track list'],
+  ['exact-provider-artist-id', 'Same provider artist ID'],
+  ['matched-recording-artist-ids', 'Matching artist credits on the same ISRC'],
+  [
+    'matched-native-recording-credit',
+    'Matching TIDAL and Spotify credits on a library track',
+  ],
+  ['recording-native-artist-credit', 'Spotify artist ID on the credited track'],
 ])
 
 /** The automatic rule that made a change, or its code when it has no label. */

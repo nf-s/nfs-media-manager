@@ -15,6 +15,7 @@ export async function observeNamedArtistIdentities(
   tx: Transaction,
   provider: string,
   names: ReadonlyMap<string, string>,
+  observedIds?: Map<string, string>,
 ) {
   const identities = new Map<string, string>()
   if (!names.size) return identities
@@ -25,6 +26,7 @@ export async function observeNamedArtistIdentities(
       artistId: sql<string>`coalesce(${artist.mergedIntoId}, ${artist.id})`,
       verified: sql<boolean>`true`,
       alias: sql<boolean>`false`,
+      original: artist.id,
     })
     .from(artistProviderCurrentState)
     .innerJoin(
@@ -58,6 +60,7 @@ export async function observeNamedArtistIdentities(
           artistId: sql<string>`coalesce(${artist.mergedIntoId}, ${artist.id})`,
           verified: sql<boolean>`false`,
           alias: sql<boolean>`${artist.mergedIntoId} is not null`,
+          original: artist.id,
         })
         .from(artist)
         .where(
@@ -75,8 +78,9 @@ export async function observeNamedArtistIdentities(
     identities.set(externalId, artistId)
   }
   for (const id of conflicts) identities.delete(id)
-  for (const { externalId, artistId, verified, alias } of stored) {
+  for (const { externalId, artistId, verified, alias, original } of stored) {
     if (verified) continue
+    observedIds?.set(externalId, original)
     const target = identities.get(externalId)
     if (
       target &&

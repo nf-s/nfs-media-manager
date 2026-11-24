@@ -83,6 +83,7 @@ import {
 } from './sonovault-similar-lookup'
 import { lookupTidalSimilar } from './tidal-similar-lookup'
 import { reconcileSimilarArtistCredits } from './catalog-artist-reconciliation'
+import { reconcileTidalJobArtists } from './tidal-artist-reconciliation'
 import { matchTarget } from './tidal-track-match'
 
 type Reader = Pick<typeof db, 'select' | 'execute'>
@@ -694,7 +695,10 @@ async function observeStoredTidalSuggestions(
     )
     items.push({ ...item, catalogMediaItemId })
   }
-  if (input.kind === 'track') await reconcileSimilarArtistCredits(tx, items)
+  if (input.kind === 'track') {
+    if (input.jobId) await reconcileTidalJobArtists(tx, input.jobId)
+    await reconcileSimilarArtistCredits(tx, items)
+  }
   return items
 }
 

@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { db } from '@/lib/db'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
 import { AlbumMbidSchema } from '@/plugins/builtin/album-provider-helpers'
@@ -253,11 +253,30 @@ export async function observeLastfmScrobbles(
         },
       ]),
   )
-  if (artists.size)
-    await tx
+  const keptArtists = new Map<string, string>()
+  if (artists.size) {
+    const inserted = await tx
       .insert(artist)
       .values([...artists.values()])
       .onConflictDoNothing()
+      .returning({ id: artist.id })
+    if (inserted.length < artists.size) {
+      const aliases = await tx
+        .select({ id: artist.id, target: artist.mergedIntoId })
+        .from(artist)
+        .where(
+          and(
+            inArray(
+              artist.id,
+              [...artists.values()].map(({ id }) => id),
+            ),
+            isNotNull(artist.mergedIntoId),
+          ),
+        )
+      for (const { id, target } of aliases)
+        if (target) keptArtists.set(id, target)
+    }
+  }
   const storedArtists = await observeNamedArtistIdentities(
     tx,
     'lastfm',
@@ -307,7 +326,7 @@ export async function observeLastfmScrobbles(
       if (observedArtist && !members.has(id))
         credits.push({
           mediaItemId: id,
-          artistId: observedArtist,
+          artistId: keptArtists.get(observedArtist) ?? observedArtist,
           role: 'artist',
         })
       occurrences.push({

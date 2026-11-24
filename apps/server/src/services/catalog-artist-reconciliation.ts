@@ -12,9 +12,6 @@ import { validIsrc } from '@/lib/isrc'
 import { createStableId } from '@/lib/media-utils'
 import { spotifyCodeLookup, tidalSimilar, providerResponse } from '@/schemas/db'
 import { normalizeSpotifyCatalogTrack } from './provider-search-task-replay'
-import { readArtistMerge } from './artist-merge-plan'
-import { lockLibraryTrackWrites } from './album-library-tracks'
-import { persistArtistMerge } from './artist-merges'
 import type { ChangeTransaction } from './library-change-effect'
 
 /** Both native artist IDs must identify just one current artist. Names never select a record. */
@@ -44,7 +41,7 @@ export async function reconcileArtistPair(
   apply: boolean,
 ) {
   if (sourceId === targetId) return false
-  await lockLibraryTrackWrites(tx)
+  await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
   const active = await tx.execute(
     sql`select id from artist where id in (${sourceId},${targetId}) and merged_into_id is null order by id for update`,
   )
@@ -54,13 +51,18 @@ export async function reconcileArtistPair(
     where c.kind = 'artist' and c.action = 'merge' and c.undone_at is not null
       and e.type = 'artist-merge' and e.record_ids @> array[${sourceId},${targetId}]::text[] limit 1`)
   if (previous.rows.length) return false
+  // The journal also handles recording merges that call the catalog writer.
+  const { readArtistMerge } = await import('./artist-merge-plan')
   const reading = await readArtistMerge(
     tx,
     { artistIds: [sourceId, targetId], targetId, follow: false },
     true,
   )
   if (reading.plan.blocked || reading.plan.cautions.length) return false
-  if (apply) await persistArtistMerge(tx, reading, rule)
+  if (apply) {
+    const { persistArtistMerge } = await import('./artist-merges')
+    await persistArtistMerge(tx, reading, rule)
+  }
   return true
 }
 
@@ -160,7 +162,9 @@ export async function reconcileExactCatalogArtists(
       from artist n join artist_provider_current_state s on s.provider=n.catalog_provider
       join artist_provider_snapshot p on p.id=s.latest_snapshot_id and p.normalized_data->>'externalId'=n.catalog_external_id
       join artist a on a.id=s.artist_id
-      where n.merged_into_id is null and coalesce(a.merged_into_id,a.id) <> n.id`)
+      where n.merged_into_id is null
+      group by n.id,p.provider,n.catalog_external_id
+      having count(distinct coalesce(a.merged_into_id,a.id))=1 and min(coalesce(a.merged_into_id,a.id)) <> n.id`)
     let reconciled = 0
     for (const { source, provider, external_id } of z
       .array(
@@ -196,7 +200,7 @@ export async function repairScopedSpotifyCredits(
   database = db,
 ) {
   return database.transaction(async (tx) => {
-    await lockLibraryTrackWrites(tx)
+    await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
     const rows =
       await tx.execute(sql`select distinct a.id, a.name, m.id as track_id, o.position, credit->>'id' as external_id
       from artist a join catalog_observation o on o.target_kind='artist' and o.target_id=a.id
@@ -331,32 +335,33 @@ export async function repairStoredSimilarArtists(
   apply: boolean,
   database = db,
 ) {
-  const pages = await database
-    .select({ id: tidalSimilar.mediaItemId })
-    .from(tidalSimilar)
-    .where(eq(tidalSimilar.kind, 'track'))
   let merged = 0
-  for (const { id } of pages) {
-    const dryRun = Symbol('artist repair dry run')
-    try {
-      await database.transaction(async (tx) => {
-        await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-        const [saved] = await tx
-          .select({ items: tidalSimilar.items })
-          .from(tidalSimilar)
-          .where(eq(tidalSimilar.mediaItemId, id))
-        const items =
-          z.array(TidalSuggestionSchema).safeParse(saved?.items).data ?? []
-        await restoreLookupCredits(
-          tx,
-          items.flatMap((item) => validIsrc(item.code) ?? []),
-        )
+  const dryRun = Symbol('artist repair dry run')
+  try {
+    await database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+      const rows = await tx
+        .select({ items: tidalSimilar.items })
+        .from(tidalSimilar)
+        .where(eq(tidalSimilar.kind, 'track'))
+      const pages = rows.map(
+        (row) => z.array(TidalSuggestionSchema).safeParse(row.items).data ?? [],
+      )
+      const codes = [
+        ...new Set(
+          pages.flatMap((items) =>
+            items.flatMap((item) => validIsrc(item.code) ?? []),
+          ),
+        ),
+      ]
+      for (let i = 0; i < codes.length; i += 100)
+        await restoreLookupCredits(tx, codes.slice(i, i + 100))
+      for (const items of pages)
         merged += await reconcileSimilarArtistCredits(tx, items)
-        if (!apply) throw dryRun
-      })
-    } catch (error) {
-      if (error !== dryRun) throw error
-    }
+      if (!apply) throw dryRun
+    })
+  } catch (error) {
+    if (error !== dryRun) throw error
   }
   return merged
 }
