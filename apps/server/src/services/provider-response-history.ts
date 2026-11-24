@@ -30,6 +30,10 @@ import {
 } from '@/schemas/db'
 import { observeTmdbFilmResponse } from './film-catalog-observations'
 import { projectSubscriptionResponse } from './subscription-catalog-observations'
+import {
+  observeMusicProviderResponse,
+  readRetainedMusicResponse,
+} from './music-provider-observations'
 
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -199,6 +203,28 @@ export async function saveProviderResponseCapture(
     ['spotify', 'youtube', 'rinse', 'nts'].includes(stored.provider)
   )
     await database.transaction((tx) => projectSubscriptionResponse(tx, stored))
+  if (stored) {
+    const discoveries = readRetainedMusicResponse(stored)
+    if (discoveries.length) {
+      const artistId =
+        input.artistId ??
+        (typeof scope.options.artistId === 'string'
+          ? scope.options.artistId
+          : undefined)
+      const albumId =
+        'mediaItemId' in scope && typeof scope.mediaItemId === 'string'
+          ? scope.mediaItemId
+          : undefined
+      await database.transaction((tx) =>
+        observeMusicProviderResponse(
+          tx,
+          stored,
+          { artistId, albumId },
+          discoveries,
+        ),
+      )
+    }
+  }
 }
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]

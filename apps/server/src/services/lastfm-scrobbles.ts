@@ -55,6 +55,8 @@ import {
   recordProviderSuccess,
 } from './provider-requests'
 import { recordAccountSyncResponses } from './provider-response-history'
+import { latestCatalogResponseId } from './music-catalog-observations'
+import { observeLastfmScrobbles } from './lastfm-catalog-observations'
 
 const PAGE_SIZE = 200
 // Last.fm publishes no numeric limit but warns against several calls per second.
@@ -466,13 +468,12 @@ async function insertScrobbles(
   database: Pick<typeof db, 'insert'>,
   rows: Array<typeof lastfmScrobble.$inferInsert>,
 ) {
-  if (!rows.length) return 0
-  const inserted = await database
+  if (!rows.length) return []
+  return database
     .insert(lastfmScrobble)
     .values(rows)
     .onConflictDoNothing()
     .returning({ id: lastfmScrobble.id })
-  return inserted.length
 }
 
 /** Stores one fetched page and advances the checkpoint in the same transaction. */
@@ -481,6 +482,7 @@ async function storePage(
   token: string,
   run: SyncRow,
   page: z.infer<typeof RecentTracksSchema>,
+  jobId?: string,
 ) {
   const totalPages = page.recenttracks['@attr'].totalPages
   return db.transaction(async (tx) => {
@@ -496,13 +498,41 @@ async function storePage(
       current.nextPage !== run.nextPage
     )
       return 'lost'
-    const inserted = await insertScrobbles(tx, scrobbleRows(account, page))
+    const rows = scrobbleRows(account, page)
+    const inserted = await insertScrobbles(tx, rows)
+    if (inserted.length) {
+      const ids = new Set(inserted.map(({ id }) => id))
+      await observeLastfmScrobbles(
+        tx,
+        rows.flatMap((row) =>
+          ids.has(row.id)
+            ? [
+                {
+                  id: row.id,
+                  artistName: row.artistName,
+                  artistMbid: row.artistMbid ?? null,
+                  albumName: row.albumName ?? null,
+                  albumMbid: row.albumMbid ?? null,
+                  trackName: row.trackName,
+                  trackMbid: row.trackMbid ?? null,
+                },
+              ]
+            : [],
+        ),
+        {
+          jobId,
+          responseId: jobId
+            ? await latestCatalogResponseId(tx, jobId, 'lastfm')
+            : undefined,
+        },
+      )
+    }
     await tx
       .update(lastfmSync)
       .set({
         nextPage: run.nextPage + 1,
         totalPages,
-        newScrobbles: current.newScrobbles + inserted,
+        newScrobbles: current.newScrobbles + inserted.length,
       })
       .where(eq(lastfmSync.username, account))
     return run.nextPage >= totalPages ? 'fetched-all' : 'more'
@@ -617,7 +647,13 @@ export async function runLastfmSyncJob(
         // A page that arrives after cancellation is discarded.
         if (!(await context.isActive())) return { outcome: 'stopped' }
         pages += 1
-        const stored = await storePage(configured.account, token, run, page)
+        const stored = await storePage(
+          configured.account,
+          token,
+          run,
+          page,
+          context.jobId,
+        )
         if (stored === 'lost') return { outcome: 'stopped' }
         if (stored === 'more') {
           const total = page.recenttracks['@attr'].totalPages

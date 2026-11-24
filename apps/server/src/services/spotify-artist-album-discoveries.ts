@@ -19,7 +19,9 @@ type Release = ReturnType<
   typeof parseSpotifyArtistAlbumPage
 >['releases'][number]
 type PageOrigin = {
-  artistId: string
+  artistId?: string
+  operation?: string
+  importId?: string
   occurrencePrefix: string
   page: number
   jobId?: string
@@ -46,9 +48,14 @@ function uniqueAlbumMatches(rows: { externalId: string | null; id: string }[]) {
 export async function observeSpotifyArtistAlbumPage(
   tx: Transaction,
   releases: readonly Release[],
-  { artistId, occurrencePrefix, ...page }: PageOrigin,
+  {
+    artistId,
+    occurrencePrefix,
+    operation = 'artist-albums',
+    ...page
+  }: PageOrigin,
 ) {
-  if (!releases.length) return
+  if (!releases.length) return new Map<string, string>()
   const externalIds = [...new Set(releases.map(({ externalId }) => externalId))]
   const byReference = uniqueAlbumMatches(
     await tx
@@ -92,8 +99,8 @@ export async function observeSpotifyArtistAlbumPage(
     const origin: CatalogOrigin = {
       ...page,
       provider,
-      operation: 'artist-albums',
-      subjectKind: 'artist',
+      operation,
+      subjectKind: artistId ? 'artist' : undefined,
       subjectId: artistId,
       occurrenceKey: `${occurrencePrefix}:${release.position}`,
       relationshipRole: release.relationshipRole,
@@ -191,7 +198,7 @@ export async function observeSpotifyArtistAlbumPage(
       ...credit,
       mediaItemId: id,
       billingOrder: index,
-      primary: release.primary && index === 0,
+      primary: Boolean(artistId && release.primary && index === 0),
       origin,
     })),
   )
@@ -283,4 +290,5 @@ export async function observeSpotifyArtistAlbumPage(
       }),
     ),
   ])
+  return new Map(targets.map(({ release, id }) => [release.externalId, id]))
 }

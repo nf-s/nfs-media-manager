@@ -25,6 +25,12 @@ import { observeSpotifyPlaylists } from './spotify-playlist-listing'
 import { ListedPlaylistSchema } from './spotify-playlist-state'
 import { backfillSpotifyTrackDiscoveries } from './spotify-track-search'
 import { backfillTidalSimilarDiscoveries } from './tidal-similar'
+import {
+  backfillLastfmScrobbles,
+  backfillMusicAlbumSnapshots,
+  backfillMusicArtistSnapshots,
+  backfillPublicMusicResponses,
+} from './music-provider-backfill'
 
 type Batch = { apply: boolean; limit: number; after?: string }
 
@@ -274,6 +280,10 @@ export async function backfillMusicCatalog(apply = false) {
     spotifyPlaylistPages: backfillSpotifyPlaylistPages,
     sonovaultLookups: backfillSonovaultLookups,
     sonovaultCandidates: backfillSonovaultCandidates,
+    publicMusicResponses: backfillPublicMusicResponses,
+    musicAlbumSnapshots: backfillMusicAlbumSnapshots,
+    musicArtistSnapshots: backfillMusicArtistSnapshots,
+    lastfmScrobbles: backfillLastfmScrobbles,
   }
   for (const [family, backfill] of Object.entries(families)) {
     const counts = { candidates: 0, skipped: 0 }

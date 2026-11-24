@@ -91,7 +91,7 @@ export async function writeAlbumLinks(
           coalesce((
             select array_agg(t.title) from track t
             where t.album_media_item_id = mi.id), '{}') as tracks
-        from media_item mi where mi.media_type = 'album'`)
+        from media_item mi where mi.media_type = 'album' and mi.in_library`)
     ).rows,
   )
   const groups = GroupRowsSchema.parse(

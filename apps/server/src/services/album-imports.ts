@@ -12,7 +12,11 @@ import {
 import { db } from '@/lib/db'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
-import { parseOptionalDate, slugifyParts } from '@/lib/media-utils'
+import {
+  createStableId,
+  parseOptionalDate,
+  slugifyParts,
+} from '@/lib/media-utils'
 import {
   AlbumImportCandidateSchema,
   albumCandidateArtists,
@@ -34,6 +38,8 @@ import {
   providerReference,
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from './provider-state'
+import { observeAlbumImportCandidate } from './album-import-observations'
+import { promoteCatalogMediaInTransaction } from './catalog-discoveries'
 import {
   queueMediaEnrichment,
   requireEnrichmentConfirmation,
@@ -47,6 +53,7 @@ import {
 
 const StoredCandidateSchema = AlbumImportCandidateSchema.extend({
   action: z.enum(['new', 'unchanged']),
+  catalogMediaItemId: z.string().optional(),
 })
 const StoredPreviewSchema = z
   .object({
@@ -75,6 +82,7 @@ export const albumImportFormats: z.infer<typeof FileImportFormatSchema>[] = [
 async function findAlbumCandidates(
   candidates: AlbumImportCandidate[],
   database: Pick<typeof db, 'select'>,
+  includeOutside = false,
 ) {
   const byReference = new Map<string, Set<string>>()
   const byName = new Map<string, Set<string>>()
@@ -98,6 +106,18 @@ async function findAlbumCandidates(
       .where(
         and(
           eq(mediaItem.mediaType, 'album'),
+          includeOutside
+            ? or(
+                eq(mediaItem.inLibrary, true),
+                eq(providerReference.referenceType, 'spotify'),
+                and(
+                  eq(providerReference.provider, 'spotify'),
+                  eq(providerReference.referenceType, 'album'),
+                ),
+              )
+            : eq(mediaItem.inLibrary, true),
+          sql`${providerReference.metadata}->>'rejected' is distinct from 'true'`,
+          sql`${providerReference.metadata}->>'verified' is distinct from 'false'`,
           sql`(
         case when ${providerReference.referenceType} = 'spotify' or (${providerReference.provider} = 'spotify' and ${providerReference.referenceType} = 'album') then 'spotify:' || ${providerReference.externalId}
         when ${providerReference.referenceType} in ('upc', 'ean') then 'barcode:' || lpad(${providerReference.externalId}, 14, '0') end
@@ -128,6 +148,7 @@ async function findAlbumCandidates(
       .where(
         and(
           eq(mediaItem.mediaType, 'album'),
+          eq(mediaItem.inLibrary, true),
           eq(mediaCredit.role, 'artist'),
           inArray(
             sql`lower(regexp_replace(trim(${mediaItem.title}), '[[:space:]]+', ' ', 'g'))`,
@@ -192,7 +213,7 @@ async function matchAlbumRelease(
   candidate: AlbumImportCandidate,
   database: Pick<typeof db, 'select'>,
 ) {
-  const [found] = await findAlbumCandidates([candidate], database)
+  const [found] = await findAlbumCandidates([candidate], database, true)
   if (!found?.named.length || found.identified.length)
     return { ...albumMatch(found?.identified ?? []), besideRelease: false }
   const releases = new Set(
@@ -230,6 +251,8 @@ export async function prepareAlbumCandidates(
   options: {
     kind: 'csv' | 'spotify'
     source: string
+    previewId?: string
+    catalogIds?: ReadonlyMap<string, string>
     discovery?: AlbumImportPreview['discovery']
   },
 ) {
@@ -239,6 +262,17 @@ export async function prepareAlbumCandidates(
       message: 'Preview exceeds 9,999 albums',
     })
   const matches = await matchAlbumCandidates(collected.records)
+  const id = options.previewId ?? nanoid()
+  const previewScope = createStableId(
+    'album-preview',
+    JSON.stringify([
+      options.kind,
+      collected.records.map((record) => [
+        albumCandidateNameKey(record),
+        albumCandidateKeys(record),
+      ]),
+    ]),
+  )
   const records: z.infer<typeof StoredCandidateSchema>[] = []
   const seen = new Set<string>()
   const warnings = [...collected.warnings]
@@ -260,10 +294,35 @@ export async function prepareAlbumCandidates(
       continue
     }
     keys.forEach((key) => seen.add(key))
-    if (match?.id) existing++
-    records.push({ ...record, action: match?.id ? 'unchanged' : 'new' })
+    const member = Boolean(match?.id)
+    if (member) existing++
+    records.push({ ...record, action: member ? 'unchanged' : 'new' })
   }
-  const id = nanoid()
+  for (let start = 0; start < records.length; start += 100) {
+    await db.transaction(async (tx) => {
+      for (const [index, record] of records
+        .slice(start, start + 100)
+        .entries()) {
+        const position = start + index + 1
+        const native = albumCandidateKeys(record)
+          .find((key) => key.startsWith('spotify:'))
+          ?.slice('spotify:'.length)
+        record.catalogMediaItemId = await observeAlbumImportCandidate(
+          tx,
+          record,
+          {
+            provider: record.provider,
+            operation: 'album-import-preview',
+            occurrenceKey: id,
+            importId: id,
+          },
+          position,
+          previewScope,
+          native ? options.catalogIds?.get(native) : undefined,
+        )
+      }
+    })
+  }
   const expiresAt = new Date(Date.now() + 3600000)
   await db.insert(filmImportPreview).values({
     id,
@@ -320,6 +379,7 @@ export async function commitAlbumImportRecord(
   transaction?: ImportTransaction,
   options: {
     snapshotSource?: 'manual-add'
+    ownerId?: string
     /** The candidate is one Spotify release the owner chose. */
     exactRelease?: boolean
   } = {},
@@ -333,7 +393,36 @@ export async function commitAlbumImportRecord(
           besideRelease: false,
         }
     if (match.error) throw new Error(match.error)
-    if (match.id) return { id: match.id, created: false }
+    const existingId = match.id ?? candidate.catalogMediaItemId
+    if (existingId) {
+      const previous = await tx.query.mediaItem.findFirst({
+        where: eq(mediaItem.id, existingId),
+        columns: { inLibrary: true },
+      })
+      if (previous?.inLibrary) return { id: existingId, created: false }
+      if (previous && candidate.action === 'new') {
+        await applyProviderResultInTransaction(
+          {
+            mediaItemId: existingId,
+            mediaType: 'album',
+            provider: candidate.provider,
+            source: options.snapshotSource ?? 'file-import',
+            payload: {
+              source: candidate.source,
+              data: candidate.result.payload,
+            },
+            normalized: candidate.result.normalized,
+          },
+          tx,
+        )
+        const added = await promoteCatalogMediaInTransaction(
+          tx,
+          existingId,
+          options.ownerId,
+        )
+        return { id: existingId, created: added.created }
+      }
+    }
     if (candidate.action !== 'new')
       throw new Error(
         'Album disappeared since preview; preview again before creating it',
@@ -451,7 +540,9 @@ export async function confirmAlbumImport(
         for (const [index, record] of records.entries()) {
           if (!record) continue
           try {
-            const outcome = await commitAlbumImportRecord(record)
+            const outcome = await commitAlbumImportRecord(record, undefined, {
+              ownerId: userId,
+            })
             if (outcome.created) newIds.push(outcome.id)
             else unchanged++
           } catch {

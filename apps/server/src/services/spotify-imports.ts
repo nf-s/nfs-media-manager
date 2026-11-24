@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { nanoid } from 'nanoid'
 import { SpotifySavedAlbumsInputSchema } from '@repo/schemas/spotify'
 import {
   SpotifySavedPageSchema,
@@ -7,7 +8,9 @@ import {
 } from '@/lib/spotify-api'
 import { type AlbumImportCandidate } from '@/lib/album-import-candidates'
 import { ServerError } from '@/lib/error'
+import { db } from '@/lib/db'
 import { prepareAlbumCandidates } from './album-imports'
+import { observeSpotifySavedAlbumPage } from './album-import-observations'
 import { spotifyAccountToken, spotifyOperation } from './spotify-oauth'
 
 const activePreviews = new Set<string>()
@@ -28,6 +31,8 @@ export async function previewSpotifyAlbums(
       message: 'A Spotify preview is already running. Wait for it to finish.',
     })
   activePreviews.add(userId)
+  const previewId = nanoid()
+  const catalogIds = new Map<string, string>()
   try {
     const discovered = await spotifyOperation(async (request) => {
       const token = await spotifyAccountToken(userId, request)
@@ -70,6 +75,12 @@ export async function previewSpotifyAlbums(
           seen.add(saved.album.id)
           savedAlbums.push(saved)
         }
+        for (const [externalId, id] of await observeSpotifySavedAlbumPage(
+          db,
+          page,
+          previewId,
+        ))
+          catalogIds.set(externalId, id)
         offset += page.items.length
         nextOffset =
           page.next !== null && offset < total && offset <= 10000
@@ -123,6 +134,8 @@ export async function previewSpotifyAlbums(
       userId,
       {
         kind: 'spotify',
+        previewId,
+        catalogIds,
         source: 'Spotify saved albums',
         discovery: {
           ...discovered.discovery,

@@ -76,6 +76,7 @@ async function libraryTracks(database: Transaction) {
           lt.spotify_album_id, lt.album_name,
           lt.album_media_item_id as album_id,
           array(select distinct t.album_media_item_id from track t
+            join media_item a on a.id = t.album_media_item_id and a.in_library
             where t.track_media_item_id = lt.media_item_id order by t.album_media_item_id) as listed_album_ids,
           lt.album_link_strategy as strategy,
           coalesce((
