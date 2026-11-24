@@ -22,6 +22,7 @@ type CatalogMedia = {
   artworkUrl?: string | null
   releaseDate?: Date | null
   spotifyUrl?: string | null
+  playable?: boolean
   artistId?: string
   albumId?: string | null
   albumName?: string | null
@@ -175,16 +176,17 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
       await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
     if (media.kind === 'track')
       await tx.insert(libraryTrack).values({
-        mediaItemId: id, spotifyTrackId: spotifyTrack ? media.externalId : undefined,
+        mediaItemId: id, spotifyTrackId: spotifyTrack && media.playable !== false ? media.externalId : undefined,
         spotifyUrl: media.spotifyUrl, durationSec: media.durationSec, albumMediaItemId: media.albumId,
         albumName: media.albumName, spotifyAlbumId: media.spotifyAlbumId,
         albumLinkStrategy: media.albumId && media.spotifyAlbumId ? 'spotify-album' : undefined,
       }).onConflictDoUpdate({target: libraryTrack.mediaItemId, set: {
+        spotifyTrackId: sql`coalesce(${libraryTrack.spotifyTrackId}, excluded.spotify_track_id)`,
         durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
         albumMediaItemId: sql`coalesce(${libraryTrack.albumMediaItemId}, excluded.album_media_item_id)`,
         albumName: sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`,
         spotifyAlbumId: sql`coalesce(${libraryTrack.spotifyAlbumId}, excluded.spotify_album_id)`,
-      }, setWhere: sql`(${libraryTrack.durationSec} is null and excluded.duration_sec is not null)
+      }, setWhere: sql`(${libraryTrack.spotifyTrackId} is null and excluded.spotify_track_id is not null) or (${libraryTrack.durationSec} is null and excluded.duration_sec is not null)
         or (${libraryTrack.albumMediaItemId} is null and excluded.album_media_item_id is not null)
         or (${libraryTrack.albumName} is null and excluded.album_name is not null)
         or (${libraryTrack.spotifyAlbumId} is null and excluded.spotify_album_id is not null)` })

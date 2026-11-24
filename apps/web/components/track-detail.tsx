@@ -53,7 +53,7 @@ import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import type { BrowseFilterHref } from '@/utils/browse-items'
 import { TrackArtistLinks } from './creator-links'
 import { CreatorDetailState } from './creator-detail-state'
-import { DetailLink } from './detail-link'
+
 import {
   DetailArt,
   DetailTabs,
@@ -69,7 +69,7 @@ import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
 import { LibraryRecordChanges } from './library-changes'
-import { TrackAlbumNotices, useTrackAlbumAddition } from './track-album-notices'
+import { TrackAlbumNotices, TrackAlbumReferenceLink, useTrackAlbumAddition } from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
 import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { TrackRecordParts } from './track-record-parts'
@@ -413,7 +413,7 @@ function TrackOverview({
         </Section>
         <ListeningTrend kind="track" id={item.id} />
         <TrackAppearsOn track={item} onResolved={onResolved}>
-          {(albumId || albumAddition.missing) && (
+          {(albumId || albumAddition.exactId || albumAddition.missing) && (
             <List compact>
               <ListRow
                 thumb={
@@ -426,11 +426,11 @@ function TrackOverview({
                   </Thumb>
                 }
                 title={
-                  albumId ? (
+                  albumId || albumAddition.exactId ? (
                     <RowTitle>
-                      <DetailLink kind="album" id={albumId}>
+                      <TrackAlbumReferenceLink item={item} addition={albumAddition}>
                         {albumTitle}
-                      </DetailLink>
+                      </TrackAlbumReferenceLink>
                     </RowTitle>
                   ) : (
                     <span
@@ -659,10 +659,10 @@ function TrackDetailContent({
             {(item.album || item.albumName) && (
               <>
                 {item.artists.length > 0 ? ' · on ' : 'on '}
-                {item.album ? (
-                  <DetailLink kind="album" id={item.album.id}>
-                    {item.album.title}
-                  </DetailLink>
+                {item.album || albumAddition.unlisted || albumAddition.exactId ? (
+                  <TrackAlbumReferenceLink item={item} addition={albumAddition}>
+                    {item.album?.title ?? item.albumName ?? 'Album'}
+                  </TrackAlbumReferenceLink>
                 ) : item.albumName ? (
                   <span {...albumShortcut(item.albumName, filterHref)}>
                     {item.albumName}
