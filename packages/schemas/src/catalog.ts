@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { PaginationQuerySchema } from './common'
 
 export const LibraryScopeSchema = z.enum(['library', 'outside', 'all'])
+export const CatalogNativeKindSchema = z.enum(['artist', 'person', 'playlist', 'collection', 'subscription-source', 'subscription-item'])
+export type CatalogNativeKind = z.infer<typeof CatalogNativeKindSchema>
 
 export const CatalogScopeQuerySchema = z.object({
   libraryScope: LibraryScopeSchema.optional(),
@@ -23,6 +25,9 @@ export const CatalogObservationSchema = z.object({
   position: z.number().int().nullable(),
   jobId: z.string().nullable(),
   responseId: z.string().nullable(),
+  details: z.record(z.string(), z.unknown()).nullable(),
+  snapshotId: z.string().nullable(),
+  importId: z.string().nullable(),
   observedAt: z.string(),
 })
 

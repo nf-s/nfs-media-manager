@@ -14,7 +14,7 @@ export function LibraryAction({
   touch = false,
 }: {
   name: string
-  kind: 'track' | 'album' | 'film'
+  kind: 'track' | 'album' | 'film' | 'artist' | 'person' | 'playlist' | 'collection' | 'show' | 'item'
   onAdd?: () => void
   action?: 'add' | 'find'
   size?: 'xs' | 'sm'

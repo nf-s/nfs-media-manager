@@ -1,11 +1,11 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { JsonValue } from '@repo/media-plugin-sdk'
-import type { CatalogObservationQuerySchema } from '@repo/schemas/catalog'
+import type { CatalogNativeKind, CatalogObservationQuerySchema } from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
-import { album, artist, catalogAddition, catalogObservation, film, libraryTrack, mediaCredit, mediaItem, providerReference } from '@/schemas/db'
+import { album, artist, catalogAddition, catalogObservation, film, libraryTrack, mediaCredit, mediaItem, playlist, providerReference, subscriptionItem, subscriptionSource } from '@/schemas/db'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -16,6 +16,7 @@ type CatalogMedia = {
   title: string
   provider: string
   referenceType: string
+  provisionalKey?: string
   referenceMetadata?: Record<string, JsonValue>
   externalId?: string | null
   artworkUrl?: string | null
@@ -144,7 +145,7 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
   const spotifyTrack = media.provider === 'spotify' && media.kind === 'track'
   const key = media.externalId
     ? [media.provider, type, media.externalId]
-    : [...originKey(origin), media.provider, type, media.title]
+    : [media.provider, type, media.provisionalKey ?? [...originKey(origin), media.title]]
   const id = existingId ?? (spotifyTrack && media.externalId
     ? createStableId('library-track', `spotify:${media.externalId}`)
     : createStableId(`catalog-${media.kind}`, JSON.stringify(key)))
@@ -206,8 +207,19 @@ export async function promoteCatalogMedia(id: string, ownerId: string) {
   return db.transaction((tx) => promoteCatalogMediaInTransaction(tx, id, ownerId))
 }
 
-export async function listCatalogObservations(id: string, { page, size }: z.infer<typeof CatalogObservationQuerySchema>) {
-  const where = eq(catalogObservation.mediaItemId, id)
+export async function promoteNativeResource(kind: CatalogNativeKind, id: string) {
+  const table = { artist, person: artist, playlist, collection: playlist, 'subscription-source': subscriptionSource, 'subscription-item': subscriptionItem }[kind]
+  return db.transaction(async (tx) => {
+    const where = and(eq(table.id, id), table === playlist ? eq(playlist.kind, kind === 'collection' ? 'collection' : 'playlist') : undefined)
+    const [row] = await tx.update(table).set({ addedToLibrary: true })
+      .where(and(where, eq(table.addedToLibrary, false))).returning({ id: table.id })
+    if (!row && !await tx.$count(table, where)) throw new ServerError({ statusCode: 404, message: 'Resource not found' })
+    return { mediaItemId: id, created: Boolean(row) }
+  })
+}
+
+export async function listCatalogObservations(id: string, { page, size }: z.infer<typeof CatalogObservationQuerySchema>, kind?: CatalogNativeKind) {
+  const where = kind ? and(eq(catalogObservation.targetId, id), eq(catalogObservation.targetKind, kind)) : eq(catalogObservation.mediaItemId, id)
   const [items, totalCount] = await Promise.all([
     db.select().from(catalogObservation).where(where)
       .orderBy(desc(catalogObservation.observedAt), desc(catalogObservation.id)).limit(size).offset((page - 1) * size),

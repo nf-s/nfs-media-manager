@@ -1,7 +1,8 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 
-export function catalogScopeCondition(id: SQL, member: SQL, query: CatalogScopeQuery): SQL {
+export function catalogScopeCondition(id: SQL, member: SQL, query: CatalogScopeQuery, kind?: string): SQL {
+  const target = kind ? sql`o.target_kind = ${kind} and o.target_id = ${id}` : sql`o.media_item_id = ${id}`
   const scope = query.libraryScope ?? 'library'
   if (scope === 'library') return member
   const operations = [...new Set(query.discoverySources?.split(',') ?? [])]
@@ -10,9 +11,9 @@ export function catalogScopeCondition(id: SQL, member: SQL, query: CatalogScopeQ
     ? sql`true`
     : query.discoverySourceMode === 'all'
       ? sql`(select count(distinct o.operation) from catalog_observation o
-          where o.media_item_id = ${id} and o.operation = any(${sql.param(operations)}::text[])) = ${operations.length}`
+          where ${target} and o.operation = any(${sql.param(operations)}::text[])) = ${operations.length}`
       : sql`exists (select 1 from catalog_observation o
-          where o.media_item_id = ${id} and o.operation = any(${sql.param(operations)}::text[]))`
+          where ${target} and o.operation = any(${sql.param(operations)}::text[]))`
   return scope === 'outside' ? sql`(not (${member}) and ${outside})` : sql`((${member}) or ${outside})`
 }
 

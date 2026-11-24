@@ -2,6 +2,7 @@
 
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
+import type { CatalogNativeKind } from '@repo/schemas/catalog'
 import { Section, KeyValues } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
@@ -31,17 +32,17 @@ const discoveryLabels: Record<string, string> = {
 
 export function CatalogLibraryAction({ id, kind, title, inLibrary }: {
   id: string
-  kind: 'album' | 'track' | 'film'
+  kind: 'album' | 'track' | 'film' | CatalogNativeKind
   title: string
   inLibrary: boolean
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const action = useMutation({
-    mutationFn: () => addCatalogMedia(apiBaseUrl, id),
+    mutationFn: () => addCatalogMedia(apiBaseUrl, id, kind === 'album' || kind === 'film' || kind === 'track' ? 'media' : kind),
     onSuccess: async () => {
       await Promise.all([
-        invalidateManualMediaAddition(client, kind),
+        kind === 'album' || kind === 'film' || kind === 'track' ? invalidateManualMediaAddition(client, kind) : client.invalidateQueries(),
         client.invalidateQueries({ queryKey: [kind, id] }),
         client.invalidateQueries({ queryKey: ['artists'] }),
         client.invalidateQueries({ queryKey: ['artist'] }),
@@ -49,8 +50,8 @@ export function CatalogLibraryAction({ id, kind, title, inLibrary }: {
     },
   })
   return <>
-    <LibraryAction kind={kind} name={title} saved={inLibrary || action.isSuccess} pending={action.isPending} onAdd={() => action.mutate()} />
-    {action.isError && <Notice tone="error">Could not add to library.</Notice>}
+    <LibraryAction kind={kind === 'subscription-source' ? 'show' : kind === 'subscription-item' ? 'item' : kind} name={title} saved={inLibrary || action.isSuccess} pending={action.isPending} onAdd={() => action.mutate()} />
+    {action.isError && <Notice tone="danger">Could not add to library.</Notice>}
   </>
 }
 
@@ -60,12 +61,12 @@ function discoverySubject(kind: string | null, id: string | null) {
   return <DetailLink kind={kind} id={id}>{label}</DetailLink>
 }
 
-export function CatalogDiscoveries({ id }: { id: string }) {
+export function CatalogDiscoveries({ id,kind = 'media' }: { id: string; kind?: CatalogNativeKind | 'media' }) {
   const { apiBaseUrl } = useConfig()
   const discoveries = useInfiniteQuery({
-    queryKey: ['catalog-discoveries', id],
+    queryKey: ['catalog-discoveries', kind,id],
     initialPageParam: 1,
-    queryFn: ({ pageParam, signal }) => catalogDiscoveries(apiBaseUrl, id, pageParam, signal),
+    queryFn: ({ pageParam, signal }) => catalogDiscoveries(apiBaseUrl, id, pageParam, signal,kind),
     getNextPageParam: (last) => last.page < last.pageCount ? last.page + 1 : undefined,
   })
   const rows = discoveries.data?.pages.flatMap((page) => page.items) ?? []
@@ -73,7 +74,7 @@ export function CatalogDiscoveries({ id }: { id: string }) {
   return <Section title="Discoveries">
     {rows.map((item) => {
       const provider = item.provider === 'lastfm' ? 'Last.fm' : item.provider === 'spotify' ? 'Spotify' : item.provider === 'tidal' ? 'TIDAL' : item.provider
-      return <SourceRow key={item.id} mark={<ProviderMark label={provider} icon={providerLogoUrl(item.provider)} />} name={discoveryLabels[item.operation] ?? item.operation} match={provider} when={formatDateTime(item.observedAt)}>
+      return <SourceRow key={item.id} mark={<ProviderMark name={provider} src={providerLogoUrl(item.provider)} />} name={discoveryLabels[item.operation] ?? item.operation} match={provider} when={formatDateTime(item.observedAt)}>
         <KeyValues items={[
           { label: 'Found from', value: discoverySubject(item.subjectKind, item.subjectId) },
           { label: 'Relationship', value: item.relationshipRole === 'appears_on' ? 'Appears on' : item.relationshipRole },
@@ -83,7 +84,7 @@ export function CatalogDiscoveries({ id }: { id: string }) {
         ]} />
       </SourceRow>
     })}
-    {discoveries.isError && <Notice tone="error" action={<Button variant="link" onClick={() => void discoveries.refetch()}>Retry</Button>}>Could not load discoveries.</Notice>}
+    {discoveries.isError && <Notice tone="danger" action={<Button variant="link" onClick={() => void discoveries.refetch()}>Retry</Button>}>Could not load discoveries.</Notice>}
     {discoveries.hasNextPage && <Button variant="link" disabled={discoveries.isFetchingNextPage} onClick={() => void discoveries.fetchNextPage()}>Show more</Button>}
   </Section>
 }

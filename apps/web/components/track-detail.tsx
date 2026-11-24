@@ -71,6 +71,7 @@ import { DetailMore } from './detail-more'
 import { LibraryRecordChanges } from './library-changes'
 import { TrackAlbumNotices, useTrackAlbumAddition } from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
+import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
 import { BrowseFilterPill } from './browse-controls'
@@ -685,6 +686,7 @@ function TrackDetailContent({
         }
         actions={
           <>
+            <CatalogLibraryAction key={item.id} id={item.id} kind="track" title={item.title} inLibrary={item.inLibrary ?? true} />
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: item.title }}
@@ -740,6 +742,7 @@ function TrackDetailContent({
           <SimilarItems key={item.id} kind="track" id={item.id} />
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries id={item.id} />
           <TrackRecordParts
             key={`parts-${item.id}`}
             item={item}

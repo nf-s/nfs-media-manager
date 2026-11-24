@@ -1,8 +1,12 @@
 DROP INDEX "playlist_name_kind_uidx";--> statement-breakpoint
 ALTER TABLE "catalog_observation" ALTER COLUMN "media_item_id" DROP NOT NULL;--> statement-breakpoint
 ALTER TABLE "artist" ADD COLUMN "added_to_library" boolean DEFAULT false NOT NULL;--> statement-breakpoint
-ALTER TABLE "catalog_observation" ADD COLUMN "target_kind" text NOT NULL;--> statement-breakpoint
-ALTER TABLE "catalog_observation" ADD COLUMN "target_id" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "catalog_observation" ADD COLUMN "target_kind" text;--> statement-breakpoint
+ALTER TABLE "catalog_observation" ADD COLUMN "target_id" text;--> statement-breakpoint
+UPDATE catalog_observation o SET target_kind = m.media_type::text, target_id = m.id
+FROM media_item m WHERE m.id = o.media_item_id;--> statement-breakpoint
+ALTER TABLE "catalog_observation" ALTER COLUMN "target_kind" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "catalog_observation" ALTER COLUMN "target_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "catalog_observation" ADD COLUMN "details" jsonb;--> statement-breakpoint
 ALTER TABLE "catalog_observation" ADD COLUMN "snapshot_id" text;--> statement-breakpoint
 ALTER TABLE "catalog_observation" ADD COLUMN "import_id" text;--> statement-breakpoint
