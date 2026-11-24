@@ -1,7 +1,7 @@
 'use client'
 
 import { MergeBar, type RowSelection } from './merge-bar'
-import { trackMergeAdapter } from './track-merge-review'
+import { interactiveTrackMergeAdapter } from './track-merge-review'
 
 /**
  * The bar under a table of tracks: the selection with Merge, then the result
@@ -17,6 +17,10 @@ export function TrackMergeBar({
   total?: number
 }) {
   return (
-    <MergeBar selection={selection} total={total} adapter={trackMergeAdapter} />
+    <MergeBar
+      selection={selection}
+      total={total}
+      adapter={interactiveTrackMergeAdapter}
+    />
   )
 }

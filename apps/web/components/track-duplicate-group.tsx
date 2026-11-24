@@ -39,7 +39,10 @@ import {
   SecondaryCellDetails,
   SecondaryTableSelectionBar,
 } from './secondary-table'
-import { trackMergeAdapter } from './track-merge-review'
+import {
+  interactiveTrackMergeAdapter,
+  trackMergeAdapter,
+} from './track-merge-review'
 
 type DuplicateMembers = Pick<TrackDuplicateGroup, 'memberIds'>
 
@@ -90,7 +93,9 @@ export function describeTrackDuplicateStatus(item: MergeQueueItem) {
 export function useTrackDuplicateActions({
   onChange,
   onNotMerged,
+  adapter = trackMergeAdapter,
 }: {
+  adapter?: typeof trackMergeAdapter
   /** A merge or Keep separate finished. */
   onChange?: (change: LibraryChange) => void
   /** A merge of selected rows failed or its review was closed: these tracks. */
@@ -105,7 +110,7 @@ export function useTrackDuplicateActions({
   const notMerged = (ids: readonly string[]) => {
     if (selected.current.delete(ids.join(' '))) onNotMerged?.(ids)
   }
-  const work = useMergeQueue(trackMergeAdapter, {
+  const work = useMergeQueue(adapter, {
     onDone: (next) => {
       setChange(next)
       onChange?.(next)
@@ -118,7 +123,7 @@ export function useTrackDuplicateActions({
     // The track merge refresh also covers what Keep separate changes.
     onDrain: async (changes) => {
       const combined = combineLibraryChanges(changes)
-      if (combined) await trackMergeAdapter.invalidate(client, combined)
+      if (combined) await adapter.invalidate(client, combined)
     },
   })
   return {
@@ -318,6 +323,7 @@ export function TrackDuplicateNotice({
     retry: false,
   })
   const actions = useTrackDuplicateActions({
+    adapter: interactiveTrackMergeAdapter,
     onChange: (change) => {
       if (
         change.action === 'merge' &&

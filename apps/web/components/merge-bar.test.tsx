@@ -427,6 +427,34 @@ test('one change stands for several so one refresh covers them', () => {
   assert.equal(combined?.target?.id, 'track-3')
 })
 
+test('a busy track merge restores the same review and follow choice for a manual retry', async () => {
+  const busy = new Error('The library is busy. Try the merge again.')
+  const requests: unknown[] = []
+  const adapter: MergeAdapter<TrackMergePlan> = {
+    ...trackMergeAdapter,
+    plan: async () => cautionPlan,
+    merge: async (_base, request) => {
+      requests.push(request)
+      if (requests.length === 1) throw busy
+      return merged
+    },
+    canRetry: (error) => error === busy,
+  }
+  const queue = createMergeQueue(adapter, apiBaseUrl, () => ({}))
+  await queue.merge('pair', { ids: ['track-1', 'track-2'] })
+  await queue.confirm('pair', false)
+  const [review] = queue.getSnapshot().reviews
+  assert.ok(review)
+  assert.equal(review.plan, cautionPlan)
+  assert.equal(review.follow, false)
+  assert.equal(review.error, busy.message)
+  assert.equal(requests.length, 1)
+  await queue.confirm('pair', review.follow)
+  assert.equal(requests.length, 2)
+  assert.deepEqual(requests[0], requests[1])
+  assert.deepEqual(queue.getSnapshot().reviews, [])
+})
+
 test('the Merge bar says how many selections are still to go', () => {
   assert.equal(describeMergeProgress(0), null)
   assert.equal(describeMergeProgress(1), 'Merging…')

@@ -300,7 +300,7 @@ export const trackMergeAdapter: MergeAdapter<TrackMergePlan> = {
     ),
 }
 
-export const inspectorTrackMergeAdapter: MergeAdapter<TrackMergePlan> = {
+export const interactiveTrackMergeAdapter: MergeAdapter<TrackMergePlan> = {
   ...trackMergeAdapter,
   merge: (apiBaseUrl, request) => submitTrackMerge(apiBaseUrl, request, true),
   canRetry: (failure) =>

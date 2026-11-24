@@ -499,7 +499,12 @@ export type MergeQueueSnapshot<Plan> = {
   /** Queued or running, in the order pressed; the first is running. */
   waiting: readonly { key: string; action: LibraryChangeAction }[]
   /** Merges waiting for the owner's review; the first one is shown. */
-  reviews: readonly { key: string; plan: Plan }[]
+  reviews: readonly {
+    key: string
+    plan: Plan
+    follow?: boolean
+    error?: string
+  }[]
 }
 
 export type MergeQueueHandlers = {
@@ -671,7 +676,7 @@ export function createMergeQueue<Plan>(
     replan(key: string, plan: Plan) {
       publish({
         reviews: snapshot.reviews.map((review) =>
-          review.key === key ? { key, plan } : review,
+          review.key === key ? { ...review, plan } : review,
         ),
       })
     },
@@ -686,7 +691,22 @@ export function createMergeQueue<Plan>(
         ids: request.ids,
         action: 'merge',
         failed: adapter.wording.failed,
-        run: () => adapter.merge(apiBaseUrl, { ...request, reviewed: true }),
+        run: async () => {
+          try {
+            return await adapter.merge(apiBaseUrl, {
+              ...request,
+              reviewed: true,
+            })
+          } catch (failure) {
+            if (!adapter.canRetry?.(failure)) throw failure
+            setItem(key, { status: 'review', action: 'merge' })
+            const error = errorMessage(failure, adapter.wording.failed)
+            publish({
+              reviews: [...snapshot.reviews, { ...review, follow, error }],
+            })
+            return null
+          }
+        },
       })
     },
     /** Closes the review without merging. */
@@ -722,7 +742,7 @@ export function useMergeQueue<Plan>(
     queue.getSnapshot,
     queue.getSnapshot,
   )
-  const [follow, setFollow] = useState(true)
+  const [followChoice, setFollow] = useState<boolean>()
   const replan = useMutation({
     retry: false,
     mutationFn: async ({
@@ -738,8 +758,9 @@ export function useMergeQueue<Plan>(
     onSuccess: ({ key, plan }) => queue.replan(key, plan),
   })
   const [review] = snapshot.reviews
+  const follow = followChoice ?? review?.follow ?? true
   function close() {
-    setFollow(true)
+    setFollow(undefined)
     replan.reset()
   }
   return {
@@ -755,7 +776,7 @@ export function useMergeQueue<Plan>(
         error={
           replan.isError
             ? errorMessage(replan.error, 'The merge could not be planned.')
-            : null
+            : (review.error ?? null)
         }
         follow={follow}
         onFollow={setFollow}

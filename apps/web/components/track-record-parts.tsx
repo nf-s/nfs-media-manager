@@ -49,7 +49,7 @@ import {
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
 import { loadTrackMergeCandidates } from './track-merge'
-import { inspectorTrackMergeAdapter } from './track-merge-review'
+import { interactiveTrackMergeAdapter } from './track-merge-review'
 
 const partColumns: TableColumn[] = [
   { key: 'part', label: 'Part', width: 200, fill: true },
@@ -444,7 +444,7 @@ export function TrackRecordParts({
       await invalidateScrobbleLinks(client)
     },
   })
-  const merge = useMerge(inspectorTrackMergeAdapter, {
+  const merge = useMerge(interactiveTrackMergeAdapter, {
     onMerge: (next) => {
       setUndoError(null)
       setChange(next)
@@ -527,7 +527,7 @@ export function TrackRecordParts({
             }
           >
             {change.undoneAt ? 'Undone: ' : ''}
-            {inspectorTrackMergeAdapter.describe(change)}
+            {interactiveTrackMergeAdapter.describe(change)}
             {undoError ? ` · ${undoError}` : ''}
           </Notice>
         )}
