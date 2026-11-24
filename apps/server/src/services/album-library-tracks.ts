@@ -461,6 +461,7 @@ export async function reconcileSpotifyAlbumRecordings(
         with release_ids as (
           select min(album_id) as album_id, spotify_id
           from (${spotifyAlbumReleaseIds(albumId)}) releases
+          join media_item member_album on member_album.id = releases.album_id and member_album.in_library
           where spotify_id is not null
           group by spotify_id having count(*) = 1
         ), candidates as (
@@ -525,6 +526,7 @@ export async function reconcileSpotifyAlbumRecordings(
       (
         await database.execute(sql`
           select spotify_id from (${spotifyAlbumReleaseIds()}) releases
+          join media_item member_album on member_album.id = releases.album_id and member_album.in_library
           where spotify_id in (
             select jsonb_array_elements_text(${JSON.stringify(releaseIds)}::jsonb)
           )
@@ -674,8 +676,9 @@ export async function removeOrphanTracks(
       and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)
       and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`
   const observed = sql`exists (select 1 from catalog_observation o where o.media_item_id = mi.id)`
-  await database.execute(sql`update media_item mi set in_library = false where mi.in_library and ${orphan} and ${observed}`)
-  const removed = await database.execute(sql`delete from media_item mi where ${orphan} and not ${observed}`)
-
-  return removed.rowCount ?? 0
+  const demoted = await database.execute(sql`update media_item mi set in_library = false where mi.in_library and ${orphan} and ${observed}`)
+  const removed = await database.execute(sql`with removed as (
+    delete from media_item mi where ${orphan} and not ${observed} returning in_library
+  ) select count(*) filter (where in_library)::int as members from removed`)
+  return (demoted.rowCount ?? 0) + z.object({members:z.number()}).parse(removed.rows[0]).members
 }

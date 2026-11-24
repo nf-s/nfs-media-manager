@@ -48,7 +48,7 @@ const EntryAlbumRowsSchema = z.array(
   z.object({ id: z.string(), album_id: z.string() }),
 )
 
-const visibleAlbum = sql`m.media_type = 'album'
+const visibleAlbum = sql`m.in_library and m.media_type = 'album'
   and m.metadata->>'legacyHidden' is distinct from 'true'`
 
 function unavailableReason(

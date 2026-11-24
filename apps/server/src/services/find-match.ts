@@ -1,7 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
-import { nanoid } from 'nanoid'
 import { PluginMatchCandidatesSchema } from '@repo/media-plugin-sdk'
 import {
   ARTIST_ENRICHMENT_TASK,
@@ -207,14 +206,14 @@ async function searchMedia(
           referenceType: candidate.referenceType,
           catalogMediaItemId: albumCatalogIds.get(
             `${candidate.referenceType}:${candidate.externalId}`,
-          ),
+          ) ?? filmCatalogIds.get(candidate.externalId),
           externalId: candidate.externalId,
           title: candidate.title,
           subtitle: candidate.subtitle ?? null,
           releaseDate: candidate.releaseDate ?? null,
           artworkUrl: candidate.artworkUrl ?? null,
           url: candidate.url ?? null,
-          catalogMediaItemId: filmCatalogIds.get(candidate.externalId),
+
           current:
             current.get(candidate.referenceType) === candidate.externalId,
         }),

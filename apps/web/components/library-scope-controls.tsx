@@ -77,7 +77,7 @@ export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
                     onChange({
                       ...value,
                       scope:
-                        target.checked && value.scope === 'library'
+                        target.checked && !value.selection && value.scope === 'library'
                           ? 'all'
                           : value.scope,
                       sources: target.checked
@@ -97,17 +97,19 @@ export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
               onChange={({ target }) =>
                 onChange({
                   ...value,
-                  mode: target.value === 'all' ? 'all' : 'any',
+                  mode: target.value === 'exclude' ? 'exclude' : target.value === 'all' ? 'all' : 'any',
                 })
               }
             >
               <option value="any">Any selected</option>
               <option value="all">All selected</option>
+              <option value="exclude">Exclude selected</option>
             </Select>
           </label>
-          <p className="ds-help">
-            Applies to outside items. In All known, library items also appear.
-          </p>
+          <label className="ds-checkrow">
+            <input type="checkbox" className="ds-check" checked={Boolean(value.selection)} onChange={({target}) => onChange({...value, selection:target.checked})} />
+            Apply source filters to library items
+          </label>
         </div>
       </FilterPanelSection>
     </>
@@ -115,7 +117,7 @@ export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
 }
 
 export function LibraryScopePills({ value, onChange }: LibraryScopeControl) {
-  if (value.scope === 'library') return null
+  if (value.scope === 'library' && !value.selection) return null
   return (
     <>
       {value.scope === 'outside' && (

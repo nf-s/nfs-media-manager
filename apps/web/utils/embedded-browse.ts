@@ -39,6 +39,7 @@ export const browseStateKeys: readonly string[] = [
   'libraryScope',
   'discoverySources',
   'discoverySourceMode',
+  'discoverySourceScope',
   'sortBy',
   'direction',
   'view',

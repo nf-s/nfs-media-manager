@@ -2491,13 +2491,14 @@ function textRows(
   options: {
     includeArchived?: boolean
     normalizeTags?: boolean
+    scope?: CatalogScopeQuery
     // Facets also list each tag's parents, counted over all their subtags.
     rollUpTags?: boolean
   } = {},
 ): SQL {
-  const visible = options.includeArchived
-    ? sql`media_item.media_type = ${mediaType}`
-    : sql`media_item.media_type = ${mediaType} and media_item.metadata->>'legacyHidden' is distinct from 'true'`
+  const visible = sql`media_item.media_type = ${mediaType}
+    ${options.includeArchived ? sql`` : sql`and media_item.metadata->>'legacyHidden' is distinct from 'true'`}
+    ${options.scope ? sql`and ${catalogScopeCondition(sql`media_item.id`,sql`media_item.in_library`,options.scope)}` : sql``}`
   if (key === 'title')
     return sql`select media_item.id, media_item.title as value from media_item where ${visible}`
   if (key === 'summary')
@@ -2634,12 +2635,12 @@ const releaseTagFacetKeys = sql`select t.id as tag_id, ${normalizedTagSql(sql`t.
 function albumTagFacetRows(
   key: string,
   tagLevels?: TagLevels,
-  includeArchived = false,
+  includeArchived: boolean | undefined,
+  scope: CatalogScopeQuery,
 ) {
-  const visible = includeArchived
-    ? sql`media_item.media_type = 'album'`
-    : sql`media_item.media_type = 'album'
-    and media_item.metadata->>'legacyHidden' is distinct from 'true'`
+  const visible = sql`media_item.media_type = 'album'
+    ${includeArchived ? sql`` : sql`and media_item.metadata->>'legacyHidden' is distinct from 'true'`}
+    and ${catalogScopeCondition(sql`media_item.id`,sql`media_item.in_library`,scope)}`
   const release = sql`select media_item.id, labels.value from media_item
     join media_item_tag mt on mt.media_item_id = media_item.id
     join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
@@ -3046,13 +3047,14 @@ function browseFacetQuery(
       (field.key === 'trackTag' || singleTagLevel(trackLevels) === 'track')
     const source =
       musicTagFacet && !trackTagFacet
-        ? albumTagFacetRows(field.key, query.tagLevels, options.includeArchived)
+        ? albumTagFacetRows(field.key, query.tagLevels, options.includeArchived, query)
         : trackTagFacet
-          ? trackTagFacetRows
+          ? sql`${trackTagFacetRows} and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`,query)}`
           : textRows(field.key, mediaType, {
               includeArchived: options.includeArchived,
               normalizeTags: true,
               rollUpTags: true,
+              scope: query,
             })
     // Choosing the Last.fm source explicitly includes its retained source rows.
     const visibility =
@@ -3073,10 +3075,9 @@ function browseFacetQuery(
       source,
       query,
       limit,
-      sql`${options.includeLastfmSourceRows && mediaType === 'track'
+      options.includeLastfmSourceRows && mediaType === 'track'
         ? sql`and id in (select media_item_id from library_track)`
-        : visibility} and id in (select m.id from media_item m where
-          ${catalogScopeCondition(sql`m.id`, sql`m.in_library`, query)})`,
+        : visibility,
       musicTagFacet ||
         trackTagFacet ||
         (mediaType === 'album' && field.key === 'playlist')

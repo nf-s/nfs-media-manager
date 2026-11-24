@@ -214,7 +214,9 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
     await observeCredits(tx, id, media, origin)
   }
 
-  if (media.externalId)
+  const existingNativeTrack = spotifyTrack && !outside && media.externalId && await tx.$count(libraryTrack,
+    and(eq(libraryTrack.mediaItemId,id), eq(libraryTrack.spotifyTrackId,media.externalId)))
+  if (media.externalId && !existingNativeTrack)
     await tx.insert(providerReference).values({
       id: createStableId('catalog-ref', JSON.stringify([id, media.provider, type, media.externalId])),
       mediaItemId: id, provider: media.provider, referenceType: type, externalId: media.externalId, metadata: media.referenceMetadata,

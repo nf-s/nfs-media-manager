@@ -169,6 +169,7 @@ export function collectionBrowseHref(
   if (list.libraryScope) params.set('libraryScope', list.libraryScope)
   if (list.discoverySources)
     params.set('discoverySources', list.discoverySources)
+  if (list.discoverySourceScope) params.set('discoverySourceScope',list.discoverySourceScope)
   if (list.discoverySourceMode)
     params.set('discoverySourceMode', list.discoverySourceMode)
   const q = list.q?.trim()
