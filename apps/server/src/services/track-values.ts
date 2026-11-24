@@ -9,31 +9,42 @@ const lastfmPlaceholderSources = sql`from lastfm_track_source s
   join library_track placeholder on placeholder.media_item_id = s.track_media_item_id
   join media_item mi on mi.id = s.track_media_item_id`
 
-function lastfmPlaceholder({
-  id,
-  source,
-  spotifyTrackId,
-  albumId,
-  albumName,
-}: {
-  id: SQLWrapper
-  source: SQLWrapper
-  spotifyTrackId: SQLWrapper
-  albumId: SQLWrapper
-  albumName: SQLWrapper
-}) {
-  return sql`${source} = 'lastfm' and ${spotifyTrackId} is null
+function lastfmPlaceholder(
+  {
+    id,
+    lastfm,
+    spotifyTrackId,
+    albumId,
+    albumName,
+  }: {
+    id: SQLWrapper
+    lastfm: SQL
+    spotifyTrackId: SQLWrapper
+    albumId: SQLWrapper
+    albumName: SQLWrapper
+  },
+  bulk = false,
+) {
+  const inTrackList = bulk
+    ? sql`coalesce(${id} in (select track_media_item_id from track), false)`
+    : sql`exists (select 1 from track t where t.track_media_item_id = ${id})`
+  const inPlaylist = bulk
+    ? sql`coalesce(${id} in (select media_item_id from playlist_item), false)`
+    : sql`exists (select 1 from playlist_item pi where pi.media_item_id = ${id})`
+  return sql`${lastfm} and ${spotifyTrackId} is null
     and ${albumId} is null and nullif(trim(${albumName}), '') is null
-    and not exists (select 1 from track t where t.track_media_item_id = ${id})
-    and not exists (select 1 from playlist_item pi where pi.media_item_id = ${id})`
+    and not (${inTrackList}) and not (${inPlaylist})`
 }
 
-const lastfmPlaceholderOnly = lastfmPlaceholder({
+const placeholderColumns = {
   id: sql`mi.id`,
-  source: sql`mi.source_label`,
   spotifyTrackId: sql`placeholder.spotify_track_id`,
   albumId: sql`placeholder.album_media_item_id`,
   albumName: sql`placeholder.album_name`,
+}
+const lastfmPlaceholderOnly = lastfmPlaceholder({
+  ...placeholderColumns,
+  lastfm: sql`mi.source_label = 'lastfm'`,
 })
 
 const linkedTrackIsPlayable = sql`pm.metadata->>'legacyHidden' is distinct from 'true'
@@ -60,7 +71,7 @@ export const manyLastfmTrackSources = sql`exists (
 /** The title walk already has the library track and its media item. */
 export const trackTitleVisibility = sql`case when ${lastfmPlaceholder({
   id: mediaItem.id,
-  source: mediaItem.sourceLabel,
+  lastfm: sql`${mediaItem.sourceLabel} = 'lastfm'`,
   spotifyTrackId: libraryTrack.spotifyTrackId,
   albumId: libraryTrack.albumMediaItemId,
   albumName: libraryTrack.albumName,
@@ -71,7 +82,7 @@ export const trackTitleVisibility = sql`case when ${lastfmPlaceholder({
 ) else true end`
 
 /** Source rows retained for match review whose history already appears in Browse. */
-export function redundantLastfmTrackIds(id?: SQL) {
+export function redundantLastfmTrackIds(id?: SQL, { denseSets = false } = {}) {
   if (id)
     return sql`
       select s.track_media_item_id as id
@@ -87,26 +98,68 @@ export function redundantLastfmTrackIds(id?: SQL) {
   // The source primary key makes each listener/artist/track name unique.
   // Sparse scopes can stop at the first playable peer; dense scopes check
   // matching links together after restricting them to eligible names.
-  return sql`with placeholder_sources as materialized (
+  const sparseSources = sql`
       select s.track_media_item_id, s.username, s.artist_key, s.track_key, s.manually_matched
-      ${lastfmPlaceholderSources} where ${lastfmPlaceholderOnly}
-    ),
+      ${lastfmPlaceholderSources} where ${lastfmPlaceholderOnly}`
+  // Facet aggregation consumes the complete visibility set. Check the
+  // constituent IDs together when the source relation is large.
+  const sources = denseSets
+    ? sql`${sparseSources} and not (select many from source_scope)
+      union all
+      select s.track_media_item_id, s.username, s.artist_key, s.track_key, s.manually_matched
+      from lastfm_track_source s where (select many from source_scope)
+        and coalesce(s.track_media_item_id in (
+          select placeholder.media_item_id from library_track placeholder
+          where ${lastfmPlaceholder(
+            {
+              ...placeholderColumns,
+              id: sql`placeholder.media_item_id`,
+              lastfm: sql`coalesce(placeholder.media_item_id in (
+              select id from media_item where source_label = 'lastfm'
+            ), false)`,
+            },
+            true,
+          )}
+        ), false)`
+    : sparseSources
+  const sourceScope = denseSets
+    ? sql`source_scope as materialized (
+        select ${manyLastfmTrackSources} as many
+      ),`
+    : sql``
+  const wantedLinks = denseSets
+    ? sql`from lastfm_track_link l
+      where not (select bounded from probe_names) and l.strategy = 'exact'
+        and coalesce((l.username, l.artist_key, l.track_key) in (
+          select s.username, s.artist_key, s.track_key from placeholder_sources s
+          where not s.manually_matched
+        ), false)`
+    : sql`from placeholder_sources s
+      join lastfm_track_link l using (username, artist_key, track_key)
+      where not (select bounded from probe_names) and not s.manually_matched
+        and l.strategy = 'exact'`
+  const playableLinks = denseSets
+    ? sql`where coalesce(l.track_media_item_id in (
+        select peer.media_item_id from library_track peer
+        join media_item pm on pm.id = peer.media_item_id
+        where ${linkedTrackIsPlayable}
+      ), false)`
+    : sql`join library_track peer on peer.media_item_id = l.track_media_item_id
+      join media_item pm on pm.id = peer.media_item_id
+      where ${linkedTrackIsPlayable}`
+  return sql`with ${sourceScope}
+    placeholder_sources as materialized (${sources}),
     probe_names as materialized (
       select count(*) <= ${lastfmSourceProbeLimit} as bounded from placeholder_sources
     ),
     wanted_links as materialized (
       select l.username, l.artist_key, l.track_key, l.track_media_item_id
-      from placeholder_sources s
-      join lastfm_track_link l using (username, artist_key, track_key)
-      where not (select bounded from probe_names) and not s.manually_matched
-        and l.strategy = 'exact'
+      ${wantedLinks}
     ),
     matched_names as (
       select distinct l.username, l.artist_key, l.track_key
       from wanted_links l
-      join library_track peer on peer.media_item_id = l.track_media_item_id
-      join media_item pm on pm.id = peer.media_item_id
-      where ${linkedTrackIsPlayable}
+      ${playableLinks}
     )
     select s.track_media_item_id as id from placeholder_sources s
     group by s.track_media_item_id

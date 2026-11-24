@@ -22,7 +22,7 @@ export const ExplainSchema = z.tuple([
           'Shared Read Blocks': z.number(),
           'Temp Read Blocks': z.number(),
           'Temp Written Blocks': z.number(),
-        }),
+        }).passthrough(),
         'Execution Time': z.number(),
       }),
     ]),
@@ -126,6 +126,7 @@ export function createTrackPerformanceFixture() {
     maxStatements: number,
     read: () => Promise<T>,
     maxRejectedJoinRows?: number,
+    inspectPlan?: (plan: unknown) => void,
   ) {
     logQuery.mockClear()
     const observed = await read()
@@ -148,6 +149,7 @@ export function createTrackPerformanceFixture() {
         params,
       )
       const explain = ExplainSchema.parse(result.rows)[0]['QUERY PLAN'][0]
+      inspectPlan?.(explain.Plan)
       sharedBlocks +=
         explain.Plan['Shared Hit Blocks'] + explain.Plan['Shared Read Blocks']
       tempBlocks +=
