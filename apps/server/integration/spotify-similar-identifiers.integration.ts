@@ -48,6 +48,7 @@ import { SpotifySavedPageSchema } from '@/lib/spotify-api'
 import { observeSpotifySavedAlbumPage } from '@/services/album-import-observations'
 import { createTaskJob, getJob, processQueuedJobs } from '@/services/jobs'
 import { recoverStoredSpotifyAlbumUpcs } from '@/services/spotify-album-upc-recovery'
+import { searchMatchCandidates } from '@/services/find-match'
 
 const spotifyId = (n: number) => `fixturespotify${String(n).padStart(8, '0')}`
 const searchedUpc = '0000000000048'
@@ -81,6 +82,15 @@ beforeAll(async () => {
       url.origin === 'https://api.spotify.com' &&
       url.pathname === '/v1/search'
     ) {
+      if (url.searchParams.get('q') === 'Fixture Album Seed')
+        return Response.json({
+          albums: {
+            items: [
+              { ...spotifyAlbum(13), external_ids: { upc: returnedUpc } },
+            ],
+            total: 1,
+          },
+        })
       if (url.searchParams.get('q') === `upc:${searchedUpc}`)
         return Response.json({
           albums: {
@@ -232,6 +242,42 @@ it('retains the UPC of a saved Spotify album preview with its exact edition', as
     externalId: returnedUpc,
     metadata: { source: 'album-import-preview', importId: 'fixture-preview' },
   })
+})
+
+it('keeps a Find match UPC on the exact Spotify result with its saved response', async () => {
+  const result = await searchMatchCandidates({
+    kind: 'album',
+    provider: 'spotify',
+    id: 'album-seed',
+  })
+  const native = await references('album', 13)
+  expect(result.items).toMatchObject([{ catalogMediaItemId: native.id }])
+  const snapshot = await fixture.query.providerSnapshot.findFirst({
+    where: and(
+      eq(schema.providerSnapshot.mediaItemId, 'album-seed'),
+      eq(schema.providerSnapshot.provider, 'spotify'),
+    ),
+  })
+  expect(snapshot).toMatchObject({
+    payload: {
+      request: { url: 'https://api.spotify.com/v1/search' },
+      response: { status: 200, body: { state: 'captured' } },
+    },
+  })
+  expect(native.references).toContainEqual({
+    referenceType: 'upc',
+    externalId: returnedUpc,
+    metadata: { source: 'match-search', snapshotId: snapshot?.id },
+  })
+  expect(
+    await fixture.$count(
+      schema.providerReference,
+      and(
+        eq(schema.providerReference.mediaItemId, 'album-seed'),
+        eq(schema.providerReference.referenceType, 'upc'),
+      ),
+    ),
+  ).toBe(0)
 })
 
 it('records each returned ISRC only on its own Spotify track and preserves release credits', async () => {

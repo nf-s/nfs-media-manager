@@ -139,6 +139,7 @@ export const spotifyPlugin: MediaProviderPlugin = {
       subtitle: item.artists.map((entry) => entry.name).join(', '),
       releaseDate: item.release_date,
       artworkUrl: item.images[0]?.url,
+      upc: item.external_ids?.upc,
       url: `https://open.spotify.com/album/${item.id}`,
     }))
   },

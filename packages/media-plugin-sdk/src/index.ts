@@ -249,6 +249,11 @@ export const PluginMatchCandidateSchema = z.object({
   /** A year or an ISO date. */
   releaseDate: z.string().trim().min(1).max(40).optional(),
   artworkUrl: ProviderSiteUrlSchema.optional(),
+  /** A barcode the provider reported for this exact edition. */
+  upc: z
+    .string()
+    .regex(/^\d{8,14}$/)
+    .optional(),
   /** The candidate on the provider's own site. */
   url: ProviderSiteUrlSchema.optional(),
 })

@@ -28,6 +28,7 @@ import {
 } from './catalog-discoveries'
 import { spotifyTrackAndAlbumObservations } from './music-catalog-observations'
 import type { PlaylistPage } from './spotify-playlists'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Evidence = {
@@ -56,6 +57,7 @@ function playlistObservations(
     }): {
       recording: Observation
       album?: Observation
+      isrc?: string | null
     } => {
       const key = JSON.stringify([
         evidence.snapshot ?? evidence.jobId ?? 'stored',
@@ -81,13 +83,16 @@ function playlistObservations(
         relationshipRole: 'playlist_entry',
       }
       if (track)
-        return spotifyTrackAndAlbumObservations(
-          {
-            ...track,
-            spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
-          },
-          origin,
-        )
+        return {
+          ...spotifyTrackAndAlbumObservations(
+            {
+              ...track,
+              spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
+            },
+            origin,
+          ),
+          isrc: track.isrc,
+        }
       return {
         recording: {
           media: {
@@ -112,17 +117,25 @@ async function observeIndividually(
   entries: ReturnType<typeof playlistObservations>,
   pendingSpotifyCredits: SpotifyRecordingCredit[],
 ) {
-  for (const { album, recording } of entries) {
+  const codes: Parameters<typeof recordSpotifyCatalogCodes>[1][number][] = []
+  for (const { album, recording, isrc } of entries) {
     const albumId = album
       ? await observeCatalogMedia(tx, album.media, album.origin)
       : undefined
-    await observeCatalogMedia(
+    const trackId = await observeCatalogMedia(
       tx,
       { ...recording.media, albumId },
       recording.origin,
       pendingSpotifyCredits,
     )
+    codes.push({
+      mediaItemId: trackId,
+      kind: 'track',
+      value: isrc,
+      origin: recording.origin,
+    })
   }
+  await recordSpotifyCatalogCodes(tx, codes)
 }
 
 /** Retain observations when the input has no previously imported tracks. */

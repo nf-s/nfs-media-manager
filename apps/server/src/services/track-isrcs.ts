@@ -9,6 +9,7 @@ type Database = Pick<typeof db, 'insert'>
 /** Where an ISRC reference was read. */
 export type TrackIsrcSource =
   | { kind: 'spotify-playlist-import'; jobId: string }
+  | { kind: 'spotify-playlist-response'; responseId: string; jobId?: string }
   | { kind: 'spotify-track-search'; jobId: string }
   | { kind: 'spotify-track-lookup'; responseId: string }
   | { kind: 'spotify-track-lookup-snapshot'; snapshotId: string }
@@ -26,6 +27,7 @@ export type TrackIsrcSource =
 
 export const spotifyRecordingSources = [
   'spotify-playlist-import',
+  'spotify-playlist-response',
   'spotify-track-search',
   'spotify-track-lookup',
   'spotify-track-lookup-snapshot',

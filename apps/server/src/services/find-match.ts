@@ -1,7 +1,10 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
-import { PluginMatchCandidatesSchema } from '@repo/media-plugin-sdk'
+import {
+  PluginMatchCandidatesSchema,
+  type MediaPluginTestContext,
+} from '@repo/media-plugin-sdk'
 import {
   ARTIST_ENRICHMENT_TASK,
   ArtistProfileProviderSchema,
@@ -25,6 +28,7 @@ import {
 } from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
 import { parseOptionalDate } from '@/lib/media-utils'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
 import {
   normalizeArtistProviderId,
   searchArtistCandidates,
@@ -39,8 +43,12 @@ import { observeNamedArtistIdentities } from './catalog-artist-identities'
 import {
   observeCatalogMedia,
   observeCatalogOccurrence,
+  type CatalogOrigin,
 } from './catalog-discoveries'
+import { readMediaProviderWithEvidence } from './interactive-media-provider-response'
+import { IN_REQUEST_SLOT_WAIT_MS } from './jobs'
 import { providerOperation } from './manual-add'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 import { sonovaultAlbumMatchCandidates } from './sonovault-album-lookup'
 import { observeFilmCandidate } from './film-catalog-observations'
 
@@ -144,21 +152,35 @@ async function searchMedia(
     kind === 'album' && plugin.manifest.albumReleaseHints
       ? await getAlbumReleaseHints(input.id, rejections)
       : undefined
-  const candidates = await providerOperation(
+  const { result: candidates, responses } = await providerOperation(
     input.provider,
     async (context, provider) => {
-      if (!provider.searchMatchCandidates) throw unavailable()
-      return PluginMatchCandidatesSchema.parse(
-        await provider.searchMatchCandidates({
-          ...context,
-          mediaType: kind,
-          media: {
-            ...media,
-            ...(releaseHints?.length ? { releaseHints } : {}),
-          },
-          ...(input.q ? { query: input.q } : {}),
-        }),
-      )
+      const search = async (request: MediaPluginTestContext['request']) => {
+        if (!provider.searchMatchCandidates) throw unavailable()
+        return PluginMatchCandidatesSchema.parse(
+          await provider.searchMatchCandidates({
+            ...context,
+            request,
+            mediaType: kind,
+            media: {
+              ...media,
+              ...(releaseHints?.length ? { releaseHints } : {}),
+            },
+            ...(input.q ? { query: input.q } : {}),
+          }),
+        )
+      }
+      return kind === 'album' && input.provider === 'spotify'
+        ? readMediaProviderWithEvidence(
+            {
+              mediaItemId: input.id,
+              plugin: provider,
+              secrets: context.secrets,
+              maxSlotWaitMs: IN_REQUEST_SLOT_WAIT_MS,
+            },
+            search,
+          )
+        : { result: await search(context.request), responses: [] }
     },
     undefined,
     'searching',
@@ -188,7 +210,17 @@ async function searchMedia(
   )
   const albumCatalogIds =
     kind === 'album'
-      ? await observeAlbumMatchCandidates(input, candidates)
+      ? await observeAlbumMatchCandidates(
+          input,
+          candidates,
+          responses.find(
+            ({ requestUrl, status }) =>
+              requestUrl === 'https://api.spotify.com/v1/search' &&
+              status !== null &&
+              status >= 200 &&
+              status < 300,
+          ),
+        )
       : new Map<string, string>()
   return MatchSearchResultSchema.parse({
     provider: input.provider,
@@ -226,11 +258,21 @@ async function searchMedia(
 async function observeAlbumMatchCandidates(
   input: z.infer<typeof MatchSearchInputSchema>,
   candidates: z.infer<typeof PluginMatchCandidatesSchema>,
+  evidence?: { snapshotId: string; observedAt: Date },
 ) {
   const occurrenceKey = nanoid()
   return db.transaction(async (tx) => {
     const ids = new Map<string, string>()
     for (const [index, candidate] of candidates.entries()) {
+      const origin: CatalogOrigin = {
+        provider: input.provider,
+        operation: 'match-search',
+        occurrenceKey,
+        subjectKind: 'album',
+        subjectId: input.id,
+        position: index + 1,
+        ...evidence,
+      }
       const id = await observeCatalogMedia(
         tx,
         {
@@ -243,15 +285,17 @@ async function observeAlbumMatchCandidates(
           releaseDate: parseOptionalDate(candidate.releaseDate),
           referenceMetadata: { url: candidate.url ?? null },
         },
-        {
-          provider: input.provider,
-          operation: 'match-search',
-          occurrenceKey,
-          subjectKind: 'album',
-          subjectId: input.id,
-          position: index + 1,
-        },
+        origin,
       )
+      if (
+        evidence &&
+        input.provider === 'spotify' &&
+        candidate.referenceType === 'album' &&
+        SpotifyIdSchema.safeParse(candidate.externalId).success
+      )
+        await recordSpotifyCatalogCodes(tx, [
+          { mediaItemId: id, kind: 'album', value: candidate.upc, origin },
+        ])
       ids.set(`${candidate.referenceType}:${candidate.externalId}`, id)
     }
     return ids

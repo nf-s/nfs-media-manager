@@ -3,6 +3,7 @@ import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { and, eq } from 'drizzle-orm'
 import { ProviderResponseSchema } from '@repo/schemas/provider-response'
 import {
   SPOTIFY_PLAYLIST_IMPORT_TASK,
@@ -52,8 +53,9 @@ vi.mock('@/services/spotify-oauth', async (importOriginal) => ({
     playlistChanges: true,
   }),
   spotifyPlaylistToken: async () => 'fixture-access-token',
+  spotifyPlaylistChangeToken: async () => 'fixture-access-token',
 }))
-import { processQueuedJobs } from '@/services/jobs'
+import { getJob, processQueuedJobs } from '@/services/jobs'
 import {
   getJobProviderResponse,
   listJobProviderResponses,
@@ -64,6 +66,7 @@ import { listPlaylistBrowsePage } from '@/services/playlist-directory'
 import { getPlaylistDetail, getTrackDetail } from '@/services/tracks'
 import { observePlaybackCatalog } from '@/services/playback-catalog'
 import { recordTrackIsrcs } from '@/services/track-isrcs'
+import { queueSpotifyTrackPlaylistAddition } from '@/services/spotify-track-playlist-additions'
 import { backfillMusicCatalog } from '@/services/music-catalog-backfill'
 import { promoteCatalogMedia } from '@/services/catalog-discoveries'
 import {
@@ -437,4 +440,128 @@ describe('Spotify playlist job responses', () => {
     )
     expect(request.mock.calls).toHaveLength(calls)
   })
+})
+
+it('records ISRCs from an addition job’s playlist reread against the returned Spotify IDs', async () => {
+  const playlistId = 'different-fixture-playlist'
+  const spotifyPlaylistId = 'additionplaylist'.padEnd(22, '0')
+  const mediaItemId = 'adding-fixture-track'
+  const spotifyTrackId = 'additiontrack'.padEnd(22, '0')
+  const unrelatedSpotifyId = 'separateedition'.padEnd(22, '0')
+  const trackIsrc = 'QZFX22800041'
+  const unrelatedIsrc = 'QZFX22800042'
+  const savedRequest = request.getMockImplementation()
+  request.mockImplementation(async (input, init) => {
+    const { pathname } = new URL(String(input))
+    if (pathname === `/v1/playlists/${spotifyPlaylistId}`)
+      return Response.json({
+        ...playlist,
+        id: spotifyPlaylistId,
+        snapshot_id: 'version-on-spotify',
+        items: { total: 2 },
+      })
+    if (
+      pathname === `/v1/playlists/${spotifyPlaylistId}/items` &&
+      init?.method !== 'POST'
+    )
+      return Response.json({
+        items: [
+          {
+            ...entry,
+            item: {
+              ...entry.item,
+              id: spotifyTrackId,
+              external_ids: { isrc: trackIsrc },
+            },
+          },
+          {
+            ...entry,
+            item: {
+              ...entry.item,
+              id: unrelatedSpotifyId,
+              external_ids: { isrc: unrelatedIsrc },
+            },
+          },
+        ],
+        total: 2,
+        offset: 0,
+        next: null,
+      })
+    if (savedRequest) return savedRequest(input, init)
+    throw new Error('Unexpected offline provider request')
+  })
+  try {
+    await databaseClient.delete(schema.providerRequestState)
+    await databaseClient.insert(schema.playlist).values({
+      id: playlistId,
+      name: 'Fixture Stale Playlist',
+      kind: 'playlist',
+      source: 'spotify',
+      spotifyId: spotifyPlaylistId,
+      snapshotId: 'previous-version',
+    })
+    await databaseClient.insert(schema.mediaItem).values({
+      id: mediaItemId,
+      mediaType: 'track',
+      title: entry.item.name,
+      slug: mediaItemId,
+    })
+    await databaseClient
+      .insert(schema.libraryTrack)
+      .values({ mediaItemId, spotifyTrackId })
+    const queued = await queueSpotifyTrackPlaylistAddition(
+      mediaItemId,
+      { playlistId },
+      USER_ID,
+    )
+    await processQueuedJobs()
+    expect(await getJob(queued.job.jobId)).toMatchObject({
+      status: 'succeeded',
+      options: { added: 0, alreadyPresent: 1 },
+    })
+    const response = await databaseClient.query.providerResponse.findFirst({
+      where: and(
+        eq(schema.providerResponse.jobId, queued.job.jobId),
+        eq(
+          schema.providerResponse.requestUrl,
+          `https://api.spotify.com/v1/playlists/${spotifyPlaylistId}/items`,
+        ),
+      ),
+    })
+    expect(response).toMatchObject({ bodyState: 'captured' })
+    const other = await databaseClient.query.libraryTrack.findFirst({
+      where: eq(schema.libraryTrack.spotifyTrackId, unrelatedSpotifyId),
+    })
+    expect(other?.mediaItemId).toEqual(expect.any(String))
+    for (const [id, isrc] of [
+      [mediaItemId, trackIsrc],
+      [other?.mediaItemId, unrelatedIsrc],
+    ]) {
+      if (!id) throw new Error('Expected track catalog record')
+      const codes = await databaseClient.query.providerReference.findMany({
+        where: and(
+          eq(schema.providerReference.mediaItemId, id),
+          eq(schema.providerReference.referenceType, 'isrc'),
+        ),
+      })
+      expect(codes).toMatchObject([
+        {
+          provider: 'spotify',
+          externalId: isrc,
+          metadata: {
+            source: 'spotify-playlist-response',
+            responseId: response?.id,
+            jobId: queued.job.jobId,
+          },
+        },
+      ])
+    }
+    expect(
+      await databaseClient.query.mediaItem.findFirst({
+        where: eq(schema.mediaItem.id, other?.mediaItemId ?? ''),
+      }),
+    ).toMatchObject({ inLibrary: false })
+  } finally {
+    if (savedRequest) request.mockImplementation(savedRequest)
+  }
 })

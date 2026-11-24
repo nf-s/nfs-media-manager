@@ -16,28 +16,22 @@ type Code = {
   origin: Origin
 }
 
-function trackEvidence({
-  mediaItemId,
-  value,
-  origin,
-}: Code): TrackIsrcEvidence[] {
+function trackIsrcSource(origin: Origin): TrackIsrcEvidence['source'] | null {
   const { operation, jobId, responseId, snapshotId } = origin
-  const source: TrackIsrcEvidence['source'] | null = responseId
-    ? {
-        kind:
-          operation === 'spotify-track-album-lookup'
-            ? 'spotify-track-lookup'
-            : 'spotify-search-response',
-        responseId,
-      }
-    : snapshotId
-      ? { kind: 'spotify-track-lookup-snapshot', snapshotId }
-      : jobId
-        ? { kind: 'spotify-track-search', jobId }
-        : null
-  return source
-    ? [{ mediaItemId, isrc: value ?? null, provider: 'spotify', source }]
-    : []
+  if (operation === 'playlist-contents')
+    return responseId
+      ? { kind: 'spotify-playlist-response', jobId, responseId }
+      : null
+  if (responseId)
+    return {
+      kind:
+        operation === 'spotify-track-album-lookup'
+          ? 'spotify-track-lookup'
+          : 'spotify-search-response',
+      responseId,
+    }
+  if (snapshotId) return { kind: 'spotify-track-lookup-snapshot', snapshotId }
+  return jobId ? { kind: 'spotify-track-search', jobId } : null
 }
 
 /** Record only codes returned for the exact native Spotify resource. */
@@ -50,7 +44,14 @@ export async function recordSpotifyCatalogCodes(
   for (const code of codes) {
     if (!code.value) continue
     if (code.kind === 'track') {
-      isrcs.push(...trackEvidence(code))
+      const source = trackIsrcSource(code.origin)
+      if (source)
+        isrcs.push({
+          mediaItemId: code.mediaItemId,
+          isrc: code.value,
+          provider: 'spotify',
+          source,
+        })
       continue
     }
     const upc = UpcSchema.safeParse(code.value)

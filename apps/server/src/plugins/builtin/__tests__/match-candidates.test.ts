@@ -89,6 +89,7 @@ describe('provider match candidates', () => {
         subtitle: 'Example Artist',
         releaseDate: '2020-05',
         artworkUrl: 'https://i.scdn.co/image/example',
+        upc: '012345678901',
         url: `https://open.spotify.com/album/${spotifyAlbumId}`,
       },
     ])
