@@ -602,12 +602,31 @@ describe('TIDAL track match in the request, with offline HTTP', () => {
         source: 'tidal-similar',
         selection: 'alternate',
         url: 'https://tidal.com/browse/track/900401',
+        sourceItemId: trackId(scenario.single),
+        jobId: 'similar-job-fixture',
+        responseId: 'similar-response-fixture',
+        code: isrc(position),
         version: null,
         durationSec: libraryDuration(position),
         popularity: 0.4,
       },
     })
-    expect((await getTidalTrackMatch(trackId(position))).match).toBeNull()
+    const before = await getTidalTrackMatch(trackId(position))
+    expect(before.match).toBeNull()
+    expect(before.similarEditions).toEqual([
+      {
+        tidalTrackId: '900401',
+        url: 'https://tidal.com/browse/track/900401',
+        sourceItemId: trackId(scenario.single),
+        jobId: 'similar-job-fixture',
+        responseId: 'similar-response-fixture',
+        code: isrc(position),
+      },
+    ])
+    const statuses = await listTidalTrackMatchStatuses({
+      trackIds: [trackId(position)],
+    })
+    expect(statuses.items[0]?.similarEditions).toBeUndefined()
     const { job } = await match(position)
     const accepted = await acceptTidalTrackMatch({
       trackId: trackId(position),
@@ -619,6 +638,7 @@ describe('TIDAL track match in the request, with offline HTTP', () => {
       source: 'tidal-track-match',
       matchReason: 'manual',
     })
+    expect(accepted.similarEditions).toBeUndefined()
 
     await acceptTidalTrackMatch({
       trackId: trackId(position),

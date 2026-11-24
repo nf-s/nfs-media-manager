@@ -10,6 +10,7 @@ import {
   TIDAL_TRACK_CANDIDATE_LIMIT,
   TIDAL_TRACK_MATCH_TASK,
   TidalIdSchema,
+  TidalSimilarEditionSchema,
   TidalTrackCandidateSchema,
   TidalTrackMatchAcceptInputSchema,
   TidalTrackMatchInputSchema,
@@ -756,14 +757,44 @@ async function reviewCandidates(database: Reader, job: MatchJob) {
     : stored.candidates
 }
 
+async function similarEditions(database: Reader, trackId: string) {
+  const rows = await database
+    .select({
+      tidalTrackId: providerReference.externalId,
+      metadata: providerReference.metadata,
+    })
+    .from(providerReference)
+    .where(
+      and(
+        eq(providerReference.mediaItemId, trackId),
+        eq(providerReference.provider, PROVIDER),
+        eq(providerReference.referenceType, 'track'),
+        sql`${providerReference.metadata}->>'source' = 'tidal-similar'`,
+        sql`${providerReference.metadata}->>'selection' = 'alternate'`,
+      ),
+    )
+    .orderBy(providerReference.externalId)
+  return rows.flatMap(({ tidalTrackId, metadata }) => {
+    const parsed = TidalSimilarEditionSchema.safeParse({
+      ...metadata,
+      tidalTrackId,
+    })
+    return parsed.success ? [parsed.data] : []
+  })
+}
+
 async function readTidalTrackMatch(database: Reader, trackId: string) {
-  const [state] = await readMatchStates(database, [trackId])
+  const [[state], editions] = await Promise.all([
+    readMatchStates(database, [trackId]),
+    similarEditions(database, trackId),
+  ])
   const job = state?.job ?? null
   return TidalTrackMatchReviewSchema.parse({
     trackId,
     match: state
       ? currentMatch(state.tidalTrackId, state.referenceMetadata)
       : null,
+    ...(editions.length ? { similarEditions: editions } : {}),
     job: job ? summarizeMatch(job) : null,
     candidates: job ? await reviewCandidates(database, job) : [],
   })
