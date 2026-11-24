@@ -1,6 +1,9 @@
 'use client'
 
-import type { ArtistMergePlan } from '@repo/schemas/artist-merges'
+import type {
+  ArtistMergePlan,
+  ArtistMergePlanArtist,
+} from '@repo/schemas/artist-merges'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
@@ -48,8 +51,35 @@ const reviewColumns: TableColumn[] = [
 
 const quoted = (name: string) => `“${name}”`
 const credits = { one: 'credit', other: 'credits' }
+const tracks = { one: 'track', other: 'tracks' }
 
-/** Shown only when something speaks against the merge, or part of it cannot be made. */
+function artistChoice(
+  artist: ArtistMergePlanArtist,
+  artists: readonly ArtistMergePlanArtist[],
+) {
+  if (artists.filter(({ name }) => name === artist.name).length === 1)
+    return artist.name
+  const summary = (entry: ArtistMergePlanArtist) =>
+    [
+      entry.name,
+      entry.inLibrary === undefined
+        ? undefined
+        : entry.inLibrary
+          ? 'In library'
+          : 'Outside library',
+      formatItemCount(entry.trackCount, tracks),
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  const label = summary(artist)
+  return artists.some(
+    (entry) => entry.id !== artist.id && summary(entry) === label,
+  )
+    ? `${label} · ${artist.id}`
+    : label
+}
+
+/** The records, the result and the evidence to check before confirming. */
 function ArtistMergePlanReview({
   plan,
   pending,
@@ -73,6 +103,7 @@ function ArtistMergePlanReview({
   const { moves } = plan
   const { target, total } = plan.scrobbles
   const added = total - target
+  const hasProfiles = plan.artists.some((artist) => artist.profiles?.length)
   const leaveOut = (id: string) =>
     replan({
       ids: artistIds.filter((artistId) => artistId !== id),
@@ -129,7 +160,7 @@ function ArtistMergePlanReview({
                 >
                   {plan.artists.map((artist) => (
                     <option key={artist.id} value={artist.id}>
-                      {artist.name}
+                      {artistChoice(artist, plan.artists)}
                     </option>
                   ))}
                 </Select>
@@ -170,6 +201,37 @@ function ArtistMergePlanReview({
           ]}
         />
       </Section>
+      {hasProfiles && (
+        <Section title="Provider identifiers">
+          <KeyValues
+            items={plan.artists.map((artist) => {
+              const record = artistChoice(artist, plan.artists)
+              return {
+                label: record,
+                value: artist.profiles?.length ? (
+                  artist.profiles.map(({ provider, externalId }) => {
+                    const label = providerLabel(provider)
+                    const text = externalId
+                      ? `${label} · ${externalId}`
+                      : `${label} · ID unavailable`
+                    return (
+                      <SecondaryCell
+                        key={`${provider}:${externalId}`}
+                        text={text}
+                        label={`${label} identifier for ${record}`}
+                      >
+                        {text}
+                      </SecondaryCell>
+                    )
+                  })
+                ) : (
+                  <EmptyValue />
+                ),
+              }
+            })}
+          />
+        </Section>
+      )}
       <Section title="Artists">
         <SecondaryTableScroll
           className="dtl-bounded"
@@ -302,6 +364,10 @@ export const artistMergeAdapter: MergeAdapter<ArtistMergePlan> = {
   }),
   needsReview: (plan) => plan.blocked || plan.cautions.length > 0,
   blocked: (plan) => plan.blocked,
+  acknowledgement: (plan) =>
+    plan.cautions.some(({ code }) => code === 'profiles')
+      ? 'I confirm these profiles belong to the same artist.'
+      : null,
   Review: ArtistMergePlanReview,
   wording: {
     title: (plan) => {

@@ -277,6 +277,7 @@ async function mergeArtists(
   merge: (
     merge: ReturnType<typeof useMerge<ArtistMergePlan>>['merge'],
   ) => Promise<unknown>,
+  requireReview = false,
 ) {
   const requests: Array<{ url: string; body: unknown }> = []
   t.mock.method(
@@ -304,7 +305,7 @@ async function mergeArtists(
   }
   let started: ReturnType<typeof useMerge<ArtistMergePlan>> | undefined
   function ArtistMerge() {
-    started = useMerge(adapter)
+    started = useMerge(adapter, { requireReview })
     return null
   }
   const client = new QueryClient()
@@ -340,6 +341,23 @@ test('a clean artist merge is planned, then made at once', async (t) => {
   ])
   assert.deepEqual(outcome, { status: 'merged', change: merged })
   assert.deepEqual(invalidated, [merged])
+})
+
+test('an artist inspector merge waits for review even on a clean plan', async (t) => {
+  const { outcome, requests, invalidated } = await mergeArtists(
+    t,
+    cleanPlan,
+    (merge) => merge(['artist-1', 'artist-2']),
+    true,
+  )
+  assert.deepEqual(requests, [
+    {
+      url: `${apiBaseUrl}/api/v1/library-changes/artist-merges/plan`,
+      body: { artistIds: ['artist-1', 'artist-2'] },
+    },
+  ])
+  assert.deepEqual(outcome, { status: 'review', plan: cleanPlan })
+  assert.deepEqual(invalidated, [])
 })
 
 test('an artist merge with a caution or a film block opens the review first', async (t) => {

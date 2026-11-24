@@ -221,6 +221,8 @@ export type MergeAdapter<Plan> = {
   needsReview: (plan: Plan) => boolean
   /** The merge cannot be made as planned. */
   blocked: (plan: Plan) => boolean
+  /** The owner must acknowledge this evidence before confirming the plan. */
+  acknowledgement?: (plan: Plan) => string | null
   Review: ComponentType<MergeReviewProps<Plan>>
   wording: {
     /** The review dialog's title. */
@@ -264,6 +266,7 @@ function MergeReviewDialog<Plan>({
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
+  const [acknowledged, setAcknowledged] = useState<Plan | null>(null)
   useEffect(() => {
     const element = dialog.current
     const previous = document.activeElement
@@ -275,6 +278,7 @@ function MergeReviewDialog<Plan>({
     }
   }, [])
   const { Review } = adapter
+  const acknowledgement = adapter.acknowledgement?.(plan)
   return (
     <dialog
       ref={dialog}
@@ -315,10 +319,28 @@ function MergeReviewDialog<Plan>({
             setFollow={onFollow}
             error={error ? <Notice tone="danger">{error}</Notice> : null}
           />
+          {acknowledgement && (
+            <label className="ds-checkrow">
+              <input
+                type="checkbox"
+                className="ds-check"
+                disabled={pending}
+                checked={acknowledged === plan}
+                onChange={(event) =>
+                  setAcknowledged(event.target.checked ? plan : null)
+                }
+              />
+              <span>{acknowledgement}</span>
+            </label>
+          )}
           <div className="ds-actions">
             <Button
               variant="primary"
-              disabled={pending || adapter.blocked(plan)}
+              disabled={
+                pending ||
+                adapter.blocked(plan) ||
+                Boolean(acknowledgement && acknowledged !== plan)
+              }
               onClick={onMerge}
             >
               {pending ? 'Merging...' : 'Merge'}
@@ -343,10 +365,13 @@ export function useMerge<Plan>(
   {
     onPlan,
     onMerge,
+    requireReview = false,
   }: {
     /** The records the latest plan merges. */
     onPlan?: (ids: string[]) => void
     onMerge?: (change: LibraryChange) => void
+    /** Require confirmation even for a plan with no cautions. */
+    requireReview?: boolean
   } = {},
 ) {
   const { apiBaseUrl } = useConfig()
@@ -375,7 +400,8 @@ export function useMerge<Plan>(
     }: MergeRequest & { reviewed: boolean }): Promise<MergeOutcome<Plan>> => {
       if (!reviewed) {
         const next = await adapter.plan(apiBaseUrl, chosen)
-        if (adapter.needsReview(next)) return { status: 'review', plan: next }
+        if (requireReview || adapter.needsReview(next))
+          return { status: 'review', plan: next }
       }
       return {
         status: 'merged',

@@ -53,6 +53,8 @@ import {
   ArtistProfileSources,
 } from './artist-profile-sources'
 import { ArtistAlbums } from './artist-albums'
+import { ArtistMergePicker } from './artist-merge-picker'
+import { artistMergeAdapter } from './artist-merge-review'
 import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { CreatorDetailState } from './creator-detail-state'
 import {
@@ -81,6 +83,7 @@ import { ListeningTrend } from './listening-trend'
 import { LibraryRecordChanges } from './library-changes'
 import { MetadataCoverage } from './metadata-coverage'
 import MetadataSourceControl from './metadata-source-control'
+import { useMerge } from './merge-bar'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
 import { TrackAlbumTableValue } from './track-browse-cells'
@@ -597,6 +600,13 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
       keptArtistHref(nextId, window.location),
     )
   }
+  const [mergeArtistId, setMergeArtistId] = useState<string | null>(null)
+  const merge = useMerge(artistMergeAdapter, {
+    requireReview: true,
+    onMerge: (change) => {
+      if (change.target && change.target.id !== id) showArtist(change.target.id)
+    },
+  })
   const loaded = query.data
   useEffect(() => {
     if (!loaded || loaded.id === id) return
@@ -676,10 +686,36 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
               inLibrary={artist.inLibrary ?? true}
             />
             <DetailActionsSpacer />
-            <DetailMore crumb={{ title: artist.name }} />
+            <DetailMore
+              crumb={{ title: artist.name }}
+              items={[
+                {
+                  label: 'Merge with…',
+                  disabled: merge.pending,
+                  onSelect: () => {
+                    merge.clearError()
+                    setMergeArtistId(artist.id)
+                  },
+                },
+              ]}
+            />
           </>
         }
       />
+      {mergeArtistId === artist.id && (
+        <ArtistMergePicker
+          artist={artist}
+          onClose={() => setMergeArtistId(null)}
+          onPick={(candidateId) => {
+            setMergeArtistId(null)
+            void merge.merge([artist.id, candidateId])
+          }}
+        />
+      )}
+      {merge.dialog}
+      {merge.error && !merge.review && (
+        <Notice tone="danger">{merge.error}</Notice>
+      )}
       <DetailTabs
         label="Artist details"
         value={shownTab}
