@@ -1874,13 +1874,10 @@ async function browseQueries(
   }
 
   async function readPage(limit: number) {
-    // Keep positive artist tags as a set of keys. A broad tag must not be
-    // nested-loop joined against the date index, and release ordering only
-    // needs to resolve the primary date ties at the page boundary. Tags,
-    // Track tags, Has track tags, Album tags and Provider filters in any mode
-    // take the same path: their test is on the date index, and the visibility
-    // probe below keeps media_item a lookup per walked track instead of a
-    // materialised scan.
+    // Hash positive artist tag memberships on the table the date index
+    // walks, as for Track tags. Using = any(array(...)) can drive the page
+    // from the whole artist membership list instead of the Added order.
+    // Resolve release order only for dates that touch the requested ranks.
     const firstArtistTagPage =
       mediaType === 'track' &&
       offset === 0 &&
@@ -1900,9 +1897,9 @@ async function browseQueries(
       ? and(
           whereWithFilters((chip) =>
             chip.field === 'artistTag' && chip.mode !== 'exclude'
-              ? sql`${libraryTrack.mediaItemId} = any(array(
+              ? sql`coalesce(${libraryTrack.mediaItemId} in (
                   ${mediaIdsWithArtistTag(normalizeTagName(chip.value))}
-                ))`
+                ), false)`
               : undefined,
           ),
           listening?.condition(listeningSubject, sql`${mediaItem.id}`),
