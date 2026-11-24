@@ -1836,13 +1836,25 @@ it('bounds the Spotify alternate lookup for detail on a common track title', asy
       where media_item_id = 'track-1001';
     insert into media_credit (media_item_id, artist_id, role, billing_order)
     values ('track-1001', 'artist-2', 'artist', 1);
+    insert into catalog_media_alias (alias_id, media_item_id)
+    values ('alias-to-track-1', 'track-1');
   `)
   await pool.query('vacuum analyze media_item')
-  await checkBudget('Track detail for a common title', 1_500, 4, async () => {
-    const detail = await getTrackDetail('track-1')
-    expect(detail?.spotifyTrackId).toBeNull()
-    expect(detail?.spotifyAlternate?.trackId).toBe('track-18001')
-    expect(detail?.spotifyAlternate?.identifier).toBe('ZZZFixture000000000001')
+  const detail = await checkBudget(
+    'Track detail for a common title',
+    1_500,
+    4,
+    async () => {
+      const item = await getTrackDetail('track-1')
+      expect(item?.id).toBe('track-1')
+      expect(item?.spotifyTrackId).toBeNull()
+      expect(item?.spotifyAlternate?.trackId).toBe('track-18001')
+      expect(item?.spotifyAlternate?.identifier).toBe('ZZZFixture000000000001')
+      return item
+    },
+  )
+  await checkBudget('Track detail through an alias', 1_500, 4, async () => {
+    expect(await getTrackDetail('alias-to-track-1')).toEqual(detail)
   })
 })
 

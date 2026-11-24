@@ -28,7 +28,6 @@ import {
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
-import { resolveCatalogMediaId } from './catalog-discoveries'
 import { ServerError } from '@/lib/error'
 import { measureRequestPhase } from '@/lib/request-log'
 import {
@@ -120,12 +119,11 @@ const TrackRowsSchema = z.array(
   }),
 )
 
-export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
-  if (!ids.length) return []
-  const pageIds = sql`any(${sql.param(ids)}::text[])`
+async function loadTrackItems(pageIds: SQL, prefix = sql``) {
   const rows = TrackRowsSchema.parse(
     (
       await db.execute(sql`
+        ${prefix}
         select mi.id, mi.in_library, mi.title, coalesce(mi.artwork_url, am.artwork_url) as artwork_url,
           ${isoTimestamp(sql`coalesce(mi.release_date, am.release_date)`)} as release_date,
           coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name) order by c.billing_order, a.name)
@@ -163,49 +161,54 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         where lt.media_item_id = ${pageIds}`)
     ).rows,
   )
-  const byId = new Map(rows.map((row) => [row.id, row]))
-  return ids.flatMap((id) => {
-    const row = byId.get(id)
-    if (!row) return []
+  return rows.map((row) => {
     const spotifyTrackId = row.spotify_track_id
-    return [
-      TrackListItemSchema.parse({
-        id: row.id,
-        inLibrary: row.in_library,
-        mediaType: 'track',
-        title: row.title,
-        artworkUrl: row.artwork_url,
-        releaseDate: row.release_date,
-        artists: row.artist_credits.map((credit) => credit.name),
-        artistCredits: row.artist_credits,
-        artistTags: row.artist_tags,
-        albumName: row.album_name,
-        album:
-          row.album_id && row.album_title !== null
-            ? { id: row.album_id, title: row.album_title }
-            : null,
-        albumLinkStrategy: row.album_link_strategy,
-        trackTags: row.track_tags,
-        albumTags: row.album_tags,
-        playlists: row.playlists,
-        sources: row.sources,
-        durationSec: row.duration_sec,
-        bpm: row.bpm,
-        musicalKey: row.musical_key,
-        dateAdded: row.in_library ? row.date_added : null,
-        spotifyTrackId,
-        spotifyMatch: row.spotify_match,
-        providers: row.providers,
-        spotifyUrl:
-          row.spotify_url ??
-          (spotifyTrackId
-            ? `https://open.spotify.com/track/${spotifyTrackId}`
-            : null),
-        isrc: row.isrc,
-        scrobbles: row.scrobble_count,
-        lastListenedAt: row.last_listened_at,
-      }),
-    ]
+    return TrackListItemSchema.parse({
+      id: row.id,
+      inLibrary: row.in_library,
+      mediaType: 'track',
+      title: row.title,
+      artworkUrl: row.artwork_url,
+      releaseDate: row.release_date,
+      artists: row.artist_credits.map((credit) => credit.name),
+      artistCredits: row.artist_credits,
+      artistTags: row.artist_tags,
+      albumName: row.album_name,
+      album:
+        row.album_id && row.album_title !== null
+          ? { id: row.album_id, title: row.album_title }
+          : null,
+      albumLinkStrategy: row.album_link_strategy,
+      trackTags: row.track_tags,
+      albumTags: row.album_tags,
+      playlists: row.playlists,
+      sources: row.sources,
+      durationSec: row.duration_sec,
+      bpm: row.bpm,
+      musicalKey: row.musical_key,
+      dateAdded: row.in_library ? row.date_added : null,
+      spotifyTrackId,
+      spotifyMatch: row.spotify_match,
+      providers: row.providers,
+      spotifyUrl:
+        row.spotify_url ??
+        (spotifyTrackId
+          ? `https://open.spotify.com/track/${spotifyTrackId}`
+          : null),
+      isrc: row.isrc,
+      scrobbles: row.scrobble_count,
+      lastListenedAt: row.last_listened_at,
+    })
+  })
+}
+
+export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
+  if (!ids.length) return []
+  const items = await loadTrackItems(sql`any(${sql.param(ids)}::text[])`)
+  const byId = new Map(items.map((item) => [item.id, item]))
+  return ids.flatMap((id) => {
+    const item = byId.get(id)
+    return item ? [item] : []
   })
 }
 
@@ -405,12 +408,22 @@ async function getTrackListeningDetail(id: string) {
   return ListeningDetailSchema.parse(result.rows[0])
 }
 
-export async function getTrackDetail(requestedId: string): Promise<TrackDetail | null> {
-  const id = await resolveCatalogMediaId(db, requestedId)
+export async function getTrackDetail(
+  requestedId: string,
+): Promise<TrackDetail | null> {
   const [item] = await measureRequestPhase('trackDetailHydrate', () =>
-    loadTracks([id]),
+    loadTrackItems(
+      sql`(select id from requested_track)`,
+      sql`with requested_track as materialized (
+        select coalesce(
+          (select media_item_id from catalog_media_alias where alias_id = ${requestedId}),
+          ${requestedId}::text
+        ) as id
+      )`,
+    ),
   )
   if (!item) return null
+  const { id } = item
   const [listening, lastfmSources, spotifyAlternate] = await Promise.all([
     measureRequestPhase('trackDetailListening', () =>
       getTrackListeningDetail(id),
