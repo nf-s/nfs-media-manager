@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -148,6 +148,110 @@ async function libraryTrack(
   })
   if (options.artist) await credit(id, options.artist)
 }
+
+it('keeps metadata for the exact overridden reference and provider', async () => {
+  const mediaItemId = 'reference-override-fixture'
+  const provider = 'fixture-a'
+  await album(mediaItemId)
+  const exact = [
+    {
+      referenceType: 'album',
+      externalId: 'chosen-album',
+      provider,
+      metadata: { url: 'https://example.test/old-album' },
+    },
+    {
+      referenceType: 'master',
+      externalId: 'chosen-master',
+      provider,
+      metadata: { url: 'https://example.test/chosen-master' },
+    },
+    {
+      referenceType: 'release',
+      externalId: 'chosen-release',
+      provider: 'fixture-b',
+      metadata: { url: 'https://example.test/foreign-release' },
+    },
+  ]
+  await databaseClient.insert(schema.providerReference).values(
+    exact.map((reference) => ({
+      ...reference,
+      id: `existing-${reference.referenceType}`,
+      mediaItemId,
+      isPrimary: true,
+    })),
+  )
+  await databaseClient.insert(schema.providerReferenceOverride).values(
+    exact.map(({ referenceType, externalId }) => ({
+      id: `override-${referenceType}`,
+      mediaItemId,
+      provider,
+      referenceType,
+      externalId,
+    })),
+  )
+  const { applyProviderResult } = await import('@/services/provider-state')
+  await applyProviderResult({
+    mediaItemId,
+    mediaType: 'album',
+    provider,
+    source: 'fixture',
+    ...PluginResultSchema.parse({
+      payload: {},
+      normalized: {
+        references: [
+          {
+            referenceType: 'album',
+            externalId: 'chosen-album',
+            isPrimary: true,
+            metadata: { url: 'https://example.test/chosen-album' },
+          },
+          ...exact.map(({ referenceType }) => ({
+            referenceType,
+            externalId: `different-${referenceType}`,
+            metadata: {
+              url: `https://example.test/different-${referenceType}`,
+            },
+          })),
+          {
+            referenceType: 'album',
+            externalId: 'chosen-album',
+            isPrimary: true,
+          },
+        ],
+      },
+    }),
+  })
+
+  expect(
+    await databaseClient
+      .select({
+        referenceType: schema.providerReference.referenceType,
+        externalId: schema.providerReference.externalId,
+        metadata: schema.providerReference.metadata,
+      })
+      .from(schema.providerReference)
+      .where(
+        and(
+          eq(schema.providerReference.mediaItemId, mediaItemId),
+          eq(schema.providerReference.provider, provider),
+        ),
+      )
+      .orderBy(schema.providerReference.referenceType),
+  ).toEqual([
+    {
+      referenceType: 'album',
+      externalId: 'chosen-album',
+      metadata: { url: 'https://example.test/chosen-album' },
+    },
+    {
+      referenceType: 'master',
+      externalId: 'chosen-master',
+      metadata: { url: 'https://example.test/chosen-master' },
+    },
+    { referenceType: 'release', externalId: 'chosen-release', metadata: null },
+  ])
+})
 
 // One scrobbled artist and track name counted towards a library track.
 async function trackLink(trackId: string, artist: string, title: string) {

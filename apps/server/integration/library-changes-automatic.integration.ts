@@ -795,6 +795,29 @@ it('gives album listening history to the listed recording exactly as the SQL fun
   }
 })
 
+it('keeps an album history recording with a native provider ID separate', async () => {
+  const albumId = await historyFixture()
+  const reference = {
+    id: 'history-tidal-reference',
+    mediaItemId: 'history-first',
+    provider: 'tidal',
+    referenceType: 'track',
+    externalId: '910001',
+  }
+  await fixture.insert(schema.providerReference).values(reference)
+
+  await fixture.transaction((tx) => mergeAlbumTrackHistory(tx, albumId))
+  expect(await fixture.select().from(schema.providerReference)).toEqual([
+    expect.objectContaining(reference),
+  ])
+  const state = await historyState()
+  expect(state.items).toContain('history-first')
+  expect(state.items).not.toContain('history-second')
+  expect(state.sources).toContainEqual(
+    expect.objectContaining({ trackMediaItemId: 'history-first' }),
+  )
+})
+
 it('records an album history merge from a track-list refresh, puts it back and does not make it again', async () => {
   const release = await album('history-refresh')
   const signal = nameOf('Signal')

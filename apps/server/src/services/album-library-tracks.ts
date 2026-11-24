@@ -335,16 +335,15 @@ async function allowedMerges<
 /**
  * Gives the scrobbled names and playlist entries of a Last.fm-only track
  * linked to the album to the one listed recording with its title and artist,
- * then removes it. A pair whose names the owner rejected, or that the owner
- * keeps separate, is left alone. Recorded as automatic changes.
+ * then removes it. Tracks with independent evidence and pairs the owner
+ * rejected or keeps separate are left alone. Recorded as automatic changes.
  */
 export async function mergeAlbumTrackHistory(
   database: Transaction,
   albumId: string,
   batchId: string | null = null,
 ) {
-  // A pre-existing Last.fm row may duplicate an exact Spotify match. Keep
-  // all evidence when the scrobble group and the list select one recording.
+  // A pre-existing Last.fm row may duplicate a listed recording.
   const pairs = HistoryPairsSchema.parse(
     (
       await database.execute(sql`
@@ -358,6 +357,7 @@ export async function mergeAlbumTrackHistory(
         where source.album_media_item_id = ${albumId} and source.spotify_track_id is null
           and source_item.source_label = 'lastfm'
           and source_item.metadata->>'legacyHidden' is distinct from 'true'
+          and not ${independentTrackData(sql`source_item.id`)}
           and not exists (select 1 from catalog_addition a where a.media_item_id = source.media_item_id)
           and not exists (select 1 from catalog_media_alias a where a.alias_id = source.media_item_id)
           and not exists (select 1 from track listed where listed.track_media_item_id = source.media_item_id)

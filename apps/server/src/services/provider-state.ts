@@ -125,19 +125,62 @@ async function replaceProviderReferences(
   const effective = new Map(
     active.map((override) => [override.referenceType, override.externalId]),
   )
-  const effectiveReferences: PluginNormalizedResult['references'] =
-    references.map((reference) => ({
-      ...reference,
-      externalId:
-        effective.get(reference.referenceType) ?? reference.externalId,
-    }))
-  for (const [referenceType, externalId] of effective) {
-    if (
-      !effectiveReferences.some(
-        (reference) => reference.referenceType === referenceType,
-      )
+  const effectiveReferences = new Map<
+    string,
+    PluginNormalizedResult['references'][number]
+  >()
+  for (const reference of references) {
+    const overrideId = effective.get(reference.referenceType)
+    if (overrideId !== undefined && overrideId !== reference.externalId)
+      continue
+    const key = `${reference.referenceType}:${reference.externalId}`
+    const earlier = effectiveReferences.get(key)
+    effectiveReferences.set(
+      key,
+      overrideId !== undefined && !reference.metadata && earlier?.metadata
+        ? { ...reference, metadata: earlier.metadata }
+        : reference,
     )
-      effectiveReferences.push({ referenceType, externalId, isPrimary: false })
+  }
+  const withoutFreshMetadata = [...effective].filter(
+    ([type, id]) => !effectiveReferences.get(`${type}:${id}`)?.metadata,
+  )
+  if (withoutFreshMetadata.length) {
+    const existing = await database
+      .select({
+        referenceType: providerReference.referenceType,
+        externalId: providerReference.externalId,
+        isPrimary: providerReference.isPrimary,
+        metadata: providerReference.metadata,
+      })
+      .from(providerReference)
+      .where(
+        and(
+          eq(providerReference.mediaItemId, mediaItemId),
+          eq(providerReference.provider, providerId),
+          inArray(
+            providerReference.referenceType,
+            withoutFreshMetadata.map(([type]) => type),
+          ),
+        ),
+      )
+    const byId = new Map(
+      existing.map((reference) => [
+        `${reference.referenceType}:${reference.externalId}`,
+        reference,
+      ]),
+    )
+    for (const [referenceType, externalId] of withoutFreshMetadata) {
+      const key = `${referenceType}:${externalId}`
+      const fresh = effectiveReferences.get(key)
+      const prior = byId.get(key)
+      effectiveReferences.set(key, {
+        referenceType,
+        externalId,
+        isPrimary: fresh?.isPrimary ?? prior?.isPrimary ?? false,
+        metadata: fresh?.metadata ?? prior?.metadata ?? undefined,
+      })
+    }
   }
   const blockedReferences = checkFilmReferenceStatus
     ? (
@@ -173,12 +216,7 @@ async function replaceProviderReferences(
     ),
   )
 
-  for (const reference of new Map(
-    effectiveReferences.map((reference) => [
-      `${reference.referenceType}:${reference.externalId}`,
-      reference,
-    ]),
-  ).values()) {
+  for (const reference of effectiveReferences.values()) {
     const referenceId = createStableId(
       'pref',
       `${mediaItemId}:${providerId}:${reference.referenceType}:${reference.externalId}`,
