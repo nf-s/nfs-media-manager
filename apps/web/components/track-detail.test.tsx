@@ -578,11 +578,12 @@ test('Sources lists the recorded and scrobbled Last.fm names in tables', () => {
 })
 
 test('Sources offers to add a missing Spotify album and warns about albums that do not list the track', () => {
+  const externalId = '1234567890ABCDEFGHIJKL'
   const html = render(
     TrackDetailSchema.parse({
       ...scrobbled,
       albumName: 'Harbour Lights',
-      spotifyAlbumId: '1234567890ABCDEFGHIJKL',
+      spotifyAlbumId: externalId,
       scrobbledAlbums: [
         { id: 'fixture-single', title: 'Harbour Lights', scrobbles: 115 },
         { id: 'fixture-live', title: 'Live Set', scrobbles: 1 },
@@ -590,6 +591,11 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
     }),
     '',
     'sources',
+    null,
+    [],
+    undefined,
+    undefined,
+    { mediaType: 'album', externalId, mediaItemId: null, ambiguous: false },
   )
   assert.equal(html.match(/<h3>Album<\/h3>/g)?.length, 1)
   assert.match(
@@ -607,17 +613,38 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
 })
 
 test('offers an exact Spotify album add on Overview even without an album name', () => {
+  const externalId = '1234567890ABCDEFGHIJKL'
   const html = render(
     TrackDetailSchema.parse({
       ...scrobbled,
       albumName: null,
-      spotifyAlbumId: '1234567890ABCDEFGHIJKL',
+      spotifyAlbumId: externalId,
     }),
+    '',
+    'detail',
+    null,
+    [],
+    undefined,
+    undefined,
+    { mediaType: 'album', externalId, mediaItemId: null, ambiguous: false },
   )
   assert.match(
     html,
     />Album<\/button><span class="ds-row-by">Recorded album<\/span>.*aria-label="Add album to library · Spotify release"/,
   )
+})
+
+test('Sources keeps the Spotify link and withholds add while release membership is unresolved', () => {
+  const externalId = '1234567890ABCDEFGHIJKL'
+  const html = render(
+    { ...scrobbled, spotifyAlbumId: externalId },
+    '',
+    'sources',
+  )
+  assert.ok(
+    html.includes(`href="https://open.spotify.com/album/${externalId}"`),
+  )
+  assert.doesNotMatch(html, /aria-label="Add album to library|lucide-book-plus/)
 })
 
 test('offers an album search from Sources when only the recorded name is known', () => {
@@ -648,8 +675,10 @@ test('Sources marks an exact Spotify release saved even when the track is absent
     html,
     /href="\/albums\/saved-release"[^>]*>Recorded album<\/a>” is in the library but does not list this track\./,
   )
-  assert.match(html, /aria-label="Recorded album is in your library \(album\)"/)
-  assert.doesNotMatch(html, /aria-label="Add album to library/)
+  assert.doesNotMatch(
+    html,
+    /aria-label="Add album to library|lucide-book-check/,
+  )
 })
 
 test('Sources shows no album notices for a track on its library album', () => {

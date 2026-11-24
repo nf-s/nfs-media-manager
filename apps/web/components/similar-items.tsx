@@ -43,7 +43,7 @@ import {
   unavailableReason,
 } from './play-controls'
 import { usePlayback, usePlaybackControls } from './playback-provider'
-import { useConfig } from './providers'
+import { useAnnounceLibraryAddition, useConfig } from './providers'
 import {
   TidalTrackMatchReviewDialog,
   useTidalTrackMatch,
@@ -107,25 +107,34 @@ export function useRefreshTidalSimilar(kind: TidalSimilarKind, id: string) {
   })
 }
 
-/** A suggestion on Spotify only, as an item the player can start. */
+/** A suggestion with a Spotify match, including ones already saved locally. */
 export function spotifyPlayable(
   kind: TidalSimilarKind,
   item: TidalSimilarItem,
 ): PlayableItem | null {
   const spotify = item.spotify
   if (!spotify) return null
+  const library = item.library
   return {
     kind,
     uri: `spotify:${kind}:${spotify.spotifyId}`,
     title: spotify.title,
     artist: spotify.artists.join(', '),
-    albumId: null,
+    albumId:
+      kind === 'album' ? (library?.id ?? null) : (library?.album?.id ?? null),
     ...(kind === 'track' && spotify.spotifyAlbumId
       ? { albumUri: `spotify:album:${spotify.spotifyAlbumId}` }
       : {}),
-    albumTitle: kind === 'album' ? spotify.title : (spotify.albumName ?? ''),
+    albumTitle:
+      kind === 'album'
+        ? spotify.title
+        : (spotify.albumName ??
+          library?.album?.title ??
+          library?.albumName ??
+          ''),
     artworkUrl: spotify.artworkUrl,
     trackCount: kind === 'album' ? spotify.trackCount : 1,
+    ...(kind === 'track' && library ? { trackId: library.id } : {}),
     credits: spotify.artists.map((name) => ({ id: null, name })),
   }
 }
@@ -238,6 +247,8 @@ export function SimilarRow({
 }) {
   const client = useQueryClient()
   const { apiBaseUrl } = useConfig()
+  const announceAddition = useAnnounceLibraryAddition()
+  const title = item.library?.title ?? tidalSuggestionTitle(item)
   const add = useMutation({
     retry: false,
     mutationFn: () =>
@@ -247,9 +258,11 @@ export function SimilarRow({
         TidalSimilarAddResultSchema,
         { method: 'POST' },
       ),
-    onSuccess: () => invalidateManualMediaAddition(client, kind),
+    onSuccess: () => {
+      announceAddition(kind, title)
+      void invalidateManualMediaAddition(client, kind)
+    },
   })
-  const title = item.library?.title ?? tidalSuggestionTitle(item)
   const libraryId = add.data?.id ?? item.library?.id
   const detailId = libraryId ?? item.catalogMediaItemId
   const inLibrary = Boolean(detailId && libraryId === detailId)
@@ -327,7 +340,7 @@ export function SimilarRow({
             <LibraryAction
               kind={kind}
               name={title}
-              saved={inLibrary}
+              saved={inLibrary || item.hiddenLibraryMatch}
               pending={add.isPending}
               onAdd={() => add.mutate()}
             />

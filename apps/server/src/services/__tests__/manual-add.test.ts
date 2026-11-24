@@ -196,6 +196,46 @@ describe('manual provider search and library additions', () => {
     expect(mocks.addFilm).not.toHaveBeenCalled()
   })
 
+  it('marks an ambiguous Spotify release or TMDb result as ineligible for addition', async () => {
+    mocks.request
+      .mockResolvedValueOnce(Response.json(spotifyTokenFixture))
+      .mockResolvedValueOnce(
+        Response.json({
+          albums: { items: [spotifyAlbumFixture()], total: 1, offset: 0 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          page: 1,
+          total_pages: 1,
+          results: [{ id: 701, title: 'Example Film' }],
+        }),
+      )
+    mocks.catalogMatches.mockResolvedValue({
+      rows: [
+        {
+          spotify_id: spotifyAlbumId,
+          library_id: null,
+          hidden: false,
+          in_library: true,
+        },
+      ],
+    })
+    mocks.filmMatches.mockResolvedValue([
+      { id: 'existing-film', error: 'Ambiguous film identifiers' },
+    ])
+    for (const mediaType of ['album', 'film'] satisfies ('album' | 'film')[]) {
+      const results = await searchManualMedia({
+        mediaType,
+        q: 'Example',
+        exactMembership: true,
+      })
+      expect(results.items).toMatchObject([
+        { mediaItemId: null, membershipAmbiguous: true },
+      ])
+    }
+  })
+
   it('does not make requests when credentials or search input are invalid', async () => {
     mocks.secrets.mockReturnValue({})
     await expect(

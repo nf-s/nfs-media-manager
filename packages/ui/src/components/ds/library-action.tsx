@@ -1,7 +1,51 @@
-import { BookCheck, BookPlus } from 'lucide-react'
+import { BookPlus, Search } from 'lucide-react'
 import { Button } from '../ui/button'
 
-/** Adds one item or opens its catalog search. Saved items keep a focusable status. */
+export type LibraryActionKind =
+  | 'track'
+  | 'album'
+  | 'film'
+  | 'artist'
+  | 'person'
+  | 'playlist'
+  | 'collection'
+  | 'show'
+  | 'item'
+
+/** Keep keyboard focus near the item when a successful add removes its button. */
+function restoreFocusOnRemoval(button: HTMLButtonElement | null) {
+  if (!button) return
+  return () => {
+    if (document.activeElement !== button) return
+    // The save can also replace the surrounding notice or row actions.
+    const scopes: HTMLElement[] = []
+    for (
+      let scope = button.parentElement;
+      scope && scope !== document.body;
+      scope = scope.parentElement
+    ) {
+      scopes.push(scope)
+      if (scope.matches('dialog, main, [role="dialog"]')) break
+    }
+    queueMicrotask(() => {
+      if (document.activeElement !== document.body) return
+      for (const scope of scopes) {
+        if (!scope.isConnected) continue
+        const next =
+          scope.querySelector<HTMLElement>(
+            'a.ds-row-title[href], a[data-workspace-href]',
+          ) ??
+          scope.querySelector<HTMLElement>(
+            'a[href], button:not(:disabled):not([aria-disabled="true"])',
+          )
+        next?.focus({ preventScroll: true })
+        if (document.activeElement !== document.body) return
+      }
+    })
+  }
+}
+
+/** Adds a missing item or opens its catalog search for confirmation. */
 export function LibraryAction({
   name,
   kind,
@@ -14,16 +58,7 @@ export function LibraryAction({
   touch = false,
 }: {
   name: string
-  kind:
-    | 'track'
-    | 'album'
-    | 'film'
-    | 'artist'
-    | 'person'
-    | 'playlist'
-    | 'collection'
-    | 'show'
-    | 'item'
+  kind: LibraryActionKind
   onAdd?: () => void
   action?: 'add' | 'find'
   size?: 'xs' | 'sm'
@@ -33,18 +68,18 @@ export function LibraryAction({
   /** Use the larger phone target when there is room beside the title. */
   touch?: boolean
 }) {
-  const label = saved
-    ? `${name} is in your library (${kind})`
-    : pending
-      ? `Adding ${kind} to library · ${name}`
-      : action === 'find'
-        ? `Find ${kind} in library · ${name}`
-        : `Add ${kind} to library · ${name}`
-  const unavailable = saved || pending || disabled || !onAdd
-  const Icon = saved ? BookCheck : BookPlus
+  if (saved) return null
+  const label = pending
+    ? `Adding ${kind} to library · ${name}`
+    : action === 'find'
+      ? `Find ${kind} in library · ${name}`
+      : `Add ${kind} to library · ${name}`
+  const unavailable = pending || disabled || !onAdd
+  const Icon = action === 'find' ? Search : BookPlus
 
   return (
     <Button
+      ref={restoreFocusOnRemoval}
       type="button"
       className="ds-library-action"
       variant="ghost"

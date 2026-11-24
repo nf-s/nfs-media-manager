@@ -8,7 +8,8 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 import { usePathname } from 'next/navigation'
-import { createContext, useContext, useLayoutEffect } from 'react'
+import { createContext, useContext, useLayoutEffect, useState } from 'react'
+import type { LibraryActionKind } from '@repo/ui/components/ds/library-action'
 import { observeDocumentBrowsePath } from '@/hooks/useBrowsePerformance'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { initializeKeyNotation } from '@/utils/key-notation'
@@ -118,6 +119,13 @@ interface Props {
   apiBaseUrl: string
 }
 
+type AnnounceLibraryAddition = (kind: LibraryActionKind, title: string) => void
+const LibraryAnnouncementContext = createContext<AnnounceLibraryAddition>(
+  () => {},
+)
+export const useAnnounceLibraryAddition = () =>
+  useContext(LibraryAnnouncementContext)
+
 function BrowseDocumentTiming() {
   const pathname = usePathname()
   useLayoutEffect(() => {
@@ -127,11 +135,24 @@ function BrowseDocumentTiming() {
 }
 
 const Providers: React.FC<Props> = ({ children, appUrl, apiBaseUrl }) => {
+  const [announcement, setAnnouncement] = useState({ text: '', count: 0 })
   return (
     <ConfigContext.Provider value={{ appUrl, apiBaseUrl }}>
       <QueryClientProvider client={queryClient}>
         <BrowseDocumentTiming />
-        {children}
+        <LibraryAnnouncementContext.Provider
+          value={(kind, title) =>
+            setAnnouncement((previous) => ({
+              text: `Added ${kind} to library · ${title}`,
+              count: previous.count + 1,
+            }))
+          }
+        >
+          {children}
+          <span className="sr-only" role="status" aria-atomic="true">
+            <span key={announcement.count}>{announcement.text}</span>
+          </span>
+        </LibraryAnnouncementContext.Provider>
         <Toaster />
       </QueryClientProvider>
     </ConfigContext.Provider>

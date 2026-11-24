@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { CatalogMembershipResult } from '@repo/schemas/manual-add'
+import type { PlaybackCatalogResult } from '@repo/schemas/playback'
 import {
   PathnameContext,
   SearchParamsContext,
@@ -11,12 +13,15 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import PlayerDock, { rejoinMessage } from './player-dock'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
 import { ConfigContext } from './providers'
+import { catalogMembershipQuery } from '@/hooks/use-catalog-membership'
 import type {
   PlayableItem,
   PlaybackSnapshot,
   QueueEntry,
 } from '@/utils/playback'
 import { idlePlaybackState, type PlaybackTarget } from '@/utils/playback-engine'
+import { catalogLookups, playingLibraryItems } from '@/utils/playback-library'
+import { currentPlaybackCatalog } from '@/utils/playback-catalog'
 
 const trackId = 'ABCDEFGHIJKL1234567890'
 const item: PlayableItem = {
@@ -57,7 +62,30 @@ function unexpectedNavigation() {
   throw new Error('Navigation forbidden during rendering')
 }
 
-function render(view?: PlaybackView, search = '') {
+function render(
+  view?: PlaybackView,
+  search = '',
+  membership?: CatalogMembershipResult,
+  references?: PlaybackCatalogResult,
+) {
+  const client = new QueryClient()
+  if (view && membership) {
+    const { track, album } = playingLibraryItems(view.snapshot, view.current)
+    const { queryKey } = catalogMembershipQuery(catalogLookups([track, album]))
+    client.setQueryData(queryKey, membership)
+  }
+  if (view && references) {
+    const observed = currentPlaybackCatalog(view.snapshot, view.current)
+    if (!observed) throw new Error('Missing playback observation fixture')
+    client.setQueryData(
+      [
+        'playback-catalog',
+        'playback',
+        [[`${observed.kind}:${observed.spotifyId}`, observed]],
+      ],
+      references,
+    )
+  }
   const dock = view ? (
     <PlaybackViewContext.Provider value={view}>
       <PlayerDock />
@@ -66,7 +94,7 @@ function render(view?: PlaybackView, search = '') {
     <PlayerDock />
   )
   return renderToStaticMarkup(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={client}>
       <ConfigContext.Provider
         value={{ apiBaseUrl: 'http://localhost', appUrl: 'http://localhost' }}
       >
@@ -140,8 +168,7 @@ test('the dock shows the track, transport, queue count, device and Spotify link'
   )
   assert.match(html, /<strong><a [^>]*>Second track<\/a><\/strong>/)
   assert.match(html, /Example artist · <a [^>]*>Fixture album<\/a>/)
-  assert.match(html, /aria-label="Fixture album is in your library \(album\)"/)
-  assert.match(html, /aria-label="Add track to library · Second track"/)
+  assert.doesNotMatch(html, /ds-library-action/)
   assert.match(html, /aria-label="Play"/)
   assert.match(html, /1:05/)
   assert.match(html, /3:20/)
@@ -295,8 +322,161 @@ test('playback started elsewhere is shown without a library album', () => {
   assert.match(html, /aria-label="Play on: Fixture speaker"/)
   assert.match(html, /Press Next to start the queue\./)
   assert.match(html, /<h3>Playing<\/h3>/)
-  assert.match(html, /aria-label="Add track to library · Second track"/)
+  assert.doesNotMatch(html, /ds-library-action/)
+})
+
+test('the device relink finds the saved track independently of its actual release and a stale queue reference', () => {
+  const original = 'AAAAAAAAAAAAAAAAAAAAAA'
+  const release = 'BBBBBBBBBBBBBBBBBBBBBB'
+  const html = render(
+    {
+      ...on,
+      current: {
+        ...item,
+        kind: 'track',
+        uri: 'spotify:track:CCCCCCCCCCCCCCCCCCCCCC',
+        title: snapshot.trackName,
+        trackId: 'stale-track',
+      },
+      snapshot: {
+        ...snapshot,
+        linkedFromUri: `spotify:track:${original}`,
+        albumUri: `spotify:album:${release}`,
+      },
+    },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'track',
+          externalId: trackId,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+        {
+          mediaType: 'track',
+          externalId: original,
+          mediaItemId: 'matching-track',
+          ambiguous: false,
+        },
+        {
+          mediaType: 'album',
+          externalId: release,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          kind: 'track',
+          spotifyId: trackId,
+          item: { id: 'outside-track', inLibrary: false },
+          album: { id: 'outside-release', inLibrary: false },
+          artists: [],
+        },
+      ],
+    },
+  )
+  assert.match(
+    html,
+    /<strong><a [^>]*href="\/tracks[^\"]*matching-track[^\"]*"[^>]*>Second track<\/a><\/strong>/,
+  )
+  assert.doesNotMatch(
+    html,
+    /stale-track|library-album|(?:Add|Find) track to library|is in your library/,
+  )
   assert.match(html, /aria-label="Add album to library · Fixture album"/)
+  assert.match(html, /href="\/albums[^\"]*outside-release[^\"]*"/)
+  assert.doesNotMatch(
+    html,
+    /aria-label="Add album to library · Fixture album"[^>]*aria-disabled/,
+  )
+})
+
+test('an outside observation that conflicts with the current track reference cannot be promoted', () => {
+  const html = render(
+    {
+      ...on,
+      current: {
+        ...item,
+        kind: 'track',
+        uri: `spotify:track:${trackId}`,
+        title: snapshot.trackName,
+        trackId: 'saved-from-discovery',
+      },
+      snapshot,
+    },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'track',
+          externalId: trackId,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          kind: 'track',
+          spotifyId: trackId,
+          item: { id: 'outside-track', inLibrary: false },
+          album: null,
+          artists: [],
+        },
+      ],
+    },
+  )
+  assert.match(html, /href="\/tracks[^\"]*saved-from-discovery[^\"]*"/)
+  assert.doesNotMatch(html, /ds-library-action/)
+})
+
+test('a local playback item has no add action even if Spotify reports a catalog-like URI', () => {
+  const html = render(
+    { ...on, snapshot: { ...snapshot, isLocal: true, contextUri: null } },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'track',
+          externalId: trackId,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    },
+  )
+  assert.match(html, /<strong>Second track<\/strong>/)
+  assert.doesNotMatch(html, /ds-library-action/)
+})
+
+test('a missing result for the playing track cannot expose Add while its relink is unresolved', () => {
+  const html = render(
+    {
+      ...on,
+      snapshot: {
+        ...snapshot,
+        linkedFromUri: 'spotify:track:AAAAAAAAAAAAAAAAAAAAAA',
+      },
+    },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'track',
+          externalId: trackId,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    },
+  )
+  assert.match(html, /<strong><a [^>]*>Second track<\/a><\/strong>/)
+  assert.doesNotMatch(html, /ds-library-action/)
 })
 
 test('a device apps cannot control is shown with its transport disabled', () => {

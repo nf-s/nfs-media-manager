@@ -380,6 +380,7 @@ export const TidalSimilarItemSchema = TidalSuggestionSchema.extend({
     })
     .nullable()
     .default(null),
+  hiddenLibraryMatch: z.literal(true).optional(),
   /** The Spotify album or track, for `spotify` (and `library` when known). */
   spotify: SpotifyCodeMatchSchema.nullable(),
 })

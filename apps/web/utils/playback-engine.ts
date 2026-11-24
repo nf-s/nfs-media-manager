@@ -360,10 +360,16 @@ function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
   return (
     shown !== null &&
     shown.trackUri === after.trackUri &&
+    shown.linkedFromUri === after.linkedFromUri &&
+    shown.relinkedTrackUri === after.relinkedTrackUri &&
+    shown.isLocal === after.isLocal &&
+    shown.albumUri === after.albumUri &&
+    shown.albumName === after.albumName &&
     shown.paused === after.paused &&
     shown.durationMs === after.durationMs &&
     shown.contextUri === after.contextUri &&
     shown.trackName === after.trackName &&
+    shown.artists === after.artists &&
     shown.artworkUrl === after.artworkUrl &&
     Math.abs(positionAt(shown, after.at) - after.positionMs) < 1_500
   )
@@ -2040,8 +2046,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         ...details,
         // The session follows the URI the group reports.
         trackUri: uri,
-        linkedFromUri: null,
-        albumUri: snapshot.albumUri ?? details.albumUri,
+        linkedFromUri: details.trackUri === uri ? details.linkedFromUri : null,
+        ...(details.trackUri &&
+        details.trackUri !== uri &&
+        details.linkedFromUri === uri
+          ? { relinkedTrackUri: details.trackUri }
+          : {}),
+        albumUri: details.albumUri ?? snapshot.albumUri,
         artworkUrl: details.artworkUrl ?? snapshot.artworkUrl,
       }
     const item =

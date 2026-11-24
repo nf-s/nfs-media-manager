@@ -19,6 +19,7 @@ export const ManualMediaSearchItemSchema = z.object({
   url: z.string().url(),
   mediaItemId: z.string().nullable(),
   catalogMediaItemId: z.string().min(1).optional(),
+  membershipAmbiguous: z.literal(true).optional(),
   /** How many tracks an album result has, when the provider says. */
   trackCount: z.number().int().nonnegative().optional(),
 })
@@ -63,7 +64,19 @@ export const CatalogMembershipInputSchema = z
       .array(
         z.discriminatedUnion('mediaType', [
           SpotifyAlbumInputSchema,
-          SpotifyTrackInputSchema,
+          SpotifyTrackInputSchema.extend({
+            recording: z
+              .strictObject({
+                title: z.string().trim().min(1).max(2000),
+                artists: z
+                  .array(z.string().trim().min(1).max(2000))
+                  .min(1)
+                  .max(200),
+                spotifyAlbumId: SpotifyAlbumInputSchema.shape.externalId,
+                albumName: z.string().max(2000),
+              })
+              .optional(),
+          }),
         ]),
       )
       .min(1)

@@ -10,25 +10,26 @@ import { Notice } from '@repo/ui/components/ds/feedback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
 import { useCatalogMembership } from '@/hooks/use-catalog-membership'
 import { fetchApiData } from '@/utils/api'
-import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
+import {
+  invalidateManualMediaAddition,
+  rememberManualMediaAddition,
+} from '@/utils/manual-media-add'
 import {
   describeScrobbledAlbum,
   describeUnlistedAlbum,
   missingTrackAlbum,
 } from '@/utils/track-album-notices'
-import {
-  AlbumReferenceSearchDialog,
-  invalidateAlbumReferences,
-} from './album-reference-search'
+import { AlbumReferenceSearchDialog } from './album-reference-search'
 import { DetailLink } from './detail-link'
 import { errorMessage } from './lastfm-sync'
-import { useConfig } from './providers'
+import { useAnnounceLibraryAddition, useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 
 /** Overview and Sources share the add result while the track detail stays open. */
 export function useTrackAlbumAddition(item: TrackDetail) {
   const { apiBaseUrl } = useConfig()
+  const announceAddition = useAnnounceLibraryAddition()
   const client = useQueryClient()
   const missing = missingTrackAlbum(item)
   const exactId =
@@ -44,6 +45,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
   const exact = membership.data?.items.find(
     (entry) => entry.mediaType === 'album' && entry.externalId === exactId,
   )
+  const name = item.album?.title ?? missing?.name
   const [searchQuery, setSearchQuery] = useState<string | null>(null)
   const add = useMutation({
     retry: false,
@@ -57,42 +59,42 @@ export function useTrackAlbumAddition(item: TrackDetail) {
           body: JSON.stringify({ trackId: item.id, spotifyAlbumId, add: true }),
         },
       )
-      await Promise.all([
-        invalidateManualMediaAddition(client, 'album'),
-        invalidateAlbumReferences(client),
-      ])
       return mediaItemId
+    },
+    onSuccess: (id, externalId) => {
+      rememberManualMediaAddition(client, 'album', externalId, id)
+      if (name) announceAddition('album', name)
+      void invalidateManualMediaAddition(client, 'album')
     },
   })
   const addedId =
     add.isSuccess && add.variables === item.spotifyAlbumId ? add.data : null
   const unlisted = item.album ? null : (addedId ?? exact?.mediaItemId ?? null)
-  const confirmation = missing?.kind === 'search' || Boolean(exact?.ambiguous)
-  const query = missing?.query
+  const query = missing?.kind === 'search' ? missing.query : null
   const saved = Boolean(addedId || exact?.mediaItemId)
   const error = add.isError
     ? errorMessage(add.error, 'Could not add album.')
-    : exact?.ambiguous && !query
-      ? 'More than one library album uses this Spotify release ID.'
+    : exact?.ambiguous
+      ? 'This Spotify release could not be matched to one visible library album.'
       : null
+  const canAdd =
+    membership.isSuccess &&
+    !membership.isFetching &&
+    exact?.mediaItemId === null &&
+    !exact.ambiguous
   function addOrFind() {
-    if (confirmation) {
-      if (query) setSearchQuery(query)
-    } else if (exactId) add.mutate(exactId)
+    if (query) setSearchQuery(query)
+    else if (canAdd && exactId) add.mutate(exactId)
   }
-  const canAct = confirmation
-    ? Boolean(query)
-    : Boolean(exactId && !membership.isPending)
-  const name = item.album?.title ?? missing?.name
   const libraryAction =
-    name && (saved || missing || exactId) ? (
+    name && (saved || query || canAdd || add.isPending) ? (
       <LibraryAction
         name={name}
         kind="album"
         saved={saved}
         pending={add.isPending}
-        action={confirmation ? 'find' : 'add'}
-        onAdd={canAct ? addOrFind : undefined}
+        action={query ? 'find' : 'add'}
+        onAdd={addOrFind}
       />
     ) : undefined
   const action =
@@ -171,27 +173,26 @@ export function TrackAlbumNotices({
   if (!missing && !error && item.scrobbledAlbums.length === 0) return null
   return (
     <Section title="Album">
-      {unlisted && (
-        <Notice tone="attention" action={action}>
-          {unlistedText.before}
-          <DetailLink
-            kind="album"
-            id={unlisted}
-            title="Open the library album with the same Spotify release ID"
-          >
-            {unlistedText.title}
-          </DetailLink>
-          {unlistedText.after}
-        </Notice>
-      )}
-      {missing && !unlisted && (
-        <Notice action={action}>
-          {addition.exactId ? (
+      {(missing || unlisted) && (
+        <Notice tone={unlisted ? 'attention' : undefined} action={action}>
+          {unlisted ? (
+            <>
+              {unlistedText.before}
+              <DetailLink
+                kind="album"
+                id={unlisted}
+                title="Open the library album with the same Spotify release ID"
+              >
+                {unlistedText.title}
+              </DetailLink>
+              {unlistedText.after}
+            </>
+          ) : missing && addition.exactId ? (
             <TrackAlbumReferenceLink item={item} addition={addition}>
               {missing.name}
             </TrackAlbumReferenceLink>
           ) : (
-            missing.message
+            missing?.message
           )}
         </Notice>
       )}

@@ -407,18 +407,14 @@
                     D.libraryAction('film', 'Paper Harbor', { pending: true }),
                     'Adding',
                   ),
-                  g.item(
-                    D.libraryAction('track', 'Glass Meridian', { saved: true }),
-                    'In library',
-                  ),
                 ]),
               ) +
               g.rules([
-                'Use the outlined book with a plus for adding a track, album or film. Use the book with a check for a confirmed library item outside the queue.',
+                'Use the outlined book with a plus for an item outside the library. A catalog item can already have a detail page and still be eligible for Add. Keep the detail link for a library member. Remove the add action immediately after a successful save and announce the result to screen readers.',
                 'Include the item kind and title in the tooltip and accessible name.',
                 'Put the action beside the title in the player or beside the service link in external results. Use the larger touch target beside the title on the phone player.',
                 'In queue rows, keep action space separate from the truncated text and leave the library slot empty for saved items. Use secondary label ink at rest and the shared ghost button hover and focus states.',
-                'Open the catalog search for an uncertain match so the user can confirm the item. Adding to the library preserves playback and queue order.',
+                'Use the search icon to find a release by name. Only offer a direct add once membership is known. Adding to the library preserves playback and queue order.',
               ]),
           },
           {
@@ -1250,7 +1246,7 @@
                 '<b>A Similar tab after Overview</b> in the album and track drawers. Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
                 '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. The second line starts with where it can be played, then the artists, then the year (albums) or length (tracks).',
                 'Show genre names in small pills below the details. Put <b>Add to Library</b> after the external suggestion’s service link.',
-                '<b>In library</b> (Pressure Systems): the title opens the library item and the play pair plays it. The book with a check shows its saved state.',
+                '<b>In library</b> (Pressure Systems): the title opens the library item and the play pair plays it.',
                 '<b>On Spotify</b> (Night Shift Utopia): the title is text and the play pair plays or queues it on Spotify. The service link opens it on Spotify.',
                 '<b>Not on Spotify</b> (Concrete Bloom): reserve the play pair’s space so titles line up. The service link opens it on TIDAL.',
                 '<b>Not looked up on Spotify</b> (Strobe Hymnal): drawn as Not on Spotify until the Spotify lookup has run.',

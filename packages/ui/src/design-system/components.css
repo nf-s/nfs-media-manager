@@ -176,9 +176,7 @@
 .ds-library-action {
   flex: none;
 }
-.ds-library-action:where(.queue-library-slot *):where(
-    :not(:hover, :focus-visible)
-  )[data-variant='ghost'] {
+.ds-library-action:where(:not(:hover, :focus-visible))[data-variant='ghost'] {
   color: var(--ds-ink-3);
 }
 .ds-btn.ds-library-action[aria-disabled='true'] {

@@ -642,7 +642,7 @@ const SpotifyTrackCandidateRowsSchema = z.array(
 
 /** Exact Spotify IDs win, then a uniquely corroborated album recording can gain an ID. */
 export async function resolveSpotifyTrackIds(
-  tx: Transaction,
+  tx: Pick<Transaction, 'execute'>,
   tracks: Pick<
     SpotifyLibraryTrack,
     'spotifyTrackId' | 'spotifyAlbumId' | 'title' | 'artists' | 'albumName'

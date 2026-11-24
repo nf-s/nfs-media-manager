@@ -19,7 +19,7 @@ import {
   runSpotifyCatalogSearches,
 } from './manual-add'
 import { latestCatalogResponseId } from './music-catalog-observations'
-import { libraryItemsBySpotifyId } from './similar-library-matches'
+import { libraryMembershipBySpotifyId } from './similar-library-matches'
 import {
   chooseSpotifyTrack,
   codeKey,
@@ -198,7 +198,7 @@ export async function runSpotifySimilarLookup(
           let match: SpotifyCodeMatch | null
           if (result.kind === 'album') match = result.album
           else {
-            const library = await libraryItemsBySpotifyId(
+            const library = await libraryMembershipBySpotifyId(
               db,
               'track',
               result.tracks.map(({ spotifyId }) => spotifyId),
@@ -206,7 +206,7 @@ export async function runSpotifySimilarLookup(
             const chosen = chooseSpotifyTrack(
               key,
               result.tracks,
-              new Set(library.keys()),
+              new Set(library.visible.keys()),
             )
             match = chosen
               ? {

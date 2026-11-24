@@ -6,6 +6,7 @@ import {
 } from '@repo/schemas/playback'
 import type { PlaybackSnapshot, PlayedTrack } from './playback'
 import { playbackSpotifyId } from './playback-catalog'
+import { spotifyTrackUri } from './album-links'
 
 const DeviceSchema = z.object({
   id: z.string().nullable(),
@@ -17,6 +18,10 @@ const DeviceSchema = z.object({
   supports_volume: z.boolean().optional(),
 })
 const DevicesSchema = z.object({ devices: z.array(DeviceSchema) })
+export const SpotifyLinkedTrackSchema = z
+  .object({ id: z.string().nullish(), uri: z.string().min(1).nullish() })
+  .nullish()
+  .transform((track) => track?.uri ?? spotifyTrackUri(track?.id) ?? null)
 const TrackSchema = z.object({
   uri: z.string(),
   name: z.string(),
@@ -26,7 +31,8 @@ const TrackSchema = z.object({
   artists: z
     .array(z.object({ name: z.string(), uri: z.string().optional() }))
     .default([]),
-  linked_from: z.object({ uri: z.string().optional() }).optional(),
+  linked_from: SpotifyLinkedTrackSchema,
+  is_local: z.boolean().optional(),
   is_playable: z.boolean().optional(),
   album: z
     .object({
@@ -49,12 +55,14 @@ const ObservedTrackSchema = TrackSchema.pick({
   artists: true,
   album: true,
   duration_ms: true,
+  is_local: true,
 }).extend({ duration_ms: TrackSchema.shape.duration_ms.optional() })
 
 function catalogTrack(value: unknown): PlaybackCatalogItem | null {
   const parsed = ObservedTrackSchema.safeParse(value)
   if (!parsed.success) return null
   const track = parsed.data
+  if (track.is_local) return null
   const item = PlaybackCatalogItemSchema.safeParse({
     kind: 'track',
     spotifyId: playbackSpotifyId('track', track.uri),
@@ -79,12 +87,12 @@ function catalogTrack(value: unknown): PlaybackCatalogItem | null {
 const QueueItemSchema = z
   .object({
     uri: z.string().min(1),
-    linked_from: z.object({ uri: z.string().min(1).nullish() }).nullish(),
+    linked_from: SpotifyLinkedTrackSchema,
   })
   .passthrough()
   .transform(({ uri, linked_from, ...item }) => ({
     uri,
-    linkedFromUri: linked_from?.uri ?? null,
+    linkedFromUri: linked_from,
     catalog: catalogTrack({ ...item, uri }),
   }))
 const QueueSchema = z.object({
@@ -174,6 +182,7 @@ export type TrackDetails = Pick<
   PlaybackSnapshot,
   | 'trackUri'
   | 'linkedFromUri'
+  | 'isLocal'
   | 'trackName'
   | 'artists'
   | 'albumName'
@@ -188,7 +197,8 @@ export type TrackDetails = Pick<
 function trackDetails(track: z.infer<typeof TrackSchema>): TrackDetails {
   return {
     trackUri: track.uri,
-    linkedFromUri: track.linked_from?.uri ?? null,
+    linkedFromUri: track.linked_from,
+    ...(track.is_local ? { isLocal: true } : {}),
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',

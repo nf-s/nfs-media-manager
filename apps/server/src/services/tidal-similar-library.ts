@@ -1,4 +1,3 @@
-import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { PluginNormalizedResultSchema } from '@repo/media-plugin-sdk'
 import {
   TidalSimilarAddParamsSchema,
@@ -239,6 +238,11 @@ export async function addTidalSimilarToLibrary(
         message: 'Similar item not found.',
       })
     if (item.library) return { id: item.library.id }
+    if (item.hiddenLibraryMatch)
+      throw new ServerError({
+        statusCode: 409,
+        message: 'The selected item is hidden in the library.',
+      })
     if (item.catalogMediaItemId) {
       const { mediaItemId } = await promoteCatalogMediaInTransaction(
         tx,
@@ -252,40 +256,6 @@ export async function addTidalSimilarToLibrary(
       ...item,
       spotify: item.spotifySource === 'spotify' ? item.spotify : null,
     }
-
-    const [hidden] = await tx
-      .select({ id: mediaItem.id })
-      .from(providerReference)
-      .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
-      .where(
-        and(
-          eq(mediaItem.mediaType, kind),
-          sql`${mediaItem.metadata}->>'legacyHidden' = 'true'`,
-          or(
-            and(
-              eq(providerReference.provider, 'tidal'),
-              eq(providerReference.referenceType, kind),
-              eq(providerReference.externalId, tidalId),
-            ),
-            kind === 'album' && verified.spotify
-              ? and(
-                  eq(providerReference.provider, 'spotify'),
-                  inArray(providerReference.referenceType, [
-                    'album',
-                    'spotify',
-                  ]),
-                  eq(providerReference.externalId, verified.spotify.spotifyId),
-                )
-              : undefined,
-          ),
-        ),
-      )
-      .limit(1)
-    if (hidden)
-      throw new ServerError({
-        statusCode: 409,
-        message: 'The selected item is hidden in the library.',
-      })
 
     const addedAt = new Date()
     const id =

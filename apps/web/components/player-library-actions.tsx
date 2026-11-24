@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import {
   useMutation,
   useMutationState,
@@ -25,42 +25,49 @@ import {
 import {
   addManualMediaItem,
   invalidateManualMediaAddition,
+  rememberManualMediaAddition,
 } from '@/utils/manual-media-add'
-import ManualMediaAdd from './manual-media-add'
-import { useConfig } from './providers'
+import { useAnnounceLibraryAddition, useConfig } from './providers'
 
 const mutationKey = ['player-library-add']
-type CatalogItem = PlaybackLibraryItem['catalog'][number]
-type SaveItem = {
-  mediaType: CatalogItem['mediaType']
-  mediaItemId?: string
-  externalId?: string
+type PlayerAddition = {
+  mediaType: PlaybackLibraryItem['kind']
+  externalId: string
+  catalogId?: string
+  title: string
 }
 
-const PlayerLibraryContext = createContext<{
-  save: (item: SaveItem) => void
-  find: (item: PlaybackLibraryItem) => void
-}>({
-  save: () => undefined,
-  find: () => undefined,
-})
+const PlayerLibraryContext = createContext<(item: PlayerAddition) => void>(
+  () => undefined,
+)
 
 export function PlayerLibraryActions({ children }: { children: ReactNode }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const [chosen, setChosen] = useState<PlaybackLibraryItem | null>(null)
+  const announce = useAnnounceLibraryAddition()
   const save = useMutation({
     mutationKey,
-    mutationFn: async ({ mediaType, mediaItemId, externalId }: SaveItem) => {
-      if (mediaItemId)
-        return (await addCatalogMedia(apiBaseUrl, mediaItemId)).mediaItemId
-      if (!externalId) throw new Error('This item needs a Spotify reference.')
+    mutationFn: async ({
+      mediaType,
+      catalogId,
+      externalId,
+    }: PlayerAddition) => {
+      if (catalogId)
+        return (await addCatalogMedia(apiBaseUrl, catalogId)).mediaItemId
       return addManualMediaItem(apiBaseUrl, mediaType, {
         externalId,
         mediaItemId: null,
       })
     },
-    onSuccess: (mediaItemId, { mediaType, externalId }) => {
+    onSuccess: async (
+      mediaItemId,
+      { mediaType, externalId, catalogId, title },
+    ) => {
+      rememberManualMediaAddition(client, mediaType, externalId, mediaItemId)
+      await Promise.all([
+        client.cancelQueries({ queryKey: ['catalog-membership'] }),
+        client.cancelQueries({ queryKey: ['playback-catalog'] }),
+      ])
       client.setQueriesData<CatalogMembershipResult>(
         { queryKey: ['catalog-membership'] },
         (data) =>
@@ -72,23 +79,27 @@ export function PlayerLibraryActions({ children }: { children: ReactNode }) {
             ),
           },
       )
-      void client.invalidateQueries({ queryKey: ['playback-catalog'] })
+      if (catalogId) {
+        const saved = { id: mediaItemId, inLibrary: true }
+        client.setQueriesData<PlaybackCatalogResult>(
+          { queryKey: ['playback-catalog'] },
+          (data) =>
+            data && {
+              items: data.items.map((row) => ({
+                ...row,
+                item: row.item.id === catalogId ? saved : row.item,
+                album: row.album?.id === catalogId ? saved : row.album,
+              })),
+            },
+        )
+      }
+      announce(mediaType, title)
       void invalidateManualMediaAddition(client, mediaType)
     },
   })
   return (
-    <PlayerLibraryContext.Provider
-      value={{ save: save.mutate, find: setChosen }}
-    >
+    <PlayerLibraryContext.Provider value={save.mutate}>
       {children}
-      {chosen && (
-        <ManualMediaAdd
-          mediaType={chosen.kind}
-          initialQuery={[chosen.title, chosen.artist].filter(Boolean).join(' ')}
-          onClose={() => setChosen(null)}
-          onAdded={() => setChosen(null)}
-        />
-      )}
     </PlayerLibraryContext.Provider>
   )
 }
@@ -125,12 +136,11 @@ export function usePlayerLibraryMembership(
       },
     ),
   })
-  const references = queries.flatMap(({ data }) => data?.items ?? [])
   return {
     data: lookup.data,
-    references,
-    pending: queries.some((query) => query.isLoading) || lookup.isLoading,
-    failed: queries.some((query) => query.isError) || lookup.isError,
+    observed: [...identified.values()],
+    references: queries.flatMap(({ data }) => data?.items ?? []),
+    unresolved: lookup.isError || (lookup.isFetching && lookup.isStale),
   }
 }
 
@@ -153,20 +163,51 @@ export function playerItemIdentity(
   item: PlaybackLibraryItem,
   membership: PlayerLibraryMembership,
 ) {
-  const stored = observedPlaybackItem(item, membership.references)?.item
-  const album =
-    item.kind === 'album'
-      ? membership.references.find(
-          ({ album }) => album && album.id === item.mediaItemId,
-        )?.album
-      : null
+  const [exact] = item.catalog
+  const observation =
+    exact &&
+    membership.observed.find(
+      ({ kind, spotifyId }) =>
+        kind === item.kind && spotifyId === exact.externalId,
+    )
+  const albumTrack =
+    exact &&
+    item.kind === 'album' &&
+    membership.observed.find(
+      (entry) =>
+        entry.kind === 'track' && entry.album?.spotifyId === exact.externalId,
+    )
+  const trackAlbum = albumTrack
+    ? membership.references.find(
+        ({ kind, spotifyId }) =>
+          kind === 'track' && spotifyId === albumTrack.spotifyId,
+      )?.album
+    : null
+  const stored =
+    observedPlaybackItem(item, membership.references)?.item ?? trackAlbum
   const match = playbackItemMembership(item, membership.data)
-  return {
-    mediaItemId: stored?.id ?? album?.id ?? match.mediaItemId,
-    inLibrary:
-      stored?.inLibrary ?? album?.inLibrary ?? Boolean(match.mediaItemId),
-    ambiguous: !stored && match.ambiguous,
-  }
+  const mediaItemId =
+    match.status === 'saved'
+      ? match.mediaItemId
+      : stored?.inLibrary
+        ? stored.id
+        : (item.mediaItemId ?? stored?.id ?? null)
+  const awaitingObservation = (observation || albumTrack) && !stored
+  const consistent = !item.mediaItemId || item.mediaItemId === stored?.id
+  const add: PlayerAddition | null =
+    match.status === 'missing' &&
+    !membership.unresolved &&
+    !awaitingObservation &&
+    !stored?.inLibrary &&
+    consistent
+      ? {
+          mediaType: item.kind,
+          externalId: match.catalogItem.externalId,
+          catalogId: stored?.id,
+          title: item.title,
+        }
+      : null
+  return { mediaItemId, add }
 }
 
 export function PlayerLibraryAction({
@@ -178,13 +219,8 @@ export function PlayerLibraryAction({
   membership: PlayerLibraryMembership
   touch?: boolean
 }) {
-  const { save, find } = useContext(PlayerLibraryContext)
-  const { mediaItemId, inLibrary, ambiguous } = playerItemIdentity(
-    item,
-    membership,
-  )
-  const [exact] = item.catalog
-  const needsSearch = !mediaItemId && (!exact || ambiguous || membership.failed)
+  const save = useContext(PlayerLibraryContext)
+  const { add } = playerItemIdentity(item, membership)
   const saving = useMutationState({
     filters: { mutationKey, status: 'pending' },
     select: (mutation) => mutation.state.variables,
@@ -192,7 +228,10 @@ export function PlayerLibraryAction({
     (pending) =>
       typeof pending === 'object' &&
       pending !== null &&
-      (('mediaItemId' in pending && pending.mediaItemId === mediaItemId) ||
+      add &&
+      (('catalogId' in pending &&
+        add.catalogId &&
+        pending.catalogId === add.catalogId) ||
         item.catalog.some(
           (entry) =>
             'externalId' in pending &&
@@ -201,24 +240,14 @@ export function PlayerLibraryAction({
             pending.mediaType === entry.mediaType,
         )),
   )
+  if (!add) return null
   return (
     <LibraryAction
       kind={item.kind}
       name={item.title}
       touch={touch}
-      saved={inLibrary}
-      disabled={Boolean(!inLibrary && membership.pending)}
-      pending={!inLibrary && saving}
-      action={needsSearch ? 'find' : 'add'}
-      onAdd={() => {
-        if (needsSearch) find(item)
-        else
-          save({
-            mediaType: item.kind,
-            mediaItemId: mediaItemId ?? undefined,
-            externalId: exact?.externalId,
-          })
-      }}
+      pending={saving}
+      onAdd={() => save(add)}
     />
   )
 }

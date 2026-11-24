@@ -157,6 +157,8 @@ function references(
   const credits =
     !snapshot ||
     current?.uri === snapshot.trackUri ||
+    current?.uri === snapshot.linkedFromUri ||
+    current?.uri === snapshot.relinkedTrackUri ||
     current?.uri === snapshot.albumUri
       ? (current?.credits ?? [])
       : []
@@ -166,8 +168,13 @@ function references(
     playing.track && observedPlaybackItem(playing.track, membership.references)
   const spotifyAlbumId = playbackSpotifyId('album', playing.album?.uri)
   const trackId = track.detail?.id
-  if (trackId && spotifyAlbumId && exactTrack?.album) {
-    album.detail = { kind: 'album', id: exactTrack.album.id }
+  if (
+    trackId &&
+    spotifyAlbumId &&
+    exactTrack?.item.id === trackId &&
+    exactTrack.album &&
+    exactTrack.album.id === album.detail?.id
+  ) {
     album.albumReference = { trackId, spotifyAlbumId }
   }
   const named = snapshot
@@ -197,16 +204,9 @@ function libraryReference(
 ): Reference {
   if (!item) return { label: '', detail: null, url: null }
   const { mediaItemId } = playerItemIdentity(item, membership)
-  const resolved = observedPlaybackItem(item, membership.references)
-  const pending =
-    !resolved &&
-    membership.pending &&
-    item.catalog.length > 0 &&
-    !item.mediaItemId
   return {
     label: item.title,
-    detail:
-      mediaItemId && !pending ? { kind: item.kind, id: mediaItemId } : null,
+    detail: mediaItemId ? { kind: item.kind, id: mediaItemId } : null,
     url: spotifyWebUrl(item.uri),
   }
 }
@@ -604,7 +604,10 @@ function ItemText({
                 label: albumTitle,
                 detail: albumId ? { kind: 'album', id: albumId } : null,
                 url: spotifyWebUrl(item.albumUri ?? null),
-                ...(known?.album && trackId && spotifyAlbumId
+                ...(known?.album &&
+                trackId &&
+                known.item.id === trackId &&
+                spotifyAlbumId
                   ? { albumReference: { trackId, spotifyAlbumId } }
                   : {}),
               }}
@@ -639,10 +642,10 @@ function QueueLibrarySlot({
   membership: PlayerLibraryMembership
   touch?: boolean
 }) {
-  const { inLibrary } = playerItemIdentity(item, membership)
+  const { add } = playerItemIdentity(item, membership)
   return (
     <span className="queue-library-slot" data-touch={touch ? '' : undefined}>
-      {!inLibrary && (
+      {add && (
         <span ref={focusQueueTitleOnRemoval}>
           <PlayerLibraryAction
             item={item}
@@ -1368,21 +1371,13 @@ function Dock({ view }: { view: PlaybackView }) {
   })
   const shown = describe(view)
   const { failure } = view
-  const known = playingLibraryItems(view.snapshot, view.current)
+  const items = playingLibraryItems(view.snapshot, view.current)
   const observed = currentPlaybackCatalog(view.snapshot, view.current)
   const membership = usePlayerLibraryMembership(
-    [known.track, known.album],
+    [items.track, items.album],
     'playback',
     [observed],
   )
-  const release = membership.references[0]?.album
-  const items = {
-    track: known.track,
-    album:
-      known.album && release
-        ? { ...known.album, mediaItemId: release.id }
-        : known.album,
-  }
   const playing = {
     items,
     links: references(view, items, membership),

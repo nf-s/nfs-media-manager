@@ -10,6 +10,7 @@ import {
 } from '@repo/schemas/spotify-track-search'
 import {
   SpotifyAlbumSchema,
+  SpotifyIdSchema,
   normalizeSpotifyTrackEntry,
   spotifyTrackMention,
   spotifyJson,
@@ -36,6 +37,10 @@ const SpotifyCatalogTrackPopularitySchema = z.object({
   popularity: SpotifyTrackSearchCandidateSchema.shape.popularity,
 })
 
+const SpotifyCatalogTrackRelinkSchema = z.object({
+  linked_from: z.object({ id: SpotifyIdSchema }),
+})
+
 type Request = MediaPluginTestContext['request']
 type SearchInput = z.infer<typeof SearchInputSchema>
 type AlbumSearchInput = z.infer<typeof AlbumSearchInputSchema>
@@ -58,11 +63,13 @@ export function normalizeSpotifyCatalogTrack(
     ...SpotifyCatalogTrackPopularitySchema.safeParse(item).data,
     spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
   })
+  const relink = SpotifyCatalogTrackRelinkSchema.safeParse(item)
   return candidate.success
     ? {
         ...candidate.data,
         releaseDate: track.releaseDate,
         albumArtistCredits: track.albumArtistCredits,
+        linkedFromId: relink.data?.linked_from.id ?? null,
       }
     : null
 }

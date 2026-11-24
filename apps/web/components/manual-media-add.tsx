@@ -9,7 +9,12 @@ import {
   type ReactNode,
 } from 'react'
 import { useVirtualRows, useVirtualTable } from '@/hooks/useVirtualTable'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  skipToken,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import {
   ManualMediaSearchInputSchema,
@@ -31,9 +36,12 @@ import {
   describeSearchItem,
   loadManualSearchPage,
   invalidateManualMediaAddition,
+  manualMediaAdditionsKey,
   orderSearchItems,
+  rememberManualMediaAddition,
+  type ManualMediaAdditions,
 } from '@/utils/manual-media-add'
-import { useConfig } from './providers'
+import { useAnnounceLibraryAddition, useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
 import { MediaThumb } from './media-artwork'
 import ServiceIconLinks from './service-icon-links'
@@ -82,15 +90,19 @@ export function ManualMediaSearch({
   tracksPlayed?: number
 }) {
   const { apiBaseUrl } = useConfig()
+  const announceAddition = useAnnounceLibraryAddition()
   const client = useQueryClient()
   const [query, setQuery] = useState(initialQuery.slice(0, 200))
-  const addedIds = useRef(new Map<string, string>())
   const automaticallySearched = useRef(false)
   const [showInitialResult, setShowInitialResult] = useState(true)
   const { provider, placeholder } = searchFields[mediaType]
   const inputId = useId()
   const isLinking = Boolean(onChoose) || existingActionLabel !== 'Open'
   const exactMembership = isLinking ? undefined : true
+  const { data: additions } = useQuery<ManualMediaAdditions>({
+    queryKey: manualMediaAdditionsKey(mediaType),
+    queryFn: skipToken,
+  })
   const search = useMutation({
     retry: false,
     mutationFn: (input: ManualMediaSearchInput) =>
@@ -117,13 +129,21 @@ export function ManualMediaSearch({
       }),
     onSuccess: (result, input) => onSearchResult?.(input.q, result),
   })
+  function libraryIdFor(item: ManualMediaSearchItem) {
+    const added = additions?.get(item.externalId)
+    return (
+      item.mediaItemId ??
+      (added && added.addedAt >= search.submittedAt ? added.id : undefined)
+    )
+  }
   const add = useMutation({
     retry: false,
     mutationFn: async (item: ManualMediaSearchItem) => {
-      let id = item.mediaItemId ?? addedIds.current.get(item.externalId)
+      let id = libraryIdFor(item)
       if (!id) {
         id = await addManualMediaItem(apiBaseUrl, mediaType, item)
-        addedIds.current.set(item.externalId, id)
+        rememberManualMediaAddition(client, mediaType, item.externalId, id)
+        announceAddition(mediaType, item.title)
         await invalidateManualMediaAddition(client, mediaType)
       }
       await onAdded(id)
@@ -237,9 +257,8 @@ export function ManualMediaSearch({
             tracksPlayed={tracksPlayed}
             disabled={disabled || add.isPending}
             renderItem={(item) => {
-              const libraryId =
-                item.mediaItemId ?? addedIds.current.get(item.externalId)
-              const detailId = item.catalogMediaItemId ?? libraryId
+              const libraryId = libraryIdFor(item)
+              const detailId = libraryId ?? item.catalogMediaItemId
               const inLibrary = Boolean(libraryId)
               const pending =
                 add.isPending && add.variables?.externalId === item.externalId
@@ -255,7 +274,6 @@ export function ManualMediaSearch({
                           onClick={(event) => {
                             if (
                               isLinking ||
-                              item.catalogMediaItemId ||
                               event.defaultPrevented ||
                               event.button !== 0 ||
                               event.metaKey ||
@@ -265,7 +283,7 @@ export function ManualMediaSearch({
                             )
                               return
                             event.preventDefault()
-                            if (!busy) add.mutate(item)
+                            if (!busy) void onAdded(detailId)
                           }}
                         >
                           {item.title}
@@ -305,7 +323,7 @@ export function ManualMediaSearch({
                               ? existingActionLabel
                               : 'Add'}
                         </Button>
-                      ) : (
+                      ) : !item.membershipAmbiguous ? (
                         <LibraryAction
                           kind={mediaType}
                           name={item.title}
@@ -314,7 +332,7 @@ export function ManualMediaSearch({
                           disabled={busy}
                           onAdd={() => add.mutate(item)}
                         />
-                      )}
+                      ) : null}
                     </span>
                   }
                 />

@@ -25,6 +25,8 @@ export function currentPlaybackCatalog(
   current: PlayableItem | null,
 ) {
   if (!snapshot) return current ? queuedPlaybackCatalog(current) : null
+  if (snapshot.isLocal || snapshot.trackUri?.startsWith('spotify:local:'))
+    return null
   const albumUri =
     snapshot.albumUri ??
     (current?.kind === 'album' &&
@@ -34,7 +36,10 @@ export function currentPlaybackCatalog(
       : undefined)
   const parsed = PlaybackCatalogItemSchema.safeParse({
     kind: 'track',
-    spotifyId: playbackSpotifyId('track', snapshot.trackUri),
+    spotifyId: playbackSpotifyId(
+      'track',
+      snapshot.relinkedTrackUri ?? snapshot.trackUri,
+    ),
     title: snapshot.trackName,
     durationSec: Math.round(snapshot.durationMs / 1000) || undefined,
     album: snapshot.albumName

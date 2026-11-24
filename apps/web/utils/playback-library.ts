@@ -1,46 +1,93 @@
-import { spotifyIdPattern } from '@repo/schemas/playback'
 import type {
   CatalogMembershipInput,
   CatalogMembershipResult,
 } from '@repo/schemas/manual-add'
 import type { PlayableItem, PlaybackSnapshot } from './playback'
+import { playbackSpotifyId } from './playback-catalog'
 
-type CatalogItem = CatalogMembershipInput['items'][number]
+type CatalogItem = Extract<
+  CatalogMembershipInput['items'][number],
+  { mediaType: 'album' | 'track' }
+>
 type CatalogKind = CatalogItem['mediaType']
 
 export type PlaybackLibraryItem = {
   kind: CatalogKind
   title: string
-  artist: string
   uri: string | null
   mediaItemId: string | null
   catalog: CatalogItem[]
 }
 
+type PlaybackItemMembership =
+  | { status: 'saved'; mediaItemId: string }
+  | { status: 'missing'; catalogItem: CatalogItem }
+  | { status: 'unresolved' }
+
 function playbackLibraryItem(
   kind: CatalogKind,
   title: string,
-  artist: string,
   uri: string | null,
   mediaItemId: string | null,
-  alternateUri?: string | null,
+  ...alternateUris: (string | null | undefined)[]
 ): PlaybackLibraryItem {
-  const prefix = `spotify:${kind}:`
-  const catalog = [uri, alternateUri].flatMap((value) => {
-    if (!value?.startsWith(prefix)) return []
-    const externalId = value.slice(prefix.length)
-    return spotifyIdPattern.test(externalId)
-      ? [{ mediaType: kind, externalId }]
-      : []
+  const catalog = [...new Set([uri, ...alternateUris])].flatMap((value) => {
+    const externalId = playbackSpotifyId(kind, value)
+    return externalId ? [{ mediaType: kind, externalId }] : []
   })
-  return { kind, title, artist, uri, mediaItemId, catalog }
+  return { kind, title, uri, mediaItemId, catalog }
+}
+
+function playingTrack(snapshot: PlaybackSnapshot, trackId: string | null) {
+  if (!snapshot.trackName) return null
+  if (snapshot.isLocal || snapshot.trackUri?.startsWith('spotify:local:'))
+    return playbackLibraryItem('track', snapshot.trackName, null, trackId)
+  const item = playbackLibraryItem(
+    'track',
+    snapshot.trackName,
+    snapshot.relinkedTrackUri ?? snapshot.trackUri,
+    trackId,
+    snapshot.trackUri,
+    snapshot.linkedFromUri,
+  )
+  const [first, ...aliases] = item.catalog
+  const spotifyAlbumId = playbackSpotifyId('album', snapshot.albumUri)
+  const title = snapshot.trackName.trim()
+  const artists = (
+    snapshot.artistLinks.length
+      ? snapshot.artistLinks.map(({ name }) => name)
+      : [snapshot.artists]
+  )
+    .map((name) => name.trim())
+    .filter(Boolean)
+  if (
+    first?.mediaType !== 'track' ||
+    !spotifyAlbumId ||
+    !title ||
+    !artists.length
+  )
+    return item
+  return {
+    ...item,
+    catalog: [
+      {
+        ...first,
+        recording: {
+          spotifyAlbumId,
+          title,
+          artists,
+          albumName: snapshot.albumName,
+        },
+      },
+      ...aliases,
+    ],
+  }
 }
 
 export function queuedLibraryItem(item: PlayableItem): PlaybackLibraryItem {
   return playbackLibraryItem(
     item.kind,
     item.title,
-    item.artist,
     item.uri,
     item.kind === 'track' ? (item.trackId ?? null) : item.albumId,
   )
@@ -52,40 +99,33 @@ export function playingLibraryItems(
   current: PlayableItem | null,
 ) {
   if (snapshot) {
-    const trackId =
-      current?.kind === 'track' && current.uri === snapshot.trackUri
-        ? (current.trackId ?? null)
+    const currentTrack =
+      current?.kind === 'track' &&
+      (current.uri === snapshot.trackUri ||
+        current.uri === snapshot.linkedFromUri ||
+        current.uri === snapshot.relinkedTrackUri)
+        ? current
         : null
-    const albumUri =
-      snapshot.albumUri ??
-      (current?.kind === 'album' &&
-      current.uri === snapshot.contextUri &&
-      current.albumTitle === snapshot.albumName
-        ? snapshot.contextUri
-        : null)
+    const trackId = currentTrack?.trackId ?? null
+    const potentialAlbumUri = snapshot.albumUri ?? snapshot.contextUri
+    const currentAlbum =
+      current?.kind === 'album' &&
+      current.uri === potentialAlbumUri &&
+      (snapshot.albumUri !== null || current.albumTitle === snapshot.albumName)
+        ? current
+        : null
+    const albumUri = snapshot.albumUri ?? currentAlbum?.uri ?? null
     const albumId =
-      current?.kind === 'album' && current.uri === albumUri
-        ? current.albumId
-        : null
+      currentAlbum?.albumId ??
+      (currentTrack?.uri === snapshot.trackUri &&
+      !albumUri &&
+      currentTrack.albumTitle === snapshot.albumName
+        ? currentTrack.albumId
+        : null)
     return {
-      track: snapshot.trackName
-        ? playbackLibraryItem(
-            'track',
-            snapshot.trackName,
-            snapshot.artists,
-            snapshot.trackUri,
-            trackId,
-            snapshot.linkedFromUri,
-          )
-        : null,
+      track: playingTrack(snapshot, trackId),
       album: snapshot.albumName
-        ? playbackLibraryItem(
-            'album',
-            snapshot.albumName,
-            snapshot.artists,
-            albumUri,
-            albumId,
-          )
+        ? playbackLibraryItem('album', snapshot.albumName, albumUri, albumId)
         : null,
     }
   }
@@ -98,7 +138,6 @@ export function playingLibraryItems(
           ? playbackLibraryItem(
               'album',
               current.albumTitle,
-              current.artist,
               current.albumUri ?? null,
               current.albumId,
             )
@@ -107,30 +146,29 @@ export function playingLibraryItems(
 }
 
 export function catalogLookups(items: readonly (PlaybackLibraryItem | null)[]) {
-  return items.flatMap((item) =>
-    item && !item.mediaItemId ? item.catalog : [],
-  )
+  return items.flatMap((item) => item?.catalog ?? [])
 }
 
 export function playbackItemMembership(
   item: PlaybackLibraryItem,
   membership: CatalogMembershipResult | undefined,
-) {
-  if (item.mediaItemId)
-    return { mediaItemId: item.mediaItemId, ambiguous: false }
+): PlaybackItemMembership {
+  const [catalogItem] = item.catalog
+  if (!catalogItem || !membership) return { status: 'unresolved' }
   const found = new Set<string>()
-  let ambiguous = false
+  let complete = true
   for (const key of item.catalog) {
-    const row = membership?.items.find(
+    const row = membership.items.find(
       (row) =>
         row.mediaType === key.mediaType && row.externalId === key.externalId,
     )
+    if (row?.ambiguous) return { status: 'unresolved' }
     if (row?.mediaItemId) found.add(row.mediaItemId)
-    if (row?.ambiguous) ambiguous = true
+    if (!row) complete = false
   }
   const [only] = found
-  return {
-    mediaItemId: found.size === 1 && !ambiguous ? (only ?? null) : null,
-    ambiguous: ambiguous || found.size > 1,
-  }
+  if (found.size === 1 && only) return { status: 'saved', mediaItemId: only }
+  return complete && found.size === 0
+    ? { status: 'missing', catalogItem }
+    : { status: 'unresolved' }
 }

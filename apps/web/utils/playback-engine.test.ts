@@ -2806,8 +2806,10 @@ const kitchen = {
 async function sourceOnRoom(
   sonos: ReturnType<typeof fakeSonos>,
   unknown: string[] = [],
+  configure?: (api: PlayerApi) => void,
 ) {
   const setup = harness(undefined, sonos.api)
+  configure?.(setup.api)
   for (const uri of unknown) setup.failLookup(uri)
   setup.engine.prepare()
   await settle()
@@ -2938,7 +2940,16 @@ test('Next on a Sonos room skips in its queue and the queue is topped up', async
 
 test('a track Sonos reports by URI alone is described by the queue, then by Spotify', async () => {
   const sonos = fakeSonos()
-  const setup = await sourceOnRoom(sonos)
+  const relink = 'spotify:track:fixture-relinked'
+  const setup = await sourceOnRoom(sonos, [], (api) => {
+    const readDetails = api.track
+    api.track = async (uri) => {
+      const details = await readDetails(uri)
+      return uri === sourceTrack(1).uri
+        ? { ...details, trackUri: relink, linkedFromUri: uri }
+        : details
+    }
+  })
   // Sonos has no name, artist or length for a track it loaded by ID, and its
   // artwork is served from the speaker on the home network.
   const bare = (uri: string, positionMs: number) =>
@@ -2965,6 +2976,7 @@ test('a track Sonos reports by URI alone is described by the queue, then by Spot
   assert.equal(shown?.durationMs, 180_000)
   assert.equal(shown?.artworkUrl, 'https://images.example/cover.jpg')
   assert.equal(shown?.linkedFromUri, null)
+  assert.equal(shown?.relinkedTrackUri, relink)
   // Each track is read from Spotify once, however often the room reports it.
   await advance(9_000)
   assert.deepEqual(
@@ -3636,6 +3648,32 @@ test('nothing is saved until something is played or queued here', async () => {
   assert.equal(setup.engine.saved(), null)
   setup.engine.enqueue(track)
   assert.equal(setup.engine.saved()?.queue.length, 1)
+  setup.engine.dispose()
+})
+
+test('a device update publishes added recording identity without advancing the queue', async () => {
+  const setup = harness()
+  setup.remote.device = { ...speaker, active: true }
+  setup.remote.snapshot = remoteSnapshot({})
+  setup.engine.watch()
+  await advance(100)
+  const before = setup.engine.getState().snapshot
+  assert.ok(before)
+  setup.engine.enqueue(track)
+  const queued = setup.engine.getState().queue
+  const calls = [...setup.calls]
+  setup.remote.snapshot = remoteSnapshot({
+    positionMs: 3_000,
+    linkedFromUri: 'spotify:track:original',
+    albumUri: 'spotify:album:actual',
+  })
+  await advance(3_000)
+  const after = setup.engine.getState().snapshot
+  assert.equal(after?.trackUri, before.trackUri)
+  assert.equal(after?.linkedFromUri, 'spotify:track:original')
+  assert.equal(after?.albumUri, 'spotify:album:actual')
+  assert.deepEqual(setup.engine.getState().queue, queued)
+  assert.deepEqual(setup.calls, [...calls, 'state'])
   setup.engine.dispose()
 })
 

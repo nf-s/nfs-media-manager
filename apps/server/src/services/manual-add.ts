@@ -82,6 +82,7 @@ import {
 } from './provider-task-replay'
 import { getProviderTransport } from './provider-transport'
 import { getSpotifyAccountStatus, spotifyAccountToken } from './spotify-oauth'
+import { resolveSpotifyTrackIds } from './spotify-playlists'
 
 /**
  * A provider and its stored credentials for a request made outside a job.
@@ -435,7 +436,30 @@ async function searchManualSpotifyTracks(
       searchSpotifyCatalogTrackPage(request, token, { ...market, query, page }),
   )
   const matches = await findManualTrackMatches(
-    result.items.map((track) => track.spotifyTrackId),
+    result.items.flatMap(({ spotifyTrackId, linkedFromId }) =>
+      linkedFromId ? [spotifyTrackId, linkedFromId] : [spotifyTrackId],
+    ),
+  )
+  function matchFor(track: (typeof result.items)[number]) {
+    const exact = matches.get(track.spotifyTrackId)
+    const linked = track.linkedFromId
+      ? matches.get(track.linkedFromId)
+      : undefined
+    const candidates = [exact, linked]
+    return (
+      candidates.find((match) => match?.inLibrary && !match.hidden) ??
+      candidates.find((match) => match?.hidden) ??
+      exact ??
+      linked
+    )
+  }
+  const albumRecordings = await resolveSpotifyTrackIds(
+    db,
+    result.items.filter((track) => {
+      const match = matchFor(track)
+      return !match?.inLibrary && !match?.hidden
+    }),
+    { choosingOneCandidate: true, memberTargets: true },
   )
   const key = nanoid()
   const observed = await db.transaction((tx) =>
@@ -447,7 +471,7 @@ async function searchManualSpotifyTracks(
   )
   return ManualMediaSearchResultSchema.parse({
     items: result.items.map((track) => {
-      const match = matches.get(track.spotifyTrackId)
+      const match = matchFor(track)
       return {
         externalId: track.spotifyTrackId,
         title: track.title,
@@ -457,8 +481,13 @@ async function searchManualSpotifyTracks(
         releaseDate: track.releaseDate,
         artworkUrl: track.artworkUrl,
         url: track.spotifyUrl,
-        mediaItemId: match?.inLibrary && !match.hidden ? match.id : null,
+        mediaItemId: match?.hidden
+          ? null
+          : match?.inLibrary
+            ? match.id
+            : (albumRecordings.get(track.spotifyTrackId) ?? null),
         catalogMediaItemId: observed.get(track.spotifyTrackId),
+        ...(match?.hidden ? { membershipAmbiguous: true } : {}),
       }
     }),
     page,
@@ -617,17 +646,19 @@ export async function searchManualMedia(
         result.items.map((item) => item.externalId),
       )
       const ids = await observed()
-      return {
+      return ManualMediaSearchResultSchema.parse({
         ...result,
         items: result.items.map((item, index) => {
           const match = matches.get(item.externalId)
+          const ambiguous = match?.hidden || match?.id === null
           return {
             ...item,
-            mediaItemId: match?.hidden ? null : (match?.id ?? null),
+            mediaItemId: !ambiguous && match?.inLibrary ? match.id : null,
             catalogMediaItemId: ids[index],
+            ...(ambiguous ? { membershipAmbiguous: true } : {}),
           }
         }),
-      }
+      })
     }
     const candidates = page.items.map((item) =>
       AlbumImportCandidateSchema.parse({
@@ -703,6 +734,7 @@ export async function searchManualMedia(
         ? (matches[index]?.id ?? null)
         : null,
       catalogMediaItemId: observed[index],
+      ...(matches[index]?.error ? { membershipAmbiguous: true } : {}),
     })),
     page: options.page,
     ...(page.total_results === undefined
@@ -729,6 +761,18 @@ export async function readCatalogMembership({
     findManualTrackMatches(trackIds),
     findCatalogAlbumMembership(albumIds),
   ])
+  const albumRecordings = await resolveSpotifyTrackIds(
+    db,
+    items.flatMap((item) =>
+      item.mediaType === 'track' &&
+      item.recording &&
+      !tracks.get(item.externalId)?.inLibrary &&
+      !tracks.get(item.externalId)?.hidden
+        ? [{ ...item.recording, spotifyTrackId: item.externalId }]
+        : [],
+    ),
+    { choosingOneCandidate: true, memberTargets: true },
+  )
   return {
     items: items.map((item) => {
       const match =
@@ -737,12 +781,18 @@ export async function readCatalogMembership({
           : albums.get(item.externalId)
       const ambiguous =
         match !== undefined && (match.hidden || match.id === null)
+      const recording =
+        item.mediaType === 'track' && item.recording
+          ? albumRecordings.get(item.externalId)
+          : undefined
       return {
-        ...item,
-        mediaItemId:
-          ambiguous || (match && 'inLibrary' in match && !match.inLibrary)
-            ? null
-            : (match?.id ?? null),
+        mediaType: item.mediaType,
+        externalId: item.externalId,
+        mediaItemId: ambiguous
+          ? null
+          : match?.inLibrary
+            ? match.id
+            : (recording ?? null),
         ambiguous,
       }
     }),
@@ -751,23 +801,29 @@ export async function readCatalogMembership({
 
 async function findCatalogAlbumMembership(
   albumIds: string[],
-  includeOutside = false,
+  forAddition = false,
 ) {
   const matches = new Map<
     string,
     { id: string | null; hidden: boolean; inLibrary: boolean }
   >()
   if (!albumIds.length) return matches
+  // A library member takes precedence over observations when reading membership.
+  // The write guard checks the full set before promoting an outside record.
   const result = await db.execute(sql`
-    select release.spotify_id,
-      case when count(*) = 1 then min(release.album_id) end as library_id,
-      bool_or(coalesce(mi.metadata->>'legacyHidden' = 'true', false)) as hidden,
-      bool_or(mi.in_library) as in_library
-    from (${spotifyAlbumReleaseIds()}) release
-    join media_item mi on mi.id = release.album_id
-    where release.spotify_id = any(${sql.param(albumIds)}::text[])
-      ${includeOutside ? sql`` : sql`and mi.in_library`}
-    group by release.spotify_id
+    select spotify_id,
+      case when count(*) = 1 then min(album_id) end as library_id,
+      bool_or(hidden) as hidden, bool_or(in_library) as in_library
+    from (
+      select release.spotify_id, release.album_id, mi.in_library,
+        mi.metadata->>'legacyHidden' is not distinct from 'true' as hidden,
+        bool_or(mi.in_library) over (partition by release.spotify_id) as has_member
+      from (${spotifyAlbumReleaseIds()}) release
+      join media_item mi on mi.id = release.album_id
+      where release.spotify_id = any(${sql.param(albumIds)}::text[])
+    ) release_matches
+    ${forAddition ? sql`` : sql`where in_library = has_member`}
+    group by spotify_id
   `)
   const rows = z
     .array(

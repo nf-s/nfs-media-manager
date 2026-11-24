@@ -64,8 +64,8 @@ import { saveProviderResponseCapture } from './provider-response-history'
 import { appendProviderTaskReplayStep } from './provider-task-replay'
 import {
   libraryItemsByCode,
-  libraryItemsBySpotifyId,
-  libraryItemsByTidalId,
+  libraryMembershipBySpotifyId,
+  libraryMembershipByTidalId,
   librarySimilarGenres,
   type SimilarLibraryItem,
 } from './similar-library-matches'
@@ -359,7 +359,7 @@ export async function suggestionsNeedingSpotify(
   )
   const keys = [...new Set(keyed.map(({ key }) => key))]
   const [byTidalId, byCode, lookups] = await Promise.all([
-    libraryItemsByTidalId(
+    libraryMembershipByTidalId(
       database,
       kind,
       keyed.map(({ suggestion }) => suggestion.tidalId),
@@ -369,7 +369,11 @@ export async function suggestionsNeedingSpotify(
   ])
   const seen = new Set<string>()
   return keyed.filter(({ key, suggestion }) => {
-    if (seen.has(key) || byCode.has(key) || byTidalId.has(suggestion.tidalId))
+    if (
+      seen.has(key) ||
+      byCode.has(key) ||
+      byTidalId.visible.has(suggestion.tidalId)
+    )
       return false
     seen.add(key)
     const lookup = lookups.get(key)
@@ -913,7 +917,7 @@ async function mapSuggestions(
     suggestion.code ? codeKey(kind, suggestion.code) : null
   const keys = [...new Set(suggestions.flatMap((item) => keyOf(item) ?? []))]
   const [byTidalId, byCode, lookups] = await Promise.all([
-    libraryItemsByTidalId(
+    libraryMembershipByTidalId(
       database,
       kind,
       suggestions.map(({ tidalId }) => tidalId),
@@ -926,16 +930,30 @@ async function mapSuggestions(
       [...lookups.values()].flatMap(({ spotifyId }) => spotifyId ?? []),
     ),
   ]
-  const bySpotifyId = await libraryItemsBySpotifyId(database, kind, spotifyIds)
+  const bySpotifyId = await libraryMembershipBySpotifyId(
+    database,
+    kind,
+    spotifyIds,
+  )
   return suggestions.map((suggestion) => {
     const key = keyOf(suggestion)
     const lookup = key ? lookups.get(key) : undefined
     const spotify = SpotifyCodeMatchSchema.safeParse(lookup?.result)
-    const tidal = byTidalId.get(suggestion.tidalId)
+    const tidal = byTidalId.visible.get(suggestion.tidalId)
     const code = key ? byCode.get(key) : undefined
     const spotifyId = lookup?.spotifyId
-    const spotifyLibrary = spotifyId ? bySpotifyId.get(spotifyId) : undefined
+    const spotifyLibrary = spotifyId
+      ? bySpotifyId.visible.get(spotifyId)
+      : undefined
     const library = tidal ?? code ?? spotifyLibrary
+    const hiddenLibraryMatch =
+      !library &&
+      (byTidalId.hidden.has(suggestion.tidalId) ||
+        Boolean(
+          spotifyId &&
+          lookup?.source === 'spotify' &&
+          bySpotifyId.hidden.has(spotifyId),
+        ))
     const libraryMatch: TidalSimilarItem['libraryMatch'] = tidal
       ? { basis: 'tidal-id', value: suggestion.tidalId }
       : code && suggestion.code
@@ -952,6 +970,7 @@ async function mapSuggestions(
       state: stateOf(library, lookup),
       library: library ?? null,
       libraryMatch,
+      ...(hiddenLibraryMatch ? { hiddenLibraryMatch: true } : {}),
       spotify:
         spotify.success && spotify.data.spotifyId === lookup?.spotifyId
           ? spotify.data

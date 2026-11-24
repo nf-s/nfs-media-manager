@@ -96,7 +96,16 @@ test('playing library actions use the device track independently of a stale queu
   assert.ok(track)
   assert.ok(release)
   assert.deepEqual(catalogLookups([track, release]), [
-    { mediaType: 'track', externalId: observed },
+    {
+      mediaType: 'track',
+      externalId: observed,
+      recording: {
+        title: 'First',
+        artists: ['First artist'],
+        spotifyAlbumId: albumId,
+        albumName: 'Fixture album',
+      },
+    },
     { mediaType: 'track', externalId: relinked },
     { mediaType: 'album', externalId: albumId },
   ])
@@ -111,12 +120,11 @@ test('playing library actions use the device track independently of a stale queu
     ],
   }
   assert.deepEqual(playbackItemMembership(track, matches), {
+    status: 'saved',
     mediaItemId: 'saved-track',
-    ambiguous: false,
   })
   assert.deepEqual(playbackItemMembership(release, matches), {
-    mediaItemId: null,
-    ambiguous: false,
+    status: 'unresolved',
   })
   assert.deepEqual(
     playbackItemMembership(track, {
@@ -130,7 +138,7 @@ test('playing library actions use the device track independently of a stale queu
         },
       ],
     }),
-    { mediaItemId: null, ambiguous: true },
+    { status: 'unresolved' },
   )
 })
 

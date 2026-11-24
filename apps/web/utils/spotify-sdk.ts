@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { PlaybackSnapshot } from './playback'
+import { SpotifyLinkedTrackSchema } from './spotify-player-api'
 
 type SdkListener = (payload: unknown) => void
 
@@ -77,10 +78,8 @@ const TrackSchema = z.object({
       images: z.array(z.object({ url: z.string() })).default([]),
     })
     .optional(),
-  linked_from: z
-    .object({ uri: z.string().nullable().optional() })
-    .nullable()
-    .optional(),
+  linked_from: SpotifyLinkedTrackSchema,
+  is_local: z.boolean().optional(),
 })
 const StateSchema = z.object({
   context: z
@@ -113,7 +112,8 @@ export function sdkPlayback(
   const artwork = track.album?.images[0]?.url
   return {
     trackUri: track.uri,
-    linkedFromUri: track.linked_from?.uri ?? null,
+    linkedFromUri: track.linked_from,
+    ...(track.is_local ? { isLocal: true } : {}),
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',

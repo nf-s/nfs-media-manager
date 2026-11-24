@@ -28,6 +28,7 @@ vi.mock('@/lib/db', () => ({
 }))
 
 import { refreshTrackAddedDates } from '@/services/spotify-playlists'
+import { observeTidalSuggestion } from '@/services/music-catalog-observations'
 import { getTidalSimilar } from '@/services/tidal-similar'
 import { addTidalSimilarToLibrary } from '@/services/tidal-similar-library'
 import { getTidalTrackMatch } from '@/services/tidal-track-match'
@@ -219,6 +220,97 @@ it('adds an album with a stored Spotify mapping once and preserves both catalogu
   expect(request).not.toHaveBeenCalled()
 })
 
+it('recognizes an album whose Spotify release is stored only as a URL', async () => {
+  const id = 'fixture-url-only-album'
+  const urlOnlySpotifyId = 'ZZZZZZZZZZZZZZZZZZZZZZ'
+  const url = `https://open.spotify.com/album/${urlOnlySpotifyId}`
+  const sourceId = 'fixture-url-only-source'
+  await db.insert(schema.mediaItem).values([
+    { id, mediaType: 'album', slug: id, title: 'Saved release' },
+    { id: sourceId, mediaType: 'album', slug: sourceId, title: 'Album source' },
+  ])
+  await db
+    .insert(schema.album)
+    .values([{ mediaItemId: id, spotifyUrl: url }, { mediaItemId: sourceId }])
+  await db.insert(schema.spotifyCodeLookup).values({
+    codeType: 'upc',
+    code: '82',
+    spotifyId: urlOnlySpotifyId,
+    result: { ...spotifyMatch('album'), spotifyId: urlOnlySpotifyId, url },
+    searchedAt: addedBefore,
+  })
+  await db.insert(schema.tidalSimilar).values({
+    mediaItemId: sourceId,
+    kind: 'album',
+    readAt: addedBefore,
+    items: [albumSuggestion('106', '0000000000082')],
+  })
+  const input = {
+    kind: 'albums',
+    id: sourceId,
+    tidalId: '106',
+  } satisfies AddInput
+  expect((await getTidalSimilar(input)).items[0]).toMatchObject({
+    state: 'library',
+    library: { id, spotifyId: urlOnlySpotifyId },
+    libraryMatch: { basis: 'spotify-id', value: urlOnlySpotifyId },
+  })
+  expect(await addTidalSimilarToLibrary(input)).toEqual({ id })
+})
+
+it('promotes an outside suggestion in place and preserves its discovery origin', async () => {
+  const input = {
+    kind: 'albums',
+    id: albumId,
+    tidalId: '107',
+  } satisfies AddInput
+  const suggestion = albumSuggestion(input.tidalId, null)
+  const id = await db.transaction(async (tx) => {
+    const catalogMediaItemId = await observeTidalSuggestion(
+      tx,
+      'album',
+      suggestion,
+      {
+        operation: 'similar',
+        key: 'fixture-outside-origin',
+        subjectKind: 'album',
+        subjectId: albumId,
+        page: 1,
+        position: 1,
+      },
+    )
+    const source = await tx.query.tidalSimilar.findFirst({
+      where: eq(schema.tidalSimilar.mediaItemId, albumId),
+    })
+    await tx
+      .update(schema.tidalSimilar)
+      .set({
+        items: [
+          ...(source?.items ?? []),
+          { ...suggestion, catalogMediaItemId },
+        ],
+      })
+      .where(eq(schema.tidalSimilar.mediaItemId, albumId))
+    return catalogMediaItemId
+  })
+  const read = async () =>
+    (await getTidalSimilar(input)).items.find(
+      (item) => item.tidalId === input.tidalId,
+    )
+  expect(await read()).toMatchObject({ catalogMediaItemId: id, library: null })
+  expect((await read())?.hiddenLibraryMatch).toBeUndefined()
+  expect(await addTidalSimilarToLibrary(input)).toEqual({ id })
+  expect(await read()).toMatchObject({ state: 'library', library: { id } })
+  expect(
+    await db
+      .select()
+      .from(schema.catalogObservation)
+      .where(eq(schema.catalogObservation.mediaItemId, id)),
+  ).toContainEqual(
+    expect.objectContaining({ operation: 'similar', subjectId: albumId }),
+  )
+})
+
 it('adds a TIDAL-only album without a barcode and recognizes it by TIDAL ID', async () => {
   const input = {
     kind: 'albums',
@@ -368,6 +460,14 @@ it('leaves a hidden suggestion hidden', async () => {
     .update(schema.mediaItem)
     .set({ metadata: { legacyHidden: true } })
     .where(eq(schema.mediaItem.id, id))
+  expect(
+    (await getTidalSimilar(input)).items.find(
+      (item) => item.tidalId === input.tidalId,
+    ),
+  ).toMatchObject({
+    library: null,
+    hiddenLibraryMatch: true,
+  })
   await expect(addTidalSimilarToLibrary(input)).rejects.toMatchObject({
     statusCode: 409,
   })

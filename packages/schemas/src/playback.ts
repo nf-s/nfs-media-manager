@@ -48,6 +48,9 @@ export const PlaybackSnapshotSchema = z.object({
   trackUri: UriSchema.nullable(),
   /** The requested track when Spotify substituted another recording for it. */
   linkedFromUri: UriSchema.nullable(),
+  /** The relinked Spotify catalog URI when the device reports the requested URI. */
+  relinkedTrackUri: UriSchema.optional(),
+  isLocal: z.boolean().optional(),
   trackName: TextSchema,
   artists: TextSchema,
   albumName: TextSchema,

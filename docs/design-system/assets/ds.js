@@ -32,7 +32,6 @@
     queue: '<path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"/>',
     library: '<path d="M4 19.5v-15m4 15v-15m4 15v-15m4-1 4 15"/>',
     bookPlus: `${BOOK}<path d="M12 7v6M9 10h6"/>`,
-    bookCheck: `${BOOK}<path d="m9 9.5 2 2 4-4"/>`,
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
     sparkles:
       '<path d="m11 4 1.8 4.7 4.7 1.8-4.7 1.8L11 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="M18.5 15.5v4M16.5 17.5h4"/>',
@@ -169,23 +168,21 @@
   }
 
   function libraryAction(kind, name, o = {}) {
-    const label = o.saved
-      ? `${name} is in your library (${kind})`
-      : o.pending
-        ? `Adding ${kind} to library · ${name}`
-        : o.action === 'find'
-          ? `Find ${kind} in library · ${name}`
-          : `Add ${kind} to library · ${name}`
+    if (o.saved) return ''
+    const label = o.pending
+      ? `Adding ${kind} to library · ${name}`
+      : o.action === 'find'
+        ? `Find ${kind} in library · ${name}`
+        : `Add ${kind} to library · ${name}`
     return `<button type="button" class="ds-btn ds-library-action" data-variant="ghost" data-size="xs" data-icon${attrs(
       {
         'data-touch': o.touch,
         'aria-label': label,
-        'aria-disabled':
-          o.saved || o.pending || o.disabled ? 'true' : undefined,
+        'aria-disabled': o.pending || o.disabled ? 'true' : undefined,
         'aria-busy': o.pending ? 'true' : undefined,
         title: label,
       },
-    )}>${icon(o.saved ? 'bookCheck' : 'bookPlus')}</button>`
+    )}>${icon(o.action === 'find' ? 'search' : 'bookPlus')}</button>`
   }
 
   /* The header pair goes under the artwork (detailHead's o.play): a labelled

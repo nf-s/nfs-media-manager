@@ -18,7 +18,7 @@ import { addCatalogMedia, catalogDiscoveries } from '@/utils/catalog-api'
 import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import { providerLogoUrl } from '@/utils/provider-logos'
 import { discoverySourceLabels } from '@/utils/library-scope'
-import { useConfig } from './providers'
+import { useAnnounceLibraryAddition, useConfig } from './providers'
 import { DetailLink } from './detail-link'
 
 function nativeQueryKeys(kind: CatalogNativeKind, id: string) {
@@ -54,6 +54,13 @@ export function CatalogLibraryAction({
   inLibrary: boolean
 }) {
   const { apiBaseUrl } = useConfig()
+  const announce = useAnnounceLibraryAddition()
+  const labelKind =
+    kind === 'subscription-source'
+      ? 'show'
+      : kind === 'subscription-item'
+        ? 'item'
+        : kind
   const client = useQueryClient()
   const action = useMutation({
     mutationFn: () =>
@@ -64,9 +71,10 @@ export function CatalogLibraryAction({
           ? 'media'
           : kind,
       ),
-    onSuccess: async () => {
+    onSuccess: () => {
+      announce(labelKind, title)
       if (kind === 'album' || kind === 'film' || kind === 'track') {
-        await Promise.all([
+        void Promise.all([
           invalidateManualMediaAddition(client, kind),
           client.invalidateQueries({ queryKey: [kind, id] }),
           client.invalidateQueries({
@@ -74,7 +82,7 @@ export function CatalogLibraryAction({
           }),
         ])
       } else {
-        await Promise.all(
+        void Promise.all(
           nativeQueryKeys(kind, id).map((queryKey) =>
             client.invalidateQueries({ queryKey }),
           ),
@@ -85,13 +93,7 @@ export function CatalogLibraryAction({
   return (
     <>
       <LibraryAction
-        kind={
-          kind === 'subscription-source'
-            ? 'show'
-            : kind === 'subscription-item'
-              ? 'item'
-              : kind
-        }
+        kind={labelKind}
         name={title}
         saved={inLibrary || action.isSuccess}
         pending={action.isPending}

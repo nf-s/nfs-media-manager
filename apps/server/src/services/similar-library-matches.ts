@@ -5,6 +5,7 @@ import {
   type TidalSimilarKind,
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
+import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { upcVariants } from './spotify-code-search'
 
 type Reader = Pick<typeof db, 'execute'>
@@ -30,10 +31,10 @@ export type SimilarLibraryItem = {
   trackCount: number | null
 }
 
+const legacyHidden = (alias: string) =>
+  sql.raw(`${alias}.metadata->>'legacyHidden' is not distinct from 'true'`)
 const visible = (alias: string) =>
-  sql.raw(
-    `${alias}.in_library and ${alias}.metadata->>'legacyHidden' is distinct from 'true'`,
-  )
+  sql`${sql.raw(`${alias}.in_library`)} and not (${legacyHidden(alias)})`
 
 const spotifyAlbumIdFromUrl = sql`substring(a.spotify_url from '/album/([A-Za-z0-9]{22})')`
 
@@ -57,6 +58,22 @@ function collect(rows: unknown[]) {
   for (const row of z.array(LibraryRowSchema).parse(rows))
     if (!items.has(row.code)) items.set(row.code, toItem(row))
   return items
+}
+
+const LibraryMembershipRowSchema = LibraryRowSchema.extend({
+  hidden: z.boolean(),
+  in_library: z.boolean(),
+})
+
+function collectMembership(rows: unknown[]) {
+  const visible = new Map<string, SimilarLibraryItem>()
+  const hidden = new Set<string>()
+  for (const row of z.array(LibraryMembershipRowSchema).parse(rows)) {
+    if (row.hidden) hidden.add(row.code)
+    else if (row.in_library && !visible.has(row.code))
+      visible.set(row.code, toItem(row))
+  }
+  return { visible, hidden }
 }
 
 /**
@@ -110,12 +127,12 @@ export async function libraryItemsByCode(
 }
 
 /** Library tracks or albums by their Spotify ID. */
-export async function libraryItemsBySpotifyId(
+export async function libraryMembershipBySpotifyId(
   database: Reader,
   kind: TidalSimilarKind,
   spotifyIds: readonly string[],
-): Promise<Map<string, SimilarLibraryItem>> {
-  if (!spotifyIds.length) return new Map()
+) {
+  if (!spotifyIds.length) return collectMembership([])
   const ids = sql.param([...spotifyIds])
   const result =
     kind === 'track'
@@ -124,32 +141,32 @@ export async function libraryItemsBySpotifyId(
             coalesce(m.artwork_url, am.artwork_url) as artwork_url,
             lt.spotify_track_id as spotify_id, am.id as album_id,
             am.title as album_title, lt.album_name,
-            null::integer as track_count
+            null::integer as track_count, ${legacyHidden('m')} as hidden, m.in_library
           from library_track lt
           join media_item m on m.id = lt.media_item_id
           left join media_item am on am.id = lt.album_media_item_id
-          where lt.spotify_track_id = any(${ids}::text[]) and ${visible('m')}
+          where lt.spotify_track_id = any(${ids}::text[])
           order by m.created_at, m.id`)
       : await database.execute(sql`
-          select r.external_id as code, m.id, m.title, m.artwork_url,
-            r.external_id as spotify_id, null as album_id,
-            null as album_title, null as album_name, a.track_count
-          from provider_reference r
-          join media_item m on m.id = r.media_item_id and m.media_type = 'album'
-          join album a on a.media_item_id = m.id
-          where r.provider = 'spotify' and r.reference_type in ('album', 'spotify')
-            and r.external_id = any(${ids}::text[]) and ${visible('m')}
+          select r.spotify_id as code, m.id, m.title, m.artwork_url,
+            r.spotify_id, null as album_id,
+            null as album_title, null as album_name, a.track_count,
+            ${legacyHidden('m')} as hidden, m.in_library
+          from (${spotifyAlbumReleaseIds()}) r
+          join media_item m on m.id = r.album_id and m.media_type = 'album'
+          join album a on a.media_item_id = r.album_id
+          where r.spotify_id = any(${ids}::text[])
           order by m.created_at, m.id`)
-  return collect(result.rows)
+  return collectMembership(result.rows)
 }
 
 /** Library items with a TIDAL reference to this exact suggestion. */
-export async function libraryItemsByTidalId(
+export async function libraryMembershipByTidalId(
   database: Reader,
   kind: TidalSimilarKind,
   tidalIds: readonly string[],
-): Promise<Map<string, SimilarLibraryItem>> {
-  if (!tidalIds.length) return new Map()
+) {
+  if (!tidalIds.length) return collectMembership([])
   const ids = sql.param([...tidalIds])
   const result =
     kind === 'track'
@@ -158,25 +175,26 @@ export async function libraryItemsByTidalId(
             coalesce(m.artwork_url, am.artwork_url) as artwork_url,
             lt.spotify_track_id as spotify_id, am.id as album_id,
             am.title as album_title, lt.album_name,
-            null::integer as track_count
+            null::integer as track_count, ${legacyHidden('m')} as hidden, m.in_library
           from provider_reference r
           join media_item m on m.id = r.media_item_id and m.media_type = 'track'
           join library_track lt on lt.media_item_id = m.id
           left join media_item am on am.id = lt.album_media_item_id
           where r.provider = 'tidal' and r.reference_type = 'track'
-            and r.external_id = any(${ids}::text[]) and ${visible('m')}
+            and r.external_id = any(${ids}::text[])
           order by m.created_at, m.id`)
       : await database.execute(sql`
           select r.external_id as code, m.id, m.title, m.artwork_url,
             ${spotifyAlbumIdFromUrl} as spotify_id, null as album_id,
-            null as album_title, null as album_name, a.track_count
+            null as album_title, null as album_name, a.track_count,
+            ${legacyHidden('m')} as hidden, m.in_library
           from provider_reference r
           join media_item m on m.id = r.media_item_id and m.media_type = 'album'
           join album a on a.media_item_id = m.id
           where r.provider = 'tidal' and r.reference_type = 'album'
-            and r.external_id = any(${ids}::text[]) and ${visible('m')}
+            and r.external_id = any(${ids}::text[])
           order by m.created_at, m.id`)
-  return collect(result.rows)
+  return collectMembership(result.rows)
 }
 
 const GenreRowsSchema = z.array(

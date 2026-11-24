@@ -165,7 +165,7 @@ test('reads the details of a track by its URI', async () => {
           { name: 'First artist', uri: 'spotify:artist:first' },
           { name: 'Second artist' },
         ],
-        linked_from: { uri: 'spotify:track:ABCDEFGHIJKL1234567890' },
+        linked_from: { id: 'ABCDEFGHIJKL1234567890' },
         album: {
           uri: 'spotify:album:fixture',
           name: 'Fixture album',
@@ -433,6 +433,7 @@ test('reads remote playback, including nothing playing and non-track items', asy
       is_playing: false,
       item: {
         ...track,
+        is_local: true,
         album: { name: 'x', images: [{ url: 'http://images.example/a.jpg' }] },
       },
     },
@@ -441,6 +442,7 @@ test('reads remote playback, including nothing playing and non-track items', asy
   assert.equal(read.snapshot?.contextUri, null)
   assert.equal(read.snapshot?.positionMs, 0)
   assert.equal(read.snapshot?.paused, true)
+  assert.equal(read.snapshot?.isLocal, true)
   assert.equal(read.snapshot?.artworkUrl, null)
   assert.equal(read.snapshot?.at, 5)
   // Spotify gives a device apps cannot control no ID; its playback is still read.
@@ -480,7 +482,7 @@ test('reads the browser player state and ignores malformed payloads', () => {
           name: 'Fixture album',
           images: [{ url: 'https://images.example/cover.jpg' }],
         },
-        linked_from: { uri: 'spotify:track:requested' },
+        linked_from: { id: 'ABCDEFGHIJKL1234567890' },
       },
       previous_tracks: [],
       next_tracks: [{}],
@@ -488,7 +490,7 @@ test('reads the browser player state and ignores malformed payloads', () => {
   }
   assert.deepEqual(sdkPlayback(state, 9), {
     trackUri: 'spotify:track:substitute',
-    linkedFromUri: 'spotify:track:requested',
+    linkedFromUri: 'spotify:track:ABCDEFGHIJKL1234567890',
     trackName: 'Fixture track',
     artists: 'First',
     albumName: 'Fixture album',

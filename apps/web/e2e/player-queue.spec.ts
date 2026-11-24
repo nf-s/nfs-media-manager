@@ -1,8 +1,10 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { PlayableItem, SavedPlayback } from '@repo/schemas/playback'
 import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
 import { CatalogMembershipInputSchema } from '@repo/schemas/manual-add'
 import { webOrigin } from './preview'
+
+const externalId = (entry: PlayableItem) => entry.uri.split(':').at(-1) ?? ''
 
 function item(
   kind: PlayableItem['kind'],
@@ -36,81 +38,32 @@ function actionPosition(action: Locator) {
   })
 }
 
-test('queue titles leave room for controls and saving clears the library action', async ({
-  page,
-  isMobile,
-}) => {
-  if (isMobile) await page.setViewportSize({ width: 320, height: 812 })
-  const playing = item('track', 1, 'Playing track')
-  const release = item('album', 2, 'Playing album')
-  const queued = item('album', 3, 'Queued album')
-  const savedAlbum = item('album', 4, 'Saved album')
-  const upcoming = item('track', 5, 'Upcoming track')
-  const savedTrack = item('track', 6, 'Saved track')
-  const externalId = (entry: PlayableItem) => entry.uri.split(':').at(-1) ?? ''
-  const saved = new Set([
-    externalId(playing),
-    externalId(savedAlbum),
-    externalId(savedTrack),
-  ])
-  const state: SavedPlayback = {
-    version: 1,
-    savedAt: Date.now(),
-    current: playing,
-    currentFromSource: true,
-    session: null,
-    shuffle: false,
-    sequence: 2,
-    target: { kind: 'spotify', device: null, browser: null },
-    queue: [queued, savedAlbum].map((entry, index) => ({
-      key: `queue-${index}`,
-      item: entry,
-    })),
-    snapshot: {
-      trackUri: playing.uri,
-      linkedFromUri: null,
-      trackName: playing.title,
-      artists: playing.artist,
-      albumName: release.title,
-      albumUri: release.uri,
-      artistLinks: [
-        {
-          name: 'Synthetic artist',
-          uri: 'spotify:artist:0000000000000000000007',
-        },
-      ],
-      artworkUrl: null,
-      durationMs: 200_000,
-      positionMs: 50_000,
-      paused: true,
-      contextUri: release.uri,
-      hasNext: true,
-      trackNumber: 1,
-      discNumber: 1,
-      at: Date.now(),
-    },
-    source: {
-      descriptor: { type: 'album', tracks: [playing, upcoming, savedTrack] },
-      label: 'Fixture source',
-      href: '/tracks',
-      kind: 'album',
-      length: 3,
-      startIndex: 0,
-      remaining: [[1, 3]],
-      played: ['0:0'],
-      skipped: [],
-      exhausted: [],
-      upcoming: [upcoming, savedTrack].map((entry, index) => ({
-        index: index + 1,
-        position: 0,
-        item: entry,
-      })),
-      history: [],
-    },
-  }
+async function mockPlayback(
+  page: Page,
+  state: SavedPlayback,
+  saved: Set<string>,
+  {
+    promoting,
+    shadowed,
+    membershipReady,
+  }: {
+    promoting?: PlayableItem
+    shadowed?: readonly PlayableItem[]
+    membershipReady?: Promise<void>
+  } = {},
+) {
+  const writes: string[] = []
+  const promotions: string[] = []
+  const observed = new Set<string>()
+  const outsideIds = new Set(shadowed?.map(externalId))
   await page.route(
     /^https:\/\/(?:[^/]+\.spotify\.com|sdk\.scdn\.co)\//,
-    (route) => route.abort(),
+    (route) => {
+      const { hostname, pathname } = new URL(route.request().url())
+      if (hostname === 'api.spotify.com' && route.request().method() !== 'GET')
+        writes.push(pathname)
+      return route.abort()
+    },
   )
   await page.route(`${webOrigin}/api/v1/**`, async (route) => {
     const request = route.request()
@@ -139,9 +92,10 @@ test('queue titles leave room for controls and saving clears the library action'
     } else if (path.endsWith('/playback/catalog')) {
       const { items } = PlaybackCatalogInputSchema.parse(request.postDataJSON())
       const reference = (id: string) => ({
-        id: `catalog-${id}`,
-        inLibrary: saved.has(id),
+        id: outsideIds.has(id) ? `outside-${id}` : `catalog-${id}`,
+        inLibrary: saved.has(id) && !outsideIds.has(id),
       })
+      for (const entry of items) observed.add(entry.spotifyId)
       data = {
         items: items.map((entry) => ({
           kind: entry.kind,
@@ -157,6 +111,7 @@ test('queue titles leave room for controls and saving clears the library action'
         })),
       }
     } else if (path.endsWith('/manual-add/membership')) {
+      await membershipReady
       const { items } = CatalogMembershipInputSchema.parse(
         request.postDataJSON(),
       )
@@ -169,13 +124,18 @@ test('queue titles leave room for controls and saving clears the library action'
             : null,
         })),
       }
-    } else if (
-      path.endsWith(`/catalog/media/catalog-${externalId(queued)}/add`)
-    ) {
-      const id = externalId(queued)
+    } else if (/\/catalog\/media\/[^/]+\/add$/.test(path)) {
+      if (!promoting) throw new Error('Unexpected catalog promotion')
+      const id = externalId(promoting)
+      expect(path).toBe(`/api/v1/catalog/media/catalog-${id}/add`)
       expect(request.method()).toBe('POST')
+      promotions.push(id)
       saved.add(id)
       data = { created: true, mediaItemId: `catalog-${id}` }
+    } else if (path.endsWith('/manual-add/add')) {
+      throw new Error(
+        'The observed catalog item should be promoted by its media ID',
+      )
     } else if (path.endsWith('/spotify/playback/token')) {
       data = {
         accessToken: 'synthetic',
@@ -188,15 +148,133 @@ test('queue titles leave room for controls and saving clears the library action'
       json: { statusCode: 200, message: 'OK', data },
     })
   })
-  await page.goto('/tracks')
-  if (isMobile) {
-    await page
-      .getByRole('button', { name: `Open player: ${playing.title}` })
-      .click()
-  } else {
-    await page.getByRole('button', { name: /^Queue: 2 queued/ }).click()
-  }
+  return { writes, promotions, observed }
+}
 
+function snapshot(playing: PlayableItem, release: PlayableItem) {
+  return {
+    trackUri: playing.uri,
+    linkedFromUri: null,
+    trackName: playing.title,
+    artists: playing.artist,
+    albumName: release.title,
+    albumUri: release.uri,
+    artistLinks: [
+      { name: playing.artist, uri: 'spotify:artist:0000000000000000000009' },
+    ],
+    artworkUrl: null,
+    durationMs: 200_000,
+    positionMs: 50_000,
+    paused: true,
+    contextUri: release.uri,
+    hasNext: true,
+    trackNumber: 1,
+    discNumber: 1,
+    at: Date.now(),
+  }
+}
+
+function playback(current: PlayableItem): SavedPlayback {
+  return {
+    version: 1,
+    savedAt: Date.now(),
+    current,
+    currentFromSource: true,
+    session: null,
+    shuffle: false,
+    sequence: 2,
+    target: { kind: 'spotify', device: null, browser: null },
+    queue: [],
+    snapshot: null,
+    source: null,
+  }
+}
+
+function openQueue(page: Page, isMobile: boolean, playing: PlayableItem) {
+  return isMobile
+    ? page
+        .getByRole('button', { name: `Open player: ${playing.title}` })
+        .click()
+    : page.getByRole('button', { name: /^Queue: 2 queued/ }).click()
+}
+
+const savedActionName = /is in your library/
+
+test('queue titles leave room for controls and saving clears the library action', async ({
+  page,
+  isMobile,
+}) => {
+  if (isMobile) await page.setViewportSize({ width: 320, height: 812 })
+  const playing = item('track', 1, 'Playing track')
+  const relinked = item('track', 7, 'Relinked recording')
+  const release = item('album', 2, 'Playing album')
+  const queued = item('album', 3, 'Queued album')
+  const savedAlbum = item('album', 4, 'Saved album')
+  const upcoming = item('track', 5, 'Upcoming track')
+  const savedTrack = item('track', 6, 'Saved track')
+  const stale = { ...item('track', 8, 'Previous track'), trackId: 'previous' }
+  const state: SavedPlayback = {
+    ...playback(stale),
+    queue: [queued, savedAlbum].map((entry, index) => ({
+      key: `queue-${index}`,
+      item: entry,
+    })),
+    snapshot: {
+      ...snapshot(playing, release),
+      trackUri: relinked.uri,
+      relinkedTrackUri: playing.uri,
+    },
+    source: {
+      descriptor: { type: 'album', tracks: [stale, upcoming, savedTrack] },
+      label: 'Fixture source',
+      href: '/tracks',
+      kind: 'album',
+      length: 3,
+      startIndex: 0,
+      remaining: [[1, 3]],
+      played: ['0:0'],
+      skipped: [],
+      exhausted: [],
+      upcoming: [upcoming, savedTrack].map((entry, index) => ({
+        index: index + 1,
+        position: 0,
+        item: entry,
+      })),
+      history: [],
+    },
+  }
+  const saved = new Set([
+    externalId(playing),
+    externalId(savedAlbum),
+    externalId(savedTrack),
+  ])
+  let resolveMembership = () => {}
+  const membershipReady = new Promise<void>((resolve) => {
+    resolveMembership = resolve
+  })
+  const { writes, promotions, observed } = await mockPlayback(
+    page,
+    state,
+    saved,
+    {
+      membershipReady,
+      promoting: queued,
+      shadowed: [playing, relinked],
+    },
+  )
+  await page.goto('/tracks')
+  await openQueue(page, isMobile, playing)
+  const dock = page.locator('.player-dock')
+  const nowPlaying = isMobile
+    ? page.locator('.player-sheet-body > .player-text')
+    : dock.locator('.player-text').first()
+  await expect(
+    nowPlaying.getByText(playing.title, { exact: true }),
+  ).toBeVisible()
+  const dockNowPlaying = dock.locator('.player-now')
+  await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(0)
+  await expect(nowPlaying.locator('.ds-library-action')).toHaveCount(0)
+  resolveMembership()
   const panel = page.locator('.queue-contents:visible')
   await expect(
     panel.getByRole('heading', { name: 'Next from Fixture source' }),
@@ -247,6 +325,32 @@ test('queue titles leave room for controls and saving clears the library action'
       playingRow.getByRole('link', { name, exact: true }),
     ).toHaveAttribute('data-workspace-href', href)
   }
+  const playingLink = nowPlaying.getByRole('link', { name: playing.title })
+  await expect(playingLink).toHaveAttribute(
+    'data-workspace-href',
+    `/tracks/catalog-${externalId(playing)}`,
+  )
+  await expect(dock.getByRole('button', { name: savedActionName })).toHaveCount(
+    0,
+  )
+  await expect(
+    nowPlaying
+      .locator('.player-identity-line')
+      .first()
+      .locator('.ds-library-action'),
+  ).toHaveCount(0)
+  if (isMobile)
+    await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(0)
+  await expect(
+    nowPlaying.getByRole('button', {
+      name: `Add album to library · ${release.title}`,
+    }),
+  ).toBeEnabled()
+  expect(
+    [...observed].some((id) =>
+      [playing, relinked].map(externalId).includes(id),
+    ),
+  ).toBe(true)
   await expect(
     playingRow.getByRole('button', { name: /^Add album to library/ }),
   ).toBeEnabled()
@@ -254,7 +358,7 @@ test('queue titles leave room for controls and saving clears the library action'
     upcomingRow.getByRole('button', { name: /^Add track to library/ }),
   ).toBeEnabled()
   await expect(
-    panel.getByRole('button', { name: /is in your library/ }),
+    panel.getByRole('button', { name: savedActionName }),
   ).toHaveCount(0)
   const add = queuedRow.getByRole('button', { name: /^Add album to library/ })
   await expect(add).toBeEnabled()
@@ -284,6 +388,11 @@ test('queue titles leave room for controls and saving clears the library action'
     await add.tap()
   }
   await expect(queuedRow.locator('.ds-library-action')).toHaveCount(0)
+  await expect(
+    page.getByRole('status').filter({
+      hasText: `Added album to library · ${queued.title}`,
+    }),
+  ).toHaveAttribute('aria-atomic', 'true')
   const savedLink = queuedRow.getByRole('link', { name: queued.title })
   await expect(savedLink).toHaveAttribute(
     'data-workspace-href',
@@ -292,4 +401,162 @@ test('queue titles leave room for controls and saving clears the library action'
   if (!isMobile) await expect(savedLink).toBeFocused()
   expect(await actionPosition(play)).toEqual(before)
   await expect(rows).toHaveCount(5)
+  if (isMobile) {
+    await page.getByRole('button', { name: 'Close player' }).click()
+  } else {
+    await dock.getByRole('button', { name: /^Queue: 2 queued/ }).click()
+  }
+  await openQueue(page, isMobile, playing)
+  await expect(savedLink).toBeVisible()
+  await expect(queuedRow.locator('.ds-library-action')).toHaveCount(0)
+  await page.reload()
+  await openQueue(page, isMobile, playing)
+  await expect(savedLink).toHaveAttribute(
+    'data-workspace-href',
+    `/albums/catalog-${externalId(queued)}`,
+  )
+  await expect(queuedRow.locator('.ds-library-action')).toHaveCount(0)
+  await expect(rows).toHaveCount(5)
+  await playingRow
+    .getByRole('link', { name: release.title, exact: true })
+    .click()
+  await expect(page).toHaveURL((url) =>
+    Boolean(
+      url.searchParams
+        .get('inspect')
+        ?.includes(`catalog-${externalId(release)}`),
+    ),
+  )
+  expect(promotions).toEqual([externalId(queued)])
+  expect(writes).toEqual([])
+})
+
+test('saving the playing recording preserves independent album navigation', async ({
+  page,
+  isMobile,
+}) => {
+  const playing = item('track', 11, 'Device track')
+  const release = item('album', 12, 'Saved device album')
+  const state: SavedPlayback = {
+    ...playback(item('album', 13, 'Previous album')),
+    snapshot: snapshot(playing, release),
+  }
+  const saved = new Set([externalId(release)])
+  const { writes, promotions } = await mockPlayback(page, state, saved, {
+    promoting: playing,
+  })
+  await page.goto('/tracks')
+  const dock = page.locator('.player-dock')
+  const dockNowPlaying = dock.locator('.player-now')
+  const sheet = page.locator('.player-sheet-body')
+  const miniPlayer = dock.getByRole('button', {
+    name: `Open player: ${playing.title}`,
+  })
+  const addName = `Add track to library · ${playing.title}`
+  const add = dockNowPlaying.getByRole('button', { name: addName })
+  await expect(add).toBeEnabled()
+  if (isMobile) {
+    await miniPlayer.click()
+    await expect(
+      sheet.getByRole('button', { name: addName }).first(),
+    ).toBeEnabled()
+    await expect(
+      sheet.locator('.player-text').first().getByRole('link', {
+        name: release.title,
+      }),
+    ).toHaveAttribute(
+      'data-workspace-href',
+      `/albums/catalog-${externalId(release)}`,
+    )
+    await page.getByRole('button', { name: 'Close player' }).click()
+  } else {
+    await expect(
+      dockNowPlaying.getByRole('link', {
+        name: release.title,
+        exact: true,
+      }),
+    ).toHaveAttribute(
+      'data-workspace-href',
+      `/albums/catalog-${externalId(release)}`,
+    )
+  }
+  await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(1)
+  await add.press('Enter')
+  await expect(
+    page.getByRole('status').filter({
+      hasText: `Added track to library · ${playing.title}`,
+    }),
+  ).toHaveAttribute('aria-atomic', 'true')
+  await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(0)
+  if (isMobile) {
+    await expect(miniPlayer).toBeFocused()
+    await miniPlayer.click()
+    await expect(sheet.locator('.ds-library-action')).toHaveCount(0)
+  } else {
+    await expect(
+      dockNowPlaying.getByRole('link', { name: playing.title }),
+    ).toBeFocused()
+  }
+  const surface = isMobile
+    ? sheet.locator('.player-text').first()
+    : dockNowPlaying
+  await expect(
+    surface.getByRole('link', { name: playing.title }),
+  ).toHaveAttribute(
+    'data-workspace-href',
+    `/tracks/catalog-${externalId(playing)}`,
+  )
+  await expect(
+    surface.getByRole('button', { name: savedActionName }),
+  ).toHaveCount(0)
+  await expect(
+    dock
+      .locator('.player-row')
+      .getByRole('button', { name: 'Play', exact: true }),
+  ).toBeEnabled()
+  if (isMobile) {
+    await expect(
+      sheet.getByText('Nothing queued.', { exact: true }),
+    ).toBeVisible()
+  } else {
+    await expect(
+      dock.getByRole('button', { name: 'Queue: 0 next' }),
+    ).toBeVisible()
+  }
+  expect(promotions).toEqual([externalId(playing)])
+  expect(writes).toEqual([])
+})
+
+test('a local recording does not offer a catalog add', async ({
+  page,
+  isMobile,
+}) => {
+  const playing = item('track', 21, 'Local recording')
+  const release = item('album', 22, 'Saved album')
+  const state: SavedPlayback = {
+    ...playback(item('track', 23, 'Previous track')),
+    snapshot: { ...snapshot(playing, release), isLocal: true },
+  }
+  await mockPlayback(page, state, new Set([externalId(release)]))
+  await page.goto('/tracks')
+  const dock = page.locator('.player-dock')
+  const nowPlaying = isMobile
+    ? page.locator('.player-sheet-body > .player-text')
+    : dock.locator('.player-now')
+  if (isMobile) {
+    await dock
+      .getByRole('button', { name: `Open player: ${playing.title}` })
+      .click()
+  }
+  await expect(
+    nowPlaying.getByText(playing.title, { exact: true }),
+  ).toBeVisible()
+  await expect(
+    nowPlaying.getByRole('link', { name: release.title, exact: true }),
+  ).toHaveAttribute(
+    'data-workspace-href',
+    `/albums/catalog-${externalId(release)}`,
+  )
+  await expect(nowPlaying.locator('.ds-library-action')).toHaveCount(0)
+  await expect(dock.locator('.player-now .ds-library-action')).toHaveCount(0)
 })

@@ -144,6 +144,29 @@ export async function addManualMediaItem(
   return result.mediaItemId
 }
 
+export const manualMediaAdditionsKey = (
+  mediaType: ManualMediaSearchInput['mediaType'],
+) => ['manual-media-additions', mediaType]
+
+export type ManualMediaAdditions = ReadonlyMap<
+  string,
+  { id: string; addedAt: number }
+>
+
+/** Update open catalog results when another surface saves the exact item. */
+export function rememberManualMediaAddition(
+  client: QueryClient,
+  mediaType: ManualMediaSearchInput['mediaType'],
+  externalId: string,
+  id: string,
+) {
+  client.setQueryData<ManualMediaAdditions>(
+    manualMediaAdditionsKey(mediaType),
+    (previous) =>
+      new Map(previous).set(externalId, { id, addedAt: Date.now() }),
+  )
+}
+
 export function invalidateManualMediaAddition(
   client: QueryClient,
   mediaType: ManualMediaSearchInput['mediaType'],
@@ -166,10 +189,16 @@ export function invalidateManualMediaAddition(
   return Promise.all([
     ...(mediaType === 'album'
       ? [
-          client.invalidateQueries({ queryKey: ['catalog-membership'] }),
-          client.invalidateQueries({ queryKey: ['playback-catalog'] }),
-          client.invalidateQueries({ queryKey: ['tidal-similar'] }),
-        ]
+          'catalog-membership',
+          'playback-catalog',
+          'tidal-similar',
+          'album',
+          'artist',
+          'artist-overview',
+          'playlist',
+          'track',
+          'tracks',
+        ].map((key) => client.invalidateQueries({ queryKey: [key] }))
       : []),
     client.invalidateQueries({
       queryKey: [mediaType === 'album' ? 'albums' : 'films'],

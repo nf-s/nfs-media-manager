@@ -153,13 +153,13 @@ test('every external album and track offers Add to Library beside its service li
   for (const kind of kinds) {
     const html = body({ kind })
     assert.equal(html.match(/lucide-book-plus/g)?.length, 3)
-    assert.equal(html.match(/lucide-book-check/g)?.length, 1)
+    assert.doesNotMatch(html, /lucide-book-check/)
     for (const item of items) {
       const action = `aria-label="Add ${kind} to library · ${item.title}"`
       if (item.library) {
         assert.ok(!html.includes(action))
         assert.ok(
-          html.includes(
+          !html.includes(
             `aria-label="${item.title} is in your library (${kind})"`,
           ),
         )
@@ -212,6 +212,16 @@ test('similar rows show genre names with generic grouping and keep stored eviden
     }
     assert.doesNotMatch(body({ kind, items: [item] }), /class="ds-pills"/)
   }
+})
+
+test('a hidden exact suggestion keeps its service link without an add control', () => {
+  const item = {
+    ...suggestion('100007', 'none', 'Hidden suggestion'),
+    hiddenLibraryMatch: true,
+  } satisfies TidalSimilar['items'][number]
+  const html = body({ items: [item] })
+  assert.ok(html.includes(`href="${item.url}"`))
+  assert.doesNotMatch(html, /lucide-book-plus|lucide-book-check/)
 })
 
 test('the library match opens Sources and names the reference used', () => {
@@ -466,4 +476,15 @@ test('a Spotify-only suggestion plays by its Spotify URI', () => {
     credits: [{ id: null, name: 'Example artist' }],
   })
   assert.equal(similarCounts([]), '0 from TIDAL · 0 in library · 0 on Spotify')
+})
+
+test('a cached Spotify match still queues a saved suggestion with its library identity', () => {
+  const [saved, external] = items
+  assert.ok(saved?.library && external?.spotify)
+  const playable = spotifyPlayable('track', {
+    ...saved,
+    spotify: external.spotify,
+  })
+  assert.equal(playable?.trackId, saved.library.id)
+  assert.equal(playable?.uri, `spotify:track:${external.spotify.spotifyId}`)
 })

@@ -36,6 +36,7 @@ const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
 const plugins = [spotifyPlugin, tmdbPlugin]
 const shorterPageTrackId = 'AAAAAAAAAAAAAAAAAAAAAA'
+const relinkedTrackId = 'EEEEEEEEEEEEEEEEEEEEEE'
 /** A longer release with the title and artist of the fixture album. */
 const extendedAlbumId = 'CCCCCCCCCCCCCCCCCCCCCC'
 const extendedTrackId = 'DDDDDDDDDDDDDDDDDDDDDD'
@@ -87,6 +88,10 @@ const request = vi.fn(async (input: string | URL) => {
     return Response.json(extendedAlbum)
   if (url.pathname === `/v1/tracks/${extendedTrackId}`)
     return Response.json(extendedTrack)
+  if (url.pathname === '/v1/search' && url.searchParams.get('type') === 'album')
+    return Response.json({
+      albums: { items: [spotifyAlbumFixture()], total: 1, offset: 0 },
+    })
   if (
     url.pathname === '/v1/search' &&
     url.searchParams.get('type') === 'track'
@@ -101,7 +106,15 @@ const request = vi.fn(async (input: string | URL) => {
         items:
           offset === 0
             ? [{ ...catalogTrack, id: shorterPageTrackId, is_local: true }]
-            : [catalogTrack, catalogTrack],
+            : url.searchParams.get('q') === 'Relinked'
+              ? [
+                  {
+                    ...catalogTrack,
+                    id: relinkedTrackId,
+                    linked_from: { id: spotifyTrackId },
+                  },
+                ]
+              : [catalogTrack, catalogTrack],
       },
     })
   }
@@ -181,6 +194,82 @@ afterAll(async () => {
 })
 
 describe('manual additions through the canonical persistence path', () => {
+  it('distinguishes eligible outside albums, ambiguous identities and library members', async () => {
+    const identity = {
+      mediaType: 'album',
+      externalId: spotifyAlbumId,
+    } satisfies Parameters<typeof readCatalogMembership>[0]['items'][number]
+    const outsideId = 'fixture-outside-album'
+    const duplicateId = 'fixture-outside-album-duplicate'
+    async function insertOutside(id: string) {
+      await databaseClient.insert(schema.mediaItem).values({
+        id,
+        mediaType: 'album',
+        slug: id,
+        title: 'Example Album',
+        inLibrary: false,
+      })
+      await databaseClient.insert(schema.album).values({
+        mediaItemId: id,
+        spotifyUrl: `https://open.spotify.com/album/${spotifyAlbumId}`,
+      })
+    }
+    const read = () => readCatalogMembership({ items: [identity] })
+    const search = () =>
+      searchManualMedia({
+        mediaType: 'album',
+        q: 'Example Album',
+        exactMembership: true,
+      })
+    await insertOutside(outsideId)
+    expect(await read()).toEqual({
+      items: [{ ...identity, mediaItemId: null, ambiguous: false }],
+    })
+    const single = await search()
+    expect(single.items[0]).toMatchObject({
+      mediaItemId: null,
+      catalogMediaItemId: outsideId,
+    })
+    expect(single.items[0]?.membershipAmbiguous).toBeUndefined()
+
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: { legacyHidden: true } })
+      .where(eq(schema.mediaItem.id, outsideId))
+    expect(await read()).toEqual({
+      items: [{ ...identity, mediaItemId: null, ambiguous: true }],
+    })
+    expect((await search()).items[0]).toMatchObject({
+      mediaItemId: null,
+      membershipAmbiguous: true,
+    })
+
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ metadata: {} })
+      .where(eq(schema.mediaItem.id, outsideId))
+    await insertOutside(duplicateId)
+    expect(await read()).toEqual({
+      items: [{ ...identity, mediaItemId: null, ambiguous: true }],
+    })
+    expect((await search()).items[0]).toMatchObject({
+      mediaItemId: null,
+      membershipAmbiguous: true,
+    })
+    await expect(addManualMedia(identity)).rejects.toMatchObject({
+      response: { statusCode: 409 },
+    })
+
+    await databaseClient
+      .update(schema.mediaItem)
+      .set({ inLibrary: true })
+      .where(eq(schema.mediaItem.id, outsideId))
+    expect(await read()).toEqual({
+      items: [{ ...identity, mediaItemId: outsideId, ambiguous: false }],
+    })
+    expect((await search()).items[0]).toMatchObject({ mediaItemId: outsideId })
+  })
+
   it('looks up catalog identities independently without requesting the provider', async () => {
     const added = await addManualMedia({
       mediaType: 'track',
@@ -315,6 +404,74 @@ describe('manual additions through the canonical persistence path', () => {
 })
 
 describe('manual Spotify tracks', () => {
+  it('finds a saved album recording from device metadata before Spotify has been linked', async () => {
+    await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId })
+    await addManualMedia({ mediaType: 'track', externalId: spotifyTrackId })
+    const [track] = await databaseClient.select().from(schema.libraryTrack)
+    if (!track) throw new Error('Missing fixture track')
+    await databaseClient
+      .update(schema.libraryTrack)
+      .set({ spotifyTrackId: null, spotifyUrl: null })
+      .where(eq(schema.libraryTrack.mediaItemId, track.mediaItemId))
+    const outsideId = 'fixture-outside-spotify-track'
+    await databaseClient.insert(schema.mediaItem).values({
+      id: outsideId,
+      mediaType: 'track',
+      title: 'Opening',
+      slug: outsideId,
+      inLibrary: false,
+    })
+    await databaseClient.insert(schema.libraryTrack).values({
+      mediaItemId: outsideId,
+      spotifyTrackId,
+    })
+    request.mockClear()
+
+    const identity = {
+      mediaType: 'track',
+      externalId: spotifyTrackId,
+    } satisfies Parameters<typeof readCatalogMembership>[0]['items'][number]
+    const recording = {
+      title: 'Opening',
+      artists: ['Example Artist'],
+      spotifyAlbumId,
+      albumName: 'Example Album',
+    }
+    expect(await readCatalogMembership({ items: [identity] })).toEqual({
+      items: [{ ...identity, ambiguous: false, mediaItemId: null }],
+    })
+    expect(
+      await readCatalogMembership({ items: [{ ...identity, recording }] }),
+    ).toEqual({
+      items: [
+        { ...identity, ambiguous: false, mediaItemId: track.mediaItemId },
+      ],
+    })
+    expect(
+      await readCatalogMembership({
+        items: [
+          {
+            ...identity,
+            recording: { ...recording, spotifyAlbumId: extendedAlbumId },
+          },
+        ],
+      }),
+    ).toEqual({
+      items: [{ ...identity, ambiguous: false, mediaItemId: null }],
+    })
+    expect(request).not.toHaveBeenCalled()
+    expect(
+      (await searchManualMedia({ mediaType: 'track', q: 'Opening', page: 2 }))
+        .items,
+    ).toMatchObject([
+      {
+        externalId: spotifyTrackId,
+        mediaItemId: track.mediaItemId,
+        catalogMediaItemId: outsideId,
+      },
+    ])
+  })
+
   it('pages through catalog results and uses exact library IDs', async () => {
     const search = { mediaType: 'track', q: 'Opening' } satisfies Parameters<
       typeof searchManualMedia
@@ -354,6 +511,22 @@ describe('manual Spotify tracks', () => {
     expect(request).not.toHaveBeenCalled()
     expect((await searchManualMedia({ ...search, page: 2 })).items).toEqual([
       { ...expectedItem, mediaItemId: albumTrack?.mediaItemId },
+    ])
+  })
+
+  it('recognizes a saved recording under the original ID of a relinked Spotify result', async () => {
+    const saved = await addManualMedia({
+      mediaType: 'track',
+      externalId: spotifyTrackId,
+    })
+    const result = await searchManualMedia({
+      mediaType: 'track',
+      q: 'Relinked',
+      page: 2,
+      exactMembership: true,
+    })
+    expect(result.items).toMatchObject([
+      { externalId: relinkedTrackId, mediaItemId: saved.mediaItemId },
     ])
   })
 
@@ -453,6 +626,7 @@ describe('manual Spotify tracks', () => {
     'reuses an unambiguous recording on the corresponding library album with added date %s',
     async (previousDate) => {
       await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId })
+      await addManualMedia({ mediaType: 'track', externalId: spotifyTrackId })
       const [albumTrack] = await databaseClient
         .select()
         .from(schema.libraryTrack)
