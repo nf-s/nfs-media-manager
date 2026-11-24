@@ -39,6 +39,7 @@ import {
   columnWidth,
 } from '@repo/ui/components/ui/table'
 import { Card, CardTitle } from '@repo/ui/components/ds/card'
+import { CatalogLibraryAction } from './catalog-detail'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
 import {
   List,
@@ -197,9 +198,22 @@ function versionMark(item: TrackListItem) {
   )
 }
 
+function TrackBrowseLibraryAction({ track }: { track: TrackListItem }) {
+  if (track.inLibrary !== false) return null
+  return (
+    <CatalogLibraryAction
+      id={track.id}
+      kind="track"
+      title={track.title}
+      inLibrary={track.inLibrary}
+      inline
+    />
+  )
+}
+
 /**
  * The identity cell of a version's part row: the provider mark, the title,
- * Shown on the version the record's row is shown as, then the play pair.
+ * Shown on the version the record's row is shown as, then the row actions.
  */
 export function TrackVersionTitle({
   track,
@@ -221,6 +235,7 @@ export function TrackVersionTitle({
           </>
         )}
       </TablePartTitle>
+      <TrackBrowseLibraryAction track={track} />
       <LibraryTrackPlayButton track={track} />
     </span>
   )
@@ -677,19 +692,23 @@ function TrackBrowse({
     )
   }
 
-  function titleWithVersions(
+  function titleWithActions(
     item: TrackListItem,
     index: number | undefined,
     title: ReactNode,
   ) {
-    return item.recordingGroup && index !== undefined ? (
+    const showVersions = item.recordingGroup && index !== undefined
+    return showVersions || item.inLibrary === false ? (
       <span className="ds-cell-id gap-[var(--ds-1)]">
         {title}
-        <RecordingVersionsToggle
-          track={item}
-          index={index}
-          versions={versions}
-        />
+        <TrackBrowseLibraryAction track={item} />
+        {showVersions && (
+          <RecordingVersionsToggle
+            track={item}
+            index={index}
+            versions={versions}
+          />
+        )}
       </span>
     ) : (
       title
@@ -731,6 +750,7 @@ function TrackBrowse({
             target={{ kind: 'track', id: item.id }}
           />
           {trackLink(item, 'ds-cell-title')}
+          <TrackBrowseLibraryAction track={item} />
           {playPair(item, index)}
         </span>
       )
@@ -798,7 +818,7 @@ function TrackBrowse({
             target={{ kind: 'track', id: item.id }}
           />
         }
-        title={titleWithVersions(
+        title={titleWithActions(
           item,
           index,
           <RowTitle>{trackLink(item)}</RowTitle>,
@@ -1118,7 +1138,7 @@ function TrackBrowse({
                             overlay={playPair(item, index, 'tile')}
                           />
                         }
-                        title={titleWithVersions(
+                        title={titleWithActions(
                           item,
                           index,
                           <CardTitle>{trackLink(item)}</CardTitle>,

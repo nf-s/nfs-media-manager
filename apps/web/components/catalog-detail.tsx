@@ -47,11 +47,14 @@ export function CatalogLibraryAction({
   kind,
   title,
   inLibrary,
+  inline = false,
 }: {
   id: string
   kind: 'album' | 'track' | 'film' | CatalogNativeKind
   title: string
   inLibrary: boolean
+  /** Inline actions report errors through the shared mutation toast. */
+  inline?: boolean
 }) {
   const { apiBaseUrl } = useConfig()
   const announce = useAnnounceLibraryAddition()
@@ -99,7 +102,7 @@ export function CatalogLibraryAction({
         pending={action.isPending}
         onAdd={() => action.mutate()}
       />
-      {action.isError && (
+      {!inline && action.isError && (
         <Notice tone="danger">Could not add to library.</Notice>
       )}
     </>
