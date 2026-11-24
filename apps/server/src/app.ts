@@ -16,6 +16,7 @@ import {
   ownerSessionSecurity,
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
+import { recordCatalogRequestFailure } from '@/lib/request-log'
 import { logger } from '@/middlewares/logger'
 import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
 import albums from '@/routes/albums'
@@ -225,6 +226,7 @@ const v1ApiRoutes = v1ApiBase
   )
 
 app.onError(async (err, c) => {
+  recordCatalogRequestFailure(err)
   if (err instanceof ServerError) {
     return c.json(err.response, err.response.statusCode)
   }

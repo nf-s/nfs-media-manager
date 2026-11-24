@@ -9,6 +9,7 @@ import {
 import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { measureCatalogWriteLock } from '@/lib/request-log'
 import { catalogNativeAddition } from '@/schemas/db'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
@@ -822,7 +823,9 @@ export async function observeCatalogMedia(
   pendingSpotifyCredits?: SpotifyRecordingCredit[],
 ): Promise<string> {
   // Share the lock used by existing Spotify recording, merge and track writers.
-  await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+  await measureCatalogWriteLock(() =>
+    tx.execute(sql`select pg_advisory_xact_lock(614106)`),
+  )
   const resolved = await existingMedia(tx, media)
   const existingId = typeof resolved === 'string' ? resolved : resolved?.id
   const spotifyTrack = media.provider === 'spotify' && media.kind === 'track'

@@ -34,6 +34,8 @@ For slow Track details, compare the `trackDetailHydrate`, `trackDetailListening`
 
 The API emits one `api.request` access event per completed handler invocation. In Workers Query Builder, select the API Worker and filter by this event. Group by the registered `route` and `method`. For successful interactive reads, show count, median, p95 and maximum of `durationMs`. Count server errors in a separate series covering all statuses. Get the traffic count before adding optional phase fields. Query each applicable phase separately so missing fields do not exclude requests from the denominator. Start with the following alert thresholds and recalibrate from measured traffic when usage or capacity changes. [Cloudflare Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/)
 
+For `POST /api/v1/playback/catalog` and `POST /api/v1/catalog/spotify-album-reference`, compare the shared catalog write lock phase (`phases.catalogWriteLock.durationMs`) with the total duration. Group 5xx responses by `catalogFailure` to distinguish lock timeouts, query cancellation, transaction conflicts, other database failures, provider evidence failures and validation failures. A query cancellation can also come from a statement deadline. Report requests without a failure category separately.
+
 | Interactive read     | Starting p95 threshold |
 | -------------------- | ---------------------: |
 | Browse page          |                 750 ms |

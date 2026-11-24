@@ -1,3 +1,4 @@
+import '@hono/zod-openapi'
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
@@ -10,6 +11,7 @@ import {
 } from '@repo/schemas/provider-response'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { env } from '@/env'
+import { logApiRequest, requestQueryLogger } from '@/lib/request-log'
 import { parseSpotifyArtistAlbumPage } from '@/lib/spotify-artist-albums'
 import { spotifyTokenFixture } from '@/plugins/builtin/__tests__/fixtures/spotify'
 import { spotifyPlugin } from '@/plugins/builtin/spotify'
@@ -28,7 +30,8 @@ let statements: number | undefined
 const fixture = drizzle(pool, {
   schema,
   logger: {
-    logQuery() {
+    logQuery(query: string, params: unknown[]) {
+      requestQueryLogger.logQuery(query, params)
       if (statements !== undefined) statements++
     },
   },
@@ -50,6 +53,19 @@ vi.mock('@/lib/db', () => ({
   },
   get db() {
     return fixture
+  },
+}))
+vi.mock('@/lib/auth', () => ({
+  auth: {
+    api: {
+      async getSession({ headers }: { headers: Headers }) {
+        if (!headers.has('cookie')) return null
+        return {
+          user: { id: ownerId, email: 'owner@example.test', role: 'admin' },
+          session: { userId: ownerId },
+        }
+      },
+    },
   },
 }))
 vi.mock('@/plugins/registry', () => ({
@@ -469,6 +485,91 @@ it('opens an exact recorded parent once, retains a partial track page and adds o
     ),
   ).toBe(1)
 }, 20_000)
+
+it('identifies catalog requests cancelled while waiting for the write lock and allows a clean retry', async () => {
+  const { default: app } = await import('@/app')
+  const albumId = await seedParentAlbum('catalog-contention-album')
+  const trackId = await seedParentTrack('catalog-contention-track', {
+    albumMediaItemId: albumId,
+  })
+  const attempts = [
+    {
+      path: '/api/v1/catalog/spotify-album-reference',
+      body: { trackId },
+    },
+    {
+      path: '/api/v1/playback/catalog',
+      body: {
+        operation: 'playback',
+        items: [
+          {
+            kind: 'album',
+            spotifyId: 'catalogcontentionalbum',
+            title: 'Catalog contention fixture',
+            artists: [],
+          },
+        ],
+      },
+    },
+  ]
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  request.mockClear()
+  try {
+    for (const { path, body } of attempts) {
+      const send = () => {
+        const input = new Request(`http://localhost:4000${path}`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            cookie: 'session=fixture',
+            origin: 'http://localhost:3000',
+          },
+          body: JSON.stringify(body),
+        })
+        return logApiRequest(input, () => app.fetch(input))
+      }
+      const response = await fixture.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+        const blocked = send()
+        await vi.waitFor(async () => {
+          const { rows } = await tx.execute(sql`
+            select pg_cancel_backend(pid) as cancelled from pg_locks
+            where locktype = 'advisory' and classid = 0 and objid = 614106
+              and not granted and pg_backend_pid() = any(pg_blocking_pids(pid))
+          `)
+          expect(rows).toEqual([{ cancelled: true }])
+        })
+        return blocked
+      })
+      expect(response.status).toBe(500)
+      expect((await send()).status).toBe(200)
+    }
+    expect(request).not.toHaveBeenCalled()
+    expect(info.mock.calls.map(([line]) => JSON.parse(line))).toEqual(
+      attempts.flatMap(({ path }) => [
+        expect.objectContaining({
+          event: 'api.request',
+          route: path,
+          status: 500,
+          drizzleStatementCount: 3,
+          catalogFailure: 'query-cancelled',
+          phases: expect.objectContaining({
+            catalogWriteLock: expect.objectContaining({
+              drizzleStatementCount: 1,
+            }),
+          }),
+        }),
+        expect.not.objectContaining({ catalogFailure: expect.anything() }),
+      ]),
+    )
+    expect(JSON.stringify(info.mock.calls)).not.toContain(trackId)
+    expect(JSON.stringify(info.mock.calls)).not.toContain(
+      'Catalog contention fixture',
+    )
+  } finally {
+    info.mockRestore()
+  }
+})
 
 it('writes a new and repeated 20-entry artist release page in bounded database work', async () => {
   const sourceId = 'artist-page-writer'

@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
+import { DrizzleQueryError } from 'drizzle-orm'
 import type { Logger } from 'drizzle-orm/logger'
+import { ZodError } from 'zod'
 import {
   albumBrowseFields,
   filmBrowseFields,
@@ -15,6 +17,7 @@ import {
   type SonosStateReason,
 } from '@repo/schemas/sonos'
 import { env } from '@/env'
+import { ProviderResponseStorageError } from '@/lib/provider-response-history'
 import type { SonosRateLimit } from '@/lib/sonos-rate-limit'
 
 interface RequestLogDetails {
@@ -28,6 +31,7 @@ interface RequestLogDetails {
 
 type RequestPhase =
   | 'accessCheck'
+  | 'catalogWriteLock'
   | 'ids'
   | 'hydrate'
   | 'trackDetailHydrate'
@@ -81,8 +85,18 @@ interface RequestLogContext {
   drizzleStatementCount: number
   phases: Partial<Record<RequestPhase, PhaseMetrics>>
   browse?: RequestBrowseProfile
+  catalogFailure?: CatalogFailure
   recordingOrderRefreshDue?: boolean
 }
+
+type CatalogFailure =
+  | 'lock-timeout'
+  | 'query-cancelled'
+  | 'transaction-conflict'
+  | 'database'
+  | 'provider-evidence'
+  | 'data-validation'
+  | 'other'
 
 interface SonosDispatch {
   attemptId: string
@@ -113,6 +127,7 @@ type RequestEvent =
   | ({ event: 'api.request'; method: string; status: number } & PhaseMetrics & {
         phases?: RequestLogContext['phases']
         browse?: RequestBrowseProfile
+        catalogFailure?: CatalogFailure
       })
   | (SonosDispatch & { event: 'sonos.dispatch' })
   | (SonosDispatch & {
@@ -152,6 +167,39 @@ const methods = new Set([
   'HEAD',
   'OPTIONS',
 ])
+
+const catalogRoutes = new Set([
+  '/api/v1/catalog/spotify-album-reference',
+  '/api/v1/playback/catalog',
+])
+
+export function recordCatalogRequestFailure(error: unknown) {
+  const current = context.getStore()
+  if (!current || !catalogRoutes.has(current.details.route)) return
+
+  let failure: CatalogFailure = 'other'
+  if (error instanceof ProviderResponseStorageError)
+    failure = 'provider-evidence'
+  else if (error instanceof ZodError) failure = 'data-validation'
+  else if (error instanceof DrizzleQueryError) {
+    const cause = error.cause
+    const code =
+      cause && typeof cause === 'object' && 'code' in cause ? cause.code : null
+    if (code === '55P03') failure = 'lock-timeout'
+    else if (code === '57014') failure = 'query-cancelled'
+    else if (code === '40P01' || code === '40001')
+      failure = 'transaction-conflict'
+    else failure = 'database'
+  }
+  current.catalogFailure = failure
+}
+
+export function measureCatalogWriteLock<T>(acquire: () => Promise<T>) {
+  const current = context.getStore()
+  return current && catalogRoutes.has(current.details.route)
+    ? measureRequestPhase('catalogWriteLock', async () => acquire())
+    : acquire()
+}
 
 export function writeRequestLog(event: RequestEvent) {
   const record = {
@@ -329,6 +377,8 @@ export async function logApiRequest(
         durationMs: performance.now() - start,
         drizzleStatementCount: current.drizzleStatementCount,
         ...(current.browse && { browse: current.browse }),
+        ...(status >= 500 &&
+          current.catalogFailure && { catalogFailure: current.catalogFailure }),
         ...(Object.keys(current.phases).length && {
           phases: { ...current.phases },
         }),

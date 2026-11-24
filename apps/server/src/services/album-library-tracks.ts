@@ -5,6 +5,7 @@ import { albumNameKey } from '@/lib/album-import-candidates'
 import { observeCatalogOccurrences } from './catalog-discoveries'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
+import { measureCatalogWriteLock } from '@/lib/request-log'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { album, libraryTrack, mediaItem, track } from '@/schemas/db'
 import {
@@ -91,7 +92,9 @@ export type AlbumFallbackArtistCreditCorrection = z.infer<
 /** Share the library-track writer lock with imports, retention and merges. */
 export async function lockLibraryTrackWrites(database: Transaction) {
   // The worker holds 614105 for its entire session on a separate connection.
-  await database.execute(sql`select pg_advisory_xact_lock(614106)`)
+  await measureCatalogWriteLock(() =>
+    database.execute(sql`select pg_advisory_xact_lock(614106)`),
+  )
 }
 
 /**
