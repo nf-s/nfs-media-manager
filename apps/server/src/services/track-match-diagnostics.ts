@@ -147,6 +147,7 @@ const trackTables = sql`from media_item join library_track on library_track.medi
   left join media_item track_sort_album on track_sort_album.id = library_track.album_media_item_id`
 const visibleTracks = sql`media_item.media_type = 'track'
   and media_item.metadata->>'legacyHidden' is distinct from 'true'`
+const visibleLibraryTracks = sql`${visibleTracks} and media_item.in_library`
 const trackBrowseFieldKeys = new Set(
   trackBrowseFields.map((field) => field.key),
 )
@@ -542,7 +543,7 @@ function trackMatchDiagnosticsRows(
     (filter) => filter.field === 'source' && filter.mode === 'required',
   )
   const scope = [
-    visibleTracks,
+    visibleLibraryTracks,
     ...trackBrowseFieldConditions(sources, [], ordinaryFields, evidenceFilter),
   ]
   if (query.creatorId)
@@ -812,7 +813,7 @@ export async function listTrackMatchDiagnosticsFacets(input: BrowseFacetQuery) {
         browseFacetRows(field, evidenceValues(field.key), query, limit),
       )
       const result = await db.execute(sql`
-        with records as not materialized (${records} ${trackTables} where ${visibleTracks}),
+        with records as not materialized (${records} ${trackTables} where ${visibleLibraryTracks}),
           evidence as materialized (${trackEvidence(sql`records`, allEvidenceProviders)})
         ${sql.join(fields, sql` union all `)}
       `)

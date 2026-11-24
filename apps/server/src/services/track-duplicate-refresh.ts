@@ -16,7 +16,7 @@ import { readTrackMergeOutlines } from './track-merge-plan'
 const TRACK_DUPLICATE_GROUP_LIMIT = 12
 
 // Bump when the rules change, so the next maintenance tick rebuilds.
-const RULES_VERSION = 1
+const RULES_VERSION = 2
 /** Groups built by another role or other rules are rebuilt. */
 export const trackDuplicateBuilder = sql`current_user || ':track-duplicates-' || ${String(RULES_VERSION)}::text`
 
@@ -113,6 +113,7 @@ async function readCandidates(
         from library_track lt join media_item mi on mi.id = lt.media_item_id
         left join track_match_key k on k.track_id = lt.media_item_id
         where mi.media_type = 'track'
+          and mi.in_library
           and mi.metadata->>'legacyHidden' is distinct from 'true'
           ${ids ? sql`and lt.media_item_id = any(${idsParam(ids)})` : sql``}`)
     ).rows,
@@ -537,7 +538,7 @@ async function publishGroups(
 async function rebuildAll(tx: ChangeTransaction) {
   await tx.execute(sql`
     delete from track_match_key k using media_item mi
-    where mi.id = k.track_id and (mi.media_type <> 'track'
+    where mi.id = k.track_id and (mi.media_type <> 'track' or not mi.in_library
       or mi.metadata->>'legacyHidden' is not distinct from 'true')`)
   const candidates = await readCandidates(tx)
   const { groups, waiting } = await buildGroups(

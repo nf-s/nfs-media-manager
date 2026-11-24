@@ -292,7 +292,9 @@ it('uses the title index for both directions of Track Browse', async () => {
     )
     expect(
       plans.some(
-        (plan) => plan['Index Name'] === 'media_item_type_title_id_idx',
+        (plan) =>
+          plan['Index Name'] === 'media_item_type_title_id_idx' ||
+          plan['Index Name'] === 'media_item_library_title_idx',
       ),
     ).toBe(true)
   }

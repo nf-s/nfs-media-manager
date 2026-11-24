@@ -34,6 +34,7 @@ import {
 import { readRejectionTest } from './library-match-rejections'
 import { refreshTrackAddedDates } from './spotify-playlists'
 import { archiveTracks } from './track-archive'
+import { refreshTrackDuplicates } from './track-duplicate-refresh'
 import { refreshTrackListeningTotals } from './track-links'
 import { moveTrackMemberships } from './track-version-effects'
 
@@ -710,13 +711,19 @@ export async function removeOrphanTracks(
       or exists (select 1 from catalog_media_alias a where a.media_item_id = mi.id)
       or exists (select 1 from playlist_item pi where pi.media_item_id = mi.id))`
   const demoted = await database.execute(
-    sql`update media_item mi set in_library = false where mi.in_library and ${orphan} and ${observed}`,
+    sql`update media_item mi set in_library = false
+      where mi.in_library and ${orphan} and ${observed} returning mi.id`,
   )
   const removed = await database.execute(sql`with removed as (
     delete from media_item mi where ${orphan} and not ${observed} returning in_library
   ) select count(*) filter (where in_library)::int as members from removed`)
+  const demotedIds = z.array(z.object({ id: z.string() })).parse(demoted.rows)
+  if (demotedIds.length)
+    await refreshTrackDuplicates(database, {
+      trackIds: demotedIds.map(({ id }) => id),
+    })
   return (
-    (demoted.rowCount ?? 0) +
+    demotedIds.length +
     z.object({ members: z.number() }).parse(removed.rows[0]).members
   )
 }

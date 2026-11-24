@@ -1,9 +1,11 @@
 import { sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { z } from 'zod'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import { db } from '@/lib/db'
 import { canReadDatabaseWithoutCache } from '@/lib/database-read-cache'
 import { recordRecordingOrderLookup } from '@/lib/request-log'
+import { catalogScopeCondition } from './catalog-scope'
 
 const RecordingGroupSchema = z.object({
   id: z.string(),
@@ -33,17 +35,28 @@ const normalizedIsrc = (value: SQL) => sql`upper(trim(${value}))`
 const validIsrc = (value: SQL) =>
   sql`substring(${value} from '^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$')`
 const knownDuration = sql`case when lt.duration_sec > 0 then lt.duration_sec end`
-const visibleTrack = sql`mi.media_type = 'track'
-  and mi.in_library
-  and mi.metadata->>'legacyHidden' is distinct from 'true'`
+function visibleRecordingTrack(
+  libraryScope?: CatalogScopeQuery['libraryScope'],
+) {
+  const membership = catalogScopeCondition(sql`mi.id`, sql`mi.in_library`, {
+    libraryScope,
+  })
+  return sql`mi.media_type = 'track' and ${membership}
+    and mi.metadata->>'legacyHidden' is distinct from 'true'`
+}
+const visibleLibraryTrack = visibleRecordingTrack()
 // A track with a stored version group is grouped by it alone, so a group of
 // one keeps it apart from the versions worked out for it.
 const unstoredVersion = sql`lt.version_group_id is null`
 
-function recordingTracksWithTitles(titles: SQL, creatorId?: SQL) {
+function recordingTracksWithTitles(
+  titles: SQL,
+  visibility: SQL,
+  creatorId?: SQL,
+) {
   const title = exactName(sql`mi.title`)
   return sql`select mi.id, ${title} as title_key from media_item mi
-    where ${visibleTrack} and ${title} = any(array(${titles}))
+    where ${visibility} and ${title} = any(array(${titles}))
     ${
       creatorId
         ? sql`and mi.id in (select media_item_id from media_credit
@@ -52,14 +65,14 @@ function recordingTracksWithTitles(titles: SQL, creatorId?: SQL) {
     }`
 }
 
-function recordingVersionTracks(id: string) {
+function recordingVersionTracks(id: string, visibility: SQL) {
   // Stored versions can have other titles.
   return sql`recording_version_tracks as materialized (
-    ${recordingTracksWithTitles(sql`select ${exactName(sql`title`)} as title_key from media_item where id = ${id}`)}
+    ${recordingTracksWithTitles(sql`select ${exactName(sql`title`)} as title_key from media_item where id = ${id}`, visibility)}
     union
     select mi.id, ${exactName(sql`mi.title`)} as title_key
     from library_track lt join media_item mi on mi.id = lt.media_item_id
-    where ${visibleTrack} and lt.version_group_id = (
+    where ${visibility} and lt.version_group_id = (
       select version_group_id from library_track where media_item_id = ${id})
   ), `
 }
@@ -106,7 +119,7 @@ function recordingIdentities(titledTracks: SQL) {
     where v.title_key <> '' and ${unstoredVersion}`
 }
 
-function recordingContenders(creatorId?: string) {
+function recordingContenders(visibility: SQL, creatorId?: string) {
   // Every version of a recording shares the track's complete artist credits.
   const source = creatorId
     ? sql`select mi.id, ${exactName(sql`mi.title`)} as title_key,
@@ -114,13 +127,13 @@ function recordingContenders(creatorId?: string) {
       from media_credit c
       join media_item mi on mi.id = c.media_item_id
       join library_track lt on lt.media_item_id = mi.id
-      where c.artist_id = ${creatorId} and c.role = 'artist' and ${visibleTrack}
+      where c.artist_id = ${creatorId} and c.role = 'artist' and ${visibility}
         and ${unstoredVersion}`
     : sql`select mi.id, ${exactName(sql`mi.title`)} as title_key,
         ${validIsrc(normalizedIsrc(sql`lt.isrc`))} as isrc, ${knownDuration} as duration_sec
       from media_item mi
       join library_track lt on lt.media_item_id = mi.id
-      where ${visibleTrack} and ${unstoredVersion}
+      where ${visibility} and ${unstoredVersion}
         and mi.id in (select id from recording_groupable)`
   return sql`
     ${
@@ -140,7 +153,7 @@ function recordingContenders(creatorId?: string) {
       ${
         creatorId
           ? sql``
-          : sql`union all ${recordingIdentities(sql`(${recordingTracksWithTitles(boundedTitles)})`)}`
+          : sql`union all ${recordingIdentities(sql`(${recordingTracksWithTitles(boundedTitles, visibility)})`)}`
       }
     )`
 }
@@ -152,6 +165,7 @@ export function recordingMemberships(
     creatorId?: string
     versionId?: string
     includePeerMembers?: boolean
+    libraryScope?: CatalogScopeQuery['libraryScope']
     useTargetTitles?: boolean
     targetArtist?: SQL
   } = {},
@@ -160,9 +174,11 @@ export function recordingMemberships(
     creatorId,
     versionId,
     includePeerMembers,
+    libraryScope,
     useTargetTitles,
     targetArtist,
   } = options
+  const visibility = visibleRecordingTrack(libraryScope)
   const titledTracks =
     versionId !== undefined
       ? sql`recording_version_tracks`
@@ -172,13 +188,14 @@ export function recordingMemberships(
             select distinct ${exactName(sql`mi.title`)} as title_key
             from recording_matches target join media_item mi using (id)
           `,
+            visibility,
             targetArtist,
           )})`
         : undefined
   const contenders = titledTracks
     ? sql`recording_contenders as (${recordingIdentities(titledTracks)})`
-    : recordingContenders(creatorId)
-  return sql`${versionId === undefined ? sql`` : recordingVersionTracks(versionId)}
+    : recordingContenders(visibility, creatorId)
+  return sql`${versionId === undefined ? sql`` : recordingVersionTracks(versionId, visibility)}
     recording_matches as materialized (${matches}),
     ${contenders},
     recording_credits as (
@@ -252,7 +269,7 @@ export function recordingMemberships(
         min(lt.media_item_id) over versions as group_key,
         count(*) over versions as version_count
       from library_track lt join media_item mi on mi.id = lt.media_item_id
-      where ${visibleTrack} and lt.version_group_id in (
+      where ${visibility} and lt.version_group_id in (
         select v.version_group_id from library_track v
         where v.version_group_id is not null
           and v.media_item_id in (select id from recording_matches))
@@ -372,7 +389,7 @@ export const spotifyAlternateValue = sql`case when a.track_id is not null then j
 export function trackSpotifyAlternate(id: string) {
   const target = sql`select mi.id, mi.source_label, lt.spotify_track_id
     from media_item mi join library_track lt on lt.media_item_id = mi.id
-    where mi.id = ${id} and ${visibleTrack}`
+    where mi.id = ${id} and ${visibleLibraryTrack}`
   // Every sibling has the same complete artist credits. Use one to narrow
   // common titles before validating all credits and recording evidence.
   const targetArtist = sql`select artist_id from media_credit
@@ -401,7 +418,7 @@ export async function readRecordingVersions(
     sql`, `,
   )
   const matches = sql`select mi.id from media_item mi
-    where mi.id in (${given}) and ${visibleTrack}`
+    where mi.id in (${given}) and ${visibleLibraryTrack}`
   return RecordingPeerRowsSchema.parse(
     (
       await reader.execute(sql`with ${recordingMemberships(matches, {
@@ -500,7 +517,7 @@ const RecordingOrderReadSchema = z.object({
 
 const cleanOrder = sql`not exists (select 1 from recording_browse_order_dirty)`
 // Bump when the unfiltered membership or order changes, including tie-breaks.
-const orderBuilder = sql`current_user || ':v3'`
+const orderBuilder = sql`current_user || ':v4'`
 const staleOrder = sql`(recording_browse_order_state.total_count is null
   or recording_browse_order_state.builder <> ${orderBuilder}
   or not (${cleanOrder}))`

@@ -14,6 +14,7 @@ import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { standaloneLastfmTrackId } from '@/lib/track-matching'
 import * as schema from '@/schemas/db'
+import { removeOrphanTracks } from '@/services/album-library-tracks'
 
 const database = 'track_duplicates_' + randomUUID().replaceAll('-', '')
 const connection = {
@@ -398,6 +399,65 @@ it('says what Merge does to each group, as the merge plan does', async () => {
     .set({ metadata: { legacyHidden: 'true' } })
     .where(eq(schema.mediaItem.id, remaster.id))
   expect((await groupOf(nightDrive.id))?.merge).toBeNull()
+})
+
+it('omits outside tracks and drops a published group when its retained peer leaves the library', async () => {
+  const name = 'Scoped duplicate fixture'
+  const member = 'duplicate-scope-member'
+  const observed = 'duplicate-scope-observed'
+  const ids = [member, observed]
+  await fixture
+    .insert(schema.mediaItem)
+    .values(
+      ids.map((id) => ({
+        id,
+        slug: id,
+        title: name,
+        mediaType: 'track',
+        inLibrary: id === member,
+      })),
+    )
+  await fixture
+    .insert(schema.libraryTrack)
+    .values(ids.map((mediaItemId) => ({ mediaItemId, durationSec: 200 })))
+  await fixture
+    .insert(schema.mediaCredit)
+    .values(
+      ids.map((mediaItemId) => ({ mediaItemId, artistId, role: 'artist' })),
+    )
+  await fixture.insert(schema.catalogObservation).values({
+    id: 'duplicate-scope-observation',
+    mediaItemId: observed,
+    targetKind: 'track',
+    targetId: observed,
+    provider: 'spotify',
+    operation: 'playback',
+  })
+  expect(await rebuild()).toBe(true)
+  const initial = await countTrackDuplicateGroups({})
+  const matching = await listTrackMatchDiagnostics(
+    matches({ duplicates: false, q: name }),
+  )
+  expect(matching.items.map(({ id }) => id)).toEqual([member])
+  expect((await listTrackDuplicates(member)).items).toEqual([])
+
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: true })
+    .where(eq(schema.mediaItem.id, observed))
+  expect(await rebuild()).toBe(true)
+  expect((await countTrackDuplicateGroups({})).count).toBe(initial.count + 1)
+  expect((await groupOf(member))?.memberIds).toEqual(ids)
+
+  expect(
+    await fixture.transaction((tx) => removeOrphanTracks(tx, [observed])),
+  ).toBe(1)
+  expect(await countTrackDuplicateGroups({})).toEqual(initial)
+  expect((await listTrackDuplicates(member)).items).toEqual([])
+  const retained = await fixture.query.mediaItem.findFirst({
+    where: eq(schema.mediaItem.id, observed),
+  })
+  expect(retained?.inLibrary).toBe(false)
 })
 
 it('counts groups from stored state', async () => {

@@ -37,6 +37,7 @@ const lastfmPlaceholderOnly = lastfmPlaceholder({
 })
 
 const linkedTrackIsPlayable = sql`pm.metadata->>'legacyHidden' is distinct from 'true'
+  and pm.in_library
   and (peer.spotify_track_id is not null or exists (
     select 1 from track t where t.track_media_item_id = peer.media_item_id))`
 

@@ -789,7 +789,11 @@ function groupedTrackBrowse(
   const artistTagScope = sharedArtistTags
     ? sql`browse_artist_tag_labels as (${artistTagLabels()}), `
     : sql``
-  const memberships = sql`with ${artistTagScope}${recordingMemberships(matches, { creatorId: query.creatorId, versionId })}`
+  const memberships = sql`with ${artistTagScope}${recordingMemberships(matches, {
+    creatorId: query.creatorId,
+    libraryScope: query.libraryScope,
+    versionId,
+  })}`
   const groupRanges = query.ranges.flatMap((range) => {
     const value = recordingGroupValue(range.field)
     if (!value) return []
@@ -2634,7 +2638,7 @@ const releaseTagFacetKeys = sql`select t.id as tag_id, ${normalizedTagSql(sql`t.
 
 function albumTagFacetRows(
   key: string,
-  tagLevels?: TagLevels,
+  tagLevels: TagLevels | undefined,
   includeArchived: boolean | undefined,
   scope: CatalogScopeQuery,
 ) {

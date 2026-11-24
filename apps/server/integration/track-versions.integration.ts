@@ -32,6 +32,7 @@ vi.mock('@/plugins/registry', () => ({
 }))
 
 import { importLastfmLibraryTracks } from '@/services/lastfm-library-tracks'
+import { queryBrowseCounts, queryBrowsePositions } from '@/services/browse'
 import {
   redoLibraryChange,
   undoLibraryChange,
@@ -42,6 +43,7 @@ import { planTrackMerge } from '@/services/track-merge-plan'
 import { mergeTracks } from '@/services/track-merges'
 import {
   listTrackBrowsePage,
+  listTrackFilterOptions,
   listTrackRecordingVersions,
 } from '@/services/tracks'
 import {
@@ -268,6 +270,118 @@ beforeEach(async () => {
   await fixture.transaction((tx) => refreshTrackAddedDates(tx))
 })
 
+it('groups recording versions within the selected library scope', async () => {
+  const title = 'Shared scoped recording'
+  const member = 'scope-member'
+  const firstOutside = 'scope-outside-one'
+  const outside = [firstOutside, 'scope-outside-two']
+  const ids = [member, ...outside]
+  await fixture.insert(schema.mediaItem).values(
+    ids.map((id) => ({
+      id,
+      slug: id,
+      title,
+      mediaType: 'track',
+      inLibrary: id === member,
+    })),
+  )
+  await fixture.insert(schema.libraryTrack).values(
+    ids.map((mediaItemId) => ({
+      mediaItemId,
+      durationSec: 199,
+      isrc: 'ZZFIX2612345',
+    })),
+  )
+  await fixture
+    .insert(schema.mediaCredit)
+    .values(
+      ids.map((mediaItemId) => ({ mediaItemId, artistId, role: 'artist' })),
+    )
+
+  for (const q of [undefined, title]) {
+    const facets = await listTrackFilterOptions({ q })
+    const matching = facets.filter(
+      (facet) => facet.field === 'title' && facet.value === title,
+    )
+    expect(matching).toEqual([expect.objectContaining({ count: 1 })])
+  }
+
+  for (const { libraryScope, representative, expected } of [
+    { libraryScope: 'library', representative: member, expected: [member] },
+    {
+      libraryScope: 'outside',
+      representative: firstOutside,
+      expected: outside,
+    },
+    { libraryScope: 'all', representative: member, expected: ids },
+  ]) {
+    const query = TrackQuerySchema.parse({
+      q: title,
+      libraryScope,
+      groupRecordings: true,
+    })
+    const results = await listTrackBrowsePage(query)
+    expect(results.items).toHaveLength(1)
+    expect(results.items[0]?.id).toBe(representative)
+    expect(results.items[0]?.recordingGroup?.versionCount ?? 1).toBe(
+      expected.length,
+    )
+    expect((await queryBrowseCounts('track', query)).totalCount).toBe(1)
+    expect(await queryBrowsePositions('track', query, [0, 1])).toEqual([
+      expect.objectContaining({ id: representative, position: 0 }),
+    ])
+    const expanded = await listTrackRecordingVersions(representative, query)
+    expect(expanded.items.map(({ id }) => id)).toEqual(expected)
+  }
+})
+
+it('keeps a Last.fm library track visible after its playable peer leaves the library', async () => {
+  const title = 'Scoped Last.fm visibility fixture'
+  const source = 'scope-lastfm-source'
+  const peer = 'scope-lastfm-peer'
+  await fixture.insert(schema.mediaItem).values([
+    {
+      id: source,
+      slug: source,
+      title,
+      mediaType: 'track',
+      sourceLabel: 'lastfm',
+    },
+    {
+      id: peer,
+      slug: peer,
+      title,
+      mediaType: 'track',
+      sourceLabel: 'spotify',
+      inLibrary: false,
+    },
+  ])
+  await fixture
+    .insert(schema.libraryTrack)
+    .values([
+      { mediaItemId: source },
+      { mediaItemId: peer, spotifyTrackId: 'ScopedPlayableFixture0' },
+    ])
+  const name = {
+    username: account,
+    artistKey: 'fixture artist',
+    trackKey: title.toLowerCase(),
+  }
+  await fixture
+    .insert(schema.lastfmTrackSource)
+    .values({ ...name, trackMediaItemId: source })
+  await fixture
+    .insert(schema.lastfmTrackLink)
+    .values({ ...name, trackMediaItemId: peer, strategy: 'exact' })
+  for (const sortBy of ['title', 'dateAdded']) {
+    const query = TrackQuerySchema.parse({ q: title, sortBy })
+    expect(
+      (await listTrackBrowsePage(query)).items.map(({ id }) => id),
+    ).toEqual([source])
+    expect((await queryBrowseCounts('track', query)).totalCount).toBe(1)
+  }
+})
+
 it('joins two Spotify tracks as versions of one record', async () => {
   const before = await tracksOf([first, reissue])
   const plan = await planTrackMerge({ trackIds: [reissue, first] })
@@ -369,6 +483,7 @@ it('moves a merged track’s album position and playlist entry and puts them bac
       mediaItemId: first,
       position: 3,
       addedAt: new Date('2024-02-01T10:00:00Z'),
+      admitsToLibrary: true,
     },
   ])
   expect(after.tracks.find((row) => row.mediaItemId === first)).toMatchObject({
