@@ -1709,11 +1709,9 @@ export async function createTaskJob(
   const definition = taskJobs.get(task)
   if (!definition)
     throw new ServerError({ statusCode: 422, message: 'Unknown job task' })
-  const {
-    activity: _priorActivity,
-    providerReplaySteps: _historicalSteps,
-    ...input
-  } = scheduling.taskOptions ?? {}
+  const input = { ...scheduling.taskOptions }
+  delete input.activity
+  delete input.providerReplaySteps
   const provider = taskProvider(definition, input)
   if (!provider)
     throw new ServerError({ statusCode: 422, message: 'Invalid task provider' })
@@ -2233,7 +2231,8 @@ export async function createJob(
   } = {},
 ): Promise<Job> {
   const parsedInput = CreateJobSchema.parse(input)
-  const { activity: _priorActivity, ...options } = parsedInput.options
+  const options = { ...parsedInput.options }
+  delete options.activity
   if (
     parsedInput.options.task === ARTIST_ENRICHMENT_TASK ||
     parsedInput.options.task === SPOTIFY_ARTIST_ALBUMS_TASK
