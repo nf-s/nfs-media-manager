@@ -454,3 +454,87 @@ it('preserves duplicate positions, provisional records, rejected matches and mer
     ),
   ).toBe(false)
 })
+
+it.each([
+  { name: 'individual', observe: observeSpotifyPlaylistPage },
+  { name: 'batch', observe: observeSpotifyPlaylistPageBatch },
+])(
+  'reconciles previously sparse recording credits on $name ingestion',
+  async ({ observe }) => {
+    await withRollback(async (tx) => {
+      const name = 'Fixture Performer'
+      const [first, second, rejected] = page.entries
+      if (!first?.track || !second?.track || !rejected?.track)
+        throw new Error('Missing fixture tracks')
+      const sparse = {
+        ...page,
+        entries: [first, second, rejected].map(({ position, track }) => {
+          if (!track) throw new Error('Missing fixture track')
+          return {
+            position,
+            track: {
+              ...track,
+              artistCredits: [],
+              artists: [name],
+              artistBilling: position === 1 ? [{ name }, { name }] : [{ name }],
+              albumName: null,
+            },
+          }
+        }),
+      }
+      await seedTracks(tx, sparse.entries)
+      await tx.update(schema.mediaItem).set({ inLibrary: false })
+      await observe(tx, 'fixture-playlist', sparse, evidence)
+
+      const native = (id: number) => ({ id: nativeId('A', id), name })
+      const nativeArtist = (id: number) =>
+        createStableId(
+          'catalog-artist',
+          JSON.stringify(['spotify', native(id).id]),
+        )
+      const provisional = (trackId: string, position: number) =>
+        createStableId(
+          'catalog-artist',
+          JSON.stringify(['spotify', trackId, 'artist', position, name]),
+        )
+      const firstId = first.track.spotifyTrackId
+      const secondId = second.track.spotifyTrackId
+      const rejectedId = rejected.track.spotifyTrackId
+      const [lowId, highId] = [
+        provisional(rejectedId, 0),
+        nativeArtist(3),
+      ].sort()
+      if (!lowId || !highId) throw new Error('Missing fixture artist pair')
+      await tx
+        .insert(schema.libraryKeepSeparate)
+        .values({ kind: 'artist', lowId, highId })
+      const rich = {
+        ...sparse,
+        entries: sparse.entries.map(({ position, track }) => {
+          const billing =
+            position === 1 ? [native(0), native(1)] : [native(position)]
+          return {
+            position,
+            track: { ...track, artistCredits: billing, artistBilling: billing },
+          }
+        }),
+      }
+      const next = { ...evidence, snapshot: 'fixture-native' }
+      await observe(tx, 'fixture-playlist', rich, next)
+      const state = await catalogState(tx)
+      const merged = new Map(
+        state.artists.map(({ id, mergedIntoId }) => [id, mergedIntoId]),
+      )
+      expect(merged.get(provisional(firstId, 0))).toBe(nativeArtist(0))
+      expect(merged.get(provisional(firstId, 1))).toBe(nativeArtist(1))
+      expect(merged.get(provisional(secondId, 0))).toBe(nativeArtist(2))
+      expect(merged.get(provisional(rejectedId, 0))).toBeNull()
+      for (const id of [0, 1, 2, 3])
+        expect(merged.get(nativeArtist(id))).toBeNull()
+      await observe(tx, 'fixture-playlist', rich, next)
+      await observe(tx, 'fixture-playlist', sparse, evidence)
+      expect(await catalogState(tx)).toEqual(state)
+      return state
+    })
+  },
+)

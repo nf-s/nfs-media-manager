@@ -16,12 +16,15 @@ import {
   observeCatalogMedia,
   observeCatalogOccurrences,
   provisionalCatalogArtistId,
+  reconcileSpotifyRecordingCredits,
   resolveCatalogReferences,
+  spotifyRecordingCredits,
   spotifyTrackCatalogCredits,
   writeOutsideCatalogMedia,
   type CatalogMedia,
   type CatalogOccurrence,
   type CatalogOrigin,
+  type SpotifyRecordingCredit,
 } from './catalog-discoveries'
 import { spotifyTrackAndAlbumObservations } from './music-catalog-observations'
 import type { PlaylistPage } from './spotify-playlists'
@@ -37,6 +40,7 @@ type Observation = { media: CatalogMedia; origin: CatalogOrigin }
 type ResolvedObservation = Observation & {
   id: string
   outside: boolean
+  suppliedTrackCredits?: CatalogMedia['credits']
 }
 
 function playlistObservations(
@@ -106,6 +110,7 @@ function playlistObservations(
 async function observeIndividually(
   tx: Transaction,
   entries: ReturnType<typeof playlistObservations>,
+  pendingSpotifyCredits: SpotifyRecordingCredit[],
 ) {
   for (const { album, recording } of entries) {
     const albumId = album
@@ -115,21 +120,25 @@ async function observeIndividually(
       tx,
       { ...recording.media, albumId },
       recording.origin,
+      pendingSpotifyCredits,
     )
   }
 }
 
 /** Retain observations when the input has no previously imported tracks. */
-export function observeSpotifyPlaylistPage(
+export async function observeSpotifyPlaylistPage(
   tx: Transaction,
   playlistId: string,
   page: PlaylistPage,
   evidence: Evidence,
 ) {
-  return observeIndividually(
+  const pendingSpotifyCredits: SpotifyRecordingCredit[] = []
+  await observeIndividually(
     tx,
     playlistObservations(playlistId, page, evidence),
+    pendingSpotifyCredits,
   )
+  await reconcileSpotifyRecordingCredits(tx, pendingSpotifyCredits)
 }
 
 async function resolveObservations(
@@ -224,7 +233,7 @@ async function resolveObservations(
     const track =
       recording.media.externalId && tracksById.get(recording.media.externalId)
     let credits = recording.media.credits ?? []
-    if (track && credits.length === 1 && !credits[0]?.externalId)
+    if (track && credits.some((credit) => !credit.externalId))
       credits = spotifyTrackCatalogCredits(credits, track.artistCredits)
     observations.push({
       ...recording,
@@ -233,6 +242,7 @@ async function resolveObservations(
         : newCatalogMediaId(recording.media, recording.origin),
       outside: !track || !track.inLibrary,
       media: { ...recording.media, albumId: release?.id, credits },
+      suppliedTrackCredits: recording.media.credits,
     })
   }
   return observations
@@ -314,7 +324,16 @@ async function resolveCredits(
         values.artistId = aliases.get(values.artistId) ?? values.artistId
     }
   }
-  return credits
+  const matches = observations.flatMap(
+    ({ id, media, origin, suppliedTrackCredits }) =>
+      spotifyRecordingCredits(
+        id,
+        { ...media, credits: suppliedTrackCredits },
+        origin,
+        native,
+      ),
+  )
+  return { credits, matches }
 }
 
 /** Store every playlist position after the import has resolved and written its native tracks. */
@@ -327,25 +346,30 @@ export async function observeSpotifyPlaylistPageBatch(
   const entries = playlistObservations(playlistId, page, evidence)
   if (!entries.length) return
   await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-  await observeEntries(tx, entries)
+  const pendingSpotifyCredits: SpotifyRecordingCredit[] = []
+  await observeEntries(tx, entries, pendingSpotifyCredits)
+  await reconcileSpotifyRecordingCredits(tx, pendingSpotifyCredits)
 }
 
 async function observeEntries(
   tx: Transaction,
   entries: ReturnType<typeof playlistObservations>,
+  pendingSpotifyCredits: SpotifyRecordingCredit[],
 ): Promise<void> {
-  if (await tryObserveBatch(tx, entries)) return
-  if (entries.length === 1) return observeIndividually(tx, entries)
+  if (await tryObserveBatch(tx, entries, pendingSpotifyCredits)) return
+  if (entries.length === 1)
+    return observeIndividually(tx, entries, pendingSpotifyCredits)
   // Keep nearby clean entries batched. Earlier entries may change how a later
   // release or artist resolves, so each half reads after the previous writes.
   const middle = Math.floor(entries.length / 2)
-  await observeEntries(tx, entries.slice(0, middle))
-  await observeEntries(tx, entries.slice(middle))
+  await observeEntries(tx, entries.slice(0, middle), pendingSpotifyCredits)
+  await observeEntries(tx, entries.slice(middle), pendingSpotifyCredits)
 }
 
 async function tryObserveBatch(
   tx: Transaction,
   entries: ReturnType<typeof playlistObservations>,
+  pendingSpotifyCredits: SpotifyRecordingCredit[],
 ) {
   const creditCount = entries.reduce(
     (count, { album, recording }) =>
@@ -358,8 +382,9 @@ async function tryObserveBatch(
   if (creditCount > 4_000) return false
   const observations = await resolveObservations(tx, entries)
   if (!observations) return false
-  const credits = await resolveCredits(tx, observations)
-  if (!credits) return false
+  const resolvedCredits = await resolveCredits(tx, observations)
+  if (!resolvedCredits) return false
+  const { credits, matches } = resolvedCredits
 
   const outside = new Map<string, CatalogMedia>()
   const references: (typeof providerReference.$inferInsert)[] = []
@@ -410,5 +435,6 @@ async function tryObserveBatch(
     ...credits.map(({ occurrence }) => occurrence),
     ...occurrences,
   ])
+  pendingSpotifyCredits.push(...matches)
   return true
 }

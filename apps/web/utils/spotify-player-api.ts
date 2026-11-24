@@ -5,7 +5,7 @@ import {
   type PlaybackCatalogItem,
 } from '@repo/schemas/playback'
 import type { PlaybackSnapshot, PlayedTrack } from './playback'
-import { playbackSpotifyId } from './playback-catalog'
+import { playbackCatalogArtwork, playbackSpotifyId } from './playback-catalog'
 import { spotifyTrackUri } from './album-links'
 
 const DeviceSchema = z.object({
@@ -22,25 +22,38 @@ export const SpotifyLinkedTrackSchema = z
   .object({ id: z.string().nullish(), uri: z.string().min(1).nullish() })
   .nullish()
   .transform((track) => track?.uri ?? spotifyTrackUri(track?.id) ?? null)
+const SpotifyPlaybackEntitySchema = z.object({
+  id: z.string().nullish(),
+  uri: z.string().nullish(),
+})
+export const SpotifyPlaybackArtistSchema = SpotifyPlaybackEntitySchema.extend({
+  name: z.string(),
+})
+export const SpotifyPlaybackAlbumSchema = SpotifyPlaybackEntitySchema.extend({
+  name: z.string(),
+  images: z.array(z.object({ url: z.string() })).default([]),
+})
+
+export function spotifyPlaybackEntityUri(
+  kind: 'album' | 'artist',
+  item: z.infer<typeof SpotifyPlaybackEntitySchema> | undefined,
+) {
+  if (item?.uri) return item.uri
+  const candidate = `spotify:${kind}:${item?.id ?? ''}`
+  return playbackSpotifyId(kind, candidate) ? candidate : null
+}
+
 const TrackSchema = z.object({
   uri: z.string(),
   name: z.string(),
   duration_ms: z.number().nonnegative(),
   track_number: z.number().int().optional(),
   disc_number: z.number().int().optional(),
-  artists: z
-    .array(z.object({ name: z.string(), uri: z.string().optional() }))
-    .default([]),
+  artists: z.array(SpotifyPlaybackArtistSchema).default([]),
   linked_from: SpotifyLinkedTrackSchema,
   is_local: z.boolean().optional(),
   is_playable: z.boolean().optional(),
-  album: z
-    .object({
-      uri: z.string().optional(),
-      name: z.string(),
-      images: z.array(z.object({ url: z.string() })).default([]),
-    })
-    .optional(),
+  album: SpotifyPlaybackAlbumSchema.optional(),
 })
 const StateSchema = z.object({
   device: DeviceSchema,
@@ -67,18 +80,25 @@ function catalogTrack(value: unknown): PlaybackCatalogItem | null {
     kind: 'track',
     spotifyId: playbackSpotifyId('track', track.uri),
     title: track.name,
+    artworkUrl: playbackCatalogArtwork(track.album?.images[0]?.url),
     durationSec: track.duration_ms
       ? Math.round(track.duration_ms / 1000)
       : undefined,
     album: track.album
       ? {
           title: track.album.name,
-          spotifyId: playbackSpotifyId('album', track.album.uri),
+          spotifyId: playbackSpotifyId(
+            'album',
+            spotifyPlaybackEntityUri('album', track.album),
+          ),
         }
       : undefined,
-    artists: track.artists.map(({ name, uri }) => ({
-      name,
-      spotifyId: playbackSpotifyId('artist', uri),
+    artists: track.artists.map((artist) => ({
+      name: artist.name,
+      spotifyId: playbackSpotifyId(
+        'artist',
+        spotifyPlaybackEntityUri('artist', artist),
+      ),
     })),
   })
   return item.success ? item.data : null
@@ -202,10 +222,10 @@ function trackDetails(track: z.infer<typeof TrackSchema>): TrackDetails {
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',
-    albumUri: track.album?.uri ?? null,
-    artistLinks: track.artists.map(({ name, uri }) => ({
-      name,
-      uri: uri ?? null,
+    albumUri: spotifyPlaybackEntityUri('album', track.album),
+    artistLinks: track.artists.map((artist) => ({
+      name: artist.name,
+      uri: spotifyPlaybackEntityUri('artist', artist),
     })),
     artworkUrl: httpsUrl(track.album?.images[0]?.url),
     durationMs: track.duration_ms,

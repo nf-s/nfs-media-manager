@@ -1,6 +1,11 @@
 import { z } from 'zod'
 import type { PlaybackSnapshot } from './playback'
-import { SpotifyLinkedTrackSchema } from './spotify-player-api'
+import {
+  SpotifyLinkedTrackSchema,
+  SpotifyPlaybackAlbumSchema,
+  SpotifyPlaybackArtistSchema,
+  spotifyPlaybackEntityUri,
+} from './spotify-player-api'
 
 type SdkListener = (payload: unknown) => void
 
@@ -68,16 +73,8 @@ const TrackSchema = z.object({
   uri: z.string(),
   name: z.string(),
   duration_ms: z.number().nonnegative().optional(),
-  artists: z
-    .array(z.object({ name: z.string(), uri: z.string().optional() }))
-    .default([]),
-  album: z
-    .object({
-      uri: z.string().optional(),
-      name: z.string().optional(),
-      images: z.array(z.object({ url: z.string() })).default([]),
-    })
-    .optional(),
+  artists: z.array(SpotifyPlaybackArtistSchema).default([]),
+  album: SpotifyPlaybackAlbumSchema.partial({ name: true }).optional(),
   linked_from: SpotifyLinkedTrackSchema,
   is_local: z.boolean().optional(),
 })
@@ -117,10 +114,10 @@ export function sdkPlayback(
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',
-    albumUri: track.album?.uri ?? null,
-    artistLinks: track.artists.map(({ name, uri }) => ({
-      name,
-      uri: uri ?? null,
+    albumUri: spotifyPlaybackEntityUri('album', track.album),
+    artistLinks: track.artists.map((artist) => ({
+      name: artist.name,
+      uri: spotifyPlaybackEntityUri('artist', artist),
     })),
     artworkUrl: artwork?.startsWith('https://') ? artwork : null,
     durationMs: parsed.data.duration ?? track.duration_ms ?? 0,

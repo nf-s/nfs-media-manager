@@ -78,6 +78,7 @@ export async function storeConfirmedRecording(
     ...(candidate.artistCredits.length
       ? {
           spotifyArtistCredits: candidate.artistCredits,
+          spotifyArtistBilling: candidate.artistBilling ?? null,
           spotifyArtistCreditsSource: {
             source: 'spotify-search',
             ...('jobId' in provenance ? { jobId: provenance.jobId } : {}),
@@ -167,7 +168,12 @@ export async function storeConfirmedRecording(
   ])
   if (!existing?.hasArtists || albumFallbackArtistCreditCorrection)
     await replaceSpotifyTrackCredits(tx, [
-      { id: targetId, artists: candidate.artists },
+      {
+        id: targetId,
+        artists: candidate.artists,
+        artistCredits: candidate.artistCredits,
+        artistBilling: candidate.artistBilling,
+      },
     ])
   if (candidate.spotifyAlbumId)
     await tx.execute(sql`

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
@@ -28,12 +28,15 @@ vi.mock('@/lib/db', () => ({
 }))
 
 import { refreshTrackAddedDates } from '@/services/spotify-playlists'
-import { setCatalogMediaAlias } from '@/services/catalog-discoveries'
+import {
+  observeCatalogMedia,
+  setCatalogMediaAlias,
+} from '@/services/catalog-discoveries'
 import { observeTidalSuggestion } from '@/services/music-catalog-observations'
 import { getTidalSimilar } from '@/services/tidal-similar'
 import { addTidalSimilarToLibrary } from '@/services/tidal-similar-library'
 import { getTidalTrackMatch } from '@/services/tidal-track-match'
-import { getTrackDetail } from '@/services/tracks'
+import { getTrackDetail, loadTracks } from '@/services/tracks'
 
 type AddInput = Parameters<typeof addTidalSimilarToLibrary>[0]
 
@@ -524,11 +527,162 @@ it('presents a discovered track with its recorded credits and release after alia
     album: { id: expect.any(String), title: 'Harbour Current' },
   })
   expect(before?.artistCredits[0]?.id).not.toBe(before?.artistCredits[1]?.id)
+  const release = before?.album?.id
+  if (!release) throw new Error('Missing observed release fixture')
+  const artworkUrl = 'https://example.test/observed-release.jpg'
+  await db
+    .update(schema.mediaItem)
+    .set({ artworkUrl })
+    .where(eq(schema.mediaItem.id, release))
+  expect(await getTrackDetail(alias)).toMatchObject({
+    id: track,
+    album: { id: release, title: 'Harbour Current', inLibrary: false },
+    albumName: 'Harbour Current',
+    artworkUrl,
+    albumLinkStrategy: null,
+  })
+  expect((await loadTracks([track]))[0]).toMatchObject({ album: null })
+  await db
+    .update(schema.mediaItem)
+    .set({ artworkUrl: null })
+    .where(eq(schema.mediaItem.id, release))
   expect(await addTidalSimilarToLibrary(input)).toEqual({ id: track })
   expect(await addTidalSimilarToLibrary(input)).toEqual({ id: track })
+  expect(await getTrackDetail(track)).toMatchObject({
+    inLibrary: true,
+    album: null,
+  })
   expect((await getTidalSimilar(input)).items[0]?.track).toEqual({
     ...before,
     inLibrary: true,
+  })
+})
+
+it('uses only one eligible observed release and always keeps a stored album link', async () => {
+  const recording = await db.transaction((tx) =>
+    observeTidalSuggestion(tx, 'track', trackSuggestion('302', null), {
+      key: 'fixture-release-eligibility',
+      operation: 'similar',
+      position: 1,
+    }),
+  )
+  const observeRelease = (externalId: string, artworkUrl: string) =>
+    db.transaction((tx) =>
+      observeCatalogMedia(
+        tx,
+        {
+          kind: 'album',
+          title: `Observed release ${externalId}`,
+          provider: 'tidal',
+          referenceType: 'album',
+          externalId,
+          artworkUrl,
+        },
+        {
+          provider: 'tidal',
+          operation: 'similar',
+          occurrenceKey: `fixture-release-eligibility-${externalId}`,
+          subjectKind: 'track',
+          subjectId: recording,
+          relationshipRole: 'release',
+        },
+      ),
+    )
+  const firstArtwork = 'https://example.test/first-observed.jpg'
+  const first = await observeRelease('992', firstArtwork)
+  await db.insert(schema.catalogObservation).values({
+    id: 'fixture-repeat-release',
+    mediaItemId: first,
+    targetKind: 'album',
+    targetId: first,
+    subjectKind: 'track',
+    subjectId: recording,
+    relationshipRole: 'release',
+    provider: 'tidal',
+    operation: 'similar',
+  })
+  const second = await observeRelease(
+    '993',
+    'https://example.test/second-observed.jpg',
+  )
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: null,
+    artworkUrl: null,
+  })
+
+  await db
+    .update(schema.mediaItem)
+    .set({ metadata: { legacyHidden: true } })
+    .where(eq(schema.mediaItem.id, second))
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: { id: first },
+    artworkUrl: firstArtwork,
+  })
+
+  await db
+    .update(schema.providerReference)
+    .set({ metadata: { rejected: true } })
+    .where(
+      and(
+        eq(schema.providerReference.mediaItemId, first),
+        eq(schema.providerReference.provider, 'tidal'),
+      ),
+    )
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: null,
+    artworkUrl: null,
+  })
+  await db
+    .update(schema.providerReference)
+    .set({ metadata: null })
+    .where(
+      and(
+        eq(schema.providerReference.mediaItemId, first),
+        eq(schema.providerReference.provider, 'tidal'),
+      ),
+    )
+
+  const otherSpotifyId = 'fixtureNativeAlbum'.padEnd(22, '0')
+  await db
+    .update(schema.libraryTrack)
+    .set({ spotifyAlbumId: `spotify:album:${otherSpotifyId}` })
+    .where(eq(schema.libraryTrack.mediaItemId, recording))
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: null,
+    artworkUrl: null,
+  })
+  await db.insert(schema.providerReference).values({
+    id: 'fixture-observed-release-spotify',
+    mediaItemId: first,
+    provider: 'spotify',
+    referenceType: 'spotify',
+    externalId: otherSpotifyId,
+  })
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: { id: first },
+    artworkUrl: firstArtwork,
+  })
+
+  await db
+    .delete(schema.catalogObservation)
+    .where(
+      and(
+        eq(schema.catalogObservation.subjectId, recording),
+        eq(schema.catalogObservation.provider, 'tidal'),
+      ),
+    )
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: null,
+    artworkUrl: null,
+  })
+
+  await db
+    .update(schema.libraryTrack)
+    .set({ albumMediaItemId: albumId, albumLinkStrategy: 'album-track-list' })
+    .where(eq(schema.libraryTrack.mediaItemId, recording))
+  expect(await getTrackDetail(recording)).toMatchObject({
+    album: { id: albumId },
+    albumLinkStrategy: 'album-track-list',
   })
 })
 

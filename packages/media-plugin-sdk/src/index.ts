@@ -133,6 +133,18 @@ export const PluginTrackSchema = z.object({
   position: z.number().int().positive(),
   durationSec: z.number().int().nonnegative().optional(),
   artists: z.array(z.string().trim().min(1)).optional(),
+  spotifyArtistBilling: z
+    .array(
+      z.object({
+        id: z
+          .string()
+          .regex(/^[A-Za-z0-9]{22}$/)
+          .optional(),
+        name: z.string().trim().min(1),
+      }),
+    )
+    .max(50)
+    .optional(),
   /** The track's version label, such as a remix or edit name. */
   version: z.string().trim().min(1).max(255).optional(),
   /** The recording's ISRC as the provider reports it. */

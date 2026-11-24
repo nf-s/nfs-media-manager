@@ -249,14 +249,9 @@ export async function readArtistMerge(
   const ordered = [target, ...sources]
   const names = new Map(ordered.map((artist) => [artist.id, artist.name]))
   const separate = await readKeptSeparate(reader, 'artist', ids)
-  const separateNames = [
-    ...new Set(
-      separate.flatMap(({ lowId, highId }) => [
-        names.get(lowId) ?? lowId,
-        names.get(highId) ?? highId,
-      ]),
-    ),
-  ]
+  const separateIds = new Set(
+    separate.flatMap(({ lowId, highId }) => [lowId, highId]),
+  )
   const providers = differentProfiles(ordered)
   const unlike = unlikeNames(
     target.name,
@@ -270,8 +265,11 @@ export async function readArtistMerge(
   if (moves?.together)
     cautions.push({ code: 'together', items: moves.together })
   if (unlike.length) cautions.push({ code: 'names', names: unlike })
-  if (separateNames.length > 1)
-    cautions.push({ code: 'separate', names: separateNames })
+  if (separateIds.size)
+    cautions.push({
+      code: 'separate',
+      names: Array.from(separateIds, (id) => names.get(id) ?? id),
+    })
   const plan: ArtistMergePlan = {
     targetId: target.id,
     artists: ordered.map((artist) => ({

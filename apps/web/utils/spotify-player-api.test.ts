@@ -9,7 +9,10 @@ import { sdkDeviceId, sdkPlayback } from './spotify-sdk'
 
 type Call = { url: URL; method: string; token: string; body: string | null }
 
-function client(responses: Response[]) {
+function client(
+  responses: Response[],
+  observe?: Parameters<typeof createPlayerApi>[2],
+) {
   const calls: Call[] = []
   const tokens: boolean[] = []
   const api = createPlayerApi(
@@ -29,6 +32,7 @@ function client(responses: Response[]) {
       if (!response) throw new Error('Unexpected request')
       return response
     },
+    observe,
   )
   return { api, calls, tokens }
 }
@@ -122,6 +126,48 @@ test('rejects a playback queue containing a malformed item', async () => {
     Response.json({ currently_playing: null, queue: [{ uri: 123 }] }),
   ])
   await assert.rejects(api.queue(), { name: 'ZodError' })
+})
+
+test('keeps native album and artist IDs and artwork in queue and recovery catalog observations', async () => {
+  const trackId = 'ABCDEFGHIJKL1234567890'
+  const albumId = '1234567890ABCDEFGHIJKL'
+  const artistId = '0987654321ABCDEFGHIJKL'
+  const artworkUrl = 'https://i.scdn.co/image/fixture'
+  const uri = `spotify:track:${trackId}`
+  const track = {
+    uri,
+    name: 'Fixture track',
+    duration_ms: 240_000,
+    album: {
+      id: albumId,
+      name: 'Fixture album',
+      images: [{ url: artworkUrl }],
+    },
+    artists: [{ id: artistId, name: 'Fixture artist' }],
+  }
+  const observations: unknown[] = []
+  const { api } = client(
+    [
+      Response.json({ currently_playing: track, queue: [] }),
+      Response.json({ items: [{ track, played_at: '2026-01-01T00:00:00Z' }] }),
+    ],
+    (operation, items) => observations.push({ operation, items }),
+  )
+  await api.queue()
+  await api.played(0)
+  const expected = {
+    kind: 'track',
+    spotifyId: trackId,
+    title: track.name,
+    durationSec: 240,
+    album: { title: track.album.name, spotifyId: albumId },
+    artists: [{ name: 'Fixture artist', spotifyId: artistId }],
+    artworkUrl,
+  }
+  assert.deepEqual(observations, [
+    { operation: 'playback-queue', items: [expected] },
+    { operation: 'playback-recovery', items: [expected] },
+  ])
 })
 
 test('sends transport commands with bounded values', async () => {

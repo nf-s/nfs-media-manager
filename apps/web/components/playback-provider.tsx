@@ -228,7 +228,7 @@ function createEngine(
   return createPlaybackEngine({
     api: createPlayerApi(token, fetch, (operation, items) => {
       const unique = new Map(
-        items.map((item) => [`${operation}:${item.spotifyId}`, item]),
+        items.map((item) => [`${operation}:${JSON.stringify(item)}`, item]),
       )
       const pending = [...unique]
         .filter(([key]) => !seenCatalog.has(key))

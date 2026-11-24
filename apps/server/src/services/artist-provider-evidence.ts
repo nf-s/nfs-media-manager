@@ -11,7 +11,7 @@ import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { SpotifyIdSchema } from '@/lib/spotify-api'
+import { SpotifyIdSchema, spotifyAlbumTrackPaths } from '@/lib/spotify-api'
 import { listCurrentArtistProfiles } from './artist-profiles'
 import {
   artistNameKey,
@@ -41,11 +41,6 @@ const EvidenceRowsSchema = z.array(
 )
 type EvidenceRow = z.infer<typeof EvidenceRowsSchema>[number]
 type AcceptedEvidence = EvidenceRow & { normalizedId: string; exact: boolean }
-
-const spotifyAlbumTrackPaths = [
-  '$.tracks.items[*] ? (@.id == $track_id)',
-  '$.data.tracks.items[*] ? (@.id == $track_id)',
-]
 
 const spotifyTrackCreditPaths = spotifyAlbumTrackPaths.map(
   (path) => path + '.artists[*]',

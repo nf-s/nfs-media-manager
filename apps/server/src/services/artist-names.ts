@@ -90,6 +90,8 @@ export type ArtistCreditInput = {
   name: string
   role: string
   billingOrder: number
+  /** Already resolved using an exact provider identifier. */
+  artistId?: string
   /** Kept from an earlier credit, in place of the resolved name. */
   creditedAs?: string | null
 }
@@ -106,11 +108,13 @@ export async function writeArtistCredits(
   if (!credits.length) return
   const resolved = await resolveArtistIds(
     tx,
-    credits.map((credit) => credit.name),
+    credits.filter(({ artistId }) => !artistId).map(({ name }) => name),
   )
   const rows = credits
     .flatMap((credit) => {
-      const target = resolved.get(credit.name)
+      const target = credit.artistId
+        ? { artistId: credit.artistId, creditedAs: null }
+        : resolved.get(credit.name)
       return target
         ? [
             {
@@ -119,6 +123,7 @@ export async function writeArtistCredits(
               role: credit.role,
               billing_order: credit.billingOrder,
               credited_as: credit.creditedAs ?? target.creditedAs,
+              provider_name: credit.artistId ? credit.name : null,
             },
           ]
         : []
@@ -134,11 +139,15 @@ export async function writeArtistCredits(
       insert into media_credit
         (media_item_id, artist_id, role, billing_order, credited_as)
       select r.media_item_id, r.artist_id, r.role, r.billing_order,
-        r.credited_as
+        case when r.provider_name is null then r.credited_as
+          else coalesce(r.credited_as, (
+            select nullif(r.provider_name, a.name) from artist a where a.id = r.artist_id
+          ))
+        end
       from jsonb_to_recordset(${JSON.stringify(
         rows.slice(start, start + WRITE_BATCH),
       )}::jsonb) as r(media_item_id text, artist_id text, role text,
-        billing_order int, credited_as text)
+        billing_order int, credited_as text, provider_name text)
       order by r.media_item_id, r.role, r.billing_order
       on conflict do nothing`)
 }

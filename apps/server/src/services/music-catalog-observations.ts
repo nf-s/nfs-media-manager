@@ -15,6 +15,7 @@ import {
   type CatalogOrigin,
 } from './catalog-discoveries'
 import type { SpotifySearchObservation } from './provider-search-task-replay'
+import { spotifyTrackBilling } from './spotify-artist-credits'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type MusicObservationOrigin = Omit<
@@ -70,6 +71,7 @@ export function spotifyTrackAndAlbumObservations(
       | 'artworkUrl'
       | 'artists'
       | 'artistCredits'
+      | 'artistBilling'
       | 'spotifyUrl'
     >,
     'durationSec'
@@ -127,18 +129,10 @@ export function spotifyTrackAndAlbumObservations(
       durationSec: track.durationSec,
       spotifyAlbumId,
       albumName: track.albumName ?? undefined,
-      credits: [
-        ...track.artistCredits.map(({ id, name }) => ({
-          externalId: id,
-          name,
-        })),
-        ...track.artists
-          .filter(
-            (name) =>
-              !track.artistCredits.some((credit) => credit.name === name),
-          )
-          .map((name) => ({ name })),
-      ],
+      credits: spotifyTrackBilling(track).map(({ id, name }) => ({
+        externalId: id,
+        name,
+      })),
     } satisfies CatalogMedia,
     origin: trackOrigin,
   }

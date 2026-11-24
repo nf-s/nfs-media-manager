@@ -32,6 +32,13 @@ export const SPOTIFY_PLAYLIST_CHANGE_SCOPES: readonly string[] = [
 // POST /playlists/{id}/items accepts at most this many URIs per request.
 export const SPOTIFY_PLAYLIST_ADD_LIMIT = 100
 export const SpotifyIdSchema = z.string().regex(/^[A-Za-z0-9]{22}$/)
+
+/** Album receipts, including the wrapper used by legacy imports. */
+export const spotifyAlbumTrackPaths = [
+  '$.tracks.items[*] ? (@.id == $track_id)',
+  '$.data.tracks.items[*] ? (@.id == $track_id)',
+  '$.spotify.tracks.items[*] ? (@.id == $track_id)',
+]
 export const UpcSchema = z.string().regex(/^\d{8,14}$/)
 const HttpsUrlSchema = z
   .string()
@@ -193,6 +200,7 @@ export type SpotifyLibraryTrack = {
   title: string
   artists: string[]
   artistCredits: Array<{ id: string; name: string }>
+  artistBilling?: Array<{ id?: string; name: string }>
   albumArtistCredits?: Array<{ id?: string; name: string }>
   durationSec: number
   albumName: string | null
@@ -516,21 +524,17 @@ export function normalizeSpotifyTrackEntry(
     .string()
     .datetime({ offset: true })
     .safeParse(entry.added_at)
-  const artistCredits = new Map<string, { id: string; name: string }>()
-  for (const artist of data.artists) {
-    const id = SpotifyIdSchema.safeParse(artist.id)
-    if (id.success)
-      artistCredits.set(`${id.data}:${artist.name}`, {
-        id: id.data,
-        name: artist.name,
-      })
-  }
+  const artistBilling = spotifyArtistBilling(data.artists)
+  const artistCredits = artistBilling.flatMap(({ id, name }) =>
+    id ? [{ id, name }] : [],
+  )
   return {
     track: {
       spotifyTrackId: data.id,
       title: data.name,
       artists: [...new Set(data.artists.map((artist) => artist.name))],
-      artistCredits: [...artistCredits.values()],
+      artistCredits,
+      ...(artistCredits.length ? { artistBilling } : {}),
       ...(data.album?.artists
         ? {
             albumArtistCredits: data.album.artists.map(({ id, name }) => ({
@@ -621,7 +625,21 @@ export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {
         position: index + 1,
         durationSec: Math.round(track.duration_ms / 1000),
         artists: [...new Set(track.artists.map((artist) => artist.name))],
+        ...(track.artists.some(
+          ({ id }) => SpotifyIdSchema.safeParse(id).success,
+        )
+          ? { spotifyArtistBilling: spotifyArtistBilling(track.artists) }
+          : {}),
       })),
     },
   })
+}
+
+function spotifyArtistBilling(artists: { id?: string | null; name: string }[]) {
+  const billing = new Map<string, { id?: string; name: string }>()
+  for (const { id, name } of artists) {
+    const externalId = SpotifyIdSchema.safeParse(id).data
+    billing.set(JSON.stringify([externalId, name]), { id: externalId, name })
+  }
+  return [...billing.values()]
 }

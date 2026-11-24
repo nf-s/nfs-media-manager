@@ -6,14 +6,11 @@ import { observeCatalogOccurrences } from './catalog-discoveries'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
+import { album, libraryTrack, mediaItem, track } from '@/schemas/db'
 import {
-  album,
-  libraryTrack,
-  mediaCredit,
-  mediaItem,
-  track,
-} from '@/schemas/db'
-import { writeArtistCredits } from './artist-names'
+  spotifyTrackBilling,
+  replaceSpotifyArtistCredits,
+} from './spotify-artist-credits'
 import {
   membershipDetails,
   mergeTrackCatalogAddress,
@@ -121,6 +118,7 @@ export async function replaceAlbumTracks(
     observe_only: Boolean(evidence),
     durationSec: item.durationSec ?? null,
     artists: item.artists ?? [],
+    artistBilling: item.spotifyArtistBilling,
   }))
   const resolved = ResolvedTracksSchema.parse(
     (
@@ -182,7 +180,14 @@ export async function replaceAlbumTracks(
   const creditedRecordings = entries.flatMap((entry) => {
     const id = recordings.get(entry.id)
     return id && entry.artists.length
-      ? [{ id, externalId: entry.external_id, artists: entry.artists }]
+      ? [
+          {
+            id,
+            externalId: entry.external_id,
+            artists: entry.artists,
+            artistBilling: entry.artistBilling,
+          },
+        ]
       : []
   })
   if (creditedRecordings.length) {
@@ -223,26 +228,20 @@ export async function replaceAlbumTracks(
         )
       })
       .flatMap((recording) =>
-        [...new Set(recording.artists)].map((name, billingOrder) => ({
+        spotifyTrackBilling(recording).map(({ name, id }, billingOrder) => ({
           mediaItemId: recording.id,
           name,
+          spotifyId: id,
           role: 'artist',
           billingOrder,
         })),
       )
-    if (credits.length) {
-      await database
-        .delete(mediaCredit)
-        .where(
-          and(
-            inArray(mediaCredit.mediaItemId, [
-              ...new Set(credits.map(({ mediaItemId }) => mediaItemId)),
-            ]),
-            eq(mediaCredit.role, 'artist'),
-          ),
-        )
-      await writeArtistCredits(database, credits)
-    }
+    if (credits.length)
+      await replaceSpotifyArtistCredits(
+        database,
+        [...new Set(credits.map(({ mediaItemId }) => mediaItemId))],
+        credits,
+      )
   }
 
   await mergeAlbumTrackHistory(database, albumId, batchId)

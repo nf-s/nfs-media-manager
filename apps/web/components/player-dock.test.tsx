@@ -167,7 +167,7 @@ test('the dock shows the track, transport, queue count, device and Spotify link'
     /<a [^>]*aria-label="Open Fixture album"[^>]*href="\/albums[^"]*library-album[^"]*"/,
   )
   assert.match(html, /<strong><a [^>]*>Second track<\/a><\/strong>/)
-  assert.match(html, /Example artist · <a [^>]*>Fixture album<\/a>/)
+  assert.match(html, /Example artist<\/a> · <a [^>]*>Fixture album<\/a>/)
   assert.doesNotMatch(html, /ds-library-action/)
   assert.match(html, /aria-label="Play"/)
   assert.match(html, /1:05/)
@@ -306,7 +306,7 @@ test('playback started elsewhere is shown without a library album', () => {
     queue: [{ key: 'queued-1', item }],
     volume: 0.4,
   })
-  // Without library items, the track, artist and album open on Spotify.
+  // The artist stays in the app while the track and album are being observed.
   assert.match(
     html,
     new RegExp(
@@ -315,8 +315,9 @@ test('playback started elsewhere is shown without a library album', () => {
   )
   assert.match(
     html,
-    /<a href="https:\/\/open\.spotify\.com\/artist\/0987654321ABCDEFGHIJKL"[^>]*>Example artist<\/a> · <a href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL"[^>]*>Fixture album<\/a>/,
+    /<a [^>]*href="\/artists\?libraryScope=all&amp;filters=[^"]+"[^>]*>Example artist<\/a> · <a href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL"[^>]*>Fixture album<\/a>/,
   )
+  assert.doesNotMatch(html, /https:\/\/open\.spotify\.com\/artist\//)
   assert.match(html, /aria-label="Open Fixture album in Spotify"/)
   assert.match(html, /aria-label="Pause"/)
   assert.match(html, /aria-label="Play on: Fixture speaker"/)

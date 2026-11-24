@@ -10,10 +10,12 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { catalogNativeAddition } from '@/schemas/db'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { readAlbumMatchRejectionsForItems } from './album-match-rejections'
 import { currentArtistId } from './artist-names'
 import { observeNamedArtistIdentities } from './catalog-artist-identities'
+import { reconcileArtistPair } from './catalog-artist-reconciliation'
 import {
   album,
   artist,
@@ -345,18 +347,25 @@ export function spotifyTrackCatalogCredits(
   credits: CatalogCredit[],
   metadata: unknown,
 ) {
-  const [sole] = credits
   const billing = z
-    .tuple([
+    .array(
       z.object({
         id: z.string().regex(/^[A-Za-z0-9]{22}$/),
         name: z.string(),
       }),
-    ])
+    )
     .safeParse(metadata)
-  return sole && billing.success && billing.data[0].name === sole.name
-    ? [{ ...sole, externalId: billing.data[0].id }]
-    : credits
+  if (!billing.success) return credits
+  return credits.map((credit) => {
+    if (credit.externalId) return credit
+    const matches = new Set(
+      billing.data
+        .filter((row) => row.name === credit.name)
+        .map((row) => row.id),
+    )
+    const [externalId] = matches
+    return matches.size === 1 && externalId ? { ...credit, externalId } : credit
+  })
 }
 
 export function catalogCreditOccurrence(
@@ -400,6 +409,137 @@ export function provisionalCatalogArtistId(
   )
 }
 
+export type SpotifyRecordingCredit = {
+  source: string
+  target: string
+  recording: string
+  spotify_track: string
+  external_id: string
+  name: string
+  position: number
+}
+
+/** Use the supplied recording billing, before filling missing IDs from cached metadata. */
+export function spotifyRecordingCredits(
+  id: string,
+  media: CatalogMedia,
+  origin: CatalogOrigin,
+  native: ReadonlyMap<string, string>,
+): SpotifyRecordingCredit[] {
+  if (
+    media.kind !== 'track' ||
+    media.provider !== 'spotify' ||
+    origin.provider !== 'spotify'
+  )
+    return []
+  const spotifyTrack = SpotifyIdSchema.safeParse(media.externalId).data
+  if (!spotifyTrack) return []
+  return (media.credits ?? []).flatMap(
+    ({ externalId, name, role = 'artist' }, position) => {
+      const artistId = SpotifyIdSchema.safeParse(externalId).data
+      const target = artistId && native.get(artistId)
+      return role === 'artist' &&
+        artistId &&
+        target &&
+        !(position === 0 && media.artistId)
+        ? [
+            {
+              source: provisionalCatalogArtistId(
+                'spotify',
+                id,
+                role,
+                position,
+                name,
+              ),
+              target,
+              recording: id,
+              spotify_track: spotifyTrack,
+              external_id: artistId,
+              name,
+              position: position + 1,
+            },
+          ]
+        : []
+    },
+  )
+}
+
+/** Check all supplied recording slots together before journaling any merge. */
+export async function reconcileSpotifyRecordingCredits(
+  tx: Transaction,
+  credits: readonly SpotifyRecordingCredit[],
+) {
+  if (!credits.length) return
+  const matches = await tx.execute(sql`
+    with incoming as (
+      select distinct * from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb)
+        as i(source text,target text,recording text,spotify_track text,external_id text,name text,position integer)
+    ), eligible as materialized (
+      select i.* from incoming i
+      join artist a on a.id=i.source and a.name=i.name and a.catalog_provider='spotify'
+        and a.catalog_external_id is null and a.merged_into_id is null
+      join library_track t on t.media_item_id=i.recording
+      join media_item m on m.id=t.media_item_id and m.metadata->>'legacyHidden' is distinct from 'true'
+      where (
+        t.spotify_track_id=i.spotify_track or (t.spotify_track_id is null and exists (
+          select 1 from provider_reference r where r.media_item_id=i.recording
+            and r.provider='spotify' and r.reference_type in ('track','spotify_track','spotify')
+            and r.external_id=i.spotify_track and r.metadata->>'rejected' is distinct from 'true'
+            and r.metadata->>'verified' is distinct from 'false'
+        ))
+      ) and exists (
+        select 1 from catalog_observation o where o.target_kind='artist' and o.target_id=i.source
+          and o.provider='spotify' and o.subject_kind='track' and o.subject_id=i.recording
+          and o.relationship_role='artist' and o.position=i.position
+      ) and not exists (
+        select 1 from media_credit c where c.artist_id=i.source and c.media_item_id<>i.recording
+      ) and not exists (
+        select 1 from incoming other where other.source=i.source and (other.external_id<>i.external_id or other.target<>i.target)
+      )
+    )
+    select e.source, e.target, e.recording, e.position from eligible e
+    join lateral (
+      select min(ids.owner) as owner from (
+        select coalesce(a.merged_into_id,a.id) as owner from artist a
+          where a.catalog_provider='spotify' and a.catalog_external_id=e.external_id
+        union
+        select coalesce(a.merged_into_id,a.id) as owner from artist_provider_current_state s
+          join artist a on a.id=s.artist_id
+          join artist_provider_snapshot p on p.id=s.latest_snapshot_id and p.artist_id=s.artist_id and p.provider=s.provider
+          where s.provider='spotify' and p.normalized_data->>'externalId'=e.external_id
+      ) ids having count(*)=1
+    ) sole_owner on sole_owner.owner=e.target
+    where not exists (
+      select 1 from catalog_observation o join artist a on a.id=o.target_id
+      where o.subject_kind='track' and o.subject_id=e.recording and o.position=e.position
+        and o.provider='spotify' and o.target_kind='artist' and o.relationship_role='artist'
+        and a.catalog_provider='spotify' and a.name=e.name and a.catalog_external_id<>e.external_id
+    )
+    order by e.recording,e.position`)
+  const rows = z
+    .array(
+      z.object({
+        source: z.string(),
+        target: z.string(),
+        recording: z.string(),
+        position: z.number(),
+      }),
+    )
+    .parse(matches.rows)
+  for (const { source, target, recording, position } of rows)
+    await reconcileArtistPair(
+      tx,
+      source,
+      target,
+      'recording-native-artist-credit',
+      true,
+      {
+        trackId: recording,
+        position,
+      },
+    )
+}
+
 async function observeCredits(
   tx: Transaction,
   id: string,
@@ -408,14 +548,11 @@ async function observeCredits(
   outside: boolean,
 ) {
   let credits = media.credits ?? []
-  const [sole] = credits
   if (
     media.kind === 'track' &&
     media.provider === 'spotify' &&
     media.externalId &&
-    sole &&
-    !sole.externalId &&
-    credits.length === 1
+    credits.some((credit) => !credit.externalId)
   ) {
     const [recording] = await tx
       .select({ metadata: mediaItem.metadata })
@@ -508,6 +645,7 @@ async function observeCredits(
       .insert(mediaCredit)
       .values({ mediaItemId: id, artistId: media.artistId, role: 'artist' })
       .onConflictDoNothing()
+  return spotifyRecordingCredits(id, media, origin, native)
 }
 
 export function newCatalogMediaId(
@@ -607,7 +745,34 @@ export async function writeOutsideCatalogMedia(
       .values(films.map(({ id }) => ({ mediaItemId: id })))
       .onConflictDoNothing()
   const recordings = entries.filter(({ media }) => media.kind === 'track')
-  if (recordings.length)
+  if (recordings.length) {
+    const provisional = recordings.flatMap(({ media }) =>
+      media.provider === 'spotify' &&
+      media.externalId &&
+      media.albumName &&
+      media.albumId &&
+      media.spotifyAlbumId
+        ? [
+            createStableId(
+              'catalog-album',
+              JSON.stringify([
+                'spotify',
+                'spotify',
+                JSON.stringify([
+                  'spotify-track-album',
+                  media.externalId,
+                  media.albumName,
+                ]),
+              ]),
+            ),
+          ]
+        : [],
+    )
+    const upgradeParent = provisional.length
+      ? sql`excluded.spotify_album_id is not null and excluded.album_media_item_id is not null
+      and ${libraryTrack.spotifyAlbumId} is null and ${libraryTrack.albumLinkStrategy} is null
+      and ${inArray(libraryTrack.albumMediaItemId, provisional)}`
+      : sql`false`
     await tx
       .insert(libraryTrack)
       .values(
@@ -631,7 +796,8 @@ export async function writeOutsideCatalogMedia(
         set: {
           spotifyTrackId: sql`coalesce(${libraryTrack.spotifyTrackId}, excluded.spotify_track_id)`,
           durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
-          albumMediaItemId: sql`coalesce(${libraryTrack.albumMediaItemId}, excluded.album_media_item_id)`,
+          albumMediaItemId: sql`case when ${upgradeParent} then excluded.album_media_item_id else coalesce(${libraryTrack.albumMediaItemId}, excluded.album_media_item_id) end`,
+          albumLinkStrategy: sql`case when ${upgradeParent} or ${libraryTrack.albumMediaItemId} is null then coalesce(excluded.album_link_strategy, ${libraryTrack.albumLinkStrategy}) else ${libraryTrack.albumLinkStrategy} end`,
           albumName: sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`,
           spotifyAlbumId: sql`coalesce(${libraryTrack.spotifyAlbumId}, excluded.spotify_album_id)`,
         },
@@ -640,6 +806,7 @@ export async function writeOutsideCatalogMedia(
         or (${libraryTrack.albumName} is null and excluded.album_name is not null)
         or (${libraryTrack.spotifyAlbumId} is null and excluded.spotify_album_id is not null)`,
       })
+  }
 }
 
 /** Resolve exact provider representations and retain each independent occurrence. */
@@ -647,6 +814,7 @@ export async function observeCatalogMedia(
   tx: Transaction,
   media: CatalogMedia,
   origin: CatalogOrigin,
+  pendingSpotifyCredits?: SpotifyRecordingCredit[],
 ): Promise<string> {
   // Share the lock used by existing Spotify recording, merge and track writers.
   await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
@@ -670,7 +838,7 @@ export async function observeCatalogMedia(
       ),
     )
   if (outside) await writeOutsideCatalogMedia(tx, [{ id, media }])
-  await observeCredits(tx, id, media, origin, outside)
+  const creditMatches = await observeCredits(tx, id, media, origin, outside)
 
   const existingNativeTrack =
     spotifyTrack &&
@@ -688,6 +856,8 @@ export async function observeCatalogMedia(
     await tx.insert(providerReference).values(reference).onConflictDoNothing()
 
   await observeCatalogOccurrence(tx, { kind: media.kind, id }, origin)
+  if (pendingSpotifyCredits) pendingSpotifyCredits.push(...creditMatches)
+  else await reconcileSpotifyRecordingCredits(tx, creditMatches)
   return id
 }
 

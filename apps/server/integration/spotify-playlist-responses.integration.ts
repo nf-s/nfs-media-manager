@@ -61,7 +61,7 @@ import {
 import { queueSpotifyPlaylistListing } from '@/services/spotify-playlist-listing'
 import { queueSpotifyPlaylistImports } from '@/services/spotify-playlists'
 import { listPlaylistBrowsePage } from '@/services/playlist-directory'
-import { getPlaylistDetail } from '@/services/tracks'
+import { getPlaylistDetail, getTrackDetail } from '@/services/tracks'
 import { observePlaybackCatalog } from '@/services/playback-catalog'
 import { backfillMusicCatalog } from '@/services/music-catalog-backfill'
 import { promoteCatalogMedia } from '@/services/catalog-discoveries'
@@ -260,6 +260,7 @@ describe('Spotify playlist job responses', () => {
   })
 
   it('opens the observed recording, album and artist and promotes only that recording', async () => {
+    const artworkUrl = 'https://i.scdn.co/image/playing-fixture'
     const observation = PlaybackCatalogInputSchema.parse({
       operation: 'playback',
       items: [
@@ -267,6 +268,7 @@ describe('Spotify playlist job responses', () => {
           kind: 'track',
           spotifyId: 'playing'.padEnd(22, '0'),
           title: 'Playing track',
+          artworkUrl,
           artists: [
             { name: 'Playing artist', spotifyId: 'artist'.padEnd(22, '0') },
           ],
@@ -278,17 +280,45 @@ describe('Spotify playlist job responses', () => {
       ],
     })
     const calls = request.mock.calls.length
+    const sparseItems = observation.items.map(
+      ({ kind, spotifyId, title, artists }) => ({
+        kind,
+        spotifyId,
+        title,
+        artists: artists.map(({ name }) => ({ name })),
+      }),
+    )
+    const sparse = await observePlaybackCatalog({
+      operation: 'playback-queue',
+      items: sparseItems,
+    })
+    expect(sparse.items[0]?.artists).toEqual([])
     const [first, again] = await Promise.all([
-      observePlaybackCatalog(observation),
+      observePlaybackCatalog({
+        ...observation,
+        items: [...observation.items, ...sparseItems],
+      }),
       observePlaybackCatalog(observation),
     ])
     expect(again).toEqual(first)
     const item = first.items[0]
     if (!item) throw new Error('Expected an observed track')
+    expect(item.item).toEqual(sparse.items[0]?.item)
+    expect(await getTrackDetail(item.item.id)).toMatchObject({
+      artworkUrl,
+      albumName: 'Playing album',
+      album: { id: item.album?.id, title: 'Playing album' },
+    })
     expect(item).toMatchObject({
       item: { id: expect.any(String), inLibrary: false },
       album: { id: expect.any(String), inLibrary: false },
-      artists: [{ id: expect.any(String), name: 'Playing artist' }],
+      artists: [
+        {
+          id: expect.any(String),
+          name: 'Playing artist',
+          spotifyId: 'artist'.padEnd(22, '0'),
+        },
+      ],
     })
     await promoteCatalogMedia(item.item.id, USER_ID)
     const next = await observePlaybackCatalog({

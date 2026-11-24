@@ -88,6 +88,8 @@ import type {
   SelectableTarget,
 } from '@/utils/playback-engine'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
+import { browseFilterHref } from '@/utils/browse-items'
+import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 
 const phoneQuery = '(max-width: 700px)'
 
@@ -170,6 +172,8 @@ function references(
   const track = libraryReference(playing.track, membership)
   const exactTrack =
     playing.track && observedPlaybackItem(playing.track, membership.references)
+  const exactAlbum =
+    playing.album && observedPlaybackItem(playing.album, membership.references)
   const spotifyAlbumId = playbackSpotifyId('album', playing.album?.uri)
   const trackId = track.detail?.id
   const fromCurrentTrack =
@@ -191,25 +195,23 @@ function references(
           : undefined,
     }
   }
-  const named = snapshot
-    ? snapshot.artistLinks
-    : credits.map(({ name }) => ({ name, uri: null }))
+  const known = exactTrack?.artists ?? exactAlbum?.artists ?? credits
   const plain = snapshot?.artists ?? current?.artist ?? ''
-  const artists: Reference[] = named.length
-    ? named.map(({ name, uri }) => {
-        const known = exactTrack?.artists ?? credits
-        const matches = known.filter((credit) => credit.name === name)
-        const id = matches.length === 1 ? matches[0]?.id : null
-        return {
-          label: name,
-          detail: id ? { kind: 'artist', id } : null,
-          url: spotifyWebUrl(uri),
-        }
+  const artists = snapshot?.artistLinks.length
+    ? snapshot.artistLinks.map(({ name, uri }) => {
+        const spotifyId = playbackSpotifyId('artist', uri)
+        const matches = spotifyId
+          ? (exactTrack?.artists ?? []).filter(
+              (credit) => credit.spotifyId === spotifyId,
+            )
+          : known.filter((credit) => credit.name === name)
+        return { name, id: matches.length === 1 ? matches[0]?.id : null }
       })
-    : plain
-      ? [{ label: plain, detail: null, url: null }]
+    : known.length &&
+        (!snapshot || known.map(({ name }) => name).join(', ') === plain)
+      ? known
       : []
-  return { track, artists, album }
+  return { track, artists, album, artistLabel: plain }
 }
 
 function libraryReference(
@@ -268,6 +270,52 @@ function PlayerLink({
   return <>{children ?? to.label}</>
 }
 
+function PlayerArtists({
+  artists,
+  fallback,
+  onNavigate,
+}: {
+  artists: readonly { name: string; id?: string | null }[]
+  fallback: string
+  onNavigate?: () => void
+}) {
+  const entries = artists.length
+    ? artists
+    : fallback
+      ? [{ name: fallback, id: null }]
+      : []
+  return entries.map(({ name, id }, index) => {
+    const href = browseFilterHref('/artists?libraryScope=all', [
+      { field: 'name', value: name, mode: 'required' },
+    ])
+    return (
+      <Fragment key={`${id ?? name}:${index}`}>
+        {index > 0 && ', '}
+        {id ? (
+          <DetailLink
+            kind="artist"
+            id={id}
+            title={`Open ${name}`}
+            onClick={onNavigate}
+          >
+            {name}
+          </DetailLink>
+        ) : (
+          <Link
+            {...workspaceTabLinkProps(href, name)}
+            href={href}
+            title={`Find ${name} in Artists`}
+            prefetch={false}
+            onClick={onNavigate}
+          >
+            {name}
+          </Link>
+        )}
+      </Fragment>
+    )
+  })
+}
+
 /** The playing track, its artists and its album, each linked. */
 function NowPlaying({
   shown,
@@ -284,10 +332,11 @@ function NowPlaying({
   touch?: boolean
   inQueue?: boolean
 }) {
-  const { track, artists, album } = shown
+  const { track, artists, album, artistLabel } = shown
   const title = playing.track ? track : album
   const titleItem = playing.track ?? playing.album
   const release = playing.track ? playing.album : null
+  const hasArtists = artists.length > 0 || Boolean(artistLabel)
   const LibraryControl = inQueue ? QueueLibrarySlot : PlayerLibraryAction
   return (
     <span className="player-text">
@@ -306,16 +355,15 @@ function NowPlaying({
           />
         )}
       </span>
-      {(artists.length > 0 || release) && (
+      {(hasArtists || release) && (
         <span className="player-identity-line">
           <span>
-            {artists.map((artist, index) => (
-              <Fragment key={`${artist.label}:${index}`}>
-                {index > 0 && ', '}
-                <PlayerLink to={artist} onNavigate={onNavigate} />
-              </Fragment>
-            ))}
-            {artists.length > 0 && release && ' · '}
+            <PlayerArtists
+              artists={artists}
+              fallback={artistLabel}
+              onNavigate={onNavigate}
+            />
+            {hasArtists && release && ' · '}
             {release && <PlayerLink to={album} onNavigate={onNavigate} />}
           </span>
           {release && (
@@ -329,19 +377,6 @@ function NowPlaying({
       )}
     </span>
   )
-}
-
-function itemDetail(item: PlayableItem) {
-  if (item.kind === 'track')
-    return [item.artist, item.albumTitle].filter(Boolean).join(' · ')
-  return [
-    item.artist,
-    item.trackCount === null
-      ? ''
-      : `${item.trackCount} ${item.trackCount === 1 ? 'track' : 'tracks'}`,
-  ]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 function targetLabel(target: PlaybackTarget) {
@@ -578,7 +613,9 @@ function ItemText({
 }) {
   const known = observedPlaybackItem(library, membership.references)
   const artists = known?.artists.length ? known.artists : (item.credits ?? [])
+  const hasArtists = artists.length > 0 || Boolean(item.artist)
   const albumTitle = item.kind === 'track' ? item.albumTitle : ''
+  const trackCount = item.kind === 'album' ? item.trackCount : null
   const albumId = known?.album?.id ?? item.albumId
   const trackId = playerItemIdentity(library, membership).mediaItemId
   const spotifyAlbumId = playbackSpotifyId('album', item.albumUri)
@@ -596,24 +633,14 @@ function ItemText({
           onNavigate={onNavigate}
         />
       </strong>
-      {item.kind === 'track' ? (
+      {(hasArtists || albumTitle || trackCount !== null) && (
         <span>
-          {artists.length
-            ? artists.map(({ id, name }, index) => (
-                <Fragment key={`${id ?? name}:${index}`}>
-                  {index > 0 && ', '}
-                  <PlayerLink
-                    to={{
-                      label: name,
-                      detail: id ? { kind: 'artist', id } : null,
-                      url: null,
-                    }}
-                    onNavigate={onNavigate}
-                  />
-                </Fragment>
-              ))
-            : item.artist}
-          {(artists.length > 0 || item.artist) && albumTitle && ' · '}
+          <PlayerArtists
+            artists={artists}
+            fallback={item.artist}
+            onNavigate={onNavigate}
+          />
+          {hasArtists && (albumTitle || trackCount !== null) && ' · '}
           {albumTitle && (
             <PlayerLink
               to={{
@@ -636,9 +663,9 @@ function ItemText({
               onNavigate={onNavigate}
             />
           )}
+          {trackCount !== null &&
+            `${trackCount} ${trackCount === 1 ? 'track' : 'tracks'}`}
         </span>
-      ) : (
-        <span>{itemDetail(item)}</span>
       )}
     </span>
   )

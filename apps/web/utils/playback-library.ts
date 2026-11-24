@@ -3,7 +3,7 @@ import type {
   CatalogMembershipResult,
 } from '@repo/schemas/manual-add'
 import type { PlayableItem, PlaybackSnapshot } from './playback'
-import { playbackSpotifyId } from './playback-catalog'
+import { playbackAlbumUri, playbackSpotifyId } from './playback-catalog'
 
 type CatalogItem = Extract<
   CatalogMembershipInput['items'][number],
@@ -38,7 +38,11 @@ function playbackLibraryItem(
   return { kind, title, uri, mediaItemId, catalog }
 }
 
-function playingTrack(snapshot: PlaybackSnapshot, trackId: string | null) {
+function playingTrack(
+  snapshot: PlaybackSnapshot,
+  trackId: string | null,
+  albumUri: string | null,
+) {
   if (!snapshot.trackName) return null
   if (snapshot.isLocal || snapshot.trackUri?.startsWith('spotify:local:'))
     return playbackLibraryItem('track', snapshot.trackName, null, trackId)
@@ -51,7 +55,7 @@ function playingTrack(snapshot: PlaybackSnapshot, trackId: string | null) {
     snapshot.linkedFromUri,
   )
   const [first, ...aliases] = item.catalog
-  const spotifyAlbumId = playbackSpotifyId('album', snapshot.albumUri)
+  const spotifyAlbumId = playbackSpotifyId('album', albumUri)
   const title = snapshot.trackName.trim()
   const artists = (
     snapshot.artistLinks.length
@@ -114,16 +118,16 @@ export function playingLibraryItems(
       (snapshot.albumUri !== null || current.albumTitle === snapshot.albumName)
         ? current
         : null
-    const albumUri = snapshot.albumUri ?? currentAlbum?.uri ?? null
+    const albumUri = playbackAlbumUri(snapshot, current)
     const albumId =
       currentAlbum?.albumId ??
       (currentTrack?.uri === snapshot.trackUri &&
-      !albumUri &&
+      (!albumUri || albumUri === currentTrack.albumUri) &&
       currentTrack.albumTitle === snapshot.albumName
         ? currentTrack.albumId
         : null)
     return {
-      track: playingTrack(snapshot, trackId),
+      track: playingTrack(snapshot, trackId, albumUri),
       album: snapshot.albumName
         ? playbackLibraryItem('album', snapshot.albumName, albumUri, albumId)
         : null,

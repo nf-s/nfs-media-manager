@@ -73,6 +73,17 @@ export const PlaybackSnapshotSchema = z.object({
 export type PlaybackSnapshot = z.infer<typeof PlaybackSnapshotSchema>
 
 const CatalogIdSchema = z.string().regex(spotifyIdPattern)
+export const PlaybackCatalogArtworkSchema = z
+  .url({ protocol: /^https$/ })
+  .max(8000)
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return !url.username && !url.password && !url.search && !url.hash
+    } catch {
+      return false
+    }
+  })
 const CatalogNameSchema = z
   .string()
   .trim()
@@ -85,6 +96,7 @@ export const PlaybackCatalogItemSchema = z.object({
   kind: z.enum(['track', 'album']),
   spotifyId: CatalogIdSchema,
   title: CatalogNameSchema,
+  artworkUrl: PlaybackCatalogArtworkSchema.optional(),
   album: z
     .object({ spotifyId: CatalogIdSchema.optional(), title: CatalogNameSchema })
     .optional(),
@@ -120,7 +132,13 @@ export const PlaybackCatalogResultSchema = z.object({
       spotifyId: CatalogIdSchema,
       item: PlaybackCatalogReferenceSchema,
       album: PlaybackCatalogReferenceSchema.nullable(),
-      artists: z.array(z.object({ name: z.string(), id: z.string() })),
+      artists: z.array(
+        z.object({
+          name: z.string(),
+          id: z.string(),
+          spotifyId: CatalogIdSchema.optional(),
+        }),
+      ),
     }),
   ),
 })

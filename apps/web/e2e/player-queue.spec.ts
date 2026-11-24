@@ -46,10 +46,12 @@ async function mockPlayback(
     promoting,
     shadowed,
     membershipReady,
+    useCatalogServer = false,
   }: {
     promoting?: PlayableItem
     shadowed?: readonly PlayableItem[]
     membershipReady?: Promise<void>
+    useCatalogServer?: boolean
   } = {},
 ) {
   const writes: string[] = []
@@ -90,6 +92,7 @@ async function mockPlayback(
         state,
       }
     } else if (path.endsWith('/playback/catalog')) {
+      if (useCatalogServer) return route.fallback()
       const { items } = PlaybackCatalogInputSchema.parse(request.postDataJSON())
       const reference = (id: string) => ({
         id: outsideIds.has(id) ? `outside-${id}` : `catalog-${id}`,
@@ -104,10 +107,9 @@ async function mockPlayback(
           album: entry.album?.spotifyId
             ? reference(entry.album.spotifyId)
             : null,
-          artists: entry.artists.map(({ name }) => ({
-            name,
-            id: 'fixture-artist',
-          })),
+          artists: entry.artists.flatMap(({ name, spotifyId }) =>
+            spotifyId ? [{ name, id: 'fixture-artist', spotifyId }] : [],
+          ),
         })),
       }
     } else if (path.endsWith('/manual-add/membership')) {
@@ -199,6 +201,78 @@ function openQueue(page: Page, isMobile: boolean, playing: PlayableItem) {
 }
 
 const savedActionName = /is in your library/
+
+test('playback opens the shadow recording with its album, artwork and artist', async ({
+  page,
+  isMobile,
+}) => {
+  const release = {
+    ...item('album', 81, 'Album'),
+    title: 'Playback-only album',
+  }
+  const playing = {
+    ...item('track', 82, 'Recording'),
+    title: 'Playback-only recording',
+    artist: 'Playback-only artist',
+    albumTitle: release.title,
+    albumUri: release.uri,
+  }
+  const artworkUrl = 'https://i.scdn.co/image/playback-fixture'
+  await page.route(artworkUrl, (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="#667788"/></svg>',
+    }),
+  )
+  await mockPlayback(
+    page,
+    {
+      ...playback(playing),
+      snapshot: {
+        ...snapshot(playing, release),
+        albumUri: null,
+        artworkUrl,
+      },
+    },
+    new Set(),
+    { useCatalogServer: true },
+  )
+  async function nowPlaying() {
+    await page.goto('/tracks')
+    if (isMobile)
+      await page
+        .getByRole('button', { name: `Open player: ${playing.title}` })
+        .click()
+    return page.locator(
+      isMobile ? '.player-sheet-body > .player-text' : '.player-now',
+    )
+  }
+
+  const dock = await nowPlaying()
+  const title = dock.getByRole('link', { name: playing.title, exact: true })
+  await expect(title).toHaveAttribute('data-workspace-href', /^\/tracks\//)
+  await title.click()
+  const detail = page.locator('.dtl-detail > header').last()
+  await expect(
+    detail.getByRole('heading', { name: playing.title }),
+  ).toBeVisible()
+  await expect(detail.getByRole('link', { name: release.title })).toBeVisible()
+  await expect(detail.locator('img.ds-artimg')).toHaveAttribute(
+    'src',
+    artworkUrl,
+  )
+  await expect(detail.locator('img.ds-artimg')).toBeVisible()
+
+  const artist = (await nowPlaying()).getByRole('link', {
+    name: playing.artist,
+    exact: true,
+  })
+  await expect(artist).toHaveAttribute('data-workspace-href', /^\/artists\//)
+  await artist.click()
+  await expect(
+    page.getByRole('heading', { name: playing.artist }),
+  ).toBeVisible()
+})
 
 test('queue titles leave room for controls and saving clears the library action', async ({
   page,
@@ -316,6 +390,17 @@ test('queue titles leave room for controls and saving clears the library action'
   const playingRow = rows.nth(0)
   const queuedRow = rows.nth(1)
   const upcomingRow = rows.nth(3)
+  const queuedArtist = queuedRow.getByRole('link', {
+    name: queued.artist,
+    exact: true,
+  })
+  await expect(queuedArtist).toHaveAttribute(
+    'href',
+    /^\/artists\?libraryScope=all&filters=/,
+  )
+  await expect(
+    upcomingRow.getByRole('link', { name: upcoming.artist, exact: true }),
+  ).toHaveAttribute('href', /^\/artists\?libraryScope=all&filters=/)
   for (const { name, href } of [
     { name: playing.title, href: `/tracks/catalog-${externalId(playing)}` },
     { name: release.title, href: `/albums/catalog-${externalId(release)}` },
@@ -378,6 +463,8 @@ test('queue titles leave room for controls and saving clears the library action'
     expect(await actionPosition(play)).toEqual(before)
     await page.mouse.move(0, 0)
     await queuedRow.getByRole('link', { name: queued.title }).focus()
+    await page.keyboard.press('Tab')
+    await expect(queuedArtist).toBeFocused()
     await page.keyboard.press('Tab')
     await expect(add).toBeFocused()
     await expect(queuedRow.locator('.queue-actions')).toHaveCSS('opacity', '1')

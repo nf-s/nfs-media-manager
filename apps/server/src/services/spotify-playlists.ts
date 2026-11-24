@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
@@ -32,12 +32,14 @@ import {
 import {
   libraryTrack,
   catalogObservation,
-  mediaCredit,
   mediaItem,
   playlist,
   playlistItem,
 } from '@/schemas/db'
-import { writeArtistCredits } from './artist-names'
+import {
+  spotifyTrackBilling,
+  replaceSpotifyArtistCredits,
+} from './spotify-artist-credits'
 import { observeCatalogOccurrence } from './catalog-discoveries'
 import { latestCatalogResponseId } from './music-catalog-observations'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
@@ -66,6 +68,12 @@ import { refreshTrackLinks } from './track-links'
 import { observeSpotifyPlaylistPageBatch } from './spotify-playlist-observations'
 
 const WRITE_BATCH = 500
+const StoredSpotifyArtistCreditsSchema = z.array(
+  z.object({ id: SpotifyIdSchema, name: z.string() }),
+)
+const StoredSpotifyArtistBillingSchema = z.array(
+  z.object({ id: SpotifyIdSchema.optional(), name: z.string() }),
+)
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -723,23 +731,16 @@ export async function refreshTrackAddedDates(
 /** Resolve the provider's ordered artist credits against existing library artists. */
 export async function replaceSpotifyTrackCredits(
   tx: Transaction,
-  batch: { id: string; artists: string[] }[],
+  batch: ({ id: string } & Parameters<typeof spotifyTrackBilling>[0])[],
 ) {
-  await tx.delete(mediaCredit).where(
-    and(
-      inArray(
-        mediaCredit.mediaItemId,
-        batch.map((track) => track.id),
-      ),
-      eq(mediaCredit.role, 'artist'),
-    ),
-  )
-  await writeArtistCredits(
+  await replaceSpotifyArtistCredits(
     tx,
+    batch.map((track) => track.id),
     batch.flatMap((track) =>
-      track.artists.map((name, billingOrder) => ({
+      spotifyTrackBilling(track).map(({ name, id }, billingOrder) => ({
         mediaItemId: track.id,
         name,
+        spotifyId: id,
         role: 'artist',
         billingOrder,
       })),
@@ -779,8 +780,17 @@ async function storeImport(
     for (let start = 0; start < tracks.length; start += WRITE_BATCH) {
       await context.assertActive()
       const batch = tracks.slice(start, start + WRITE_BATCH)
-      const confirmed = await tx
-        .select({ id: mediaItem.id })
+      const isConfirmed = sql<boolean>`
+        ${mediaItem.metadata} #>> '{spotifyTrackSearch,spotifyTrackId}' = ${libraryTrack.spotifyTrackId}
+      `
+      const known = await tx
+        .select({
+          id: mediaItem.id,
+          spotifyTrackId: libraryTrack.spotifyTrackId,
+          confirmed: sql<boolean>`coalesce(${isConfirmed}, false)`,
+          artistCredits: sql<unknown>`${mediaItem.metadata}->'spotifyArtistCredits'`,
+          artistBilling: sql<unknown>`${mediaItem.metadata}->'spotifyArtistBilling'`,
+        })
         .from(libraryTrack)
         .innerJoin(mediaItem, eq(mediaItem.id, libraryTrack.mediaItemId))
         .where(
@@ -789,10 +799,21 @@ async function storeImport(
               libraryTrack.spotifyTrackId,
               batch.map(({ spotifyTrackId }) => spotifyTrackId),
             ),
-            sql`${mediaItem.metadata} #>> '{spotifyTrackSearch,spotifyTrackId}' = ${libraryTrack.spotifyTrackId}`,
+            or(
+              isConfirmed,
+              inArray(
+                libraryTrack.spotifyTrackId,
+                batch
+                  .filter(({ artistCredits }) => !artistCredits.length)
+                  .map(({ spotifyTrackId }) => spotifyTrackId),
+              ),
+            ),
           ),
         )
-      const confirmedIds = new Set(confirmed.map(({ id }) => id))
+      const confirmedIds = new Set(
+        known.filter(({ confirmed }) => confirmed).map(({ id }) => id),
+      )
+      const priorBilling = new Map(known.map((track) => [track.id, track]))
       const preserveReviewed = inArray(mediaItem.id, [...confirmedIds])
       const items = batch.map((track): typeof mediaItem.$inferInsert => {
         const id = idForTrack(track.spotifyTrackId)
@@ -808,6 +829,7 @@ async function storeImport(
           metadata: track.artistCredits.length
             ? {
                 spotifyArtistCredits: track.artistCredits,
+                spotifyArtistBilling: track.artistBilling ?? null,
                 spotifyArtistCreditsSource: artistCreditsSource,
               }
             : {},
@@ -870,10 +892,30 @@ async function storeImport(
           })
         await replaceSpotifyTrackCredits(
           tx,
-          imports.map((track) => ({
-            id: idForTrack(track.spotifyTrackId),
-            artists: track.artists,
-          })),
+          imports.map((track) => {
+            const id = idForTrack(track.spotifyTrackId)
+            const prior = priorBilling.get(id)
+            const stored = StoredSpotifyArtistCreditsSchema.safeParse(
+              prior?.artistCredits,
+            ).data
+            const billing = StoredSpotifyArtistBillingSchema.safeParse(
+              prior?.artistBilling,
+            ).data
+            const storedNames = [
+              ...new Set((billing ?? stored)?.map(({ name }) => name)),
+            ]
+            const useStored =
+              !track.artistCredits.length &&
+              prior?.spotifyTrackId === track.spotifyTrackId &&
+              storedNames.length === track.artists.length &&
+              storedNames.every((name, index) => name === track.artists[index])
+            return {
+              id,
+              artists: track.artists,
+              artistCredits: useStored ? stored : track.artistCredits,
+              artistBilling: useStored ? billing : track.artistBilling,
+            }
+          }),
         )
       }
       await context.activity('Saving track details', {

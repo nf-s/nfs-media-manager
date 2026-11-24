@@ -31,6 +31,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { measureRequestPhase } from '@/lib/request-log'
 import { spotifyAlbumId } from '@/lib/spotify-api'
+import { albumMatchRejectionField } from './album-match-rejections'
 import {
   albumTrackDurationExpression,
   trackProvidersExpression,
@@ -122,7 +123,65 @@ const TrackRowsSchema = z.array(
   }),
 )
 
-async function loadTrackItems(pageIds: SQL, prefix = sql``) {
+/** A release observation can supply the header for a shadow recording. */
+function observedTrackRelease() {
+  const nativeAlbum = sql`coalesce(
+    substring(lt.spotify_album_id from '^(?:spotify:album:)?([A-Za-z0-9]{22})$'),
+    substring(lt.spotify_album_id from '^https://open[.]spotify[.]com/album/([A-Za-z0-9]{22})/?(?:[?#].*)?$')
+  )`
+  return sql`(
+    select min(candidate.id)
+    from (
+      select distinct release.media_item_id as id
+      from catalog_observation o
+      join album release on release.media_item_id = o.media_item_id
+      join media_item release_item on release_item.id = release.media_item_id
+      where not mi.in_library and lt.album_media_item_id is null
+        and o.subject_kind = 'track' and o.subject_id = lt.media_item_id
+        and o.target_kind = 'album' and o.relationship_role = 'release'
+        and release_item.media_type = 'album'
+        and release_item.metadata->>'legacyHidden' is distinct from 'true'
+        and (o.response_id is null or exists (
+          select 1 from provider_response r
+          where r.id = o.response_id and r.provider = o.provider
+            and r.status between 200 and 299 and not r.not_found
+        ))
+        and not exists (
+          select 1 from provider_reference r
+          where r.media_item_id = release.media_item_id
+            and r.reference_type in ('album', 'spotify', 'spotify_album', 'sonovault-release')
+            and (r.provider = o.provider or (r.provider = 'spotify' and r.external_id = ${nativeAlbum}))
+            and (r.metadata->>'rejected' = 'true' or r.metadata->>'verified' = 'false')
+        )
+        and not exists (
+          select 1 from media_override r
+          where r.media_item_id = release.media_item_id and r.field = ${albumMatchRejectionField}
+            and r.value->>'referenceType' in ('album', 'spotify', 'spotify_album', 'sonovault-release')
+            and (r.value->>'provider' = o.provider
+              or (r.value->>'provider' = 'spotify' and r.value->>'identifier' = ${nativeAlbum}))
+        )
+        and (lt.spotify_album_id is null
+          or substring(release.spotify_url from '/album/([A-Za-z0-9]{22})') = ${nativeAlbum}
+          or exists (
+            select 1 from provider_reference r
+            where r.media_item_id = release.media_item_id and r.provider = 'spotify'
+              and r.reference_type in ('album', 'spotify', 'spotify_album')
+              and r.external_id = ${nativeAlbum}
+          ))
+      limit 2
+    ) candidate
+    having count(*) = 1
+  )`
+}
+
+async function loadTrackItems(
+  pageIds: SQL,
+  prefix = sql``,
+  { includeObservedRelease = false } = {},
+) {
+  const albumId = includeObservedRelease
+    ? sql`coalesce(lt.album_media_item_id, ${observedTrackRelease()})`
+    : sql`lt.album_media_item_id`
   const rows = TrackRowsSchema.parse(
     (
       await db.execute(sql`
@@ -133,7 +192,7 @@ async function loadTrackItems(pageIds: SQL, prefix = sql``) {
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = mi.id and c.role = 'artist'), '[]'::jsonb) as artist_credits,
           coalesce(page_tags.tags, '[]'::jsonb) as artist_tags,
-          coalesce(lt.album_name, am.title) as album_name, lt.album_media_item_id as album_id,
+          coalesce(lt.album_name, am.title) as album_name, am.id as album_id,
           am.title as album_title, am.in_library as album_in_library, lt.album_link_strategy,
           coalesce(page_track_tags.tags, '{}') as track_tags,
           coalesce((
@@ -158,7 +217,7 @@ async function loadTrackItems(pageIds: SQL, prefix = sql``) {
           ${isoTimestamp(sql`lt.last_listened_at`)} as last_listened_at
         from library_track lt
         join media_item mi on mi.id = lt.media_item_id
-        left join media_item am on am.id = lt.album_media_item_id
+        left join media_item am on am.id = ${albumId}
         left join (${artistTagsForItems(pageIds)}) page_tags on page_tags.media_item_id = lt.media_item_id
         left join (${trackTagsForItems(pageIds)}) page_track_tags on page_track_tags.media_item_id = lt.media_item_id
         where lt.media_item_id = ${pageIds}`)
@@ -428,6 +487,7 @@ export async function getTrackDetail(
           ${requestedId}::text
         ) as id
       )`,
+      { includeObservedRelease: true },
     ),
   )
   if (!item) return null

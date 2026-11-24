@@ -111,6 +111,7 @@ export function usePlayerLibraryMembership(
 ) {
   const { apiBaseUrl } = useConfig()
   const lookup = useCatalogMembership(catalogLookups(items))
+  const client = useQueryClient()
   const identified = new Map(
     observed.flatMap((item) =>
       item ? [[`${item.kind}:${item.spotifyId}`, item]] : [],
@@ -124,13 +125,27 @@ export function usePlayerLibraryMembership(
         const batch = catalog.slice(chunk * 50, (chunk + 1) * 50)
         return {
           queryKey: ['playback-catalog', operation, batch],
-          queryFn: ({ signal }: { signal: AbortSignal }) =>
-            recordPlaybackCatalog(
+          queryFn: async ({ signal }: { signal: AbortSignal }) => {
+            const result = await recordPlaybackCatalog(
               apiBaseUrl,
               operation,
               batch.map(([, item]) => item),
               signal,
-            ),
+            )
+            for (const { kind, item, album } of result.items) {
+              if (!item.inLibrary)
+                void client.invalidateQueries({
+                  queryKey: [kind, item.id],
+                  exact: true,
+                })
+              if (album && !album.inLibrary)
+                void client.invalidateQueries({
+                  queryKey: ['album', album.id],
+                  exact: true,
+                })
+            }
+            return result
+          },
           staleTime: Infinity,
         }
       },

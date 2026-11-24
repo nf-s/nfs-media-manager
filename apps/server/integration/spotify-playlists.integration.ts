@@ -532,10 +532,20 @@ describe('Spotify playlist imports', () => {
       replaceAlbumTracks(tx, 'track-credit-album', normalized.tracks),
     )
     const rows = (await listTracks(trackQuery())).items
-    expect(rows.find((row) => row.title === 'albumonly')?.artists).toEqual([
-      'The Examples',
-      'Featured Artist',
-    ])
+    const albumOnly = rows.find((row) => row.title === 'albumonly')
+    if (!albumOnly) throw new Error('Expected an album track')
+    expect(albumOnly.artists).toEqual(['The Examples', 'Featured Artist'])
+    expect(
+      await databaseClient
+        .select({ id: schema.artist.catalogExternalId })
+        .from(schema.mediaCredit)
+        .innerJoin(
+          schema.artist,
+          eq(schema.artist.id, schema.mediaCredit.artistId),
+        )
+        .where(eq(schema.mediaCredit.mediaItemId, albumOnly.id))
+        .orderBy(schema.mediaCredit.billingOrder),
+    ).toEqual([{ id: null }, { id: spotifyId('featured') }])
     expect(rows.find((row) => row.title === 'imported')?.artists).toEqual([
       'Imported Artist',
     ])
@@ -595,6 +605,56 @@ describe('Spotify playlist imports', () => {
     await importAll({ playlists: [], likedSongs: true })
     const [withoutIds] = await databaseClient.select().from(schema.mediaItem)
     expect(withoutIds?.metadata).toEqual(updated?.metadata)
+  })
+
+  it('credits distinct Spotify artist IDs even when their names are identical', async () => {
+    const firstId = spotifyId('firstartist')
+    const secondId = spotifyId('secondartist')
+    const entry = {
+      added_at: '2024-03-01T10:00:00Z',
+      item: {
+        type: 'track',
+        id: spotifyId('sharedbilling'),
+        name: 'Shared billing',
+        duration_ms: 120000,
+        artists: [
+          { name: 'Lead without ID' },
+          { id: firstId, name: 'The Examples' },
+          { id: secondId, name: 'The Examples' },
+        ],
+      },
+    }
+    liked = [entry]
+    await importAll({ playlists: [], likedSongs: true })
+    const credits = () =>
+      databaseClient
+        .select({
+          spotifyId: schema.artist.catalogExternalId,
+          name: schema.artist.name,
+        })
+        .from(schema.mediaCredit)
+        .innerJoin(
+          schema.artist,
+          eq(schema.artist.id, schema.mediaCredit.artistId),
+        )
+        .orderBy(schema.mediaCredit.billingOrder)
+    const expected = [
+      { spotifyId: null, name: 'Lead without ID' },
+      { spotifyId: firstId, name: 'The Examples' },
+      { spotifyId: secondId, name: 'The Examples' },
+    ]
+    expect(await credits()).toEqual(expected)
+    liked = [
+      {
+        ...entry,
+        item: {
+          ...entry.item,
+          artists: entry.item.artists.map(({ name }) => ({ name })),
+        },
+      },
+    ]
+    await importAll({ playlists: [], likedSongs: true })
+    expect(await credits()).toEqual(expected)
   })
 
   it('reuses confirmed Spotify search recordings without replacing their metadata', async () => {

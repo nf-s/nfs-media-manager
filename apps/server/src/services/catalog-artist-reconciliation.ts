@@ -9,6 +9,7 @@ import {
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { validIsrc } from '@/lib/isrc'
+import { spotifyAlbumTrackPaths } from '@/lib/spotify-api'
 import { createStableId } from '@/lib/media-utils'
 import { spotifyCodeLookup, tidalSimilar, providerResponse } from '@/schemas/db'
 import { normalizeSpotifyCatalogTrack } from './provider-search-task-replay'
@@ -39,11 +40,12 @@ export async function reconcileArtistPair(
   targetId: string,
   rule: string,
   apply: boolean,
+  sharedBilling?: { trackId: string; position: number },
 ) {
   if (sourceId === targetId) return false
-  await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+  if (apply) await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
   const active = await tx.execute(
-    sql`select id from artist where id in (${sourceId},${targetId}) and merged_into_id is null order by id for update`,
+    sql`select id from artist where id in (${sourceId},${targetId}) and merged_into_id is null order by id ${apply ? sql`for update` : sql``}`,
   )
   if (active.rows.length !== 2) return false
   const previous = await tx.execute(sql`
@@ -56,9 +58,22 @@ export async function reconcileArtistPair(
   const reading = await readArtistMerge(
     tx,
     { artistIds: [sourceId, targetId], targetId, follow: false },
-    true,
+    apply,
   )
-  if (reading.plan.blocked || reading.plan.cautions.length) return false
+  if (reading.plan.blocked) return false
+  for (const caution of reading.plan.cautions) {
+    if (caution.code === 'names' && rule === 'exact-provider-artist-id')
+      continue
+    if (caution.code !== 'together' || caution.items !== 1 || !sharedBilling)
+      return false
+    // An older playback and its native replacement may occupy the same billing slot.
+    const shared =
+      await tx.execute(sql`select 1 from media_credit s join media_credit t
+      on t.media_item_id=s.media_item_id and t.role=s.role and t.billing_order=s.billing_order
+      where s.media_item_id=${sharedBilling.trackId} and s.artist_id=${sourceId} and t.artist_id=${targetId}
+        and s.role='artist' and s.billing_order=${sharedBilling.position - 1}`)
+    if (!shared.rows.length) return false
+  }
   if (apply) {
     const { persistArtistMerge } = await import('./artist-merges')
     await persistArtistMerge(tx, reading, rule)
@@ -194,36 +209,69 @@ export async function reconcileExactCatalogArtists(
   })
 }
 
-/** A provisional artist from one recording may have acquired a native Spotify credit on that exact recording. */
+async function scopedSpotifyEvidence(
+  tx: Pick<ChangeTransaction, 'execute'>,
+  onlyId?: string,
+) {
+  const rows =
+    await tx.execute(sql`select a.id, a.name, m.id as track_id, o.position, min(b.external_id) as external_id
+      from artist a join catalog_observation o on o.target_kind='artist' and o.target_id=a.id
+      join media_item m on m.id=o.subject_id join library_track t on t.media_item_id=m.id
+      cross join lateral (
+        select credit->>'id' as external_id from jsonb_array_elements(case when jsonb_typeof(m.metadata->'spotifyArtistCredits')='array'
+          then m.metadata->'spotifyArtistCredits' else '[]'::jsonb end) with ordinality as bill(credit,ordinal)
+          where o.position=ordinal and credit->>'name'=a.name
+        union all
+        select n.catalog_external_id from catalog_observation x join artist n on n.id=x.target_id
+          where x.subject_kind='track' and x.subject_id=m.id and x.position=o.position and x.provider='spotify'
+            and x.target_kind='artist' and x.relationship_role='artist' and n.catalog_provider='spotify' and n.name=a.name
+        union all
+        select bill.credit->>'id' from provider_current_state p
+          cross join lateral (values ${sql.join(
+            spotifyAlbumTrackPaths.map((path) => sql`(${path}::text)`),
+            sql`, `,
+          )}) path(value)
+          cross join lateral jsonb_path_query(p.payload,path.value::jsonpath,jsonb_build_object('track_id',t.spotify_track_id)) song
+          cross join lateral jsonb_array_elements(case when jsonb_typeof(song->'artists')='array' then song->'artists' else '[]'::jsonb end) with ordinality bill(credit,ordinal)
+          where p.provider='spotify' and p.media_item_id=t.album_media_item_id and bill.ordinal=o.position and bill.credit->>'name'=a.name
+      ) b
+      where a.catalog_provider='spotify' and a.catalog_external_id is null and a.merged_into_id is null
+        ${onlyId ? sql`and a.id=${onlyId}` : sql``}
+        and o.provider='spotify' and o.subject_kind='track' and o.relationship_role='artist'
+        and b.external_id ~ '^[a-zA-Z0-9]{22}$' and t.spotify_track_id is not null
+        and not exists(select 1 from media_credit c where c.artist_id=a.id and c.media_item_id<>m.id)
+      group by a.id,a.name,m.id,o.position having count(distinct b.external_id)=1`)
+  return z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        track_id: z.string(),
+        position: z.number(),
+        external_id: z.string(),
+      }),
+    )
+    .parse(rows.rows)
+}
+
+/** Keep the shared track-write lock for just one independently reversible artist merge. */
 export async function repairScopedSpotifyCredits(
   apply: boolean,
   database = db,
 ) {
-  return database.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-    const rows =
-      await tx.execute(sql`select distinct a.id, a.name, m.id as track_id, o.position, credit->>'id' as external_id
-      from artist a join catalog_observation o on o.target_kind='artist' and o.target_id=a.id
-      join media_item m on m.id=o.subject_id join library_track t on t.media_item_id=m.id
-      cross join lateral jsonb_array_elements(case when jsonb_typeof(m.metadata->'spotifyArtistCredits')='array'
-        then m.metadata->'spotifyArtistCredits' else '[]'::jsonb end) with ordinality as bill(credit,ordinal)
-      where a.catalog_provider='spotify' and a.catalog_external_id is null and a.merged_into_id is null
-        and o.provider='spotify' and o.subject_kind='track' and o.relationship_role='artist'
-        and o.position=ordinal and credit->>'name'=a.name and credit->>'id' ~ '^[a-zA-Z0-9]{22}$'
-        and t.spotify_track_id is not null and jsonb_array_length(m.metadata->'spotifyArtistCredits')=1
-        and not exists(select 1 from media_credit c where c.artist_id=a.id and c.media_item_id<>m.id)`)
-    let reconciled = 0
-    for (const row of z
-      .array(
-        z.object({
-          id: z.string(),
-          name: z.string(),
-          track_id: z.string(),
-          position: z.number(),
-          external_id: z.string(),
-        }),
-      )
-      .parse(rows.rows)) {
+  let reconciled = 0
+  for (const candidate of await scopedSpotifyEvidence(database)) {
+    const merged = await database.transaction(async (tx) => {
+      if (apply) await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+      const row = apply
+        ? (await scopedSpotifyEvidence(tx, candidate.id)).find(
+            (r) =>
+              r.track_id === candidate.track_id &&
+              r.external_id === candidate.external_id &&
+              r.position === candidate.position,
+          )
+        : candidate
+      if (!row) return false
       if (
         row.id !==
         createStableId(
@@ -237,9 +285,40 @@ export async function repairScopedSpotifyCredits(
           ]),
         )
       )
-        continue
+        return false
       const owners = await exactOwners(tx, 'spotify', row.external_id)
-      if (
+      const slot = { trackId: row.track_id, position: row.position }
+      if (!owners.length) {
+        // The retained billing may be the first record of this artist's Spotify ID.
+        const rollback = new Error('Roll back provisional artist repair')
+        let eligible = false
+        try {
+          await tx.transaction(async (savepoint) => {
+            const { observeNamedArtistIdentities } =
+              await import('./catalog-artist-identities')
+            const identities = await observeNamedArtistIdentities(
+              savepoint,
+              'spotify',
+              new Map([[row.external_id, row.name]]),
+            )
+            const target = identities.get(row.external_id)
+            if (target)
+              eligible = await reconcileArtistPair(
+                savepoint,
+                row.id,
+                target,
+                'recording-native-artist-credit',
+                apply,
+                slot,
+              )
+            if (!apply || !eligible) throw rollback
+          })
+        } catch (error) {
+          if (error !== rollback) throw error
+        }
+        return eligible
+      }
+      return Boolean(
         owners.length === 1 &&
         owners[0] &&
         (await reconcileArtistPair(
@@ -248,12 +327,13 @@ export async function repairScopedSpotifyCredits(
           owners[0],
           'recording-native-artist-credit',
           apply,
-        ))
+          slot,
+        )),
       )
-        reconciled++
-    }
-    return reconciled
-  })
+    })
+    if (merged) reconciled++
+  }
+  return reconciled
 }
 
 /** Older lookup results omitted artist IDs. Recover only the selected Spotify recording from its own successful retained responses. */

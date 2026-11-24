@@ -92,6 +92,10 @@ export const SpotifyTrackSearchCandidateSchema = z.object({
     .array(z.object({ id: spotifyId, name }))
     .max(50)
     .default([]),
+  artistBilling: z
+    .array(z.object({ id: spotifyId.optional(), name }))
+    .max(50)
+    .optional(),
   albumName: name.nullable(),
   spotifyAlbumId: spotifyId.nullable(),
   releaseDate: z.string().max(40).nullable().optional(),
