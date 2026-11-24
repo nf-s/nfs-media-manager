@@ -238,10 +238,10 @@ test('queue titles leave room for controls and saving clears the library action'
   const playingRow = rows.nth(0)
   const queuedRow = rows.nth(1)
   const upcomingRow = rows.nth(3)
-  for (const [name, href] of [
-    [playing.title, `/tracks/catalog-${externalId(playing)}`],
-    [release.title, `/albums/catalog-${externalId(release)}`],
-    ['Synthetic artist', '/artists/fixture-artist'],
+  for (const { name, href } of [
+    { name: playing.title, href: `/tracks/catalog-${externalId(playing)}` },
+    { name: release.title, href: `/albums/catalog-${externalId(release)}` },
+    { name: 'Synthetic artist', href: '/artists/fixture-artist' },
   ]) {
     await expect(
       playingRow.getByRole('link', { name, exact: true }),
