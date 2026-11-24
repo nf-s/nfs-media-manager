@@ -233,10 +233,10 @@ export async function restoreRemovedTracks(
     and r.record_id in (${idList(ids)})`
   await tx.execute(sql`
     insert into media_item (id, media_type, slug, title, original_title,
-      summary, artwork_url, release_date, source_label, metadata, created_at,
+      summary, artwork_url, release_date, source_label, metadata, in_library, created_at,
       updated_at)
     select x.id, x.media_type, x.slug, x.title, x.original_title, x.summary,
-      x.artwork_url, x.release_date, x.source_label, x.metadata, x.created_at,
+      x.artwork_url, x.release_date, x.source_label, x.metadata, coalesce(x.in_library, true), x.created_at,
       x.updated_at
     ${rows} jsonb_populate_record(null::media_item, r.snapshot->'mediaItem') x
     ${selected}
@@ -262,7 +262,19 @@ export async function restoreRemovedTracks(
     ${selected}
       and exists (select 1 from media_item mi where mi.id = x.media_item_id)
     on conflict do nothing`)
-  // The artist may have been merged into another, or recreated, since.
+  // Keep the exact provider artist when it still exists, following name merges.
+  await tx.execute(sql`
+    insert into media_credit (media_item_id, artist_id, role, billing_order, credited_as)
+    select r.record_id, coalesce(a.merged_into_id, a.id), c->>'role',
+      (c->>'billingOrder')::int,
+      coalesce(c->>'creditedAs', case when a.merged_into_id is not null then a.name end)
+    ${rows} jsonb_array_elements(r.snapshot->'credits') c
+    join artist a on a.id = c->>'artistId'
+    ${selected}
+      and exists (select 1 from media_item mi where mi.id = r.record_id)
+    order by r.record_id, c->>'role', (c->>'billingOrder')::int
+    on conflict do nothing`)
+  // Fall back to the archived name when the artist has since been removed.
   const credits = ArchivedCreditsSchema.parse(
     (
       await tx.execute(sql`
@@ -271,6 +283,7 @@ export async function restoreRemovedTracks(
           c->>'creditedAs' as "creditedAs"
         ${rows} jsonb_array_elements(r.snapshot->'credits') c
         ${selected}
+          and not exists (select 1 from artist a where a.id = c->>'artistId')
           and exists (select 1 from media_item mi where mi.id = r.record_id)`)
     ).rows,
   )

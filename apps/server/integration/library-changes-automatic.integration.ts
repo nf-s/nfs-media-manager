@@ -1,6 +1,6 @@
 import '@hono/zod-openapi'
 import { createHash, randomUUID } from 'node:crypto'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -38,6 +38,11 @@ import {
   mergeAlbumTrackHistory,
   replaceAlbumTracks,
 } from '@/services/album-library-tracks'
+import {
+  listCatalogObservations,
+  observeCatalogOccurrence,
+  setCatalogMediaAlias,
+} from '@/services/catalog-discoveries'
 import { importLastfmLibraryTracks } from '@/services/lastfm-library-tracks'
 import {
   getLibraryChange,
@@ -839,6 +844,14 @@ it('records an album history merge from a track-list refresh, puts it back and d
     details: { counts: { 'playlist-entry': 2 } },
   })
 
+  // Archives made before the catalog migration have no membership column.
+  await fixture
+    .update(schema.libraryChangeRemoval)
+    .set({
+      snapshot: sql`${schema.libraryChangeRemoval.snapshot} #- '{mediaItem,in_library}'`,
+    })
+    .where(eq(schema.libraryChangeRemoval.changeId, change.id))
+
   await undoLibraryChange(change.id)
   expect(await ownerOf(signal)).toEqual({
     trackId: signal.standaloneId,
@@ -866,6 +879,134 @@ it('records an album history merge from a track-list refresh, puts it back and d
     manual: false,
   })
   expect(await trackRow(signal.standaloneId)).toBeUndefined()
+})
+
+it('keeps album history discoveries and prior addresses through merge, undo and redo', async () => {
+  const albumId = await historyFixture()
+  const source = 'history-first'
+  const target = 'history-target'
+  const alias = 'earlier-address'
+  await fixture.transaction((tx) => setCatalogMediaAlias(tx, alias, source))
+  await fixture.insert(schema.catalogObservation).values([
+    {
+      id: 'prior-discovery',
+      targetKind: 'track',
+      targetId: alias,
+      mediaItemId: source,
+      provider: 'tidal',
+      operation: 'similar',
+    },
+    {
+      id: 'source-discovery',
+      targetKind: 'track',
+      targetId: source,
+      mediaItemId: source,
+      provider: 'spotify',
+      operation: 'now-playing',
+    },
+    {
+      id: 'target-discovery',
+      targetKind: 'track',
+      targetId: target,
+      mediaItemId: target,
+      provider: 'spotify',
+      operation: 'album-tracks',
+    },
+  ])
+  const sourcesAt = async (id: string) =>
+    (await listCatalogObservations(id, { page: 1, size: 10 })).items
+      .map((item) => item.operation)
+      .sort()
+
+  await fixture.transaction((tx) => mergeAlbumTrackHistory(tx, albumId))
+  const change = await onlyChange()
+  expect(await trackRow(source)).toBeUndefined()
+  expect(await sourcesAt(target)).toEqual([
+    'album-tracks',
+    'now-playing',
+    'similar',
+  ])
+  expect(await sourcesAt(alias)).toEqual(await sourcesAt(target))
+  await fixture.transaction((tx) =>
+    observeCatalogOccurrence(
+      tx,
+      { kind: 'track', id: source },
+      {
+        provider: 'fixture',
+        operation: 'replayed-response',
+        occurrenceKey: 'fixture-response',
+      },
+    ),
+  )
+  expect(await sourcesAt(target)).toEqual([
+    'album-tracks',
+    'now-playing',
+    'replayed-response',
+    'similar',
+  ])
+
+  await undoLibraryChange(change.id)
+  expect(await sourcesAt(alias)).toEqual([
+    'now-playing',
+    'replayed-response',
+    'similar',
+  ])
+  expect(await sourcesAt(source)).toEqual(await sourcesAt(alias))
+  expect(await sourcesAt(target)).toEqual(['album-tracks'])
+
+  await fixture
+    .insert(schema.playlist)
+    .values({ id: 'new-list', name: 'New List', kind: 'playlist' })
+  await fixture
+    .insert(schema.playlistItem)
+    .values({ playlistId: 'new-list', mediaItemId: source })
+  await expect(redoLibraryChange(change.id)).rejects.toMatchObject({
+    statusCode: 409,
+  })
+  expect(await sourcesAt(source)).toEqual([
+    'now-playing',
+    'replayed-response',
+    'similar',
+  ])
+  expect(await sourcesAt(target)).toEqual(['album-tracks'])
+  await fixture
+    .delete(schema.playlistItem)
+    .where(eq(schema.playlistItem.playlistId, 'new-list'))
+
+  await redoLibraryChange(change.id)
+  expect(await trackRow(source)).toBeUndefined()
+  expect(await sourcesAt(alias)).toEqual(await sourcesAt(target))
+  expect(await sourcesAt(source)).toEqual([
+    'album-tracks',
+    'now-playing',
+    'replayed-response',
+    'similar',
+  ])
+})
+
+it('keeps explicitly added tracks and never gives a member’s history to an outside track automatically', async () => {
+  const albumId = await historyFixture()
+  await fixture
+    .insert(schema.catalogAddition)
+    .values({ mediaItemId: 'history-first' })
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: false })
+    .where(eq(schema.mediaItem.id, 'history-target'))
+
+  await fixture.transaction((tx) => mergeAlbumTrackHistory(tx, albumId))
+  expect((await automatic()).totalCount).toBe(0)
+  expect(await trackRow('history-first')).toBeDefined()
+  expect(await trackRow('history-second')).toBeDefined()
+
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: true })
+    .where(eq(schema.mediaItem.id, 'history-target'))
+  await fixture.transaction((tx) => mergeAlbumTrackHistory(tx, albumId))
+  expect((await automatic()).totalCount).toBe(1)
+  expect(await trackRow('history-first')).toBeDefined()
+  expect(await trackRow('history-second')).toBeUndefined()
 })
 
 function candidate(title: string, suffix: string): SpotifyTrackSearchCandidate {
@@ -1249,6 +1390,66 @@ it('records Spotify album recording merges so they can be undone, and keeps undo
   expect(await positions(release.albumId)).toEqual(before.positions)
   expect(await ownerOf(one)).toEqual({ trackId: first.trackId, manual: false })
   expect((await automatic()).totalCount).toBe(2)
+})
+
+it('restores an outside recording and its exact native artist when undoing a Spotify album merge', async () => {
+  const release = await album('spotify-catalog-release', { spotify: true })
+  await fixture.transaction((tx) =>
+    replaceAlbumTracks(
+      tx,
+      release.albumId,
+      [{ title: 'Signal', position: 1 }],
+      { provider: 'fixture' },
+    ),
+  )
+  const [position] = await positions(release.albumId)
+  if (!position) throw new Error('Expected an album recording')
+  const source = position.trackId
+  const target = 'spotify-catalog-signal'
+  await spotifyTrack(target, 'Signal', {
+    spotifyAlbumId: spotifyId(release.albumId),
+  })
+  const nativeArtistId = 'native-fixture-artist'
+  await fixture.insert(schema.artist).values({
+    id: nativeArtistId,
+    name: ARTIST,
+    catalogProvider: 'spotify',
+    catalogExternalId: 'fixture-identity',
+  })
+  await fixture
+    .update(schema.mediaCredit)
+    .set({ artistId: nativeArtistId })
+    .where(inArray(schema.mediaCredit.mediaItemId, [source, target]))
+
+  await refreshTrackLinks(account)
+  const change = await onlyChange()
+  expect(await trackRow(source)).toBeUndefined()
+  const discoveries = (id: string) =>
+    listCatalogObservations(id, { page: 1, size: 10 })
+  expect((await discoveries(source)).items).toMatchObject([
+    { targetId: source, mediaItemId: target },
+  ])
+
+  await undoLibraryChange(change.id)
+  expect(await trackRow(source)).toMatchObject({
+    media_item: { inLibrary: false },
+  })
+  expect(
+    await fixture
+      .select()
+      .from(schema.mediaCredit)
+      .where(eq(schema.mediaCredit.mediaItemId, source)),
+  ).toMatchObject([{ artistId: nativeArtistId }])
+  expect((await discoveries(source)).items).toMatchObject([
+    { targetId: source, mediaItemId: source },
+  ])
+  expect((await discoveries(target)).totalCount).toBe(0)
+
+  await redoLibraryChange(change.id)
+  expect(await trackRow(source)).toBeUndefined()
+  expect((await discoveries(source)).items).toMatchObject([
+    { targetId: source, mediaItemId: target },
+  ])
 })
 
 it('records album recordings a track-list refresh removes, with their archive', async () => {

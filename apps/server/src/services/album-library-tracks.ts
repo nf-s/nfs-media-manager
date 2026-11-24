@@ -16,6 +16,7 @@ import {
 import { writeArtistCredits } from './artist-names'
 import {
   membershipDetails,
+  mergeTrackCatalogAddress,
   removedTracksEntry,
 } from './automatic-match-effects'
 import { readKeptSeparateTest } from './keep-separate-effects'
@@ -131,10 +132,28 @@ export async function replaceAlbumTracks(
     resolved.map(({ entry_id, recording_id }) => [entry_id, recording_id]),
   )
   if (evidence) {
-    await observeCatalogOccurrences(database, entries.flatMap((entry) => {
-      const id = recordings.get(entry.id)
-      return id ? [{ target: {kind: 'track', id}, origin: { ...evidence, operation: 'album-tracks', occurrenceKey: entry.id, subjectKind: 'album', subjectId: albumId, position: entry.position, relationshipRole: 'track-on-album' } }] : []
-    }))
+    await observeCatalogOccurrences(
+      database,
+      entries.flatMap((entry) => {
+        const id = recordings.get(entry.id)
+        return id
+          ? [
+              {
+                target: { kind: 'track', id },
+                origin: {
+                  ...evidence,
+                  operation: 'album-tracks',
+                  occurrenceKey: entry.id,
+                  subjectKind: 'album',
+                  subjectId: albumId,
+                  position: entry.position,
+                  relationshipRole: 'track-on-album',
+                },
+              },
+            ]
+          : []
+      }),
+    )
   }
   const previous = await database
     .delete(track)
@@ -335,8 +354,12 @@ export async function mergeAlbumTrackHistory(
         join track t on t.album_media_item_id = ${albumId}
           and lower(regexp_replace(trim(t.title), '[[:space:]]+', ' ', 'g'))
             = lower(regexp_replace(trim(source_item.title), '[[:space:]]+', ' ', 'g'))
+        join media_item target_item on target_item.id = t.track_media_item_id
         where source.album_media_item_id = ${albumId} and source.spotify_track_id is null
           and source_item.source_label = 'lastfm'
+          and source_item.metadata->>'legacyHidden' is distinct from 'true'
+          and not exists (select 1 from catalog_addition a where a.media_item_id = source.media_item_id)
+          and not exists (select 1 from catalog_media_alias a where a.alias_id = source.media_item_id)
           and not exists (select 1 from track listed where listed.track_media_item_id = source.media_item_id)
           and exists (select 1 from lastfm_track_source s where s.track_media_item_id = source.media_item_id)
           and not exists (select 1 from lastfm_track_source s
@@ -349,6 +372,9 @@ export async function mergeAlbumTrackHistory(
                 = lower(regexp_replace(trim(source_item.title), '[[:space:]]+', ' ', 'g')))
         group by source.media_item_id
         having count(distinct t.track_media_item_id) = 1
+          and bool_and((not source_item.in_library or target_item.in_library)
+            and target_item.metadata->>'legacyHidden' is distinct from 'true'
+            and not exists (select 1 from catalog_media_alias a where a.alias_id = target_item.id))
           and bool_or(exists (select 1 from media_credit sc
             join media_credit tc on tc.artist_id = sc.artist_id
             where sc.media_item_id = source.media_item_id and tc.media_item_id = t.track_media_item_id
@@ -369,6 +395,7 @@ export async function mergeAlbumTrackHistory(
     effects.set(target_id, [
       ...(effects.get(target_id) ?? []),
       ...(await moveTrackMemberships(database, source_id, target_id, false)),
+      await mergeTrackCatalogAddress(database, source_id, target_id),
     ])
     const moved = MovedNamesSchema.parse(
       (
@@ -467,6 +494,8 @@ export async function reconcileSpotifyAlbumRecordings(
         ), candidates as (
           select source.media_item_id as source_id, target.media_item_id as target_id,
             t.album_media_item_id as album_id, r.spotify_id,
+            ((not legacy.in_library or imported.in_library)
+                and not exists (select 1 from catalog_media_alias a where a.alias_id = target.media_item_id)) as eligible_target,
             count(*) over (partition by source.media_item_id) as source_matches,
             count(*) over (partition by target.media_item_id) as target_matches
           from release_ids r
@@ -489,6 +518,8 @@ export async function reconcileSpotifyAlbumRecordings(
             and source.spotify_album_id is null and source.album_name is null
             and (source.duration_sec is null or source.duration_sec = target.duration_sec)
             and imported.source_label in ('spotify', 'spotify-search') and target.spotify_track_id is not null
+            and not exists (select 1 from catalog_addition a where a.media_item_id = source.media_item_id)
+            and not exists (select 1 from catalog_media_alias a where a.alias_id = source.media_item_id)
             and imported.metadata->>'legacyHidden' is distinct from 'true'
             and release.metadata->>'legacyHidden' is distinct from 'true'
             and (target.album_media_item_id is null or target.album_media_item_id = r.album_id)
@@ -514,7 +545,7 @@ export async function reconcileSpotifyAlbumRecordings(
             and not ${independentTrackData(sql`legacy.id`)}
         )
         select source_id, target_id, album_id, spotify_id from candidates
-        where source_matches = 1 and target_matches = 1`)
+        where source_matches = 1 and target_matches = 1 and eligible_target`)
     ).rows,
   )
   if (!pairs.length) return
@@ -572,15 +603,15 @@ async function mergeSpotifyAlbumRecordings(
   )
   const effects = new Map<string, ChangeEffectEntry[]>()
   for (const pair of pairs)
-    effects.set(
-      pair.target_id,
-      await moveTrackMemberships(
+    effects.set(pair.target_id, [
+      ...(await moveTrackMemberships(
         database,
         pair.source_id,
         pair.target_id,
         true,
-      ),
-    )
+      )),
+      await mergeTrackCatalogAddress(database, pair.source_id, pair.target_id),
+    ])
   const rows = sql`jsonb_to_recordset(${JSON.stringify(pairs)}::jsonb)
     as pair(source_id text, target_id text, album_id text)`
   const moved = PairNamesSchema.parse(
@@ -676,10 +707,16 @@ export async function removeOrphanTracks(
       and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id and pi.admits_to_library)
       and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`
   const observed = sql`(exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
+      or exists (select 1 from catalog_media_alias a where a.media_item_id = mi.id)
       or exists (select 1 from playlist_item pi where pi.media_item_id = mi.id))`
-  const demoted = await database.execute(sql`update media_item mi set in_library = false where mi.in_library and ${orphan} and ${observed}`)
+  const demoted = await database.execute(
+    sql`update media_item mi set in_library = false where mi.in_library and ${orphan} and ${observed}`,
+  )
   const removed = await database.execute(sql`with removed as (
     delete from media_item mi where ${orphan} and not ${observed} returning in_library
   ) select count(*) filter (where in_library)::int as members from removed`)
-  return (demoted.rowCount ?? 0) + z.object({members:z.number()}).parse(removed.rows[0]).members
+  return (
+    (demoted.rowCount ?? 0) +
+    z.object({ members: z.number() }).parse(removed.rows[0]).members
+  )
 }

@@ -5,6 +5,7 @@ import type {
   LibraryChangePart,
 } from '@repo/schemas/library-changes'
 import { JsonValueSchema } from '@repo/schemas/common'
+import { ServerError } from '@/lib/error'
 import { standaloneLastfmTrackId } from '@/lib/track-matching'
 import { writeArtistCredits } from './artist-names'
 import { createStandaloneTracks } from './lastfm-standalone-tracks'
@@ -114,6 +115,7 @@ async function removeUnusedTracks(
         select mi.id from media_item mi
         where mi.id in (${idList(ids)})
           and not exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
+          and not exists (select 1 from catalog_media_alias a where a.media_item_id = mi.id)
           and not exists (select 1 from catalog_addition a where a.media_item_id = mi.id)
           and not exists (select 1 from track t where t.track_media_item_id = mi.id)
           and not exists (select 1 from playlist_item p where p.media_item_id = mi.id)
@@ -214,6 +216,102 @@ export const removedTracksEntry = (ids: string[], keptFrom?: string) =>
     ...ids,
     ...(keptFrom ? [keptFrom] : []),
   ])
+
+const TrackAliasRowsSchema = z.array(
+  z.object({ alias_id: z.string(), media_item_id: z.string() }),
+)
+const MERGED_AGAIN =
+  'A discovery in this change has been merged again. Undo that change first.'
+const TRACK_STILL_USED = 'A track in this change has new library links.'
+
+const trackCatalogMerge = defineChangeEffect({
+  type: 'track-catalog-merge',
+  payload: z.object({
+    sourceId: z.string(),
+    targetId: z.string(),
+    previousAliases: z.array(z.string()),
+  }),
+  async blocker(reader, { sourceId, targetId, previousAliases }, direction) {
+    const wanted =
+      direction === 'undo' ? [sourceId, ...previousAliases] : previousAliases
+    const ids = [sourceId, ...previousAliases]
+    const aliases = TrackAliasRowsSchema.parse(
+      (
+        await reader.execute(sql`
+        select alias_id, media_item_id from catalog_media_alias
+        where alias_id in (${idList(ids)}) or media_item_id = ${sourceId}`)
+      ).rows,
+    )
+    const destination = direction === 'undo' ? targetId : sourceId
+    if (
+      aliases.length !== wanted.length ||
+      aliases.some(
+        (alias) =>
+          alias.media_item_id !== destination ||
+          !wanted.includes(alias.alias_id),
+      )
+    )
+      return MERGED_AGAIN
+    const present = await presentTrackIds(reader, [sourceId, targetId])
+    if (direction === 'undo' && present.has(sourceId)) return MERGED_AGAIN
+    if (direction === 'redo' && present.size !== 2) return TRACK_GONE
+    return null
+  },
+  async apply(tx, { sourceId, targetId, previousAliases }, direction) {
+    if (direction === 'redo') {
+      await setCatalogMediaAlias(tx, sourceId, targetId)
+      return async () => {
+        const state = z.object({ removable: z.boolean() }).parse(
+          (
+            await tx.execute(sql`
+            select (not source.in_library or target.in_library)
+              and lt.spotify_track_id is null
+              and not coalesce(source.metadata ? 'spotifyTrackSearch', false)
+              and not exists (select 1 from catalog_addition a where a.media_item_id = source.id)
+              and not exists (select 1 from track t where t.track_media_item_id = source.id)
+              and not exists (select 1 from playlist_item p where p.media_item_id = source.id)
+              and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = source.id)
+              as removable
+            from media_item source join library_track lt on lt.media_item_id = source.id
+            join media_item target on target.id = ${targetId}
+            where source.id = ${sourceId}`)
+          ).rows[0],
+        )
+        if (!state.removable)
+          throw new ServerError({ statusCode: 409, message: TRACK_STILL_USED })
+      }
+    }
+    await clearCatalogMediaAlias(tx, sourceId)
+    if (previousAliases.length) {
+      const ids = idList(previousAliases)
+      await tx.execute(sql`update catalog_media_alias set media_item_id = ${sourceId}
+        where alias_id in (${ids})`)
+      await tx.execute(sql`update catalog_observation set media_item_id = ${sourceId}
+        where media_item_id = ${targetId} and target_kind = 'track' and target_id in (${ids})`)
+    }
+    return null
+  },
+})
+
+/** Redirects the disappearing recording and its prior addresses under the track writer lock. */
+export async function mergeTrackCatalogAddress(
+  tx: ChangeTransaction,
+  sourceId: string,
+  targetId: string,
+) {
+  const previousAliases = TrackAliasRowsSchema.parse(
+    (
+      await tx.execute(sql`
+      select alias_id, media_item_id from catalog_media_alias
+      where media_item_id = ${sourceId} order by alias_id`)
+    ).rows,
+  ).map(({ alias_id }) => alias_id)
+  await setCatalogMediaAlias(tx, sourceId, targetId)
+  return trackCatalogMerge.entry({ sourceId, targetId, previousAliases }, [
+    sourceId,
+    targetId,
+  ])
+}
 
 /* The Spotify identity a search wrote onto a track that was already there. */
 
@@ -560,6 +658,7 @@ export function membershipDetails(
 export const automaticMatchEffects: ChangeEffectHandler[] = [
   standaloneTracks.handler,
   trackPresence.handler,
+  trackCatalogMerge.handler,
   trackRowState.handler,
   spotifyCatalogBinding.handler,
   searchAcceptance.handler,
