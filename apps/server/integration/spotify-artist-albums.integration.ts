@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { env } from '@/env'
+import { parseSpotifyArtistAlbumPage } from '@/lib/spotify-artist-albums'
 import { spotifyTokenFixture } from '@/plugins/builtin/__tests__/fixtures/spotify'
 import { spotifyPlugin } from '@/plugins/builtin/spotify'
 import * as schema from '@/schemas/db'
@@ -18,7 +19,15 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const fixture = drizzle(pool, { schema })
+let statements: number | undefined
+const fixture = drizzle(pool, {
+  schema,
+  logger: {
+    logQuery() {
+      if (statements !== undefined) statements++
+    },
+  },
+})
 const request = vi.fn<typeof fetch>()
 const ownerId = 'fixture-owner'
 const artistId = 'fixture-artist'
@@ -51,6 +60,7 @@ vi.mock('@/lib/provider-secrets', () => ({
 import { processQueuedJobs } from '@/services/jobs'
 import { getMediaSources } from '@/services/history'
 import { openSpotifyAlbumReference } from '@/services/spotify-album-reference'
+import { observeSpotifyArtistAlbumPage } from '@/services/spotify-artist-album-discoveries'
 import {
   getJobProviderResponse,
   listJobProviderResponses,
@@ -406,6 +416,137 @@ it('opens an exact recorded parent once, reuses its cached details and adds only
     ),
   ).toBe(1)
 }, 20_000)
+
+it('writes a new and repeated 20-entry artist release page in bounded database work', async () => {
+  const sourceId = 'artist-page-writer'
+  await fixture
+    .insert(schema.artist)
+    .values({ id: sourceId, name: 'Artist Page Fixture' })
+  const releases = Array.from({ length: 20 }, (_, index) => ({
+    externalId: `writerRelease${index}`.padEnd(22, '0'),
+    title: `Fixture release ${index}`,
+    primary: index % 2 === 0,
+    position: index + 1,
+    relationshipRole: index % 2 === 0 ? 'album' : 'appears_on',
+    credits:
+      index % 2 === 0
+        ? [{ externalId: spotifyArtistId, name: artistName }]
+        : [{ externalId: otherSpotifyArtistId, name: 'Another Artist' }],
+    artworkUrl: undefined,
+    releaseDate: undefined,
+    trackCount: undefined,
+  })).map((release) => ({
+    ...release,
+    spotifyUrl: `https://open.spotify.com/album/${release.externalId}`,
+  }))
+  for (const limit of [13, 12]) {
+    statements = 0
+    try {
+      await fixture.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+        await observeSpotifyArtistAlbumPage(tx, releases, {
+          artistId: sourceId,
+          occurrencePrefix: 'fixture-catalogue',
+          page: 1,
+        })
+      })
+      expect(statements).toBeLessThanOrEqual(limit)
+    } finally {
+      statements = undefined
+    }
+  }
+  expect(
+    await fixture.$count(
+      schema.catalogObservation,
+      and(
+        eq(schema.catalogObservation.subjectId, sourceId),
+        isNotNull(schema.catalogObservation.mediaItemId),
+      ),
+    ),
+  ).toBe(20)
+})
+
+it('preserves ambiguous album identities and duplicate response positions', async () => {
+  const sourceId = 'artist-page-ambiguous'
+  const externalId = 'ambiguousAlbum'.padEnd(22, '0')
+  await fixture
+    .insert(schema.artist)
+    .values({ id: sourceId, name: 'Ambiguity Fixture' })
+  const members = ['confirmed-album-one', 'confirmed-album-two']
+  await fixture.insert(schema.mediaItem).values(
+    members.map((id): typeof schema.mediaItem.$inferInsert => ({
+      id,
+      title: id,
+      slug: id,
+      mediaType: 'album',
+    })),
+  )
+  await fixture
+    .insert(schema.album)
+    .values(members.map((id) => ({ mediaItemId: id })))
+  await fixture.insert(schema.providerReference).values(
+    members.map((id) => ({
+      id: 'spotify-' + id,
+      mediaItemId: id,
+      provider: 'spotify',
+      referenceType: 'album',
+      externalId,
+    })),
+  )
+  const response = parseSpotifyArtistAlbumPage(
+    {
+      offset: 0,
+      total: 2,
+      next: null,
+      items: [
+        { ...outsideAlbum, id: externalId },
+        { ...appearanceAlbum, id: externalId },
+      ],
+    },
+    spotifyArtistId,
+    0,
+  )
+  const save = () =>
+    fixture.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+      await observeSpotifyArtistAlbumPage(tx, response.releases, {
+        artistId: sourceId,
+        occurrencePrefix: 'fixture-ambiguous',
+        page: 1,
+      })
+    })
+  await Promise.all([save(), save()])
+  const discoveries = await fixture
+    .select()
+    .from(schema.catalogObservation)
+    .where(eq(schema.catalogObservation.subjectId, sourceId))
+    .orderBy(schema.catalogObservation.position)
+  const localId = discoveries[0]?.mediaItemId
+  if (!localId) throw new Error('Missing provisional album identity')
+  expect(members).not.toContain(localId)
+  expect(
+    discoveries.map(({ mediaItemId, position, relationshipRole }) => ({
+      mediaItemId,
+      position,
+      relationshipRole,
+    })),
+  ).toEqual([
+    { mediaItemId: localId, position: 1, relationshipRole: 'single' },
+    { mediaItemId: localId, position: 2, relationshipRole: 'appears_on' },
+  ])
+  expect(
+    await fixture.query.mediaItem.findFirst({
+      where: eq(schema.mediaItem.id, localId),
+    }),
+  ).toMatchObject({ inLibrary: false, title: outsideAlbum.name })
+  for (const id of members) {
+    expect(
+      await fixture.query.mediaItem.findFirst({
+        where: eq(schema.mediaItem.id, id),
+      }),
+    ).toMatchObject({ inLibrary: true, title: id })
+  }
+})
 
 it('keeps a withdrawn exact parent accessible and reuses the failed lookup', async () => {
   await fixture.delete(schema.providerRequestState)

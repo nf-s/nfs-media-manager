@@ -49,7 +49,6 @@ import {
   loadArtistProviderTarget,
   saveArtistProviderResult,
 } from './artist-profiles'
-import { observeCatalogMedia } from './catalog-discoveries'
 import {
   createTaskJob,
   withRunningJob,
@@ -64,6 +63,7 @@ import {
 } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
 import { latestSpotifyJobs } from './spotify-playlist-state'
+import { observeSpotifyArtistAlbumPage } from './spotify-artist-album-discoveries'
 
 const MarketSchema = z.string().regex(/^[A-Z]{2}$/)
 const ListingInputSchema = z.object({ artistId: z.string().min(1).max(200) })
@@ -319,36 +319,13 @@ async function savePage(
       .orderBy(desc(providerResponse.ordinal))
       .limit(1)
     const pagesSaved = (saved?.pagesSaved ?? 0) + 1
-    for (const release of page.releases) {
-      await observeCatalogMedia(
-        tx,
-        {
-          kind: 'album',
-          provider: 'spotify',
-          referenceType: 'spotify',
-          externalId: release.externalId,
-          title: release.title,
-          spotifyUrl: release.spotifyUrl,
-          artworkUrl: release.artworkUrl,
-          releaseDate: release.releaseDate,
-          trackCount: release.trackCount,
-          credits: release.credits,
-          artistId: release.primary ? scope.artistId : undefined,
-        },
-        {
-          provider: 'spotify',
-          operation: 'artist-albums',
-          subjectKind: 'artist',
-          subjectId: scope.artistId,
-          occurrenceKey: `${scope.spotifyArtistId}:${scope.market}:${release.position}`,
-          relationshipRole: release.relationshipRole,
-          position: release.position,
-          page: pagesSaved,
-          jobId: context.jobId,
-          responseId: response?.id,
-        },
-      )
-    }
+    await observeSpotifyArtistAlbumPage(tx, page.releases, {
+      artistId: scope.artistId,
+      occurrencePrefix: `${scope.spotifyArtistId}:${scope.market}`,
+      page: pagesSaved,
+      jobId: context.jobId,
+      responseId: response?.id,
+    })
     const progress = {
       pagesSaved,
       nextOffset: page.nextOffset ?? offset + page.releases.length,
