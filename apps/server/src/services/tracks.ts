@@ -28,6 +28,7 @@ import {
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
+import { resolveCatalogMediaId } from './catalog-discoveries'
 import { ServerError } from '@/lib/error'
 import { measureRequestPhase } from '@/lib/request-log'
 import {
@@ -404,7 +405,8 @@ async function getTrackListeningDetail(id: string) {
   return ListeningDetailSchema.parse(result.rows[0])
 }
 
-export async function getTrackDetail(id: string): Promise<TrackDetail | null> {
+export async function getTrackDetail(requestedId: string): Promise<TrackDetail | null> {
+  const id = await resolveCatalogMediaId(db, requestedId)
   const [item] = await measureRequestPhase('trackDetailHydrate', () =>
     loadTracks([id]),
   )

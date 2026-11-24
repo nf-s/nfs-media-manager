@@ -929,6 +929,12 @@ export const catalogObservation = pgTable(
   ],
 )
 
+export const catalogMediaAlias = pgTable('catalog_media_alias',{
+  aliasId: text('alias_id').primaryKey(),
+  mediaItemId: text('media_item_id').notNull().references(() => mediaItem.id, {onDelete:'cascade'}),
+}, (table)=>[index('catalog_media_alias_target_idx').on(table.mediaItemId),
+  check('catalog_media_alias_distinct',sql`${table.aliasId} <> ${table.mediaItemId}`)])
+
 export const catalogAddition = pgTable('catalog_addition', {
   mediaItemId: text('media_item_id').primaryKey().references(() => mediaItem.id, { onDelete: 'cascade' }),
   ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
@@ -2087,6 +2093,7 @@ export const subscriptionItem = pgTable(
     ...timestampColumns,
   },
   (table) => [
+    index('subscription_item_added_source_idx').on(table.sourceId,table.id).where(sql`${table.addedToLibrary}`),
     index('subscription_item_search_idx').using('gin', table.search),
     index('subscription_item_artist_name_keys_idx').using(
       'gin',

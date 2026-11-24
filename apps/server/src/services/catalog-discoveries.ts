@@ -5,9 +5,30 @@ import type { CatalogNativeKind, CatalogObservationQuerySchema } from '@repo/sch
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
-import { album, artist, catalogAddition, catalogObservation, film, libraryTrack, mediaCredit, mediaItem, playlist, providerReference, subscriptionItem, subscriptionSource } from '@/schemas/db'
+import { album, artist, catalogAddition, catalogMediaAlias, catalogObservation, film, libraryTrack, mediaCredit, mediaItem, playlist, providerReference, subscriptionItem, subscriptionSource } from '@/schemas/db'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+export async function resolveCatalogMediaId(reader: Pick<Transaction,'select'>, id: string) {
+  const [alias] = await reader.select({ id: catalogMediaAlias.mediaItemId }).from(catalogMediaAlias).where(eq(catalogMediaAlias.aliasId,id))
+  return alias?.id ?? id
+}
+
+/** Keep observations at the original address while resolving membership and counts on the survivor. */
+export async function setCatalogMediaAlias(tx: Transaction, aliasId: string, targetId: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+  const id = await resolveCatalogMediaId(tx,targetId)
+  if (aliasId === id) return
+  await tx.update(catalogMediaAlias).set({mediaItemId:id}).where(eq(catalogMediaAlias.mediaItemId,aliasId))
+  await tx.insert(catalogMediaAlias).values({aliasId,mediaItemId:id}).onConflictDoUpdate({target:catalogMediaAlias.aliasId,set:{mediaItemId:id}})
+  await tx.update(catalogObservation).set({mediaItemId:id}).where(eq(catalogObservation.mediaItemId,aliasId))
+}
+
+export async function clearCatalogMediaAlias(tx: Transaction, aliasId: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+  await tx.delete(catalogMediaAlias).where(eq(catalogMediaAlias.aliasId,aliasId))
+  await tx.update(catalogObservation).set({mediaItemId:aliasId}).where(and(inArray(catalogObservation.targetKind,['track','album','film']),eq(catalogObservation.targetId,aliasId)))
+}
 
 type CatalogCredit = { name: string; externalId?: string; role?: string }
 
@@ -222,7 +243,7 @@ export async function promoteCatalogMediaInTransaction(tx: Transaction, id: stri
 }
 
 export async function promoteCatalogMedia(id: string, ownerId: string) {
-  return db.transaction((tx) => promoteCatalogMediaInTransaction(tx, id, ownerId))
+  return db.transaction(async (tx) => promoteCatalogMediaInTransaction(tx, await resolveCatalogMediaId(tx,id), ownerId))
 }
 
 export async function promoteNativeResource(kind: CatalogNativeKind, id: string) {
@@ -237,7 +258,7 @@ export async function promoteNativeResource(kind: CatalogNativeKind, id: string)
 }
 
 export async function listCatalogObservations(id: string, { page, size }: z.infer<typeof CatalogObservationQuerySchema>, kind?: CatalogNativeKind) {
-  const where = kind ? and(eq(catalogObservation.targetId, id), eq(catalogObservation.targetKind, kind)) : eq(catalogObservation.mediaItemId, id)
+  const where = kind ? and(eq(catalogObservation.targetId, id), eq(catalogObservation.targetKind, kind)) : eq(catalogObservation.mediaItemId, await resolveCatalogMediaId(db,id))
   const [items, totalCount] = await Promise.all([
     db.select().from(catalogObservation).where(where)
       .orderBy(desc(catalogObservation.observedAt), desc(catalogObservation.id)).limit(size).offset((page - 1) * size),
