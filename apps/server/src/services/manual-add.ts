@@ -46,6 +46,7 @@ import { observeFilmCandidate } from './film-catalog-observations'
 import {
   observeCatalogMedia,
   promoteCatalogMediaInTransaction,
+  type CatalogOrigin,
 } from './catalog-discoveries'
 import {
   commitFilmImportRecord,
@@ -81,6 +82,7 @@ import {
   type ProviderTaskReplayStep,
 } from './provider-task-replay'
 import { getProviderTransport } from './provider-transport'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 import { getSpotifyAccountStatus, spotifyAccountToken } from './spotify-oauth'
 import { resolveSpotifyTrackIds } from './spotify-playlists'
 
@@ -607,38 +609,47 @@ export async function searchManualMedia(
           ? await latestCatalogResponseId(tx, jobId, 'spotify')
           : undefined
         const ids: string[] = []
-        for (const [index, item] of page.items.entries())
-          ids.push(
-            await observeCatalogMedia(
-              tx,
-              {
-                kind: 'album',
-                title: item.name,
-                provider: 'spotify',
-                referenceType: 'spotify',
-                externalId: item.id,
-                artworkUrl: item.images[0]?.url,
-                releaseDate: parseOptionalDate(item.release_date) ?? undefined,
-                trackCount: item.total_tracks,
-                spotifyUrl: `https://open.spotify.com/album/${item.id}`,
-                credits: item.artists.map(({ id, name }) => ({
-                  externalId: id,
-                  name,
-                })),
-              },
-              {
-                provider: 'spotify',
-                operation: 'catalog-search',
-                occurrenceKey: JSON.stringify([key, options.page, index + 1]),
-                jobId,
-                subjectKind: subjectId ? 'lastfm-album' : undefined,
-                subjectId,
-                responseId,
-                page: options.page,
-                position: index + 1,
-              },
-            ),
+        for (const [index, item] of page.items.entries()) {
+          const origin: CatalogOrigin = {
+            provider: 'spotify',
+            operation: 'catalog-search',
+            occurrenceKey: JSON.stringify([key, options.page, index + 1]),
+            jobId,
+            subjectKind: subjectId ? 'lastfm-album' : undefined,
+            subjectId,
+            responseId,
+            page: options.page,
+            position: index + 1,
+          }
+          const id = await observeCatalogMedia(
+            tx,
+            {
+              kind: 'album',
+              title: item.name,
+              provider: 'spotify',
+              referenceType: 'spotify',
+              externalId: item.id,
+              artworkUrl: item.images[0]?.url,
+              releaseDate: parseOptionalDate(item.release_date) ?? undefined,
+              trackCount: item.total_tracks,
+              spotifyUrl: `https://open.spotify.com/album/${item.id}`,
+              credits: item.artists.map(({ id, name }) => ({
+                externalId: id,
+                name,
+              })),
+            },
+            origin,
           )
+          ids.push(id)
+          await recordSpotifyCatalogCodes(tx, [
+            {
+              mediaItemId: id,
+              kind: 'album',
+              value: item.external_ids?.upc,
+              origin,
+            },
+          ])
+        }
         return ids
       })
     if (options.exactMembership) {

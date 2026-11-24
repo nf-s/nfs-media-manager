@@ -15,6 +15,7 @@ import {
   observeCatalogOccurrence,
   type CatalogOrigin,
 } from './catalog-discoveries'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type MusicResponse = Pick<
@@ -154,6 +155,10 @@ export async function observeMusicDiscovery(
       },
       origin,
     )
+    if (node.kind === 'album' && node.provider === 'spotify' && node.externalId)
+      await recordSpotifyCatalogCodes(tx, [
+        { mediaItemId: id, kind: node.kind, value: node.upc, origin },
+      ])
     if (
       node.kind === 'album' &&
       node.externalId &&

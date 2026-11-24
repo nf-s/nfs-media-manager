@@ -63,6 +63,7 @@ export type MusicDiscovery = {
   provider: string
   referenceType: string
   externalId?: string
+  upc?: string
   provisionalKey?: string
   title: string
   ordinal: number
@@ -603,6 +604,7 @@ export function spotifyReleaseObservation(
     provider: 'spotify',
     referenceType: 'spotify',
     externalId: item.id,
+    upc: item.external_ids?.upc,
     title: item.name,
     ordinal,
     relationship,

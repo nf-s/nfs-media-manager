@@ -11,6 +11,7 @@ export type TrackIsrcSource =
   | { kind: 'spotify-playlist-import'; jobId: string }
   | { kind: 'spotify-track-search'; jobId: string }
   | { kind: 'spotify-track-lookup'; responseId: string }
+  | { kind: 'spotify-track-lookup-snapshot'; snapshotId: string }
   | { kind: 'spotify-search-response'; responseId: string }
   | { kind: 'spotify-manual-add' }
   // A raw Spotify playlist file stored by the legacy import.
@@ -27,6 +28,7 @@ export const spotifyRecordingSources = [
   'spotify-playlist-import',
   'spotify-track-search',
   'spotify-track-lookup',
+  'spotify-track-lookup-snapshot',
   'spotify-search-response',
   'spotify-manual-add',
   'legacy-playlist-import',
@@ -50,7 +52,8 @@ export const trackIsrcReferenceId = (
 
 /**
  * Records each valid ISRC as the provider's reference on the library track.
- * A reference already recorded keeps the source it was first read from.
+ * A reference keeps its source unless retained Spotify evidence corroborates
+ * a code previously copied from the track's primary value.
  */
 export async function recordTrackIsrcs(
   database: Database,
@@ -84,12 +87,29 @@ export async function recordTrackIsrcs(
     })
   }
   const values = [...rows.values()]
-  for (let start = 0; start < values.length; start += WRITE_BATCH)
-    await database
+  let written = 0
+  for (let start = 0; start < values.length; start += WRITE_BATCH) {
+    const rows = await database
       .insert(providerReference)
       .values(values.slice(start, start + WRITE_BATCH))
-      .onConflictDoNothing()
-  return values.length
+      .onConflictDoUpdate({
+        target: [
+          providerReference.mediaItemId,
+          providerReference.provider,
+          providerReference.referenceType,
+          providerReference.externalId,
+        ],
+        set: {
+          metadata: sql`${providerReference.metadata} || excluded.metadata`,
+        },
+        setWhere: sql`excluded.provider = 'spotify'
+          and excluded.metadata->>'source' <> 'library-track'
+          and ${providerReference.metadata}->>'source' = 'library-track'`,
+      })
+      .returning({ id: providerReference.id })
+    written += rows.length
+  }
+  return written
 }
 
 /** Every recorded ISRC on a track with the services that reported it. */
@@ -114,4 +134,5 @@ export const sonovaultPrimaryIsrcSql = (mediaItemId: SQL, isrc: SQL) => sql`
     where sonovault_other.media_item_id = ${mediaItemId}
       and sonovault_other.reference_type = 'isrc'
       and sonovault_other.provider <> 'sonovault'
+      and sonovault_other.metadata->>'source' is distinct from 'library-track'
       and sonovault_other.external_id = ${isrc}))`

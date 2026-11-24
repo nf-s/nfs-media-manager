@@ -1,7 +1,7 @@
 import '@hono/zod-openapi'
 import { createHash, randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
@@ -447,10 +447,32 @@ it.each([
     const job = await queueOne()
     await processQueuedJobs()
 
-    expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+    const result = await getSpotifyTrackSearch(recordingId, userId)
+    expect(result).toMatchObject({
       job: { jobId: job.id, status: 'succeeded', resultCount: 1 },
-      candidates: [{ spotifyTrackId: candidateId }],
+      candidates: [
+        { spotifyTrackId: candidateId, catalogMediaItemId: expect.any(String) },
+      ],
     })
+    const candidateMediaId = result.candidates[0]?.catalogMediaItemId
+    if (!candidateMediaId) throw new Error('Expected a catalog candidate')
+    expect(
+      await fixture.query.providerReference.findFirst({
+        where: and(
+          eq(schema.providerReference.mediaItemId, candidateMediaId),
+          eq(schema.providerReference.referenceType, 'isrc'),
+        ),
+      }),
+    ).toMatchObject({ provider: 'spotify', externalId: 'AAFI12000001' })
+    expect(
+      await fixture.$count(
+        schema.providerReference,
+        and(
+          eq(schema.providerReference.mediaItemId, recordingId),
+          eq(schema.providerReference.referenceType, 'isrc'),
+        ),
+      ),
+    ).toBe(0)
     expect(
       (await getSpotifyTrackSearch(recordingId, userId)).job?.acceptedTrackId,
     ).toBeUndefined()

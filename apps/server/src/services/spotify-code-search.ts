@@ -11,6 +11,7 @@ import { validIsrc } from '@/lib/isrc'
 import {
   SpotifyAlbumSchema,
   SpotifyAlbumTypeSchema,
+  SpotifyIdSchema,
   UpcSchema,
   spotifyArtworkUrl,
   spotifyJson,
@@ -36,6 +37,14 @@ export type SpotifyCodeTrackCandidate = SpotifyCodeMatch & {
   isrc: string | null
   albumType: z.infer<typeof SpotifyAlbumTypeSchema> | null
   releaseDate: string | null
+  artistBilling?: { id?: string; name: string }[]
+  albumArtistCredits?: { id?: string; name: string }[]
+}
+
+type SpotifyCodeAlbumCandidate = SpotifyCodeMatch & {
+  upc?: string
+  releaseDate?: string
+  albumArtistCredits: { id?: string; name: string }[]
 }
 
 const AlbumTypeSchema = z.object({
@@ -111,6 +120,8 @@ async function searchTracks(
               ? albumType.data.album.album_type
               : null,
             releaseDate: track.releaseDate,
+            artistBilling: track.artistBilling,
+            albumArtistCredits: track.albumArtistCredits,
           },
         ]
       : []
@@ -122,7 +133,7 @@ async function searchAlbum(
   token: string,
   upc: string,
   market: string | undefined,
-): Promise<Array<SpotifyCodeMatch & { releaseDate?: string }>> {
+): Promise<SpotifyCodeAlbumCandidate[]> {
   const { albums } = z
     .object({
       albums: z.object({ items: z.array(SpotifyAlbumSchema).max(5) }),
@@ -149,7 +160,15 @@ async function searchAlbum(
       trackCount: album.total_tracks ?? null,
       ...(genres.length ? { genres } : {}),
     })
-    return { ...match, releaseDate: album.release_date }
+    return {
+      ...match,
+      releaseDate: album.release_date,
+      upc: album.external_ids?.upc,
+      albumArtistCredits: album.artists.map(({ id, name }) => ({
+        id: SpotifyIdSchema.safeParse(id).data,
+        name,
+      })),
+    }
   })
 }
 
@@ -183,7 +202,7 @@ export async function searchSpotifyCode(
   input: SpotifyCodeSearch,
   observe?: (
     candidates: ReadonlyArray<
-      SpotifyCodeMatch & { releaseDate?: string | null }
+      SpotifyCodeAlbumCandidate | SpotifyCodeTrackCandidate
     >,
   ) => Promise<void>,
 ): Promise<

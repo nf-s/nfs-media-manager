@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import {
   afterAll,
   beforeAll,
@@ -335,6 +335,18 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
     if (!candidate?.catalogMediaItemId)
       throw new Error('Expected a catalog link on the saved candidate')
     const { catalogMediaItemId, ...providerCandidate } = candidate
+    expect(
+      await databaseClient.query.providerReference.findFirst({
+        where: and(
+          eq(schema.providerReference.mediaItemId, catalogMediaItemId),
+          eq(schema.providerReference.referenceType, 'upc'),
+        ),
+      }),
+    ).toMatchObject({
+      provider: 'spotify',
+      externalId: '012345678901',
+      metadata: { jobId: id, responseId: expect.any(String) },
+    })
     expect(
       await replayProviderTask(
         LASTFM_SPOTIFY_SEARCH_TASK,

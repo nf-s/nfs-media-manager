@@ -4,6 +4,7 @@ import {
   AlbumReleaseDateSchema,
   SpotifyAlbumTypeSchema,
   SpotifyIdSchema,
+  UpcSchema,
   spotifyArtworkUrl,
 } from '@/lib/spotify-api'
 
@@ -24,6 +25,10 @@ const ReleaseSchema = z.object({
   images: z.array(z.object({ url: z.string() })).optional(),
   release_date: z.string().optional(),
   total_tracks: z.number().int().nonnegative().optional(),
+  external_ids: z
+    .object({ upc: UpcSchema.optional() })
+    .optional()
+    .catch(undefined),
 })
 
 const PageSchema = z.object({
@@ -91,6 +96,7 @@ export function parseSpotifyArtistAlbumPage(
         artworkUrl: spotifyArtworkUrl(release.images) ?? undefined,
         releaseDate: releaseDate(release.release_date),
         trackCount: release.total_tracks,
+        ...(release.external_ids?.upc ? { upc: release.external_ids.upc } : {}),
         credits,
         primary,
         relationshipRole:

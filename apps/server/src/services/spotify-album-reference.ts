@@ -55,6 +55,7 @@ import { readMediaProviderWithEvidence } from './interactive-media-provider-resp
 import { applyProviderResultInTransaction } from './provider-state'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 import { lockTagWrites } from './tag-state'
 import { spotifySearchRecordingId } from './track-match-diagnostics'
 
@@ -67,6 +68,10 @@ const TrackAlbumLookupInputSchema = z.object({
 const SpotifyTrackParentSchema = z.object({
   id: SpotifyIdSchema,
   album: z.object({ id: SpotifyIdSchema, name: z.string().min(1) }),
+  external_ids: z
+    .object({ isrc: z.string().optional() })
+    .optional()
+    .catch(undefined),
 })
 const ReleaseEvidenceSchema = z.object({
   id: SpotifyIdSchema,
@@ -501,11 +506,18 @@ async function loadTrackParent(trackId: string, spotifyTrackId: string) {
     }
     await lockLibraryTrackWrites(tx)
     const latest = await trackReference(tx, trackId)
-    if (
-      latest?.spotifyTrackId === spotifyTrackId &&
-      !(latest.spotifyAlbumId && spotifyAlbumId(latest.spotifyAlbumId))
-    )
-      await cacheTrackAlbum(tx, latest.id, evidence)
+    if (latest?.spotifyTrackId === spotifyTrackId) {
+      await recordSpotifyCatalogCodes(tx, [
+        {
+          mediaItemId: latest.id,
+          kind: 'track',
+          value: data.external_ids?.isrc,
+          origin: { operation: SPOTIFY_TRACK_ALBUM_LOOKUP_TASK, snapshotId },
+        },
+      ])
+      if (!(latest.spotifyAlbumId && spotifyAlbumId(latest.spotifyAlbumId)))
+        await cacheTrackAlbum(tx, latest.id, evidence)
+    }
     return { trackId, spotifyTrackId, evidence }
   })
 }
@@ -685,6 +697,7 @@ export async function runSpotifyTrackAlbumLookup(
       responseId:
         (await latestCatalogResponseId(db, context.jobId, 'spotify')) ?? null,
     }
+    const isrc = parent.data.external_ids?.isrc
     return {
       outcome: 'complete',
       message: 'Confirmed the track’s Spotify release by ID.',
@@ -692,13 +705,21 @@ export async function runSpotifyTrackAlbumLookup(
       async persist(tx) {
         await lockLibraryTrackWrites(tx)
         const current = await trackReference(tx, trackId)
-        if (
-          !current ||
-          current.spotifyTrackId !== spotifyTrackId ||
-          (current.spotifyAlbumId && spotifyAlbumId(current.spotifyAlbumId))
-        )
-          return
-        await cacheTrackAlbum(tx, current.id, evidence)
+        if (current?.spotifyTrackId !== spotifyTrackId) return
+        await recordSpotifyCatalogCodes(tx, [
+          {
+            mediaItemId: current.id,
+            kind: 'track',
+            value: isrc,
+            origin: {
+              operation: SPOTIFY_TRACK_ALBUM_LOOKUP_TASK,
+              jobId: context.jobId,
+              responseId: evidence.responseId ?? undefined,
+            },
+          },
+        ])
+        if (!(current.spotifyAlbumId && spotifyAlbumId(current.spotifyAlbumId)))
+          await cacheTrackAlbum(tx, current.id, evidence)
       },
     }
   } catch (error) {

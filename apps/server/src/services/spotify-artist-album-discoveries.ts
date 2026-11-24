@@ -9,6 +9,7 @@ import {
   observeCatalogOccurrences,
   type CatalogOrigin,
 } from './catalog-discoveries'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Release = ReturnType<
@@ -209,6 +210,16 @@ export async function observeSpotifyArtistAlbumPage(
       })),
     )
     .onConflictDoNothing()
+
+  await recordSpotifyCatalogCodes(
+    tx,
+    targets.map(({ id, release, origin }) => ({
+      mediaItemId: id,
+      kind: 'album',
+      value: release.upc,
+      origin,
+    })),
+  )
 
   const credits = targets.flatMap(({ id, release, origin }) =>
     release.credits.map((credit, index) => ({

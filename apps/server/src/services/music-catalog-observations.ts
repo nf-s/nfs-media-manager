@@ -22,6 +22,7 @@ import {
   type SimilarOrigin,
 } from './tidal-similar-references'
 import { spotifyTrackBilling } from './spotify-artist-credits'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type MusicObservationOrigin = Omit<
@@ -86,6 +87,7 @@ export function spotifyTrackAndAlbumObservations(
     playable?: boolean
     releaseDate?: string | null
     albumArtistCredits?: { id?: string; name: string }[]
+    isrc?: string | null
   },
   origin: MusicObservationOrigin,
 ) {
@@ -159,6 +161,14 @@ export async function observeSpotifyTrackAndAlbum(
     { ...recording.media, albumId },
     recording.origin,
   )
+  await recordSpotifyCatalogCodes(tx, [
+    {
+      mediaItemId: trackId,
+      kind: 'track',
+      value: track.isrc,
+      origin: recording.origin,
+    },
+  ])
   return { trackId, albumId }
 }
 

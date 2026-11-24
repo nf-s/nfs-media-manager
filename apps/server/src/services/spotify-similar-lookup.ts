@@ -26,6 +26,7 @@ import {
   spotifyTrackAndAlbumObservations,
 } from './music-catalog-observations'
 import { libraryMembershipBySpotifyId } from './similar-library-matches'
+import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 import {
   chooseSpotifyTrack,
   codeKey,
@@ -227,7 +228,7 @@ export async function runSpotifySimilarLookup(
                     page: 1,
                     position: index + 1,
                   } satisfies CatalogOrigin
-                  if (options.kind === 'track') {
+                  if ('isrc' in candidate) {
                     const { album, recording } =
                       spotifyTrackAndAlbumObservations(
                         {
@@ -247,7 +248,7 @@ export async function runSpotifySimilarLookup(
                           relationshipRole: album.origin.relationshipRole,
                         })
                       : undefined
-                    await observeCatalogMedia(
+                    const trackId = await observeCatalogMedia(
                       tx,
                       {
                         ...recording.media,
@@ -256,9 +257,17 @@ export async function runSpotifySimilarLookup(
                       },
                       origin,
                     )
+                    await recordSpotifyCatalogCodes(tx, [
+                      {
+                        mediaItemId: trackId,
+                        kind: 'track',
+                        value: candidate.isrc,
+                        origin,
+                      },
+                    ])
                     continue
                   }
-                  await observeCatalogMedia(
+                  const albumId = await observeCatalogMedia(
                     tx,
                     {
                       kind: 'album',
@@ -273,22 +282,20 @@ export async function runSpotifySimilarLookup(
                       spotifyAlbumId: candidate.spotifyAlbumId,
                       durationSec: candidate.durationSec,
                       trackCount: candidate.trackCount ?? undefined,
-                      credits: [
-                        ...(candidate.artistCredits ?? []).map(
-                          ({ id, name }) => ({ name, externalId: id }),
-                        ),
-                        ...candidate.artists
-                          .filter(
-                            (name) =>
-                              !candidate.artistCredits?.some(
-                                (credit) => credit.name === name,
-                              ),
-                          )
-                          .map((name) => ({ name })),
-                      ],
+                      credits: candidate.albumArtistCredits.map(
+                        ({ id, name }) => ({ name, externalId: id }),
+                      ),
                     },
                     origin,
                   )
+                  await recordSpotifyCatalogCodes(tx, [
+                    {
+                      mediaItemId: albumId,
+                      kind: 'album',
+                      value: candidate.upc,
+                      origin,
+                    },
+                  ])
                 }
               })
             },

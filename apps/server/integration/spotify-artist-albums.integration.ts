@@ -986,6 +986,7 @@ it('reports a legacy track failure, then reads and caches one exact track and al
         ? Response.json({
             id: spotifyTrackId,
             album: { id: spotifyAlbumId, name: releaseTitle },
+            external_ids: { isrc: 'ZZAAA2600071' },
           })
         : Response.json({ error: 'Not found' }, { status: 404 })
     return readAlbum(input)
@@ -1023,6 +1024,18 @@ it('reports a legacy track failure, then reads and caches one exact track and al
   ])
   const success = responses.find(({ response }) => response.status === 200)
   if (!success) throw new Error('Expected a successful legacy lookup response')
+  expect(
+    await fixture.query.providerReference.findFirst({
+      where: and(
+        eq(schema.providerReference.mediaItemId, trackId),
+        eq(schema.providerReference.referenceType, 'isrc'),
+      ),
+    }),
+  ).toMatchObject({
+    provider: 'spotify',
+    externalId: 'ZZAAA2600071',
+    metadata: { snapshotId: success.id },
+  })
   expect(
     await fixture.query.catalogObservation.findFirst({
       where: eq(schema.catalogObservation.snapshotId, success.id),

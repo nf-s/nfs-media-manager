@@ -7,6 +7,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import { env } from '@/env'
 import { slugifyParts } from '@/lib/media-utils'
 import * as schema from '@/schemas/db'
@@ -175,14 +176,15 @@ it('records stored Spotify ISRCs as references and fills empty primary values on
 
   expect(await recoverStoredTrackIsrcs(fixture)).toMatchObject({
     apply: false,
-    tracks: 5,
+    tracks: 4,
     tracksWithSeveralIsrcs: 1,
+    pendingReferences: 5,
     references: 0,
   })
   expect(await isrcReferences('track-lookup')).toEqual([])
 
   const applied = await recoverStoredTrackIsrcs(fixture, { apply: true })
-  expect(applied).toMatchObject({ references: 6, primaryFilled: 3 })
+  expect(applied).toMatchObject({ references: 5, primaryFilled: 3 })
   expect(await isrcReferences('track-lookup')).toEqual([
     {
       provider: 'spotify',
@@ -205,14 +207,9 @@ it('records stored Spotify ISRCs as references and fills empty primary values on
   expect(await primary('track-lookup')).toBe('ZZAAA2600001')
   expect(await primary('track-search-response')).toBe('ZZAAA2600002')
   expect(await primary('track-search-log')).toBe('ZZAAA2600003')
-  // A stored value is kept as it was and gains its reference.
+  // A stored value alone does not identify the provider that reported it.
   expect(await primary('track-existing')).toBe('ZZ-AAA-26-00004')
-  expect(await isrcReferences('track-existing')).toEqual([
-    expect.objectContaining({
-      isrc: 'ZZAAA2600004',
-      metadata: expect.objectContaining({ source: 'library-track' }),
-    }),
-  ])
+  expect(await isrcReferences('track-existing')).toEqual([])
   // Two codes keep both references and leave the primary value empty.
   expect(
     (await isrcReferences('track-conflict')).map((row) => row.isrc).sort(),
@@ -224,12 +221,14 @@ it('records stored Spotify ISRCs as references and fills empty primary values on
   expect(await recoverStoredTrackIsrcs(fixture, { apply: true })).toMatchObject(
     {
       primaryFilled: 0,
+      references: 0,
+      pendingReferences: 0,
     },
   )
   const references = await fixture
     .select({ id: schema.providerReference.id })
     .from(schema.providerReference)
-  expect(references).toHaveLength(6)
+  expect(references).toHaveLength(5)
   expect(request).not.toHaveBeenCalled()
 })
 
@@ -304,12 +303,116 @@ it('stores raw legacy playlist files once and recovers their ISRCs', async () =>
     }),
   ])
   expect(await primary('track-playlist')).toBe('ZZAAA2600007')
-  // A stored primary value is kept; the differing code is listed beside it.
+  // A stored primary value is kept; only the actual Spotify code becomes a reference.
   expect(await primary('track-playlist-conflict')).toBe('ZZAAA2600008')
   expect(
     (await isrcReferences('track-playlist-conflict'))
       .map((row) => row.isrc)
       .sort(),
-  ).toEqual(['ZZAAA2600008', 'ZZAAA2600010'])
+  ).toEqual(['ZZAAA2600010'])
+  expect(request).not.toHaveBeenCalled()
+})
+
+it('does not invent Spotify provenance and reports earlier copies of a Sonovault primary', async () => {
+  const { recoverStoredTrackIsrcs } =
+    await import('@/services/track-isrc-recovery')
+  const historical = 'z-fixture-recovery-historical'
+  const unreferenced = 'z-fixture-recovery-unreferenced'
+  const confirmed = 'z-fixture-recovery-confirmed'
+  const isrc = 'ZZAAA2600040'
+  await track(historical, spotifyId('i'), isrc)
+  await track(unreferenced, spotifyId('j'), isrc)
+  await track(confirmed, spotifyId('k'), isrc)
+  await fixture.insert(schema.sonovaultTrackLookup).values([
+    {
+      mediaItemId: historical,
+      inputType: 'spotify_id',
+      input: spotifyId('i'),
+      status: 'matched',
+      primaryIsrc: isrc,
+      lookedUpAt: new Date(),
+    },
+    {
+      mediaItemId: unreferenced,
+      inputType: 'spotify_id',
+      input: spotifyId('j'),
+      status: 'matched',
+      primaryIsrc: isrc,
+      lookedUpAt: new Date(),
+    },
+  ])
+  await fixture.insert(schema.providerReference).values([
+    {
+      id: 'legacy-copy',
+      mediaItemId: historical,
+      provider: 'spotify',
+      referenceType: 'isrc',
+      externalId: isrc,
+      metadata: { source: 'library-track' },
+    },
+    {
+      id: 'confirmed-copy',
+      mediaItemId: confirmed,
+      provider: 'spotify',
+      referenceType: 'isrc',
+      externalId: isrc,
+      metadata: { source: 'library-track' },
+    },
+  ])
+  await fixture.insert(schema.providerSnapshot).values({
+    id: 'exact-interactive-track',
+    mediaItemId: confirmed,
+    provider: 'spotify',
+    checksum: 'fixture',
+    source: DIRECT_PROVIDER_RESPONSE_SOURCE,
+    payload: {
+      request: { url: `https://api.spotify.com/v1/tracks/${spotifyId('k')}` },
+      response: {
+        status: 200,
+        body: {
+          state: 'captured',
+          text: JSON.stringify({ id: spotifyId('k'), external_ids: { isrc } }),
+        },
+      },
+    },
+  })
+  expect(
+    await recoverStoredTrackIsrcs(fixture, {
+      apply: true,
+      after: historical,
+      limit: 1,
+    }),
+  ).toMatchObject({
+    tracks: 0,
+    references: 0,
+    next: unreferenced,
+  })
+  expect(
+    await recoverStoredTrackIsrcs(fixture, {
+      apply: true,
+      after: 'z-fixture-recovery',
+      limit: 3,
+    }),
+  ).toMatchObject({
+    tracks: 1,
+    references: 1,
+    legacySpotifyReferences: 2,
+    legacySpotifyReferencesWithSonovaultPrimary: 1,
+    next: unreferenced,
+  })
+  expect(await isrcReferences(unreferenced)).toEqual([])
+  expect(await isrcReferences(historical)).toEqual([
+    { provider: 'spotify', isrc, metadata: { source: 'library-track' } },
+  ])
+  expect(await isrcReferences(confirmed)).toEqual([
+    expect.objectContaining({
+      provider: 'spotify',
+      isrc,
+      metadata: expect.objectContaining({
+        source: 'spotify-track-lookup-snapshot',
+        snapshotId: 'exact-interactive-track',
+      }),
+    }),
+  ])
   expect(request).not.toHaveBeenCalled()
 })

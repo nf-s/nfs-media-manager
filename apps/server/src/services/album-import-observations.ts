@@ -85,6 +85,7 @@ export function observeSpotifySavedAlbumPage(
         artworkUrl: release.artworkUrl,
         releaseDate: parseOptionalDate(release.date) ?? undefined,
         trackCount: release.trackCount,
+        upc: release.upc,
         details: release.details,
         credits: (release.credits ?? []).flatMap(({ name, externalId }) =>
           externalId ? [{ name, externalId }] : [],
