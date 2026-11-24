@@ -206,7 +206,10 @@ test('the queue links to the saved source and places ten upcoming tracks after q
   assert.match(html, /<h3>Queued<\/h3>/)
   assert.match(html, /<h3>Next from Tracks<\/h3>/)
   assert.ok(html.indexOf('Queued album') < html.indexOf('Next from Tracks'))
-  assert.match(html, /<strong>Source track 10<\/strong>/)
+  assert.match(
+    html,
+    /<strong title="Source track 10">Source track 10<\/strong>/,
+  )
   assert.doesNotMatch(html, /Source track 11|Source track 12/)
   // A queued entry can be played now, moved and removed.
   assert.match(html, /aria-label="Play Queued album now"/)

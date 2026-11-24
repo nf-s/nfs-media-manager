@@ -225,28 +225,31 @@ function NowPlaying({
   membership,
   onNavigate,
   touch,
+  inQueue = false,
 }: {
   shown: ReturnType<typeof references>
   playing: ReturnType<typeof playingLibraryItems>
   membership: PlayerLibraryMembership
   onNavigate?: () => void
   touch?: boolean
+  inQueue?: boolean
 }) {
   const { track, artists, album } = shown
   const title = playing.track ? track : album
   const titleItem = playing.track ?? playing.album
   const release = playing.track ? playing.album : null
+  const LibraryControl = inQueue ? QueueLibrarySlot : PlayerLibraryAction
   return (
     <span className="player-text">
       <span className="player-identity-line">
-        <strong>
+        <strong title={inQueue ? title.label : undefined}>
           <PlayerLink
             to={title.label ? title : { ...title, label: 'Nothing playing' }}
             onNavigate={onNavigate}
           />
         </strong>
         {titleItem && (
-          <PlayerLibraryAction
+          <LibraryControl
             item={titleItem}
             membership={membership}
             touch={touch}
@@ -266,7 +269,7 @@ function NowPlaying({
             {release && <PlayerLink to={album} onNavigate={onNavigate} />}
           </span>
           {release && (
-            <PlayerLibraryAction
+            <LibraryControl
               item={release}
               membership={membership}
               touch={touch}
@@ -525,16 +528,49 @@ function ItemText({
 }) {
   return (
     <span className="player-text">
-      <span className="player-identity-line">
-        <strong>
-          <PlayerLink
-            to={libraryReference(library, membership)}
-            onNavigate={onNavigate}
-          />
-        </strong>
-        <PlayerLibraryAction item={library} membership={membership} touch />
-      </span>
+      <strong title={item.title}>
+        <PlayerLink
+          to={libraryReference(library, membership)}
+          onNavigate={onNavigate}
+        />
+      </strong>
       <span>{itemDetail(item)}</span>
+    </span>
+  )
+}
+
+function focusQueueTitleOnRemoval(action: HTMLSpanElement | null) {
+  if (!action) return
+  return () => {
+    if (!action.contains(document.activeElement)) return
+    action
+      .closest('.queue-row')
+      ?.querySelector<HTMLElement>('.player-text strong a')
+      ?.focus({ preventScroll: true })
+  }
+}
+
+function QueueLibrarySlot({
+  item,
+  membership,
+  touch,
+}: {
+  item: PlaybackLibraryItem
+  membership: PlayerLibraryMembership
+  touch?: boolean
+}) {
+  const { mediaItemId } = playbackItemMembership(item, membership.data)
+  return (
+    <span className="queue-library-slot" data-touch={touch ? '' : undefined}>
+      {!mediaItemId && (
+        <span ref={focusQueueTitleOnRemoval}>
+          <PlayerLibraryAction
+            item={item}
+            membership={membership}
+            touch={touch}
+          />
+        </span>
+      )}
     </span>
   )
 }
@@ -678,6 +714,11 @@ function QueueRows({
                 onNavigate={onNavigate}
               />
             </span>
+            <QueueLibrarySlot
+              item={entry.identity}
+              membership={membership}
+              touch
+            />
             <span className="queue-actions">
               <button
                 type="button"
@@ -807,6 +848,7 @@ function QueueContents({
                 playing={playing.items}
                 membership={playing.membership}
                 onNavigate={onNavigate}
+                inQueue
               />
             </span>
           </div>
