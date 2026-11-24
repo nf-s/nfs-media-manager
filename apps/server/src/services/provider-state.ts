@@ -196,7 +196,7 @@ async function replaceProviderReferences(
       ).filter(isBlockedFilmReference)
     : []
   if (
-    effectiveReferences.some((reference) =>
+    [...effectiveReferences.values()].some((reference) =>
       hasBlockedFilmReference(blockedReferences, reference),
     )
   )
