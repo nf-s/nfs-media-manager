@@ -40,7 +40,10 @@ spotifyAlbumReference.openapi(
       },
       401: jsonErrorResponse('Unauthorized'),
       404: jsonErrorResponse('The track reference was not found'),
+      409: jsonErrorResponse('The track does not identify one Spotify release'),
       422: validationErrorResponse,
+      429: jsonErrorResponse('Spotify is busy'),
+      502: jsonErrorResponse('Spotify could not confirm the release'),
     },
   }),
   async (c) =>

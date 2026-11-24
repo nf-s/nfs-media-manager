@@ -44,6 +44,7 @@ import {
 } from './merge-bar'
 import { useConfig } from './providers'
 import { trackEntryValue, type TrackEntryColumn } from './track-entries-table'
+import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import { TrackMergeBar } from './track-merge-bar'
 
 type TrackEntry = Extract<PlaylistEntry, { kind: 'track' }>
@@ -119,6 +120,7 @@ function AlbumTrackRow({
               <DetailLink className="ds-cell-title" kind="track" id={track.id}>
                 {track.title}
               </DetailLink>
+              <TrackSpotifyMatchAction track={track} />
               {track.inLibrary === false && (
                 <span className="ds-muted">Outside library</span>
               )}

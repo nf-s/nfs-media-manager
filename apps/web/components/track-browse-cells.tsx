@@ -12,10 +12,10 @@ import {
   textValues,
   type BrowseFilterHref,
 } from '@/utils/browse-items'
-import { recordedTrackAlbum } from '@/utils/track-album-notices'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { trackAlbumReference } from '@/utils/track-album-notices'
 import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
-import { AlbumReferenceSearch } from './album-reference-search'
+import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 import { BrowseTagBadges } from './browse-controls'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
@@ -24,17 +24,27 @@ export function TrackBrowseAlbum({
   track,
   filterHref,
 }: {
-  track: Pick<TrackListItem, 'album' | 'albumName'>
+  track: TrackListItem | Pick<TrackListItem, 'album' | 'albumName'>
   filterHref?: BrowseFilterHref
 }) {
-  if (track.album)
+  let album = track.album
+  if ('albumLinkStrategy' in track) {
+    const reference = trackAlbumReference(track)
+    if (reference.openBySpotify)
+      return (
+        <SpotifyAlbumReferenceLink
+          trackId={track.id}
+          spotifyAlbumId={reference.exactId}
+        >
+          {track.albumName ?? track.album?.title ?? 'Spotify release'}
+        </SpotifyAlbumReferenceLink>
+      )
+    album = reference.album
+  }
+  if (album)
     return (
-      <DetailLink
-        kind="album"
-        id={track.album.id}
-        title={`Open ${track.album.title}`}
-      >
-        {track.albumName ?? track.album.title}
+      <DetailLink kind="album" id={album.id} title={`Open ${album.title}`}>
+        {track.albumName ?? album.title}
       </DetailLink>
     )
   return track.albumName ? (
@@ -56,11 +66,6 @@ export function TrackBrowseAlbum({
   ) : null
 }
 
-export function TrackRecordedAlbumAction({ track }: { track: TrackListItem }) {
-  const release = recordedTrackAlbum(track)
-  return release ? <AlbumReferenceSearch {...release} /> : null
-}
-
 export function TrackAlbumTableValue({
   track,
   filterHref,
@@ -68,14 +73,14 @@ export function TrackAlbumTableValue({
   track: TrackListItem
   filterHref?: BrowseFilterHref
 }) {
-  if (track.album) return <TrackBrowseAlbum track={track} />
-  if (!track.albumName) return <EmptyValue />
-  return (
-    <span className="ds-cell-id">
-      <TrackBrowseAlbum track={track} filterHref={filterHref} />
-      <TrackRecordedAlbumAction track={track} />
-    </span>
+  if (
+    !track.album &&
+    !track.albumName &&
+    !track.spotifyAlbumId &&
+    !track.spotifyTrackId
   )
+    return <EmptyValue />
+  return <TrackBrowseAlbum track={track} filterHref={filterHref} />
 }
 
 export function TrackBrowseTags({

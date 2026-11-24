@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getJobTask, type Job, type JobSubject } from '@repo/schemas/job'
+import { SPOTIFY_TRACK_ALBUM_LOOKUP_TASK } from '@repo/schemas/spotify-album-reference'
 import {
   SONOVAULT_SIMILAR_LOOKUP_TASK,
   SONOVAULT_TRACK_LOOKUP_TASK,
@@ -36,6 +37,7 @@ export function jobSubjectId(options: Record<string, unknown>): string | null {
     case SONOVAULT_SIMILAR_LOOKUP_TASK:
       return text(options.itemId)
     case TIDAL_TRACK_MATCH_TASK:
+    case SPOTIFY_TRACK_ALBUM_LOOKUP_TASK:
       return text(options.trackId)
     case SONOVAULT_TRACK_LOOKUP_TASK:
       return Array.isArray(options.trackIds) ? text(options.trackIds[0]) : null

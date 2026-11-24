@@ -1,49 +1,38 @@
-import { ManualMediaAddInputSchema } from '@repo/schemas/manual-add'
-import type { TrackDetail, TrackListItem } from '@repo/schemas/tracks'
+import { spotifyIdPattern } from '@repo/schemas/playback'
+import type { TrackListItem } from '@repo/schemas/tracks'
 import { formatItemCount } from '@repo/ui/lib/format'
+import { spotifyAlbumUrl, spotifyTrackUri } from './album-links'
 
-/** The label and search for a release reported without a library track link. */
-export function recordedTrackAlbum(
-  item: Pick<TrackListItem, 'album' | 'albumName' | 'artists'>,
+/** Prefer the exact release over a library album linked by name. */
+export function trackAlbumReference(
+  item: Pick<
+    TrackListItem,
+    'album' | 'albumLinkStrategy' | 'spotifyTrackId' | 'spotifyMatch'
+  > & { spotifyAlbumId?: string | null },
 ) {
-  if (item.album) return null
-  const name = item.albumName?.trim()
-  return name
-    ? { name, query: [item.artists[0], name].filter(Boolean).join(' ') }
-    : null
-}
-
-/** An unlinked release that can be added by Spotify ID or looked up by name. */
-export function missingTrackAlbum(
-  item: Pick<TrackDetail, 'album' | 'albumName' | 'artists' | 'spotifyAlbumId'>,
-):
-  | {
-      kind: 'id'
-      spotifyAlbumId: string
-      name: string
-      query: string | undefined
-      message: string
-    }
-  | { kind: 'search'; name: string; query: string; message: string }
-  | null {
-  if (item.album) return null
-  const recorded = recordedTrackAlbum(item)
-  const message = recorded
-    ? `“${recorded.name}” has no linked library album.`
-    : 'This track has no linked library album.'
-  const exact = ManualMediaAddInputSchema.safeParse({
-    mediaType: 'album',
-    externalId: item.spotifyAlbumId,
-  })
-  if (exact.success)
-    return {
-      kind: 'id',
-      spotifyAlbumId: exact.data.externalId,
-      name: recorded?.name ?? 'Spotify release',
-      query: recorded?.query,
-      message,
-    }
-  return recorded ? { kind: 'search', ...recorded, message } : null
+  const release = item.spotifyAlbumId
+  const externalId = release?.startsWith('https://')
+    ? spotifyAlbumUrl(release)?.split('/').at(-1)
+    : release?.replace(/^spotify:album:/, '')
+  const exactId =
+    externalId && spotifyIdPattern.test(externalId) ? externalId : null
+  const localAlbum = item.album
+  const matched =
+    item.spotifyMatch !== 'unmatched' &&
+    Boolean(spotifyTrackUri(item.spotifyTrackId))
+  const listed =
+    item.albumLinkStrategy === 'album-track-list' ||
+    item.albumLinkStrategy === 'spotify-track'
+  const useLocal =
+    item.albumLinkStrategy === 'spotify-album' ||
+    (exactId === null && (listed || !matched))
+  const album = useLocal ? localAlbum : null
+  return {
+    exactId,
+    album,
+    openBySpotify:
+      (!album || album.inLibrary === false) && Boolean(exactId || matched),
+  }
 }
 
 /**

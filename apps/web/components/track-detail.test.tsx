@@ -169,7 +169,6 @@ function pillHref(html: string, label: string) {
 
 test('unmatched Last.fm tracks show recorded metadata, listening and an actionable source filter', () => {
   const html = render(scrobbled)
-  assert.match(html, /<h2 class="ds-detail-title">Synthetic track<\/h2>/)
   assert.match(
     html,
     /by <span class="inline-values"><a[^>]*href="\/artists\/fixture-artist">Example artist<\/a>/,
@@ -193,8 +192,13 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   assert.match(html, /<h3>Appears on<\/h3>/)
   assert.match(
     html,
-    /Recorded album<\/span><span class="ds-row-by">Recorded album<\/span>.*aria-label="Find album in library · Recorded album"/,
+    /Recorded album<\/span><span class="ds-row-by">Recorded album<\/span>/,
   )
+  assert.match(
+    html,
+    /<h2 class="ds-detail-title">Synthetic track <button[^>]*aria-label="Match Synthetic track to Spotify"/,
+  )
+  assert.doesNotMatch(html, /aria-label="Find album in library/)
   assert.match(html, /No playlist memberships\./)
   assert.match(html, /Match this track to Spotify to add it to a playlist/)
   assert.match(
@@ -227,6 +231,7 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   const matched = TrackDetailSchema.parse({
     ...scrobbled,
     album: { id: 'album-1', title: 'Library album' },
+    albumLinkStrategy: 'album-track-list',
     albumTags: ['Electronic'],
     artistTags: ['Synth-pop'],
     durationSec: 243,
@@ -600,7 +605,7 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
   assert.equal(html.match(/<h3>Album<\/h3>/g)?.length, 1)
   assert.match(
     html,
-    />Harbour Lights<\/button><\/span><span class="ds-actions">.*?href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL".*?<button[^>]*aria-label="Add album to library · Harbour Lights"/,
+    />Harbour Lights<\/a><\/span><span class="ds-actions">.*?href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL".*?<button[^>]*aria-label="Add album to library · Harbour Lights"/,
   )
   assert.match(
     html,
@@ -630,7 +635,7 @@ test('offers an exact Spotify album add on Overview even without an album name',
   )
   assert.match(
     html,
-    />Album<\/button><span class="ds-row-by">Recorded album<\/span>.*aria-label="Add album to library · Spotify release"/,
+    />Album<\/a><span class="ds-row-by">Recorded album<\/span>.*aria-label="Add album to library · Album"/,
   )
 })
 
@@ -647,10 +652,35 @@ test('Sources keeps the Spotify link and withholds add while release membership 
   assert.doesNotMatch(html, /aria-label="Add album to library|lucide-book-plus/)
 })
 
-test('offers an album search from Sources when only the recorded name is known', () => {
+test('shows the recorded name in Sources without offering an album search', () => {
+  const html = render(scrobbled, '', 'sources')
+  assert.match(html, /“Recorded album” has no linked library album\./)
+  assert.doesNotMatch(html, /aria-label="Find album in library/)
+})
+
+test('a legacy Spotify match opens by track ID instead of a name-linked album', () => {
+  const html = render({
+    ...scrobbled,
+    spotifyTrackId: '1234567890ABCDEFGHIJKL',
+    spotifyMatch: 'spotify-search',
+    album: { id: 'name-matched-album', title: 'Name matched album' },
+    albumLinkStrategy: 'album-title',
+  })
   assert.match(
-    render(scrobbled, '', 'sources'),
-    /“Recorded album” has no linked library album\.<\/span><button[^>]*aria-label="Find album in library · Recorded album"/,
+    html,
+    /href="\/albums\/from-track\?trackId=lastfm-track"[^>]*>Recorded album<\/a>/,
+  )
+  assert.doesNotMatch(
+    html,
+    /name-matched-album|Find album in library|Match Synthetic track to Spotify/,
+  )
+})
+
+test('an unmatched track outside the library has no title match action', () => {
+  const html = render({ ...scrobbled, inLibrary: false })
+  assert.doesNotMatch(
+    html,
+    /Match Synthetic track to Spotify|Find album in library/,
   )
 })
 
@@ -686,6 +716,7 @@ test('Sources shows no album notices for a track on its library album', () => {
     TrackDetailSchema.parse({
       ...scrobbled,
       album: { id: 'album-1', title: 'Library album' },
+      albumLinkStrategy: 'spotify-album',
       spotifyAlbumId: '1234567890ABCDEFGHIJKL',
     }),
     '',
@@ -695,4 +726,34 @@ test('Sources shows no album notices for a track on its library album', () => {
     html,
     /<h3>Album<\/h3>|has no linked library album|aria-label="Add album to library|does not list it/,
   )
+})
+
+test('a cached album outside the library opens by release ID and can be added', () => {
+  const externalId = '1234567890ABCDEFGHIJKL'
+  const track = TrackDetailSchema.parse({
+    ...scrobbled,
+    album: { id: 'cached-release', title: 'Cached release', inLibrary: false },
+    albumLinkStrategy: 'spotify-album',
+    spotifyAlbumId: externalId,
+    spotifyTrackId: 'ABCDEFGHIJKL1234567890',
+    spotifyMatch: 'spotify-import',
+  })
+  const tabs: Array<'detail' | 'sources'> = ['detail', 'sources']
+  for (const tab of tabs) {
+    const html = render(track, '', tab, null, [], undefined, undefined, {
+      mediaType: 'album',
+      externalId,
+      mediaItemId: null,
+      ambiguous: false,
+    })
+    assert.match(
+      html,
+      /href="\/albums\/from-track\?trackId=lastfm-track&amp;spotifyAlbumId=1234567890ABCDEFGHIJKL"[^>]*>Cached release<\/a>/,
+    )
+    assert.match(html, /aria-label="Add album to library · Cached release"/)
+    assert.doesNotMatch(
+      html,
+      /is in the library|Find album in library|href="\/albums\/cached-release"/,
+    )
+  }
 })

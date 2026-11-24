@@ -78,7 +78,9 @@ export async function invalidateScrobbleLinks(
         'playlist',
         'album-playlists',
       ].includes(String(query.queryKey[0])) ||
-        // Of an artist's queries only its listening chart counts scrobbles.
+        (query.queryKey[0] === 'artist-overview' &&
+          query.queryKey[2] === 'tracks') ||
+        // Of an artist's detail queries only its listening chart counts scrobbles.
         (query.queryKey[0] === 'artist' &&
           query.queryKey[2] === 'listening-series')),
   })

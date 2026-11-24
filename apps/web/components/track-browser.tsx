@@ -110,8 +110,8 @@ import {
   TrackBrowseAlbum,
   TrackBrowseTags,
   TrackBrowseValue,
-  TrackRecordedAlbumAction,
 } from './track-browse-cells'
+import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import {
   TrackBrowseFilterChips,
   TrackBrowseSearch,
@@ -228,6 +228,7 @@ export function TrackVersionTitle({
         <DetailLink kind="track" id={track.id} title={track.title}>
           {track.title}
         </DetailLink>
+        <TrackSpotifyMatchAction track={track} />
         {shown && (
           <>
             {' '}
@@ -697,12 +698,12 @@ function TrackBrowse({
     index: number | undefined,
     title: ReactNode,
   ) {
-    const showVersions = item.recordingGroup && index !== undefined
-    return showVersions || item.inLibrary === false ? (
+    return (
       <span className="ds-cell-id gap-[var(--ds-1)]">
         {title}
+        <TrackSpotifyMatchAction track={item} />
         <TrackBrowseLibraryAction track={item} />
-        {showVersions && (
+        {item.recordingGroup && index !== undefined && (
           <RecordingVersionsToggle
             track={item}
             index={index}
@@ -710,8 +711,6 @@ function TrackBrowse({
           />
         )}
       </span>
-    ) : (
-      title
     )
   }
 
@@ -751,6 +750,7 @@ function TrackBrowse({
           />
           {trackLink(item, 'ds-cell-title')}
           <TrackBrowseLibraryAction track={item} />
+          <TrackSpotifyMatchAction track={item} />
           {playPair(item, index)}
         </span>
       )
@@ -825,7 +825,10 @@ function TrackBrowse({
         )}
         by={
           child ? (
-            item.album || item.albumName ? (
+            item.album ||
+            item.albumName ||
+            item.spotifyAlbumId ||
+            item.spotifyTrackId ? (
               <TrackBrowseAlbum track={item} filterHref={filterHref} />
             ) : (
               'Release unknown'
@@ -833,7 +836,10 @@ function TrackBrowse({
           ) : (
             <>
               <TrackArtistLinks track={item} fallbackHref={artistFilterHref} />
-              {(item.album || item.albumName) && (
+              {(item.album ||
+                item.albumName ||
+                item.spotifyAlbumId ||
+                item.spotifyTrackId) && (
                 <>
                   {' '}
                   · <TrackBrowseAlbum track={item} filterHref={filterHref} />
@@ -849,7 +855,6 @@ function TrackBrowse({
             playPair(item, index)
           )
         }
-        action={<TrackRecordedAlbumAction track={item} />}
         tags={
           <TrackBrowseTags
             track={item}

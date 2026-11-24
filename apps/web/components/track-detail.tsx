@@ -81,6 +81,7 @@ import MetadataSourceControl from './metadata-source-control'
 import { BrowseFilterPill } from './browse-controls'
 import { TrackTagEditor, useTrackTagEdits } from './track-tag-editor'
 import { TrackSpotifySource } from './track-spotify-source'
+import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import { TrackTidalSource } from './tidal-track-match'
 import { TrackSonovaultSource } from './sonovault-track-lookup'
 import TrackAppearsOn from './track-playlist-additions'
@@ -362,8 +363,7 @@ function TrackOverview({
   sourcesHref: string
 }) {
   const notation = useKeyNotation()
-  const albumId = item.album?.id ?? albumAddition.unlisted
-  const albumTitle = item.album?.title ?? item.albumName ?? 'Album'
+  const albumTitle = albumAddition.name
   const facts = item.facts.length
     ? [
         {
@@ -417,7 +417,7 @@ function TrackOverview({
         </Section>
         <ListeningTrend kind="track" id={item.id} />
         <TrackAppearsOn track={item} onResolved={onResolved}>
-          {(albumId || albumAddition.exactId || albumAddition.missing) && (
+          {albumTitle && (
             <List compact>
               <ListRow
                 thumb={
@@ -430,7 +430,7 @@ function TrackOverview({
                   </Thumb>
                 }
                 title={
-                  albumId || albumAddition.exactId ? (
+                  albumAddition.catalogId || albumAddition.openBySpotify ? (
                     <RowTitle>
                       <TrackAlbumReferenceLink
                         item={item}
@@ -451,9 +451,9 @@ function TrackOverview({
                   )
                 }
                 by={
-                  item.album
+                  albumAddition.album
                     ? 'Album'
-                    : albumId
+                    : albumAddition.unlisted
                       ? 'Album does not list this track'
                       : 'Recorded album'
                 }
@@ -649,7 +649,18 @@ function TrackDetailContent({
           />
         }
         kind="Track"
-        title={item.title}
+        title={
+          <>
+            {item.title}{' '}
+            <TrackSpotifyMatchAction
+              track={item}
+              hasAlternate={Boolean(item.spotifyAlternate)}
+              onMatched={(targetId) => {
+                if (targetId !== item.id) openResolvedTrack(targetId)
+              }}
+            />
+          </>
+        }
         by={
           <>
             {item.artists.length > 0 && (
@@ -663,14 +674,12 @@ function TrackDetailContent({
                 />
               </>
             )}
-            {(item.album || item.albumName) && (
+            {albumAddition.name && (
               <>
                 {item.artists.length > 0 ? ' · on ' : 'on '}
-                {item.album ||
-                albumAddition.unlisted ||
-                albumAddition.exactId ? (
+                {albumAddition.catalogId || albumAddition.openBySpotify ? (
                   <TrackAlbumReferenceLink item={item} addition={albumAddition}>
-                    {item.album?.title ?? item.albumName ?? 'Album'}
+                    {albumAddition.name}
                   </TrackAlbumReferenceLink>
                 ) : item.albumName ? (
                   <span {...albumShortcut(item.albumName, filterHref)}>
@@ -777,7 +786,6 @@ function TrackDetailContent({
           />
         </TabsContent>
       </DetailTabs>
-      {albumAddition.dialog}
     </article>
   )
 }

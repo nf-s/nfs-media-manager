@@ -4,6 +4,8 @@ import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { SPOTIFY_TRACK_ALBUM_LOOKUP_TASK } from '@repo/schemas/spotify-album-reference'
+import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { env } from '@/env'
 import { parseSpotifyArtistAlbumPage } from '@/lib/spotify-artist-albums'
 import { spotifyTokenFixture } from '@/plugins/builtin/__tests__/fixtures/spotify'
@@ -57,9 +59,10 @@ vi.mock('@/lib/provider-secrets', () => ({
   }),
 }))
 
-import { processQueuedJobs } from '@/services/jobs'
+import { processQueuedJobById, processQueuedJobs } from '@/services/jobs'
 import { getMediaSources } from '@/services/history'
 import { openSpotifyAlbumReference } from '@/services/spotify-album-reference'
+import { loadTracks } from '@/services/tracks'
 import { observeSpotifyArtistAlbumPage } from '@/services/spotify-artist-album-discoveries'
 import {
   getJobProviderResponse,
@@ -548,7 +551,7 @@ it('preserves ambiguous album identities and duplicate response positions', asyn
   }
 })
 
-it('keeps a withdrawn exact parent accessible and reuses the failed lookup', async () => {
+it('keeps a failed exact parent accessible and retries that release by ID', async () => {
   await fixture.delete(schema.providerRequestState)
   const trackId = 'track-with-withdrawn-parent'
   const spotifyAlbumId = 'withdrawnparent'.padEnd(22, '0')
@@ -595,7 +598,408 @@ it('keeps a withdrawn exact parent accessible and reuses the failed lookup', asy
     (await listJobProviderResponses(opened.jobId, { page: 1, size: 1 }))
       .totalCount,
   ).toBe(1)
+  await fixture.delete(schema.providerRequestState)
   request.mockClear()
-  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual(opened)
+  request.mockImplementation(albumRequest(spotifyAlbumId, 'Returned release'))
+  const retry = await openSpotifyAlbumReference(reference, ownerId)
+  expect(retry.mediaItemId).toBe(opened.mediaItemId)
+  expect(retry.jobId).toBeTruthy()
+  expect(retry.jobId).not.toBe(opened.jobId)
+  await processQueuedJobs()
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(['/api/token', `/v1/albums/${spotifyAlbumId}`])
+  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual({
+    mediaItemId: opened.mediaItemId,
+  })
+}, 20_000)
+
+async function seedParentTrack(
+  id: string,
+  data: Partial<typeof schema.libraryTrack.$inferInsert> = {},
+) {
+  await fixture
+    .insert(schema.mediaItem)
+    .values({ id, slug: id, title: id, mediaType: 'track' })
+  await fixture.insert(schema.libraryTrack).values({ ...data, mediaItemId: id })
+  return id
+}
+
+async function seedParentAlbum(
+  id: string,
+  spotifyAlbumId?: string,
+  inLibrary = true,
+) {
+  await fixture
+    .insert(schema.mediaItem)
+    .values({ id, slug: id, title: id, mediaType: 'album', inLibrary })
+  await fixture.insert(schema.album).values({
+    mediaItemId: id,
+    spotifyUrl: spotifyAlbumId
+      ? `https://open.spotify.com/album/${spotifyAlbumId}`
+      : undefined,
+  })
+  return id
+}
+
+function albumRequest(spotifyAlbumId: string, name: string): typeof fetch {
+  return async (input) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'accounts.spotify.com')
+      return Response.json(spotifyTokenFixture)
+    if (url.pathname === `/v1/albums/${spotifyAlbumId}`)
+      return Response.json({
+        id: spotifyAlbumId,
+        name,
+        artists: credits,
+        total_tracks: 0,
+        tracks: { items: [], total: 0, offset: 0, next: null },
+      })
+    throw new Error('Unexpected offline provider request')
+  }
+}
+
+it('opens a linked local album and prefers a different exact known edition over a title link', async () => {
+  const localId = await seedParentAlbum('local-album-for-parent')
+  const localTrack = await seedParentTrack('local-album-track', {
+    albumMediaItemId: localId,
+    albumLinkStrategy: 'album-track-list',
+  })
+  const spotifyAlbumId = 'exactreleasedifferent'.padEnd(22, '0')
+  const exactId = await seedParentAlbum('exact-known-release', spotifyAlbumId)
+  const exactTrack = await seedParentTrack('other-edition-track', {
+    albumMediaItemId: localId,
+    albumLinkStrategy: 'album-title',
+    spotifyAlbumId: `spotify:album:${spotifyAlbumId}`,
+  })
+  request.mockClear()
+  expect(await loadTracks([exactTrack])).toMatchObject([{ spotifyAlbumId }])
+  expect(
+    await openSpotifyAlbumReference({ trackId: localTrack }, ownerId),
+  ).toEqual({ mediaItemId: localId })
+  expect(
+    await openSpotifyAlbumReference(
+      { trackId: exactTrack, spotifyAlbumId },
+      ownerId,
+    ),
+  ).toEqual({ mediaItemId: exactId })
   expect(request).not.toHaveBeenCalled()
+})
+
+it('hydrates a linked outside release using its stored identity without rereading the legacy track', async () => {
+  await fixture.delete(schema.providerRequestState)
+  const spotifyAlbumId = 'linkedoutsidealbum'.padEnd(22, '0')
+  const linked = await seedParentAlbum(
+    'linked-outside-release',
+    spotifyAlbumId,
+    false,
+  )
+  const trackId = await seedParentTrack('track-with-linked-outside-release', {
+    albumMediaItemId: linked,
+    albumLinkStrategy: 'spotify-album',
+    spotifyTrackId: 'tracklinkedoutside'.padEnd(22, '0'),
+  })
+  expect(await loadTracks([trackId])).toMatchObject([
+    { album: { id: linked, inLibrary: false } },
+  ])
+  request.mockClear()
+  request.mockImplementation(
+    albumRequest(spotifyAlbumId, 'Hydrated outside release'),
+  )
+  const opened = await openSpotifyAlbumReference({ trackId }, ownerId)
+  expect(opened.mediaItemId).toBe(linked)
+  if (!opened.jobId) throw new Error('Expected an exact-album job')
+  await processQueuedJobs()
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(['/api/token', `/v1/albums/${spotifyAlbumId}`])
+  expect(
+    await fixture.query.mediaItem.findFirst({
+      where: eq(schema.mediaItem.id, linked),
+    }),
+  ).toMatchObject({ inLibrary: false })
+  request.mockClear()
+  expect(await openSpotifyAlbumReference({ trackId }, ownerId)).toEqual({
+    mediaItemId: linked,
+  })
+  expect(request).not.toHaveBeenCalled()
+}, 20_000)
+
+async function seedParentEvidence(
+  trackId: string,
+  spotifyTrackId: string,
+  albumIds: string[],
+) {
+  const jobId = `${trackId}-match-job`
+  const id = `${jobId}-response`
+  const text = JSON.stringify({
+    tracks: {
+      items: albumIds.map((albumId) => ({
+        id: spotifyTrackId,
+        album: { id: albumId, name: 'Saved release evidence' },
+      })),
+    },
+  })
+  await fixture.insert(schema.scrapeJob).values({
+    id: jobId,
+    provider: 'spotify',
+    status: 'succeeded',
+    requestedByUserId: ownerId,
+    scope: { mediaType: 'track', mediaItemIds: [trackId], limit: 1 },
+    options: {
+      task: SPOTIFY_TRACK_SEARCH_TASK,
+      trackId,
+      acceptedSpotifyTrackId: spotifyTrackId,
+    },
+  })
+  await fixture.insert(schema.providerResponse).values({
+    id,
+    jobId,
+    provider: 'spotify',
+    attempt: 1,
+    ordinal: 1,
+    status: 200,
+    phase: 'task',
+    method: 'GET',
+    requestUrl: 'https://api.spotify.com/v1/search?type=track',
+    bodyState: 'captured',
+    retainedBytes: Buffer.byteLength(text),
+    body: { state: 'captured', text, relayed: false },
+  })
+  return { jobId, responseId: id }
+}
+
+it('uses retained raw evidence for the selected track without reading it from Spotify', async () => {
+  const spotifyTrackId = 'storedlegacytrack'.padEnd(22, '0')
+  const spotifyAlbumId = 'storedlegacyalbum'.padEnd(22, '0')
+  const trackId = await seedParentTrack('stored-legacy-track', {
+    spotifyTrackId,
+  })
+  const albumId = await seedParentAlbum('stored-legacy-release', spotifyAlbumId)
+  const evidence = await seedParentEvidence(trackId, spotifyTrackId, [
+    spotifyAlbumId,
+  ])
+  request.mockClear()
+  expect(await openSpotifyAlbumReference({ trackId }, ownerId)).toEqual({
+    mediaItemId: albumId,
+  })
+  expect(await loadTracks([trackId])).toMatchObject([{ spotifyAlbumId }])
+  expect(
+    await fixture.query.catalogObservation.findFirst({
+      where: eq(schema.catalogObservation.responseId, evidence.responseId),
+    }),
+  ).toMatchObject({ mediaItemId: albumId, subjectId: trackId, ...evidence })
+  expect(request).not.toHaveBeenCalled()
+})
+
+it('reports a legacy track failure, then reads and caches one exact track and album without promoting either', async () => {
+  await fixture.delete(schema.providerRequestState)
+  const spotifyTrackId = 'lookuptrackbyid'.padEnd(22, '0')
+  const spotifyAlbumId = 'lookupitsalbum'.padEnd(22, '0')
+  const trackId = await seedParentTrack('lookup-track', {
+    spotifyTrackId,
+    albumName: 'Legacy release spelling',
+  })
+  const reference = { trackId, spotifyAlbumId }
+  const trackPath = `/v1/tracks/${spotifyTrackId}`
+  const albumPath = `/v1/albums/${spotifyAlbumId}`
+  const releaseTitle = 'Exact release title'
+  let available = false
+  const readAlbum = albumRequest(spotifyAlbumId, releaseTitle)
+  request.mockClear()
+  request.mockImplementation(async (input) => {
+    if (new URL(String(input)).pathname === trackPath)
+      return available
+        ? Response.json({
+            id: spotifyTrackId,
+            album: { id: spotifyAlbumId, name: releaseTitle },
+          })
+        : Response.json({ error: 'Not found' }, { status: 404 })
+    return readAlbum(input)
+  })
+  await expect(
+    openSpotifyAlbumReference(reference, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 502 } })
+  expect(await loadTracks([trackId])).toMatchObject([{ spotifyAlbumId: null }])
+  await fixture.delete(schema.providerRequestState)
+  available = true
+  const opened = await openSpotifyAlbumReference(reference, ownerId)
+  if (!opened.jobId) throw new Error('Expected an exact-album job')
+  await processQueuedJobById(opened.jobId, 'spotify', {
+    canContinue: async () => true,
+    recordOutcome: async () => {},
+  })
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual([
+    '/api/token',
+    trackPath,
+    '/api/token',
+    trackPath,
+    '/api/token',
+    albumPath,
+  ])
+  expect(await loadTracks([trackId])).toMatchObject([{ spotifyAlbumId }])
+  expect(
+    await fixture.query.mediaItem.findFirst({
+      where: eq(schema.mediaItem.id, opened.mediaItemId),
+    }),
+  ).toMatchObject({
+    title: releaseTitle,
+    inLibrary: false,
+  })
+  expect(
+    await fixture.$count(
+      schema.catalogAddition,
+      eq(schema.catalogAddition.mediaItemId, opened.mediaItemId),
+    ),
+  ).toBe(0)
+  const jobs = await fixture.query.scrapeJob.findMany({
+    where: sql`${schema.scrapeJob.options}->>'task' = ${SPOTIFY_TRACK_ALBUM_LOOKUP_TASK} and ${schema.scrapeJob.options}->>'trackId' = ${trackId}`,
+  })
+  expect(jobs.map(({ status }) => status).sort()).toEqual([
+    'failed',
+    'succeeded',
+  ])
+  for (const { id } of jobs) {
+    expect(
+      await listJobProviderResponses(id, { page: 1, size: 1 }),
+    ).toMatchObject({ totalCount: 1 })
+  }
+  const success = jobs.find(({ status }) => status === 'succeeded')
+  if (!success) throw new Error('Expected a successful legacy lookup')
+  expect(
+    await fixture.query.catalogObservation.findFirst({
+      where: eq(schema.catalogObservation.jobId, success.id),
+    }),
+  ).toMatchObject({
+    mediaItemId: opened.mediaItemId,
+    responseId: expect.any(String),
+    subjectId: trackId,
+  })
+  request.mockClear()
+  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual({
+    mediaItemId: opened.mediaItemId,
+  })
+  const anotherTrack = await seedParentTrack('other-track-same-shadow-album', {
+    spotifyAlbumId,
+  })
+  expect(
+    await openSpotifyAlbumReference({ trackId: anotherTrack }, ownerId),
+  ).toEqual({ mediaItemId: opened.mediaItemId })
+  expect(request).not.toHaveBeenCalled()
+}, 25_000)
+
+it('verifies the expected player release against the legacy Spotify track before opening', async () => {
+  await fixture.delete(schema.providerRequestState)
+  const spotifyTrackId = 'expectedreleaselegacy'.padEnd(22, '0')
+  const returnedRelease = 'confirmedlegacyalbum'.padEnd(22, '0')
+  const staleRelease = 'staleplayerrelease'.padEnd(22, '0')
+  const trackId = await seedParentTrack('legacy-player-track', {
+    spotifyTrackId,
+  })
+  const actualAlbum = await seedParentAlbum(
+    'legacy-player-actual-album',
+    returnedRelease,
+  )
+  await seedParentAlbum('legacy-player-stale-album', staleRelease)
+  const trackPath = `/v1/tracks/${spotifyTrackId}`
+  request.mockClear()
+  request.mockImplementation(async (input) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'accounts.spotify.com')
+      return Response.json(spotifyTokenFixture)
+    if (url.pathname === trackPath)
+      return Response.json({
+        id: spotifyTrackId,
+        album: { id: returnedRelease, name: 'Confirmed release' },
+      })
+    throw new Error('Unexpected offline provider request')
+  })
+
+  const staleReference = { trackId, spotifyAlbumId: staleRelease }
+  await expect(
+    openSpotifyAlbumReference(staleReference, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(['/api/token', trackPath])
+  expect(
+    await fixture.$count(
+      schema.catalogObservation,
+      eq(schema.catalogObservation.subjectId, trackId),
+    ),
+  ).toBe(0)
+
+  request.mockClear()
+  await expect(
+    openSpotifyAlbumReference(staleReference, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  expect(
+    await openSpotifyAlbumReference(
+      { trackId, spotifyAlbumId: returnedRelease },
+      ownerId,
+    ),
+  ).toEqual({ mediaItemId: actualAlbum })
+  expect(request).not.toHaveBeenCalled()
+}, 20_000)
+
+it('refuses missing identifiers, conflicting retained evidence and duplicate album mappings', async () => {
+  const missing = await seedParentTrack('album-missing-track', {
+    albumName: 'Same title',
+  })
+  const spotifyTrackId = 'conflictingtrack'.padEnd(22, '0')
+  const conflicting = await seedParentTrack('album-conflicting-track', {
+    spotifyTrackId,
+    albumName: 'Same title',
+  })
+  const spotifyAlbumId = 'conflictingalbum'.padEnd(22, '0')
+  await seedParentEvidence(conflicting, spotifyTrackId, [
+    spotifyAlbumId,
+    'otheralbumconflict'.padEnd(22, '0'),
+  ])
+  const duplicate = await seedParentTrack('album-duplicate-track', {
+    spotifyAlbumId,
+  })
+  await seedParentAlbum('duplicate-exact-edition-one', spotifyAlbumId)
+  await seedParentAlbum('duplicate-exact-edition-two', spotifyAlbumId)
+  request.mockClear()
+  for (const trackId of [missing, conflicting, duplicate]) {
+    await expect(
+      openSpotifyAlbumReference({ trackId }, ownerId),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+  }
+  expect(request).not.toHaveBeenCalled()
+  expect(
+    await fixture.$count(
+      schema.catalogObservation,
+      eq(schema.catalogObservation.subjectId, duplicate),
+    ),
+  ).toBe(0)
+  await fixture.delete(schema.providerRequestState)
+  const legacySpotifyId = 'duplicatedlegacytrack'.padEnd(22, '0')
+  const legacyTrack = await seedParentTrack(
+    'legacy-track-with-duplicate-albums',
+    { spotifyTrackId: legacySpotifyId },
+  )
+  const trackPath = `/v1/tracks/${legacySpotifyId}`
+  request.mockImplementation(async (input) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'accounts.spotify.com')
+      return Response.json(spotifyTokenFixture)
+    if (url.pathname === trackPath)
+      return Response.json({
+        id: legacySpotifyId,
+        album: { id: spotifyAlbumId, name: 'Duplicate release' },
+      })
+    throw new Error('Unexpected offline provider request')
+  })
+  for (const trackId of [legacyTrack, legacyTrack])
+    await expect(
+      openSpotifyAlbumReference({ trackId }, ownerId),
+    ).rejects.toMatchObject({ response: { statusCode: 409 } })
+  expect(await loadTracks([legacyTrack])).toMatchObject([{ spotifyAlbumId }])
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(['/api/token', trackPath])
 }, 20_000)

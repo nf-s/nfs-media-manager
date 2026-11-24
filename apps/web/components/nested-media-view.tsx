@@ -219,6 +219,7 @@ export function NestedMediaCard({
   id,
   title,
   artworkUrl,
+  titleAction,
   mediaType = kind === 'film' || kind === 'subscription' ? kind : 'album',
   subtitle,
   metadata,
@@ -226,6 +227,7 @@ export function NestedMediaCard({
 }: Pick<DetailTarget, 'kind' | 'id'> & {
   view: CardView
   title: string
+  titleAction?: ReactNode
   artworkUrl?: string | null
   mediaType?: ArtworkType
   subtitle?: ReactNode
@@ -237,6 +239,20 @@ export function NestedMediaCard({
     <DetailLink kind={kind} id={id} title={title}>
       {title}
     </DetailLink>
+  )
+  const label =
+    view === 'list' ? (
+      <RowTitle>{titleLink}</RowTitle>
+    ) : (
+      <CardTitle>{titleLink}</CardTitle>
+    )
+  const heading = titleAction ? (
+    <span className="ds-cell-id">
+      {label}
+      {titleAction}
+    </span>
+  ) : (
+    label
   )
   if (view === 'list')
     return (
@@ -253,7 +269,7 @@ export function NestedMediaCard({
             <MediaThumb kind={artwork} src={artworkUrl} size={40} />
           </DetailLink>
         }
-        title={<RowTitle>{titleLink}</RowTitle>}
+        title={heading}
         by={subtitle}
         play={
           actions ? (
@@ -281,7 +297,7 @@ export function NestedMediaCard({
           )}
         </MediaArt>
       }
-      title={<CardTitle>{titleLink}</CardTitle>}
+      title={heading}
       by={subtitle ?? ''}
       meta={metadata ?? ''}
       tags={

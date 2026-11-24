@@ -2,7 +2,6 @@
 
 import type { EntityRelationship } from '@repo/schemas/entity-relationships'
 import { Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
-import { AlbumReferenceSearch } from './album-reference-search'
 import { DetailLink } from './detail-link'
 
 function RelationshipPills({
@@ -15,7 +14,7 @@ function RelationshipPills({
   return (
     <Pills wrap label={label}>
       {relationships.map(
-        ({ targetType, targetId, name, externalId }, index) => {
+        ({ targetType, targetId, name, externalId, url }, index) => {
           const key = `${targetId ?? externalId ?? name}:${index}`
           if (targetId)
             return (
@@ -25,18 +24,17 @@ function RelationshipPills({
                 </DetailLink>
               </Pill>
             )
-          if (targetType === 'artist')
+          if (targetType === 'album' && url)
             return (
-              <Pill key={key} size="md">
-                {name}
+              <Pill key={key} size="md" asChild>
+                <a href={url} target="_blank" rel="noreferrer">
+                  <PillLabel>{name}</PillLabel>
+                </a>
               </Pill>
             )
           return (
-            <Pill key={key} size="md" asChild>
-              <span>
-                <PillLabel title={name}>{name}</PillLabel>
-                <AlbumReferenceSearch name={name} query={name} />
-              </span>
+            <Pill key={key} size="md">
+              {name}
             </Pill>
           )
         },

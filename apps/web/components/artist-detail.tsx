@@ -87,6 +87,7 @@ import { useMerge } from './merge-bar'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
 import { TrackAlbumTableValue } from './track-browse-cells'
+import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 
 type ArtistTab =
   | 'overview'
@@ -419,17 +420,16 @@ function ArtistOverview({
                         kind="track"
                         id={track.id}
                         title={track.title}
-                        play={<TrackRowPlay track={track} />}
+                        play={
+                          <>
+                            <TrackSpotifyMatchAction track={track} />
+                            <TrackRowPlay track={track} />
+                          </>
+                        }
                       />
                     </TableCell>
                     <TableCell>
-                      {track.album ? (
-                        <DetailLink kind="album" id={track.album.id}>
-                          {track.album.title}
-                        </DetailLink>
-                      ) : (
-                        <TrackAlbumTableValue track={track} />
-                      )}
+                      <TrackAlbumTableValue track={track} />
                     </TableCell>
                     <TableCell align="end">
                       {formatCount(track.scrobbles)}

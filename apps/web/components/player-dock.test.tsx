@@ -325,6 +325,65 @@ test('playback started elsewhere is shown without a library album', () => {
   assert.doesNotMatch(html, /ds-library-action/)
 })
 
+test('the now-playing album resolves by the current track when its release ID is missing', () => {
+  const html = render({
+    ...on,
+    active: true,
+    current: {
+      ...item,
+      kind: 'track',
+      uri: snapshot.trackUri ?? '',
+      title: 'Second track',
+      trackId: 'saved-track',
+      albumId: 'name-matched-album',
+    },
+    snapshot,
+  })
+  assert.match(
+    html,
+    /href="\/albums\/from-track\?trackId=saved-track"[^>]*>Fixture album<\/a>/,
+  )
+  assert.doesNotMatch(html, /name-matched-album/)
+})
+
+test('an observed outside album uses the exact resolver from the player', () => {
+  const release = 'BBBBBBBBBBBBBBBBBBBBBB'
+  const html = render(
+    {
+      ...on,
+      active: true,
+      snapshot: { ...snapshot, albumUri: `spotify:album:${release}` },
+    },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'album',
+          externalId: release,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          kind: 'track',
+          spotifyId: trackId,
+          item: { id: 'outside-track', inLibrary: false },
+          album: { id: 'outside-release', inLibrary: false },
+          artists: [],
+        },
+      ],
+    },
+  )
+  assert.match(
+    html,
+    /href="\/albums\/from-track\?trackId=outside-track&amp;spotifyAlbumId=BBBBBBBBBBBBBBBBBBBBBB"[^>]*>Fixture album<\/a>/,
+  )
+  assert.match(html, /aria-label="Add album to library · Fixture album"/)
+})
+
 test('the device relink finds the saved track independently of its actual release and a stale queue reference', () => {
   const original = 'AAAAAAAAAAAAAAAAAAAAAA'
   const release = 'BBBBBBBBBBBBBBBBBBBBBB'

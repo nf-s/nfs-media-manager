@@ -77,7 +77,7 @@ function track(id: string, title: string, spotifyTrackId: string) {
     artistCredits: [{ id: 'example-artist', name: 'Example artist' }],
     albumName: 'Spotify album',
     album: id === 'track-1' ? { id: 'album-1', title: 'Fixture album' } : null,
-    albumLinkStrategy: null,
+    albumLinkStrategy: id === 'track-1' ? 'spotify-album' : null,
     albumTags: [],
     playlists: [],
     durationSec: 200,

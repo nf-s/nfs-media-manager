@@ -104,6 +104,7 @@ import {
   useSonovaultTrackLookupStatusForPages,
 } from './sonovault-track-lookup'
 import { TrackBrowseValue } from './track-browse-cells'
+import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import { TrackBrowseSearch } from './track-browse-controls'
 
 const selectionWidth = 36
@@ -759,6 +760,7 @@ export default function TrackMetadataTable({
                                 <DetailLink kind="track" id={track.id}>
                                   {track.title}
                                 </DetailLink>
+                                <TrackSpotifyMatchAction track={track} />
                                 {track.inLibrary === false && (
                                   <span className="ds-muted">
                                     Outside library

@@ -30,6 +30,7 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { measureRequestPhase } from '@/lib/request-log'
+import { spotifyAlbumId } from '@/lib/spotify-api'
 import {
   albumTrackDurationExpression,
   trackProvidersExpression,
@@ -100,6 +101,7 @@ const TrackRowsSchema = z.array(
     album_name: z.string().nullable(),
     album_id: z.string().nullable(),
     album_title: z.string().nullable(),
+    album_in_library: z.boolean().nullable(),
     album_link_strategy: TrackAlbumLinkStrategySchema.nullable(),
     track_tags: z.array(z.string()),
     album_tags: z.array(z.string()),
@@ -110,6 +112,7 @@ const TrackRowsSchema = z.array(
     musical_key: z.string().nullable(),
     date_added: z.string().nullable(),
     spotify_track_id: z.string().nullable(),
+    spotify_album_id: z.string().nullable(),
     spotify_match: TrackSpotifyMatchSchema,
     providers: z.array(z.string()),
     spotify_url: z.string().nullable(),
@@ -131,7 +134,7 @@ async function loadTrackItems(pageIds: SQL, prefix = sql``) {
             where c.media_item_id = mi.id and c.role = 'artist'), '[]'::jsonb) as artist_credits,
           coalesce(page_tags.tags, '[]'::jsonb) as artist_tags,
           coalesce(lt.album_name, am.title) as album_name, lt.album_media_item_id as album_id,
-          am.title as album_title, lt.album_link_strategy,
+          am.title as album_title, am.in_library as album_in_library, lt.album_link_strategy,
           coalesce(page_track_tags.tags, '{}') as track_tags,
           coalesce((
             select array_agg(distinct t.name order by t.name)
@@ -147,7 +150,7 @@ async function loadTrackItems(pageIds: SQL, prefix = sql``) {
           coalesce(lt.duration_sec, ${albumTrackDurationExpression(sql`lt.media_item_id`, sql`lt.album_media_item_id`)}) as duration_sec,
           ${verifiedTrackBpm(sql`lt.media_item_id`)} as bpm,
           ${verifiedTrackKey(sql`lt.media_item_id`)} as musical_key,
-          lt.spotify_track_id,
+          lt.spotify_track_id, lt.spotify_album_id,
           ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`)} as spotify_match,
           ${trackProvidersExpression(sql`mi.id`, sql`lt.spotify_track_id`)} as providers,
           ${isoTimestamp(sql`lt.date_added`)} as date_added,
@@ -176,7 +179,11 @@ async function loadTrackItems(pageIds: SQL, prefix = sql``) {
       albumName: row.album_name,
       album:
         row.album_id && row.album_title !== null
-          ? { id: row.album_id, title: row.album_title }
+          ? {
+              id: row.album_id,
+              title: row.album_title,
+              ...(row.album_in_library === false ? { inLibrary: false } : {}),
+            }
           : null,
       albumLinkStrategy: row.album_link_strategy,
       trackTags: row.track_tags,
@@ -188,6 +195,9 @@ async function loadTrackItems(pageIds: SQL, prefix = sql``) {
       musicalKey: row.musical_key,
       dateAdded: row.in_library ? row.date_added : null,
       spotifyTrackId,
+      spotifyAlbumId: row.spotify_album_id
+        ? spotifyAlbumId(row.spotify_album_id)
+        : null,
       spotifyMatch: row.spotify_match,
       providers: row.providers,
       spotifyUrl:
@@ -332,7 +342,6 @@ const ListeningDetailSchema = z.object({
       strategy: TrackScrobbleLinkStrategySchema,
     }),
   ),
-  spotify_album_id: z.string().nullable(),
   scrobbled_albums: z.array(
     z.object({ id: z.string(), title: z.string(), scrobbles: z.number() }),
   ),
@@ -363,7 +372,7 @@ async function getTrackListeningDetail(id: string) {
         and s.artist_key = l.artist_key and s.track_key = l.track_key
       where l.track_media_item_id = ${id}
     ), target as (
-      select album_media_item_id, version_group_id, isrc, spotify_album_id
+      select album_media_item_id, version_group_id, isrc
       from library_track where media_item_id = ${id}
     ), album_counts as (
       select album_media_item_id as id, count(*)::int as scrobbles
@@ -399,7 +408,6 @@ async function getTrackListeningDetail(id: string) {
       extract(epoch from max(listened_at))::float8 as last,
       coalesce((select jsonb_agg(months order by month) from months), '[]'::jsonb) as months,
       coalesce((select jsonb_agg(sources order by count desc, artist_key, track_key) from sources), '[]'::jsonb) as sources,
-      (select spotify_album_id from target) as spotify_album_id,
       coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums,
       ${trackIsrcsExpression(sql`${id}::text`)} as isrcs,
       ${trackFactsExpression(sql`${id}::text`)} as facts,
@@ -439,7 +447,6 @@ export async function getTrackDetail(
     ...item,
     ...(spotifyAlternate ? { spotifyAlternate } : {}),
     lastfmSources,
-    spotifyAlbumId: listening.spotify_album_id,
     scrobbledAlbums: listening.scrobbled_albums,
     isrcs: listening.isrcs,
     facts: listening.facts,

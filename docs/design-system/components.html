@@ -405,10 +405,13 @@
                 g.flow([
                   g.item(D.libraryAction('track', 'Glass Meridian'), 'Add'),
                   g.item(
-                    D.libraryAction('album', 'Tidal Geometry', {
-                      action: 'find',
+                    btn('', {
+                      icon: 'search',
+                      size: 'xs',
+                      variant: 'ghost',
+                      aria: 'Match Glass Meridian to Spotify',
                     }),
-                    'Find and confirm',
+                    'Match track',
                   ),
                   g.item(
                     D.libraryAction('film', 'Paper Harbor', { pending: true }),
@@ -421,7 +424,7 @@
                 'Include the item kind and title in the tooltip and accessible name.',
                 'Put the action beside the title in the player or beside the service link in external results. Use the larger touch target beside the title on the phone player.',
                 'In queue rows, keep action space separate from the truncated text and leave the library slot empty for saved items. Use secondary label ink at rest and the shared ghost button hover and focus states.',
-                'Use the search icon to find a release by name. Only offer a direct add once membership is known. Adding to the library preserves playback and queue order.',
+                'An album title opens its identified release. Place manual Spotify search beside the title of an unmatched library track. Offer Add once membership is known. Adding to the library preserves playback and queue order.',
               ]),
           },
           {

@@ -166,8 +166,14 @@ export const TrackListItemSchema = z.object({
     .default([]),
   /** The reported album name, whether or not it is in the library. */
   albumName: z.string().nullable(),
-  /** The linked library album. */
-  album: z.object({ id: z.string(), title: z.string() }).nullable(),
+  /** The linked album, including a known release outside the library. */
+  album: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      inLibrary: z.boolean().optional(),
+    })
+    .nullable(),
   albumLinkStrategy: TrackAlbumLinkStrategySchema.nullable(),
   /** The track's own tags in Browse: Sonovault's verified ones and the owner's. */
   trackTags: z.array(z.string()).default([]),
@@ -183,6 +189,8 @@ export const TrackListItemSchema = z.object({
   musicalKey: CamelotKeySchema.nullable().default(null),
   dateAdded: z.string().nullable(),
   spotifyTrackId: z.string().nullable(),
+  /** The recorded Spotify release, including releases outside the library. */
+  spotifyAlbumId: z.string().nullable().default(null),
   /** Required evidence for the effective ID; never inferred from listening links. */
   spotifyMatch: TrackSpotifyMatchSchema,
   /** Providers with an ID for the track, Spotify among them when it has one. */
@@ -371,8 +379,6 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
   spotifyAlternate: TrackSpotifyAlternateSchema.optional(),
   /** Recorded names with strict Last.fm membership, most played first, up to 50. */
   lastfmSources: z.array(TrackLastfmSourceSchema),
-  /** The Spotify album the track was imported from, whether or not it is in the library. */
-  spotifyAlbumId: z.string().nullable(),
   /**
    * Library albums that scrobbles counted towards the track are linked to but
    * that hold neither the track nor a version of it, most scrobbles first, up to 5.

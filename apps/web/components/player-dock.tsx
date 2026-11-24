@@ -138,7 +138,11 @@ type Reference = {
   label: string
   detail: DetailTarget | null
   url: string | null
-  albumReference?: { trackId: string; spotifyAlbumId: string }
+  albumReference?: {
+    trackId: string
+    spotifyAlbumId?: string
+    catalogId?: string
+  }
 }
 
 type PlayingIdentity = {
@@ -168,14 +172,24 @@ function references(
     playing.track && observedPlaybackItem(playing.track, membership.references)
   const spotifyAlbumId = playbackSpotifyId('album', playing.album?.uri)
   const trackId = track.detail?.id
-  if (
-    trackId &&
-    spotifyAlbumId &&
+  const fromCurrentTrack =
+    current?.kind === 'track' &&
+    current.trackId === trackId &&
+    current.uri === playing.track?.uri &&
+    Boolean(playbackSpotifyId('track', current.uri))
+  const fromObservation =
     exactTrack?.item.id === trackId &&
-    exactTrack.album &&
-    exactTrack.album.id === album.detail?.id
-  ) {
-    album.albumReference = { trackId, spotifyAlbumId }
+    exactTrack?.album?.id === album.detail?.id &&
+    Boolean(spotifyAlbumId)
+  if (playing.album && trackId && (fromObservation || fromCurrentTrack)) {
+    album.albumReference = {
+      trackId,
+      spotifyAlbumId,
+      catalogId:
+        fromObservation && exactTrack?.album?.inLibrary
+          ? exactTrack.album.id
+          : undefined,
+    }
   }
   const named = snapshot
     ? snapshot.artistLinks
@@ -224,11 +238,7 @@ function PlayerLink({
   const label = children ? `Open ${to.label}` : undefined
   if (to.albumReference)
     return (
-      <SpotifyAlbumReferenceLink
-        {...to.albumReference}
-        catalogId={to.detail?.id}
-        onNavigate={onNavigate}
-      >
+      <SpotifyAlbumReferenceLink {...to.albumReference} onNavigate={onNavigate}>
         {children ?? to.label}
       </SpotifyAlbumReferenceLink>
     )
@@ -572,6 +582,12 @@ function ItemText({
   const albumId = known?.album?.id ?? item.albumId
   const trackId = playerItemIdentity(library, membership).mediaItemId
   const spotifyAlbumId = playbackSpotifyId('album', item.albumUri)
+  const fromObservation =
+    known?.item.id === trackId && Boolean(known?.album && spotifyAlbumId)
+  const fromQueueTrack =
+    item.kind === 'track' &&
+    item.trackId === trackId &&
+    Boolean(playbackSpotifyId('track', item.uri))
   return (
     <span className="player-text">
       <strong title={item.title}>
@@ -604,11 +620,17 @@ function ItemText({
                 label: albumTitle,
                 detail: albumId ? { kind: 'album', id: albumId } : null,
                 url: spotifyWebUrl(item.albumUri ?? null),
-                ...(known?.album &&
-                trackId &&
-                known.item.id === trackId &&
-                spotifyAlbumId
-                  ? { albumReference: { trackId, spotifyAlbumId } }
+                ...(trackId && (fromObservation || fromQueueTrack)
+                  ? {
+                      albumReference: {
+                        trackId,
+                        spotifyAlbumId,
+                        catalogId:
+                          fromObservation && known?.album?.inLibrary
+                            ? known.album.id
+                            : undefined,
+                      },
+                    }
                   : {}),
               }}
               onNavigate={onNavigate}

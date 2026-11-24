@@ -42,6 +42,7 @@ import {
 } from '@repo/schemas/tracks'
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
 import { SPOTIFY_ARTIST_ALBUMS_TASK } from '@repo/schemas/spotify-artist-albums'
+import { SPOTIFY_TRACK_ALBUM_LOOKUP_TASK } from '@repo/schemas/spotify-album-reference'
 import {
   SPOTIFY_TRACK_SEARCH_TASK,
   SpotifyTrackSearchFreshnessSchema,
@@ -166,6 +167,10 @@ import {
   prepareSpotifyArtistAlbums,
   runSpotifyArtistAlbums,
 } from '@/services/spotify-artist-albums'
+import {
+  prepareSpotifyTrackAlbumLookup,
+  runSpotifyTrackAlbumLookup,
+} from '@/services/spotify-album-reference'
 import {
   prepareSpotifyPlaylistAddition,
   runSpotifyPlaylistAddition,
@@ -1227,6 +1232,7 @@ export interface TaskJobContext extends LastfmSyncJobContext {
 
 type TaskJobDefinition = {
   provider: string | ((options: Record<string, JsonValue>) => string | null)
+  runsInRequest?: boolean
   prepare(
     userId: string | null,
     options: Record<string, JsonValue>,
@@ -1284,6 +1290,15 @@ const taskJobs = new Map<string, TaskJobDefinition>([
       provider: 'spotify',
       prepare: prepareSpotifyTrackSearch,
       run: runSpotifyTrackSearch,
+    },
+  ],
+  [
+    SPOTIFY_TRACK_ALBUM_LOOKUP_TASK,
+    {
+      provider: 'spotify',
+      runsInRequest: true,
+      prepare: prepareSpotifyTrackAlbumLookup,
+      run: runSpotifyTrackAlbumLookup,
     },
   ],
   [
@@ -1465,7 +1480,8 @@ async function insertTaskJob(
     SUBSCRIPTION_SYNC_TASKS.some((task) => task === options.task) ||
     MIX_SYNC_TASKS.some((task) => task === options.task)
   const trackSearch =
-    options.task === SPOTIFY_TRACK_SEARCH_TASK
+    options.task === SPOTIFY_TRACK_SEARCH_TASK ||
+    options.task === SPOTIFY_TRACK_ALBUM_LOOKUP_TASK
       ? SpotifyTrackSearchParamsSchema.parse(options)
       : options.task === TIDAL_TRACK_MATCH_TASK
         ? TidalTrackMatchParamsSchema.parse(options)
@@ -1567,7 +1583,8 @@ export async function createTaskJob(
   if (!provider)
     throw new ServerError({ statusCode: 422, message: 'Invalid task provider' })
   const plugin = await getScrapePlugin(provider)
-  const inRequest = plugin?.manifest.runsInRequest === true
+  const inRequest =
+    definition.runsInRequest === true || plugin?.manifest.runsInRequest === true
   const safety = await getProviderSafety(provider)
   if (safety.halted || safety.cooldownUntil)
     throw providerSafetyRefusal(plugin, safety)
@@ -2217,7 +2234,11 @@ export async function createJob(
       )
     }
     const active = await tx
-      .select({ jobId: scrapeJob.id, status: scrapeJob.status })
+      .select({
+        jobId: scrapeJob.id,
+        status: scrapeJob.status,
+        options: scrapeJob.options,
+      })
       .from(scrapeJobItem)
       .innerJoin(scrapeJob, eq(scrapeJob.id, scrapeJobItem.jobId))
       .where(
@@ -2232,7 +2253,12 @@ export async function createJob(
     // A job queued before the provider ran in the request runs now instead.
     const [queued] = active
     if (scheduling.reuseSpotifyAlbumReferenceAttempt) {
-      if (queued) return queued.jobId
+      if (
+        queued &&
+        queued.options.spotifyAlbumReference ===
+          parsedInput.options.spotifyAlbumReference
+      )
+        return queued.jobId
       const [previous] = await tx
         .select({ jobId: scrapeJob.id })
         .from(scrapeJobItem)
@@ -2242,6 +2268,7 @@ export async function createJob(
             eq(scrapeJobItem.provider, parsedInput.provider),
             inArray(scrapeJobItem.mediaItemId, mediaItemIds),
             sql`${scrapeJob.options}->>'spotifyAlbumReference' = ${parsedInput.options.spotifyAlbumReference}`,
+            eq(scrapeJob.status, 'succeeded'),
           ),
         )
         .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
@@ -2447,6 +2474,7 @@ export async function jobSortField(query: JobListQuery) {
       case when nullif(btrim(concat_ws('', ${table.options}->>'artistName', ${table.options}->>'albumName')), '') is not null
         then concat(' · ', concat_ws(' — ', nullif(btrim(${table.options}->>'artistName'), ''), nullif(btrim(${table.options}->>'albumName'), ''))) else '' end)
     when ${SPOTIFY_TRACK_SEARCH_TASK} then concat_ws(' · ', 'Spotify track search', nullif(btrim(${table.options}->>'trackTitle'), ''))
+    when ${SPOTIFY_TRACK_ALBUM_LOOKUP_TASK} then 'Spotify track release lookup'
     when ${TIDAL_TRACK_MATCH_TASK} then concat_ws(' · ', 'TIDAL track match', nullif(btrim(${table.options}->>'trackTitle'), ''))
     when ${SONOVAULT_TRACK_LOOKUP_TASK} then concat_ws(' · ',
       case when ${table.options}->>'refresh' = 'true' then 'Sonovault track refresh' else 'Sonovault track lookup' end,
@@ -2821,7 +2849,7 @@ function jobsInMediaScope(
   const artistTasks = sql`coalesce(${scrapeJob.options}->>'task', '') in (${ARTIST_ENRICHMENT_TASK}, ${SPOTIFY_ARTIST_ALBUMS_TASK})`
   if (mediaType === 'artist') return artistTasks
   if (mediaType === 'track')
-    return sql`(${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK}, ${SONOVAULT_TRACK_LOOKUP_TASK})
+    return sql`(${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${SPOTIFY_TRACK_ALBUM_LOOKUP_TASK}, ${TIDAL_TRACK_MATCH_TASK}, ${SONOVAULT_TRACK_LOOKUP_TASK})
       or (${scrapeJob.options}->>'task' in (${TIDAL_SIMILAR_TASK}, ${SPOTIFY_SIMILAR_LOOKUP_TASK})
         and ${scrapeJob.scope}->>'mediaType' = 'track'))`
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (

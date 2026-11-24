@@ -34,6 +34,7 @@ import { DetailLink } from './detail-link'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
 import { AlbumReferencePlayButton } from './play-controls'
 import { TrackAlbumTableValue } from './track-browse-cells'
+import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -223,6 +224,11 @@ function TrackEntryCard({
       kind={entry.kind}
       id={item.id}
       title={item.title}
+      titleAction={
+        entry.kind === 'track' && (
+          <TrackSpotifyMatchAction track={entry.track} />
+        )
+      }
       artworkUrl={item.artworkUrl ?? fallbackArtworkUrl ?? null}
       subtitle={
         entry.kind === 'track' ? (
@@ -279,6 +285,7 @@ function TrackEntryCell({
           <DetailLink kind="track" id={track.id} className="ds-cell-title">
             {track.title}
           </DetailLink>
+          <TrackSpotifyMatchAction track={track} />
           {track.inLibrary === false && (
             <span className="ds-muted">Outside library</span>
           )}

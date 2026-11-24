@@ -436,7 +436,7 @@ test('album Sources show stored collection links under their provider', () => {
   assert.doesNotMatch(html, /Collection without a link|Fixture playlist/)
 })
 
-test('album Sources link verified relationships and offer to add unresolved albums', () => {
+test('album Sources link resolved catalog items and original provider releases', () => {
   const album = AlbumDetailSchema.parse({
     ...albumWithCollections,
     relationshipSources: [
@@ -492,10 +492,9 @@ test('album Sources link verified relationships and offer to add unresolved albu
   )
   assert.match(
     html,
-    />Unresolved fixture album<\/span><button[^>]*aria-label="Find album in library · Unresolved fixture album"/,
+    /href="https:\/\/example.test\/albums\/fixture"[^>]*><span class="ds-pill-label">Unresolved fixture album/,
   )
-  assert.equal(html.match(/aria-label="Find album in library/g)?.length, 1)
-  assert.doesNotMatch(html, /href="https:\/\/example.test\/albums\/fixture"/)
+  assert.doesNotMatch(html, /aria-label="Find album in library/)
   const closed = renderSources(
     { ...provider, mediaTypes: ['album'] },
     undefined,

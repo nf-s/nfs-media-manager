@@ -173,14 +173,14 @@ test('Grouped Tracks in the Table open their versions with the part chevron befo
   const html = await render('view=table&sortBy=scrobbles', 1, undefined, true)
   assert.match(
     html,
-    /<span class="ds-cell-id"><button class="ds-btn ds-part-toggle" data-variant="ghost" data-size="xs" data-icon="" type="button" aria-expanded="false" aria-label="Show 2 release versions for Example Song"[^>]*>.*?<\/button><a[^>]* class="bi-thumb-link"[^>]*>.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><span class="ds-play" data-place="row">/,
+    /<span class="ds-cell-id"><button class="ds-btn ds-part-toggle" data-variant="ghost" data-size="xs" data-icon="" type="button" aria-expanded="false" aria-label="Show 2 release versions for Example Song"[^>]*>.*?<\/button><a[^>]* class="bi-thumb-link"[^>]*>.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><button[^>]*aria-label="Match Example Song to Spotify"[^>]*>.*?<\/button><span class="ds-play" data-place="row">/,
   )
   // An ungrouped table keeps no chevron space.
   const plain = await render('view=table')
   assert.doesNotMatch(plain, /ds-part-toggle|ds-part-slot/)
 })
 
-test('Grouped Tracks place the release versions button immediately after the title link in the List and Grid', async () => {
+test('Grouped Tracks place the match and release versions buttons beside the title link in the List and Grid', async () => {
   for (const view of ['list', 'grid']) {
     const html = await render(
       `view=${view}&sortBy=scrobbles`,
@@ -190,7 +190,7 @@ test('Grouped Tracks place the release versions button immediately after the tit
     )
     assert.match(
       html,
-      /<a [^>]*>Example Song<\/a><button[^>]*aria-label="Show 2 release versions for Example Song"/,
+      /<a [^>]*>Example Song<\/a><button[^>]*aria-label="Match Example Song to Spotify"[^>]*>.*?<\/button><button[^>]*aria-label="Show 2 release versions for Example Song"/,
       view,
     )
     assert.doesNotMatch(
@@ -266,7 +266,7 @@ test('Tracks Table: drawn default columns, pinned title with thumbnail and play 
   assert.doesNotMatch(html, /Artwork and playback/)
   assert.match(
     html,
-    /<td data-sticky="edge" style="--ds-sticky-left:36px" title="Example Song"><span class="ds-cell-id"><a[^>]* class="bi-thumb-link"[^>]*><span class="ds-thumb">.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><span class="ds-play" data-place="row">/,
+    /<td data-sticky="edge" style="--ds-sticky-left:36px" title="Example Song"><span class="ds-cell-id"><a[^>]* class="bi-thumb-link"[^>]*><span class="ds-thumb">.*?<a[^>]* class="ds-cell-title"[^>]*>Example Song<\/a><button[^>]*aria-label="Match Example Song to Spotify"[^>]*>.*?<\/button><span class="ds-play" data-place="row">/,
   )
   assert.match(
     html,
