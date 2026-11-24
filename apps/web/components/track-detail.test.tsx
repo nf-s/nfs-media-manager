@@ -4,6 +4,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import type { CatalogMembershipResult } from '@repo/schemas/manual-add'
 import {
@@ -131,7 +132,12 @@ function render(
                 connection: 'connected',
               }}
             >
-              <TrackDetailView id={item.id} />
+              <AppRouterContext.Provider value={{
+                back: mock.fn(), forward: mock.fn(), refresh: mock.fn(),
+                hmrRefresh: mock.fn(), push: mock.fn(), replace: mock.fn(), prefetch: mock.fn(),
+              }}>
+                <TrackDetailView id={item.id} />
+              </AppRouterContext.Provider>
             </PlaybackViewContext.Provider>
           </SearchParamsContext.Provider>
         </ConfigContext.Provider>
@@ -582,7 +588,7 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
   assert.equal(html.match(/<h3>Album<\/h3>/g)?.length, 1)
   assert.match(
     html,
-    /“Harbour Lights” has no linked library album\.<\/span><span class="ds-actions">.*?href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL".*?<button[^>]*aria-label="Add album to library · Harbour Lights"/,
+    />Harbour Lights<\/button><\/span><span class="ds-actions">.*?href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL".*?<button[^>]*aria-label="Add album to library · Harbour Lights"/,
   )
   assert.match(
     html,
@@ -604,7 +610,7 @@ test('offers an exact Spotify album add on Overview even without an album name',
   )
   assert.match(
     html,
-    />Album<\/span><span class="ds-row-by">Recorded album<\/span>.*aria-label="Add album to library · Spotify release"/,
+    />Album<\/button><span class="ds-row-by">Recorded album<\/span>.*aria-label="Add album to library · Spotify release"/,
   )
 })
 

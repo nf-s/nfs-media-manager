@@ -102,7 +102,9 @@ beforeAll(async () => {
       for (const statement of migration.sql)
         await transaction.execute(sql.raw(statement))
   })
-  await addMedia('legacy-film')
+  await databaseClient.execute(sql`insert into media_item (id, title, slug, media_type)
+    values ('legacy-film', 'legacy-film', 'legacy-film', 'film')`)
+  await databaseClient.execute(sql`insert into film (media_item_id) values ('legacy-film')`)
   // Seed the historical table before later migrations add columns.
   await databaseClient.execute(sql`insert into tag (id, name, kind) values
     ('legacy-a', ${'caf\u00e9 society'}, 'keyword'),

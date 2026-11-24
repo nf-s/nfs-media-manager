@@ -388,7 +388,7 @@ test('the artist Albums tab is the Albums browser held to the artist', async () 
   // The count and the link to Browse share the line under the toolbar.
   assert.match(
     html,
-    /<div class="ds-filterline"><span class="ds-toolbar-count" role="status">1 album<\/span><a [^>]*>Show in Albums<\/a><\/div>/,
+    /<div class="ds-filterline"><span class="ds-toolbar-count" role="status">1 album<\/span>.*?Fetch albums<\/button>.*?>Show in Albums<\/a>/,
   )
   // No page rail, drawer or page actions inside the detail.
   assert.doesNotMatch(html, /class="browse-page"|ds-rail-label|>Add album</)

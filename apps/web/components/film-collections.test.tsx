@@ -128,18 +128,18 @@ async function render(
       : directory.page
   if (page)
     client.setQueryData(
-      [`${mediaType}-collections`, 'browse', '', 'name', 'asc', false, 1],
+      [`${mediaType}-collections`, 'browse', '', 'name', 'asc', {}, false, 1],
       {
         ...page,
         totalCount: page.hasMore ? undefined : page.items.length,
       },
     )
   if (directory.totalCount !== undefined)
-    client.setQueryData([`${mediaType}-collections`, 'browse-count', ''], {
+    client.setQueryData([`${mediaType}-collections`, 'browse-count', '', {}], {
       totalCount: directory.totalCount,
     })
   client.setQueryData(
-    [`${mediaType}-collection`, fixture.id, 'position', 'asc', '', [], 1],
+    [`${mediaType}-collection`, fixture.id, 'position', 'asc', '', [], {}, 1],
     { ...details.items, summary: { ...details, sourceLinks: [] } },
   )
   client.setQueryData(

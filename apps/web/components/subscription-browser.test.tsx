@@ -449,7 +449,7 @@ test('the channels list links names to details and counts to filtered Browse', a
   }
   const html = render(
     <SubscriptionChannels />,
-    [[['subscriptions', 'sources'], sources]],
+    [[['subscriptions', 'sources', ''], sources]],
     '',
     '/subscriptions/channels',
   )
@@ -772,7 +772,7 @@ test('the shows list is the channels table for Mixes with stations and stored mi
   }
   const html = render(
     <SubscriptionChannels library="mixes" />,
-    [[['mixes', 'sources'], sources]],
+    [[['mixes', 'sources', 'library=mixes'], sources]],
     'q=breakfast',
     '/mixes/shows',
   )
