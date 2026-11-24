@@ -32,6 +32,7 @@ import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
 import { queueSpotifyTrackSearches } from '@/services/spotify-track-search'
 import { matchTidalTracks } from '@/services/tidal-track-match'
 import { queueSonovaultTrackLookups } from '@/services/sonovault-track-lookup'
+import { queueArtistSelection } from '@/services/artist-selection'
 
 const database = `metadata_scope_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -275,6 +276,30 @@ it('intersects freshness and refresh limits with scope and rejects stale selecti
       ),
   ])
     await expect(action()).rejects.toThrow('outside the current scope')
+  expect(
+    await queueArtistSelection(
+      {
+        artistIds: ['artist-observed', 'artist-missing'],
+        providers: ['spotify'],
+        confirmBroadRun: false,
+      },
+      owner,
+    ),
+  ).toEqual({
+    jobs: [],
+    skipped: [
+      {
+        artistId: 'artist-observed',
+        provider: 'spotify',
+        reason: 'Artist is outside the current scope.',
+      },
+      {
+        artistId: 'artist-missing',
+        provider: 'spotify',
+        reason: 'Artist is missing or archived.',
+      },
+    ],
+  })
   expect(await fixture.$count(schema.scrapeJob)).toBe(0)
   expect(fetch).not.toHaveBeenCalled()
 })

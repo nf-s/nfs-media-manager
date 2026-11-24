@@ -40,6 +40,12 @@ export async function queueArtistSelection(
     })
   const visible = await matchingArtistSelection(ids, options)
   const visibleIds = new Set(visible)
+  const outsideScope = new Set(
+    await matchingArtistSelection(
+      ids.filter((id) => !visibleIds.has(id)),
+      { libraryScope: 'all' },
+    ),
+  )
   const result: ArtistEnrichmentResult = { jobs: [], skipped: [] }
   for (const provider of providers) {
     const filters = freshness.filter((filter) => filter.provider === provider)
@@ -56,7 +62,9 @@ export async function queueArtistSelection(
           reason:
             visibleIds.has(artistId) && filters.length > 0
               ? 'No longer matches the freshness filter.'
-              : 'Artist is outside the current scope.',
+              : outsideScope.has(artistId)
+                ? 'Artist is outside the current scope.'
+                : 'Artist is missing or archived.',
         })
         continue
       }
