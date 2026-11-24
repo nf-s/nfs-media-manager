@@ -65,7 +65,10 @@ import { getPlaylistDetail, getTrackDetail } from '@/services/tracks'
 import { observePlaybackCatalog } from '@/services/playback-catalog'
 import { backfillMusicCatalog } from '@/services/music-catalog-backfill'
 import { promoteCatalogMedia } from '@/services/catalog-discoveries'
-import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
+import {
+  PlaybackCatalogInputSchema,
+  type PlaybackCatalogInput,
+} from '@repo/schemas/playback'
 
 const USER_ID = 'response-user'
 const PLAYLIST = 'responses'.padEnd(22, '0')
@@ -259,7 +262,7 @@ describe('Spotify playlist job responses', () => {
     expect(request.mock.calls).toHaveLength(calls)
   })
 
-  it('opens the observed recording, album and artist and promotes only that recording', async () => {
+  it('opens the playing recording, album and artist and saves only the selected track without creating discoveries', async () => {
     const artworkUrl = 'https://i.scdn.co/image/playing-fixture'
     const observation = PlaybackCatalogInputSchema.parse({
       operation: 'playback',
@@ -277,9 +280,18 @@ describe('Spotify playlist job responses', () => {
             spotifyId: 'release'.padEnd(22, '0'),
           },
         },
+        {
+          kind: 'album',
+          spotifyId: 'release'.padEnd(22, '0'),
+          title: 'Playing album',
+          artists: [
+            { name: 'Playing artist', spotifyId: 'artist'.padEnd(22, '0') },
+          ],
+        },
       ],
     })
     const calls = request.mock.calls.length
+    const discoveries = await databaseClient.$count(schema.catalogObservation)
     const sparseItems = observation.items.map(
       ({ kind, spotifyId, title, artists }) => ({
         kind,
@@ -320,24 +332,30 @@ describe('Spotify playlist job responses', () => {
         },
       ],
     })
-    await promoteCatalogMedia(item.item.id, USER_ID)
-    const next = await observePlaybackCatalog({
-      ...observation,
-      operation: 'playback-queue',
-    })
-    expect(next.items[0]).toMatchObject({
-      item: { id: item.item.id, inLibrary: true },
-      album: { id: item.album?.id, inLibrary: false },
-    })
-    const evidence = await databaseClient
-      .select()
-      .from(schema.catalogObservation)
+    expect(first.items[1]?.item).toEqual(item.album)
     expect(
-      evidence
-        .filter(({ targetId }) => targetId === item.item.id)
-        .map(({ operation }) => operation)
-        .sort(),
-    ).toEqual(['playback', 'playback-queue'])
+      await databaseClient.query.libraryTrack.findFirst({
+        where: (track, { eq }) => eq(track.mediaItemId, item.item.id),
+      }),
+    ).toMatchObject({
+      albumMediaItemId: item.album?.id,
+      spotifyAlbumId: 'release'.padEnd(22, '0'),
+    })
+    await promoteCatalogMedia(item.item.id, USER_ID)
+    const operations: PlaybackCatalogInput['operation'][] = [
+      'playback-queue',
+      'playback-recovery',
+    ]
+    for (const operation of operations) {
+      const next = await observePlaybackCatalog({ ...observation, operation })
+      expect(next.items[0]).toMatchObject({
+        item: { id: item.item.id, inLibrary: true },
+        album: { id: item.album?.id, inLibrary: false },
+      })
+    }
+    expect(await databaseClient.$count(schema.catalogObservation)).toBe(
+      discoveries,
+    )
     expect(request.mock.calls).toHaveLength(calls)
   })
 })

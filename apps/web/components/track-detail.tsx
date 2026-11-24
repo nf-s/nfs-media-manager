@@ -4,7 +4,6 @@ import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useDetailPerformance } from '@/hooks/useDetailPerformance'
 import { useQuery } from '@tanstack/react-query'
-import { Disc3 } from 'lucide-react'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 import {
   formatBrowseFilterValue,
@@ -22,12 +21,9 @@ import {
 } from '@repo/schemas/tracks'
 import { formatMusicalKey, type KeyNotation } from '@repo/schemas/musical-keys'
 import { formatTagName } from '@repo/schemas/tags'
-import { Thumb } from '@repo/ui/components/ds/artwork'
 import { DetailActionsSpacer } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
-import { Notice } from '@repo/ui/components/ds/feedback'
 import { Pill, PillLabel } from '@repo/ui/components/ds/pill'
-import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Button } from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import {
@@ -50,12 +46,7 @@ import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import type { BrowseFilterHref } from '@/utils/browse-items'
 import { CreatorDetailState } from './creator-detail-state'
 
-import {
-  DetailTabs,
-  FilterPill,
-  PlaylistPills,
-  useDetailTab,
-} from './detail-frame'
+import { DetailTabs, FilterPill, useDetailTab } from './detail-frame'
 import { TrackDetailHeader } from './track-detail-header'
 import { ListeningStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
@@ -69,7 +60,7 @@ import {
   useTrackAlbumAddition,
 } from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
-import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
+import { CatalogLibraryAction } from './catalog-detail'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
 import { BrowseFilterPill } from './browse-controls'
@@ -78,7 +69,7 @@ import { TrackSpotifySource } from './track-spotify-source'
 import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import { TrackTidalSource } from './tidal-track-match'
 import { TrackSonovaultSource } from './sonovault-track-lookup'
-import TrackAppearsOn from './track-playlist-additions'
+import TrackAppearances from './track-appearances'
 import { SimilarItems } from './similar-items'
 
 type OnFilter = (filter: BrowseFilter, keepOpen?: boolean) => void
@@ -357,7 +348,6 @@ function TrackOverview({
   sourcesHref: string
 }) {
   const notation = useKeyNotation()
-  const albumTitle = albumAddition.name
   const facts = item.facts.length
     ? [
         {
@@ -410,56 +400,11 @@ function TrackOverview({
           />
         </Section>
         <ListeningTrend kind="track" id={item.id} />
-        <TrackAppearsOn track={item} onResolved={onResolved}>
-          {albumTitle && (
-            <List compact>
-              <ListRow
-                thumb={
-                  <Thumb size={40}>
-                    {item.artworkUrl ? (
-                      <img className="ds-artimg" src={item.artworkUrl} alt="" />
-                    ) : (
-                      <Disc3 className="ds-i" aria-hidden="true" />
-                    )}
-                  </Thumb>
-                }
-                title={
-                  albumAddition.catalogId || albumAddition.openBySpotify ? (
-                    <RowTitle>
-                      <TrackAlbumReferenceLink
-                        item={item}
-                        addition={albumAddition}
-                      >
-                        {albumTitle}
-                      </TrackAlbumReferenceLink>
-                    </RowTitle>
-                  ) : (
-                    <span
-                      className="ds-row-title"
-                      {...(item.albumName
-                        ? albumShortcut(item.albumName, filterHref)
-                        : undefined)}
-                    >
-                      {albumTitle}
-                    </span>
-                  )
-                }
-                by={
-                  albumAddition.album
-                    ? 'Album'
-                    : albumAddition.unlisted
-                      ? 'Album does not list this track'
-                      : 'Recorded album'
-                }
-                action={albumAddition.action}
-              />
-            </List>
-          )}
-          {albumAddition.error && (
-            <Notice tone="danger">{albumAddition.error}</Notice>
-          )}
-          <PlaylistPills playlists={item.playlists} />
-        </TrackAppearsOn>
+        <TrackAppearances
+          item={item}
+          albumAddition={albumAddition}
+          onResolved={onResolved}
+        />
       </div>
       <div className="dtl-side">
         <TrackTags item={item} onFilter={onFilter} filterHref={filterHref} />
@@ -723,7 +668,6 @@ function TrackDetailContent({
           <SimilarItems key={item.id} kind="track" id={item.id} />
         </TabsContent>
         <TabsContent value="sources">
-          <CatalogDiscoveries id={item.id} />
           <TrackRecordParts
             key={`parts-${item.id}`}
             item={item}

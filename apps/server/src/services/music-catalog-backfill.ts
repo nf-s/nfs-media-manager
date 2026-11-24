@@ -26,7 +26,6 @@ import { ListedPlaylistSchema } from './spotify-playlist-state'
 import { backfillSpotifyTrackDiscoveries } from './spotify-track-search'
 import { backfillTidalSimilarDiscoveries } from './tidal-similar'
 import {
-  backfillLastfmScrobbles,
   backfillMusicAlbumSnapshots,
   backfillMusicArtistSnapshots,
   backfillPublicMusicResponses,
@@ -283,7 +282,6 @@ export async function backfillMusicCatalog(apply = false) {
     publicMusicResponses: backfillPublicMusicResponses,
     musicAlbumSnapshots: backfillMusicAlbumSnapshots,
     musicArtistSnapshots: backfillMusicArtistSnapshots,
-    lastfmScrobbles: backfillLastfmScrobbles,
   }
   for (const [family, backfill] of Object.entries(families)) {
     const counts = { candidates: 0, skipped: 0 }
@@ -297,5 +295,6 @@ export async function backfillMusicCatalog(apply = false) {
     }
     result[family] = counts
   }
-  return { apply, ...result }
+  // Preserve the report field for clients of earlier backfill runs.
+  return { apply, ...result, lastfmScrobbles: { candidates: 0, skipped: 0 } }
 }

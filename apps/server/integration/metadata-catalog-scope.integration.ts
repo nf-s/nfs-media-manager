@@ -7,6 +7,7 @@ import { AlbumSelectionQuerySchema } from '@repo/schemas/album-selection'
 import { FilmSelectionQuerySchema } from '@repo/schemas/film-selection'
 import { ArtistMetadataQuerySchema } from '@repo/schemas/creators'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
+import { TrackQuerySchema } from '@repo/schemas/tracks'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -29,6 +30,7 @@ import {
   listArtistSelectionSnapshotPage,
 } from '@/services/artist-bulk-selection'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
+import { queryBrowseCount, queryBrowseIds } from '@/services/browse'
 import { queueSpotifyTrackSearches } from '@/services/spotify-track-search'
 import { matchTidalTracks } from '@/services/tidal-track-match'
 import { queueSonovaultTrackLookups } from '@/services/sonovault-track-lookup'
@@ -121,6 +123,18 @@ beforeAll(async () => {
       })),
     ),
   )
+  await fixture.insert(schema.catalogObservation).values(
+    ['playback', 'playback-queue', 'playback-recovery', 'scrobble'].map(
+      (operation) => ({
+        id: `track-activity-${operation}`,
+        targetKind: 'track',
+        targetId: 'track-other',
+        mediaItemId: 'track-other',
+        provider: operation === 'scrobble' ? 'lastfm' : 'spotify',
+        operation,
+      }),
+    ),
+  )
   await fixture.insert(schema.providerCurrentState).values(
     ['album', 'film'].map((kind) => ({
       id: `${kind}-other-state`,
@@ -208,6 +222,43 @@ it('reads the same scoped rows and totals across the four Metadata libraries and
     TrackMatchDiagnosticsQuerySchema.parse({ libraryScope: 'all' }),
   )
   expect(ordinaryMatches.items.map(({ id }) => id)).toEqual(['track-member'])
+})
+
+it('ignores track activity as a discovery source when reading pages and counts', async () => {
+  const activity = 'playback,playback-queue,playback-recovery,scrobble'
+  for (const { sources, mode, ids } of [
+    { sources: activity, mode: 'any', ids: ['track-observed', 'track-other'] },
+    {
+      sources: `fixture-result,${activity}`,
+      mode: 'all',
+      ids: ['track-observed'],
+    },
+    {
+      sources: `fixture-result,${activity}`,
+      mode: 'exclude',
+      ids: ['track-other'],
+    },
+  ]) {
+    const scope = {
+      libraryScope: 'outside',
+      discoverySources: sources,
+      discoverySourceMode: mode,
+    }
+    const query = TrackQuerySchema.parse(scope)
+    const [browse, count, metadata] = await Promise.all([
+      queryBrowseIds('track', query),
+      queryBrowseCount('track', query),
+      listTrackMatchDiagnostics(
+        TrackMatchDiagnosticsQuerySchema.parse({
+          ...scope,
+          view: 'spotify-search-metadata',
+        }),
+      ),
+    ])
+    expect(browse.ids.sort()).toEqual(ids)
+    expect(count.totalCount).toBe(ids.length)
+    expect(metadata.items.map(({ id }) => id).sort()).toEqual(ids)
+  }
 })
 
 it('intersects freshness and refresh limits with scope and rejects stale selections before starting jobs', async () => {

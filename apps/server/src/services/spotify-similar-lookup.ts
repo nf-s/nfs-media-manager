@@ -20,7 +20,10 @@ import {
   prepareSpotifyCatalogTrackSearch,
   runSpotifyCatalogSearches,
 } from './manual-add'
-import { latestCatalogResponseId } from './music-catalog-observations'
+import {
+  latestCatalogResponseId,
+  observeTidalSimilarLibraryMatches,
+} from './music-catalog-observations'
 import { libraryMembershipBySpotifyId } from './similar-library-matches'
 import {
   chooseSpotifyTrack,
@@ -125,18 +128,40 @@ export async function storeSpotifyCodeLookup(input: {
       source === 'spotify' &&
       input.itemId &&
       input.kind === 'track' &&
-      input.match?.artistCredits?.length
+      input.match
     ) {
       const [saved] = await tx
-        .select({ items: tidalSimilar.items })
+        .select({
+          items: tidalSimilar.items,
+          jobId: tidalSimilar.scrapeJobId,
+          readAt: tidalSimilar.readAt,
+        })
         .from(tidalSimilar)
-        .where(eq(tidalSimilar.mediaItemId, input.itemId))
+        .where(
+          and(
+            eq(tidalSimilar.mediaItemId, input.itemId),
+            eq(tidalSimilar.kind, 'track'),
+          ),
+        )
       const items =
         z.array(TidalSuggestionSchema).safeParse(saved?.items).data ?? []
-      await reconcileSimilarArtistCredits(
-        tx,
-        items.filter((item) => codeKey('track', item.code ?? '') === input.key),
+      const matching = items.flatMap((item, index) =>
+        codeKey('track', item.code ?? '') === input.key
+          ? [{ ...item, catalogPosition: item.catalogPosition ?? index + 1 }]
+          : [],
       )
+      if (!saved || !matching.length) return
+      const responseId = saved.jobId
+        ? await latestCatalogResponseId(tx, saved.jobId, 'tidal')
+        : undefined
+      await observeTidalSimilarLibraryMatches(tx, matching, {
+        seedId: input.itemId,
+        jobId: saved.jobId ?? undefined,
+        responseId,
+        observedAt: saved.readAt,
+      })
+      if (input.match.artistCredits?.length)
+        await reconcileSimilarArtistCredits(tx, matching)
     }
   })
 }

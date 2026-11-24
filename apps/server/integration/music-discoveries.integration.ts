@@ -16,7 +16,7 @@ import {
 } from '@/services/album-imports'
 import { observeSpotifySavedAlbumPage } from '@/services/album-import-observations'
 import { observeCatalogMedia } from '@/services/catalog-discoveries'
-import { observeLastfmScrobbles } from '@/services/lastfm-catalog-observations'
+import { backfillMusicCatalog } from '@/services/music-catalog-backfill'
 import { linkScrobblesToAlbums } from '@/services/lastfm-album-links'
 import { getAlbumDetail } from '@/services/media'
 import {
@@ -405,7 +405,7 @@ it('retains tracklists for Spotify saved albums outside the selected preview and
   })
 })
 
-it('never uses an outside album for automatic Last.fm relinking', async () => {
+it('excludes scrobbles from catalog backfill and links them only to library albums', async () => {
   const username = 'fixture-listener'
   const id = 'lastfm-fixture-event'
   const row = {
@@ -425,7 +425,32 @@ it('never uses an outside album for automatic Last.fm relinking', async () => {
     albumKey: 'logging release',
     trackKey: 'logging track',
   })
-  await fixture.transaction((tx) => observeLastfmScrobbles(tx, [row]))
+  expect(await backfillMusicCatalog(true)).toMatchObject({
+    lastfmScrobbles: { candidates: 0, skipped: 0 },
+  })
+  expect(
+    await fixture.$count(
+      schema.catalogObservation,
+      eq(schema.catalogObservation.operation, 'scrobble'),
+    ),
+  ).toBe(0)
+  const albumId = await fixture.transaction((tx) =>
+    observeCatalogMedia(
+      tx,
+      {
+        kind: 'album',
+        title: row.albumName,
+        provider: 'lastfm',
+        referenceType: 'mbid',
+        credits: [{ name: row.artistName }],
+      },
+      {
+        provider: 'lastfm',
+        operation: 'album-profile',
+        occurrenceKey: 'outside-album',
+      },
+    ),
+  )
   await linkScrobblesToAlbums(username)
   expect(
     await fixture.query.lastfmScrobble.findFirst({
@@ -433,13 +458,13 @@ it('never uses an outside album for automatic Last.fm relinking', async () => {
     }),
   ).toMatchObject({ albumMediaItemId: null })
   await fixture.execute(
-    sql`update media_item set in_library = true where title = ${row.albumName}`,
+    sql`update media_item set in_library = true where id = ${albumId}`,
   )
   await linkScrobblesToAlbums(username)
   const result = await fixture.query.lastfmScrobble.findFirst({
     where: eq(schema.lastfmScrobble.id, id),
   })
-  expect(result?.albumMediaItemId).toEqual(expect.any(String))
+  expect(result?.albumMediaItemId).toBe(albumId)
 })
 
 it('keeps rejected and uncertain Spotify references off the linked library album', async () => {

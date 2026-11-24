@@ -11,6 +11,7 @@ import { BrowseFilterPill } from './browse-controls'
 import { FilterPanelSection } from './browse-filter-panel'
 
 export type LibraryScopeControl = {
+  kind?: 'track'
   value: LibraryScopeState
   onChange: (value: LibraryScopeState) => void
 }
@@ -33,8 +34,17 @@ export function LibraryScopeToggle({ value, onChange }: LibraryScopeControl) {
   )
 }
 
-export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
-  const sources = new Set([...discoverySourceLabels.keys(), ...value.sources])
+export function LibraryScopeSections({
+  kind,
+  value,
+  onChange,
+}: LibraryScopeControl) {
+  const sources = new Set([
+    ...(kind === 'track'
+      ? ['album-tracks', 'playlist-contents', 'similar']
+      : discoverySourceLabels.keys()),
+    ...value.sources,
+  ])
   return (
     <>
       <FilterPanelSection

@@ -282,7 +282,7 @@ function TrackBrowse({
   const { apiBaseUrl } = useConfig()
   const { embedded } = host
   const searchParams = host.params
-  const libraryScope = readLibraryScope(searchParams)
+  const libraryScope = readLibraryScope(searchParams, 'track')
   const catalogParams = libraryScopeQuery(libraryScope)
   const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [adding, setAdding] = useState(false)
@@ -948,7 +948,11 @@ function TrackBrowse({
     >
       <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
-          libraryScope={{ value: libraryScope, onChange: changeLibraryScope }}
+          libraryScope={{
+            kind: 'track',
+            value: libraryScope,
+            onChange: changeLibraryScope,
+          }}
           addActions={
             !embedded && (
               <Button type="button" onClick={() => setAdding(true)}>

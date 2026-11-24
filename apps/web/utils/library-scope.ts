@@ -1,5 +1,6 @@
 import {
   CatalogScopeQuerySchema,
+  isTrackDiscoverySource,
   type CatalogScopeQuery,
 } from '@repo/schemas/catalog'
 
@@ -73,18 +74,21 @@ export type LibraryScopeState = {
 
 export function readLibraryScope(
   params: Pick<URLSearchParams, 'get'>,
+  kind?: 'track',
 ): LibraryScopeState {
   const { libraryScope, discoverySources, discoverySourceMode } =
     CatalogScopeQuerySchema.shape
-  const sources = discoverySources.safeParse(
+  const rawSources = discoverySources.safeParse(
     params.get('discoverySources'),
   ).data
+  const sources = [...new Set(rawSources?.split(','))].sort()
   return {
     scope: libraryScope.safeParse(params.get('libraryScope')).data ?? 'library',
     ...(params.get('discoverySourceScope') === 'selection'
       ? { selection: true }
       : {}),
-    sources: [...new Set(sources?.split(','))].sort(),
+    sources:
+      kind === 'track' ? sources.filter(isTrackDiscoverySource) : sources,
     mode:
       discoverySourceMode.safeParse(params.get('discoverySourceMode')).data ??
       'any',

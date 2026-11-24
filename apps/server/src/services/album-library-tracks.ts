@@ -445,7 +445,7 @@ export async function mergeAlbumTrackHistory(
   })
 }
 
-export function spotifyAlbumReleaseIds(albumId?: string) {
+export function spotifyAlbumReleaseIds(albumId?: string | SQL) {
   const albumScope =
     albumId === undefined ? sql`` : sql`and release.media_item_id = ${albumId}`
   return sql`

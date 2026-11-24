@@ -4,7 +4,6 @@ import type { JsonValue } from '@repo/schemas/common'
 import { isProviderItemNotFoundError } from '@repo/media-plugin-sdk'
 import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
-  SpotifyCodeMatchSchema,
   TIDAL_SIMILAR_LIMIT,
   TIDAL_SIMILAR_TASK,
   TIDAL_TRACK_MATCH_TASK,
@@ -14,7 +13,6 @@ import {
   TidalSimilarSourceSchema,
   TidalSuggestionSchema,
   TidalTrackMatchReasonSchema,
-  type SpotifyCodeLookupSource,
   type TidalSimilar,
   type TidalSimilarItem,
   type TidalSimilarJob,
@@ -49,7 +47,6 @@ import {
   scrapeJob,
   scrapeJobItem,
   scrapeJobLog,
-  spotifyCodeLookup,
   tidalSimilar,
 } from '@/schemas/db'
 import {
@@ -62,6 +59,7 @@ import { providerOperation } from './manual-add'
 import {
   latestCatalogResponseId,
   observeTidalSuggestion,
+  observeTidalSimilarLibraryMatches,
 } from './music-catalog-observations'
 import { artistGenresByBilledName } from './music-tags'
 import { createProviderRequest } from './provider-requests'
@@ -69,11 +67,12 @@ import { saveProviderResponseCapture } from './provider-response-history'
 import { appendProviderTaskReplayStep } from './provider-task-replay'
 import {
   libraryItemsByCode,
-  libraryMembershipBySpotifyId,
   libraryMembershipByTidalId,
   librarySimilarGenres,
   similarTrackDetails,
-  type SimilarLibraryItem,
+  mapSuggestions,
+  spotifyLookups,
+  type MappedSimilarItem,
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
 import {
@@ -325,26 +324,6 @@ export async function prepareTidalSimilar(
     ),
     itemTitle: target.title.slice(0, 500) || id,
   })
-}
-
-/** Each code's stored Spotify search, by code key. */
-async function spotifyLookups(
-  database: Pick<typeof db, 'select'>,
-  kind: TidalSimilarKind,
-  keys: readonly string[],
-) {
-  if (!keys.length)
-    return new Map<string, typeof spotifyCodeLookup.$inferSelect>()
-  const rows = await database
-    .select()
-    .from(spotifyCodeLookup)
-    .where(
-      and(
-        eq(spotifyCodeLookup.codeType, kind === 'album' ? 'upc' : 'isrc'),
-        sql`${spotifyCodeLookup.code} = any(${sql.param([...keys])}::text[])`,
-      ),
-    )
-  return new Map(rows.map((row) => [row.code, row]))
 }
 
 /**
@@ -710,6 +689,12 @@ async function observeStoredTidalSuggestions(
     items.push({ ...item, catalogMediaItemId })
   }
   if (input.kind === 'track') {
+    await observeTidalSimilarLibraryMatches(tx, items, {
+      seedId: input.itemId,
+      jobId: input.jobId ?? undefined,
+      responseId,
+      observedAt: input.observedAt,
+    })
     if (input.jobId) await reconcileTidalJobArtists(tx, input.jobId)
     await reconcileSimilarArtistCredits(tx, items)
   }
@@ -901,20 +886,6 @@ async function unmatchedTrack(
   return null
 }
 
-function stateOf(
-  library: SimilarLibraryItem | undefined,
-  lookup: typeof spotifyCodeLookup.$inferSelect | undefined,
-): TidalSimilarItem['state'] {
-  if (library) return 'library'
-  if (!lookup) return 'unsearched'
-  return lookup.spotifyId ? 'spotify' : 'none'
-}
-
-type MappedSimilarItem = TidalSimilarItem & {
-  spotifySource: SpotifyCodeLookupSource | null
-  sonovaultResponseId: string | null
-}
-
 function sonovaultTrackCandidates(
   items: readonly MappedSimilarItem[],
   responseIds: readonly string[],
@@ -925,81 +896,6 @@ function sonovaultTrackCandidates(
       ? [...responseIds, suggestion.sonovaultResponseId]
       : responseIds
     return ids.length ? [{ suggestion, responseIds: ids }] : []
-  })
-}
-
-/** The stored suggestions with what each maps to now. */
-async function mapSuggestions(
-  database: Reader,
-  kind: TidalSimilarKind,
-  suggestions: readonly TidalSuggestion[],
-): Promise<MappedSimilarItem[]> {
-  const keyOf = (suggestion: TidalSuggestion) =>
-    suggestion.code ? codeKey(kind, suggestion.code) : null
-  const keys = [...new Set(suggestions.flatMap((item) => keyOf(item) ?? []))]
-  const [byTidalId, byCode, lookups] = await Promise.all([
-    libraryMembershipByTidalId(
-      database,
-      kind,
-      suggestions.map(({ tidalId }) => tidalId),
-    ),
-    libraryItemsByCode(database, kind, keys),
-    spotifyLookups(database, kind, keys),
-  ])
-  const spotifyIds = [
-    ...new Set(
-      [...lookups.values()].flatMap(({ spotifyId }) => spotifyId ?? []),
-    ),
-  ]
-  const bySpotifyId = await libraryMembershipBySpotifyId(
-    database,
-    kind,
-    spotifyIds,
-  )
-  return suggestions.map((suggestion) => {
-    const key = keyOf(suggestion)
-    const lookup = key ? lookups.get(key) : undefined
-    const spotify = SpotifyCodeMatchSchema.safeParse(lookup?.result)
-    const tidal = byTidalId.visible.get(suggestion.tidalId)
-    const code = key ? byCode.get(key) : undefined
-    const spotifyId = lookup?.spotifyId
-    const spotifyLibrary = spotifyId
-      ? bySpotifyId.visible.get(spotifyId)
-      : undefined
-    const library = tidal ?? code ?? spotifyLibrary
-    const hiddenLibraryMatch =
-      !library &&
-      (byTidalId.hidden.has(suggestion.tidalId) ||
-        Boolean(
-          spotifyId &&
-          lookup?.source === 'spotify' &&
-          bySpotifyId.hidden.has(spotifyId),
-        ))
-    const libraryMatch: TidalSimilarItem['libraryMatch'] = tidal
-      ? { basis: 'tidal-id', value: suggestion.tidalId }
-      : code && suggestion.code
-        ? { basis: kind === 'track' ? 'isrc' : 'upc', value: suggestion.code }
-        : spotifyLibrary && spotifyId
-          ? { basis: 'spotify-id', value: spotifyId }
-          : null
-    return {
-      ...suggestion,
-      genres: suggestion.genres ?? [],
-      genreSource: suggestion.genres?.length ? 'tidal' : null,
-      genreArtist: null,
-      genreEvidence: null,
-      state: stateOf(library, lookup),
-      library: library ?? null,
-      libraryMatch,
-      ...(hiddenLibraryMatch ? { hiddenLibraryMatch: true } : {}),
-      spotify:
-        spotify.success && spotify.data.spotifyId === lookup?.spotifyId
-          ? spotify.data
-          : null,
-      spotifySource: lookup?.source ?? null,
-      sonovaultResponseId:
-        lookup?.source === 'sonovault' ? lookup.responseId : null,
-    }
   })
 }
 

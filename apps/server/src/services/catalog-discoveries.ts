@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { JsonValue } from '@repo/media-plugin-sdk'
-import type {
-  CatalogNativeKind,
-  CatalogObservationQuerySchema,
+import {
+  listeningDiscoveryOperations,
+  type CatalogNativeKind,
+  type CatalogObservationQuerySchema,
 } from '@repo/schemas/catalog'
 import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import { db } from '@/lib/db'
@@ -294,8 +295,12 @@ export async function observeCatalogOccurrences(
   tx: Transaction,
   occurrences: CatalogOccurrence[],
 ) {
-  for (let start = 0; start < occurrences.length; start += 500) {
-    const rows = occurrences
+  // Playback can resolve a catalog identity without recording a discovery.
+  const discoveries = occurrences.filter(
+    ({ origin }) => !listeningDiscoveryOperations.includes(origin.operation),
+  )
+  for (let start = 0; start < discoveries.length; start += 500) {
+    const rows = discoveries
       .slice(start, start + 500)
       .map(({ target, origin }) => ({
         id: createStableId(
@@ -1014,6 +1019,10 @@ export async function listCatalogObservations(
         )
       : eq(catalogObservation.mediaItemId, await resolveCatalogMediaId(db, id))
   }
+  where = and(
+    where,
+    notInArray(catalogObservation.operation, [...listeningDiscoveryOperations]),
+  )
   const [items, totalCount] = await Promise.all([
     db
       .select({

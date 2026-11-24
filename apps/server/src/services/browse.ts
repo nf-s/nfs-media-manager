@@ -1517,6 +1517,7 @@ async function browseQueries(
       sql`${mediaItem.id}`,
       sql`${mediaItem.inLibrary}`,
       query,
+      mediaType === 'track' ? 'track' : undefined,
     ),
   ]
   // A playlist member already has a library identity.
@@ -1661,7 +1662,7 @@ async function browseQueries(
       !options.conditions?.length &&
         !options.includeLastfmSourceRows &&
         !options.sort &&
-        memberScope(query),
+        memberScope(query, 'track'),
       versionId,
     )
   const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
@@ -2510,7 +2511,7 @@ function textRows(
 ): SQL {
   const visible = sql`media_item.media_type = ${mediaType}
     ${options.includeArchived ? sql`` : sql`and media_item.metadata->>'legacyHidden' is distinct from 'true'`}
-    ${options.scope ? sql`and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, options.scope)}` : sql``}`
+    ${options.scope ? sql`and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, options.scope, mediaType === 'track' ? 'track' : undefined)}` : sql``}`
   if (key === 'title')
     return sql`select media_item.id, media_item.title as value from media_item where ${visible}`
   if (key === 'summary')
@@ -2731,7 +2732,7 @@ function trackMusicFacetSources(
         from media_item m join library_track lt on lt.media_item_id = m.id
         left join media_credit c on c.media_item_id = m.id and c.role = 'artist'
         where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true' ${visibility}
-          and ${catalogScopeCondition(sql`m.id`, sql`m.in_library`, scope)}
+          and ${catalogScopeCondition(sql`m.id`, sql`m.in_library`, scope, 'track')}
           and (exists (select 1 from browse_artist_facet_keys)
             or exists (select 1 from browse_release_facet_keys))
         group by m.id, lt.album_media_item_id, lt.has_own_tags
@@ -3066,7 +3067,7 @@ function browseFacetQuery(
             query,
           )
         : trackTagFacet
-          ? sql`${trackTagFacetRows} and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, query)}`
+          ? sql`${trackTagFacetRows} and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, query, 'track')}`
           : textRows(field.key, mediaType, {
               includeArchived: options.includeArchived,
               normalizeTags: true,
@@ -3395,7 +3396,9 @@ async function queryBrowseFacets(
 ): Promise<FacetRow[]> {
   if (!fields.length) return []
   const vocabulary =
-    !options.includeArchived && !options.fields && memberScope(query)
+    !options.includeArchived &&
+    !options.fields &&
+    memberScope(query, mediaType === 'track' ? 'track' : undefined)
       ? mediaType === 'track' && !options.includeLastfmSourceRows
         ? trackFacetVocabulary
         : mediaType === 'album'

@@ -545,7 +545,7 @@ function trackMatchDiagnosticsRows(
   )
   const scope = [
     metadata
-      ? sql`${visibleTracks} and ${catalogScopeCondition(trackId, sql`media_item.in_library`, query)}`
+      ? sql`${visibleTracks} and ${catalogScopeCondition(trackId, sql`media_item.in_library`, query, 'track')}`
       : visibleLibraryTracks,
     ...trackBrowseFieldConditions(sources, [], ordinaryFields, evidenceFilter),
   ]

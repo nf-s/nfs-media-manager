@@ -11,10 +11,12 @@ import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { providerResponse } from '@/schemas/db'
 import {
   observeCatalogMedia,
+  observeCatalogOccurrences,
   type CatalogMedia,
   type CatalogOrigin,
 } from './catalog-discoveries'
 import type { SpotifySearchObservation } from './provider-search-task-replay'
+import { mapSuggestions } from './similar-library-matches'
 import { spotifyTrackBilling } from './spotify-artist-credits'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -263,4 +265,49 @@ export async function observeTidalSuggestion(
       },
     )
   return trackId
+}
+
+/** Preserve the link to the library track a saved Similar result opens. */
+export async function observeTidalSimilarLibraryMatches(
+  tx: Transaction,
+  suggestions: readonly TidalSuggestion[],
+  input: {
+    seedId: string
+    jobId?: string
+    responseId?: string
+    observedAt?: Date
+  },
+) {
+  const items = await mapSuggestions(tx, 'track', suggestions)
+  await observeCatalogOccurrences(
+    tx,
+    items.flatMap((item, index) => {
+      const id = item.library?.id
+      if (
+        !id ||
+        id === item.catalogMediaItemId ||
+        id === input.seedId ||
+        !item.libraryMatch
+      )
+        return []
+      return [
+        {
+          target: { kind: 'track', id },
+          origin: occurrence('tidal', {
+            operation: 'similar',
+            key: input.jobId ?? input.seedId,
+            subjectKind: 'track',
+            subjectId: input.seedId,
+            jobId: input.jobId,
+            responseId: input.responseId,
+            observedAt: input.observedAt,
+            page: 1,
+            position: item.catalogPosition ?? index + 1,
+            relationshipRole: 'library-match',
+            details: { [item.libraryMatch.basis]: item.libraryMatch.value },
+          }),
+        },
+      ]
+    }),
+  )
 }

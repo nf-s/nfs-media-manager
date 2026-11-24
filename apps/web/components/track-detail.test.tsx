@@ -189,17 +189,13 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   )
   assert.deepEqual(tabs, ['Overview', 'Similar', 'Sources'])
   assert.match(html, /<h3>Listening<\/h3>/)
-  assert.match(html, /<h3>Appears on<\/h3>/)
-  assert.match(
-    html,
-    /Recorded album<\/span><span class="ds-row-by">Recorded album<\/span>/,
-  )
+  assert.match(html, /<h3>Appears in<\/h3>/)
+  assert.doesNotMatch(html, /<h3>Discoveries<\/h3>/)
   assert.match(
     html,
     /<h2 class="ds-detail-title">Synthetic track <button[^>]*aria-label="Match Synthetic track to Spotify"/,
   )
   assert.doesNotMatch(html, /aria-label="Find album in library/)
-  assert.match(html, /No playlist memberships\./)
   assert.match(html, /Match this track to Spotify to add it to a playlist/)
   assert.match(
     html,

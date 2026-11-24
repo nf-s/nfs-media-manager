@@ -3,6 +3,7 @@ import {
   CatalogNativeKindSchema,
   CatalogObservationPageSchema,
   CatalogObservationQuerySchema,
+  TrackAppearancesSchema,
 } from '@repo/schemas/catalog'
 import { ManualMediaAddResultSchema } from '@repo/schemas/manual-add'
 import {
@@ -19,16 +20,46 @@ import {
   promoteCatalogMedia,
   promoteNativeResource,
 } from '@/services/catalog-discoveries'
+import { listTrackAppearances } from '@/services/track-appearances'
 
-const params = z.object({
-  kind: z.union([z.literal('media'), CatalogNativeKindSchema]),
+const idParams = z.object({
   id: z.string().min(1).max(500),
+})
+const params = idParams.extend({
+  kind: z.union([z.literal('media'), CatalogNativeKindSchema]),
 })
 const errors = {
   401: jsonErrorResponse('Unauthorized'),
   422: validationErrorResponse,
 }
 const catalog: OpenAPIHono<AppEnv> = createOpenAPIApp()
+
+catalog.openapi(
+  createRoute({
+    method: 'get',
+    path: '/{id}/appearances',
+    middleware: [authMiddleware()],
+    request: { params: idParams },
+    responses: {
+      ...errors,
+      404: jsonErrorResponse('Track not found'),
+      200: {
+        description: 'Albums, playlists and tracks where this track appeared',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(TrackAppearancesSchema),
+          },
+        },
+      },
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await listTrackAppearances(c.req.valid('param').id),
+      200,
+    ),
+)
 
 catalog.openapi(
   createRoute({

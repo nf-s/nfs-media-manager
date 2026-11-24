@@ -29,6 +29,34 @@ async function openTrackSimilar(page: Page) {
   await page.getByRole('tab', { name: 'Similar', exact: true }).click()
 }
 
+test('track appearances link back to the album and the originating Similar list', async ({
+  page,
+}) => {
+  await openTrackSimilar(page)
+  const panel = page.getByRole('tabpanel', { name: 'Similar', exact: true })
+  await panel
+    .getByRole('link', { name: 'Tidal Basin Edit', exact: true })
+    .click()
+  const appearances = page.locator('section.ds-section').filter({
+    has: page.getByRole('heading', { name: 'Appears in', exact: true }),
+  })
+  await expect(
+    appearances.getByRole('link', { name: 'Harbour Current' }),
+  ).toHaveCount(1)
+  const seed = appearances.getByRole('link', {
+    name: 'Hidden Letter',
+    exact: true,
+  })
+  await expect(seed).toHaveCount(1)
+  await seed.click()
+  await expect(
+    page.getByRole('tab', { name: 'Similar', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(
+    panel.getByRole('link', { name: 'Tidal Basin Edit', exact: true }),
+  ).toBeVisible()
+})
+
 test('a first read shows recommendations while the catalog save is pending', async ({
   page,
 }) => {

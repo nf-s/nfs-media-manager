@@ -46,6 +46,43 @@ test('Tracks Browse filters by a field, selects rows and keeps the filter on rel
   await selectRows(page, 1, matching)
 })
 
+test('Tracks Browse ignores listen and playback discovery filters in saved links', async ({
+  page,
+}) => {
+  const params = new URLSearchParams({
+    libraryScope: 'all',
+    discoverySources:
+      'playback,playback-queue,playback-recovery,scrobble,similar',
+  })
+  await page.goto(`/tracks?${params}`)
+  await expect(
+    page.getByRole('button', {
+      name: 'Remove discovery source Similar results',
+    }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', {
+      name: /filters, columns and grid size, 1 filter on/i,
+    })
+    .click()
+  await page.getByText('Discovery sources', { exact: true }).click()
+  await expect(
+    page.getByRole('checkbox', { name: 'Similar results', exact: true }),
+  ).toBeChecked()
+  for (const name of [
+    'Playback',
+    'Playback queue',
+    'Recently played',
+    'Listening history',
+    'Film details',
+    'Find match',
+  ]) {
+    await expect(page.getByRole('checkbox', { name, exact: true })).toHaveCount(
+      0,
+    )
+  }
+})
+
 test('Tracks Browse adds an outside track from its title cell', async ({
   page,
 }) => {

@@ -12,7 +12,7 @@ import {
   usePlaylistAdditions,
 } from './playlist-addition-controls'
 
-const TITLE = 'Appears on'
+const TITLE = 'Appears in'
 
 function MatchedTrack({
   trackId,
@@ -64,10 +64,9 @@ function MatchedTrack({
 }
 
 /**
- * A track's Appears on section: its album and playlists, given as children,
- * with the action that adds the track to another playlist in the head.
+ * Keep the playlist action alongside the places that contain the track.
  */
-export default function TrackAppearsOn({
+export default function TrackAppearanceSection({
   track,
   onResolved,
   children,

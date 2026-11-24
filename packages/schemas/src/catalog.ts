@@ -24,6 +24,17 @@ export const CatalogScopeQuerySchema = z.object({
 })
 export type CatalogScopeQuery = z.infer<typeof CatalogScopeQuerySchema>
 
+export const listeningDiscoveryOperations: readonly string[] = [
+  'playback',
+  'playback-queue',
+  'playback-recovery',
+  'scrobble',
+]
+
+export function isTrackDiscoverySource(operation: string) {
+  return !listeningDiscoveryOperations.includes(operation)
+}
+
 export const CatalogObservationQuerySchema = PaginationQuerySchema
 
 export const CatalogObservationSchema = z.object({
@@ -56,3 +67,32 @@ export const CatalogObservationPageSchema = z.object({
   totalCount: z.number().int(),
   pageCount: z.number().int(),
 })
+
+const TrackAppearanceTargetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+})
+
+export const TrackAppearancesSchema = z.object({
+  items: z.array(
+    z.discriminatedUnion('kind', [
+      TrackAppearanceTargetSchema.extend({
+        kind: z.literal('album'),
+        relationship: z.literal('album'),
+        spotifyAlbumId: z
+          .string()
+          .regex(/^[A-Za-z0-9]{22}$/)
+          .optional(),
+      }),
+      TrackAppearanceTargetSchema.extend({
+        kind: z.literal('playlist'),
+        relationship: z.literal('playlist'),
+      }),
+      TrackAppearanceTargetSchema.extend({
+        kind: z.literal('track'),
+        relationship: z.literal('similar'),
+      }),
+    ]),
+  ),
+})
+export type TrackAppearances = z.infer<typeof TrackAppearancesSchema>

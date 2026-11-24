@@ -658,7 +658,7 @@ function playlistEntriesQuery(
       and (not exists (select 1 from latest)
         or not exists (select 1 from library_track lt where lt.media_item_id = p.media_item_id))
     union all
-    select o.subject_id, o.target_id, o.position,
+    select o.subject_id, coalesce(o.media_item_id, o.target_id), o.position,
       (o.details->>'addedAt')::timestamptz at time zone 'UTC'
     from latest join catalog_observation o on o.details->>'version' = latest.version
     where o.subject_kind = 'playlist' and o.subject_id = ${id}

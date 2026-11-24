@@ -161,7 +161,7 @@ export default function TrackMetadataTable({
   const { apiBaseUrl } = useConfig()
   const path = usePathname()
   const params = useSearchParams()
-  const libraryScope = readLibraryScope(params)
+  const libraryScope = readLibraryScope(params, 'track')
   const scopeQuery = libraryScopeQuery(libraryScope)
   const inspector = useDetailInspector()
   const [pending, setPending] = useState(false)
@@ -405,6 +405,7 @@ export default function TrackMetadataTable({
       <MetadataSelectionToolbar
         disabled={pending}
         libraryScope={{
+          kind: 'track',
           value: libraryScope,
           onChange: (next) => setParams(libraryScopeUpdates(next)),
         }}

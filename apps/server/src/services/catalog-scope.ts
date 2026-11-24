@@ -1,23 +1,38 @@
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
-import type { CatalogScopeQuery } from '@repo/schemas/catalog'
+import {
+  isTrackDiscoverySource,
+  type CatalogNativeKind,
+  type CatalogScopeQuery,
+} from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { libraryTrack, mediaItem } from '@/schemas/db'
+
+function discoveryOperations(
+  query: CatalogScopeQuery,
+  kind?: CatalogNativeKind | 'track',
+) {
+  const operations = [...new Set(query.discoverySources?.split(','))]
+  return kind === 'track'
+    ? operations.filter(isTrackDiscoverySource)
+    : operations
+}
 
 export function catalogScopeCondition(
   id: SQL,
   member: SQL,
   query: CatalogScopeQuery,
-  kind?: string,
+  kind?: CatalogNativeKind | 'track',
 ): SQL {
   const scope = query.libraryScope ?? 'library'
   if (scope === 'library' && query.discoverySourceScope !== 'selection')
     return member
-  const operations = [...new Set(query.discoverySources?.split(',') ?? [])]
+  const operations = discoveryOperations(query, kind)
   if (scope === 'all' && !operations.length) return sql`true`
-  const target = kind
-    ? sql`o.target_kind = ${kind} and o.target_id = ${id}`
-    : sql`o.media_item_id = ${id}`
+  const target =
+    kind && kind !== 'track'
+      ? sql`o.target_kind = ${kind} and o.target_id = ${id}`
+      : sql`o.media_item_id = ${id}`
   const exists = (
     operation: SQL,
   ) => sql`exists (select 1 from catalog_observation o
@@ -46,10 +61,13 @@ export function catalogScopeCondition(
     : sql`((${member}) or ${origin})`
 }
 
-export function memberScope(query: CatalogScopeQuery) {
+export function memberScope(query: CatalogScopeQuery, kind?: 'track') {
   return (
     (!query.libraryScope || query.libraryScope === 'library') &&
-    !(query.discoverySources && query.discoverySourceScope === 'selection')
+    !(
+      query.discoverySourceScope === 'selection' &&
+      discoveryOperations(query, kind).length
+    )
   )
 }
 
@@ -71,6 +89,7 @@ export async function requireTrackSelectionScope(
         sql`${mediaItem.id}`,
         sql`${mediaItem.inLibrary}`,
         scope,
+        'track',
       ),
     ),
   )

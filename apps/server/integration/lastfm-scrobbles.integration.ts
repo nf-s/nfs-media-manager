@@ -305,6 +305,12 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       Array(3).fill('fixture-listener'),
     )
     expect(
+      await databaseClient.$count(
+        schema.catalogObservation,
+        eq(schema.catalogObservation.operation, 'scrobble'),
+      ),
+    ).toBe(0)
+    expect(
       rows.find((row) => row.albumName === 'Unknown album')?.albumMediaItemId,
     ).toBeNull()
     expect(

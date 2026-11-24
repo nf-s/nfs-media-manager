@@ -1,14 +1,19 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  SpotifyCodeMatchSchema,
   TidalSimilarTrackSchema,
   normalizeSimilarGenres,
+  type SpotifyCodeLookupSource,
+  type TidalSimilarItem,
   type TidalSimilarKind,
+  type TidalSuggestion,
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { spotifyAlbumId } from '@/lib/spotify-api'
+import { spotifyCodeLookup } from '@/schemas/db'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
-import { upcVariants } from './spotify-code-search'
+import { codeKey, upcVariants } from './spotify-code-search'
 import {
   albumTrackDurationExpression,
   trackSpotifyMatchExpression,
@@ -201,6 +206,115 @@ export async function libraryMembershipByTidalId(
             and r.external_id = any(${ids}::text[])
           order by m.created_at, m.id`)
   return collectMembership(result.rows)
+}
+
+/** Each code's stored Spotify search, by code key. */
+export async function spotifyLookups(
+  database: Pick<typeof db, 'select'>,
+  kind: TidalSimilarKind,
+  keys: readonly string[],
+) {
+  if (!keys.length)
+    return new Map<string, typeof spotifyCodeLookup.$inferSelect>()
+  const rows = await database
+    .select()
+    .from(spotifyCodeLookup)
+    .where(
+      and(
+        eq(spotifyCodeLookup.codeType, kind === 'album' ? 'upc' : 'isrc'),
+        sql`${spotifyCodeLookup.code} = any(${sql.param([...keys])}::text[])`,
+      ),
+    )
+  return new Map(rows.map((row) => [row.code, row]))
+}
+
+function stateOf(
+  library: SimilarLibraryItem | undefined,
+  lookup: typeof spotifyCodeLookup.$inferSelect | undefined,
+): TidalSimilarItem['state'] {
+  if (library) return 'library'
+  if (!lookup) return 'unsearched'
+  return lookup.spotifyId ? 'spotify' : 'none'
+}
+
+export type MappedSimilarItem = TidalSimilarItem & {
+  spotifySource: SpotifyCodeLookupSource | null
+  sonovaultResponseId: string | null
+}
+
+/** The stored suggestions with what each maps to now. */
+export async function mapSuggestions(
+  database: Pick<typeof db, 'select' | 'execute'>,
+  kind: TidalSimilarKind,
+  suggestions: readonly TidalSuggestion[],
+): Promise<MappedSimilarItem[]> {
+  const keyOf = (suggestion: TidalSuggestion) =>
+    suggestion.code ? codeKey(kind, suggestion.code) : null
+  const keys = [...new Set(suggestions.flatMap((item) => keyOf(item) ?? []))]
+  const [byTidalId, byCode, lookups] = await Promise.all([
+    libraryMembershipByTidalId(
+      database,
+      kind,
+      suggestions.map(({ tidalId }) => tidalId),
+    ),
+    libraryItemsByCode(database, kind, keys),
+    spotifyLookups(database, kind, keys),
+  ])
+  const spotifyIds = [
+    ...new Set(
+      [...lookups.values()].flatMap(({ spotifyId }) => spotifyId ?? []),
+    ),
+  ]
+  const bySpotifyId = await libraryMembershipBySpotifyId(
+    database,
+    kind,
+    spotifyIds,
+  )
+  return suggestions.map((suggestion) => {
+    const key = keyOf(suggestion)
+    const lookup = key ? lookups.get(key) : undefined
+    const spotify = SpotifyCodeMatchSchema.safeParse(lookup?.result)
+    const tidal = byTidalId.visible.get(suggestion.tidalId)
+    const code = key ? byCode.get(key) : undefined
+    const spotifyId = lookup?.spotifyId
+    const spotifyLibrary = spotifyId
+      ? bySpotifyId.visible.get(spotifyId)
+      : undefined
+    const library = tidal ?? code ?? spotifyLibrary
+    const hiddenLibraryMatch =
+      !library &&
+      (byTidalId.hidden.has(suggestion.tidalId) ||
+        Boolean(
+          spotifyId &&
+          lookup?.source === 'spotify' &&
+          bySpotifyId.hidden.has(spotifyId),
+        ))
+    const libraryMatch: TidalSimilarItem['libraryMatch'] = tidal
+      ? { basis: 'tidal-id', value: suggestion.tidalId }
+      : code && suggestion.code
+        ? { basis: kind === 'track' ? 'isrc' : 'upc', value: suggestion.code }
+        : spotifyLibrary && spotifyId
+          ? { basis: 'spotify-id', value: spotifyId }
+          : null
+    return {
+      ...suggestion,
+      genres: suggestion.genres ?? [],
+      genreSource: suggestion.genres?.length ? 'tidal' : null,
+      genreArtist: null,
+      genreEvidence: null,
+      state: stateOf(library, lookup),
+      library: library ?? null,
+      libraryMatch,
+      ...(hiddenLibraryMatch ? { hiddenLibraryMatch: true } : {}),
+      spotify:
+        spotify.success && spotify.data.spotifyId === lookup?.spotifyId
+          ? spotify.data
+          : null,
+      spotifySource: lookup?.source ?? null,
+      sonovaultResponseId:
+        lookup?.source === 'sonovault' ? lookup.responseId : null,
+    }
+  })
 }
 
 const SimilarTrackRowsSchema = z.array(

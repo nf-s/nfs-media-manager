@@ -366,8 +366,8 @@
           D.chartBox('track', { range: 'All', height: 132 }),
         ) +
         section(
-          'Appears on',
-          `<div class="ds-list" data-compact style="margin:0 -12px">${D.row(A[0], { by: 'Album · Mira Kestrel · 2019' })}</div>${pills(['Late shift', 'Kitchen'], md)}`,
+          'Appears in',
+          `<div class="ds-list" data-compact>${D.row({ title: 'Harbour Lights', kind: 'album', art: null }, { by: 'Album', play: false })}${D.row({ title: 'Late shift', kind: 'playlist', art: null }, { by: 'Playlist', play: false })}${D.row({ title: 'Sodium Glow', kind: 'track', art: null }, { by: 'Similar tracks', play: false })}</div>`,
           { aside: linkBtn('Add to playlist') },
         ) +
         section(

@@ -82,6 +82,25 @@ const spotifyTrack = 'track-spotify'
 const spellingAlbum = 'album-spelling'
 const playlistId = 'fixture-playlist'
 
+// Recreate the artist evidence written by older players for the repair tests.
+function legacyPlaybackCredit(
+  trackId: string,
+  artistId: string,
+  operation: 'playback' | 'playback-queue',
+) {
+  return fixture.insert(schema.catalogObservation).values({
+    id: 'fixture-legacy-playback-credit-' + trackId,
+    targetKind: 'artist',
+    targetId: artistId,
+    provider: 'spotify',
+    operation,
+    subjectKind: 'track',
+    subjectId: trackId,
+    relationshipRole: 'artist',
+    position: 1,
+  })
+}
+
 const scrobbles = (
   artistName: string,
   trackName: string,
@@ -591,6 +610,7 @@ it('previews and journals a scoped name-only discovery only when the exact recor
   )
   const [credit] = (await credits()).filter((c) => c.mediaItemId === track)
   if (!credit) throw new Error('Expected provisional credit')
+  await legacyPlaybackCredit(track, credit.artistId, 'playback')
   expect(await repairScopedSpotifyCredits(false, fixture)).toBe(0)
   const externalId = 'E'.repeat(22)
   await fixture
@@ -634,21 +654,18 @@ it('recovers a queue artist from the exact track in a stored legacy Spotify albu
   )
   const [old] = (await credits()).filter((c) => c.mediaItemId === id)
   if (!old) throw new Error('Missing queue artist')
-  await fixture
-    .insert(schema.mediaItem)
-    .values({
-      id: 'legacy-film-role',
-      slug: 'legacy-film-role',
-      title: 'Fixture performer film',
-      mediaType: 'film',
-    })
-  await fixture
-    .insert(schema.mediaCredit)
-    .values({
-      mediaItemId: 'legacy-film-role',
-      artistId: keptId,
-      role: 'actor',
-    })
+  await legacyPlaybackCredit(id, old.artistId, 'playback-queue')
+  await fixture.insert(schema.mediaItem).values({
+    id: 'legacy-film-role',
+    slug: 'legacy-film-role',
+    title: 'Fixture performer film',
+    mediaType: 'film',
+  })
+  await fixture.insert(schema.mediaCredit).values({
+    mediaItemId: 'legacy-film-role',
+    artistId: keptId,
+    role: 'actor',
+  })
   await fixture
     .update(schema.artistProviderSnapshot)
     .set({ normalizedData: { tags: [], externalId: nativeId } })
@@ -731,6 +748,7 @@ it('repairs scoped Spotify billing only from exact and consistent retained recor
     )
     const [credit] = (await credits()).filter((row) => row.mediaItemId === id)
     if (!credit) throw new Error('Expected a scoped artist credit')
+    await legacyPlaybackCredit(id, credit.artistId, 'playback-queue')
     evidence.set(name, { id, spotifyId, artistId: credit.artistId })
   }
   const entry = (name: string) => {

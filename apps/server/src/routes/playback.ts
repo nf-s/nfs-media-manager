@@ -72,8 +72,7 @@ app.openapi(
     },
     responses: {
       200: {
-        description:
-          'Record a playback catalog observation and resolve local references',
+        description: 'Resolve local catalog references for playback',
         content: {
           'application/json': {
             schema: createResponseSchema(PlaybackCatalogResultSchema),

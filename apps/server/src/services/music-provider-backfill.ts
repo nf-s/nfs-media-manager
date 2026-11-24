@@ -10,7 +10,6 @@ import {
 } from '@/lib/music-provider-discoveries'
 import {
   artistProviderSnapshot,
-  lastfmScrobble,
   mediaItem,
   providerResponse,
   providerSnapshot,
@@ -18,7 +17,6 @@ import {
   scrapeJobItem,
 } from '@/schemas/db'
 import { observeCatalogOccurrence } from './catalog-discoveries'
-import { observeLastfmScrobbles } from './lastfm-catalog-observations'
 import {
   observeMusicDiscovery,
   observeMusicProviderResponse,
@@ -284,28 +282,4 @@ export async function backfillMusicArtistSnapshots({
       })
   }
   return { next: rows.at(-1)?.id ?? null, candidates, skipped }
-}
-
-export async function backfillLastfmScrobbles({ apply, limit, after }: Batch) {
-  const rows = await db
-    .select({
-      id: lastfmScrobble.id,
-      artistName: lastfmScrobble.artistName,
-      artistMbid: lastfmScrobble.artistMbid,
-      trackName: lastfmScrobble.trackName,
-      trackMbid: lastfmScrobble.trackMbid,
-      albumName: lastfmScrobble.albumName,
-      albumMbid: lastfmScrobble.albumMbid,
-    })
-    .from(lastfmScrobble)
-    .where(after ? gt(lastfmScrobble.id, after) : undefined)
-    .orderBy(asc(lastfmScrobble.id))
-    .limit(limit)
-  if (apply && rows.length)
-    await db.transaction((tx) => observeLastfmScrobbles(tx, rows))
-  return {
-    next: rows.at(-1)?.id ?? null,
-    candidates: rows.reduce((sum, row) => sum + (row.albumName ? 3 : 2), 0),
-    skipped: 0,
-  }
 }
