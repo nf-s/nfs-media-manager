@@ -191,7 +191,8 @@
     if (place === 'header') {
       return `${btn('Play', { icon: 'play', variant: 'primary', size: 'md' })}${btn('', { icon: 'queue', size: 'md', aria: 'Add to queue', title: 'Add to queue' })}`
     }
-    return `<span class="ds-play" data-place="${place}"><button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}">${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue">${icon('queue', { size: 'sm' })}</button></span>`
+    const controls = attrs({ disabled: o.disabled })
+    return `<span class="ds-play" data-place="${place}"><button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}"${controls}>${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue"${controls}>${icon('queue', { size: 'sm' })}</button></span>`
   }
 
   function pill(label, o = {}) {
@@ -500,11 +501,8 @@
     return `<div class="ds-row"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${thumb(item)}<div class="ds-row-main"><a class="ds-row-title" href="#">${esc(item.title)}</a><span class="ds-row-by">${esc(o.by || item.by || '')}</span></div>${playable ? play('row', { playing: o.state === 'playing' }) : '<span></span>'}<div class="ds-row-tags">${item.tags ? pills(item.tags, { max: o.maxTags || 3 }) : ''}</div><div class="ds-row-meta">${(o.meta || []).join('')}</div></div>`
   }
 
-  /* A similar album or track from TIDAL, in a compact list. s.state is
-     library, spotify, none or unsearched; s.meta is the year or length. In
-     the library the title opens the item; otherwise it is text and the
-     trailing actions open it on Spotify or TIDAL and add it to the
-     library. Only library and Spotify suggestions have the play pair. */
+  /* A similar item from TIDAL in a compact list. s.state is library,
+     spotify, none or unsearched. Tracks use the standard linked track row. */
   const SUGGESTION = {
     library: 'In library',
     spotify: 'On Spotify',
@@ -512,11 +510,13 @@
     unsearched: 'Not looked up on Spotify',
   }
   function suggestion(s, o = {}) {
+    const track = s.kind === 'track'
     const linked = s.state === 'library'
     const service = s.state === 'spotify' ? 'Spotify' : 'TIDAL'
-    const title = linked
-      ? `<a class="ds-row-title" href="#">${esc(s.title)}</a>`
-      : `<span class="ds-row-title">${esc(s.title)}</span>`
+    const title =
+      linked || track
+        ? `<a class="ds-row-title" href="#">${esc(s.title)}</a>`
+        : `<span class="ds-row-title">${esc(s.title)}</span>`
     const open = linked
       ? ''
       : btn('', {
@@ -531,7 +531,20 @@
       ? `<span class="ds-pills" data-wrap role="group" aria-label="Genres">${s.genres.map((genre) => pill(genre, { static: true })).join('')}</span>`
       : ''
     const actions = `<span class="ds-actions">${open}${libraryAction(s.kind, s.title, { saved: linked })}</span>`
-    return `<div class="ds-row ds-suggestion" data-action${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))}</span>${badges}</div>${playable ? play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${actions}</div>`
+    const artwork = track
+      ? `<a class="bi-thumb-link" href="#" aria-label="Open details for ${esc(s.title)}">${thumb(s)}</a>`
+      : thumb(s)
+    const by = track
+      ? [s.by, s.meta]
+          .filter(Boolean)
+          .map((label) => `<a href="#">${esc(label)}</a>`)
+          .join(' · ')
+      : esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))
+    const availability =
+      track && !playable ? '<span class="ds-row-by">Unavailable</span>' : ''
+    const controls =
+      playable || track ? play('row', { disabled: !playable }) : '<span></span>'
+    return `<div class="ds-row${track ? '' : ' ds-suggestion'}" data-action${attrs({ 'data-state': o.state })}>${artwork}<div class="ds-row-main">${title}<span class="ds-row-by">${by}</span>${availability}${badges}</div>${controls}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${actions}</div>`
   }
   /* A list row still loading, in a compact list with a trailing action */
   const skelRow = () =>

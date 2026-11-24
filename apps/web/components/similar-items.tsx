@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import {
@@ -16,7 +16,7 @@ import {
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
-import { List, RowTitle } from '@repo/ui/components/ds/list-row'
+import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { PlayPair } from '@repo/ui/components/ds/play'
 import { Status } from '@repo/ui/components/ds/status'
@@ -31,8 +31,9 @@ import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
 import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
-import type { PlayableItem } from '@/utils/playback'
-import { formatTrackDuration } from '@/utils/track-browse'
+import { libraryTrackPlayable, type PlayableItem } from '@/utils/playback'
+import { ItemThumb } from './browse-items'
+import { CreatorLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import { errorMessage } from './lastfm-sync'
 import { MediaThumb } from './media-artwork'
@@ -49,6 +50,7 @@ import {
   useTidalTrackMatch,
   type TidalReviewTrack,
 } from './tidal-track-match'
+import { TrackBrowseAlbum } from './track-browse-cells'
 
 const similarPath = (kind: TidalSimilarKind, id: string) =>
   `/api/v1/tidal/similar/${kind === 'album' ? 'albums' : 'tracks'}/${encodeURIComponent(id)}`
@@ -107,34 +109,22 @@ export function useRefreshTidalSimilar(kind: TidalSimilarKind, id: string) {
   })
 }
 
-/** A suggestion with a Spotify match, including ones already saved locally. */
-export function spotifyPlayable(
-  kind: TidalSimilarKind,
+/** An album suggestion with a Spotify match, including one already saved locally. */
+export function spotifyAlbumPlayable(
   item: TidalSimilarItem,
 ): PlayableItem | null {
   const spotify = item.spotify
   if (!spotify) return null
   const library = item.library
   return {
-    kind,
-    uri: `spotify:${kind}:${spotify.spotifyId}`,
+    kind: 'album',
+    uri: `spotify:album:${spotify.spotifyId}`,
     title: spotify.title,
     artist: spotify.artists.join(', '),
-    albumId:
-      kind === 'album' ? (library?.id ?? null) : (library?.album?.id ?? null),
-    ...(kind === 'track' && spotify.spotifyAlbumId
-      ? { albumUri: `spotify:album:${spotify.spotifyAlbumId}` }
-      : {}),
-    albumTitle:
-      kind === 'album'
-        ? spotify.title
-        : (spotify.albumName ??
-          library?.album?.title ??
-          library?.albumName ??
-          ''),
+    albumId: library?.id ?? null,
+    albumTitle: spotify.title,
     artworkUrl: spotify.artworkUrl,
-    trackCount: kind === 'album' ? spotify.trackCount : 1,
-    ...(kind === 'track' && library ? { trackId: library.id } : {}),
+    trackCount: spotify.trackCount,
     credits: spotify.artists.map((name) => ({ id: null, name })),
   }
 }
@@ -154,11 +144,7 @@ function SpotifyPlayButton({ item }: { item: PlayableItem }) {
       />
     )
   const { snapshot } = view
-  const current =
-    item.kind === 'album'
-      ? view.current?.uri === item.uri
-      : snapshot !== null &&
-        (snapshot.trackUri === item.uri || snapshot.linkedFromUri === item.uri)
+  const current = view.current?.uri === item.uri
   return (
     <PlayPair
       place="row"
@@ -170,32 +156,13 @@ function SpotifyPlayButton({ item }: { item: PlayableItem }) {
   )
 }
 
-/** The row's play pair; none where it cannot be played, keeping the slot. */
-function suggestionPlay(
-  kind: TidalSimilarKind,
-  item: TidalSimilarItem,
-  title: string,
-) {
+/** The album suggestion's play pair, including a cached Spotify lookup. */
+function suggestedAlbumPlay(item: TidalSimilarItem, title: string) {
   const library = item.library
-  // A track added from TIDAL can still play through its cached Spotify match.
-  const playable = library?.spotifyId ? null : spotifyPlayable(kind, item)
+  const playable = library?.spotifyId ? null : spotifyAlbumPlayable(item)
   if (playable) return <SpotifyPlayButton item={playable} />
   if (item.state === 'library' && library)
-    return kind === 'album' ? (
-      <AlbumReferencePlayButton id={library.id} title={title} />
-    ) : (
-      <LibraryTrackPlayButton
-        track={{
-          id: library.id,
-          spotifyTrackId: library.spotifyId,
-          title,
-          artists: item.artists,
-          album: library.album,
-          albumName: library.albumName,
-          artworkUrl: library.artworkUrl,
-        }}
-      />
-    )
+    return <AlbumReferencePlayButton id={library.id} title={title} />
   return undefined
 }
 
@@ -236,6 +203,97 @@ function SimilarGenres({
   return genres
 }
 
+function SimilarTrackRow({
+  item,
+  title,
+  detailId,
+  actions,
+  matchEvidence,
+}: {
+  item: TidalSimilarItem
+  title: string
+  detailId: string | undefined
+  actions: ReactNode
+  matchEvidence: ReactNode
+}) {
+  const { track: stored, library, spotify } = item
+  const artistCredits = stored?.artistCredits ?? []
+  const creators = artistCredits.length
+    ? artistCredits
+    : item.artists.map((name) => ({ id: null, name }))
+  const track = {
+    ...(detailId ? { id: detailId } : {}),
+    title,
+    artists: creators.map(({ name }) => name),
+    artistCredits,
+    album: stored?.album ?? library?.album ?? null,
+    albumName:
+      stored?.albumName ??
+      library?.albumName ??
+      spotify?.albumName ??
+      item.linkedAlbums?.[0]?.title ??
+      null,
+    artworkUrl:
+      stored?.artworkUrl ?? library?.artworkUrl ?? spotify?.artworkUrl ?? null,
+    spotifyTrackId:
+      stored?.spotifyTrackId ??
+      library?.spotifyId ??
+      spotify?.spotifyId ??
+      null,
+    spotifyAlbumId: stored?.spotifyAlbumId ?? spotify?.spotifyAlbumId ?? null,
+  }
+  const available = libraryTrackPlayable(track) !== null
+  return (
+    <ListRow
+      thumb={
+        detailId ? (
+          <ItemThumb
+            kind="track"
+            src={track.artworkUrl}
+            title={title}
+            target={{ kind: 'track', id: detailId }}
+          />
+        ) : (
+          <MediaThumb kind="track" src={track.artworkUrl} size={40} />
+        )
+      }
+      title={
+        <RowTitle>
+          {detailId ? (
+            <DetailLink kind="track" id={detailId} title={title}>
+              {title}
+            </DetailLink>
+          ) : (
+            <span title={title}>{title}</span>
+          )}
+        </RowTitle>
+      }
+      by={
+        <>
+          <CreatorLinks kind="artist" creators={creators} />
+          {(track.album || track.albumName) && (
+            <>
+              {creators.length > 0 && ' · '}
+              <TrackBrowseAlbum track={track} />
+            </>
+          )}
+        </>
+      }
+      play={<LibraryTrackPlayButton track={track} />}
+      action={actions}
+    >
+      {(matchEvidence || !available) && (
+        <span className="ds-row-by">
+          {matchEvidence}
+          {matchEvidence && !available && ' · '}
+          {!available && 'Unavailable'}
+        </span>
+      )}
+      <SimilarGenres item={item} title={title} />
+    </ListRow>
+  )
+}
+
 export function SimilarRow({
   kind,
   itemId,
@@ -248,7 +306,8 @@ export function SimilarRow({
   const client = useQueryClient()
   const { apiBaseUrl } = useConfig()
   const announceAddition = useAnnounceLibraryAddition()
-  const title = item.library?.title ?? tidalSuggestionTitle(item)
+  const title =
+    item.track?.title ?? item.library?.title ?? tidalSuggestionTitle(item)
   const add = useMutation({
     retry: false,
     mutationFn: () =>
@@ -263,9 +322,12 @@ export function SimilarRow({
       void invalidateManualMediaAddition(client, kind)
     },
   })
-  const libraryId = add.data?.id ?? item.library?.id
-  const detailId = libraryId ?? item.catalogMediaItemId
-  const inLibrary = Boolean(detailId && libraryId === detailId)
+  const detailId =
+    add.data?.id ??
+    item.track?.id ??
+    item.library?.id ??
+    item.catalogMediaItemId
+  const inLibrary = Boolean(add.data || item.track?.inLibrary || item.library)
   const place = inLibrary
     ? 'library'
     : item.state === 'library'
@@ -274,79 +336,82 @@ export function SimilarRow({
         : 'unsearched'
       : item.state
   const match = item.libraryMatch
+  const matchEvidence =
+    item.library && match ? (
+      <DetailLink
+        kind={kind}
+        id={item.library.id}
+        tab="sources"
+        title={`Matched by ${libraryMatchLabels[match.basis]} ${match.value}`}
+      >
+        {kind === 'track' ? 'Library match' : 'In library'}
+      </DetailLink>
+    ) : null
+  const actions = (
+    <span className="ds-actions">
+      {!inLibrary &&
+        (place === 'spotify' && item.spotify ? (
+          <SuggestionLink
+            href={item.spotify.url}
+            service="Spotify"
+            itemTitle={title}
+          />
+        ) : (
+          <SuggestionLink href={item.url} service="TIDAL" itemTitle={title} />
+        ))}
+      <LibraryAction
+        kind={kind}
+        name={title}
+        saved={inLibrary || item.hiddenLibraryMatch}
+        pending={add.isPending}
+        onAdd={() => add.mutate()}
+      />
+    </span>
+  )
   return (
     <>
-      <SuggestionRow
-        place={place}
-        thumb={
-          <MediaThumb
-            kind={kind}
-            src={item.library?.artworkUrl ?? item.spotify?.artworkUrl ?? null}
-            size={40}
-          />
-        }
-        title={
-          detailId ? (
-            <RowTitle>
-              <DetailLink kind={kind} id={detailId} title={title}>
-                {title}
-              </DetailLink>
-            </RowTitle>
-          ) : (
-            <span className="ds-row-title" title={title}>
-              {title}
-            </span>
-          )
-        }
-        details={[
-          detailId && !inLibrary ? 'Outside library' : null,
-          item.artists.join(', '),
-          kind === 'album'
-            ? item.releaseDate?.slice(0, 4)
-            : item.durationSec !== null
-              ? formatTrackDuration(item.durationSec)
-              : null,
-        ]}
-        placeEvidence={
-          item.library && match ? (
-            <DetailLink
+      {kind === 'track' ? (
+        <SimilarTrackRow
+          item={item}
+          title={title}
+          detailId={detailId}
+          actions={actions}
+          matchEvidence={matchEvidence}
+        />
+      ) : (
+        <SuggestionRow
+          place={place}
+          thumb={
+            <MediaThumb
               kind={kind}
-              id={item.library.id}
-              tab="sources"
-              title={`Matched by ${libraryMatchLabels[match.basis]} ${match.value}`}
-            >
-              {inLibrary ? 'In library' : 'Library match'}
-            </DetailLink>
-          ) : undefined
-        }
-        badges={<SimilarGenres item={item} title={title} />}
-        play={suggestionPlay(kind, item, title)}
-        actions={
-          <span className="ds-actions">
-            {!inLibrary &&
-              (place === 'spotify' && item.spotify ? (
-                <SuggestionLink
-                  href={item.spotify.url}
-                  service="Spotify"
-                  itemTitle={title}
-                />
-              ) : (
-                <SuggestionLink
-                  href={item.url}
-                  service="TIDAL"
-                  itemTitle={title}
-                />
-              ))}
-            <LibraryAction
-              kind={kind}
-              name={title}
-              saved={inLibrary || item.hiddenLibraryMatch}
-              pending={add.isPending}
-              onAdd={() => add.mutate()}
+              src={item.library?.artworkUrl ?? item.spotify?.artworkUrl ?? null}
+              size={40}
             />
-          </span>
-        }
-      />
+          }
+          title={
+            detailId ? (
+              <RowTitle>
+                <DetailLink kind={kind} id={detailId} title={title}>
+                  {title}
+                </DetailLink>
+              </RowTitle>
+            ) : (
+              <span className="ds-row-title" title={title}>
+                {title}
+              </span>
+            )
+          }
+          details={[
+            detailId && !inLibrary ? 'Outside library' : null,
+            item.artists.join(', '),
+            item.releaseDate?.slice(0, 4),
+          ]}
+          placeEvidence={matchEvidence}
+          badges={<SimilarGenres item={item} title={title} />}
+          play={suggestedAlbumPlay(item, title)}
+          actions={actions}
+        />
+      )}
       {add.isError && (
         <Notice tone="danger">
           {errorMessage(add.error, `Could not add ${title} to the library.`)}
@@ -549,7 +614,9 @@ export function SimilarBody({
           <Status state="running">Finding on Spotify</Status>
         ) : (
           <ToolbarCount>
-            {similarCounts(items)}
+            {kind === 'track'
+              ? `${formatCount(items.length)} from TIDAL`
+              : similarCounts(items)}
             {source && <SimilarSource source={source} />}
           </ToolbarCount>
         )}

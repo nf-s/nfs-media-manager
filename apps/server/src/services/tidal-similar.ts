@@ -67,6 +67,7 @@ import {
   libraryMembershipBySpotifyId,
   libraryMembershipByTidalId,
   librarySimilarGenres,
+  similarTrackDetails,
   type SimilarLibraryItem,
 } from './similar-library-matches'
 import { codeKey } from './spotify-code-search'
@@ -1103,6 +1104,27 @@ export async function findStoredTidalSuggestion(
   return mapped ?? null
 }
 
+async function presentSimilarItems(
+  database: Reader,
+  kind: TidalSimilarKind,
+  target: NonNullable<Awaited<ReturnType<typeof similarTarget>>>,
+) {
+  const mapped = await mapSuggestions(database, kind, target.items)
+  if (kind === 'album') return mapSimilarGenres(database, kind, mapped, target)
+  const idOf = (item: TidalSimilarItem) =>
+    item.library?.id ?? item.catalogMediaItemId
+  const ids = [...new Set(mapped.flatMap((item) => idOf(item) ?? []))]
+  const [items, tracks] = await Promise.all([
+    mapSimilarGenres(database, kind, mapped, target),
+    similarTrackDetails(database, ids),
+  ])
+  return items.map((item) => {
+    const id = idOf(item)
+    const track = id ? tracks.get(id) : undefined
+    return track ? { ...item, track } : item
+  })
+}
+
 async function readTidalSimilar(
   kind: TidalSimilarKind,
   id: string,
@@ -1117,9 +1139,7 @@ async function readTidalSimilar(
       [SPOTIFY_SIMILAR_LOOKUP_TASK, SONOVAULT_SIMILAR_LOOKUP_TASK],
       id,
     ),
-    mapSuggestions(db, kind, target.items).then((mapped) =>
-      mapSimilarGenres(db, kind, mapped, target),
-    ),
+    presentSimilarItems(db, kind, target),
   ])
   const unmatched =
     kind === 'track' && target.tidalId === null

@@ -28,6 +28,7 @@ vi.mock('@/lib/db', () => ({
 }))
 
 import { refreshTrackAddedDates } from '@/services/spotify-playlists'
+import { setCatalogMediaAlias } from '@/services/catalog-discoveries'
 import { observeTidalSuggestion } from '@/services/music-catalog-observations'
 import { getTidalSimilar } from '@/services/tidal-similar'
 import { addTidalSimilarToLibrary } from '@/services/tidal-similar-library'
@@ -470,5 +471,59 @@ it('leaves a hidden suggestion hidden', async () => {
   })
   await expect(addTidalSimilarToLibrary(input)).rejects.toMatchObject({
     statusCode: 409,
+  })
+})
+
+it('presents a discovered track with its recorded credits and release after alias resolution', async () => {
+  const input = {
+    kind: 'tracks',
+    id: trackId,
+    tidalId: '299',
+  } satisfies AddInput
+  const alias = 'fixture-discovery-alias'
+  const artistCredits = [
+    { id: '901', name: 'Fixture Ensemble' },
+    { id: '902', name: 'Fixture Orchestra' },
+  ]
+  const suggestion = {
+    ...trackSuggestion(input.tidalId, null),
+    artistCredits,
+    linkedAlbums: [
+      { id: '991', title: 'Harbour Current', releaseDate: null, artistCredits },
+    ],
+  }
+  const track = await db.transaction(async (tx) => {
+    const track = await observeTidalSuggestion(tx, 'track', suggestion, {
+      operation: 'similar',
+      key: 'fixture-discovery-with-release',
+      subjectKind: 'track',
+      subjectId: trackId,
+      position: 1,
+    })
+    await setCatalogMediaAlias(tx, alias, track)
+    return track
+  })
+  await db
+    .update(schema.tidalSimilar)
+    .set({ items: [{ ...suggestion, catalogMediaItemId: alias }] })
+    .where(eq(schema.tidalSimilar.mediaItemId, trackId))
+
+  const before = (await getTidalSimilar(input)).items[0]?.track
+  expect(before).toMatchObject({
+    id: track,
+    inLibrary: false,
+    title: 'Curtain Fold (Extended Mix)',
+    artistCredits: [
+      { id: expect.any(String), name: 'Fixture Ensemble' },
+      { id: expect.any(String), name: 'Fixture Orchestra' },
+    ],
+    album: { id: expect.any(String), title: 'Harbour Current' },
+  })
+  expect(before?.artistCredits[0]?.id).not.toBe(before?.artistCredits[1]?.id)
+  expect(await addTidalSimilarToLibrary(input)).toEqual({ id: track })
+  expect(await addTidalSimilarToLibrary(input)).toEqual({ id: track })
+  expect((await getTidalSimilar(input)).items[0]?.track).toEqual({
+    ...before,
+    inLibrary: true,
   })
 })

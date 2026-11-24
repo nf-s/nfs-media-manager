@@ -10,6 +10,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { PluginResultSchema, type JsonValue } from '@repo/media-plugin-sdk'
 import { ArtistProfileSchema } from '@repo/schemas/artist-profiles'
+import type { TidalSuggestion } from '@repo/schemas/tidal'
 import { env } from '@/env'
 import { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
@@ -1085,6 +1086,8 @@ async function main() {
   const { patchAlbum, patchFilm } = await import('@/services/media')
   const { mergeTags, setTagVisibility } = await import('@/services/tags')
   const { relinkLastfmScrobbles } = await import('@/services/lastfm-scrobbles')
+  const { observeTidalSuggestion } =
+    await import('@/services/music-catalog-observations')
 
   const wiped = await wipe()
   console.log(`cleared ${wiped} tables`)
@@ -2293,7 +2296,7 @@ async function main() {
     await credit(track.id, [track.artist])
   }
 
-  // Saved Similar reads, including one Spotify match and one TIDAL-only track.
+  // Saved Similar reads, including one Spotify match and one shadow track.
   const similarKinds: ('album' | 'track')[] = ['album', 'track']
   for (const kind of similarKinds) {
     const album = kind === 'album'
@@ -2310,23 +2313,43 @@ async function main() {
       referenceType: kind,
       externalId: album ? '930001' : '930002',
     })
+    const suggestion: TidalSuggestion = {
+      tidalId,
+      title,
+      artists,
+      code,
+      version: null,
+      url: `https://tidal.com/browse/${kind}/${tidalId}`,
+      durationSec: album ? null : 263,
+      releaseDate: album ? '2025-10-04' : null,
+      genres: album ? [] : ['Deep House'],
+    }
+    if (!album) {
+      const artistCredits = [{ id: '930022', name: 'Halden Row' }]
+      suggestion.artistCredits = artistCredits
+      suggestion.linkedAlbums = [
+        {
+          id: '930021',
+          title: 'Harbour Current',
+          releaseDate: null,
+          artistCredits,
+        },
+      ]
+      suggestion.catalogMediaItemId = await db.transaction((tx) =>
+        observeTidalSuggestion(tx, 'track', suggestion, {
+          operation: 'similar',
+          key: parent.id,
+          subjectKind: 'track',
+          subjectId: parent.id,
+          position: 1,
+        }),
+      )
+    }
     await db.insert(schema.tidalSimilar).values({
       mediaItemId: parent.id,
       kind,
       readAt: daysAgo(1),
-      items: [
-        {
-          tidalId,
-          title,
-          artists,
-          code,
-          version: null,
-          url: `https://tidal.com/browse/${kind}/${tidalId}`,
-          durationSec: album ? null : 263,
-          releaseDate: album ? '2025-10-04' : null,
-          genres: album ? [] : ['Deep House'],
-        },
-      ],
+      items: [suggestion],
     })
     if (code) {
       const id = spotifyId('similar-album')

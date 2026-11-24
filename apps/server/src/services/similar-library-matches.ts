@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  TidalSimilarTrackSchema,
   normalizeSimilarGenres,
   type TidalSimilarKind,
 } from '@repo/schemas/tidal'
@@ -195,6 +196,60 @@ export async function libraryMembershipByTidalId(
             and r.external_id = any(${ids}::text[])
           order by m.created_at, m.id`)
   return collectMembership(result.rows)
+}
+
+const SimilarTrackRowsSchema = z.array(
+  z.object({ requestedId: z.string(), track: TidalSimilarTrackSchema }),
+)
+
+/** Reads the credits and release links shown in the track rows, including discoveries. */
+export async function similarTrackDetails(
+  database: Reader,
+  trackIds: readonly string[],
+) {
+  if (!trackIds.length) return new Map()
+  const result = await database.execute(sql`
+    select requested.id as "requestedId", jsonb_build_object(
+      'id', m.id,
+      'title', m.title,
+      'inLibrary', m.in_library,
+      'artistCredits', coalesce((
+        select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name)
+          order by c.billing_order, a.name, a.id)
+        from media_credit c
+        join artist a on a.id = c.artist_id
+        where c.media_item_id = m.id and c.role = 'artist'
+      ), '[]'::jsonb),
+      'album', case when am.id is not null
+        then jsonb_build_object('id', am.id, 'title', am.title) end,
+      'albumName', coalesce(lt.album_name, am.title),
+      'artworkUrl', coalesce(m.artwork_url, am.artwork_url),
+      'spotifyTrackId', lt.spotify_track_id,
+      'spotifyAlbumId', lt.spotify_album_id
+    ) as track
+    from unnest(${sql.param([...trackIds])}::text[]) requested(id)
+    left join catalog_media_alias alias on alias.alias_id = requested.id
+    join media_item m on m.id = coalesce(alias.media_item_id, requested.id)
+    join library_track lt on lt.media_item_id = m.id
+    left join lateral (
+      select o.media_item_id
+      from catalog_observation o
+      where lt.album_media_item_id is null
+        and o.subject_kind = 'track' and o.subject_id in (m.id, requested.id)
+        and o.provider = 'tidal' and o.operation = 'similar'
+        and o.target_kind = 'album' and o.relationship_role = 'release'
+        and o.media_item_id is not null
+      order by o.observed_at desc, o.position, o.id
+      limit 1
+    ) observed_album on true
+    left join media_item am on am.id = coalesce(lt.album_media_item_id, observed_album.media_item_id)
+    where not (${legacyHidden('m')})`)
+  return new Map(
+    SimilarTrackRowsSchema.parse(result.rows).map(({ requestedId, track }) => [
+      requestedId,
+      track,
+    ]),
+  )
 }
 
 const GenreRowsSchema = z.array(

@@ -21,7 +21,10 @@ import { album, libraryTrack, mediaItem, providerReference } from '@/schemas/db'
 import { lockAlbumImportWrites } from './album-imports'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { writeArtistCredits } from './artist-names'
-import { promoteCatalogMediaInTransaction } from './catalog-discoveries'
+import {
+  promoteCatalogMediaInTransaction,
+  resolveCatalogMediaId,
+} from './catalog-discoveries'
 import { applyProviderResultInTransaction } from './provider-state'
 import { storeManualTrackInTransaction } from './spotify-track-recordings'
 import { findStoredTidalSuggestion } from './tidal-similar'
@@ -246,7 +249,7 @@ export async function addTidalSimilarToLibrary(
     if (item.catalogMediaItemId) {
       const { mediaItemId } = await promoteCatalogMediaInTransaction(
         tx,
-        item.catalogMediaItemId,
+        await resolveCatalogMediaId(tx, item.catalogMediaItemId),
       )
       return { id: mediaItemId }
     }

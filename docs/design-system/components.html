@@ -132,24 +132,31 @@
         ['Second Floor', 'Ayla Ren', '2023', 'library', 2],
       ].map(suggestionOf('album'))
       const SIM_TRACKS = [
-        ['Glass Arcade', 'Halcyon Grid', '5:48', 'library', 3],
+        ['Glass Arcade', 'Halcyon Grid', 'Pressure Systems', 'library', 3],
         [
           'Afterhours Telex',
           'Vela Rooms',
-          '6:30',
+          'Night Shift Utopia',
           'spotify',
           8,
           ['Deep House'],
         ],
-        ['Halogen', 'Oskar Brandt', '7:02', 'spotify', 1],
-        ['Wet Pavement', 'Lumen Drift', '5:15', 'library', 10],
-        ['Lantern Code', 'Mirela Tan', '6:44', 'none', 4],
-        ['Carousel Theory', 'Dovetail Unit', '4:58', 'spotify', 6],
-        ['Tape Echo Prayer', 'Kessler & Moss', '6:05', 'unsearched', 9],
+        ['Halogen', 'Oskar Brandt', 'Tunnel Vision EP', 'spotify', 1],
+        ['Wet Pavement', 'Lumen Drift', 'Soft Transit', 'library', 10],
+        ['Lantern Code', 'Mirela Tan', 'Concrete Bloom', 'none', 4],
+        ['Carousel Theory', 'Dovetail Unit', '', 'spotify', 6],
+        [
+          'Tape Echo Prayer',
+          'Kessler & Moss',
+          'Strobe Hymnal',
+          'unsearched',
+          9,
+        ],
       ].map(suggestionOf('track'))
       const SIM_ALBUM = { kind: 'album', seed: 7, title: 'Afterglow Circuit' }
       const SIM_TRACK = { kind: 'track', seed: 7, title: 'Signal Fade' }
       const simCounts = (list) => {
+        if (list[0]?.kind === 'track') return `${list.length} from TIDAL`
         const n = (st) => list.filter((s) => s.state === st).length
         return `${list.length} from TIDAL · ${n('library')} in library · ${n('spotify')} on Spotify`
       }
@@ -1244,13 +1251,14 @@
               `<div class="g-inspectors">${simFrame(simAlbumDrawer(similar(SIM_ALBUMS, { hover: 1 })), 800)}${simFrame(simTrackDrawer(similar(SIM_TRACKS)), 800)}</div>` +
               g.rules([
                 '<b>A Similar tab after Overview</b> in the album and track drawers. Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
-                '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. The second line starts with where it can be played, then the artists, then the year (albums) or length (tracks).',
+                '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. Track artwork and titles open the track, including discoveries. Artist credits and an available album open their regular detail views.',
+                'Similar tracks use the standard Play and Add to queue pair. When there is no playable recording the pair is disabled and the row says <b>Unavailable</b>.',
                 'Show genre names in small pills below the details. Put <b>Add to Library</b> after the external suggestion’s service link.',
-                '<b>In library</b> (Pressure Systems): the title opens the library item and the play pair plays it.',
+                'Album suggestions show their playback status, artists and year. <b>In library</b> (Pressure Systems) opens the library album from the title.',
                 '<b>On Spotify</b> (Night Shift Utopia): the title is text and the play pair plays or queues it on Spotify. The service link opens it on Spotify.',
                 '<b>Not on Spotify</b> (Concrete Bloom): reserve the play pair’s space so titles line up. The service link opens it on TIDAL.',
                 '<b>Not looked up on Spotify</b> (Strobe Hymnal): drawn as Not on Spotify until the Spotify lookup has run.',
-                '<b>The line above the list</b> counts the suggestions, those in the library and those on Spotify. The refresh button queues the TIDAL read again; its title gives the date of the last read.',
+                '<b>The line above the list</b> counts the suggestions. For albums it includes playback status counts. The refresh button reads from TIDAL again and gives the date of the last read in its title.',
                 '<b>Nothing plays</b> until Play or Add to queue is pressed.',
               ]) +
               g.sub('States') +

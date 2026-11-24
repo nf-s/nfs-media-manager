@@ -16,7 +16,7 @@ import {
   SimilarBody,
   SimilarItems,
   similarCounts,
-  spotifyPlayable,
+  spotifyAlbumPlayable,
 } from './similar-items'
 
 const createdAt = '2026-01-01T00:00:00.000Z'
@@ -234,7 +234,7 @@ test('the library match opens Sources and names the reference used', () => {
   })
   assert.match(
     html,
-    /<a [^>]*title="Matched by ISRC QZFX22800001"[^>]*href="[^"]*library-100006[^"]*tab=sources"[^>]*>In library<\/a>/,
+    /<a [^>]*title="Matched by ISRC QZFX22800001"[^>]*href="[^"]*library-100006[^"]*tab=sources"[^>]*>Library match<\/a>/,
   )
 })
 
@@ -243,7 +243,10 @@ test('the counts say which TIDAL ID the list was read with', () => {
     kind: 'track',
     source: { kind: 'sonovault', tidalId: '200001', jobId: 'example-lookup' },
   })
-  assert.match(sonovault, /on Spotify · <a [^>]*>TIDAL ID from Sonovault<\/a>/)
+  assert.match(
+    sonovault,
+    /4 from TIDAL · <a [^>]*>TIDAL ID from Sonovault<\/a>/,
+  )
   assert.match(sonovault, /href="[^"]*example-lookup[^"]*"/)
   const match = body({
     source: { kind: 'tidal', tidalId: '200002', jobId: null },
@@ -464,7 +467,7 @@ test('the tab shows the stored result without fetching again', () => {
 test('a Spotify-only suggestion plays by its Spotify URI', () => {
   const [, spotify] = items
   assert.ok(spotify)
-  assert.deepEqual(spotifyPlayable('album', spotify), {
+  assert.deepEqual(spotifyAlbumPlayable(spotify), {
     kind: 'album',
     uri: 'spotify:album:0000000000000000000017',
     title: 'Spotify album',
@@ -478,13 +481,39 @@ test('a Spotify-only suggestion plays by its Spotify URI', () => {
   assert.equal(similarCounts([]), '0 from TIDAL · 0 in library · 0 on Spotify')
 })
 
-test('a cached Spotify match still queues a saved suggestion with its library identity', () => {
-  const [saved, external] = items
-  assert.ok(saved?.library && external?.spotify)
-  const playable = spotifyPlayable('track', {
-    ...saved,
-    spotify: external.spotify,
+test('a discovered track uses its linked credits, album and artwork in the track row', () => {
+  const html = body({
+    kind: 'track',
+    items: [
+      {
+        ...suggestion('100008', 'unsearched', 'External title'),
+        catalogMediaItemId: 'old-track-id',
+        track: {
+          id: 'discovered-track',
+          title: 'Discovered track',
+          inLibrary: false,
+          artistCredits: [
+            { id: 'first-artist', name: 'Fixture Ensemble' },
+            { id: 'second-artist', name: 'Fixture Orchestra' },
+          ],
+          album: { id: 'discovered-album', title: 'Recorded album' },
+          albumName: null,
+          artworkUrl: 'https://example.test/cover.jpg',
+          spotifyTrackId: null,
+          spotifyAlbumId: null,
+        },
+      },
+    ],
   })
-  assert.equal(playable?.trackId, saved.library.id)
-  assert.equal(playable?.uri, `spotify:track:${external.spotify.spotifyId}`)
+  assert.match(html, /aria-label="Open details for Discovered track"/)
+  assert.match(html, /src="https:\/\/example\.test\/cover\.jpg"/)
+  assert.match(html, /href="[^"]*first-artist"[^>]*>Fixture Ensemble</)
+  assert.match(html, /href="[^"]*second-artist"[^>]*>Fixture Orchestra</)
+  assert.match(html, /href="[^"]*discovered-album"[^>]*>Recorded album</)
+  assert.match(html, /href="[^"]*discovered-track"[^>]*>Discovered track</)
+  assert.match(html, /aria-label="Add track to library · Discovered track"/)
+  assert.match(html, /aria-label="Play Discovered track/)
+  assert.match(html, /aria-label="Add Discovered track to queue/)
+  assert.match(html, />Unavailable</)
+  assert.doesNotMatch(html, /old-track-id|Outside library|looked up on Spotify/)
 })

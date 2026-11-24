@@ -24,7 +24,7 @@ export function TrackBrowseAlbum({
   track,
   filterHref,
 }: {
-  track: TrackListItem
+  track: Pick<TrackListItem, 'album' | 'albumName'>
   filterHref?: BrowseFilterHref
 }) {
   if (track.album)
@@ -32,7 +32,7 @@ export function TrackBrowseAlbum({
       <DetailLink
         kind="album"
         id={track.album.id}
-        title={`Open ${track.album.title} in the album library`}
+        title={`Open ${track.album.title}`}
       >
         {track.albumName ?? track.album.title}
       </DetailLink>
