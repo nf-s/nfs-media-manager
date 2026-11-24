@@ -196,7 +196,7 @@ export async function saveProviderResponseCapture(
   if (
     stored &&
     taskPhase &&
-    ['spotify', 'youtube', 'rinse'].includes(stored.provider)
+    ['spotify', 'youtube', 'rinse', 'nts'].includes(stored.provider)
   )
     await database.transaction((tx) => projectSubscriptionResponse(tx, stored))
 }

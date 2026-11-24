@@ -3,6 +3,11 @@ import { PluginNormalizedResultSchema } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import {
+  isJsonRecord,
+  normalizeOmdbPayload,
+  normalizeTmdbPayload,
+} from '@/lib/provider-normalizers'
+import {
   LotRadioEpisodePageSchema,
   lotRadioFlightRows,
   normalizeLotRadioItem,
@@ -21,6 +26,7 @@ import { observeFilmRelations } from './film-catalog-observations'
 import { projectTmdbResponse } from './provider-response-history'
 import {
   observeStationEpisodes,
+  observeSubscriptionPage,
   projectSubscriptionResponse,
 } from './subscription-catalog-observations'
 
@@ -61,8 +67,18 @@ async function projectFilmSnapshots(
     .limit(limit)
   let projected = 0
   for (const row of rows) {
+    const legacy =
+      row.normalizedData === null && isJsonRecord(row.payload)
+        ? row.provider === 'tmdb'
+          ? normalizeTmdbPayload(row.payload).normalized
+          : row.provider === 'omdb'
+            ? normalizeOmdbPayload(row.payload).normalized
+            : row.provider === 'nfo'
+              ? {}
+              : undefined
+        : undefined
     const normalized = PluginNormalizedResultSchema.safeParse(
-      row.normalizedData,
+      row.normalizedData ?? legacy ?? null,
     )
     if (!normalized.success) continue
     await observeFilmRelations(tx, row.filmId, row.payload, normalized.data, {
@@ -100,6 +116,7 @@ async function projectResponses(tx: Transaction, after: string, limit: number) {
             'tmdb',
             'youtube',
             'rinse',
+            'nts',
             'lotradio',
           ]),
           eq(
@@ -137,14 +154,21 @@ async function projectResponses(tx: Transaction, after: string, limit: number) {
         const normalized = normalizeLotRadioItem(item, observedAt)
         return normalized ? [normalized] : []
       })
-      await observeStationEpisodes(tx, entries, {
+      const origin = {
         provider: row.provider,
         operation: 'station-feed',
         occurrenceKey: row.id,
         jobId: row.jobId,
         responseId: row.id,
         observedAt,
-      })
+      }
+      await observeSubscriptionPage(
+        tx,
+        'subscription-source',
+        [...new Set(entries.map(({ show }) => show.id))],
+        origin,
+      )
+      await observeStationEpisodes(tx, entries, origin)
       projected += Number(entries.length > 0)
     } else projected += Number((await projectSubscriptionResponse(tx, row)) > 0)
   }

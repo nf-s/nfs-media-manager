@@ -15,6 +15,11 @@ import {
 } from '@/lib/youtube-api'
 import type { StationEpisode } from '@/lib/mix-station'
 import { RinseSchedulePageSchema } from '@/lib/rinse-api'
+import {
+  NtsEpisodePageSchema,
+  NtsEpisodeSchema,
+  NtsShowDetailSchema,
+} from '@/lib/nts-api'
 import { providerResponse } from '@/schemas/db'
 import { MixIdSchema, MixShowIdSchema } from '@repo/schemas/subscriptions'
 import {
@@ -24,6 +29,7 @@ import {
 } from './catalog-discoveries'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type Occurrence = Parameters<typeof observeCatalogOccurrences>[1][number]
 type StoredResponse = Pick<
   typeof providerResponse.$inferSelect,
   'body' | 'id' | 'jobId' | 'provider' | 'receivedAt' | 'requestUrl' | 'status'
@@ -34,7 +40,7 @@ export async function subscriptionResponseOrigin(
   origin: CatalogOrigin,
   requestUrl?: string,
 ): Promise<CatalogOrigin> {
-  if (!origin.jobId) return origin
+  if (!origin.jobId || !requestUrl) return origin
   const [response] = await tx
     .select({
       id: providerResponse.id,
@@ -45,13 +51,14 @@ export async function subscriptionResponseOrigin(
       and(
         eq(providerResponse.jobId, origin.jobId),
         eq(providerResponse.provider, origin.provider),
-        requestUrl ? eq(providerResponse.requestUrl, requestUrl) : undefined,
+        eq(providerResponse.requestUrl, requestUrl),
       ),
     )
     .orderBy(desc(providerResponse.ordinal))
     .limit(1)
   return {
     ...origin,
+    occurrenceKey: response?.id ?? origin.occurrenceKey,
     responseId: response?.id,
     observedAt: response?.receivedAt ?? origin.observedAt,
   }
@@ -139,12 +146,69 @@ export async function observeStationEpisodes(
 
 const youtubeApi = 'https://www.googleapis.com/youtube/v3/'
 const spotifyApi = 'https://api.spotify.com/v1/'
+const ntsApi = 'https://www.nts.live/api/v2/'
+
+function ntsOccurrences(value: unknown, url: string, origin: CatalogOrigin) {
+  const page = NtsEpisodePageSchema.safeParse(value)
+  const show =
+    url.startsWith(`${ntsApi}shows/`) && !url.includes('/episodes')
+      ? NtsShowDetailSchema.safeParse(value).data
+      : undefined
+  const direct = NtsEpisodeSchema.safeParse(value).data
+  const episodes =
+    page.data?.results ??
+    show?.embeds?.episodes?.results ??
+    (direct ? [direct] : [])
+  const occurrences: Occurrence[] = []
+  const showId = MixShowIdSchema.safeParse(`nts.${show?.show_alias ?? ''}`)
+  if (showId.success)
+    occurrences.push({
+      target: { kind: 'subscription-source', id: showId.data },
+      origin: {
+        ...origin,
+        operation: 'station-show-detail',
+        details: { status: show?.status ?? null },
+      },
+    })
+  for (const [position, episode] of episodes.entries()) {
+    const sourceId = MixShowIdSchema.safeParse(
+      `nts.${episode.show_alias ?? ''}`,
+    )
+    if (!sourceId.success || !episode.episode_alias) continue
+    const id = MixIdSchema.safeParse(
+      `${sourceId.data}.${episode.episode_alias}`,
+    )
+    if (!id.success) continue
+    occurrences.push({
+      target: { kind: 'subscription-item', id: id.data },
+      origin: {
+        ...origin,
+        operation: 'station-episode-response',
+        subjectKind: 'subscription-source',
+        subjectId: sourceId.data,
+        relationshipRole: 'episode-of',
+        position: position + 1,
+        details: {
+          status: episode.status ?? null,
+          broadcast: episode.broadcast ?? null,
+          recordingListed: Boolean(
+            episode.audio_sources?.some((source) => source.url) ||
+            episode.mixcloud,
+          ),
+        },
+      },
+    })
+  }
+  return occurrences
+}
 
 function collectedSubscriptionRows(
   row: StoredResponse,
   value: unknown,
   origin: CatalogOrigin,
 ) {
+  if (row.provider === 'nts' && row.requestUrl?.startsWith(ntsApi))
+    return ntsOccurrences(value, row.requestUrl, origin)
   if (row.requestUrl === `${youtubeApi}subscriptions`) {
     const parsed = YoutubeSubscriptionPageSchema.safeParse(value)
     return parsed.success
@@ -332,7 +396,8 @@ export async function projectSubscriptionResponse(
       (row.provider === 'rinse' &&
         row.requestUrl.startsWith(
           'https://www.rinse.fm/api/query/v1/schedule/',
-        ))
+        )) ||
+      (row.provider === 'nts' && row.requestUrl.startsWith(ntsApi))
     )
   )
     return 0

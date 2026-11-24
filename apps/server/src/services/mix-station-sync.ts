@@ -730,15 +730,21 @@ async function syncFeedPage(
         episode: entry.episode,
       })),
     )
-    const origin = await subscriptionResponseOrigin(tx, {
-      provider: station,
-      operation: 'station-feed',
-      occurrenceKey: createStableId(
-        'station-feed',
-        JSON.stringify([run.runId, run.pageToken]),
-      ),
-      jobId: context.jobId,
-    })
+    const origin = await subscriptionResponseOrigin(
+      tx,
+      {
+        provider: station,
+        operation: 'station-feed',
+        occurrenceKey: createStableId(
+          'station-feed',
+          JSON.stringify([run.runId, run.pageToken]),
+        ),
+        jobId: context.jobId,
+      },
+      station === 'lotradio'
+        ? 'https://www.thelotradio.com/the-index'
+        : undefined,
+    )
     await observeSubscriptionPage(
       tx,
       'subscription-source',

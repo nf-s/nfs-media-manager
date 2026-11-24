@@ -1081,6 +1081,116 @@ describe('reviewed film import and enrichment', () => {
     ).toMatchObject({ status: 'failed' })
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it('recovers legacy NFO relationships from raw snapshots without applying personal state', async () => {
+    const { runNonMusicCatalogBackfill } =
+      await import('@/services/nonmusic-catalog-backfill')
+    const filmId = 'raw-nfo-film-fixture'
+    const snapshotId = 'raw-nfo-snapshot-fixture'
+    await databaseClient.insert(schema.mediaItem).values({
+      id: filmId,
+      mediaType: 'film',
+      title: 'Archive Film Fixture',
+      slug: filmId,
+    })
+    await databaseClient.insert(schema.film).values({ mediaItemId: filmId })
+    await databaseClient.insert(schema.providerSnapshot).values({
+      id: snapshotId,
+      mediaItemId: filmId,
+      source: 'legacy-import',
+      provider: 'nfo',
+      checksum: 'raw-nfo-fixture',
+      payload: {
+        movie: {
+          actor: [
+            {
+              name: ['Archive Actor Fixture'],
+              tmdbid: ['73101'],
+              role: ['Pilot'],
+            },
+          ],
+          set: [{ name: ['Archive Collection Fixture'], tmdbid: ['73102'] }],
+          trailer: ['https://youtu.be/fixtureAAAA'],
+          watched: ['true'],
+        },
+      },
+    })
+    await runNonMusicCatalogBackfill({ family: 'film-snapshots' }, true)
+    const occurrences = await databaseClient
+      .select()
+      .from(schema.catalogObservation)
+      .where(eq(schema.catalogObservation.snapshotId, snapshotId))
+    expect(occurrences).toHaveLength(4)
+    expect(occurrences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          targetKind: 'person',
+          details: expect.objectContaining({
+            externalId: '73101',
+            character: 'Pilot',
+          }),
+        }),
+        expect.objectContaining({
+          targetKind: 'collection',
+          details: expect.objectContaining({ externalId: '73102' }),
+        }),
+        expect.objectContaining({
+          targetKind: 'subscription-item',
+          relationshipRole: 'trailer',
+        }),
+      ]),
+    )
+    expect(
+      await databaseClient.query.film.findFirst({
+        where: eq(schema.film.mediaItemId, filmId),
+      }),
+    ).toMatchObject({ watched: false })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps extension candidates addressable without publishing opaque identifiers as catalog references', async () => {
+    const { observeFilmCandidate } =
+      await import('@/services/film-catalog-observations')
+    const id = await databaseClient.transaction(async (tx) => {
+      const candidate = {
+        title: 'Extension Candidate Fixture',
+        referenceType: 'fixture-group',
+        externalId: 'opaque-fixture-identifier',
+        artworkUrl: 'https://fixture.invalid/image',
+      }
+      const first = await observeFilmCandidate(tx, candidate, {
+        provider: 'fixture-bookmarks',
+        operation: 'match-search',
+        occurrenceKey: 'first',
+      })
+      expect(
+        await observeFilmCandidate(tx, candidate, {
+          provider: 'fixture-bookmarks',
+          operation: 'match-search',
+          occurrenceKey: 'second',
+        }),
+      ).toBe(first)
+      return first
+    })
+    if (!id) throw new Error('Expected a durable provisional film')
+    expect(
+      await databaseClient.query.mediaItem.findFirst({
+        where: eq(schema.mediaItem.id, id),
+      }),
+    ).toMatchObject({ inLibrary: false, artworkUrl: null })
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.providerReference)
+        .where(eq(schema.providerReference.mediaItemId, id)),
+    ).toHaveLength(0)
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.catalogObservation)
+        .where(eq(schema.catalogObservation.mediaItemId, id)),
+    ).toHaveLength(2)
+  })
   it('rejects broad runs, expired previews and previews owned by another user', async () => {
     const { confirmFilmImport } = await import('@/services/film-imports')
     const preview = await previewCsv(

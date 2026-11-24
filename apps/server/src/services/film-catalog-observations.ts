@@ -81,6 +81,21 @@ function withPosition<T>(value: JsonValue | undefined, schema: z.ZodType<T>) {
   })
 }
 
+function nfoRecord(value: JsonValue | undefined) {
+  return records(value).find(isJsonRecord)
+}
+
+function nfoText(value: JsonValue | undefined) {
+  for (const entry of records(value)) {
+    const candidate = isJsonRecord(entry)
+      ? (entry['#text'] ?? entry['_'])
+      : entry
+    const parsed = Name.safeParse(candidate)
+    if (parsed.success) return parsed.data
+  }
+  return undefined
+}
+
 export function tmdbFilmCandidates(
   payload: JsonValue,
   field: 'movie_results' | 'results',
@@ -101,6 +116,7 @@ export async function observeFilmCandidate(
   origin: CatalogOrigin,
 ) {
   const nativeType = candidate.referenceType
+  const shared = nativeType === 'tmdb' || nativeType === 'imdb'
   if (
     (nativeType === 'tmdb' &&
       !TmdbId.safeParse(candidate.externalId).success) ||
@@ -110,7 +126,7 @@ export async function observeFilmCandidate(
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
   )
-  if (nativeType === 'tmdb' || nativeType === 'imdb') {
+  if (shared) {
     const members = await tx
       .selectDistinct({ id: mediaItem.id })
       .from(providerReference)
@@ -141,9 +157,15 @@ export async function observeFilmCandidate(
       kind: 'film',
       title: candidate.title,
       provider: origin.provider,
-      referenceType: nativeType,
-      externalId: candidate.externalId,
-      artworkUrl: candidate.artworkUrl,
+      referenceType: shared ? nativeType : 'provider-film-candidate',
+      externalId: shared ? candidate.externalId : undefined,
+      provisionalKey: shared
+        ? undefined
+        : createStableId(
+            'film-provider-candidate',
+            JSON.stringify([origin.provider, nativeType, candidate.externalId]),
+          ),
+      artworkUrl: origin.provider === 'tmdb' ? candidate.artworkUrl : undefined,
       releaseDate: parseOptionalDate(candidate.releaseDate),
     },
     origin,
@@ -155,6 +177,7 @@ type FilmCredit = {
   role: string
   position: number
   externalId?: string
+  identityProvider?: string
   details?: Record<string, JsonValue>
 }
 
@@ -171,6 +194,41 @@ function filmCredits(
   data: Record<string, JsonValue>,
   normalized: PluginNormalizedResult,
 ): FilmCredit[] {
+  if (provider === 'nfo') {
+    const movie = nfoRecord(data['movie'])
+    if (!movie) return normalizedCredits(normalized)
+    const actors = records(movie['actor']).flatMap((entry, position) => {
+      if (!isJsonRecord(entry)) return []
+      const name = nfoText(entry['name'])
+      if (!name) return []
+      const externalId = TmdbId.safeParse(nfoText(entry['tmdbid'])).data
+      return [
+        {
+          name,
+          role: 'actor',
+          position,
+          externalId,
+          identityProvider: externalId ? 'tmdb' : undefined,
+          details: { character: nfoText(entry['role']) ?? null },
+        },
+      ]
+    })
+    const named = normalizedCredits(normalized)
+    for (const [field, role] of [
+      ['director', 'director'],
+      ['credits', 'writer'],
+    ]) {
+      if (!field || !role || named.some((entry) => entry.role === role))
+        continue
+      for (const [position, entry] of records(movie[field]).entries()) {
+        const name = nfoText(entry)
+        if (name) named.push({ name, role, position })
+      }
+    }
+    return actors.length
+      ? [...named.filter((entry) => entry.role !== 'actor'), ...actors]
+      : named
+  }
   const credits = data['credits']
   if (provider !== 'tmdb' || !isJsonRecord(credits))
     return normalizedCredits(normalized)
@@ -207,9 +265,9 @@ function filmTrailers(
   data: Record<string, JsonValue>,
   normalized: PluginNormalizedResult,
 ) {
-  const movie = isJsonRecord(data['movie']) ? data['movie'] : data
+  const movie = nfoRecord(data['movie']) ?? data
   const explicit = [
-    ...records(movie['trailer']),
+    ...records(movie['trailer']).map((trailer) => nfoText(trailer)),
     ...normalized.links
       .filter((link) => link.provider === 'youtube-trailer')
       .map((link) => link.url),
@@ -241,7 +299,7 @@ async function observePerson(
   credit: FilmCredit,
   origin: CatalogOrigin,
 ) {
-  const { provider } = origin
+  const provider = credit.identityProvider ?? origin.provider
   const key = credit.externalId
     ? [provider, credit.externalId]
     : [provider, filmId, credit.role, credit.position, credit.name]
@@ -319,18 +377,34 @@ export async function observeFilmRelations(
   const data = filmPayload(payload)
   for (const credit of filmCredits(origin.provider, data, normalized))
     await observePerson(tx, filmId, film.inLibrary, credit, origin)
-  const collection =
+  const nfoSet =
+    origin.provider === 'nfo'
+      ? nfoRecord(nfoRecord(data['movie'])?.['set'])
+      : undefined
+  const nfoSetName = nfoText(nfoSet?.['name'])
+  const collection = TmdbCollection.safeParse(
     origin.provider === 'tmdb'
-      ? TmdbCollection.safeParse(data['belongs_to_collection'])
-      : null
-  for (const [position, entry] of normalized.playlists.entries()) {
+      ? data['belongs_to_collection']
+      : nfoSet
+        ? { id: nfoText(nfoSet['tmdbid']), name: nfoSetName }
+        : null,
+  )
+  const memberships = [...normalized.playlists]
+  if (
+    nfoSetName &&
+    !memberships.some(
+      (entry) => entry.kind === 'collection' && entry.name === nfoSetName,
+    )
+  )
+    memberships.push({ kind: 'collection', name: nfoSetName, position: 0 })
+  for (const [position, entry] of memberships.entries()) {
     if (entry.kind !== 'collection') continue
     const exact =
-      collection?.success && collection.data.name === entry.name
+      collection.success && collection.data.name === entry.name
         ? collection.data
         : null
     const key = exact
-      ? [origin.provider, exact.id]
+      ? ['tmdb', exact.id]
       : [origin.provider, filmId, entry.name, position]
     const nativeId = createStableId(
       'catalog-film-collection',
@@ -342,7 +416,7 @@ export async function observeFilmRelations(
           .from(playlist)
           .where(
             and(
-              eq(playlist.catalogProvider, origin.provider),
+              eq(playlist.catalogProvider, 'tmdb'),
               eq(playlist.catalogExternalId, exact.id),
             ),
           )
@@ -369,7 +443,7 @@ export async function observeFilmRelations(
           id: nativeId,
           kind: 'collection',
           name: entry.name,
-          catalogProvider: origin.provider,
+          catalogProvider: exact ? 'tmdb' : origin.provider,
           catalogExternalId: exact?.id,
           artworkUrl: tmdbPosterUrl(exact?.poster_path),
         })
