@@ -6,8 +6,13 @@ import {
   type TidalSimilarKind,
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
+import { spotifyAlbumId } from '@/lib/spotify-api'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { upcVariants } from './spotify-code-search'
+import {
+  albumTrackDurationExpression,
+  trackSpotifyMatchExpression,
+} from './track-values'
 
 type Reader = Pick<typeof db, 'execute'>
 
@@ -202,7 +207,7 @@ const SimilarTrackRowsSchema = z.array(
   z.object({ requestedId: z.string(), track: TidalSimilarTrackSchema }),
 )
 
-/** Reads the credits and release links shown in the track rows, including discoveries. */
+/** Reads the track header fields in one statement for library tracks and discoveries. */
 export async function similarTrackDetails(
   database: Reader,
   trackIds: readonly string[],
@@ -221,11 +226,28 @@ export async function similarTrackDetails(
         where c.media_item_id = m.id and c.role = 'artist'
       ), '[]'::jsonb),
       'album', case when am.id is not null
-        then jsonb_build_object('id', am.id, 'title', am.title) end,
+        then jsonb_build_object('id', am.id, 'title', am.title) ||
+          case when not am.in_library then '{"inLibrary":false}'::jsonb else '{}'::jsonb end end,
       'albumName', coalesce(lt.album_name, am.title),
+      'albumLinkStrategy', lt.album_link_strategy,
       'artworkUrl', coalesce(m.artwork_url, am.artwork_url),
+      'durationSec', coalesce(lt.duration_sec,
+        ${albumTrackDurationExpression(sql`m.id`, sql`lt.album_media_item_id`)}),
+      'releaseDate', to_char(coalesce(m.release_date, am.release_date), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
       'spotifyTrackId', lt.spotify_track_id,
-      'spotifyAlbumId', lt.spotify_album_id
+      'spotifyAlbumId', lt.spotify_album_id,
+      'spotifyMatch', ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`m.source_label`)},
+      'spotifyUrl', coalesce(lt.spotify_url, 'https://open.spotify.com/track/' || lt.spotify_track_id),
+      'lastfmSource', (
+        select jsonb_build_object('artistName', s.artist_name, 'trackName', s.track_name)
+        from lastfm_track_source l
+        join lastfm_scrobble s on s.username = l.username
+          and s.artist_key = l.artist_key and s.track_key = l.track_key
+        where l.track_media_item_id = m.id
+        group by l.username, l.artist_key, l.track_key, s.artist_name, s.track_name
+        order by count(*) desc, s.artist_name, s.track_name, l.username
+        limit 1
+      )
     ) as track
     from unnest(${sql.param([...trackIds])}::text[]) requested(id)
     left join catalog_media_alias alias on alias.alias_id = requested.id
@@ -247,7 +269,12 @@ export async function similarTrackDetails(
   return new Map(
     SimilarTrackRowsSchema.parse(result.rows).map(({ requestedId, track }) => [
       requestedId,
-      track,
+      {
+        ...track,
+        spotifyAlbumId: track.spotifyAlbumId
+          ? spotifyAlbumId(track.spotifyAlbumId)
+          : null,
+      },
     ]),
   )
 }

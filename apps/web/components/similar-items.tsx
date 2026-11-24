@@ -14,9 +14,10 @@ import {
   type TidalSimilarSource,
 } from '@repo/schemas/tidal'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
+import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
-import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
+import { List, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { PlayPair } from '@repo/ui/components/ds/play'
 import { Status } from '@repo/ui/components/ds/status'
@@ -32,14 +33,15 @@ import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
 import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import { libraryTrackPlayable, type PlayableItem } from '@/utils/playback'
-import { ItemThumb } from './browse-items'
-import { CreatorLinks } from './creator-links'
+import { trackAlbumReference } from '@/utils/track-album-notices'
+import { trackServiceLinks } from '@/utils/track-links'
+import { TrackDetailHeader } from './track-detail-header'
+import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 import { DetailLink } from './detail-link'
 import { errorMessage } from './lastfm-sync'
 import { MediaThumb } from './media-artwork'
 import {
   AlbumReferencePlayButton,
-  LibraryTrackPlayButton,
   playFromView,
   unavailableReason,
 } from './play-controls'
@@ -203,28 +205,29 @@ function SimilarGenres({
   return genres
 }
 
-function SimilarTrackRow({
+function SimilarTrack({
   item,
   title,
   detailId,
-  actions,
+  libraryAction,
   matchEvidence,
 }: {
   item: TidalSimilarItem
   title: string
   detailId: string | undefined
-  actions: ReactNode
+  libraryAction: ReactNode
   matchEvidence: ReactNode
 }) {
   const { track: stored, library, spotify } = item
   const artistCredits = stored?.artistCredits ?? []
-  const creators = artistCredits.length
-    ? artistCredits
-    : item.artists.map((name) => ({ id: null, name }))
+  const spotifyTrackId =
+    stored?.spotifyTrackId ?? library?.spotifyId ?? spotify?.spotifyId ?? null
   const track = {
     ...(detailId ? { id: detailId } : {}),
     title,
-    artists: creators.map(({ name }) => name),
+    artists: artistCredits.length
+      ? artistCredits.map(({ name }) => name)
+      : item.artists,
     artistCredits,
     album: stored?.album ?? library?.album ?? null,
     albumName:
@@ -235,62 +238,70 @@ function SimilarTrackRow({
       null,
     artworkUrl:
       stored?.artworkUrl ?? library?.artworkUrl ?? spotify?.artworkUrl ?? null,
-    spotifyTrackId:
-      stored?.spotifyTrackId ??
-      library?.spotifyId ??
-      spotify?.spotifyId ??
-      null,
+    spotifyTrackId,
     spotifyAlbumId: stored?.spotifyAlbumId ?? spotify?.spotifyAlbumId ?? null,
+    spotifyUrl:
+      stored?.spotifyUrl ??
+      (spotifyTrackId === spotify?.spotifyId ? spotify.url : null) ??
+      (spotifyTrackId
+        ? `https://open.spotify.com/track/${spotifyTrackId}`
+        : null),
+    durationSec:
+      stored?.durationSec ?? item.durationSec ?? spotify?.durationSec ?? null,
+    releaseDate:
+      stored?.releaseDate ??
+      item.releaseDate ??
+      item.linkedAlbums?.[0]?.releaseDate ??
+      null,
   }
-  const available = libraryTrackPlayable(track) !== null
+  const reference =
+    stored?.albumLinkStrategy !== undefined && stored.spotifyMatch !== undefined
+      ? trackAlbumReference({
+          ...stored,
+          albumLinkStrategy: stored.albumLinkStrategy,
+          spotifyMatch: stored.spotifyMatch,
+        })
+      : null
+  const albumName =
+    reference?.album?.title ??
+    track.albumName ??
+    track.album?.title ??
+    (reference?.openBySpotify ? 'Album' : null)
+  const unavailable = libraryTrackPlayable(track) === null
   return (
-    <ListRow
-      thumb={
-        detailId ? (
-          <ItemThumb
-            kind="track"
-            src={track.artworkUrl}
-            title={title}
-            target={{ kind: 'track', id: detailId }}
-          />
-        ) : (
-          <MediaThumb kind="track" src={track.artworkUrl} size={40} />
-        )
-      }
-      title={
-        <RowTitle>
-          {detailId ? (
-            <DetailLink kind="track" id={detailId} title={title}>
-              {title}
-            </DetailLink>
-          ) : (
-            <span title={title}>{title}</span>
-          )}
-        </RowTitle>
-      }
-      by={
-        <>
-          <CreatorLinks kind="artist" creators={creators} />
-          {(track.album || track.albumName) && (
-            <>
-              {creators.length > 0 && ' · '}
-              <TrackBrowseAlbum track={track} />
-            </>
-          )}
-        </>
-      }
-      play={<LibraryTrackPlayButton track={track} />}
-      action={actions}
-    >
-      {(matchEvidence || !available) && (
-        <span className="ds-row-by">
-          {matchEvidence}
-          {matchEvidence && !available && ' · '}
-          {!available && 'Unavailable'}
-        </span>
-      )}
-      <SimilarGenres item={item} title={title} />
-    </ListRow>
+    <Section>
+      <div className="dtl-stack">
+        <TrackDetailHeader
+          track={track}
+          detailId={detailId}
+          album={
+            albumName &&
+            (reference?.openBySpotify && detailId ? (
+              <SpotifyAlbumReferenceLink
+                trackId={detailId}
+                spotifyAlbumId={reference.exactId}
+              >
+                {albumName}
+              </SpotifyAlbumReferenceLink>
+            ) : (
+              <TrackBrowseAlbum track={{ album: track.album, albumName }} />
+            ))
+          }
+          links={[
+            ...trackServiceLinks(track, stored?.lastfmSource),
+            { provider: 'tidal', label: 'TIDAL', url: item.url },
+          ]}
+          actions={libraryAction}
+        />
+        {(matchEvidence || unavailable || item.genres.length > 0) && (
+          <div className="dtl-filters">
+            {matchEvidence}
+            {unavailable && <span>Unavailable</span>}
+            <SimilarGenres item={item} title={title} />
+          </div>
+        )}
+      </div>
+    </Section>
   )
 }
 
@@ -347,35 +358,23 @@ export function SimilarRow({
         {kind === 'track' ? 'Library match' : 'In library'}
       </DetailLink>
     ) : null
-  const actions = (
-    <span className="ds-actions">
-      {!inLibrary &&
-        (place === 'spotify' && item.spotify ? (
-          <SuggestionLink
-            href={item.spotify.url}
-            service="Spotify"
-            itemTitle={title}
-          />
-        ) : (
-          <SuggestionLink href={item.url} service="TIDAL" itemTitle={title} />
-        ))}
-      <LibraryAction
-        kind={kind}
-        name={title}
-        saved={inLibrary || item.hiddenLibraryMatch}
-        pending={add.isPending}
-        onAdd={() => add.mutate()}
-      />
-    </span>
+  const libraryAction = (
+    <LibraryAction
+      kind={kind}
+      name={title}
+      saved={inLibrary || item.hiddenLibraryMatch}
+      pending={add.isPending}
+      onAdd={() => add.mutate()}
+    />
   )
   return (
     <>
       {kind === 'track' ? (
-        <SimilarTrackRow
+        <SimilarTrack
           item={item}
           title={title}
           detailId={detailId}
-          actions={actions}
+          libraryAction={libraryAction}
           matchEvidence={matchEvidence}
         />
       ) : (
@@ -409,7 +408,25 @@ export function SimilarRow({
           placeEvidence={matchEvidence}
           badges={<SimilarGenres item={item} title={title} />}
           play={suggestedAlbumPlay(item, title)}
-          actions={actions}
+          actions={
+            <span className="ds-actions">
+              {!inLibrary &&
+                (place === 'spotify' && item.spotify ? (
+                  <SuggestionLink
+                    href={item.spotify.url}
+                    service="Spotify"
+                    itemTitle={title}
+                  />
+                ) : (
+                  <SuggestionLink
+                    href={item.url}
+                    service="TIDAL"
+                    itemTitle={title}
+                  />
+                ))}
+              {libraryAction}
+            </span>
+          }
         />
       )}
       {add.isError && (
@@ -632,7 +649,7 @@ export function SimilarBody({
           <RefreshCw className="ds-i" data-size="sm" aria-hidden />
         </Button>
       </FilterLine>
-      <List compact aria-label={`Similar ${noun}`}>
+      <List compact={kind === 'album'} aria-label={`Similar ${noun}`}>
         {items.map((item) => (
           <SimilarRow
             key={item.tidalId}

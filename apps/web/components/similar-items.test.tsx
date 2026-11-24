@@ -12,6 +12,8 @@ import {
 } from '@repo/schemas/tidal'
 import { TrackDetailSchema } from '@repo/schemas/tracks'
 import { ConfigContext } from './providers'
+import { PlaybackViewContext } from './playback-provider'
+import { idlePlaybackState } from '@/utils/playback-engine'
 import {
   SimilarBody,
   SimilarItems,
@@ -481,7 +483,7 @@ test('a Spotify-only suggestion plays by its Spotify URI', () => {
   assert.equal(similarCounts([]), '0 from TIDAL · 0 in library · 0 on Spotify')
 })
 
-test('a discovered track uses its linked credits, album and artwork in the track row', () => {
+test('a discovered track uses the detail header with linked credits, album and artwork', () => {
   const html = body({
     kind: 'track',
     items: [
@@ -516,4 +518,53 @@ test('a discovered track uses its linked credits, album and artwork in the track
   assert.match(html, /aria-label="Add Discovered track to queue/)
   assert.match(html, />Unavailable</)
   assert.doesNotMatch(html, /old-track-id|Outside library|looked up on Spotify/)
+})
+
+test('cached provider-only tracks use detail headers without inventing catalog links', () => {
+  const client = new QueryClient()
+  client.setQueryData(
+    ['tidal-similar', 'track', 'example-track'],
+    similar({
+      kind: 'track',
+      itemId: 'example-track',
+      items: [suggestion('100010', 'none', 'Unlinked recording')],
+    }),
+  )
+  const html = render(<SimilarItems kind="track" id="example-track" />, client)
+  assert.match(html, /<header class="ds-detail-head"/)
+  assert.match(html, /<h2 class="ds-detail-title">Unlinked recording<\/h2>/)
+  assert.match(html, /class="ds-detail-play"/)
+  assert.match(html, /class="ds-detail-links"/)
+  assert.match(html, /class="ds-detail-facts"><span>5:48<\/span>/)
+  assert.match(html, />Unavailable</)
+  assert.doesNotMatch(
+    html,
+    /Open details for Unlinked recording|class="ds-row"/,
+  )
+})
+
+test('a connected player enables the detail play pair for a Spotify match without a local ID', () => {
+  const item = suggestion('100011', 'spotify', 'Playable recording')
+  const html = render(
+    <PlaybackViewContext.Provider
+      value={{ ...idlePlaybackState, enabled: true, connection: 'connected' }}
+    >
+      <SimilarBody
+        similar={similar({ kind: 'track', items: [item] })}
+        requesting={false}
+        onRequest={() => assert.fail('Rendering must not request')}
+      />
+    </PlaybackViewContext.Provider>,
+  )
+  for (const label of [
+    'Play Playable recording',
+    'Add Playable recording to queue',
+  ]) {
+    const button = html.match(
+      new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`),
+    )?.[0]
+    assert.ok(button)
+    assert.doesNotMatch(button, /disabled/)
+  }
+  assert.doesNotMatch(html, /Open details for Playable recording|>Unavailable</)
 })

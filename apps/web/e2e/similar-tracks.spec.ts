@@ -1,4 +1,25 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
+
+async function headerLayout(header: Locator) {
+  return header.evaluate((element) => {
+    const origin = element.getBoundingClientRect()
+    return ['.ds-art', '.ds-detail-title', '.ds-detail-play button'].map(
+      (selector) => {
+        const child = element.querySelector(selector)
+        if (!child) throw new Error(`Missing track header element ${selector}`)
+        const rect = child.getBoundingClientRect()
+        const style = getComputedStyle(child)
+        return {
+          left: Math.round(rect.x - origin.x),
+          top: Math.round(rect.y - origin.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          font: style.fontSize,
+        }
+      },
+    )
+  })
+}
 
 test('Similar tracks open discovered track, artist and album inspectors', async ({
   page,
@@ -9,10 +30,16 @@ test('Similar tracks open discovered track, artist and album inspectors', async 
 
   const row = page
     .getByLabel('Similar tracks', { exact: true })
-    .locator('.ds-row')
+    .locator('section')
     .filter({ hasText: 'Tidal Basin Edit' })
   const title = row.getByRole('link', { name: 'Tidal Basin Edit', exact: true })
   await expect(title).toBeVisible()
+  const suggested = await headerLayout(row.locator('header'))
+  await expect(
+    row.getByRole('heading', { name: 'Tidal Basin Edit' }),
+  ).toBeVisible()
+  await expect(row.getByText('4:23')).toBeVisible()
+  await expect(row.getByRole('link', { name: /Open on Last.fm/ })).toBeVisible()
   await title.focus()
   await expect(
     row.getByRole('button', { name: /Play Tidal Basin Edit/ }),
@@ -41,4 +68,7 @@ test('Similar tracks open discovered track, artist and album inspectors', async 
   await expect(
     page.getByRole('heading', { name: 'Tidal Basin Edit' }),
   ).toBeVisible()
+  expect(
+    await headerLayout(page.locator('.dtl-detail > header').last()),
+  ).toEqual(suggested)
 })

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { CatalogScopeQuerySchema } from './catalog'
 import { JobStatusSchema } from './job'
 import { normalizeTagName } from './tags'
-import { TrackListItemSchema } from './tracks'
+import { TrackLastfmSourceSchema, TrackListItemSchema } from './tracks'
 
 /** The task that matches one library track to TIDAL by its ISRC. */
 export const TIDAL_TRACK_MATCH_TASK = 'tidal-track-match'
@@ -363,6 +363,17 @@ export const TidalSimilarTrackSchema = TrackListItemSchema.pick({
 }).extend({
   inLibrary: z.boolean(),
   spotifyAlbumId: z.string().nullable(),
+  albumLinkStrategy: TrackListItemSchema.shape.albumLinkStrategy.optional(),
+  durationSec: TrackListItemSchema.shape.durationSec.optional(),
+  releaseDate: TrackListItemSchema.shape.releaseDate.optional(),
+  spotifyMatch: TrackListItemSchema.shape.spotifyMatch.optional(),
+  spotifyUrl: TrackListItemSchema.shape.spotifyUrl.optional(),
+  lastfmSource: TrackLastfmSourceSchema.pick({
+    artistName: true,
+    trackName: true,
+  })
+    .nullable()
+    .optional(),
 })
 
 export const TidalSimilarItemSchema = TidalSuggestionSchema.extend({

@@ -501,8 +501,7 @@
     return `<div class="ds-row"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${thumb(item)}<div class="ds-row-main"><a class="ds-row-title" href="#">${esc(item.title)}</a><span class="ds-row-by">${esc(o.by || item.by || '')}</span></div>${playable ? play('row', { playing: o.state === 'playing' }) : '<span></span>'}<div class="ds-row-tags">${item.tags ? pills(item.tags, { max: o.maxTags || 3 }) : ''}</div><div class="ds-row-meta">${(o.meta || []).join('')}</div></div>`
   }
 
-  /* A similar item from TIDAL in a compact list. s.state is library,
-     spotify, none or unsearched. Tracks use the standard linked track row. */
+  /* Similar albums use a compact row. Tracks reuse the track detail header. */
   const SUGGESTION = {
     library: 'In library',
     spotify: 'On Spotify',
@@ -513,10 +512,9 @@
     const track = s.kind === 'track'
     const linked = s.state === 'library'
     const service = s.state === 'spotify' ? 'Spotify' : 'TIDAL'
-    const title =
-      linked || track
-        ? `<a class="ds-row-title" href="#">${esc(s.title)}</a>`
-        : `<span class="ds-row-title">${esc(s.title)}</span>`
+    const title = linked
+      ? `<a class="ds-row-title" href="#">${esc(s.title)}</a>`
+      : `<span class="ds-row-title">${esc(s.title)}</span>`
     const open = linked
       ? ''
       : btn('', {
@@ -530,21 +528,30 @@
     const badges = s.genres?.length
       ? `<span class="ds-pills" data-wrap role="group" aria-label="Genres">${s.genres.map((genre) => pill(genre, { static: true })).join('')}</span>`
       : ''
-    const actions = `<span class="ds-actions">${open}${libraryAction(s.kind, s.title, { saved: linked })}</span>`
-    const artwork = track
-      ? `<a class="bi-thumb-link" href="#" aria-label="Open details for ${esc(s.title)}">${thumb(s)}</a>`
-      : thumb(s)
-    const by = track
-      ? [s.by, s.meta]
-          .filter(Boolean)
-          .map((label) => `<a href="#">${esc(label)}</a>`)
-          .join(' · ')
-      : esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))
-    const availability =
-      track && !playable ? '<span class="ds-row-by">Unavailable</span>' : ''
-    const controls =
-      playable || track ? play('row', { disabled: !playable }) : '<span></span>'
-    return `<div class="ds-row${track ? '' : ' ds-suggestion'}" data-action${attrs({ 'data-state': o.state })}>${artwork}<div class="ds-row-main">${title}<span class="ds-row-by">${by}</span>${availability}${badges}</div>${controls}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${actions}</div>`
+    const add = libraryAction(s.kind, s.title, { saved: linked })
+    if (track) {
+      const header = detailHead({
+        item: s,
+        kind: 'Track',
+        linked: s.hasDetail,
+        by: s.hasDetail
+          ? `by <a href="#">${esc(s.by)}</a>${s.meta ? ` · on <a href="#">${esc(s.meta)}</a>` : ''}`
+          : `by ${esc(s.by)}${s.meta ? ` · on ${esc(s.meta)}` : ''}`,
+        facts: s.duration ? [s.duration] : [],
+        play: play('header', { disabled: !playable }),
+        links: logoLinks([...(playable ? ['spotify'] : []), 'lastfm', 'tidal']),
+        actions: add,
+      })
+      const evidence = [
+        linked ? '<a href="#">Library match</a>' : '',
+        playable ? '' : 'Unavailable',
+        badges,
+      ].filter(Boolean)
+      return `<section class="ds-section">${header}${evidence.length ? `<div class="ds-actions">${evidence.join(' ')} </div>` : ''}</section>`
+    }
+    const by = esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))
+    const controls = playable ? play('row') : '<span></span>'
+    return `<div class="ds-row ds-suggestion" data-action${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${by}</span>${badges}</div>${controls}<div class="ds-row-tags"></div><div class="ds-row-meta"></div><span class="ds-actions">${open}${add}</span></div>`
   }
   /* A list row still loading, in a compact list with a trailing action */
   const skelRow = () =>
@@ -629,14 +636,19 @@
      headActions); without it, and without a pair to put there, the row is
      not drawn. */
   function detailHead(o) {
-    const art =
+    const cover =
       o.art === false ? '' : artBox(o.item, { ratio: o.ratio, size: o.size })
+    const name = esc(o.title || o.item.title)
+    const art = o.linked
+      ? `<a href="#" aria-label="Open details for ${name}">${cover}</a>`
+      : cover
+    const title = o.linked ? `<a href="#">${name}</a>` : name
     const lead =
       art && o.play
         ? `<div class="ds-detail-side">${art}<div class="ds-detail-play">${o.play}</div></div>`
         : art
     const row = `${art ? '' : o.play || ''}${o.actions || ''}`
-    return `<header class="ds-detail-head"${attrs({ 'data-art': art ? undefined : 'none' })}>${lead}<div><div class="ds-kicker">${esc(o.kind)}</div><h2 class="ds-detail-title">${esc(o.title || o.item.title)}</h2>${o.by ? `<div class="ds-detail-by">${o.by}</div>` : ''}<div class="ds-detail-facts">${o.facts.map((f) => `<span>${f}</span>`).join('')}</div>${o.links ? `<div class="ds-detail-links">${o.links}</div>` : ''}${row ? `<div class="ds-detail-actions">${row}</div>` : ''}</div></header>`
+    return `<header class="ds-detail-head"${attrs({ 'data-art': art ? undefined : 'none' })}>${lead}<div><div class="ds-kicker">${esc(o.kind)}</div><h2 class="ds-detail-title">${title}</h2>${o.by ? `<div class="ds-detail-by">${o.by}</div>` : ''}<div class="ds-detail-facts">${o.facts.map((f) => `<span>${f}</span>`).join('')}</div>${o.links ? `<div class="ds-detail-links">${o.links}</div>` : ''}${row ? `<div class="ds-detail-actions">${row}</div>` : ''}</div></header>`
   }
 
   /* The action row: the item's own actions (o.lead), then More at the far

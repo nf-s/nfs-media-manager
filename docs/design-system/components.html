@@ -152,7 +152,15 @@
           'unsearched',
           9,
         ],
-      ].map(suggestionOf('track'))
+      ]
+        .map(suggestionOf('track'))
+        .map((track, index) => ({
+          ...track,
+          hasDetail: index < 5,
+          duration: ['3:45', '4:20', '5:13', '2:58', '4:31', '3:40', '5:02'][
+            index
+          ],
+        }))
       const SIM_ALBUM = { kind: 'album', seed: 7, title: 'Afterglow Circuit' }
       const SIM_TRACK = { kind: 'track', seed: 7, title: 'Signal Fade' }
       const simCounts = (list) => {
@@ -166,8 +174,10 @@
         `<div class="ds-filterline"><span class="ds-toolbar-count">${simCounts(list)}</span>${btn('', { icon: 'refresh', size: 'xs', variant: 'ghost', aria: 'Read again from TIDAL', title: 'Read again from TIDAL · updated 2026-11-20' })}</div>`
       const simEmbedded = (html) =>
         `<div style="margin-inline:calc(var(--ds-gutter) * -1)">${html}</div>`
-      const similar = (list, o = {}) =>
-        simEmbedded(simSummary(list) + simList(list, o))
+      const similar = (list, o = {}) => {
+        const content = simSummary(list) + simList(list, o)
+        return list[0]?.kind === 'track' ? content : simEmbedded(content)
+      }
       const simAlbumHead = (o = {}) =>
         D.detailHead({
           item: SIM_ALBUM,
@@ -1254,9 +1264,9 @@
               `<div class="g-inspectors">${simFrame(simAlbumDrawer(similar(SIM_ALBUMS, { hover: 1 })), 800)}${simFrame(simTrackDrawer(similar(SIM_TRACKS)), 800)}</div>` +
               g.rules([
                 '<b>A Similar tab after Overview</b> in the album and track drawers. Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
-                '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. Track artwork and titles open the track, including discoveries. Artist credits and an available album open their regular detail views.',
-                'Similar tracks use the standard Play and Add to queue pair. When there is no playable recording the pair is disabled and the row says <b>Unavailable</b>.',
-                'Show genre names in small pills below the details. Put <b>Add to Library</b> after the external suggestion’s service link.',
+                'Keep suggestions in TIDAL’s order. Albums use compact list rows. Each track uses the shared Track detail header, including its artwork, title, credits, release and available facts.',
+                'Artwork and titles open identified tracks. Linked credits and releases open their own details. Play and Add to queue sit beneath the artwork. An unavailable recording keeps the disabled controls and an <b>Unavailable</b> label.',
+                'Track service icons sit beneath the facts, followed by <b>Add to Library</b> when available. Keep the match evidence and genre pills beneath the header.',
                 'Album suggestions show their playback status, artists and year. <b>In library</b> (Pressure Systems) opens the library album from the title.',
                 '<b>On Spotify</b> (Night Shift Utopia): the title is text and the play pair plays or queues it on Spotify. The service link opens it on Spotify.',
                 '<b>Not on Spotify</b> (Concrete Bloom): reserve the play pair’s space so titles line up. The service link opens it on TIDAL.',

@@ -4,7 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useDetailPerformance } from '@/hooks/useDetailPerformance'
 import { useQuery } from '@tanstack/react-query'
-import { AudioLines, Disc3 } from 'lucide-react'
+import { Disc3 } from 'lucide-react'
 import { musicDisplayTags } from '@repo/schemas/music-tags'
 import {
   formatBrowseFilterValue,
@@ -23,10 +23,7 @@ import {
 import { formatMusicalKey, type KeyNotation } from '@repo/schemas/musical-keys'
 import { formatTagName } from '@repo/schemas/tags'
 import { Thumb } from '@repo/ui/components/ds/artwork'
-import {
-  DetailActionsSpacer,
-  DetailHeader,
-} from '@repo/ui/components/ds/detail-header'
+import { DetailActionsSpacer } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Pill, PillLabel } from '@repo/ui/components/ds/pill'
@@ -51,20 +48,17 @@ import {
 } from '@/utils/track-browse'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import type { BrowseFilterHref } from '@/utils/browse-items'
-import { TrackArtistLinks } from './creator-links'
 import { CreatorDetailState } from './creator-detail-state'
 
 import {
-  DetailArt,
   DetailTabs,
   FilterPill,
   PlaylistPills,
   useDetailTab,
 } from './detail-frame'
-import { TrackHeaderPlay } from './detail-play'
+import { TrackDetailHeader } from './track-detail-header'
 import { ListeningStats } from './listening-stats'
 import { ListeningTrend } from './listening-trend'
-import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
@@ -637,71 +631,34 @@ function TrackDetailContent({
         `/tracks/${encodeURIComponent(targetId)}${tab ? `?tab=${tab}` : ''}`,
       )
   }
-  const links = serviceLinks(trackServiceLinks(item))
   return (
     <article className="dtl-detail">
       {stale && <CreatorDetailState stale retry={retry} subject="track" />}
-      <DetailHeader
-        art={
-          <DetailArt
-            src={item.artworkUrl}
-            fallback={<AudioLines className="ds-i" aria-hidden="true" />}
+      <TrackDetailHeader
+        track={item}
+        titleAction={
+          <TrackSpotifyMatchAction
+            track={item}
+            hasAlternate={Boolean(item.spotifyAlternate)}
+            onMatched={(targetId) => {
+              if (targetId !== item.id) openResolvedTrack(targetId)
+            }}
           />
         }
-        kind="Track"
-        title={
-          <>
-            {item.title}{' '}
-            <TrackSpotifyMatchAction
-              track={item}
-              hasAlternate={Boolean(item.spotifyAlternate)}
-              onMatched={(targetId) => {
-                if (targetId !== item.id) openResolvedTrack(targetId)
-              }}
-            />
-          </>
+        artistHref={(value) => filterHref({ field: 'artist', value })}
+        album={
+          albumAddition.name &&
+          (albumAddition.catalogId || albumAddition.openBySpotify ? (
+            <TrackAlbumReferenceLink item={item} addition={albumAddition}>
+              {albumAddition.name}
+            </TrackAlbumReferenceLink>
+          ) : item.albumName ? (
+            <span {...albumShortcut(item.albumName, filterHref)}>
+              {item.albumName}
+            </span>
+          ) : null)
         }
-        by={
-          <>
-            {item.artists.length > 0 && (
-              <>
-                by{' '}
-                <TrackArtistLinks
-                  track={item}
-                  fallbackHref={(value) =>
-                    filterHref({ field: 'artist', value })
-                  }
-                />
-              </>
-            )}
-            {albumAddition.name && (
-              <>
-                {item.artists.length > 0 ? ' · on ' : 'on '}
-                {albumAddition.catalogId || albumAddition.openBySpotify ? (
-                  <TrackAlbumReferenceLink item={item} addition={albumAddition}>
-                    {albumAddition.name}
-                  </TrackAlbumReferenceLink>
-                ) : item.albumName ? (
-                  <span {...albumShortcut(item.albumName, filterHref)}>
-                    {item.albumName}
-                  </span>
-                ) : null}
-              </>
-            )}
-          </>
-        }
-        facts={[
-          item.durationSec === null
-            ? null
-            : formatTrackLength(item.durationSec * 1000),
-          item.releaseDate?.slice(0, 4),
-        ]}
-        play={<TrackHeaderPlay track={item} />}
-        links={
-          links.length > 0 && (
-            <ServiceIconLinks links={links} itemTitle={item.title} />
-          )
-        }
+        links={trackServiceLinks(item)}
         actions={
           <>
             <CatalogLibraryAction

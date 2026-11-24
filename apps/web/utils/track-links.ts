@@ -10,8 +10,11 @@ export function lastfmTrackUrl(artist: string, title: string) {
 export function trackServiceLinks(
   track: Pick<TrackListItem, 'title' | 'artists' | 'spotifyUrl'> &
     Partial<Pick<TrackDetail, 'lastfmSources'>>,
+  source:
+    | Pick<TrackDetail['lastfmSources'][number], 'artistName' | 'trackName'>
+    | null
+    | undefined = track.lastfmSources?.[0],
 ) {
-  const source = track.lastfmSources?.[0]
   const lastfm = lastfmTrackUrl(
     source?.artistName ?? track.artists[0] ?? '',
     source?.trackName ?? track.title,

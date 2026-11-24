@@ -18,6 +18,8 @@ it('bounds Track pages, counts and history when most recordings are outside the 
   const { listCatalogObservations } =
     await import('@/services/catalog-discoveries')
   const { listTrackBrowsePage } = await import('@/services/tracks')
+  const { similarTrackDetails } =
+    await import('@/services/similar-library-matches')
   const page = TrackQuerySchema.parse({
     sortBy: 'title',
     direction: 'asc',
@@ -287,4 +289,35 @@ it('bounds Track pages, counts and history when most recordings are outside the 
     id: 'origin-track-1',
     inLibrary: true,
   })
+
+  await pool.query(`
+    insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id)
+    select 'fixture-account', 'fixture ensemble', 'recording-' || n, 'track-' || n
+    from generate_series(1, 20000) n;
+    insert into lastfm_scrobble (id, username, artist_key, track_key, artist_name, track_name, listened_at)
+    select 'fixture-play-' || n || '-' || play, 'fixture-account', 'fixture ensemble',
+      'recording-' || n, 'Fixture Ensemble', 'Recording ' || n, now() - play * interval '1 hour'
+    from generate_series(1, 20000) n cross join generate_series(1, 8) play;
+  `)
+  for (const table of ['lastfm_track_source', 'lastfm_scrobble'])
+    await pool.query(`vacuum analyze ${table}`)
+
+  const memberIds = Array.from({ length: 10 }, (_, i) => `track-${i + 1}`)
+  const outsideTrackIds = outsideIds(1).slice(1, 10)
+  const headers = await checkBudget('Similar track headers', 900, 1, () =>
+    similarTrackDetails(database, [
+      'origin-track-alias',
+      ...memberIds,
+      ...outsideTrackIds,
+    ]),
+  )
+  expect(headers.size).toBe(20)
+  expect(headers.get('origin-track-alias')).toMatchObject({
+    id: 'origin-track-1',
+  })
+  expect(headers.get('track-1')?.lastfmSource).toEqual({
+    artistName: 'Fixture Ensemble',
+    trackName: 'Recording 1',
+  })
+  expect(headers.get('origin-track-2')?.lastfmSource).toBeNull()
 })

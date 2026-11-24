@@ -33,6 +33,7 @@ import { observeTidalSuggestion } from '@/services/music-catalog-observations'
 import { getTidalSimilar } from '@/services/tidal-similar'
 import { addTidalSimilarToLibrary } from '@/services/tidal-similar-library'
 import { getTidalTrackMatch } from '@/services/tidal-track-match'
+import { getTrackDetail } from '@/services/tracks'
 
 type AddInput = Parameters<typeof addTidalSimilarToLibrary>[0]
 
@@ -513,6 +514,9 @@ it('presents a discovered track with its recorded credits and release after alia
     id: track,
     inLibrary: false,
     title: 'Curtain Fold (Extended Mix)',
+    durationSec: 300,
+    spotifyUrl: null,
+    lastfmSource: null,
     artistCredits: [
       { id: expect.any(String), name: 'Fixture Ensemble' },
       { id: expect.any(String), name: 'Fixture Orchestra' },
@@ -526,4 +530,110 @@ it('presents a discovered track with its recorded credits and release after alia
     ...before,
     inLibrary: true,
   })
+})
+
+it('presents a library suggestion with the same header facts as Track detail', async () => {
+  const id = 'fixture-similar-header-track'
+  const release = 'fixture-similar-header-release'
+  const spotifyId = '00000000000SYNTHETIC01'
+  const artworkUrl = 'https://example.test/similar-header.jpg'
+  const spotifyUrl = `https://open.spotify.com/track/${spotifyId}?fixture=1`
+  await db.insert(schema.mediaItem).values([
+    { id, slug: id, mediaType: 'track', title: 'Canonical Recording' },
+    {
+      id: release,
+      slug: release,
+      mediaType: 'album',
+      title: 'Canonical Release',
+      inLibrary: false,
+      artworkUrl,
+      releaseDate: new Date('2024-05-01T00:00:00Z'),
+    },
+  ])
+  await db.insert(schema.album).values({ mediaItemId: release })
+  await db.insert(schema.libraryTrack).values({
+    mediaItemId: id,
+    spotifyTrackId: spotifyId,
+    spotifyUrl,
+    spotifyAlbumId: `spotify:album:${spotifyAlbumId}`,
+    albumMediaItemId: release,
+    albumLinkStrategy: 'spotify-album',
+  })
+  await db.insert(schema.track).values({
+    id: 'fixture-similar-header-album-track',
+    albumMediaItemId: release,
+    trackMediaItemId: id,
+    title: 'Canonical Recording',
+    position: 1,
+    durationSec: 312,
+  })
+  const recordedName = {
+    username: 'fixture-account',
+    artistKey: 'fixture orchestra',
+    trackKey: 'scrobbled recording',
+  }
+  await db.insert(schema.lastfmTrackSource).values({
+    ...recordedName,
+    trackMediaItemId: id,
+  })
+  await db.insert(schema.lastfmScrobble).values(
+    ['Early Spelling', 'Recorded Spelling', 'Recorded Spelling'].map(
+      (trackName, i) => ({
+        ...recordedName,
+        id: `fixture-similar-header-scrobble-${i}`,
+        artistName: 'Fixture Orchestra',
+        trackName,
+        listenedAt: new Date(Date.UTC(2024, 5, i + 1)),
+      }),
+    ),
+  )
+  await db
+    .update(schema.tidalSimilar)
+    .set({
+      items: [
+        { ...trackSuggestion('298', null), catalogMediaItemId: id },
+        trackSuggestion('297', null),
+      ],
+    })
+    .where(eq(schema.tidalSimilar.mediaItemId, trackId))
+
+  const detail = await getTrackDetail(id)
+  const similar = await getTidalSimilar({ kind: 'tracks', id: trackId })
+  const [catalog, providerOnly] = similar.items
+  expect(detail).toMatchObject({
+    id,
+    inLibrary: true,
+    artworkUrl,
+    album: { id: release, title: 'Canonical Release', inLibrary: false },
+    durationSec: 312,
+    releaseDate: '2024-05-01T00:00:00.000Z',
+    spotifyAlbumId,
+    spotifyUrl,
+  })
+  expect(catalog?.track).toMatchObject({
+    id,
+    inLibrary: detail?.inLibrary,
+    title: detail?.title,
+    artistCredits: detail?.artistCredits,
+    artworkUrl: detail?.artworkUrl,
+    album: detail?.album,
+    albumName: detail?.albumName,
+    albumLinkStrategy: detail?.albumLinkStrategy,
+    durationSec: detail?.durationSec,
+    releaseDate: detail?.releaseDate,
+    spotifyTrackId: detail?.spotifyTrackId,
+    spotifyAlbumId: detail?.spotifyAlbumId,
+    spotifyMatch: detail?.spotifyMatch,
+    spotifyUrl: detail?.spotifyUrl,
+    lastfmSource: {
+      artistName: 'Fixture Orchestra',
+      trackName: 'Recorded Spelling',
+    },
+  })
+  expect(detail?.lastfmSources[0]).toMatchObject({
+    artistName: 'Fixture Orchestra',
+    trackName: 'Recorded Spelling',
+  })
+  expect(providerOnly?.track).toBeUndefined()
+  expect(request).not.toHaveBeenCalled()
 })
