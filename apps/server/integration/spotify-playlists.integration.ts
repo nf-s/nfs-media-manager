@@ -1546,7 +1546,18 @@ describe('Spotify playlist imports', () => {
         }),
       ]),
     )
-    expect(await getTrackDetail(legacy.id)).toBeNull()
+    const [oldRecording] = await databaseClient
+      .select({ id: schema.libraryTrack.mediaItemId })
+      .from(schema.libraryTrack)
+      .where(eq(schema.libraryTrack.mediaItemId, legacy.id))
+    expect(oldRecording).toBeUndefined()
+    expect(await getTrackDetail(legacy.id)).toMatchObject({
+      id: result.items.find(
+        (item) => item.spotifyTrackId === spotifyId('opening'),
+      )?.id,
+      spotifyTrackId: spotifyId('opening'),
+      sources: ['album', 'spotify'],
+    })
   })
 
   it('reconciles an album track list added after the Spotify playlist', async () => {
