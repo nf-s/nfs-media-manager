@@ -450,6 +450,67 @@ const searches = () =>
   })
 
 describe('TIDAL similar items in the request, with offline HTTP', () => {
+  it('shows the provider response while a playlist write holds the catalog lock', async () => {
+    const input = { kind: 'tracks', id: trackId } satisfies Parameters<
+      typeof getTidalSimilar
+    >[0]
+    const writer = await pool.connect()
+    await writer.query('begin')
+    await writer.query('select pg_advisory_xact_lock(614106)')
+    const refresh = refreshTidalSimilar(input, userId)
+    try {
+      await vi.waitFor(
+        async () => {
+          const captured = await databaseClient
+            .select({ id: schema.providerResponse.id })
+            .from(schema.providerResponse)
+            .where(eq(schema.providerResponse.provider, 'tidal'))
+          expect(captured).not.toHaveLength(0)
+        },
+        { timeout: 10_000 },
+      )
+      const preview = await getTidalSimilar(input)
+      expect(preview.job?.status).toBe('running')
+      expect(preview.readAt).toBeNull()
+      expect(preview.items.map((item) => item.tidalId)).toEqual(
+        similarTracks.data.map((row) => row.id),
+      )
+    } finally {
+      await writer.query('rollback')
+      writer.release()
+      await refresh
+    }
+    const saved = await getTidalSimilar(input)
+    expect(saved.job?.status).toBe('succeeded')
+    expect(saved.readAt).not.toBeNull()
+    if (!saved.job) throw new Error('Expected a completed read')
+    await databaseClient.delete(schema.tidalSimilar)
+    const latest = eq(schema.scrapeJob.id, saved.job.jobId)
+    await databaseClient
+      .update(schema.scrapeJob)
+      .set({ status: 'failed' })
+      .where(latest)
+    const failed = await getTidalSimilar(input)
+    expect(failed.items.map((row) => row.tidalId)).toEqual(
+      saved.items.map((row) => row.tidalId),
+    )
+    await databaseClient
+      .update(schema.scrapeJob)
+      .set({ status: 'cancelled' })
+      .where(latest)
+    expect((await getTidalSimilar(input)).items).toEqual([])
+    await databaseClient
+      .update(schema.scrapeJob)
+      .set({ status: 'failed' })
+      .where(latest)
+    await databaseClient
+      .update(schema.providerReference)
+      .set({ externalId: '800009' })
+      .where(eq(schema.providerReference.id, 'r3'))
+    expect((await getTidalSimilar(input)).items).toEqual([])
+    expect(tidalPaths()).toHaveLength(1)
+  })
+
   it('reads similar albums, maps them to the library and Spotify, and keeps the responses', async () => {
     await databaseClient.insert(schema.tag).values([
       {

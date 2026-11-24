@@ -11,6 +11,7 @@ import {
 } from '@repo/schemas/tidal'
 import {
   TidalSimilarDocumentSchema,
+  TIDAL_API_BASE,
   includedAlbums,
   includedArtists,
   includedTracks,
@@ -35,6 +36,13 @@ export type TidalSimilarLookup = z.infer<typeof TidalSimilarLookupSchema>
 
 const relationship = (kind: TidalSimilarKind) =>
   kind === 'album' ? 'similarAlbums' : 'similarTracks'
+
+const similarResourcePath = (kind: TidalSimilarKind, tidalId: string) =>
+  `/${kind === 'album' ? 'albums' : 'tracks'}/${tidalId}/relationships/${relationship(kind)}`
+
+/** Provider receipts retain the request URL without its query string. */
+export const similarTrackResponseUrl = (tidalId: string) =>
+  TIDAL_API_BASE + similarResourcePath('track', tidalId)
 
 const GenreResourceSchema = z.object({
   id: z.string(),
@@ -150,7 +158,7 @@ export async function lookupTidalSimilar(
     await tidalJson(
       request,
       token,
-      `/${kind === 'album' ? 'albums' : 'tracks'}/${tidalId}/relationships/${name}`,
+      similarResourcePath(kind, tidalId),
       [
         ['countryCode', countryCode],
         ['include', `${name},${name}.artists`],
@@ -158,6 +166,14 @@ export async function lookupTidalSimilar(
       options,
     ),
   )
+  return similarSuggestions(kind, tidalId, document)
+}
+
+export function similarSuggestions(
+  kind: TidalSimilarKind,
+  tidalId: string,
+  document: z.infer<typeof TidalSimilarDocumentSchema>,
+): TidalSuggestion[] {
   const artists = includedArtists(document.included)
   const albums = includedAlbums(document.included)
   const tracks = includedTracks(document.included)

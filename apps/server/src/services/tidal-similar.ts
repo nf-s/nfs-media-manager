@@ -37,9 +37,14 @@ import {
   createProviderResponseRecorder,
   providerResponseSecretValues,
 } from '@/lib/provider-response-history'
-import { tidalCountry, tidalToken } from '@/lib/tidal-api'
+import {
+  TidalSimilarDocumentSchema,
+  tidalCountry,
+  tidalToken,
+} from '@/lib/tidal-api'
 import {
   mediaItem,
+  providerResponse,
   providerReference,
   scrapeJob,
   scrapeJobItem,
@@ -81,7 +86,11 @@ import {
   readSimilarSonovaultTracks,
   similarTrackCheck,
 } from './sonovault-similar-lookup'
-import { lookupTidalSimilar } from './tidal-similar-lookup'
+import {
+  lookupTidalSimilar,
+  similarSuggestions,
+  similarTrackResponseUrl,
+} from './tidal-similar-lookup'
 import { reconcileSimilarArtistCredits } from './catalog-artist-reconciliation'
 import { reconcileTidalJobArtists } from './tidal-artist-reconciliation'
 import { matchTarget } from './tidal-track-match'
@@ -1134,6 +1143,34 @@ async function presentSimilarItems(
   })
 }
 
+/** Read the first list from its receipt while catalog identities are being saved,
+ * or if the save failed. A cancelled read never supplies recommendations. */
+async function capturedTrackSuggestions(jobId: string, tidalId: string) {
+  const [receipt] = await db
+    .select({ text: sql<string | null>`${providerResponse.body}->>'text'` })
+    .from(providerResponse)
+    .innerJoin(scrapeJob, eq(scrapeJob.id, providerResponse.jobId))
+    .where(
+      and(
+        eq(providerResponse.jobId, jobId),
+        eq(providerResponse.provider, PROVIDER),
+        eq(providerResponse.requestUrl, similarTrackResponseUrl(tidalId)),
+        eq(providerResponse.status, 200),
+        eq(providerResponse.bodyState, 'captured'),
+        sql`${scrapeJob.status} in ('running', 'failed')`,
+      ),
+    )
+    .orderBy(desc(providerResponse.attempt), desc(providerResponse.ordinal))
+    .limit(1)
+  if (!receipt?.text) return []
+  try {
+    const document = TidalSimilarDocumentSchema.parse(JSON.parse(receipt.text))
+    return similarSuggestions('track', tidalId, document)
+  } catch {
+    return []
+  }
+}
+
 async function readTidalSimilar(
   kind: TidalSimilarKind,
   id: string,
@@ -1148,8 +1185,26 @@ async function readTidalSimilar(
       [SPOTIFY_SIMILAR_LOOKUP_TASK, SONOVAULT_SIMILAR_LOOKUP_TASK],
       id,
     ),
-    presentSimilarItems(db, kind, target),
+    target.items.length ? presentSimilarItems(db, kind, target) : [],
   ])
+  let visibleItems = items
+  if (
+    kind === 'track' &&
+    !target.readAt &&
+    target.tidalId &&
+    job &&
+    (job.status === 'running' || job.status === 'failed')
+  ) {
+    const suggestions = await capturedTrackSuggestions(
+      job.jobId,
+      target.tidalId,
+    )
+    if (suggestions.length)
+      visibleItems = await presentSimilarItems(db, kind, {
+        ...target,
+        items: suggestions,
+      })
+  }
   const unmatched =
     kind === 'track' && target.tidalId === null
       ? await unmatchedTrack(db, id, matchJob)
@@ -1164,7 +1219,7 @@ async function readTidalSimilar(
     lookupJob: summarize(lookupJob),
     readAt: target.readAt?.toISOString() ?? null,
     source: target.readSource,
-    items,
+    items: visibleItems,
   })
 }
 

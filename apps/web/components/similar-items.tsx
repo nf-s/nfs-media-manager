@@ -84,7 +84,11 @@ function anyActive(similar: TidalSimilar | undefined) {
 }
 
 /** The item's similar albums or tracks, polled while a job is at work. */
-export function useTidalSimilar(kind: TidalSimilarKind, id: string) {
+export function useTidalSimilar(
+  kind: TidalSimilarKind,
+  id: string,
+  refreshing = false,
+) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
     queryKey: similarKey(kind, id),
@@ -93,7 +97,7 @@ export function useTidalSimilar(kind: TidalSimilarKind, id: string) {
         signal,
       }),
     refetchInterval: (query) =>
-      anyActive(query.state.data) ? LASTFM_SYNC_POLL_MS : false,
+      refreshing || anyActive(query.state.data) ? LASTFM_SYNC_POLL_MS : false,
   })
 }
 
@@ -107,7 +111,11 @@ export function useRefreshTidalSimilar(kind: TidalSimilarKind, id: string) {
       fetchApiData(apiBaseUrl, similarPath(kind, id), TidalSimilarSchema, {
         method: 'POST',
       }),
-    onSuccess: (similar) => client.setQueryData(similarKey(kind, id), similar),
+    onSuccess: async (similar) => {
+      const queryKey = similarKey(kind, id)
+      await client.cancelQueries({ queryKey, exact: true })
+      client.setQueryData(queryKey, similar)
+    },
   })
 }
 
@@ -309,10 +317,12 @@ export function SimilarRow({
   kind,
   itemId,
   item,
+  awaitingSave = false,
 }: {
   kind: TidalSimilarKind
   itemId: string
   item: TidalSimilarItem
+  awaitingSave?: boolean
 }) {
   const client = useQueryClient()
   const { apiBaseUrl } = useConfig()
@@ -364,6 +374,7 @@ export function SimilarRow({
       name={title}
       saved={inLibrary || item.hiddenLibraryMatch}
       pending={add.isPending}
+      disabled={awaitingSave}
       onAdd={() => add.mutate()}
     />
   )
@@ -573,10 +584,10 @@ export function SimilarBody({
     kind === 'track' ? 'Reading from TIDAL and Sonovault' : 'Reading from TIDAL'
   if (isActiveSimilarJob(matchJob) || (requesting && !matched))
     return <SimilarLoading label="Matching on TIDAL" />
+  const readingList = requesting || isActiveSimilarJob(job)
   if (
-    isActiveSimilarJob(job) ||
-    (requesting && !items.length) ||
-    (matched && !job && !readAt && !requestFailed)
+    !items.length &&
+    (readingList || (matched && !job && !readAt && !requestFailed))
   )
     return <SimilarLoading label={reading} />
   const readAgain = (
@@ -594,7 +605,7 @@ export function SimilarBody({
         {...(onReview ? { onReview } : {})}
       />
     )
-  if (!readAt)
+  if (!readAt && !items.length)
     return (
       <State
         size="sm"
@@ -620,13 +631,18 @@ export function SimilarBody({
     <div>
       {job?.status === 'failed' && (
         <Notice tone="danger">
-          The last read from TIDAL failed
-          {job.errorMessage ? `: ${job.errorMessage}` : '.'}
+          {readAt
+            ? `The last read from TIDAL failed${job.errorMessage ? `: ${job.errorMessage}` : '.'}`
+            : 'TIDAL returned these tracks, but the library update failed. Read again to retry.'}
         </Notice>
       )}
       <FilterLine>
-        {requesting ? (
-          <Status state="running">{reading}</Status>
+        {readingList ? (
+          <Status state="running">
+            {readAt
+              ? reading
+              : 'Received from TIDAL · updating library matches'}
+          </Status>
         ) : isActiveSimilarJob(lookupJob) ? (
           <Status state="running">Finding on Spotify</Status>
         ) : (
@@ -642,8 +658,12 @@ export function SimilarBody({
           variant="ghost"
           icon
           aria-label="Read again from TIDAL"
-          title={`Read again from TIDAL · updated ${formatDate(readAt)}`}
-          disabled={requesting}
+          title={
+            readAt
+              ? `Read again from TIDAL · updated ${formatDate(readAt)}`
+              : 'Read again from TIDAL'
+          }
+          disabled={readingList}
           onClick={onRequest}
         >
           <RefreshCw className="ds-i" data-size="sm" aria-hidden />
@@ -656,6 +676,7 @@ export function SimilarBody({
             kind={kind}
             itemId={similar.itemId}
             item={item}
+            awaitingSave={!readAt}
           />
         ))}
       </List>
@@ -699,8 +720,8 @@ export function SimilarItems({
   id: string
 }) {
   const client = useQueryClient()
-  const similar = useTidalSimilar(kind, id)
   const refresh = useRefreshTidalSimilar(kind, id)
+  const similar = useTidalSimilar(kind, id, refresh.isPending)
   const requested = useRef(false)
   const data = similar.data
   const unread = Boolean(data?.matched && !data.job && !data.readAt)

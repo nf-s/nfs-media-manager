@@ -271,6 +271,16 @@ test('a running Spotify lookup replaces the counts with its status', () => {
   assert.match(html, /Spotify album/)
 })
 
+test('a pending refresh preserves saved rows, and a failed first save preserves received tracks', () => {
+  const active = body({ kind: 'track', job: job('running') })
+  assert.match(active, /Library album/)
+  assert.match(active, /Reading from TIDAL/)
+  const failed = body({ kind: 'track', job: job('failed'), readAt: null })
+  assert.match(failed, /TIDAL returned these tracks/)
+  assert.match(failed, /Missing album/)
+  assert.match(failed, /Read again from TIDAL/)
+})
+
 test("a track's read names Sonovault, which maps it in the same request", () => {
   const reading = (kind: TidalSimilar['kind'], items?: []) =>
     render(

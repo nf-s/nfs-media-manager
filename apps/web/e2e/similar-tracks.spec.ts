@@ -1,4 +1,6 @@
 import { expect, test, type Locator } from '@playwright/test'
+import { z } from 'zod'
+import { TidalSimilarSchema } from '@repo/schemas/tidal'
 
 async function headerLayout(header: Locator) {
   return header.evaluate((element) => {
@@ -20,6 +22,74 @@ async function headerLayout(header: Locator) {
     )
   })
 }
+
+test('a first read shows recommendations while the catalog save is pending', async ({
+  page,
+}) => {
+  let reading = false
+  let release = () => {}
+  const saving = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/tidal/similar/tracks/*', async (route) => {
+    if (route.request().method() === 'POST') {
+      reading = true
+      await saving
+    }
+    const response = await route.fetch({ method: 'GET' })
+    const payload = z
+      .object({
+        statusCode: z.number(),
+        message: z.string(),
+        data: TidalSimilarSchema,
+      })
+      .parse(await response.json())
+    const saved = payload.data
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ response })
+      return
+    }
+    await route.fulfill({
+      response,
+      json: {
+        ...payload,
+        data: {
+          ...saved,
+          readAt: null,
+          job: reading
+            ? {
+                jobId: 'example-read',
+                createdAt: new Date().toISOString(),
+                finishedAt: null,
+                errorMessage: null,
+                status: 'running',
+              }
+            : null,
+          items: reading ? saved.items : [],
+        },
+      },
+    })
+  })
+  try {
+    await page.goto('/tracks?view=list&q=Hidden+Letter')
+    await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
+    await page.getByRole('tab', { name: 'Similar', exact: true }).click()
+    await expect(
+      page.getByText('Received from TIDAL · updating library matches'),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Tidal Basin Edit' }),
+    ).toBeVisible()
+    await expect(
+      page.getByLabel('Add track to library · Tidal Basin Edit'),
+    ).toBeDisabled()
+  } finally {
+    release()
+  }
+  await expect(
+    page.getByLabel('Add track to library · Tidal Basin Edit'),
+  ).toBeEnabled()
+})
 
 test('Similar tracks open discovered track, artist and album inspectors', async ({
   page,
