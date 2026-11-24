@@ -1,5 +1,11 @@
 import { z } from 'zod'
+import {
+  PlaybackCatalogItemSchema,
+  type PlaybackCatalogInput,
+  type PlaybackCatalogItem,
+} from '@repo/schemas/playback'
 import type { PlaybackSnapshot, PlayedTrack } from './playback'
+import { playbackSpotifyId } from './playback-catalog'
 
 const DeviceSchema = z.object({
   id: z.string().nullable(),
@@ -37,14 +43,49 @@ const StateSchema = z.object({
   is_playing: z.boolean(),
   item: z.unknown(),
 })
+const ObservedTrackSchema = TrackSchema.pick({
+  uri: true,
+  name: true,
+  artists: true,
+  album: true,
+  duration_ms: true,
+}).extend({ duration_ms: TrackSchema.shape.duration_ms.optional() })
+
+function catalogTrack(value: unknown): PlaybackCatalogItem | null {
+  const parsed = ObservedTrackSchema.safeParse(value)
+  if (!parsed.success) return null
+  const track = parsed.data
+  const item = PlaybackCatalogItemSchema.safeParse({
+    kind: 'track',
+    spotifyId: playbackSpotifyId('track', track.uri),
+    title: track.name,
+    durationSec: track.duration_ms
+      ? Math.round(track.duration_ms / 1000)
+      : undefined,
+    album: track.album
+      ? {
+          title: track.album.name,
+          spotifyId: playbackSpotifyId('album', track.album.uri),
+        }
+      : undefined,
+    artists: track.artists.map(({ name, uri }) => ({
+      name,
+      spotifyId: playbackSpotifyId('artist', uri),
+    })),
+  })
+  return item.success ? item.data : null
+}
+
 const QueueItemSchema = z
   .object({
     uri: z.string().min(1),
     linked_from: z.object({ uri: z.string().min(1).nullish() }).nullish(),
   })
-  .transform(({ uri, linked_from }) => ({
+  .passthrough()
+  .transform(({ uri, linked_from, ...item }) => ({
     uri,
     linkedFromUri: linked_from?.uri ?? null,
+    catalog: catalogTrack({ ...item, uri }),
   }))
 const QueueSchema = z.object({
   currently_playing: QueueItemSchema.nullable(),
@@ -63,7 +104,7 @@ const AlbumTracksSchema = z.object({
 const HistorySchema = z.object({
   items: z.array(
     z.object({
-      track: z.object({ uri: z.string(), name: z.string() }),
+      track: z.object({ uri: z.string(), name: z.string() }).passthrough(),
       played_at: z.string(),
     }),
   ),
@@ -207,6 +248,10 @@ type Query = Record<string, string | number | undefined>
 export function createPlayerApi(
   token: TokenSource,
   fetcher: typeof fetch = fetch,
+  observe?: (
+    operation: PlaybackCatalogInput['operation'],
+    items: PlaybackCatalogItem[],
+  ) => void,
 ) {
   async function send(
     method: 'GET' | 'PUT' | 'POST',
@@ -285,7 +330,18 @@ export function createPlayerApi(
       const { currently_playing: current, queue: upcoming } = QueueSchema.parse(
         await response.json(),
       )
-      return { current, upcoming }
+      const items = [current, ...upcoming].flatMap((row) =>
+        row?.catalog ? [row.catalog] : [],
+      )
+      if (items.length) observe?.('playback-queue', items)
+      const playable = ({
+        uri,
+        linkedFromUri,
+      }: NonNullable<typeof current>) => ({ uri, linkedFromUri })
+      return {
+        current: current ? playable(current) : null,
+        upcoming: upcoming.map(playable),
+      }
     },
     async transfer(deviceId: string, play: boolean) {
       await send('PUT', '', {}, { device_ids: [deviceId], play })
@@ -351,6 +407,11 @@ export function createPlayerApi(
         return null
       }
       const { items } = HistorySchema.parse(await response.json())
+      const catalog = items.flatMap(({ track }) => {
+        const item = catalogTrack(track)
+        return item ? [item] : []
+      })
+      if (catalog.length) observe?.('playback-recovery', catalog)
       return items.flatMap(({ track, played_at: at }) => {
         const playedAt = Date.parse(at)
         return Number.isNaN(playedAt)

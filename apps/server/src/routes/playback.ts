@@ -2,6 +2,8 @@ import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import { bodyLimit } from 'hono/body-limit'
 import { createMiddleware } from 'hono/factory'
 import {
+  PlaybackCatalogInputSchema,
+  PlaybackCatalogResultSchema,
   PlaybackReleaseInputSchema,
   PlaybackReleaseResultSchema,
   PlaybackSyncInputSchema,
@@ -20,6 +22,7 @@ import {
 import { setPlaybackLogRole } from '@/lib/request-log'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireBrowserSession } from '@/middlewares/auth'
+import { observePlaybackCatalog } from '@/services/playback-catalog'
 import {
   releaseUserPlayback,
   syncUserPlayback,
@@ -54,6 +57,42 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'no-referrer')
   await next()
 })
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/catalog',
+    security: ownerSessionSecurity,
+    middleware: [browserSession, sameOrigin, sessionBodyLimit],
+    request: {
+      body: {
+        required: true,
+        content: { 'application/json': { schema: PlaybackCatalogInputSchema } },
+      },
+    },
+    responses: {
+      200: {
+        description:
+          'Record a playback catalog observation and resolve local references',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(PlaybackCatalogResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Owner browser session required'),
+      403: jsonErrorResponse('Forbidden'),
+      413: jsonErrorResponse('Playback state exceeds the size limit'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await observePlaybackCatalog(c.req.valid('json')),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

@@ -14,6 +14,7 @@ import {
   includedAlbums,
   includedArtists,
   includedTracks,
+  tidalCatalogCredits,
   tidalDurationSec,
   tidalJson,
   tidalUrl,
@@ -79,11 +80,13 @@ function albumSuggestion(
   genreResources: ReadonlyMap<string, string>,
 ): TidalSuggestion {
   const genres = genreNames(album, genreResources)
+  const credits = tidalCatalogCredits(album, artists)
   return TidalSuggestionSchema.parse({
     tidalId: album.id,
     title: album.attributes.title,
     version: null,
     artists: artistNames(album, artists),
+    ...(credits.length ? { artistCredits: credits } : {}),
     code: album.attributes.barcodeId?.trim() || null,
     durationSec: tidalDurationSec(album.attributes.duration),
     releaseDate: album.attributes.releaseDate?.trim() || null,
@@ -95,14 +98,33 @@ function albumSuggestion(
 function trackSuggestion(
   track: TidalTrackResource,
   artists: Map<string, TidalArtistResource>,
+  albums: Map<string, TidalAlbumResource>,
   genreResources: ReadonlyMap<string, string>,
 ): TidalSuggestion {
   const genres = genreNames(track, genreResources)
+  const credits = tidalCatalogCredits(track, artists)
+  const linkedAlbums = (track.relationships?.albums?.data ?? [])
+    .flatMap(({ id }) => {
+      const album = albums.get(id)
+      return album
+        ? [
+            {
+              id,
+              title: album.attributes.title,
+              releaseDate: album.attributes.releaseDate ?? null,
+              artistCredits: tidalCatalogCredits(album, artists),
+            },
+          ]
+        : []
+    })
+    .slice(0, 20)
   return TidalSuggestionSchema.parse({
     tidalId: track.id,
     title: track.attributes.title,
     version: track.attributes.version?.trim() || null,
     artists: artistNames(track, artists),
+    ...(credits.length ? { artistCredits: credits } : {}),
+    ...(linkedAlbums.length ? { linkedAlbums } : {}),
     code: track.attributes.isrc?.trim() || null,
     durationSec: tidalDurationSec(track.attributes.duration),
     releaseDate: null,
@@ -157,7 +179,7 @@ export async function lookupTidalSimilar(
     const suggestion = album
       ? albumSuggestion(album, artists, genres)
       : track
-        ? trackSuggestion(track, artists, genres)
+        ? trackSuggestion(track, artists, albums, genres)
         : null
     if (suggestion)
       suggestions.push({ ...suggestion, catalogPosition: index + 1 })

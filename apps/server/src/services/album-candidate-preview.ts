@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { nanoid } from 'nanoid'
 import { PluginResultSchema } from '@repo/media-plugin-sdk'
 import {
   AlbumCandidatePreviewSchema,
@@ -11,8 +12,10 @@ import {
 } from '@/lib/album-provider-details'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { parseOptionalDate } from '@/lib/media-utils'
 import { readAlbumMatchRejections } from './album-match-rejections'
 import { providerOperation } from './manual-add'
+import { observeCatalogMedia } from './catalog-discoveries'
 
 function releaseDetails(input: AlbumCandidatePreviewInput, payload: unknown) {
   if (input.provider === 'lastfm') {
@@ -95,6 +98,61 @@ export async function previewAlbumCandidate(input: AlbumCandidatePreviewInput) {
     undefined,
     'previewing album candidates',
   )
+  const release = releaseDetails(input, result.payload)
+  const { provider } = input
+  const tracks = result.normalized.tracks.slice(0, 500)
+  const key = nanoid()
+  const observedTracks = await db.transaction(async (tx) => {
+    const albumId = await observeCatalogMedia(
+      tx,
+      {
+        kind: 'album',
+        title: release.title,
+        provider,
+        referenceType: input.referenceType,
+        externalId: input.externalId,
+        releaseDate: parseOptionalDate(release.date),
+        trackCount: result.normalized.tracks.length,
+        credits: release.artists.map((name) => ({ name })),
+      },
+      {
+        provider,
+        operation: 'album-preview',
+        occurrenceKey: key,
+        subjectKind: 'album',
+        subjectId: input.albumId,
+      },
+    )
+    const ids = []
+    for (const track of tracks) {
+      ids.push(
+        await observeCatalogMedia(
+          tx,
+          {
+            kind: 'track',
+            title: track.title,
+            provider,
+            referenceType: 'track',
+            albumId,
+            albumName: release.title,
+            durationSec: track.durationSec,
+            credits: track.artists?.map((name) => ({ name })),
+            provisionalKey: JSON.stringify([albumId, track.position]),
+          },
+          {
+            provider,
+            operation: 'album-preview',
+            occurrenceKey: key,
+            subjectKind: 'album',
+            subjectId: albumId,
+            relationshipRole: 'track_on_edition',
+            position: track.position,
+          },
+        ),
+      )
+    }
+    return ids
+  })
   if (
     result.normalized.references.some(isRejected) ||
     result.normalized.links.some((link) =>
@@ -110,15 +168,15 @@ export async function previewAlbumCandidate(input: AlbumCandidatePreviewInput) {
       statusCode: 422,
       message: 'The provider returned no album URL.',
     })
-  const tracks = result.normalized.tracks
   return AlbumCandidatePreviewSchema.parse({
-    ...releaseDetails(input, result.payload),
+    ...release,
     url: link.url,
-    trackCount: tracks.length,
-    tracks: tracks.slice(0, 500).map(({ title, position, durationSec }) => ({
+    trackCount: result.normalized.tracks.length,
+    tracks: tracks.map(({ title, position, durationSec }, index) => ({
       title,
       position,
       durationSec: durationSec ?? null,
+      catalogMediaItemId: observedTracks[index],
     })),
   })
 }

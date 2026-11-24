@@ -44,8 +44,10 @@ import {
 import { closeChangeBatch, openChangeBatch } from './library-changes'
 import {
   latestCatalogResponseId,
+  observeSpotifySearchResults,
   observeSpotifySearchTrack,
 } from './music-catalog-observations'
+import type { SpotifySearchObservation } from './provider-search-task-replay'
 import { reconcileSpotifyTrackSearchInTransaction } from './spotify-track-search-acceptance'
 import {
   sameSpotifySearchArtists,
@@ -311,6 +313,10 @@ export async function runSpotifyTrackSearch(
         message:
           'Lookup skipped: the Sonovault candidate is no longer accepted.',
       }
+    let observed: SpotifySearchObservation[] | undefined
+    const capture = (results: SpotifySearchObservation[]) => {
+      observed = results
+    }
     const candidates = sonovault
       ? await lookupSpotifyTrackCandidates(
           sonovault.spotifyTrackId,
@@ -318,6 +324,7 @@ export async function runSpotifyTrackSearch(
           context.assertActive,
           options.market,
           context.jobId,
+          capture,
         )
       : await searchSpotifyTrackCandidates(
           options.query,
@@ -325,6 +332,7 @@ export async function runSpotifyTrackSearch(
           context.assertActive,
           options.market,
           context.jobId,
+          capture,
         )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return {
@@ -358,12 +366,28 @@ export async function runSpotifyTrackSearch(
           )
           await closeChangeBatch(tx, batchId)
         }
-        await observeSpotifyMatchCandidates(
-          tx,
-          context.jobId,
-          options.trackId,
-          candidates,
-        )
+        if (observed?.length) {
+          const responseId = await latestCatalogResponseId(
+            tx,
+            context.jobId,
+            'spotify',
+          )
+          await observeSpotifySearchResults(tx, observed, {
+            operation: 'spotify-match',
+            key: context.jobId,
+            subjectKind: 'track',
+            subjectId: options.trackId,
+            jobId: context.jobId,
+            responseId,
+          })
+        } else {
+          await observeSpotifyMatchCandidates(
+            tx,
+            context.jobId,
+            options.trackId,
+            candidates,
+          )
+        }
       },
     }
   } catch (error) {

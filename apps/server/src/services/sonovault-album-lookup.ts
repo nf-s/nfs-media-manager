@@ -66,6 +66,7 @@ import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
+import { observeSonovaultRelease } from './sonovault-catalog-observations'
 import {
   dueForSonovaultLookup,
   queueSonovaultTrackRefresh,
@@ -429,6 +430,7 @@ type Run =
       releases: number
       confirmed: Confirmed | null
       remainingBefore: number
+      observed: { release: SonovaultRelease; occurrence: 1 | 2 }[]
     }
 
 /** The stored responses of this job, in request order. */
@@ -772,6 +774,7 @@ export async function runSonovaultAlbumLookup(
         )
         let releases = 0
         let confirmed: Confirmed | null = null
+        const observed: Extract<Run, { kind: 'done' }>['observed'] = []
         for (const candidate of candidates.releases.slice(
           0,
           SONOVAULT_RELEASE_CANDIDATE_LIMIT,
@@ -782,6 +785,7 @@ export async function runSonovaultAlbumLookup(
             candidate,
           )
           releases += 1
+          observed.push({ release, occurrence: 1 })
           const confirmation = confirmSonovaultRelease(release, album.identity)
           if (!confirmation) continue
           const editionId = confirmation.edition?.id ?? null
@@ -799,10 +803,18 @@ export async function runSonovaultAlbumLookup(
             confirmedBy: confirmation.confirmedBy,
             editionId,
           }
+          if (confirmed.numbered)
+            observed.push({ release: confirmed.numbered, occurrence: 2 })
           break
         }
         recorder.assertStored()
-        return { kind: 'done', releases, confirmed, remainingBefore: remaining }
+        return {
+          kind: 'done',
+          releases,
+          confirmed,
+          remainingBefore: remaining,
+          observed,
+        }
       },
       context.assertActive,
       'looking up albums',
@@ -853,6 +865,24 @@ export async function runSonovaultAlbumLookup(
           run,
           creditsUsed,
         })
+        const responses = await jobResponses(tx, context.jobId)
+        for (const [index, { release, occurrence }] of run.observed.entries()) {
+          const response = responseFor(
+            responses,
+            `/v1/releases/${release.id}`,
+            occurrence,
+          )
+          await observeSonovaultRelease(tx, release, {
+            operation: 'sonovault-album-match',
+            occurrenceKey: context.jobId,
+            jobId: context.jobId,
+            responseId: response.id,
+            observedAt: response.fetchedAt,
+            subjectKind: 'album',
+            subjectId: album.id,
+            position: index + 1,
+          })
+        }
         await tx
           .update(scrapeJob)
           .set({

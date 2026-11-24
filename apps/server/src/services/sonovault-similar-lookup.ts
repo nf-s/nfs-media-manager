@@ -30,6 +30,7 @@ import {
   nextTaskResponseOrdinal,
   saveProviderResponseCapture,
 } from './provider-response-history'
+import { observeSonovaultTrack } from './sonovault-catalog-observations'
 import {
   reportedSonovaultCredits,
   storedSonovaultResponse,
@@ -216,6 +217,7 @@ export type SonovaultSimilarContext = Pick<
 export async function lookupSimilarTracksOnSonovault(
   context: SonovaultSimilarContext,
   checks: readonly SimilarTrackCheck[],
+  subjectId?: string,
 ): Promise<SonovaultSimilarLookup> {
   const byIsrc = new Map<string, SimilarTrackCheck>()
   for (const check of checks) {
@@ -298,6 +300,24 @@ export async function lookupSimilarTracksOnSonovault(
       reason: `${sent.length} credits would leave fewer than the ${lookup.reserve}-credit reserve (${lookup.remaining} left)`,
     }
   const response = await storedSonovaultResponse(db, context.jobId)
+  if (subjectId) {
+    await context.assertActive()
+    await db.transaction(async (tx) => {
+      for (const [index, line] of lookup.results.entries()) {
+        if (line.status !== 'matched' || !line.track) continue
+        await observeSonovaultTrack(tx, line.track, line.links, {
+          operation: 'similar-resolution',
+          occurrenceKey: context.jobId,
+          jobId: context.jobId,
+          responseId: response.id,
+          observedAt: response.fetchedAt,
+          subjectKind: 'track',
+          subjectId,
+          position: index + 1,
+        })
+      }
+    })
+  }
   const matches = new Map<string, SpotifyCodeMatch>()
   const misses = new Map<string, SonovaultSimilarMiss>()
   sent.forEach(({ isrc, check }, index) => {
@@ -383,7 +403,11 @@ export async function mapSimilarTracksThroughSonovault(
     spotifyOnlyCodes?: readonly string[]
   },
 ): Promise<SonovaultSimilarMapping | null> {
-  const lookup = await lookupSimilarTracksOnSonovault(context, input.tracks)
+  const lookup = await lookupSimilarTracksOnSonovault(
+    context,
+    input.tracks,
+    input.itemId,
+  )
   const needsSpotify = (isrc: string) => input.spotifyCodes?.has(isrc) ?? true
   if (!(await context.isActive())) return null
   if (lookup.kind === 'unavailable') {

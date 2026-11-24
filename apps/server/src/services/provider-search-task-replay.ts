@@ -11,6 +11,7 @@ import {
 import {
   SpotifyAlbumSchema,
   normalizeSpotifyTrackEntry,
+  spotifyTrackMention,
   spotifyJson,
 } from '@/lib/spotify-api'
 import { ServerError } from '@/lib/error'
@@ -41,8 +42,15 @@ type AlbumSearchInput = z.infer<typeof AlbumSearchInputSchema>
 
 const ALBUM_PAGE_SIZE = 10
 
-export function normalizeSpotifyCatalogTrack(item: unknown) {
-  if (UnavailableSpotifyCatalogTrackSchema.safeParse(item).success) return null
+export function normalizeSpotifyCatalogTrack(
+  item: unknown,
+  includeUnavailable = false,
+) {
+  if (
+    !includeUnavailable &&
+    UnavailableSpotifyCatalogTrackSchema.safeParse(item).success
+  )
+    return null
   const { track } = normalizeSpotifyTrackEntry({ item })
   if (!track) return null
   const candidate = SpotifyTrackSearchCandidateSchema.safeParse({
@@ -51,8 +59,42 @@ export function normalizeSpotifyCatalogTrack(item: unknown) {
     spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
   })
   return candidate.success
-    ? { ...candidate.data, releaseDate: track.releaseDate }
+    ? {
+        ...candidate.data,
+        releaseDate: track.releaseDate,
+        albumArtistCredits: track.albumArtistCredits,
+      }
     : null
+}
+
+export type SpotifySearchObservation = {
+  position: number
+  playable: boolean
+} & (
+  | {
+      track: NonNullable<ReturnType<typeof normalizeSpotifyCatalogTrack>>
+      mention?: never
+    }
+  | {
+      track?: never
+      mention: NonNullable<ReturnType<typeof spotifyTrackMention>>
+    }
+)
+
+export function spotifySearchObservations(items: unknown[], offset: number) {
+  return items.flatMap((item, index): SpotifySearchObservation[] => {
+    const position = offset + index + 1
+    const track = normalizeSpotifyCatalogTrack(item, true)
+    const playable =
+      !UnavailableSpotifyCatalogTrackSchema.safeParse(item).success
+    const local = z
+      .object({ is_local: z.literal(true) })
+      .safeParse(item).success
+    if (local) return []
+    if (track) return [{ track, playable, position }]
+    const mention = spotifyTrackMention({ item })
+    return mention ? [{ mention, playable: false, position }] : []
+  })
 }
 
 export async function searchSpotifyCatalogTrackPage(
@@ -90,6 +132,7 @@ export async function searchSpotifyCatalogTrackPage(
   })
   return {
     items,
+    observations: spotifySearchObservations(tracks.items, offset),
     hasMore:
       page !== undefined &&
       page < 50 &&
@@ -102,8 +145,10 @@ export async function searchSpotifyCatalogTracks(
   request: Request,
   token: string,
   input: SearchInput,
+  observe?: (observations: SpotifySearchObservation[]) => void,
 ) {
   const page = await searchSpotifyCatalogTrackPage(request, token, input)
+  observe?.(page.observations)
   return page.items.map((track) =>
     SpotifyTrackSearchCandidateSchema.parse(track),
   )
@@ -124,16 +169,21 @@ export async function lookupSpotifyCatalogTrack(
   request: Request,
   token: string,
   input: TrackLookupInput,
+  observe?: (observations: SpotifySearchObservation[]) => void,
 ) {
   const { spotifyTrackId, market } = TrackLookupInputSchema.parse(input)
-  const track = normalizeSpotifyCatalogTrack(
-    await spotifyJson(
-      request,
-      token,
-      `tracks/${spotifyTrackId}`,
-      market ? { market } : {},
+  const value = await spotifyJson(
+    request,
+    token,
+    `tracks/${spotifyTrackId}`,
+    market ? { market } : {},
+  )
+  observe?.(
+    spotifySearchObservations([value], 0).filter(
+      (item) => item.track?.spotifyTrackId === spotifyTrackId,
     ),
   )
+  const track = normalizeSpotifyCatalogTrack(value)
   return track && track.spotifyTrackId === spotifyTrackId
     ? [SpotifyTrackSearchCandidateSchema.parse(track)]
     : []

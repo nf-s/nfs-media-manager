@@ -82,8 +82,13 @@ export const TidalTrackDataSchema = z.object({
 })
 export type TidalTrackData = z.infer<typeof TidalTrackDataSchema>
 
+export const TidalCatalogCreditsSchema = z
+  .array(z.object({ id: TidalIdSchema, name }))
+  .max(50)
+
 /** One TIDAL track an ISRC lookup returned, as the review lists it. */
 export const TidalTrackCandidateSchema = TidalTrackDataSchema.extend({
+  artistCredits: TidalCatalogCreditsSchema.optional(),
   tidalTrackId: TidalIdSchema,
   title: name,
   isrc: z.string().max(40).nullable(),
@@ -253,6 +258,18 @@ export function normalizeSimilarGenres(values: readonly string[]): string[] {
 
 /** One similar album or track as TIDAL returned it, in TIDAL's order. */
 export const TidalSuggestionSchema = z.object({
+  artistCredits: TidalCatalogCreditsSchema.optional(),
+  linkedAlbums: z
+    .array(
+      z.object({
+        id: TidalIdSchema,
+        title: name,
+        releaseDate: z.string().max(40).nullable(),
+        artistCredits: TidalCatalogCreditsSchema.optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   tidalId: TidalIdSchema,
   catalogMediaItemId: id.optional(),
   catalogPosition: z.number().int().positive().optional(),

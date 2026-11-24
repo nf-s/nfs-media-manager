@@ -9,6 +9,7 @@ import {
   type SpotifyPlaylistList,
 } from '@repo/schemas/tracks'
 import { db } from '@/lib/db'
+import { createStableId } from '@/lib/media-utils'
 import {
   SpotifyPlaylistsPageSchema,
   SpotifyProfileSchema,
@@ -18,6 +19,8 @@ import {
 } from '@/lib/spotify-api'
 import { playlist, spotifyPlaylistListing } from '@/schemas/db'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
+import { observeCatalogOccurrences } from './catalog-discoveries'
+import { lockLibraryTrackWrites } from './album-library-tracks'
 import { loadPlaylistSummaries } from './playlist-directory'
 import { spotifyOperation, spotifyPlaylistToken } from './spotify-oauth'
 import {
@@ -71,9 +74,10 @@ async function listAccountPlaylists(
     )
     if (page.offset !== offset)
       throw refused('Invalid Spotify playlist pagination')
-    for (const item of page.items) {
+    const discovered = []
+    for (const [index, item] of page.items.entries()) {
       if (!item) continue
-      listed.set(item.id, {
+      const summary = {
         spotifyId: item.id,
         name: item.name.trim().slice(0, 500) || 'Untitled playlist',
         ownerName: item.owner?.display_name?.trim() || null,
@@ -83,8 +87,14 @@ async function listAccountPlaylists(
         importable:
           item.owner?.id === profile.id || item.collaborative === true,
         trackTotal: item.items?.total ?? item.tracks?.total ?? 0,
-      })
+      }
+      listed.set(item.id, summary)
+      discovered.push({ summary, position: offset + index + 1 })
     }
+    await observeSpotifyPlaylists(discovered, {
+      jobId: context.jobId,
+      page: pages,
+    })
     offset += page.items.length
     const done =
       page.next === null ||
@@ -101,6 +111,86 @@ async function listAccountPlaylists(
     if (done) break
   }
   return [...listed.values()]
+}
+
+type ListedOccurrence = { summary: ListedPlaylist; position: number }
+
+export async function observeSpotifyPlaylists(
+  discovered: ListedOccurrence[],
+  evidence: { jobId?: string; page?: number; observedAt?: Date },
+) {
+  if (!discovered.length) return
+  await db.transaction(async (tx) => {
+    await lockLibraryTrackWrites(tx)
+    const ids = [...new Set(discovered.map(({ summary }) => summary.spotifyId))]
+    const [known, names] = await Promise.all([
+      tx
+        .select({ id: playlist.id, spotifyId: playlist.spotifyId })
+        .from(playlist)
+        .where(inArray(playlist.spotifyId, ids)),
+      tx
+        .select({ name: playlist.name })
+        .from(playlist)
+        .where(eq(playlist.kind, 'playlist')),
+    ])
+    const local = new Map(known.map(({ spotifyId, id }) => [spotifyId, id]))
+    const taken = new Set(names.map(({ name }) => name))
+    const rows: (typeof playlist.$inferInsert)[] = []
+    for (const { summary } of discovered) {
+      if (local.has(summary.spotifyId)) continue
+      const id = createStableId('playlist', playlistGroupKey(summary.spotifyId))
+      let name = summary.name
+      for (let suffix = 2; taken.has(name); suffix += 1)
+        name = `${summary.name} (${suffix})`
+      taken.add(name)
+      local.set(summary.spotifyId, id)
+      rows.push({
+        id,
+        kind: 'playlist',
+        name,
+        spotifyId: summary.spotifyId,
+        catalogProvider: 'spotify',
+        catalogExternalId: summary.spotifyId,
+        spotifyUrl: playlistUrl(summary.spotifyId),
+        artworkUrl: summary.artworkUrl,
+        spotifyEditable: false,
+      })
+    }
+    if (rows.length)
+      await tx.insert(playlist).values(rows).onConflictDoNothing()
+    const stored = await tx
+      .select({ id: playlist.id, spotifyId: playlist.spotifyId })
+      .from(playlist)
+      .where(inArray(playlist.spotifyId, ids))
+    const storedIds = new Map(
+      stored.map(({ spotifyId, id }) => [spotifyId, id]),
+    )
+    await observeCatalogOccurrences(
+      tx,
+      discovered.flatMap(({ summary, position }) => {
+        const id = storedIds.get(summary.spotifyId)
+        return id
+          ? [
+              {
+                target: { kind: 'playlist', id },
+                origin: {
+                  provider: 'spotify',
+                  operation: 'playlist-listing',
+                  occurrenceKey: summary.spotifyId,
+                  position,
+                  ...evidence,
+                  details: {
+                    name: summary.name,
+                    snapshot: summary.snapshotId,
+                    trackCount: summary.trackTotal,
+                  },
+                },
+              },
+            ]
+          : []
+      }),
+    )
+  })
 }
 
 /**
@@ -174,13 +264,19 @@ export async function getSpotifyPlaylists(
   const listing = await readSpotifyPlaylistListing(userId)
   const playlists = listing?.playlists ?? []
   const spotifyIds = playlists.map((item) => item.spotifyId)
-  const [stored, imports, listings] = await Promise.all([
+  const [stored, imports, listings, known] = await Promise.all([
     listStoredSpotifyImports(spotifyIds),
     latestSpotifyJobs(
       SPOTIFY_PLAYLIST_IMPORT_TASK,
       spotifyIds.map(playlistGroupKey),
     ),
     latestSpotifyJobs(SPOTIFY_PLAYLIST_LISTING_TASK, [listingGroupKey(userId)]),
+    spotifyIds.length
+      ? db
+          .select({ id: playlist.id, spotifyId: playlist.spotifyId })
+          .from(playlist)
+          .where(inArray(playlist.spotifyId, spotifyIds))
+      : [],
   ])
   const bySpotifyId = new Map(stored.map((row) => [row.spotifyId, row]))
   const summaries = await loadPlaylistSummaries(
@@ -188,6 +284,7 @@ export async function getSpotifyPlaylists(
     imports,
   )
   const byId = new Map(summaries.map((summary) => [summary.id, summary]))
+  const knownIds = new Map(known.map((row) => [row.spotifyId, row.id]))
   return SpotifyPlaylistListSchema.parse({
     total: playlists.length,
     listedAt: listing?.listedAt.toISOString() ?? null,
@@ -197,6 +294,7 @@ export async function getSpotifyPlaylists(
       const summary = row && byId.get(row.id)
       return {
         spotifyId: item.spotifyId,
+        catalogId: knownIds.get(item.spotifyId),
         name: item.name,
         ownerName: item.ownerName,
         importable: item.importable,

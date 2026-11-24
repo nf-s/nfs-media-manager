@@ -332,8 +332,10 @@ describe('manual Spotify tracks', () => {
       artworkUrl: 'https://i.scdn.co/image/example',
       url: `https://open.spotify.com/track/${spotifyTrackId}`,
       mediaItemId: null,
+      catalogMediaItemId: expect.any(String),
     }
-    expect(await searchManualMedia({ ...search, page: 2 })).toEqual({
+    const discovery = await searchManualMedia({ ...search, page: 2 })
+    expect(discovery).toEqual({
       items: [expectedItem],
       page: 2,
       hasMore: false,
@@ -341,14 +343,18 @@ describe('manual Spotify tracks', () => {
     await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId })
     const [albumTrack] = await databaseClient.select().from(schema.libraryTrack)
     expect(albumTrack?.spotifyTrackId).toBe(spotifyTrackId)
+    expect(albumTrack?.mediaItemId).toBe(discovery.items[0]?.catalogMediaItemId)
     expect((await searchManualMedia({ ...search, page: 2 })).items).toEqual([
-      { ...expectedItem, mediaItemId: albumTrack?.mediaItemId },
+      expectedItem,
     ])
     request.mockClear()
     expect(
       await addManualMedia({ mediaType: 'track', externalId: spotifyTrackId }),
-    ).toEqual({ mediaItemId: albumTrack?.mediaItemId, created: false })
+    ).toEqual({ mediaItemId: albumTrack?.mediaItemId, created: true })
     expect(request).not.toHaveBeenCalled()
+    expect((await searchManualMedia({ ...search, page: 2 })).items).toEqual([
+      { ...expectedItem, mediaItemId: albumTrack?.mediaItemId },
+    ])
   })
 
   it('stores one track under concurrent adds and preserves it during membership cleanup', async () => {

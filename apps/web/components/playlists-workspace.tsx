@@ -51,6 +51,19 @@ import {
 } from './secondary-table'
 import { ConfirmAction } from './confirm-action'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
+import { usePageBrowse } from '@/hooks/useBrowseHost'
+import {
+  libraryScopeFilterCount,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
+import BrowseFilterPanel from './browse-filter-panel'
+import {
+  LibraryScopeSections,
+  LibraryScopeToggle,
+} from './library-scope-controls'
 import { MediaThumb } from './media-artwork'
 import { errorMessage } from './lastfm-sync'
 import { DetailLink } from './detail-link'
@@ -161,6 +174,17 @@ export default function PlaylistsWorkspace() {
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search.trim())
   const [sources, setSources] = useState<Array<PlaylistSource | 'library'>>([])
+  const host = usePageBrowse('playlists')
+  const scope = readLibraryScope(host.params)
+  const scopeQuery = libraryScopeQuery(scope)
+  const scopeKey = Object.keys(scopeQuery).length ? [scopeQuery] : []
+  const onScope = (next: LibraryScopeState) =>
+    host.update((params) => {
+      Object.entries(libraryScopeUpdates(next)).forEach(([key, value]) => {
+        if (value) params.set(key, value)
+        else params.delete(key)
+      })
+    })
   const view = useLibraryView()
   const importHref = scopedHref(
     '/imports/spotify-playlists',
@@ -174,6 +198,7 @@ export default function PlaylistsWorkspace() {
   const filters = {
     q,
     ...(sources.length ? { sources: JSON.stringify(sources) } : {}),
+    ...scopeQuery,
   }
   const {
     window: query,
@@ -182,8 +207,16 @@ export default function PlaylistsWorkspace() {
     retryCount,
   } = useCountedVirtualTable({
     performanceScreen: 'playlists',
-    queryKey: ['playlists', 'browse', q, sources, sortBy, direction],
-    countKey: ['playlists', 'browse-count', q, sources],
+    queryKey: [
+      'playlists',
+      'browse',
+      q,
+      sources,
+      sortBy,
+      direction,
+      ...scopeKey,
+    ],
+    countKey: ['playlists', 'browse-count', q, sources, ...scopeKey],
     loadCount: (signal) =>
       fetchApiData(
         apiBaseUrl,
@@ -277,7 +310,13 @@ export default function PlaylistsWorkspace() {
             'Counting playlists...'
           )}
         </ToolbarCount>
-        {columns.controls && <ToolbarEnd>{columns.controls}</ToolbarEnd>}
+        <ToolbarEnd>
+          <LibraryScopeToggle value={scope} onChange={onScope} />
+          <BrowseFilterPanel short count={libraryScopeFilterCount(scope)}>
+            <LibraryScopeSections value={scope} onChange={onScope} />
+          </BrowseFilterPanel>
+          {columns.controls}
+        </ToolbarEnd>
       </Toolbar>
       <SecondaryTableScroll
         ref={query.scroller}
@@ -367,6 +406,9 @@ export default function PlaylistsWorkspace() {
                             {playlist.name}
                           </DetailLink>
                         </SecondaryCell>
+                        {playlist.inLibrary === false && (
+                          <span className="ds-muted">Outside library</span>
+                        )}
                         <PlaylistPlayButton playlist={playlist} />
                       </span>
                     </TableCell>
@@ -374,7 +416,9 @@ export default function PlaylistsWorkspace() {
                   {columns.visible('source') && (
                     <TableCell>
                       <span className="ds-cell-id">
-                        {playlistSourceLabel(playlist.source)}
+                        {playlist.source === null && playlist.spotifyUrl
+                          ? 'Spotify'
+                          : playlistSourceLabel(playlist.source)}
                         {playlist.spotifyUrl && (
                           <ServiceIconLinks
                             links={[

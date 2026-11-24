@@ -123,7 +123,7 @@ Each addition is a Spotify job in Jobs (one album into one playlist), and asking
 2. Reads the playlist's details. When the account can no longer read the playlist, the job fails and the playlist stops being offered.
 3. Works out which tracks are already in the playlist: from the stored copy when its version is Spotify's current one, otherwise by reading the playlist from Spotify.
 4. Appends the missing tracks in album order, at most 100 per request. A cancelled job stops between requests.
-5. Queues the playlist's import, so the stored copy is read again from Spotify. Nothing is written to the stored playlist directly.
+5. Queues a read of the updated playlist. Newly seen tracks remain outside the library until added explicitly or picked up by a configured import.
 
 A retried or repeated job reads the playlist's current contents again, so tracks added before a failure, including by a request whose answer was lost, are not added twice. An addition that would take the playlist past 10,000 items is refused before anything is added.
 
@@ -133,7 +133,7 @@ A track's details can add that recording to an imported Spotify playlist the acc
 
 The track needs the same Spotify identity used for playback, supplied by an imported playlist, Liked Songs or a stored album track list. Unmatched tracks cannot be added. This action does not search Spotify. The job checks that the selected recording's identity has not changed before sending it.
 
-Each addition queues one job per track and playlist. Repeating the request while that job is active returns the same job. The job checks the playlist's current version, skips a recording already present, appends only the missing track and queues the normal playlist import. A retry reads changed playlist contents before appending, so a lost response does not add the recording twice; it also refreshes the stored playlist when that earlier write is recovered.
+Each addition queues one job per track and playlist. Repeating the request while that job is active returns the same job. The job checks the playlist's current version, skips a recording already present, appends only the missing track and queues a read of the updated playlist. A retry reads changed playlist contents before appending, so a lost response does not add the recording twice. It also refreshes the stored playlist when that earlier write is recovered.
 
 The subsequent import reuses the stored library track when its Spotify ID is already known. Addition status identifies the retained track. `POST /api/v1/tracks/:id/playlist-additions` accepts `{ "playlistId": "..." }`; `GET` at the same path reads the latest addition jobs without contacting Spotify.
 

@@ -54,6 +54,7 @@ import {
 import { trackVersionKey } from '@/lib/track-matching'
 import { getScrapePlugin } from '@/plugins/registry'
 import {
+  catalogObservation,
   libraryTrack,
   mediaItem,
   providerReference,
@@ -71,6 +72,7 @@ import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
+import { observeSonovaultTrack } from './sonovault-catalog-observations'
 import { recordTrackIsrcs, sonovaultPrimaryIsrcSql } from './track-isrcs'
 import {
   recordSonovaultTrackFacts,
@@ -803,6 +805,21 @@ export async function runSonovaultTrackLookup(
           sent,
           results: payload.results,
         })
+        const response = await storedSonovaultResponse(tx, context.jobId)
+        for (const [index, result] of payload.results.entries()) {
+          const target = sent[index]?.target
+          if (!result.track || !target || result.status !== 'matched') continue
+          await observeSonovaultTrack(tx, result.track, result.links, {
+            operation: 'sonovault-track-lookup',
+            occurrenceKey: context.jobId,
+            jobId: context.jobId,
+            responseId: response.id,
+            observedAt: response.fetchedAt,
+            subjectKind: 'track',
+            subjectId: target.id,
+            position: index + 1,
+          })
+        }
         await tx
           .update(scrapeJob)
           .set({
@@ -1135,6 +1152,20 @@ export async function removeSonovaultData() {
       .returning({ id: providerReference.id })
     const trackFacts = await removeProviderTrackFacts(tx, PROVIDER)
     await removeSonovaultTrackTags(tx)
+    await tx
+      .delete(catalogObservation)
+      .where(eq(catalogObservation.provider, PROVIDER))
+    await tx.execute(sql`
+      delete from media_item mi
+      where mi.source_label = ${PROVIDER} and not mi.in_library
+        and not exists (select 1 from catalog_observation o where o.target_id = mi.id)
+        and not exists (select 1 from playlist_item p where p.media_item_id = mi.id)
+        and not exists (select 1 from track t where t.track_media_item_id = mi.id or t.album_media_item_id = mi.id)`)
+    await tx.execute(sql`
+      delete from artist a
+      where a.catalog_provider = ${PROVIDER} and not a.added_to_library
+        and not exists (select 1 from catalog_observation o where o.target_id = a.id)
+        and not exists (select 1 from media_credit c where c.artist_id = a.id)`)
     await tx.delete(sonovaultTrackCandidate)
     const lookups = await tx
       .delete(sonovaultTrackLookup)

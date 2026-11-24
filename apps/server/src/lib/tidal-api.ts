@@ -367,13 +367,16 @@ export function tidalTrackData(track: TidalTrackResource): TidalTrackData {
 export function tidalTrackCandidate(
   track: TidalTrackResource,
   albums: Map<string, TidalAlbumResource>,
+  artists?: Map<string, TidalArtistResource>,
 ): TidalTrackCandidate {
+  const artistCredits = artists && tidalCatalogCredits(track, artists)
   return {
     ...tidalTrackData(track),
     tidalTrackId: track.id,
     title: track.attributes.title,
     isrc: track.attributes.isrc ?? null,
     streamable: track.attributes.availability?.includes('STREAM') ?? false,
+    ...(artistCredits?.length ? { artistCredits } : {}),
     albums: (track.relationships?.albums?.data ?? [])
       .flatMap((reference) => {
         const album = albums.get(reference.id)
@@ -391,4 +394,16 @@ export function tidalTrackCandidate(
       })
       .slice(0, 20),
   }
+}
+
+export function tidalCatalogCredits(
+  resource: TidalAlbumResource | TidalTrackResource,
+  artists: Map<string, TidalArtistResource>,
+) {
+  return (resource.relationships?.artists?.data ?? [])
+    .flatMap(({ id }) => {
+      const name = artists.get(id)?.attributes.name
+      return name ? [{ id, name }] : []
+    })
+    .slice(0, 50)
 }

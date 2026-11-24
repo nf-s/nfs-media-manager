@@ -13,6 +13,7 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { playlistScheduleMinutes } from '@/lib/playlist-sync'
+import { catalogScopeCondition } from './catalog-scope'
 import {
   latestSpotifyJobs,
   LIKED_SONGS_KEY,
@@ -29,6 +30,7 @@ const CountRowsSchema = z.array(z.object({ count: z.coerce.number() }))
 const PlaylistRowsSchema = z.array(
   z.object({
     id: z.string(),
+    in_library: z.boolean(),
     name: z.string(),
     source: z.string().nullable(),
     spotify_id: z.string().nullable(),
@@ -146,7 +148,8 @@ const automaticPlaylistPresentation = sql`case when p.source = 'spotify-liked' t
   from direct_album_stats direct
 ) end`
 
-const visiblePlaylists = sql`p.kind = 'playlist' and (p.source is not null or exists (${playlistAlbumMembers}))`
+const playlistMember = sql`(p.added_to_library or p.source is not null or exists (${playlistAlbumMembers}))`
+const visiblePlaylists = sql`p.kind = 'playlist' and (${playlistMember} or p.catalog_provider is not null)`
 const playlistCanAcceptAdditions = sql`(p.source = 'spotify' and p.spotify_id is not null and p.spotify_editable)`
 const playlistGroup = sql`case
   when p.source = 'spotify-liked' then ${LIKED_SONGS_KEY}
@@ -190,7 +193,10 @@ const playlistSortColumns = {
 }
 
 function playlistDirectoryFilter(query: PlaylistBrowseQuery) {
-  const conditions = [visiblePlaylists]
+  const conditions = [
+    visiblePlaylists,
+    catalogScopeCondition(sql`p.id`, playlistMember, query, 'playlist'),
+  ]
   if (query.q) {
     const pattern = `%${query.q.replace(/[\\%_]/g, '\\$&')}%`
     conditions.push(
@@ -232,10 +238,11 @@ export async function loadPlaylistSummaries(
   const rows = PlaylistRowsSchema.parse(
     (
       await db.execute(sql`
-        select p.id, p.name, p.source, p.spotify_id, p.owner_name, p.description,
+        select p.id, ${playlistMember} as in_library,
+          p.name, p.source, p.spotify_id, p.owner_name, p.description,
           p.artwork_url, p.spotify_url,
           ${isoTimestamp(sql`p.imported_at`)} as imported_at,
-          ${isoTimestamp(sql`p.created_at`)} as created_at,
+          case when ${playlistMember} then ${isoTimestamp(sql`p.created_at`)} end as created_at,
           ${isoTimestamp(sql`p.checked_at`)} as checked_at,
           p.sync_schedule, p.spotify_editable,
           stats.track_count, stats.linked_track_count, stats.duration_sec,
@@ -265,6 +272,7 @@ export async function loadPlaylistSummaries(
     })
     return PlaylistSummarySchema.parse({
       id: row.id,
+      inLibrary: row.in_library,
       name: row.name,
       source: row.source,
       ownerName: row.owner_name,

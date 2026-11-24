@@ -37,12 +37,15 @@ import {
 } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { DetailLink } from './detail-link'
+import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 import { MediaInspector } from './media-inspector'
 import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
 import {
   PlayerLibraryAction,
   PlayerLibraryActions,
+  observedPlaybackItem,
+  playerItemIdentity,
   usePlayerLibraryMembership,
   type PlayerLibraryMembership,
 } from './player-library-actions'
@@ -69,11 +72,15 @@ import {
   type QueueEntry,
 } from '@/utils/playback'
 import {
-  playbackItemMembership,
   playingLibraryItems,
   queuedLibraryItem,
   type PlaybackLibraryItem,
 } from '@/utils/playback-library'
+import {
+  currentPlaybackCatalog,
+  playbackSpotifyId,
+  queuedPlaybackCatalog,
+} from '@/utils/playback-catalog'
 import type { DetailTarget } from '@/utils/detail-inspector'
 import type {
   PlaybackRejoin,
@@ -131,6 +138,7 @@ type Reference = {
   label: string
   detail: DetailTarget | null
   url: string | null
+  albumReference?: { trackId: string; spotifyAlbumId: string }
 }
 
 type PlayingIdentity = {
@@ -149,13 +157,21 @@ function references(
   const credits = current?.credits ?? []
   const album = libraryReference(playing.album, membership)
   const track = libraryReference(playing.track, membership)
+  const exactTrack =
+    playing.track && observedPlaybackItem(playing.track, membership.references)
+  const spotifyAlbumId = playbackSpotifyId('album', playing.album?.uri)
+  const trackId = track.detail?.id
+  if (trackId && spotifyAlbumId && exactTrack?.album)
+    album.albumReference = { trackId, spotifyAlbumId }
   const named = snapshot
     ? snapshot.artistLinks
     : credits.map(({ name }) => ({ name, uri: null }))
   const plain = snapshot?.artists ?? current?.artist ?? ''
   const artists: Reference[] = named.length
     ? named.map(({ name, uri }) => {
-        const id = credits.find((credit) => credit.name === name)?.id
+        const known = exactTrack?.artists ?? credits
+        const matches = known.filter((credit) => credit.name === name)
+        const id = matches.length === 1 ? matches[0]?.id : null
         return {
           label: name,
           detail: id ? { kind: 'artist', id } : null,
@@ -173,7 +189,7 @@ function libraryReference(
   membership: PlayerLibraryMembership,
 ): Reference {
   if (!item) return { label: '', detail: null, url: null }
-  const { mediaItemId } = playbackItemMembership(item, membership.data)
+  const { mediaItemId } = playerItemIdentity(item, membership)
   return {
     label: item.title,
     detail: mediaItemId ? { kind: item.kind, id: mediaItemId } : null,
@@ -192,6 +208,16 @@ function PlayerLink({
   children?: ReactNode
 }) {
   const label = children ? `Open ${to.label}` : undefined
+  if (to.albumReference)
+    return (
+      <SpotifyAlbumReferenceLink
+        {...to.albumReference}
+        catalogId={to.detail?.id}
+        onNavigate={onNavigate}
+      >
+        {children ?? to.label}
+      </SpotifyAlbumReferenceLink>
+    )
   if (to.detail)
     return (
       <DetailLink
@@ -639,6 +665,8 @@ function QueueRows({
   }))
   const membership = usePlayerLibraryMembership(
     rows.map(({ identity }) => identity),
+    'playback-queue',
+    rows.map(({ item }) => queuedPlaybackCatalog(item)),
   )
   const queued = section === 'queue'
   const from =
@@ -1286,8 +1314,21 @@ function Dock({ view }: { view: PlaybackView }) {
   })
   const shown = describe(view)
   const { failure } = view
-  const items = playingLibraryItems(view.snapshot, view.current)
-  const membership = usePlayerLibraryMembership([items.track, items.album])
+  const known = playingLibraryItems(view.snapshot, view.current)
+  const observed = currentPlaybackCatalog(view.snapshot, view.current)
+  const membership = usePlayerLibraryMembership(
+    [known.track, known.album],
+    'playback',
+    [observed],
+  )
+  const release = membership.references[0]?.album
+  const items = {
+    track: known.track,
+    album:
+      known.album && release
+        ? { ...known.album, mediaItemId: release.id }
+        : known.album,
+  }
   const playing = {
     items,
     links: references(view, items, membership),

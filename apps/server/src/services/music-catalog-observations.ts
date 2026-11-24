@@ -7,20 +7,18 @@ import {
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { parseOptionalDate } from '@/lib/media-utils'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { providerResponse } from '@/schemas/db'
-import { observeCatalogMedia } from './catalog-discoveries'
+import { observeCatalogMedia, type CatalogOrigin } from './catalog-discoveries'
+import type { SpotifySearchObservation } from './provider-search-task-replay'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
-type Origin = {
-  operation: string
+export type MusicObservationOrigin = Omit<
+  CatalogOrigin,
+  'occurrenceKey' | 'provider'
+> & {
   key: string
-  subjectKind?: string
-  subjectId?: string
-  jobId?: string
-  responseId?: string
-  page?: number
   position: number
-  observedAt?: Date
 }
 
 export async function latestCatalogResponseId(
@@ -45,7 +43,10 @@ export async function latestCatalogResponseId(
   return latest?.id
 }
 
-function occurrence(provider: string, { key, ...origin }: Origin) {
+function occurrence(
+  provider: string,
+  { key, ...origin }: MusicObservationOrigin,
+) {
   return {
     ...origin,
     provider,
@@ -53,12 +54,64 @@ function occurrence(provider: string, { key, ...origin }: Origin) {
   }
 }
 
-export async function observeSpotifySearchTrack(
+export async function observeSpotifyTrackAndAlbum(
   tx: Transaction,
-  track: SpotifyTrackSearchCandidate & { releaseDate?: string | null },
-  origin: Origin,
+  track: Omit<
+    Pick<
+      SpotifyTrackSearchCandidate,
+      | 'spotifyTrackId'
+      | 'title'
+      | 'durationSec'
+      | 'spotifyAlbumId'
+      | 'albumName'
+      | 'artworkUrl'
+      | 'artists'
+      | 'artistCredits'
+      | 'spotifyUrl'
+    >,
+    'durationSec'
+  > & {
+    durationSec?: number | null
+    playable?: boolean
+    releaseDate?: string | null
+    albumArtistCredits?: { id?: string; name: string }[]
+  },
+  origin: MusicObservationOrigin,
 ) {
-  return observeCatalogMedia(
+  const trackOrigin = occurrence('spotify', origin)
+  const spotifyAlbumId = SpotifyIdSchema.safeParse(track.spotifyAlbumId).data
+  const releaseDate = parseOptionalDate(track.releaseDate)
+  const albumId = track.albumName
+    ? await observeCatalogMedia(
+        tx,
+        {
+          kind: 'album',
+          title: track.albumName,
+          provider: 'spotify',
+          referenceType: 'spotify',
+          externalId: spotifyAlbumId,
+          provisionalKey: JSON.stringify([
+            'spotify-track-album',
+            track.spotifyTrackId,
+            track.albumName,
+          ]),
+          artworkUrl: track.artworkUrl,
+          releaseDate,
+          spotifyUrl: spotifyAlbumId
+            ? `https://open.spotify.com/album/${spotifyAlbumId}`
+            : undefined,
+          credits: track.albumArtistCredits?.map(({ id, name }) => ({
+            externalId: id,
+            name,
+          })),
+        },
+        {
+          ...trackOrigin,
+          relationshipRole: 'candidate_album',
+        },
+      )
+    : undefined
+  const trackId = await observeCatalogMedia(
     tx,
     {
       kind: 'track',
@@ -67,26 +120,88 @@ export async function observeSpotifySearchTrack(
       referenceType: 'track',
       externalId: track.spotifyTrackId,
       artworkUrl: track.artworkUrl ?? undefined,
-      releaseDate: parseOptionalDate(track.releaseDate) ?? undefined,
+      releaseDate,
       spotifyUrl: track.spotifyUrl,
+      playable: track.playable,
       durationSec: track.durationSec,
-      spotifyAlbumId: track.spotifyAlbumId ?? undefined,
+      spotifyAlbumId,
+      albumId,
       albumName: track.albumName ?? undefined,
-      credits: track.artistCredits.length
-        ? track.artistCredits.map(({ id, name }) => ({ externalId: id, name }))
-        : track.artists.map((name) => ({ name })),
+      credits: [
+        ...track.artistCredits.map(({ id, name }) => ({
+          externalId: id,
+          name,
+        })),
+        ...track.artists
+          .filter(
+            (name) =>
+              !track.artistCredits.some((credit) => credit.name === name),
+          )
+          .map((name) => ({ name })),
+      ],
     },
-    occurrence('spotify', origin),
+    trackOrigin,
   )
+  return { trackId, albumId }
+}
+
+export async function observeSpotifySearchTrack(
+  tx: Transaction,
+  track: Parameters<typeof observeSpotifyTrackAndAlbum>[1],
+  origin: MusicObservationOrigin,
+) {
+  return (await observeSpotifyTrackAndAlbum(tx, track, origin)).trackId
+}
+
+export async function observeSpotifySearchResults(
+  tx: Transaction,
+  observations: SpotifySearchObservation[],
+  origin: Omit<MusicObservationOrigin, 'position'>,
+) {
+  const ids = new Map<string, string>()
+  for (const observation of observations) {
+    const { position, playable, track, mention } = observation
+    const source = {
+      ...origin,
+      position,
+      details: { ...origin.details, playable },
+    }
+    if (track) {
+      const id = await observeSpotifySearchTrack(
+        tx,
+        { ...track, playable },
+        source,
+      )
+      ids.set(track.spotifyTrackId, id)
+    } else if (mention) {
+      await observeCatalogMedia(
+        tx,
+        {
+          kind: 'track',
+          title: mention.name,
+          provider: 'spotify',
+          referenceType: 'track',
+          playable: false,
+          credits: mention.artists.map(({ id, name }) => ({
+            name,
+            externalId: SpotifyIdSchema.safeParse(id).data,
+          })),
+        },
+        occurrence('spotify', source),
+      )
+    }
+  }
+  return ids
 }
 
 export async function observeTidalSuggestion(
   tx: Transaction,
   kind: TidalSimilarKind,
   item: TidalSuggestion,
-  origin: Origin,
+  origin: MusicObservationOrigin,
 ) {
-  return observeCatalogMedia(
+  const observed = occurrence('tidal', origin)
+  const trackId = await observeCatalogMedia(
     tx,
     {
       kind,
@@ -96,7 +211,9 @@ export async function observeTidalSuggestion(
       externalId: item.tidalId,
       releaseDate: parseOptionalDate(item.releaseDate) ?? undefined,
       durationSec: item.durationSec ?? undefined,
-      credits: item.artists.map((name) => ({ name })),
+      credits:
+        item.artistCredits?.map(({ id, name }) => ({ name, externalId: id })) ??
+        item.artists.map((name) => ({ name })),
       referenceMetadata: {
         url: item.url,
         version: item.version,
@@ -104,6 +221,35 @@ export async function observeTidalSuggestion(
         code: item.code,
       },
     },
-    occurrence('tidal', origin),
+    observed,
   )
+  for (const [index, release] of (item.linkedAlbums ?? []).entries())
+    await observeCatalogMedia(
+      tx,
+      {
+        kind: 'album',
+        title: release.title,
+        provider: 'tidal',
+        referenceType: 'album',
+        externalId: release.id,
+        releaseDate: parseOptionalDate(release.releaseDate),
+        credits: release.artistCredits?.map(({ id, name }) => ({
+          name,
+          externalId: id,
+        })),
+      },
+      {
+        ...observed,
+        subjectKind: 'track',
+        subjectId: trackId,
+        relationshipRole: 'release',
+        position: index + 1,
+        occurrenceKey: JSON.stringify([
+          observed.occurrenceKey,
+          'release',
+          index + 1,
+        ]),
+      },
+    )
+  return trackId
 }

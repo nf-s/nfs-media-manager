@@ -62,6 +62,7 @@ import { closeChangeBatch, openChangeBatch } from './library-changes'
 import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
+import { observeSonovaultTrack } from './sonovault-catalog-observations'
 import {
   dueForSonovaultLookup,
   readSonovaultTargets,
@@ -290,6 +291,17 @@ async function writeNameLookups(
   for (const [index, sent] of input.sent.entries()) {
     const result = input.results[index]
     const target = current.get(sent.target.id)
+    if (result?.status === 'matched' && result.track)
+      await observeSonovaultTrack(tx, result.track, result.links, {
+        operation: 'sonovault-track-match',
+        occurrenceKey: input.jobId,
+        jobId: input.jobId,
+        responseId: response.id,
+        observedAt: response.fetchedAt,
+        subjectKind: 'track',
+        subjectId: sent.target.id,
+        position: index + 1,
+      })
     if (!result || !target || result.status === 'skipped_no_credits') {
       written.skipped += 1
       continue

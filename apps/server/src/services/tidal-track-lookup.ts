@@ -7,6 +7,7 @@ import { validIsrc } from '@/lib/isrc'
 import {
   TidalTracksDocumentSchema,
   includedAlbums,
+  includedArtists,
   nextPageCursor,
   tidalJson,
   tidalTrackCandidate,
@@ -59,8 +60,9 @@ export async function lookupTidalTracksByIsrc(
       ),
     )
     const albums = includedAlbums(document.included)
+    const artists = includedArtists(document.included)
     const seen = document.data.map((track) =>
-      tidalTrackCandidate(track, albums),
+      tidalTrackCandidate(track, albums, artists),
     )
     await observe?.({ page: page + 1, candidates: seen })
     for (const candidate of seen) {

@@ -533,6 +533,7 @@ export const UpdatePlaylistPresentationSchema = z
   .strict()
 
 export const PlaylistSummarySchema = z.object({
+  inLibrary: z.boolean().optional(),
   /** When this playlist was first added to this library, not saved on Spotify. */
   createdAt: z.string().datetime().nullable().default(null),
   id: z.string(),
@@ -594,6 +595,7 @@ function readJsonQuery(value: unknown): unknown {
 }
 
 export const PlaylistBrowseQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   q: z.string().trim().max(200).optional(),
   name: z.string().trim().max(200).optional(),
   size: PaginationQuerySchema.shape.size.default(100),
@@ -755,6 +757,7 @@ export const SpotifyPlaylistStoredSchema = z.object({
 })
 
 export const SpotifyPlaylistSchema = z.object({
+  catalogId: z.string().optional(),
   spotifyId: z.string(),
   name: z.string(),
   ownerName: z.string().nullable(),

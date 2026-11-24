@@ -7,6 +7,8 @@ import { ProviderResponseSchema } from '@repo/schemas/provider-response'
 import {
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   SPOTIFY_PLAYLIST_LISTING_TASK,
+  PlaylistBrowseQuerySchema,
+  PlaylistDetailQuerySchema,
 } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -58,6 +60,11 @@ import {
 } from '@/services/provider-response-history'
 import { queueSpotifyPlaylistListing } from '@/services/spotify-playlist-listing'
 import { queueSpotifyPlaylistImports } from '@/services/spotify-playlists'
+import { listPlaylistBrowsePage } from '@/services/playlist-directory'
+import { getPlaylistDetail } from '@/services/tracks'
+import { observePlaybackCatalog } from '@/services/playback-catalog'
+import { promoteCatalogMedia } from '@/services/catalog-discoveries'
+import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
 
 const USER_ID = 'response-user'
 const PLAYLIST = 'responses'.padEnd(22, '0')
@@ -66,7 +73,7 @@ const playlist = {
   name: 'Fixture Mix',
   snapshot_id: 'snapshot-1',
   owner: { id: 'owner', display_name: 'Owner' },
-  items: { total: 1 },
+  items: { total: 3 },
 }
 const entry = {
   added_at: '2024-03-01T10:00:00Z',
@@ -96,7 +103,22 @@ beforeAll(async () => {
       })
     if (pathname === `/v1/playlists/${PLAYLIST}`) return Response.json(playlist)
     if (pathname === `/v1/playlists/${PLAYLIST}/items`)
-      return Response.json({ items: [entry], total: 1, offset: 0, next: null })
+      return Response.json({
+        items: [
+          entry,
+          entry,
+          {
+            item: {
+              type: 'track',
+              name: 'No identifier',
+              artists: [{ name: 'The Examples' }],
+            },
+          },
+        ],
+        total: 3,
+        offset: 0,
+        next: null,
+      })
     throw new Error('Unexpected offline provider request')
   })
   await admin.connect()
@@ -133,6 +155,23 @@ describe('Spotify playlist job responses', () => {
       (await listJobProviderResponses(listing.id, { page: 1, size: 10 }))
         .totalCount,
     ).toBe(0)
+    expect(
+      (await listPlaylistBrowsePage(PlaylistBrowseQuerySchema.parse({}))).items,
+    ).toEqual([])
+    const observed = await listPlaylistBrowsePage(
+      PlaylistBrowseQuerySchema.parse({
+        libraryScope: 'outside',
+        discoverySources: 'playlist-listing',
+      }),
+    )
+    expect(observed.items).toMatchObject([
+      { name: 'Fixture Mix', inLibrary: false },
+    ])
+    const id = observed.items[0]?.id ?? ''
+    expect(
+      (await getPlaylistDetail(id, PlaylistDetailQuerySchema.parse({})))
+        .inLibrary,
+    ).toBe(false)
 
     // The listing's request spacing would otherwise hold the import back.
     await databaseClient.delete(schema.providerRequestState)
@@ -183,13 +222,79 @@ describe('Spotify playlist job responses', () => {
       snapshot_id: 'snapshot-1',
     })
     expect(JSON.parse(items.body.text)).toMatchObject({
-      total: 1,
-      items: [{ added_at: entry.added_at, item: { name: 'Fixture Track' } }],
+      total: 3,
+      items: [
+        { added_at: entry.added_at, item: { name: 'Fixture Track' } },
+        { added_at: entry.added_at, item: { name: 'Fixture Track' } },
+        { item: { name: 'No identifier' } },
+      ],
     })
     for (const text of [details.body.text, items.body.text]) {
       expect(text).not.toContain('fixture-access-token')
       expect(text).not.toContain('fixture-adder')
       expect(text).not.toContain('"owner"')
     }
+    const stored = await getPlaylistDetail(
+      id,
+      PlaylistDetailQuerySchema.parse({}),
+    )
+    expect(stored.inLibrary).toBe(true)
+    expect(stored.items.items).toMatchObject([
+      { position: 1, track: { title: 'Fixture Track', inLibrary: true } },
+      { position: 2, track: { title: 'Fixture Track', inLibrary: true } },
+      { position: 3, track: { title: 'No identifier', inLibrary: false } },
+    ])
+  })
+
+  it('opens the observed recording, album and artist and promotes only that recording', async () => {
+    const observation = PlaybackCatalogInputSchema.parse({
+      operation: 'playback',
+      items: [
+        {
+          kind: 'track',
+          spotifyId: 'playing'.padEnd(22, '0'),
+          title: 'Playing track',
+          artists: [
+            { name: 'Playing artist', spotifyId: 'artist'.padEnd(22, '0') },
+          ],
+          album: {
+            title: 'Playing album',
+            spotifyId: 'release'.padEnd(22, '0'),
+          },
+        },
+      ],
+    })
+    const calls = request.mock.calls.length
+    const [first, again] = await Promise.all([
+      observePlaybackCatalog(observation),
+      observePlaybackCatalog(observation),
+    ])
+    expect(again).toEqual(first)
+    const item = first.items[0]
+    if (!item) throw new Error('Expected an observed track')
+    expect(item).toMatchObject({
+      item: { id: expect.any(String), inLibrary: false },
+      album: { id: expect.any(String), inLibrary: false },
+      artists: [{ id: expect.any(String), name: 'Playing artist' }],
+    })
+    await promoteCatalogMedia(item.item.id, USER_ID)
+    const next = await observePlaybackCatalog({
+      ...observation,
+      operation: 'playback-queue',
+    })
+    expect(next.items[0]).toMatchObject({
+      item: { id: item.item.id, inLibrary: true },
+      album: { id: item.album?.id, inLibrary: false },
+    })
+    const evidence = await databaseClient
+      .select()
+      .from(schema.catalogObservation)
+    expect(
+      evidence
+        .filter(({ targetId }) => targetId === item.item.id)
+        .map(({ operation }) => operation)
+        .sort(),
+    ).toEqual(['playback', 'playback-queue'])
+    expect(request.mock.calls).toHaveLength(calls)
   })
 })

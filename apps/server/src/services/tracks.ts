@@ -563,7 +563,26 @@ function playlistEntriesQuery(
   const searchFilter = query.q
     ? sql`and (${playlistEntrySearch(pattern)} or coalesce(lt.album_name, am.title) ilike ${pattern})`
     : sql``
-  const members = sql`from playlist_item pi
+  const members = sql`from (
+    with latest as (
+      select details->>'version' as version from catalog_observation
+      where target_kind = 'playlist' and target_id = ${id}
+        and operation = 'playlist-contents' and details->'complete' = 'true'::jsonb
+      order by observed_at desc, id desc limit 1
+    )
+    select p.playlist_id, p.media_item_id, p.position, p.added_at
+    from playlist_item p
+    where p.playlist_id = ${id}
+      and (not exists (select 1 from latest)
+        or not exists (select 1 from library_track lt where lt.media_item_id = p.media_item_id))
+    union all
+    select o.subject_id, o.target_id, o.position,
+      (o.details->>'addedAt')::timestamptz at time zone 'UTC'
+    from latest join catalog_observation o on o.details->>'version' = latest.version
+    where o.subject_kind = 'playlist' and o.subject_id = ${id}
+      and o.operation = 'playlist-contents' and o.target_kind = 'track'
+      and o.relationship_role = 'playlist_entry' and o.position is not null
+  ) pi
     join media_item mi on mi.id = pi.media_item_id
     left join library_track lt on lt.media_item_id = pi.media_item_id
     left join album a on a.media_item_id = pi.media_item_id
@@ -713,7 +732,10 @@ export async function removeImportedPlaylist(id: string) {
     // The same lock as imports, which also delete tracks with no remaining source.
     await lockLibraryTrackWrites(tx)
     const [stored] = await tx
-      .select({ source: playlist.source })
+      .select({
+        source: playlist.source,
+        catalogProvider: playlist.catalogProvider,
+      })
       .from(playlist)
       .where(eq(playlist.id, id))
       .for('update')
@@ -728,18 +750,23 @@ export async function removeImportedPlaylist(id: string) {
     const kept = await tx.execute(
       sql`select 1 from playlist_item where playlist_id = ${id} limit 1`,
     )
-    if (kept.rows.length)
+    if (kept.rows.length || stored.catalogProvider)
       await tx
         .update(playlist)
         .set({
+          addedToLibrary: false,
           source: null,
-          spotifyId: null,
+          ...(stored.catalogProvider
+            ? {}
+            : { spotifyId: null, artworkUrl: null, spotifyUrl: null }),
           ownerName: null,
           description: null,
-          artworkUrl: null,
-          spotifyUrl: null,
           snapshotId: null,
           importedAt: null,
+          checkedAt: null,
+          syncSchedule: 'off',
+          syncUserId: null,
+          spotifyEditable: false,
         })
         .where(eq(playlist.id, id))
     else await tx.delete(playlist).where(eq(playlist.id, id))

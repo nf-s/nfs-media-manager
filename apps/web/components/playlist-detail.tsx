@@ -103,6 +103,7 @@ import {
 } from './track-entries-table'
 import { useConfig } from './providers'
 import { ProviderSources } from './provider-sources'
+import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { useNestedMediaView } from './nested-media-view'
 
 const ENTRY_PAGE_SIZE = 100
@@ -801,6 +802,7 @@ function PlaylistHeader({
             .join(' · ') || undefined
         }
         facts={[
+          playlist.inLibrary === false ? 'Outside library' : null,
           ...(playlist.presentation === 'albums'
             ? [
                 formatItemCount(playlist.albumCount, {
@@ -847,6 +849,14 @@ function PlaylistHeader({
         actions={
           <>
             <DetailActionsSpacer />
+            {playlist.inLibrary !== undefined && (
+              <CatalogLibraryAction
+                kind="playlist"
+                id={playlist.id}
+                title={playlist.name}
+                inLibrary={playlist.inLibrary}
+              />
+            )}
             <DetailMore
               crumb={{ title: playlist.name }}
               items={[
@@ -1014,9 +1024,11 @@ export default function PlaylistDetailView({
           <ProviderSources
             rows={[
               {
-                id: playlist.source ?? 'legacy',
+                id:
+                  playlist.source ??
+                  (playlist.spotifyUrl ? 'spotify' : 'legacy'),
                 label:
-                  playlist.source === 'spotify'
+                  playlist.source === 'spotify' || playlist.spotifyUrl
                     ? 'Spotify'
                     : playlistSourceLabel(playlist.source),
                 identifier: spotifyPlaylistId(playlist.spotifyUrl) ?? undefined,
@@ -1033,6 +1045,7 @@ export default function PlaylistDetailView({
               },
             ]}
           />
+          <CatalogDiscoveries kind="playlist" id={playlist.id} />
           <PlaylistSyncPanel playlist={playlist} />
         </TabsContent>
       </DetailTabs>

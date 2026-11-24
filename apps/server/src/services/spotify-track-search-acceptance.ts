@@ -8,7 +8,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { slugifyParts } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
-import { scrapeJob } from '@/schemas/db'
+import { mediaItem, scrapeJob } from '@/schemas/db'
 import {
   independentTrackData,
   lockLibraryTrackWrites,
@@ -137,6 +137,16 @@ async function rankSpotifySearchCandidates(
   const targets = await resolveSpotifyTrackIds(tx, candidates, {
     choosingOneCandidate: true,
   })
+  const targetIds = [...new Set(targets.values())]
+  const libraryTargets = targetIds.length
+    ? await tx
+        .select({ id: mediaItem.id })
+        .from(mediaItem)
+        .where(
+          sql`${mediaItem.inLibrary} and ${inArray(mediaItem.id, targetIds)}`,
+        )
+    : []
+  const memberIds = new Set(libraryTargets.map(({ id }) => id))
   const albumIds = [
     ...new Set(
       candidates.flatMap(({ spotifyAlbumId }) =>
@@ -150,6 +160,7 @@ async function rankSpotifySearchCandidates(
       select r.spotify_id from (${spotifyAlbumReleaseIds()}) r
       join media_item album on album.id = r.album_id
       where ${inArray(sql`r.spotify_id`, albumIds)}
+        and album.in_library
         and album.metadata->>'legacyHidden' is distinct from 'true'
       group by r.spotify_id having count(distinct r.album_id) = 1`)
     for (const row of z
@@ -161,6 +172,7 @@ async function rankSpotifySearchCandidates(
     .map((candidate) => ({
       candidate,
       targetId: targets.get(candidate.spotifyTrackId),
+      memberTarget: memberIds.has(targets.get(candidate.spotifyTrackId) ?? ''),
       exactVersion: spotifySearchMatchesTitleVersion(source, candidate),
       observedAlbum: spotifySearchMatchesObservedAlbum(source, candidate),
       libraryAlbum:
@@ -173,7 +185,7 @@ async function rankSpotifySearchCandidates(
         Number(b.exactVersion) - Number(a.exactVersion) ||
         Number(b.observedAlbum) - Number(a.observedAlbum) ||
         Number(b.libraryAlbum) - Number(a.libraryAlbum) ||
-        Number(!!b.targetId) - Number(!!a.targetId) ||
+        Number(b.memberTarget) - Number(a.memberTarget) ||
         Number(b.exactCredits) - Number(a.exactCredits) ||
         (b.candidate.popularity ?? -1) - (a.candidate.popularity ?? -1),
     )
@@ -217,6 +229,7 @@ async function linkSpotifyRecording(
   const unnamed =
     merged && !draft.before.length ? await archiveTracks(tx, [trackId]) : []
   const before = await readTrackRowImage(tx, targetId)
+  const source = merged ? await libraryRecording(tx, trackId) : null
   const jobBefore = automatic
     ? {}
     : await readJobOptions(tx, jobId, ACCEPTANCE_KEYS)
@@ -225,6 +238,11 @@ async function linkSpotifyRecording(
     matchMethod,
     albumFallbackArtistCreditCorrection,
   })
+  if (before?.inLibrary === false && source?.inLibrary)
+    await tx
+      .update(mediaItem)
+      .set({ inLibrary: true })
+      .where(eq(mediaItem.id, targetId))
   const effects: ChangeEffectEntry[] = []
   const after = before && (await readTrackRowImage(tx, targetId))
   const changed = before && after && trackRowStateEntry(targetId, before, after)

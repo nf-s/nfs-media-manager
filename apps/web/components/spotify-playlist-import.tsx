@@ -1019,11 +1019,16 @@ export default function SpotifyPlaylistImport() {
                                 src={playlist.artworkUrl}
                               />
                               <SecondaryCell text={playlist.name}>
-                                {playlist.stored ? (
+                                {playlist.stored?.playlistId ||
+                                playlist.catalogId ? (
                                   <DetailLink
                                     className="ds-cell-title"
                                     kind="playlist"
-                                    id={playlist.stored.playlistId}
+                                    id={
+                                      playlist.stored?.playlistId ??
+                                      playlist.catalogId ??
+                                      ''
+                                    }
                                   >
                                     {playlist.name}
                                   </DetailLink>

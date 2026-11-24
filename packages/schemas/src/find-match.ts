@@ -115,6 +115,7 @@ export const AlbumCandidatePreviewSchema = z.object({
   tracks: z
     .array(
       z.object({
+        catalogMediaItemId: z.string().optional(),
         title: z.string().min(1),
         position: z.number().int().positive(),
         durationSec: z.number().int().nonnegative().nullable(),

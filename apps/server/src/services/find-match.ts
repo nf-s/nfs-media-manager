@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
+import { nanoid } from 'nanoid'
 import { PluginMatchCandidatesSchema } from '@repo/media-plugin-sdk'
 import {
   ARTIST_ENRICHMENT_TASK,
@@ -24,16 +25,21 @@ import {
   effectiveReferenceOverrides,
 } from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
+import { createStableId, parseOptionalDate } from '@/lib/media-utils'
 import {
   normalizeArtistProviderId,
   searchArtistCandidates,
 } from '@/plugins/builtin/artist-providers'
 import { getScrapePlugin } from '@/plugins/registry'
-import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
+import { artist, scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { getAlbumReleaseHints } from './album-release-hints'
 import { readAlbumMatchRejections } from './album-match-rejections'
 import { identifierUrl } from './artist-provider-evidence'
 import { loadArtistProviderTarget } from './artist-profiles'
+import {
+  observeCatalogMedia,
+  observeCatalogOccurrence,
+} from './catalog-discoveries'
 import { providerOperation } from './manual-add'
 import { sonovaultAlbumMatchCandidates } from './sonovault-album-lookup'
 import { observeFilmCandidate } from './film-catalog-observations'
@@ -180,6 +186,10 @@ async function searchMedia(
     input.provider,
     isRejectedMatch,
   )
+  const albumCatalogIds =
+    kind === 'album'
+      ? await observeAlbumMatchCandidates(input, candidates)
+      : new Map<string, string>()
   return MatchSearchResultSchema.parse({
     provider: input.provider,
     query: input.q ?? mediaQuery(media),
@@ -195,6 +205,9 @@ async function searchMedia(
       .map(
         (candidate): MatchCandidate => ({
           referenceType: candidate.referenceType,
+          catalogMediaItemId: albumCatalogIds.get(
+            `${candidate.referenceType}:${candidate.externalId}`,
+          ),
           externalId: candidate.externalId,
           title: candidate.title,
           subtitle: candidate.subtitle ?? null,
@@ -209,8 +222,45 @@ async function searchMedia(
   })
 }
 
+async function observeAlbumMatchCandidates(
+  input: z.infer<typeof MatchSearchInputSchema>,
+  candidates: z.infer<typeof PluginMatchCandidatesSchema>,
+) {
+  const occurrenceKey = nanoid()
+  return db.transaction(async (tx) => {
+    const ids = new Map<string, string>()
+    for (const [index, candidate] of candidates.entries()) {
+      const id = await observeCatalogMedia(
+        tx,
+        {
+          kind: 'album',
+          title: candidate.title,
+          provider: input.provider,
+          referenceType: candidate.referenceType,
+          externalId: candidate.externalId,
+          artworkUrl: candidate.artworkUrl,
+          releaseDate: parseOptionalDate(candidate.releaseDate),
+          referenceMetadata: { url: candidate.url ?? null },
+        },
+        {
+          provider: input.provider,
+          operation: 'match-search',
+          occurrenceKey,
+          subjectKind: 'album',
+          subjectId: input.id,
+          position: index + 1,
+        },
+      )
+      ids.set(`${candidate.referenceType}:${candidate.externalId}`, id)
+    }
+    return ids
+  })
+}
+
 async function loadArtist(id: string, provider: ArtistProfileProvider) {
-  const target = await loadArtistProviderTarget(id, provider)
+  const target = await loadArtistProviderTarget(id, provider, undefined, {
+    includeCatalog: true,
+  })
   if (!target)
     throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
   return {
@@ -256,12 +306,63 @@ async function searchArtist(
     undefined,
     'searching',
   )
+  const occurrenceKey = nanoid()
+  const items = await db.transaction(async (tx) => {
+    const result: MatchCandidate[] = []
+    for (const [index, candidate] of candidates.entries()) {
+      const current = candidate.id === target.current
+      const provisionalId = createStableId(
+        'catalog-artist',
+        JSON.stringify([provider.data, candidate.id]),
+      )
+      if (!current)
+        await tx
+          .insert(artist)
+          .values({
+            id: provisionalId,
+            name: candidate.name,
+            sortName: candidate.name,
+            catalogProvider: provider.data,
+            catalogExternalId: candidate.id,
+          })
+          .onConflictDoNothing()
+      const [native] = current
+        ? []
+        : await tx
+            .select({ id: artist.id, merged: artist.mergedIntoId })
+            .from(artist)
+            .where(
+              and(
+                eq(artist.catalogProvider, provider.data),
+                eq(artist.catalogExternalId, candidate.id),
+              ),
+            )
+      const id = current ? input.id : (native?.merged ?? native?.id)
+      if (id)
+        await observeCatalogOccurrence(
+          tx,
+          { kind: 'artist', id },
+          {
+            provider: provider.data,
+            operation: 'match-search',
+            occurrenceKey,
+            subjectKind: 'artist',
+            subjectId: input.id,
+            position: index + 1,
+            details: { details: candidate.details ?? null },
+          },
+        )
+      result.push({
+        ...artistCandidate(provider.data, candidate, target.current),
+        catalogMediaItemId: id,
+      })
+    }
+    return result
+  })
   return MatchSearchResultSchema.parse({
     provider: provider.data,
     query: input.q ?? target.name,
-    items: candidates.map((candidate) =>
-      artistCandidate(provider.data, candidate, target.current),
-    ),
+    items,
   })
 }
 

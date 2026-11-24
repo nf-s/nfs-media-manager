@@ -220,6 +220,7 @@ const CreditImageSchema = z.object({
   creditedAs: z.string().nullable(),
 })
 const RowImageSchema = z.object({
+  inLibrary: z.boolean().optional(),
   sourceLabel: z.string().nullable(),
   artworkUrl: z.string().nullable(),
   metadata: JsonValueSchema.nullable(),
@@ -245,7 +246,8 @@ export async function readTrackRowImage(
   const [image] = RowImagesSchema.parse(
     (
       await reader.execute(sql`
-        select mi.source_label as "sourceLabel", mi.artwork_url as "artworkUrl",
+        select mi.in_library as "inLibrary",
+          mi.source_label as "sourceLabel", mi.artwork_url as "artworkUrl",
           mi.metadata, lt.spotify_track_id as "spotifyTrackId",
           lt.spotify_url as "spotifyUrl", lt.duration_sec as "durationSec",
           lt.isrc, lt.spotify_album_id as "spotifyAlbumId",
@@ -300,6 +302,15 @@ async function writeRowImage(
         swap('source_label', text(from.sourceLabel), text(to.sourceLabel)),
         swap('artwork_url', text(from.artworkUrl), text(to.artworkUrl)),
         swap('metadata', json(from.metadata), json(to.metadata)),
+        ...(from.inLibrary !== undefined && to.inLibrary !== undefined
+          ? [
+              swap(
+                'in_library',
+                sql`${from.inLibrary}::boolean`,
+                sql`${to.inLibrary}::boolean`,
+              ),
+            ]
+          : []),
       ],
       sql`, `,
     )}

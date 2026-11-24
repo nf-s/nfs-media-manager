@@ -26,6 +26,7 @@ import {
   type SonosRoomRef,
 } from '@/utils/playback-engine'
 import { restorePlaybackSource } from '@/utils/playback-source'
+import { recordPlaybackCatalog } from '@/utils/playback-catalog'
 import {
   createPlaybackSync,
   createSessionApi,
@@ -199,6 +200,7 @@ function createEngine(
   scrobbling: Scrobbling,
   sonos: ReturnType<typeof createSonosControlApi>,
 ) {
+  const seenCatalog = new Set<string>()
   // The access token is held in memory only and never written to storage.
   let cached: { accessToken: string; expiresAt: number } | null = null
   let pending: Promise<string> | null = null
@@ -224,7 +226,27 @@ function createEngine(
     return pending
   }
   return createPlaybackEngine({
-    api: createPlayerApi(token),
+    api: createPlayerApi(token, fetch, (operation, items) => {
+      const unique = new Map(
+        items.map((item) => [`${operation}:${item.spotifyId}`, item]),
+      )
+      const pending = [...unique]
+        .filter(([key]) => !seenCatalog.has(key))
+        .slice(0, 50)
+      if (!pending.length) return
+      for (const [key] of pending) seenCatalog.add(key)
+      while (seenCatalog.size > 500) {
+        const oldest = seenCatalog.values().next().value
+        if (oldest) seenCatalog.delete(oldest)
+      }
+      void recordPlaybackCatalog(
+        apiBaseUrl,
+        operation,
+        pending.map(([, item]) => item),
+      ).catch(() => {
+        for (const [key] of pending) seenCatalog.delete(key)
+      })
+    }),
     token,
     loadSdk: loadSpotifySdk,
     playerName: PLAYER_NAME,

@@ -279,6 +279,9 @@ function TrackEntryCell({
           <DetailLink kind="track" id={track.id} className="ds-cell-title">
             {track.title}
           </DetailLink>
+          {track.inLibrary === false && (
+            <span className="ds-muted">Outside library</span>
+          )}
           <TrackRowPlay track={track} source={source} />
         </span>
       ) : album ? (

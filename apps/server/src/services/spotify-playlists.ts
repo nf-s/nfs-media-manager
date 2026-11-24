@@ -25,6 +25,7 @@ import {
   normalizeSpotifyTrackEntry,
   spotifyArtworkUrl,
   spotifyJson,
+  spotifyTrackMention,
   type SpotifyLibraryTrack,
   type SpotifyRequest,
 } from '@/lib/spotify-api'
@@ -36,6 +37,14 @@ import {
   playlistItem,
 } from '@/schemas/db'
 import { writeArtistCredits } from './artist-names'
+import {
+  observeCatalogMedia,
+  observeCatalogOccurrence,
+} from './catalog-discoveries'
+import {
+  latestCatalogResponseId,
+  observeSpotifyTrackAndAlbum,
+} from './music-catalog-observations'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { getLastfmAccount } from './lastfm-scrobbles'
 import { loadPlaylistSummaries } from './playlist-directory'
@@ -73,6 +82,7 @@ const PlaylistTargetSchema = z.object({
   description: z.string().nullable(),
   artworkUrl: z.string().url().nullable(),
   snapshotId: z.string().nullable(),
+  observeOnly: z.boolean().optional(),
 })
 const LikedTargetSchema = z.object({ source: z.literal('spotify-liked') })
 const TargetSchema = z.discriminatedUnion('source', [
@@ -242,7 +252,101 @@ export async function readSpotifyPlaylist(
   }
 }
 
-type Fetched = { entries: SpotifyLibraryTrack[]; skipped: number }
+type PlaylistOccurrence = { position: number } & (
+  | { track: SpotifyLibraryTrack; mention?: never }
+  | {
+      track?: never
+      mention: NonNullable<ReturnType<typeof spotifyTrackMention>>
+    }
+)
+type PlaylistPage = {
+  page: number
+  total: number
+  responseId?: string
+  entries: PlaylistOccurrence[]
+}
+type Fetched = {
+  entries: SpotifyLibraryTrack[]
+  skipped: number
+  pages: PlaylistPage[]
+}
+
+export function spotifyPlaylistOccurrences(
+  items: z.infer<typeof SpotifyTrackEntriesPageSchema>['items'],
+  offset: number,
+) {
+  return items.flatMap((entry, index): PlaylistOccurrence[] => {
+    const position = offset + index + 1
+    const normalized = normalizeSpotifyTrackEntry(entry)
+    if (normalized.track) return [{ position, track: normalized.track }]
+    const mention = spotifyTrackMention(entry)
+    return mention ? [{ position, mention }] : []
+  })
+}
+
+export async function observeSpotifyPlaylistPage(
+  tx: Transaction,
+  playlistId: string,
+  page: PlaylistPage,
+  evidence: {
+    jobId?: string
+    snapshot?: string | null
+    observedAt?: Date
+    complete?: boolean
+  },
+) {
+  for (const occurrence of page.entries) {
+    const { position, track, mention } = occurrence
+    const key = JSON.stringify([
+      evidence.snapshot ?? evidence.jobId ?? 'stored',
+      position,
+    ])
+    const origin = {
+      operation: 'playlist-contents',
+      key,
+      subjectKind: 'playlist',
+      subjectId: playlistId,
+      jobId: evidence.jobId,
+      observedAt: evidence.observedAt,
+      responseId: page.responseId,
+      page: page.page,
+      position,
+      details: {
+        snapshot: evidence.snapshot ?? null,
+        version: evidence.jobId ?? evidence.snapshot ?? null,
+        total: page.total,
+        complete: evidence.complete ?? false,
+        addedAt: track?.addedAt ?? null,
+      },
+      relationshipRole: 'playlist_entry',
+    }
+    if (track) {
+      await observeSpotifyTrackAndAlbum(
+        tx,
+        {
+          ...track,
+          spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
+        },
+        origin,
+      )
+    } else if (mention) {
+      await observeCatalogMedia(
+        tx,
+        {
+          kind: 'track',
+          title: mention.name,
+          provider: 'spotify',
+          referenceType: 'track',
+          credits: mention.artists.map(({ id, name }) => ({
+            name,
+            externalId: SpotifyIdSchema.safeParse(id).data,
+          })),
+        },
+        { ...origin, provider: 'spotify', occurrenceKey: key },
+      )
+    }
+  }
+}
 
 const overLimit = (action: string) =>
   refused(
@@ -261,6 +365,7 @@ export async function readSpotifyTrackEntries(
   expectedTotal: number | null,
 ): Promise<Fetched | null> {
   const tracks = new Map<string, SpotifyLibraryTrack>()
+  const observations: PlaylistPage[] = []
   let skipped = 0
   let invalid = 0
   let offset = 0
@@ -290,6 +395,15 @@ export async function readSpotifyTrackEntries(
         'The playlist changed while it was read. Nothing was imported; try again.',
       )
     total = page.total
+    observations.push({
+      page: pages,
+      total,
+      responseId:
+        path === 'me/tracks'
+          ? undefined
+          : await latestCatalogResponseId(db, context.jobId, 'spotify'),
+      entries: spotifyPlaylistOccurrences(page.items, offset),
+    })
     for (const entry of page.items) {
       const result = normalizeSpotifyTrackEntry(entry)
       if (!result.track) {
@@ -309,6 +423,10 @@ export async function readSpotifyTrackEntries(
     offset += page.items.length
     const done =
       page.next === null || !page.items.length || offset >= page.total
+    if (done && offset !== page.total)
+      throw refused(
+        'Spotify returned an incomplete playlist. Nothing was imported; try again.',
+      )
     await context.progress({
       pagesRead: pages,
       totalPages: done ? pages : Math.max(pages, pagesFor(page.total)),
@@ -321,11 +439,15 @@ export async function readSpotifyTrackEntries(
     throw refused(
       'Spotify returned tracks in a form this application does not recognise. Nothing was imported.',
     )
-  return { entries: [...tracks.values()], skipped: skipped + invalid }
+  return {
+    entries: [...tracks.values()],
+    skipped: skipped + invalid,
+    pages: observations,
+  }
 }
 
 type Imported =
-  | { unchanged: true; spotifyId: string }
+  | { unchanged: true; spotifyId: string; admitTracks: boolean }
   | ({ unchanged: false; target: PlaylistTarget } & Fetched)
 
 /**
@@ -359,7 +481,11 @@ async function fetchTracks(
       .from(playlist)
       .where(eq(playlist.spotifyId, options.spotifyId))
     if (stored?.snapshotId && stored.snapshotId === current.snapshotId)
-      return { unchanged: true, spotifyId: options.spotifyId }
+      return {
+        unchanged: true,
+        spotifyId: options.spotifyId,
+        admitTracks: !options.observeOnly,
+      }
     if (current.total > SPOTIFY_PLAYLIST_ITEM_LIMIT)
       throw overLimit('Nothing was imported.')
     const fetched = await readSpotifyTrackEntries(
@@ -380,6 +506,7 @@ async function fetchTracks(
           description: current.description,
           artworkUrl: current.artworkUrl,
           snapshotId: current.snapshotId,
+          observeOnly: options.observeOnly,
         },
         ...fetched,
       }
@@ -444,6 +571,9 @@ async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
           target.source === 'spotify' ? target.ownerName : null,
         ),
     source: target.source,
+    addedToLibrary: true,
+    catalogProvider: target.source === 'spotify' ? 'spotify' : null,
+    catalogExternalId: target.source === 'spotify' ? target.spotifyId : null,
     spotifyId: target.source === 'spotify' ? target.spotifyId : null,
     ownerName: target.source === 'spotify' ? target.ownerName : null,
     description: target.source === 'spotify' ? target.description : null,
@@ -581,7 +711,7 @@ export async function refreshTrackAddedDates(
   trackIds?: string[],
 ) {
   await tx.execute(sql`
-    update library_track lt set date_added = least(m.added, manual.added_at)
+    update library_track lt set date_added = dates.added_at
     from library_track base
     left join (
       select media_item_id, min(added_at) as added from (
@@ -594,16 +724,19 @@ export async function refreshTrackAddedDates(
         ${trackIds ? sql`where ${inArray(sql`l.track_media_item_id`, trackIds)}` : sql``}
       ) dates group by media_item_id
     ) m on m.media_item_id = base.media_item_id
-    left join lateral (
-      select least(
-        (mi.metadata->>'spotifyTrackManualAddedAt')::timestamptz,
-        (mi.metadata->>'tidalSimilarTrackAddedAt')::timestamptz
-      ) at time zone 'UTC' as added_at
-      from media_item mi where mi.id = base.media_item_id
-    ) manual on true
+    join media_item mi on mi.id = base.media_item_id
+    left join catalog_addition ca on ca.media_item_id = base.media_item_id
+    cross join lateral (
+      select case when mi.in_library then least(
+        m.added,
+        (mi.metadata->>'spotifyTrackManualAddedAt')::timestamptz at time zone 'UTC',
+        (mi.metadata->>'tidalSimilarTrackAddedAt')::timestamptz at time zone 'UTC',
+        ca.added_at at time zone 'UTC'
+      ) end as added_at
+    ) dates
     where lt.media_item_id = base.media_item_id
       ${trackIds ? sql`and ${inArray(sql`lt.media_item_id`, trackIds)}` : sql``}
-      and lt.date_added is distinct from least(m.added, manual.added_at)`)
+      and lt.date_added is distinct from dates.added_at`)
 }
 
 /** Resolve the provider's ordered artist credits against existing library artists. */
@@ -636,6 +769,7 @@ export async function replaceSpotifyTrackCredits(
 async function storeImport(
   target: PlaylistTarget,
   tracks: SpotifyLibraryTrack[],
+  pages: PlaylistPage[],
   jobId: string,
 ) {
   return db.transaction(async (tx) => {
@@ -648,6 +782,8 @@ async function storeImport(
       jobId,
       recordedAt: new Date().toISOString(),
     }
+    const observeOnly =
+      target.source === 'spotify' && target.observeOnly === true
     const knownIds = await resolveSpotifyTrackIds(tx, tracks)
     const idForTrack = (id: string) =>
       knownIds.get(id) ?? spotifyTrackItemId(id)
@@ -673,6 +809,7 @@ async function storeImport(
         return {
           id,
           mediaType: 'track',
+          inLibrary: !observeOnly,
           slug: slugifyParts(track.title, id),
           title: track.title,
           artworkUrl: track.artworkUrl,
@@ -698,6 +835,7 @@ async function storeImport(
             metadata: sql`coalesce(${mediaItem.metadata}, '{}'::jsonb) || excluded.metadata`,
             releaseDate: sql`case when ${preserveReviewed} then ${mediaItem.releaseDate} else excluded.release_date end`,
             updatedAt: new Date(),
+            inLibrary: sql`${mediaItem.inLibrary} or excluded.in_library`,
           },
         })
       await recordTrackIsrcs(
@@ -761,6 +899,29 @@ async function storeImport(
           addedAt: parseOptionalDate(track.addedAt),
         })),
       )
+    const snapshot = target.source === 'spotify' ? target.snapshotId : null
+    await observeCatalogOccurrence(
+      tx,
+      { kind: 'playlist', id: playlistId },
+      {
+        provider: 'spotify',
+        operation: 'playlist-contents',
+        occurrenceKey: snapshot ?? jobId,
+        jobId,
+        details: {
+          snapshot,
+          version: jobId,
+          complete: true,
+          total: pages[0]?.total ?? 0,
+        },
+      },
+    )
+    for (const page of pages)
+      await observeSpotifyPlaylistPage(tx, playlistId, page, {
+        jobId,
+        snapshot,
+        complete: true,
+      })
     const removed = await removeOrphanTracks(tx)
     await refreshTrackAddedDates(tx)
     return { playlistId, removed }
@@ -783,18 +944,33 @@ export async function runSpotifyPlaylistImport(
     const fetched = await fetchTracks(context, options)
     if (!fetched || !(await context.isActive())) return { outcome: 'stopped' }
     if (fetched.unchanged) {
-      await db
-        .update(playlist)
-        .set({ checkedAt: new Date(), spotifyEditable: true })
-        .where(eq(playlist.spotifyId, fetched.spotifyId))
+      const added = await db.transaction(async (tx) => {
+        await lockLibraryTrackWrites(tx)
+        const [stored] = await tx
+          .update(playlist)
+          .set({ checkedAt: new Date(), spotifyEditable: true })
+          .where(eq(playlist.spotifyId, fetched.spotifyId))
+          .returning({ id: playlist.id })
+        if (!fetched.admitTracks || !stored) return 0
+        const result = await tx.execute(sql`
+          update media_item mi set in_library = true
+          from playlist_item pi join library_track lt on lt.media_item_id = pi.media_item_id
+          where pi.playlist_id = ${stored.id} and mi.id = lt.media_item_id
+            and not mi.in_library and mi.metadata->>'legacyHidden' is distinct from 'true'`)
+        if (result.rowCount) await refreshTrackAddedDates(tx)
+        return result.rowCount ?? 0
+      })
       return {
         outcome: 'complete',
-        message: 'The playlist has not changed since the last import.',
+        message: added
+          ? `Added ${added} stored playlist tracks to the library.`
+          : 'The playlist has not changed since the last import.',
       }
     }
     const stored = await storeImport(
       fetched.target,
       fetched.entries,
+      fetched.pages,
       context.jobId,
     )
     await refreshTrackLinks(await getLastfmAccount(), 'playlist-import')
@@ -805,7 +981,9 @@ export async function runSpotifyPlaylistImport(
     return {
       outcome: 'complete',
       message: [
-        `Imported ${fetched.entries.length} tracks from ${name}.`,
+        fetched.target.source === 'spotify' && fetched.target.observeOnly
+          ? `Read ${fetched.entries.length} tracks from ${name}.`
+          : `Imported ${fetched.entries.length} tracks from ${name}.`,
         ...(fetched.skipped
           ? [
               `${fetched.skipped} entries were skipped: local files, episodes or unavailable tracks.`,

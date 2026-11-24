@@ -152,6 +152,26 @@ const SpotifyEntryKindSchema = z.object({
   id: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
 })
+const SpotifyTrackMentionSchema = z.object({
+  type: z.literal('track').optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .refine((name) => !name.includes('\0')),
+  artists: z.array(ArtistSchema).min(1).max(50),
+})
+
+/** A provider track with a name and credits can still be opened without an ID. */
+export function spotifyTrackMention(
+  entry: z.infer<typeof SpotifyTrackEntrySchema>,
+) {
+  // Local file names can contain information about the owner or their machine.
+  if (entry.is_local) return null
+  const parsed = SpotifyTrackMentionSchema.safeParse(entry.item ?? entry.track)
+  return parsed.success ? parsed.data : null
+}
 const SpotifyLibraryTrackSchema = z.object({
   id: SpotifyIdSchema,
   name: z.string().min(1),
@@ -161,6 +181,7 @@ const SpotifyLibraryTrackSchema = z.object({
     .object({
       id: z.string().nullable().optional(),
       name: z.string().nullable().optional(),
+      artists: z.array(ArtistSchema).optional(),
       images: LooseImagesSchema,
       release_date: z.string().nullable().optional(),
     })
@@ -172,6 +193,7 @@ export type SpotifyLibraryTrack = {
   title: string
   artists: string[]
   artistCredits: Array<{ id: string; name: string }>
+  albumArtistCredits?: Array<{ id?: string; name: string }>
   durationSec: number
   albumName: string | null
   spotifyAlbumId: string | null
@@ -509,6 +531,14 @@ export function normalizeSpotifyTrackEntry(
       title: data.name,
       artists: [...new Set(data.artists.map((artist) => artist.name))],
       artistCredits: [...artistCredits.values()],
+      ...(data.album?.artists
+        ? {
+            albumArtistCredits: data.album.artists.map(({ id, name }) => ({
+              id: SpotifyIdSchema.safeParse(id).data,
+              name,
+            })),
+          }
+        : {}),
       durationSec: Math.round(data.duration_ms / 1000),
       albumName: data.album?.name || null,
       spotifyAlbumId: albumId.success ? albumId.data : null,

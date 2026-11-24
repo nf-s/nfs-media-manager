@@ -34,6 +34,7 @@ import {
   markPlaylistNotEditable,
   readSpotifyPlaylist,
   readSpotifyTrackEntries,
+  observeSpotifyPlaylistPage,
   storedImportTarget,
 } from './spotify-playlists'
 import { latestSpotifyJobs, refused } from './spotify-playlist-state'
@@ -243,6 +244,14 @@ async function presentTrackIds(
     `playlists/${options.spotifyPlaylistId}/items`,
     current.total,
   )
+  if (fetched)
+    for (const page of fetched.pages)
+      await db.transaction((tx) =>
+        observeSpotifyPlaylistPage(tx, options.playlistId, page, {
+          jobId: context.jobId,
+          snapshot: current.snapshotId,
+        }),
+      )
   return fetched
     ? {
         ids: new Set(fetched.entries.map((entry) => entry.spotifyTrackId)),
@@ -266,7 +275,7 @@ export async function queuePlaylistImportAfterAddition(
     const job = await createTaskJob(
       SPOTIFY_PLAYLIST_IMPORT_TASK,
       options.userId,
-      { scheduled: true, taskOptions: target },
+      { scheduled: true, taskOptions: { ...target, observeOnly: true } },
     )
     return job.id
   } catch (error) {

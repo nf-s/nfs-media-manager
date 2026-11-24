@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   failure: vi.fn(),
   albumMatches: vi.fn(),
   catalogMatches: vi.fn(),
+  libraryRows: vi.fn(),
+  observe: vi.fn(),
   filmMatches: vi.fn(),
   addAlbum: vi.fn(),
   addFilm: vi.fn(),
@@ -15,9 +17,14 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/db', () => ({
   db: {
-    select: () => ({ from: () => ({ where: async () => [] }) }),
+    select: () => ({ from: () => ({ where: mocks.libraryRows }) }),
     execute: mocks.catalogMatches,
+    transaction: (execute: (tx: object) => unknown) => execute({}),
   },
+}))
+vi.mock('@/services/catalog-discoveries', () => ({
+  observeCatalogMedia: mocks.observe,
+  promoteCatalogMediaInTransaction: vi.fn(),
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: mocks.secrets,
@@ -68,6 +75,11 @@ describe('manual provider search and library additions', () => {
     })
     mocks.albumMatches.mockResolvedValue([{ id: null, error: null }])
     mocks.catalogMatches.mockResolvedValue({ rows: [] })
+    mocks.libraryRows.mockResolvedValue([])
+    mocks.observe.mockImplementation(
+      async (_tx: object, target: { kind: string }) =>
+        `discovered-${target.kind}`,
+    )
     mocks.filmMatches.mockResolvedValue([{ id: null, error: null }])
     mocks.addAlbum.mockResolvedValue({ id: 'new-album', created: true })
     mocks.addFilm.mockResolvedValue({
@@ -101,6 +113,7 @@ describe('manual provider search and library additions', () => {
     mocks.albumMatches.mockResolvedValue([
       { id: 'existing-album', error: null },
     ])
+    mocks.libraryRows.mockResolvedValue([{ id: 'existing-album' }])
     const result = await searchManualMedia({
       mediaType: 'album',
       q: ' Example Artist Example Album ',
@@ -119,6 +132,7 @@ describe('manual provider search and library additions', () => {
           artworkUrl: 'https://i.scdn.co/image/example',
           url: `https://open.spotify.com/album/${spotifyAlbumId}`,
           mediaItemId: 'existing-album',
+          catalogMediaItemId: 'discovered-album',
           trackCount: 1,
         },
       ],
@@ -167,6 +181,7 @@ describe('manual provider search and library additions', () => {
       artworkUrl: 'https://image.tmdb.org/t/p/w185/example.jpg',
       url: 'https://www.themoviedb.org/movie/701',
       mediaItemId: null,
+      catalogMediaItemId: 'discovered-film',
     })
     expect(result.hasMore).toBe(true)
     expect(result.totalCount).toBe(25)
@@ -209,6 +224,7 @@ describe('manual provider search and library additions', () => {
           spotify_id: spotifyAlbumId,
           library_id: 'existing-album',
           hidden: false,
+          in_library: true,
         },
       ],
     })
@@ -300,7 +316,14 @@ describe('manual provider search and library additions', () => {
 
   it('rejects ambiguous identities and incorrect provider metadata before persisting', async () => {
     mocks.catalogMatches.mockResolvedValueOnce({
-      rows: [{ spotify_id: spotifyAlbumId, library_id: null, hidden: false }],
+      rows: [
+        {
+          spotify_id: spotifyAlbumId,
+          library_id: null,
+          hidden: false,
+          in_library: true,
+        },
+      ],
     })
     await expect(
       addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),

@@ -42,8 +42,8 @@ import { getScrapePlugin } from '@/plugins/registry'
 import { mediaItem, providerSecret } from '@/schemas/db'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { commitAlbumImportRecord, matchAlbumCandidates } from './album-imports'
-import { observeCatalogMedia } from './catalog-discoveries'
 import { observeFilmCandidate } from './film-catalog-observations'
+import { observeCatalogMedia, promoteCatalogMediaInTransaction } from './catalog-discoveries'
 import {
   commitFilmImportRecord,
   matchFilmCandidates,
@@ -62,7 +62,7 @@ import {
 import { saveProviderResponseCapture } from './provider-response-history'
 import {
   latestCatalogResponseId,
-  observeSpotifySearchTrack,
+  observeSpotifySearchResults,
 } from './music-catalog-observations'
 import {
   lookupSpotifyCatalogTrack,
@@ -71,6 +71,7 @@ import {
   searchSpotifyCatalogAlbums,
   searchSpotifyCatalogTrackPage,
   searchSpotifyCatalogTracks,
+  type SpotifySearchObservation,
 } from './provider-search-task-replay'
 import {
   appendProviderTaskReplayStep,
@@ -331,6 +332,7 @@ export async function searchSpotifyTrackCandidates(
   assertActive: () => Promise<void>,
   market?: string,
   jobId?: string,
+  observe?: (observations: SpotifySearchObservation[]) => void,
 ) {
   const { provider, params, account } = await spotifyTrackSearchAccess(
     userId,
@@ -356,7 +358,7 @@ export async function searchSpotifyTrackCandidates(
             assertActive,
           )
         : request
-      return searchSpotifyCatalogTracks(lookup, token, input)
+      return searchSpotifyCatalogTracks(lookup, token, input, observe)
     },
     assertActive,
   )
@@ -372,6 +374,7 @@ export async function lookupSpotifyTrackCandidates(
   assertActive: () => Promise<void>,
   market: string | undefined,
   jobId: string,
+  observe?: (observations: SpotifySearchObservation[]) => void,
 ) {
   const { provider, params, account } = await spotifyTrackSearchAccess(
     userId,
@@ -395,7 +398,7 @@ export async function lookupSpotifyTrackCandidates(
         secrets,
         assertActive,
       )
-      return lookupSpotifyCatalogTrack(lookup, token, input)
+      return lookupSpotifyCatalogTrack(lookup, token, input, observe)
     },
     assertActive,
   )
@@ -432,21 +435,15 @@ async function searchManualSpotifyTracks(
     result.items.map((track) => track.spotifyTrackId),
   )
   const key = nanoid()
-  const observed = await db.transaction(async (tx) => {
-    const ids: string[] = []
-    for (const [index, track] of result.items.entries())
-      ids.push(
-        await observeSpotifySearchTrack(tx, track, {
-          operation: 'catalog-search',
-          key,
-          page,
-          position: track.catalogPosition ?? index + 1,
-        }),
-      )
-    return ids
-  })
+  const observed = await db.transaction((tx) =>
+    observeSpotifySearchResults(tx, result.observations, {
+      operation: 'catalog-search',
+      key,
+      page,
+    }),
+  )
   return ManualMediaSearchResultSchema.parse({
-    items: result.items.map((track, index) => {
+    items: result.items.map((track) => {
       const match = matches.get(track.spotifyTrackId)
       return {
         externalId: track.spotifyTrackId,
@@ -457,8 +454,8 @@ async function searchManualSpotifyTracks(
         releaseDate: track.releaseDate,
         artworkUrl: track.artworkUrl,
         url: track.spotifyUrl,
-        mediaItemId: match?.hidden ? null : (match?.id ?? null),
-        catalogMediaItemId: observed[index],
+        mediaItemId: match?.inLibrary && !match.hidden ? match.id : null,
+        catalogMediaItemId: observed.get(track.spotifyTrackId),
       }
     }),
     page,
@@ -470,6 +467,10 @@ async function addManualSpotifyTrack(spotifyId: string, userId: string | null) {
   const match = (await findManualTrackMatches([spotifyId])).get(spotifyId)
   const existing = existingManualTrack(match)
   if (existing) return existing
+  if (match)
+    return db.transaction((tx) =>
+      promoteCatalogMediaInTransaction(tx, match.id, userId ?? undefined),
+    )
 
   const track = await manualSpotifyTrackOperation(
     userId,
@@ -735,24 +736,34 @@ export async function readCatalogMembership({
         match !== undefined && (match.hidden || match.id === null)
       return {
         ...item,
-        mediaItemId: ambiguous ? null : (match?.id ?? null),
+        mediaItemId:
+          ambiguous || (match && 'inLibrary' in match && !match.inLibrary)
+            ? null
+            : (match?.id ?? null),
         ambiguous,
       }
     }),
   }
 }
 
-async function findCatalogAlbumMembership(albumIds: string[]) {
-  const matches = new Map<string, { id: string | null; hidden: boolean }>()
+async function findCatalogAlbumMembership(
+  albumIds: string[],
+  includeOutside = false,
+) {
+  const matches = new Map<
+    string,
+    { id: string | null; hidden: boolean; inLibrary: boolean }
+  >()
   if (!albumIds.length) return matches
   const result = await db.execute(sql`
     select release.spotify_id,
       case when count(*) = 1 then min(release.album_id) end as library_id,
-      bool_or(coalesce(mi.metadata->>'legacyHidden' = 'true', false)) as hidden
+      bool_or(coalesce(mi.metadata->>'legacyHidden' = 'true', false)) as hidden,
+      bool_or(mi.in_library) as in_library
     from (${spotifyAlbumReleaseIds()}) release
     join media_item mi on mi.id = release.album_id
     where release.spotify_id = any(${sql.param(albumIds)}::text[])
-      and mi.in_library
+      ${includeOutside ? sql`` : sql`and mi.in_library`}
     group by release.spotify_id
   `)
   const rows = z
@@ -761,11 +772,16 @@ async function findCatalogAlbumMembership(albumIds: string[]) {
         spotify_id: z.string(),
         library_id: z.string().nullable(),
         hidden: z.boolean(),
+        in_library: z.boolean(),
       }),
     )
     .parse(result.rows)
   for (const row of rows)
-    matches.set(row.spotify_id, { id: row.library_id, hidden: row.hidden })
+    matches.set(row.spotify_id, {
+      id: row.library_id,
+      hidden: row.hidden,
+      inLibrary: row.in_library,
+    })
   return matches
 }
 
@@ -798,16 +814,22 @@ export async function addManualMedia(
   if (options.mediaType === 'track')
     return addManualSpotifyTrack(options.externalId, userId)
   if (options.mediaType === 'album') {
-    const match = (await findCatalogAlbumMembership([options.externalId])).get(
-      options.externalId,
-    )
+    const match = (
+      await findCatalogAlbumMembership([options.externalId], true)
+    ).get(options.externalId)
     if (match?.hidden || match?.id === null)
       throw new ServerError({
         statusCode: 409,
         message:
           'Ambiguous album identity. Resolve existing matches before importing.',
       })
-    if (match) return { mediaItemId: match.id, created: false }
+    if (match?.id) {
+      const { id, inLibrary } = match
+      if (inLibrary) return { mediaItemId: id, created: false }
+      return db.transaction((tx) =>
+        promoteCatalogMediaInTransaction(tx, id, userId ?? undefined),
+      )
+    }
   }
   const provider = options.mediaType === 'album' ? 'spotify' : 'tmdb'
   const referenceType = options.mediaType === 'album' ? 'album' : 'tmdb'

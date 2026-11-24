@@ -56,7 +56,11 @@ export function describeSearchItem(
       : tracks,
     item.subtitle,
     item.releaseDate?.slice(0, 4),
-    inLibrary ? 'In library' : item.catalogMediaItemId ? 'Outside library' : null,
+    inLibrary
+      ? 'In library'
+      : item.catalogMediaItemId
+        ? 'Outside library'
+        : null,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -149,6 +153,7 @@ export function invalidateManualMediaAddition(
       [
         'tracks',
         'catalog-membership',
+        'playback-catalog',
         'tidal-similar',
         'track',
         'album',
@@ -162,6 +167,7 @@ export function invalidateManualMediaAddition(
     ...(mediaType === 'album'
       ? [
           client.invalidateQueries({ queryKey: ['catalog-membership'] }),
+          client.invalidateQueries({ queryKey: ['playback-catalog'] }),
           client.invalidateQueries({ queryKey: ['tidal-similar'] }),
         ]
       : []),

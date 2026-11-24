@@ -16,6 +16,7 @@ import {
   spotifyTrackItemId,
 } from './spotify-playlists'
 import { recordTrackIsrcs, sonovaultPrimaryIsrcSql } from './track-isrcs'
+import { promoteCatalogMediaInTransaction } from './catalog-discoveries'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type SpotifyRecording = Omit<SpotifyTrackSearchCandidate, 'durationSec'> & {
@@ -27,6 +28,7 @@ export async function libraryRecording(tx: Transaction, id: string) {
     .select({
       id: mediaItem.id,
       title: mediaItem.title,
+      inLibrary: mediaItem.inLibrary,
       source: mediaItem.sourceLabel,
       spotifyId: libraryTrack.spotifyTrackId,
       hasArtists: sql<boolean>`exists (select 1 from media_credit c where c.media_item_id = ${mediaItem.id} and c.role = 'artist')`,
@@ -178,7 +180,7 @@ export async function storeConfirmedRecording(
         and position.album_media_item_id = library_track.album_media_item_id)`)
 }
 
-type TrackMatch = { id: string; hidden: boolean }
+type TrackMatch = { id: string; hidden: boolean; inLibrary: boolean }
 
 export async function findManualTrackMatches(
   spotifyIds: string[],
@@ -188,6 +190,7 @@ export async function findManualTrackMatches(
   const tracks = await database
     .select({
       id: libraryTrack.mediaItemId,
+      inLibrary: mediaItem.inLibrary,
       spotifyId: libraryTrack.spotifyTrackId,
       hidden: sql<boolean>`coalesce(${mediaItem.metadata}->>'legacyHidden' = 'true', false)`,
     })
@@ -209,7 +212,7 @@ export function existingManualTrack(
       statusCode: 409,
       message: 'The selected Spotify recording is hidden in the library.',
     })
-  return match ? { mediaItemId: match.id, created: false } : null
+  return match?.inLibrary ? { mediaItemId: match.id, created: false } : null
 }
 
 export async function storeManualTrack(
@@ -229,6 +232,7 @@ export async function storeManualTrackInTransaction(
   const match = (await findManualTrackMatches([spotifyId], tx)).get(spotifyId)
   const existing = existingManualTrack(match)
   if (existing) return existing
+  if (match) return promoteCatalogMediaInTransaction(tx, match.id)
   const resolved = (await resolveSpotifyTrackIds(tx, [candidate])).get(
     spotifyId,
   )

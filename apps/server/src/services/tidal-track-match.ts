@@ -358,6 +358,10 @@ async function observeTidalLookup(
           provider: PROVIDER,
           referenceType: 'track',
           externalId: candidate.tidalTrackId,
+          credits: candidate.artistCredits?.map(({ id, name }) => ({
+            name,
+            externalId: id,
+          })),
           durationSec: candidate.durationSec,
           referenceMetadata: {
             url: candidate.url,

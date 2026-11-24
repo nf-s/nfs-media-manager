@@ -67,6 +67,60 @@ export const PlaybackSnapshotSchema = z.object({
 })
 export type PlaybackSnapshot = z.infer<typeof PlaybackSnapshotSchema>
 
+const CatalogIdSchema = z.string().regex(spotifyIdPattern)
+const CatalogNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .refine((name) => !name.includes('\0'))
+
+/** The catalog portion of a device, queue or recovery result. */
+export const PlaybackCatalogItemSchema = z.object({
+  kind: z.enum(['track', 'album']),
+  spotifyId: CatalogIdSchema,
+  title: CatalogNameSchema,
+  album: z
+    .object({ spotifyId: CatalogIdSchema.optional(), title: CatalogNameSchema })
+    .optional(),
+  artists: z
+    .array(
+      z.object({
+        name: CatalogNameSchema,
+        spotifyId: CatalogIdSchema.optional(),
+      }),
+    )
+    .max(50),
+  durationSec: z.number().int().positive().max(86_400).optional(),
+})
+export type PlaybackCatalogItem = z.infer<typeof PlaybackCatalogItemSchema>
+
+export const PlaybackCatalogInputSchema = z
+  .object({
+    operation: z.enum(['playback', 'playback-queue', 'playback-recovery']),
+    items: z.array(PlaybackCatalogItemSchema).min(1).max(50),
+  })
+  .strict()
+export type PlaybackCatalogInput = z.infer<typeof PlaybackCatalogInputSchema>
+
+const PlaybackCatalogReferenceSchema = z.object({
+  id: z.string(),
+  inLibrary: z.boolean(),
+})
+
+export const PlaybackCatalogResultSchema = z.object({
+  items: z.array(
+    z.object({
+      kind: z.enum(['track', 'album']),
+      spotifyId: CatalogIdSchema,
+      item: PlaybackCatalogReferenceSchema,
+      album: PlaybackCatalogReferenceSchema.nullable(),
+      artists: z.array(z.object({ name: z.string(), id: z.string() })),
+    }),
+  ),
+})
+export type PlaybackCatalogResult = z.infer<typeof PlaybackCatalogResultSchema>
+
 /** One track of a source entry: the entry's index and the track's place in it. */
 export const SourceTrackSchema = z.object({
   index: z.number().int().nonnegative(),
