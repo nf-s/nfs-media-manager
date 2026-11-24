@@ -18,6 +18,7 @@ import { createPlaybackSonosRooms } from './playback-sonos-rooms'
 import { fetchApiData } from './api'
 import {
   positionAt,
+  withVerifiedPlaybackTrack,
   type PendingPlaybackSource,
   type PlayableItem,
   type PlaybackSource,
@@ -252,6 +253,13 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     }
     if (!stored) return { ...state, sharing }
     const source = stored.source
+    const snapshot = state.snapshot
+    const session = stored.session
+    const sameDevice =
+      state.target.kind === 'remote' &&
+      stored.target.kind === 'spotify' &&
+      state.target.device.id === stored.target.device?.id
+    const savedSnapshot = stored.snapshot
     return {
       ...state,
       active: true,
@@ -262,7 +270,18 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
       shuffle: stored.shuffle,
       // Until this page sees the device itself, the driver's last report.
       snapshot:
-        state.snapshot ??
+        (snapshot &&
+        sameDevice &&
+        savedSnapshot &&
+        snapshot.trackUri === savedSnapshot.trackUri &&
+        snapshot.contextUri === savedSnapshot.contextUri &&
+        stored.current?.uri === session?.item.uri
+          ? withVerifiedPlaybackTrack(
+              snapshot,
+              stored.current,
+              session?.verifiedRecordingUri,
+            )
+          : snapshot) ??
         (stored.snapshot && stored.current
           ? { ...stored.snapshot, at: storedAt }
           : null),

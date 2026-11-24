@@ -63,6 +63,7 @@ import { queueSpotifyPlaylistImports } from '@/services/spotify-playlists'
 import { listPlaylistBrowsePage } from '@/services/playlist-directory'
 import { getPlaylistDetail, getTrackDetail } from '@/services/tracks'
 import { observePlaybackCatalog } from '@/services/playback-catalog'
+import { recordTrackIsrcs } from '@/services/track-isrcs'
 import { backfillMusicCatalog } from '@/services/music-catalog-backfill'
 import { promoteCatalogMedia } from '@/services/catalog-discoveries'
 import {
@@ -260,6 +261,84 @@ describe('Spotify playlist job responses', () => {
     await backfillMusicCatalog(true)
     expect(await databaseClient.$count(schema.catalogObservation)).toBe(applied)
     expect(request.mock.calls).toHaveLength(calls)
+  })
+
+  it('opens the unique saved edition of a verified playback recording', async () => {
+    const code = 'GBABC2400123'
+    const play = async (edition: string, album: string, isrc?: string) => {
+      const result = await observePlaybackCatalog(
+        PlaybackCatalogInputSchema.parse({
+          operation: 'playback',
+          items: [
+            {
+              kind: 'track',
+              spotifyId: edition.padEnd(22, '0'),
+              title: 'Fixture recording',
+              durationSec: 174,
+              isrc,
+              artists: [
+                {
+                  name: 'Fixture recording artist',
+                  spotifyId: 'billing'.padEnd(22, '0'),
+                },
+              ],
+              album: { title: album, spotifyId: edition.padEnd(22, '1') },
+            },
+          ],
+        }),
+      )
+      const [row] = result.items
+      if (!row) throw new Error('Expected a playback catalog row')
+      return row
+    }
+    const save = async (edition: string, album: string) => {
+      const row = await play(edition, album)
+      await promoteCatalogMedia(row.item.id, USER_ID)
+      await recordTrackIsrcs(databaseClient, [
+        {
+          mediaItemId: row.item.id,
+          isrc: code,
+          provider: 'spotify',
+          source: { kind: 'spotify-manual-add' },
+        },
+      ])
+      return row.item.id
+    }
+    const saved = await save('original', 'Fixture release')
+    await save('compilation', 'Compilation')
+    expect(
+      (await play('market', 'Fixture release')).libraryTrackId,
+    ).toBeUndefined()
+    const market = await play('market', 'Fixture release', code)
+    expect(market.libraryTrackId).toBe(saved)
+    expect(market.item.inLibrary).toBe(false)
+    await recordTrackIsrcs(databaseClient, [
+      {
+        mediaItemId: market.item.id,
+        isrc: code,
+        provider: 'spotify',
+        source: {
+          kind: 'spotify-track-lookup',
+          responseId: 'fixture-response',
+        },
+      },
+    ])
+    expect((await play('market', 'Fixture release')).libraryTrackId).toBe(saved)
+    expect(
+      (await play('market', 'Fixture release', 'GBABC2400321')).libraryTrackId,
+    ).toBeUndefined()
+    const [lowId, highId] = [saved, market.item.id].sort()
+    if (!lowId || !highId) throw new Error('Expected a pair of tracks')
+    await databaseClient
+      .insert(schema.libraryKeepSeparate)
+      .values({ kind: 'track', lowId, highId })
+    expect(
+      (await play('market', 'Fixture release')).libraryTrackId,
+    ).toBeUndefined()
+    await save('othermarket', 'Fixture release')
+    expect(
+      (await play('newmarket', 'Fixture release', code)).libraryTrackId,
+    ).toBeUndefined()
   })
 
   it('opens the playing recording, album and artist and saves only the selected track without creating discoveries', async () => {

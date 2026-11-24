@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   PlaybackCatalogItemSchema,
+  PlaybackIsrcSchema,
   type PlaybackCatalogInput,
   type PlaybackCatalogItem,
 } from '@repo/schemas/playback'
@@ -33,6 +34,13 @@ export const SpotifyPlaybackAlbumSchema = SpotifyPlaybackEntitySchema.extend({
   name: z.string(),
   images: z.array(z.object({ url: z.string() })).default([]),
 })
+export const SpotifyPlaybackExternalIdsSchema = z
+  .object({
+    isrc: z
+      .unknown()
+      .transform((value) => PlaybackIsrcSchema.safeParse(value).data),
+  })
+  .nullish()
 
 export function spotifyPlaybackEntityUri(
   kind: 'album' | 'artist',
@@ -53,6 +61,7 @@ const TrackSchema = z.object({
   linked_from: SpotifyLinkedTrackSchema,
   is_local: z.boolean().optional(),
   is_playable: z.boolean().optional(),
+  external_ids: SpotifyPlaybackExternalIdsSchema,
   album: SpotifyPlaybackAlbumSchema.optional(),
 })
 const StateSchema = z.object({
@@ -69,6 +78,7 @@ const ObservedTrackSchema = TrackSchema.pick({
   album: true,
   duration_ms: true,
   is_local: true,
+  external_ids: true,
 }).extend({ duration_ms: TrackSchema.shape.duration_ms.optional() })
 
 function catalogTrack(value: unknown): PlaybackCatalogItem | null {
@@ -80,6 +90,7 @@ function catalogTrack(value: unknown): PlaybackCatalogItem | null {
     kind: 'track',
     spotifyId: playbackSpotifyId('track', track.uri),
     title: track.name,
+    ...(track.external_ids?.isrc ? { isrc: track.external_ids.isrc } : {}),
     artworkUrl: playbackCatalogArtwork(track.album?.images[0]?.url),
     durationSec: track.duration_ms
       ? Math.round(track.duration_ms / 1000)
@@ -203,6 +214,7 @@ export type TrackDetails = Pick<
   | 'trackUri'
   | 'linkedFromUri'
   | 'isLocal'
+  | 'isrc'
   | 'trackName'
   | 'artists'
   | 'albumName'
@@ -219,6 +231,7 @@ function trackDetails(track: z.infer<typeof TrackSchema>): TrackDetails {
     trackUri: track.uri,
     linkedFromUri: track.linked_from,
     ...(track.is_local ? { isLocal: true } : {}),
+    ...(track.external_ids?.isrc ? { isrc: track.external_ids.isrc } : {}),
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { SonosGroupControlSchema, SonosRoomsSchema } from './sonos'
 
 export const spotifyIdPattern = /^[A-Za-z0-9]{22}$/
+export const PlaybackIsrcSchema = z.string().regex(/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/)
 
 /**
  * The player's shared session: what one signed-in account is playing and has
@@ -48,6 +49,9 @@ export const PlaybackSnapshotSchema = z.object({
   trackUri: UriSchema.nullable(),
   /** The requested track when Spotify substituted another recording for it. */
   linkedFromUri: UriSchema.nullable(),
+  /** The requested track confirmed by Spotify's market lookup. */
+  verifiedRequestedTrackUri: UriSchema.optional(),
+  isrc: PlaybackIsrcSchema.optional(),
   /** The relinked Spotify catalog URI when the device reports the requested URI. */
   relinkedTrackUri: UriSchema.optional(),
   isLocal: z.boolean().optional(),
@@ -97,6 +101,7 @@ export const PlaybackCatalogItemSchema = z.object({
   spotifyId: CatalogIdSchema,
   title: CatalogNameSchema,
   artworkUrl: PlaybackCatalogArtworkSchema.optional(),
+  isrc: PlaybackIsrcSchema.optional(),
   album: z
     .object({ spotifyId: CatalogIdSchema.optional(), title: CatalogNameSchema })
     .optional(),
@@ -131,6 +136,7 @@ export const PlaybackCatalogResultSchema = z.object({
       kind: z.enum(['track', 'album']),
       spotifyId: CatalogIdSchema,
       item: PlaybackCatalogReferenceSchema,
+      libraryTrackId: z.string().optional(),
       album: PlaybackCatalogReferenceSchema.nullable(),
       artists: z.array(
         z.object({
@@ -259,6 +265,8 @@ export const SavedPlaybackSchema = z.object({
       sent: z.array(PlayableItemSchema).max(200),
       index: z.number().int().nonnegative(),
       anchorUri: UriSchema.nullable(),
+      /** The recording Spotify confirmed for this session's current track. */
+      verifiedRecordingUri: UriSchema.optional(),
       /** Last index queued ahead of the Spotify playback context, if any remain. */
       queuedThrough: z.number().int().nonnegative().optional(),
       /** The possible sequence while a Spotify queue command is in flight. */

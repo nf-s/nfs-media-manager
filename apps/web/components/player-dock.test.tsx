@@ -455,6 +455,88 @@ test('the device relink finds the saved track independently of its actual releas
   )
 })
 
+test('a verified substitution keeps the track that was played from the library', () => {
+  const original = 'AAAAAAAAAAAAAAAAAAAAAA'
+  const originalUri = `spotify:track:${original}`
+  const html = render(
+    {
+      ...on,
+      current: {
+        ...item,
+        kind: 'track',
+        uri: originalUri,
+        title: snapshot.trackName,
+        trackId: 'originating-track',
+      },
+      snapshot: { ...snapshot, verifiedRequestedTrackUri: originalUri },
+    },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'track',
+          externalId: trackId,
+          mediaItemId: 'other-saved-version',
+          ambiguous: false,
+        },
+        {
+          mediaType: 'track',
+          externalId: original,
+          mediaItemId: 'originating-track',
+          ambiguous: false,
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          kind: 'track',
+          spotifyId: trackId,
+          item: { id: 'other-saved-version', inLibrary: true },
+          album: null,
+          artists: [],
+        },
+      ],
+    },
+  )
+  assert.match(html, /href="\/tracks[^\"]*originating-track[^\"]*"/)
+  assert.doesNotMatch(html, /other-saved-version|Add track to library/)
+})
+
+test('a catalog observation with a verified library recording opens the saved recording', () => {
+  const html = render(
+    { ...on, snapshot },
+    '',
+    {
+      items: [
+        {
+          mediaType: 'track',
+          externalId: trackId,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          kind: 'track',
+          spotifyId: trackId,
+          item: { id: 'outside-track', inLibrary: false },
+          libraryTrackId: 'matching-library-recording',
+          album: null,
+          artists: [],
+        },
+      ],
+    },
+  )
+  assert.match(html, /href="\/tracks\/matching-library-recording"/)
+  assert.doesNotMatch(
+    html,
+    /href="\/tracks\/outside-track"|Add track to library/,
+  )
+})
+
 test('an outside observation that conflicts with the current track reference cannot be promoted', () => {
   const html = render(
     {

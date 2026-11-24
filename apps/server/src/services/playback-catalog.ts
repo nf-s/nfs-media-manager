@@ -9,6 +9,7 @@ import { artist, libraryTrack, mediaCredit, mediaItem } from '@/schemas/db'
 import { observeNamedArtistIdentities } from './catalog-artist-identities'
 import { observeCatalogMedia } from './catalog-discoveries'
 import { observeSpotifyTrackAndAlbum } from './music-catalog-observations'
+import { playbackRecordingMembers } from './playback-recording-membership'
 
 /** Store the public catalog item only. No player commands or listening events. */
 export async function observePlaybackCatalog({
@@ -29,6 +30,7 @@ export async function observePlaybackCatalog({
               : (earlier.album ?? item.album),
             artworkUrl: item.artworkUrl ?? earlier.artworkUrl,
             durationSec: item.durationSec ?? earlier.durationSec,
+            isrc: item.isrc ?? earlier.isrc,
             artists: item.artists.some(({ spotifyId }) => spotifyId)
               ? item.artists
               : earlier.artists,
@@ -98,6 +100,7 @@ export async function observePlaybackCatalog({
         kind,
         spotifyId,
         id: trackId,
+        isrc: item.isrc,
         albumId: albumId ?? null,
         credits,
       })
@@ -142,6 +145,12 @@ export async function observePlaybackCatalog({
     const library = new Map(
       memberships.map(({ id, inLibrary }) => [id, inLibrary]),
     )
+    const savedRecordings = await playbackRecordingMembers(
+      tx,
+      identities.filter(
+        ({ kind, id }) => kind === 'track' && library.get(id) === false,
+      ),
+    )
     const byMedia = new Map<string, { name: string; id: string }[]>()
     for (const { mediaId, name, id } of credits) {
       const list = byMedia.get(mediaId) ?? []
@@ -162,6 +171,7 @@ export async function observePlaybackCatalog({
           kind,
           spotifyId,
           item: reference(id),
+          libraryTrackId: savedRecordings.get(id),
           album: albumId ? reference(albumId) : null,
           artists: observedArtists.length
             ? observedArtists

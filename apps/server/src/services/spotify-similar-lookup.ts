@@ -15,7 +15,7 @@ import { createStableId, parseOptionalDate } from '@/lib/media-utils'
 import { mediaItem, spotifyCodeLookup, tidalSimilar } from '@/schemas/db'
 import { reconcileSimilarArtistCredits } from './catalog-artist-reconciliation'
 import type { TaskJobContext, TaskJobResult } from './jobs'
-import { observeCatalogMedia } from './catalog-discoveries'
+import { observeCatalogMedia, type CatalogOrigin } from './catalog-discoveries'
 import {
   prepareSpotifyCatalogTrackSearch,
   runSpotifyCatalogSearches,
@@ -23,6 +23,7 @@ import {
 import {
   latestCatalogResponseId,
   observeTidalSimilarLibraryMatches,
+  spotifyTrackAndAlbumObservations,
 } from './music-catalog-observations'
 import { libraryMembershipBySpotifyId } from './similar-library-matches'
 import {
@@ -211,14 +212,59 @@ export async function runSpotifySimilarLookup(
                   'spotify',
                 )
                 for (const [index, candidate] of candidates.entries()) {
+                  const origin = {
+                    provider: 'spotify',
+                    operation: 'spotify-code-search',
+                    occurrenceKey: JSON.stringify([
+                      context.jobId,
+                      key,
+                      index + 1,
+                    ]),
+                    subjectKind: options.kind,
+                    subjectId: options.itemId,
+                    jobId: context.jobId,
+                    responseId,
+                    page: 1,
+                    position: index + 1,
+                  } satisfies CatalogOrigin
+                  if (options.kind === 'track') {
+                    const { album, recording } =
+                      spotifyTrackAndAlbumObservations(
+                        {
+                          ...candidate,
+                          artistCredits: candidate.artistCredits ?? [],
+                          spotifyTrackId: candidate.spotifyId,
+                          spotifyUrl: candidate.url,
+                          albumName: candidate.spotifyAlbumId
+                            ? candidate.albumName
+                            : null,
+                        },
+                        { ...origin, key: origin.occurrenceKey },
+                      )
+                    const albumId = album
+                      ? await observeCatalogMedia(tx, album.media, {
+                          ...origin,
+                          relationshipRole: album.origin.relationshipRole,
+                        })
+                      : undefined
+                    await observeCatalogMedia(
+                      tx,
+                      {
+                        ...recording.media,
+                        albumId,
+                        albumName: candidate.albumName,
+                      },
+                      origin,
+                    )
+                    continue
+                  }
                   await observeCatalogMedia(
                     tx,
                     {
-                      kind: options.kind,
+                      kind: 'album',
                       title: candidate.title,
                       provider: 'spotify',
-                      referenceType:
-                        options.kind === 'album' ? 'spotify' : 'track',
+                      referenceType: 'spotify',
                       externalId: candidate.spotifyId,
                       artworkUrl: candidate.artworkUrl,
                       spotifyUrl: candidate.url,
@@ -241,21 +287,7 @@ export async function runSpotifySimilarLookup(
                           .map((name) => ({ name })),
                       ],
                     },
-                    {
-                      provider: 'spotify',
-                      operation: 'spotify-code-search',
-                      occurrenceKey: JSON.stringify([
-                        context.jobId,
-                        key,
-                        index + 1,
-                      ]),
-                      subjectKind: options.kind,
-                      subjectId: options.itemId,
-                      jobId: context.jobId,
-                      responseId,
-                      page: 1,
-                      position: index + 1,
-                    },
+                    origin,
                   )
                 }
               })

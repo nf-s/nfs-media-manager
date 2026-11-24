@@ -15,6 +15,7 @@ import { spotifyTrackUri } from '@/utils/album-links'
 import {
   albumPlayable,
   libraryTrackPlayable,
+  playbackReportsTrack,
   trackPlayable,
   type AlbumSource,
   type LibraryTrackSource,
@@ -328,9 +329,7 @@ export function TrackPlayButton({
     )
   const uri = spotifyTrackUri(track.externalId)
   const { snapshot } = view
-  const current =
-    snapshot !== null &&
-    (snapshot.trackUri === uri || snapshot.linkedFromUri === uri)
+  const current = snapshot !== null && playbackReportsTrack(snapshot, uri)
   const playing = current && !snapshot.paused
   return (
     <>
@@ -353,9 +352,7 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
   const item = view.enabled ? libraryTrackPlayable(track) : null
   if (!item) return null
   const { snapshot } = view
-  const current =
-    snapshot !== null &&
-    (snapshot.trackUri === item.uri || snapshot.linkedFromUri === item.uri)
+  const current = snapshot !== null && playbackReportsTrack(snapshot, item.uri)
   return {
     item,
     current,

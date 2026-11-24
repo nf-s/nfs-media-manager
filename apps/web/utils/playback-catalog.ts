@@ -56,6 +56,7 @@ export function currentPlaybackCatalog(
     kind: 'track',
     spotifyId: playbackSpotifyId('track', trackUri),
     title: snapshot.trackName,
+    ...(snapshot.isrc ? { isrc: snapshot.isrc } : {}),
     artworkUrl: playbackCatalogArtwork(
       snapshot.artworkUrl ?? (sameItem ? current?.artworkUrl : undefined),
     ),

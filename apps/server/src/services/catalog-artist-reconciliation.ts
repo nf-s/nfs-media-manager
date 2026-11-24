@@ -3,7 +3,6 @@ import { z } from 'zod'
 import {
   SpotifyCodeMatchSchema,
   TidalSuggestionSchema,
-  tidalSuggestionTitle,
   type SpotifyCodeMatch,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
@@ -15,6 +14,7 @@ import { spotifyCodeLookup, tidalSimilar, providerResponse } from '@/schemas/db'
 import { normalizeSpotifyCatalogTrack } from './provider-search-task-replay'
 import type { ChangeTransaction } from './library-change-effect'
 import { scopedSpotifyRetainedBilling } from './scoped-spotify-billing'
+import { similarRecordingArtistEvidence } from './similar-recording-artist-evidence'
 
 /** Both native artist IDs must identify just one current artist. Names never select a record. */
 async function exactOwners(
@@ -95,84 +95,47 @@ export async function reconcileArtistPair(
   return true
 }
 
-/** Join native credits only for a selected first-party Spotify ISRC result with corroborating version, duration and sole billing. */
+/** Join native credits on the same first-party recording with corroborating version, duration and sole billing. */
 export async function reconcileSimilarArtistCredits(
   tx: ChangeTransaction,
   items: readonly TidalSuggestion[],
   apply = true,
+  includesStoredItems = false,
 ) {
-  const codes = items.flatMap(({ code }) => validIsrc(code) ?? [])
-  if (!codes.length) return 0
+  if (
+    !items.some(
+      ({ code, artistCredits }) =>
+        artistCredits?.length === 1 && validIsrc(code),
+    )
+  )
+    return 0
   await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-  const matches = await tx
-    .select()
-    .from(spotifyCodeLookup)
-    .where(
-      and(
-        eq(spotifyCodeLookup.codeType, 'isrc'),
-        eq(spotifyCodeLookup.source, 'spotify'),
-        inArray(spotifyCodeLookup.code, codes),
-      ),
-    )
   let reconciled = 0
-  for (const item of items) {
-    const row = matches.find((r) => r.code === validIsrc(item.code))
-    const match = SpotifyCodeMatchSchema.safeParse(row?.result).data
-    const tidal = item.artistCredits?.[0]
-    const spotify = match?.artistCredits?.[0]
-    if (
-      !match ||
-      match.spotifyId !== row?.spotifyId ||
-      !tidal ||
-      !spotify ||
-      item.artistCredits?.length !== 1 ||
-      match.artistCredits?.length !== 1 ||
-      item.artists.length !== 1 ||
-      match.artists.length !== 1 ||
-      item.artists[0] !== tidal.name ||
-      match.artists[0] !== spotify.name ||
-      tidal.name !== spotify.name ||
-      tidalSuggestionTitle(item).toLowerCase() !== match.title.toLowerCase() ||
-      item.durationSec === null ||
-      match.durationSec === null ||
-      Math.abs(item.durationSec - match.durationSec) > 2
-    )
-      continue
-    const source = await exactOwners(tx, 'tidal', tidal.id)
-    const target = await exactOwners(tx, 'spotify', spotify.id)
+  const pairs = await similarRecordingArtistEvidence(
+    tx,
+    items,
+    includesStoredItems,
+  )
+  for (const pair of pairs) {
+    const source = await exactOwners(tx, 'tidal', pair.tidalId)
+    const target = await exactOwners(tx, 'spotify', pair.spotifyId)
     if (
       source.length !== 1 ||
       !source[0] ||
       target.length !== 1 ||
       !target[0] ||
-      source[0] === target[0]
+      source[0] === target[0] ||
+      (pair.owner && pair.owner !== target[0])
     )
       continue
-    // Another recording can expose a provider that split (or combined) artists. Check both directions before joining this pair.
-    const conflicting = await tx.execute(sql`
-      with pages as (
-        select items from tidal_similar where kind = 'track' and (
-          items @> ${JSON.stringify([{ artistCredits: [{ id: tidal.id }] }])}::jsonb or
-          items @> ${JSON.stringify([{ artists: [spotify.name] }])}::jsonb)
-        union all select ${JSON.stringify(items)}::jsonb
-      )
-      select 1 from pages cross join lateral jsonb_array_elements(pages.items) t
-      join spotify_code_lookup s on s.code_type='isrc' and s.source='spotify'
-        and s.code=upper(regexp_replace(t->>'code','[-[:space:]]','','g'))
-      cross join lateral jsonb_array_elements(t->'artistCredits') tc
-      cross join lateral jsonb_array_elements(s.result->'artistCredits') sc
-      where tc->>'name' = sc->>'name' and (
-        (tc->>'id' = ${tidal.id} and sc->>'id' <> ${spotify.id}) or
-        (sc->>'id' = ${spotify.id} and tc->>'id' <> ${tidal.id})) limit 1`)
     if (
-      !conflicting.rows.length &&
-      (await reconcileArtistPair(
+      await reconcileArtistPair(
         tx,
         source[0],
         target[0],
         'matched-recording-artist-ids',
         apply,
-      ))
+      )
     )
       reconciled++
   }
@@ -237,11 +200,11 @@ async function scopedSpotifyEvidence(
           when jsonb_typeof(m.metadata->'spotifyArtistBilling')='array' then m.metadata->'spotifyArtistBilling'
           when jsonb_typeof(m.metadata->'spotifyArtistCredits')='array' then m.metadata->'spotifyArtistCredits'
           else '[]'::jsonb end) with ordinality as bill(credit,ordinal)
-          where o.position=ordinal and credit->>'name'=a.name
+          where o.position=ordinal and lower(trim(credit->>'name'))=lower(trim(a.name))
         union all
         select n.catalog_external_id from catalog_observation x join artist n on n.id=x.target_id
           where x.subject_kind='track' and x.subject_id=m.id and x.position=o.position and x.provider='spotify'
-            and x.target_kind='artist' and x.relationship_role='artist' and n.catalog_provider='spotify' and n.name=a.name
+            and x.target_kind='artist' and x.relationship_role='artist' and n.catalog_provider='spotify' and lower(trim(n.name))=lower(trim(a.name))
         union all
         select bill.credit->>'id' from (
           select p.payload from provider_current_state p
@@ -256,7 +219,7 @@ async function scopedSpotifyEvidence(
           )}) path(value)
           cross join lateral jsonb_path_query(p.payload,path.value::jsonpath,jsonb_build_object('track_id',t.spotify_track_id)) song
           cross join lateral jsonb_array_elements(case when jsonb_typeof(song->'artists')='array' then song->'artists' else '[]'::jsonb end) with ordinality bill(credit,ordinal)
-          where bill.ordinal=o.position and bill.credit->>'name'=a.name
+          where bill.ordinal=o.position and lower(trim(bill.credit->>'name'))=lower(trim(a.name))
       ) b on true
       where a.catalog_provider='spotify' and a.catalog_external_id is null and a.merged_into_id is null
         ${onlyId ? sql`and a.id=${onlyId}` : sql``}
@@ -470,20 +433,19 @@ export async function repairStoredSimilarArtists(
         .select({ items: tidalSimilar.items })
         .from(tidalSimilar)
         .where(eq(tidalSimilar.kind, 'track'))
-      const pages = rows.map(
-        (row) => z.array(TidalSuggestionSchema).safeParse(row.items).data ?? [],
+      const items = rows.flatMap((row) =>
+        Array.isArray(row.items)
+          ? row.items.flatMap(
+              (item) => TidalSuggestionSchema.safeParse(item).data ?? [],
+            )
+          : [],
       )
       const codes = [
-        ...new Set(
-          pages.flatMap((items) =>
-            items.flatMap((item) => validIsrc(item.code) ?? []),
-          ),
-        ),
+        ...new Set(items.flatMap((item) => validIsrc(item.code) ?? [])),
       ]
       for (let i = 0; i < codes.length; i += 100)
         await restoreLookupCredits(tx, codes.slice(i, i + 100))
-      for (const items of pages)
-        merged += await reconcileSimilarArtistCredits(tx, items)
+      merged = await reconcileSimilarArtistCredits(tx, items, true, true)
       if (!apply) throw dryRun
     })
   } catch (error) {

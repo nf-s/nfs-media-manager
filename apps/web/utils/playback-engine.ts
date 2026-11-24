@@ -11,6 +11,7 @@ import {
   startSession,
   startUnverified,
   stepSession,
+  withVerifiedPlaybackTrack,
   WATCHED_MS,
   type PendingPlaybackSource,
   type PlayableItem,
@@ -362,6 +363,8 @@ function sameShown(shown: PlaybackSnapshot | null, after: PlaybackSnapshot) {
     shown.trackUri === after.trackUri &&
     shown.linkedFromUri === after.linkedFromUri &&
     shown.relinkedTrackUri === after.relinkedTrackUri &&
+    shown.verifiedRequestedTrackUri === after.verifiedRequestedTrackUri &&
+    shown.isrc === after.isrc &&
     shown.isLocal === after.isLocal &&
     shown.albumUri === after.albumUri &&
     shown.albumName === after.albumName &&
@@ -1723,7 +1726,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
     for (const passed of plan.slice(0, at + 1)) take(passed)
     if (due) currentFromSource = due.from === 'source'
-    session = { ...active, item, index, anchorUri: after.trackUri }
+    session = {
+      ...active,
+      item,
+      index,
+      anchorUri: after.trackUri,
+      verifiedRecordingUri: undefined,
+    }
     skippedAt = null
     set({ current: item })
     return 'followed'
@@ -1733,6 +1742,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     // Until the requested item starts, the device still reports what it was
     // playing before.
     if (session?.phase === 'starting' || sourceStarting) return
+    if (
+      session?.item.kind === 'track' &&
+      after.linkedFromUri === session.item.uri &&
+      after.trackUri &&
+      after.trackUri !== session.item.uri &&
+      session.verifiedRecordingUri !== after.trackUri
+    )
+      session.verifiedRecordingUri = after.trackUri
     if (sameShown(state.snapshot, after) && !state.starting) return
     set({ active: true, snapshot: after, starting: false })
   }
@@ -1759,21 +1776,30 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     api
       .recording(active.item.uri)
       .then(
-        (recording) =>
-          recording && sameName(recording.name, began.trackName)
-            ? began.trackUri
-            : (recording?.uri ?? null),
+        (recording) => ({
+          playsAs:
+            recording && sameName(recording.name, began.trackName)
+              ? began.trackUri
+              : (recording?.uri ?? null),
+          verifiedRecordingUri:
+            recording?.uri === active.item.uri ? undefined : recording?.uri,
+        }),
         // Spotify could not say, so the track that began is taken for it.
-        () => null,
+        () => ({ playsAs: null }),
       )
-      .then((playsAs) => {
+      .then((verification) => {
         if (started !== run || disposed || session?.phase !== 'starting') return
-        session = { ...session, playsAs }
+        session = { ...session, ...verification }
         if (latest) observe(latest)
       })
   }
 
-  function observe(after: PlaybackSnapshot) {
+  function observe(reported: PlaybackSnapshot) {
+    const after = withVerifiedPlaybackTrack(
+      reported,
+      session?.item ?? null,
+      session?.verifiedRecordingUri,
+    )
     const before = latest
     if (
       session?.phase === 'playing' &&
@@ -2929,6 +2955,9 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
             sent,
             index,
             anchorUri: active.anchorUri,
+            ...(active.verifiedRecordingUri
+              ? { verifiedRecordingUri: active.verifiedRecordingUri }
+              : {}),
             ...(queuedThrough ? { queuedThrough } : {}),
             ...(pendingSent ? { pendingSent } : {}),
             ...(pendingQueuedThrough ? { pendingQueuedThrough } : {}),
@@ -3064,7 +3093,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
             ? {
                 item: next,
                 positionMs: 0,
-                given: { ...active, item: next, index: due, anchorUri: null },
+                given: {
+                  ...active,
+                  item: next,
+                  index: due,
+                  anchorUri: null,
+                  verifiedRecordingUri: undefined,
+                },
                 // The history has been counted up to its latest entry.
                 since: Math.max(
                   since,
@@ -3146,6 +3181,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           item,
           index,
           anchorUri: after.trackUri,
+          verifiedRecordingUri: undefined,
           queuedThrough: remainingQueuedThrough(
             active.queuedThrough,
             index,
@@ -3154,10 +3190,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         }
         set({ current: item })
       }
-      latest = after
+      latest = withVerifiedPlaybackTrack(
+        after,
+        session?.item ?? null,
+        session?.verifiedRecordingUri,
+      )
       heard = after.trackUri
       heardFor = session?.sent[session.index]?.uri ?? null
-      set({ active: true, snapshot: after, starting: false })
+      set({ active: true, snapshot: latest, starting: false })
       report('rejoined')
       findSonos()
       maintainRoom()
@@ -3307,6 +3347,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           sent: storedSession.sent,
           index: storedSession.index,
           anchorUri: storedSession.anchorUri,
+          verifiedRecordingUri: storedSession.verifiedRecordingUri,
           queuedThrough: remainingQueuedThrough(
             storedSession.queuedThrough,
             storedSession.index,

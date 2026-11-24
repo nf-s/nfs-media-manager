@@ -4,6 +4,7 @@ import {
   SpotifyLinkedTrackSchema,
   SpotifyPlaybackAlbumSchema,
   SpotifyPlaybackArtistSchema,
+  SpotifyPlaybackExternalIdsSchema,
   spotifyPlaybackEntityUri,
 } from './spotify-player-api'
 
@@ -77,6 +78,7 @@ const TrackSchema = z.object({
   album: SpotifyPlaybackAlbumSchema.partial({ name: true }).optional(),
   linked_from: SpotifyLinkedTrackSchema,
   is_local: z.boolean().optional(),
+  external_ids: SpotifyPlaybackExternalIdsSchema,
 })
 const StateSchema = z.object({
   context: z
@@ -111,6 +113,7 @@ export function sdkPlayback(
     trackUri: track.uri,
     linkedFromUri: track.linked_from,
     ...(track.is_local ? { isLocal: true } : {}),
+    ...(track.external_ids?.isrc ? { isrc: track.external_ids.isrc } : {}),
     trackName: track.name,
     artists: track.artists.map((artist) => artist.name).join(', '),
     albumName: track.album?.name ?? '',

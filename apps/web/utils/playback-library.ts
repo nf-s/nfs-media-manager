@@ -2,7 +2,11 @@ import type {
   CatalogMembershipInput,
   CatalogMembershipResult,
 } from '@repo/schemas/manual-add'
-import type { PlayableItem, PlaybackSnapshot } from './playback'
+import {
+  playbackReportsTrack,
+  type PlayableItem,
+  type PlaybackSnapshot,
+} from './playback'
 import { playbackAlbumUri, playbackSpotifyId } from './playback-catalog'
 
 type CatalogItem = Extract<
@@ -53,6 +57,7 @@ function playingTrack(
     trackId,
     snapshot.trackUri,
     snapshot.linkedFromUri,
+    snapshot.verifiedRequestedTrackUri,
   )
   const [first, ...aliases] = item.catalog
   const spotifyAlbumId = playbackSpotifyId('album', albumUri)
@@ -104,10 +109,7 @@ export function playingLibraryItems(
 ) {
   if (snapshot) {
     const currentTrack =
-      current?.kind === 'track' &&
-      (current.uri === snapshot.trackUri ||
-        current.uri === snapshot.linkedFromUri ||
-        current.uri === snapshot.relinkedTrackUri)
+      current?.kind === 'track' && playbackReportsTrack(snapshot, current.uri)
         ? current
         : null
     const trackId = currentTrack?.trackId ?? null
@@ -161,15 +163,23 @@ export function playbackItemMembership(
   if (!catalogItem || !membership) return { status: 'unresolved' }
   const found = new Set<string>()
   let complete = true
+  let ambiguous = false
   for (const key of item.catalog) {
     const row = membership.items.find(
       (row) =>
         row.mediaType === key.mediaType && row.externalId === key.externalId,
     )
-    if (row?.ambiguous) return { status: 'unresolved' }
+    if (
+      !row?.ambiguous &&
+      row?.mediaItemId &&
+      row.mediaItemId === item.mediaItemId
+    )
+      return { status: 'saved', mediaItemId: row.mediaItemId }
+    if (row?.ambiguous) ambiguous = true
     if (row?.mediaItemId) found.add(row.mediaItemId)
     if (!row) complete = false
   }
+  if (ambiguous) return { status: 'unresolved' }
   const [only] = found
   if (found.size === 1 && only) return { status: 'saved', mediaItemId: only }
   return complete && found.size === 0

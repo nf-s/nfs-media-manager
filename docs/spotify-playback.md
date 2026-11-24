@@ -2,6 +2,8 @@
 
 Optional in-app playback of library albums and tracks through a connected Spotify Premium account. It is off until connected from the player bar. The Spotify logo on its own line in a detail header opens the service; music titles open library details. Play buttons remain visible when playback is disconnected, with a connection explanation.
 
+When Spotify substitutes a market edition for a saved track, the player keeps the library link when Spotify confirms the substitution. For playback started elsewhere, the player can also open a saved edition when Spotify's recording code, album title, track title, duration and ordered artist credits identify a single library track. Artist names in the player open the artist inspector. A name without a resolved artist ID opens an in-app artist search.
+
 ## Turning it on
 
 1. Configure Spotify and its redirect URI as described in [Spotify albums and CSV imports](spotify-album-imports.md#account-setup).

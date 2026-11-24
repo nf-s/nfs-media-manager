@@ -5416,6 +5416,14 @@ test('another recording Spotify plays for a track is the track started', async (
   const state = one.sync.getState()
   assert.equal(state.current?.uri, 'spotify:track:another-0')
   assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0-here')
+  assert.equal(
+    state.snapshot?.verifiedRequestedTrackUri,
+    'spotify:track:another-0',
+  )
+  assert.equal(
+    one.engine.saved()?.session?.verifiedRecordingUri,
+    'spotify:track:another-0-here',
+  )
   assert.equal(state.starting, false)
   assert.equal(state.failure, null)
   one.close()
@@ -5436,6 +5444,7 @@ test('a recording of the same name that Spotify did not name is the track starte
   const state = one.sync.getState()
   assert.equal(state.current?.uri, 'spotify:track:another-0')
   assert.equal(state.snapshot?.trackUri, 'spotify:track:another-0-reissue')
+  assert.equal(state.snapshot?.verifiedRequestedTrackUri, undefined)
   assert.equal(state.failure, null)
   one.close()
 })

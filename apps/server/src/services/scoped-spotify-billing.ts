@@ -202,7 +202,10 @@ export async function scopedSpotifyRetainedBilling(
         if (recording.id === spotify_id) bills.push(recording.artists)
     return bills.flatMap((bill) => {
       const credit = BillingSchema.safeParse(bill[position - 1]).data
-      return credit?.name === name ? [credit.id] : []
+      return credit &&
+        credit.name.trim().toLowerCase() === name.trim().toLowerCase()
+        ? [credit.id]
+        : []
     })
   }
 }

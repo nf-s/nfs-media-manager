@@ -4,6 +4,7 @@ import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
 import {
   albumPlayable,
   libraryTrackPlayable,
+  playbackReportsTrack,
   type AlbumSource,
   type LibraryTrackSource,
   type PlaybackSource,
@@ -21,7 +22,7 @@ export function useTrackPlayback(track: LibraryTrackSource) {
   const current =
     item !== null &&
     snapshot !== null &&
-    (snapshot.trackUri === item.uri || snapshot.linkedFromUri === item.uri)
+    playbackReportsTrack(snapshot, item.uri)
   return {
     item,
     current,

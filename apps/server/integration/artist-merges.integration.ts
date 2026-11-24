@@ -43,6 +43,7 @@ import { storeSpotifyCodeLookup } from '@/services/spotify-similar-lookup'
 import {
   reconcileSimilarArtistCredits,
   repairScopedSpotifyCredits,
+  repairStoredSimilarArtists,
 } from '@/services/catalog-artist-reconciliation'
 import {
   TidalSuggestionSchema,
@@ -388,6 +389,314 @@ it('keeps a discovered TIDAL artist separate until a first-party recording match
       reconcileSimilarArtistCredits(tx, [suggestion]),
     ),
   ).toBe(0)
+})
+
+it('uses exact library Spotify ISRC evidence for TIDAL Similar artist repair', async () => {
+  const code = 'USABC2300002'
+  const spotifyArtistId = 'M'.repeat(22)
+  const suggestion = TidalSuggestionSchema.parse({
+    title: 'Fixture recording',
+    artists: [KEPT],
+    artistCredits: [{ id: '12346', name: KEPT }],
+    tidalId: '56790',
+    code,
+    version: null,
+    durationSec: 200,
+    releaseDate: null,
+    url: 'https://tidal.com/track/56790',
+  })
+  const shadow = createStableId(
+    'catalog-artist',
+    JSON.stringify(['tidal', '12346']),
+  )
+  await fixture.transaction((tx) =>
+    observeTidalSuggestion(tx, 'track', suggestion, {
+      operation: 'similar',
+      key: 'isrc',
+      position: 1,
+    }),
+  )
+  await fixture.insert(schema.tidalSimilar).values({
+    mediaItemId: spotifyTrack,
+    kind: 'track',
+    items: [suggestion],
+    readAt: new Date(),
+  })
+  await fixture
+    .update(schema.artistProviderSnapshot)
+    .set({ normalizedData: { tags: [], externalId: spotifyArtistId } })
+    .where(eq(schema.artistProviderSnapshot.artistId, keptId))
+  await fixture
+    .update(schema.mediaItem)
+    .set({
+      title: suggestion.title,
+      inLibrary: true,
+      metadata: { spotifyArtistCredits: [{ id: spotifyArtistId, name: KEPT }] },
+    })
+    .where(eq(schema.mediaItem.id, spotifyTrack))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ durationSec: 201, spotifyTrackId: 'N'.repeat(22) })
+    .where(eq(schema.libraryTrack.mediaItemId, spotifyTrack))
+  const ref = {
+    id: 'fixture-tidal-similar-isrc',
+    mediaItemId: spotifyTrack,
+    provider: 'spotify',
+    referenceType: 'isrc',
+    externalId: code,
+    metadata: { source: 'spotify-track-lookup', rejected: true },
+  }
+  await fixture.insert(schema.providerReference).values(ref)
+  expect(await repairStoredSimilarArtists(false, fixture)).toBe(0)
+  await fixture
+    .update(schema.providerReference)
+    .set({ metadata: { source: 'spotify-track-lookup' } })
+    .where(eq(schema.providerReference.id, ref.id))
+  expect(
+    await fixture.transaction((tx) =>
+      reconcileSimilarArtistCredits(tx, [{ ...suggestion, version: 'Live' }]),
+    ),
+  ).toBe(0)
+
+  const otherCode = 'USABC2300003'
+  const otherTrack = 'fixture-other-isrc-track'
+  const otherSuggestion = {
+    ...suggestion,
+    title: 'Other fixture recording',
+    tidalId: '56791',
+    code: otherCode,
+  }
+  const reconcile = () =>
+    fixture.transaction((tx) => reconcileSimilarArtistCredits(tx, [suggestion]))
+  const setSuggestions = (items: (typeof suggestion)[]) =>
+    fixture
+      .update(schema.tidalSimilar)
+      .set({ items })
+      .where(eq(schema.tidalSimilar.mediaItemId, spotifyTrack))
+
+  await fixture.insert(schema.spotifyCodeLookup).values({
+    codeType: 'isrc',
+    code: otherCode,
+    spotifyId: 'O'.repeat(22),
+    source: 'spotify',
+    searchedAt: new Date(),
+    result: {
+      spotifyId: 'O'.repeat(22),
+      url: `https://open.spotify.com/track/${'O'.repeat(22)}`,
+      title: otherSuggestion.title,
+      artists: [KEPT],
+      artistCredits: [{ id: 'P'.repeat(22), name: KEPT }],
+      durationSec: 200,
+      albumName: null,
+      spotifyAlbumId: null,
+      artworkUrl: null,
+      trackCount: null,
+    },
+  })
+  await setSuggestions([suggestion, otherSuggestion])
+  expect(await reconcile()).toBe(0)
+  await fixture
+    .delete(schema.spotifyCodeLookup)
+    .where(eq(schema.spotifyCodeLookup.code, otherCode))
+
+  await fixture.insert(schema.mediaItem).values({
+    id: otherTrack,
+    slug: otherTrack,
+    title: otherSuggestion.title,
+    mediaType: 'track',
+    inLibrary: true,
+    metadata: { spotifyArtistCredits: [{ id: spotifyArtistId, name: KEPT }] },
+  })
+  await fixture.insert(schema.libraryTrack).values({
+    mediaItemId: otherTrack,
+    durationSec: 200,
+    spotifyTrackId: 'O'.repeat(22),
+  })
+  await fixture
+    .insert(schema.mediaCredit)
+    .values({ mediaItemId: otherTrack, artistId: keptId, role: 'artist' })
+  const secondRef = {
+    ...ref,
+    id: 'fixture-other-isrc',
+    mediaItemId: otherTrack,
+    metadata: { source: 'spotify-track-lookup' },
+  }
+  await fixture.insert(schema.providerReference).values(secondRef)
+  expect(await reconcile()).toBe(0)
+  await fixture
+    .update(schema.providerReference)
+    .set({ externalId: otherCode })
+    .where(eq(schema.providerReference.id, secondRef.id))
+  await setSuggestions([
+    suggestion,
+    { ...otherSuggestion, artistCredits: [{ id: '12347', name: KEPT }] },
+  ])
+  expect(await reconcile()).toBe(0)
+  await setSuggestions([suggestion])
+  const alternateBilling = 'Fixture Artist Alias'
+  await fixture
+    .update(schema.mediaItem)
+    .set({
+      metadata: {
+        spotifyArtistCredits: [{ id: spotifyArtistId, name: alternateBilling }],
+      },
+    })
+    .where(eq(schema.mediaItem.id, otherTrack))
+  await fixture
+    .update(schema.mediaCredit)
+    .set({ creditedAs: alternateBilling })
+    .where(eq(schema.mediaCredit.mediaItemId, otherTrack))
+  await fixture.insert(schema.tidalSimilar).values({
+    mediaItemId: otherTrack,
+    kind: 'track',
+    items: [
+      {
+        ...otherSuggestion,
+        artists: [alternateBilling],
+        artistCredits: [{ id: '12347', name: alternateBilling }],
+      },
+    ],
+    readAt: new Date(),
+  })
+  expect(await reconcile()).toBe(0)
+  await fixture
+    .delete(schema.tidalSimilar)
+    .where(eq(schema.tidalSimilar.mediaItemId, otherTrack))
+
+  await fixture
+    .update(schema.tidalSimilar)
+    .set({ items: [{ title: 'Incomplete legacy item' }, suggestion] })
+    .where(eq(schema.tidalSimilar.mediaItemId, spotifyTrack))
+  expect(await repairStoredSimilarArtists(false, fixture)).toBe(1)
+  expect((await artistOf(shadow))?.mergedIntoId).toBeNull()
+  expect(await reconcile()).toBe(1)
+  expect((await artistOf(shadow))?.mergedIntoId).toBe(keptId)
+  expect(await repairStoredSimilarArtists(true, fixture)).toBe(0)
+})
+
+it('corroborates a legacy ISRC with the exact Spotify search retained for the recording', async () => {
+  const code = 'USABC2300004'
+  const spotifyArtistId = 'Q'.repeat(22)
+  const spotifyTrackId = 'R'.repeat(22)
+  const artistCredits = [{ id: spotifyArtistId, name: KEPT }]
+  const suggestion = TidalSuggestionSchema.parse({
+    title: 'Recorded fixture',
+    artists: [KEPT],
+    artistCredits: [{ id: '12348', name: KEPT }],
+    tidalId: '56792',
+    code,
+    version: null,
+    durationSec: 200,
+    releaseDate: null,
+    url: 'https://tidal.com/track/56792',
+  })
+  await fixture.transaction((tx) =>
+    observeTidalSuggestion(tx, 'track', suggestion, {
+      operation: 'similar',
+      key: 'legacy-isrc',
+      position: 1,
+    }),
+  )
+  await fixture
+    .update(schema.artistProviderSnapshot)
+    .set({ normalizedData: { tags: [], externalId: spotifyArtistId } })
+    .where(eq(schema.artistProviderSnapshot.artistId, keptId))
+  await fixture
+    .update(schema.mediaItem)
+    .set({
+      inLibrary: true,
+      title: suggestion.title,
+      metadata: { spotifyArtistCredits: artistCredits },
+    })
+    .where(eq(schema.mediaItem.id, spotifyTrack))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ spotifyTrackId, durationSec: 200 })
+    .where(eq(schema.libraryTrack.mediaItemId, spotifyTrack))
+  const ref = {
+    id: 'fixture-generic-isrc',
+    mediaItemId: spotifyTrack,
+    provider: 'spotify',
+    referenceType: 'isrc',
+    externalId: code,
+    metadata: { source: 'library-track' },
+  }
+  await fixture.insert(schema.providerReference).values(ref)
+  const reconcile = () =>
+    fixture.transaction((tx) => reconcileSimilarArtistCredits(tx, [suggestion]))
+  expect(await reconcile()).toBe(0)
+
+  const job = 'fixture-search-legacy-isrc'
+  const log = 'fixture-search-legacy-isrc-result'
+  const jobOptions = {
+    task: 'spotify-track-search',
+    trackId: 'fixture-source-track',
+    acceptedSpotifyTrackId: spotifyTrackId,
+  }
+  const candidate = {
+    spotifyTrackId,
+    isrc: code,
+    title: suggestion.title,
+    artists: [KEPT],
+    artistCredits,
+    durationSec: 200,
+    albumName: null,
+    spotifyAlbumId: null,
+    artworkUrl: null,
+    spotifyUrl: 'https://open.spotify.com/track/' + spotifyTrackId,
+  }
+  const diagnostics = (results: (typeof candidate)[]) => ({
+    diagnostics: [
+      {
+        kind: 'spotify-track-search',
+        query: 'fixture search',
+        candidates: results,
+      },
+    ],
+  })
+  await fixture.insert(schema.scrapeJob).values({
+    id: job,
+    provider: 'spotify',
+    status: 'succeeded',
+    scope: {},
+    options: jobOptions,
+  })
+  await fixture.insert(schema.scrapeJobLog).values({
+    id: log,
+    jobId: job,
+    level: 'info',
+    message: 'Fixture search results',
+    metadata: diagnostics([candidate]),
+  })
+  expect(await reconcile()).toBe(0)
+  await fixture
+    .update(schema.scrapeJob)
+    .set({ options: { ...jobOptions, acceptedTrackId: spotifyTrack } })
+    .where(eq(schema.scrapeJob.id, job))
+  for (const altered of [
+    { ...candidate, isrc: 'USABC2300005' },
+    { ...candidate, spotifyTrackId: 'S'.repeat(22) },
+    { ...candidate, title: 'Recorded fixture (Live)' },
+    { ...candidate, durationSec: 203 },
+    { ...candidate, artistCredits: [{ id: 'S'.repeat(22), name: KEPT }] },
+  ]) {
+    await fixture
+      .update(schema.scrapeJobLog)
+      .set({ metadata: diagnostics([altered]) })
+      .where(eq(schema.scrapeJobLog.id, log))
+    expect(await reconcile()).toBe(0)
+  }
+  await fixture
+    .update(schema.scrapeJobLog)
+    .set({ metadata: diagnostics([candidate]) })
+    .where(eq(schema.scrapeJobLog.id, log))
+  expect(await reconcile()).toBe(1)
+  expect(await reconcile()).toBe(0)
+  expect(
+    await fixture.query.providerReference.findFirst({
+      where: eq(schema.providerReference.id, ref.id),
+    }),
+  ).toMatchObject(ref)
 })
 
 it('keeps a manually merged provisional artist credit on the survivor when its recording is discovered again', async () => {

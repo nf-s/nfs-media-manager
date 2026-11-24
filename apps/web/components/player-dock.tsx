@@ -64,6 +64,7 @@ import {
 } from './playback-provider'
 import {
   formatClock,
+  playbackReportsTrack,
   positionAt,
   queueSummary,
   spotifyWebUrl,
@@ -162,9 +163,7 @@ function references(
   const { snapshot, current } = view
   const credits =
     !snapshot ||
-    current?.uri === snapshot.trackUri ||
-    current?.uri === snapshot.linkedFromUri ||
-    current?.uri === snapshot.relinkedTrackUri ||
+    (current && playbackReportsTrack(snapshot, current.uri)) ||
     current?.uri === snapshot.albumUri
       ? (current?.credits ?? [])
       : []

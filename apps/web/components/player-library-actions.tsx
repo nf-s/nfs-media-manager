@@ -198,15 +198,18 @@ export function playerItemIdentity(
           kind === 'track' && spotifyId === albumTrack.spotifyId,
       )?.album
     : null
-  const stored =
-    observedPlaybackItem(item, membership.references)?.item ?? trackAlbum
+  const observedItem = observedPlaybackItem(item, membership.references)
+  const stored = observedItem?.item ?? trackAlbum
+  const libraryTrackId = observedItem?.libraryTrackId
   const match = playbackItemMembership(item, membership.data)
+  const originatingTrackId = item.kind === 'track' ? item.mediaItemId : null
+  const catalogId = stored?.inLibrary
+    ? stored.id
+    : (libraryTrackId ?? item.mediaItemId ?? stored?.id ?? null)
   const mediaItemId =
     match.status === 'saved'
       ? match.mediaItemId
-      : stored?.inLibrary
-        ? stored.id
-        : (item.mediaItemId ?? stored?.id ?? null)
+      : (originatingTrackId ?? catalogId)
   const awaitingObservation = (observation || albumTrack) && !stored
   const consistent = !item.mediaItemId || item.mediaItemId === stored?.id
   const add: PlayerAddition | null =
@@ -214,6 +217,7 @@ export function playerItemIdentity(
     !membership.unresolved &&
     !awaitingObservation &&
     !stored?.inLibrary &&
+    !libraryTrackId &&
     consistent
       ? {
           mediaType: item.kind,

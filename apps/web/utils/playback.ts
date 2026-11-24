@@ -213,6 +213,35 @@ export function positionAt(snapshot: PlaybackSnapshot, now: number): number {
     : position
 }
 
+export function playbackReportsTrack(
+  snapshot: PlaybackSnapshot,
+  uri: string | null | undefined,
+) {
+  return (
+    uri != null &&
+    (uri === snapshot.trackUri ||
+      uri === snapshot.linkedFromUri ||
+      uri === snapshot.relinkedTrackUri ||
+      uri === snapshot.verifiedRequestedTrackUri)
+  )
+}
+
+export function withVerifiedPlaybackTrack(
+  snapshot: PlaybackSnapshot,
+  item: PlayableItem | null,
+  verifiedRecordingUri: string | undefined,
+): PlaybackSnapshot {
+  if (
+    item?.kind !== 'track' ||
+    !verifiedRecordingUri ||
+    verifiedRecordingUri !== snapshot.trackUri ||
+    snapshot.isLocal ||
+    (snapshot.linkedFromUri && snapshot.linkedFromUri !== item.uri)
+  )
+    return snapshot
+  return { ...snapshot, verifiedRequestedTrackUri: item.uri }
+}
+
 /** The item this app started, followed until it finishes or something else takes over. */
 export type PlaybackSession = {
   item: PlayableItem
@@ -220,6 +249,8 @@ export type PlaybackSession = {
   startedAt: number
   /** For a track item, the URI Spotify actually played for it. */
   anchorUri: string | null
+  /** The exact recording Spotify reported independently of a same-title start. */
+  verifiedRecordingUri?: string
   /** The device's sequence of tracks; `item` is `sent[index]`. */
   sent: PlayableItem[]
   index: number

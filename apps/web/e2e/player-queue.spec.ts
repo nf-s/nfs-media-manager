@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { PlayableItem, SavedPlayback } from '@repo/schemas/playback'
 import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
 import { CatalogMembershipInputSchema } from '@repo/schemas/manual-add'
+import { AlbumDetailSchema } from '@repo/schemas/media'
 import { webOrigin } from './preview'
 
 const externalId = (entry: PlayableItem) => entry.uri.split(':').at(-1) ?? ''
@@ -201,6 +202,189 @@ function openQueue(page: Page, isMobile: boolean, playing: PlayableItem) {
 }
 
 const savedActionName = /is in your library/
+
+for (const from of ['Tracks Browse', 'album tracks']) {
+  test(`playing from ${from} keeps the saved track through a verified device substitution`, async ({
+    page,
+    isMobile,
+  }) => {
+    const response = await page.request.get(
+      `${webOrigin}/api/v1/albums/pv-album-01`,
+    )
+    const { data } = await response.json()
+    const album = AlbumDetailSchema.parse(data)
+    const track = album.tracks.find(({ track }) => track.spotifyTrackId)?.track
+    if (!track?.spotifyTrackId) throw new Error('Missing playable fixture')
+    if (!track.inLibrary) {
+      const saved = await page.request.post(
+        `${webOrigin}/api/v1/catalog/media/${track.id}/add`,
+        {
+          headers: { origin: webOrigin },
+        },
+      )
+      expect(saved.ok()).toBe(true)
+    }
+    const originalUri = `spotify:track:${track.spotifyTrackId}`
+    const alternateUri = item(
+      'track',
+      from === 'album tracks' ? 351 : 352,
+      'Substitute',
+    ).uri
+    const isrc = 'ZZAAA2400001'
+    const deviceTrack = {
+      uri: alternateUri,
+      name: track.title,
+      duration_ms: 180_000,
+      external_ids: { isrc },
+      album: {
+        uri: item('album', 353, 'Release').uri,
+        name: album.title,
+      },
+      artists: track.artists.map((name) => ({ name })),
+    }
+    await page.addInitScript(() => {
+      let state: unknown = null
+      window.addEventListener('fixture-spotify-state', (event) => {
+        if (event instanceof CustomEvent) state = event.detail
+      })
+      class FixturePlayer {
+        private listeners = new Map<string, (payload: unknown) => void>()
+        addListener(event: string, listener: (payload: unknown) => void) {
+          this.listeners.set(event, listener)
+          return true
+        }
+        async connect() {
+          this.listeners.get('ready')?.({ device_id: 'fixture-browser' })
+          return true
+        }
+        async getCurrentState() {
+          return state
+        }
+        async activateElement() {}
+        disconnect() {}
+      }
+      Object.defineProperty(window, 'Spotify', {
+        value: { Player: FixturePlayer },
+      })
+    })
+    await page.route(`${webOrigin}/api/v1/spotify/status`, (route) =>
+      route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: {
+            configured: true,
+            connected: true,
+            expiresAt: null,
+            scope: null,
+            redirectUri: null,
+            playback: true,
+            playbackHistory: false,
+            playlists: false,
+            playlistChanges: false,
+          },
+        },
+      }),
+    )
+    await page.route(`${webOrigin}/api/v1/spotify/playback/token`, (route) =>
+      route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: {
+            accessToken: 'synthetic',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        },
+      }),
+    )
+    let verified = false
+    await page.route('https://api.spotify.com/v1/**', async (route) => {
+      const request = route.request()
+      const { pathname } = new URL(request.url())
+      if (pathname === '/v1/me/player/play' && request.method() === 'PUT') {
+        expect(request.postDataJSON().uris[0]).toBe(originalUri)
+        await route.fulfill({ status: 204 })
+        await page.evaluate(
+          (track) =>
+            window.dispatchEvent(
+              new CustomEvent('fixture-spotify-state', {
+                detail: {
+                  paused: false,
+                  position: 1_000,
+                  duration: 180_000,
+                  track_window: { current_track: track, next_tracks: [] },
+                },
+              }),
+            ),
+          deviceTrack,
+        )
+      } else if (pathname === `/v1/tracks/${track.spotifyTrackId}`) {
+        verified = true
+        await route.fulfill({ json: deviceTrack })
+      } else if (pathname === '/v1/me/player/devices') {
+        await route.fulfill({ json: { devices: [] } })
+      } else {
+        await route.fulfill({ status: 204 })
+      }
+    })
+    const albumHref = `/albums/${album.id}?tab=tracks`
+    const browseHref = `/tracks?${new URLSearchParams({ view: 'list', q: track.title })}`
+    await page.goto(from === 'album tracks' ? albumHref : browseHref)
+    const trackPath = `/tracks/${track.id}`
+    const sourceLink = page.locator(
+      `[data-workspace-href="${trackPath}"], a[href="${trackPath}"]`,
+    )
+    const sourceRow =
+      from === 'album tracks' ? page.getByRole('row') : page.locator('.ds-row')
+    const row = sourceRow.filter({ has: sourceLink })
+    if (!isMobile) await row.hover()
+    const play = row.getByRole('button', {
+      name: `Play ${track.title}`,
+      exact: true,
+    })
+    await expect(play).toBeEnabled()
+    const observed = page.waitForResponse((response) => {
+      if (!response.url().endsWith('/api/v1/playback/catalog')) return false
+      const body = PlaybackCatalogInputSchema.parse(
+        response.request().postDataJSON(),
+      )
+      return body.items.some(
+        ({ spotifyId }) => `spotify:track:${spotifyId}` === alternateUri,
+      )
+    })
+    await play.click()
+    const catalog = await observed
+    expect(catalog.ok()).toBe(true)
+    expect(
+      PlaybackCatalogInputSchema.parse(catalog.request().postDataJSON())
+        .items[0]?.isrc,
+    ).toBe(isrc)
+    expect(verified).toBe(true)
+    if (isMobile)
+      await page
+        .getByRole('button', { name: `Open player: ${track.title}` })
+        .click()
+    const now = page.locator(
+      isMobile ? '.player-sheet-body > .player-text' : '.player-now',
+    )
+    const link = now.getByRole('link', { name: track.title, exact: true })
+    await expect(link).toHaveAttribute(
+      'data-workspace-href',
+      `/tracks/${track.id}`,
+    )
+    await expect(
+      now.getByRole('button', { name: /^Add track to library/ }),
+    ).toHaveCount(0)
+    await link.click()
+    await expect(
+      page
+        .locator('.dtl-detail > header')
+        .last()
+        .getByRole('heading', { name: track.title }),
+    ).toBeVisible()
+  })
+}
 
 test('playback opens the shadow recording with its album, artwork and artist', async ({
   page,

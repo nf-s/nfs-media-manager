@@ -61,6 +61,7 @@ vi.mock('@/lib/provider-secrets', () => ({
 }))
 
 import { getJob, processQueuedJobs } from '@/services/jobs'
+import { observeCatalogMedia } from '@/services/catalog-discoveries'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
 import {
   ProviderTaskReplayStepsSchema,
@@ -803,6 +804,23 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
   }, 30000)
 
   it('chooses Spotify tracks by library, then the earliest release that is not a compilation', async () => {
+    const shadowTrack = await databaseClient.transaction((tx) =>
+      observeCatalogMedia(
+        tx,
+        {
+          kind: 'track',
+          title: 'Spotify 33',
+          provider: 'spotify',
+          referenceType: 'track',
+          externalId: spotifyId(33),
+        },
+        {
+          provider: 'spotify',
+          operation: 'playback-queue',
+          occurrenceKey: 'sparse-33',
+        },
+      ),
+    )
     await refreshTidalSimilar({ kind: 'tracks', id: trackId }, userId)
     await runQueued()
     const result = await getTidalSimilar({ kind: 'tracks', id: trackId })
@@ -849,6 +867,42 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       value: spotifyId(22),
     })
     expect(result.items[2]?.durationSec).toBe(348)
+    const [release] = await databaseClient
+      .select({
+        title: schema.mediaItem.title,
+        inLibrary: schema.mediaItem.inLibrary,
+        artworkUrl: schema.mediaItem.artworkUrl,
+        spotifyUrl: schema.album.spotifyUrl,
+      })
+      .from(schema.libraryTrack)
+      .innerJoin(
+        schema.album,
+        eq(schema.album.mediaItemId, schema.libraryTrack.albumMediaItemId),
+      )
+      .innerJoin(
+        schema.mediaItem,
+        eq(schema.mediaItem.id, schema.album.mediaItemId),
+      )
+      .where(eq(schema.libraryTrack.mediaItemId, shadowTrack))
+    expect(release).toEqual({
+      title: 'Release 33',
+      inLibrary: false,
+      artworkUrl: 'https://i.scdn.co/image/fixture33',
+      spotifyUrl: `https://open.spotify.com/album/${spotifyId(133)}`,
+    })
+    const occurrences = await databaseClient
+      .select({
+        kind: schema.catalogObservation.targetKind,
+        responseId: schema.catalogObservation.responseId,
+      })
+      .from(schema.catalogObservation)
+      .where(eq(schema.catalogObservation.operation, 'spotify-code-search'))
+    expect(occurrences).toEqual(
+      expect.arrayContaining([
+        { kind: 'album', responseId: expect.any(String) },
+        { kind: 'track', responseId: expect.any(String) },
+      ]),
+    )
     expect(searches()).toEqual([
       `isrc:${isrc(2)}`,
       `isrc:${isrc(3)}`,

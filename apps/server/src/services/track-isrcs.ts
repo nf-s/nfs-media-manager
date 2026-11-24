@@ -23,6 +23,15 @@ export type TrackIsrcSource =
   // The value stored on the library track before references existed.
   | { kind: 'library-track' }
 
+export const spotifyRecordingSources = [
+  'spotify-playlist-import',
+  'spotify-track-search',
+  'spotify-track-lookup',
+  'spotify-search-response',
+  'spotify-manual-add',
+  'legacy-playlist-import',
+] satisfies TrackIsrcSource['kind'][]
+
 export type TrackIsrcEvidence = {
   mediaItemId: string
   isrc: string | null
