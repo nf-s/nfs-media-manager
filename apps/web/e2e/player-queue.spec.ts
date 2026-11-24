@@ -1,5 +1,6 @@
 import { expect, test, type Locator } from '@playwright/test'
 import type { PlayableItem, SavedPlayback } from '@repo/schemas/playback'
+import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
 import { CatalogMembershipInputSchema } from '@repo/schemas/manual-add'
 import { webOrigin } from './preview'
 
@@ -72,7 +73,12 @@ test('queue titles leave room for controls and saving clears the library action'
       artists: playing.artist,
       albumName: release.title,
       albumUri: release.uri,
-      artistLinks: [],
+      artistLinks: [
+        {
+          name: 'Synthetic artist',
+          uri: 'spotify:artist:0000000000000000000007',
+        },
+      ],
       artworkUrl: null,
       durationMs: 200_000,
       positionMs: 50_000,
@@ -130,6 +136,26 @@ test('queue titles leave room for controls and saving clears the library action'
         changed: true,
         state,
       }
+    } else if (path.endsWith('/playback/catalog')) {
+      const { items } = PlaybackCatalogInputSchema.parse(request.postDataJSON())
+      const reference = (id: string) => ({
+        id: `catalog-${id}`,
+        inLibrary: saved.has(id),
+      })
+      data = {
+        items: items.map((entry) => ({
+          kind: entry.kind,
+          spotifyId: entry.spotifyId,
+          item: reference(entry.spotifyId),
+          album: entry.album?.spotifyId
+            ? reference(entry.album.spotifyId)
+            : null,
+          artists: entry.artists.map(({ name }) => ({
+            name,
+            id: 'fixture-artist',
+          })),
+        })),
+      }
     } else if (path.endsWith('/manual-add/membership')) {
       const { items } = CatalogMembershipInputSchema.parse(
         request.postDataJSON(),
@@ -139,18 +165,17 @@ test('queue titles leave room for controls and saving clears the library action'
           ...entry,
           ambiguous: false,
           mediaItemId: saved.has(entry.externalId)
-            ? `saved-${entry.externalId}`
+            ? `catalog-${entry.externalId}`
             : null,
         })),
       }
-    } else if (path.endsWith('/manual-add/add')) {
+    } else if (
+      path.endsWith(`/catalog/media/catalog-${externalId(queued)}/add`)
+    ) {
       const id = externalId(queued)
-      expect(request.postDataJSON()).toEqual({
-        mediaType: 'album',
-        externalId: id,
-      })
+      expect(request.method()).toBe('POST')
       saved.add(id)
-      data = { created: true, mediaItemId: `saved-${id}` }
+      data = { created: true, mediaItemId: `catalog-${id}` }
     } else if (path.endsWith('/spotify/playback/token')) {
       data = {
         accessToken: 'synthetic',
@@ -213,6 +238,15 @@ test('queue titles leave room for controls and saving clears the library action'
   const playingRow = rows.nth(0)
   const queuedRow = rows.nth(1)
   const upcomingRow = rows.nth(3)
+  for (const [name, href] of [
+    [playing.title, `/tracks/catalog-${externalId(playing)}`],
+    [release.title, `/albums/catalog-${externalId(release)}`],
+    ['Synthetic artist', '/artists/fixture-artist'],
+  ]) {
+    await expect(
+      playingRow.getByRole('link', { name, exact: true }),
+    ).toHaveAttribute('data-workspace-href', href)
+  }
   await expect(
     playingRow.getByRole('button', { name: /^Add album to library/ }),
   ).toBeEnabled()
@@ -253,7 +287,7 @@ test('queue titles leave room for controls and saving clears the library action'
   const savedLink = queuedRow.getByRole('link', { name: queued.title })
   await expect(savedLink).toHaveAttribute(
     'data-workspace-href',
-    `/albums/saved-${externalId(queued)}`,
+    `/albums/catalog-${externalId(queued)}`,
   )
   if (!isMobile) await expect(savedLink).toBeFocused()
   expect(await actionPosition(play)).toEqual(before)

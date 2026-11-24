@@ -166,8 +166,10 @@ function references(
     playing.track && observedPlaybackItem(playing.track, membership.references)
   const spotifyAlbumId = playbackSpotifyId('album', playing.album?.uri)
   const trackId = track.detail?.id
-  if (trackId && spotifyAlbumId && exactTrack?.album)
+  if (trackId && spotifyAlbumId && exactTrack?.album) {
+    album.detail = { kind: 'album', id: exactTrack.album.id }
     album.albumReference = { trackId, spotifyAlbumId }
+  }
   const named = snapshot
     ? snapshot.artistLinks
     : credits.map(({ name }) => ({ name, uri: null }))
