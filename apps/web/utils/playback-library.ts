@@ -53,9 +53,7 @@ export function playingLibraryItems(
 ) {
   if (snapshot) {
     const trackId =
-      current?.kind === 'track' &&
-      (current.uri === snapshot.trackUri ||
-        current.uri === snapshot.linkedFromUri)
+      current?.kind === 'track' && current.uri === snapshot.trackUri
         ? (current.trackId ?? null)
         : null
     const albumUri =
@@ -101,7 +99,7 @@ export function playingLibraryItems(
               'album',
               current.albumTitle,
               current.artist,
-              null,
+              current.albumUri ?? null,
               current.albumId,
             )
           : null,

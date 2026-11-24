@@ -1,5 +1,6 @@
 import type { AlbumListItem } from '@repo/schemas/media'
-import type { TrackListItem } from '@repo/schemas/tracks'
+import type { TrackDetail, TrackListItem } from '@repo/schemas/tracks'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 import type {
   PlayableItem,
   PlaybackSnapshot,
@@ -51,7 +52,10 @@ export type LibraryTrackSource = Pick<
   TrackListItem,
   'spotifyTrackId' | 'title' | 'artists' | 'album' | 'albumName' | 'artworkUrl'
 > &
-  Partial<Pick<TrackListItem, 'id' | 'artistCredits'>>
+  Partial<
+    Pick<TrackListItem, 'id' | 'artistCredits'> &
+      Pick<TrackDetail, 'spotifyAlbumId'>
+  >
 
 export type AlbumSource = Pick<
   AlbumListItem,
@@ -107,12 +111,14 @@ export function trackPlayable(
 ): PlayableItem | null {
   const uri = spotifyTrackUri(track.externalId)
   if (!uri) return null
+  const albumUri = albumSpotifyUri(album)
   return {
     kind: 'track',
     uri,
     title: track.title,
     artist: albumArtist(album),
     albumId: album.id,
+    ...(albumUri ? { albumUri } : {}),
     albumTitle: album.title,
     artworkUrl: album.artworkUrl,
     trackCount: 1,
@@ -126,12 +132,17 @@ export function libraryTrackPlayable(
 ): PlayableItem | null {
   const uri = spotifyTrackUri(track.spotifyTrackId)
   if (!uri) return null
+  const albumUri =
+    track.spotifyAlbumId && spotifyIdPattern.test(track.spotifyAlbumId)
+      ? `spotify:album:${track.spotifyAlbumId}`
+      : undefined
   return {
     kind: 'track',
     uri,
     title: track.title,
     artist: track.artists.join(', '),
     albumId: track.album?.id ?? null,
+    ...(albumUri ? { albumUri } : {}),
     albumTitle: track.album?.title ?? track.albumName ?? '',
     artworkUrl: track.artworkUrl,
     trackCount: 1,

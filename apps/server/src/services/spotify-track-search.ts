@@ -744,6 +744,7 @@ export async function getSpotifyTrackSearch(trackId: string, userId: string) {
         .where(
           and(
             eq(catalogObservation.operation, 'spotify-match'),
+            eq(mediaItem.mediaType, 'track'),
             inArray(
               catalogObservation.jobId,
               searches.map(({ job }) => job.id),

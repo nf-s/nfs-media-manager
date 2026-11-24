@@ -276,6 +276,8 @@ const positionMove = defineChangeEffect({
 
 const EntrySchema = z.object({
   position: z.number().int(),
+  /** Entries saved before discovery also admitted tracks. */
+  admitsToLibrary: z.boolean().default(true),
   /** `added_at` to the microsecond, as stored. */
   addedAt: z.string().nullable(),
 })
@@ -293,6 +295,7 @@ const EntryRowsSchema = z.array(
     playlist_id: z.string(),
     position: z.number().int(),
     added_at: z.string().nullable(),
+    admits_to_library: z.boolean(),
   }),
 )
 
@@ -306,14 +309,18 @@ async function readEntries(
     EntryRowsSchema.parse(
       (
         await reader.execute(sql`
-          select playlist_id, position,
+          select playlist_id, position, admits_to_library,
             to_char(added_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') as added_at
           from playlist_item where media_item_id = ${trackId}
           ${playlistIds ? sql`and playlist_id in (${idList(playlistIds)})` : sql``}`)
       ).rows,
     ).map((row) => [
       row.playlist_id,
-      { position: row.position, addedAt: row.added_at },
+      {
+        position: row.position,
+        addedAt: row.added_at,
+        admitsToLibrary: row.admits_to_library,
+      },
     ]),
   )
 }
@@ -323,14 +330,15 @@ const entriesInput = (
   entries: { playlistId: string; entry: Entry }[],
 ) =>
   sql`(select r.playlist_id, ${trackId}::text as media_item_id, r.position,
-    r.added_at::timestamp as added_at
+    r.added_at::timestamp as added_at, r.admits_to_library
     from jsonb_to_recordset(${JSON.stringify(
       entries.map(({ playlistId, entry }) => ({
         playlist_id: playlistId,
         position: entry.position,
         added_at: entry.addedAt,
+        admits_to_library: entry.admitsToLibrary,
       })),
-    )}::jsonb) as r(playlist_id text, position int, added_at text)
+    )}::jsonb) as r(playlist_id text, position int, added_at text, admits_to_library bool)
     where exists (select 1 from playlist p where p.id = r.playlist_id))`
 
 async function putEntries(
@@ -340,10 +348,11 @@ async function putEntries(
 ) {
   if (!entries.length) return
   await tx.execute(sql`
-    insert into playlist_item (playlist_id, media_item_id, position, added_at)
+    insert into playlist_item (playlist_id, media_item_id, position, added_at, admits_to_library)
     select * from ${entriesInput(trackId, entries)} e
     on conflict (playlist_id, media_item_id) do update
-      set position = excluded.position, added_at = excluded.added_at`)
+      set position = excluded.position, added_at = excluded.added_at,
+        admits_to_library = excluded.admits_to_library`)
 }
 
 async function removeEntries(
@@ -448,12 +457,17 @@ export async function moveTrackMemberships(
   const playlistIds = [...sourceEntries.keys()]
   const targetBefore = await readEntries(tx, targetId, playlistIds)
   await tx.execute(sql`
-    insert into playlist_item (playlist_id, media_item_id, position, added_at)
-    select playlist_id, ${targetId}, position, added_at
+    insert into playlist_item (playlist_id, media_item_id, position, added_at, admits_to_library)
+    select playlist_id, ${targetId}, position, added_at, admits_to_library
     from playlist_item where media_item_id = ${sourceId}
     on conflict (playlist_id, media_item_id) do update
       set position = least(playlist_item.position, excluded.position),
-        added_at = least(playlist_item.added_at, excluded.added_at)`)
+        added_at = case
+          when playlist_item.admits_to_library and not excluded.admits_to_library then playlist_item.added_at
+          when excluded.admits_to_library and not playlist_item.admits_to_library then excluded.added_at
+          else least(playlist_item.added_at, excluded.added_at)
+        end,
+        admits_to_library = playlist_item.admits_to_library or excluded.admits_to_library`)
   await removeEntries(tx, sourceId, playlistIds)
   const targetAfter = await readEntries(tx, targetId, playlistIds)
   const entries = playlistIds.flatMap((playlistId) => {

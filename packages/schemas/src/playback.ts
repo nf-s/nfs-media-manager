@@ -22,6 +22,8 @@ export const PlayableItemSchema = z.object({
   artist: TextSchema,
   /** The library album; null for a library track not linked to one. */
   albumId: z.string().max(200).nullable(),
+  /** The Spotify album when this item names an exact release. */
+  albumUri: UriSchema.optional(),
   albumTitle: TextSchema,
   artworkUrl: LinkSchema.nullable(),
   trackCount: z.number().int().nonnegative().nullable(),

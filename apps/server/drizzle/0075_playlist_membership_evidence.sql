@@ -1,0 +1,1 @@
+ALTER TABLE "playlist_item" ADD COLUMN "admits_to_library" boolean DEFAULT true NOT NULL;

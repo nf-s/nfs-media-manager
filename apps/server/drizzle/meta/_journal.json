@@ -526,6 +526,13 @@
       "when": 1795490506902,
       "tag": "0074_catalog_alias_saved_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1795490750511,
+      "tag": "0075_playlist_membership_evidence",
+      "breakpoints": true
     }
   ]
 }

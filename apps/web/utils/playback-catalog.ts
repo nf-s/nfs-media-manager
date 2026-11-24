@@ -52,12 +52,14 @@ export function currentPlaybackCatalog(
 }
 
 export function queuedPlaybackCatalog(item: PlayableItem) {
+  const spotifyAlbumId = playbackSpotifyId('album', item.albumUri)
   const parsed = PlaybackCatalogItemSchema.safeParse({
     kind: item.kind,
     spotifyId: playbackSpotifyId(item.kind, item.uri),
     title: item.title,
-    // A queued track may already have a local album without a Spotify link.
-    // Only the device's album identity or a validated Spotify URI can add it.
+    ...(item.kind === 'track' && item.albumTitle && spotifyAlbumId
+      ? { album: { title: item.albumTitle, spotifyId: spotifyAlbumId } }
+      : {}),
     artists:
       item.credits?.map(({ name }) => ({ name })) ??
       (item.artist ? [{ name: item.artist }] : []),

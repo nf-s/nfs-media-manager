@@ -31,6 +31,7 @@ import {
 } from '@/lib/spotify-api'
 import {
   libraryTrack,
+  catalogObservation,
   mediaCredit,
   mediaItem,
   playlist,
@@ -537,7 +538,7 @@ async function uniquePlaylistName(
 
 async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
   const [stored] = await tx
-    .select({ id: playlist.id })
+    .select({ id: playlist.id, source: playlist.source })
     .from(playlist)
     .where(
       target.source === 'spotify'
@@ -546,7 +547,7 @@ async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
     )
   const name = target.source === 'spotify' ? target.name : LIKED_SONGS_NAME
   // A playlist that came with the legacy library keeps its album members.
-  const [legacy] = stored
+  const [legacy] = stored?.source
     ? []
     : await tx
         .select({ id: playlist.id })
@@ -556,10 +557,43 @@ async function resolvePlaylist(tx: Transaction, target: PlaylistTarget) {
             eq(playlist.name, name),
             eq(playlist.kind, 'playlist'),
             isNull(playlist.source),
+            isNull(playlist.catalogProvider),
           ),
         )
   const id =
-    stored?.id ?? legacy?.id ?? createStableId('playlist', groupKey(target))
+    legacy?.id ?? stored?.id ?? createStableId('playlist', groupKey(target))
+  if (legacy && stored && stored.id !== id) {
+    await tx
+      .update(catalogObservation)
+      .set({ targetId: id })
+      .where(
+        and(
+          eq(catalogObservation.targetKind, 'playlist'),
+          eq(catalogObservation.targetId, stored.id),
+        ),
+      )
+    await tx
+      .update(catalogObservation)
+      .set({ subjectId: id })
+      .where(
+        and(
+          eq(catalogObservation.subjectKind, 'playlist'),
+          eq(catalogObservation.subjectId, stored.id),
+        ),
+      )
+    await observeCatalogOccurrence(
+      tx,
+      { kind: 'playlist', id },
+      {
+        provider: 'spotify',
+        operation: 'playlist-identity',
+        occurrenceKey: stored.id,
+        subjectKind: 'playlist',
+        subjectId: stored.id,
+      },
+    )
+    await tx.delete(playlist).where(eq(playlist.id, stored.id))
+  }
   const now = new Date()
   const values = {
     name: legacy
@@ -613,7 +647,10 @@ export async function resolveSpotifyTrackIds(
     SpotifyLibraryTrack,
     'spotifyTrackId' | 'spotifyAlbumId' | 'title' | 'artists' | 'albumName'
   >[],
-  { choosingOneCandidate = false }: { choosingOneCandidate?: boolean } = {},
+  {
+    choosingOneCandidate = false,
+    memberTargets = false,
+  }: { choosingOneCandidate?: boolean; memberTargets?: boolean } = {},
 ) {
   if (!tracks.length) return new Map<string, string>()
   const incoming = tracks.map(
@@ -632,6 +669,8 @@ export async function resolveSpotifyTrackIds(
       from jsonb_to_recordset(${JSON.stringify(incoming)}::jsonb)
         as r("spotifyTrackId" text, "spotifyAlbumId" text, title text, artists text[])
       left join library_track existing on existing.spotify_track_id = r."spotifyTrackId"
+        and (not ${memberTargets} or exists (
+          select 1 from media_item m where m.id = existing.media_item_id and m.in_library))
       left join lateral (
         select lt.media_item_id as id, am.title as album_title,
           (
@@ -651,6 +690,7 @@ export async function resolveSpotifyTrackIds(
         join media_item am on am.id = t.album_media_item_id
         join album al on al.media_item_id = t.album_media_item_id
         where mi.media_type = 'track' and mi.metadata->>'legacyHidden' is distinct from 'true'
+          and (not ${memberTargets} or (mi.in_library and am.in_library))
           and lower(mi.title) = lower(r.title)
           and lt.spotify_track_id is null
           and not exists (select 1 from track other
@@ -716,7 +756,8 @@ export async function refreshTrackAddedDates(
     left join (
       select media_item_id, min(added_at) as added from (
         select media_item_id, added_at from playlist_item
-        ${trackIds ? sql`where ${inArray(playlistItem.mediaItemId, trackIds)}` : sql``}
+        where admits_to_library
+        ${trackIds ? sql`and ${inArray(playlistItem.mediaItemId, trackIds)}` : sql``}
         union all
         select l.track_media_item_id, s.listened_at
         from lastfm_track_source l join lastfm_scrobble s
@@ -886,6 +927,21 @@ async function storeImport(
         })),
       )
     }
+    const admittingTrackIds = observeOnly
+      ? new Set(
+          (
+            await tx
+              .select({ id: playlistItem.mediaItemId })
+              .from(playlistItem)
+              .where(
+                and(
+                  eq(playlistItem.playlistId, playlistId),
+                  eq(playlistItem.admitsToLibrary, true),
+                ),
+              )
+          ).map(({ id }) => id),
+        )
+      : null
     await tx.execute(sql`
       delete from playlist_item pi using library_track lt
       where pi.playlist_id = ${playlistId}
@@ -896,6 +952,8 @@ async function storeImport(
           playlistId,
           mediaItemId: idForTrack(track.spotifyTrackId),
           position: start + index + 1,
+          admitsToLibrary:
+            admittingTrackIds?.has(idForTrack(track.spotifyTrackId)) ?? true,
           addedAt: parseOptionalDate(track.addedAt),
         })),
       )
@@ -952,12 +1010,17 @@ export async function runSpotifyPlaylistImport(
           .where(eq(playlist.spotifyId, fetched.spotifyId))
           .returning({ id: playlist.id })
         if (!fetched.admitTracks || !stored) return 0
+        const admissions = await tx.execute(sql`
+          update playlist_item pi set admits_to_library = true
+          from library_track lt where pi.playlist_id = ${stored.id}
+            and pi.media_item_id = lt.media_item_id and not pi.admits_to_library`)
         const result = await tx.execute(sql`
           update media_item mi set in_library = true
           from playlist_item pi join library_track lt on lt.media_item_id = pi.media_item_id
           where pi.playlist_id = ${stored.id} and mi.id = lt.media_item_id
             and not mi.in_library and mi.metadata->>'legacyHidden' is distinct from 'true'`)
-        if (result.rowCount) await refreshTrackAddedDates(tx)
+        if (result.rowCount || admissions.rowCount)
+          await refreshTrackAddedDates(tx)
         return result.rowCount ?? 0
       })
       return {

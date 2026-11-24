@@ -16,6 +16,10 @@ import {
   type ChangeTransaction,
 } from './library-change-effect'
 import { matchRejectionEffects } from './library-match-rejections'
+import {
+  clearCatalogMediaAlias,
+  setCatalogMediaAlias,
+} from './catalog-discoveries'
 
 const TRACK_GONE = 'A track in this change is no longer in the library.'
 const SPOTIFY_TAKEN =
@@ -418,6 +422,65 @@ export function trackRowStateEntry(
     : trackRowState.entry({ id, before, after }, [id])
 }
 
+const spotifyCatalogBinding = defineChangeEffect({
+  type: 'spotify-catalog-binding',
+  payload: z.object({
+    id: z.string(),
+    aliasId: z.string(),
+    spotifyId: z.string(),
+    before: RowImageSchema,
+    after: RowImageSchema,
+  }),
+  async blocker(reader, { id, aliasId, spotifyId }, direction) {
+    const [tracks, result] = await Promise.all([
+      presentTrackIds(reader, [id, aliasId]),
+      reader.execute(sql`
+        select
+          (select media_item_id from library_track where spotify_track_id = ${spotifyId}) as "playable",
+          (select media_item_id from catalog_media_alias where alias_id = ${aliasId}) as "destination"`),
+    ])
+    if (tracks.size !== 2) return TRACK_GONE
+    const state = z
+      .object({
+        playable: z.string().nullable(),
+        destination: z.string().nullable(),
+      })
+      .parse(result.rows[0])
+    return state.playable === (direction === 'undo' ? id : aliasId) &&
+      state.destination === (direction === 'undo' ? id : null)
+      ? null
+      : SPOTIFY_TAKEN
+  },
+  async apply(tx, { id, aliasId, spotifyId, before, after }, direction) {
+    if (direction === 'undo') {
+      await clearCatalogMediaAlias(tx, aliasId)
+      await writeRowImage(tx, id, after, before)
+      await tx.execute(sql`
+        update library_track set spotify_track_id = ${spotifyId}
+        where media_item_id = ${aliasId}`)
+    } else {
+      await tx.execute(sql`
+        update library_track set spotify_track_id = null where media_item_id = ${aliasId}`)
+      await writeRowImage(tx, id, before, after)
+      await setCatalogMediaAlias(tx, aliasId, id)
+    }
+    return null
+  },
+})
+
+export function spotifyCatalogBindingEntry(
+  id: string,
+  aliasId: string,
+  spotifyId: string,
+  before: TrackRowImage,
+  after: TrackRowImage,
+) {
+  return spotifyCatalogBinding.entry(
+    { id, aliasId, spotifyId, before, after },
+    [id, aliasId],
+  )
+}
+
 /* The search result an owner accepted, as stored on the search job. */
 
 const OptionsSchema = z.record(z.string(), JsonValueSchema)
@@ -498,6 +561,7 @@ export const automaticMatchEffects: ChangeEffectHandler[] = [
   standaloneTracks.handler,
   trackPresence.handler,
   trackRowState.handler,
+  spotifyCatalogBinding.handler,
   searchAcceptance.handler,
   ...matchRejectionEffects,
 ]

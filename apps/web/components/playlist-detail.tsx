@@ -713,6 +713,7 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
         </span>
       }
     >
+      <p className="ds-help">Sync adds playlist tracks to your library.</p>
       {schedule.isError && (
         <Notice tone="danger">
           {errorMessage(schedule.error, 'Could not save the schedule.')}

@@ -118,6 +118,11 @@ import { refreshTrackLinks } from '@/services/track-links'
 import { removeScrobbleTrackMatch } from '@/services/track-merges'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
 import { getTrackDetail } from '@/services/tracks'
+import { resolveCatalogMediaId } from '@/services/catalog-discoveries'
+import {
+  redoLibraryChange,
+  undoLibraryChange,
+} from '@/services/library-changes'
 import {
   acceptSpotifyTrackSearch,
   reconcileSavedSpotifyTrackSearch,
@@ -190,6 +195,12 @@ async function addTrack(id: string, name: string, spotifyTrackId?: string) {
   await fixture
     .insert(schema.mediaCredit)
     .values({ mediaItemId: id, artistId: 'fixture-artist', role: 'artist' })
+}
+
+function memberTracks() {
+  return fixture.select().from(schema.libraryTrack).where(sql`
+    exists (select 1 from media_item m where m.id = ${schema.libraryTrack.mediaItemId}
+      and m.in_library and m.metadata->>'legacyHidden' is distinct from 'true')`)
 }
 
 async function queueOne(freshness?: SpotifyTrackSearchFreshness) {
@@ -350,6 +361,9 @@ it('links an exact catalog result at completion and keeps the saved results', as
   expect(JSON.stringify(captures)).not.toContain(
     spotifyTokenFixture.access_token,
   )
+  const providerCandidates = stored.candidates.map(
+    ({ catalogMediaItemId, inLibrary, ...candidate }) => candidate,
+  )
   expect(
     await replayProviderTask(
       SPOTIFY_TRACK_SEARCH_TASK,
@@ -357,7 +371,7 @@ it('links an exact catalog result at completion and keeps the saved results', as
       steps,
       captures,
     ),
-  ).toEqual([stored.candidates])
+  ).toEqual([providerCandidates])
   expect(request).toHaveBeenCalledTimes(2)
 
   expect(
@@ -384,7 +398,7 @@ it('links an exact catalog result at completion and keeps the saved results', as
     await fixture.transaction((tx) =>
       readSpotifyTrackSearchCandidate(tx, selection),
     ),
-  ).toEqual(stored.candidates[0])
+  ).toEqual(providerCandidates[0])
   await expect(
     fixture.transaction((tx) =>
       readSpotifyTrackSearchCandidate(tx, {
@@ -399,7 +413,7 @@ it('links an exact catalog result at completion and keeps the saved results', as
       userId,
     ),
   ).toMatchObject({ queued: 0, skipped: 1 })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { mediaItemId: recordingId, spotifyTrackId: candidateId },
   ])
   expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
@@ -440,7 +454,7 @@ it.each([
     expect(
       (await getSpotifyTrackSearch(recordingId, userId)).job?.acceptedTrackId,
     ).toBeUndefined()
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       { mediaItemId: recordingId, spotifyTrackId: null },
     ])
     await queueSpotifyTrackSearches({ trackIds: [recordingId] }, userId)
@@ -1230,7 +1244,7 @@ it('links a standalone Last.fm name when one exact Spotify release supports its 
   expect(await fixture.select().from(schema.lastfmTrackSource)).toMatchObject([
     { trackMediaItemId: targetId, manuallyMatched: false },
   ])
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { mediaItemId: targetId, spotifyTrackId: candidateId, scrobbleCount: 2 },
   ])
   expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject(
@@ -1311,9 +1325,7 @@ it.each([
     await processQueuedJobs()
     const { job } = await getSpotifyTrackSearch(source.trackMediaItemId, userId)
     expect(job?.matchMethod).toBe('automatic')
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-      { spotifyTrackId: chosen },
-    ])
+    expect(await memberTracks()).toMatchObject([{ spotifyTrackId: chosen }])
     expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject(
       scrobbles,
     )
@@ -1348,7 +1360,7 @@ it.each([
       resultCount: candidates.length,
     })
     expect(search.job?.acceptedTrackId).toBeUndefined()
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       { mediaItemId: source.trackMediaItemId, spotifyTrackId: null },
     ])
     expect(await fixture.select().from(schema.lastfmScrobble)).toMatchObject(
@@ -1488,7 +1500,7 @@ it.each([undefined, candidateId])(
     expect(
       (await getJob(job.jobId))?.options.matchedExistingSpotifyTrackId,
     ).toBe(spotifyTrackId)
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       {
         mediaItemId: trackId,
         albumMediaItemId: albumId,
@@ -1730,7 +1742,7 @@ it('respects the explicit choice to keep a recorded name separate', async () => 
   ).toMatchObject({
     job: { status: 'succeeded', resultCount: 1 },
   })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { mediaItemId: source.trackMediaItemId, spotifyTrackId: null },
   ])
 })
@@ -1742,9 +1754,7 @@ it('previews and applies a saved exact match offline, and respects newer searche
     .where(eq(schema.libraryTrack.mediaItemId, recordingId))
   const job = await queueOne()
   await processQueuedJobs()
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-    { spotifyTrackId: null },
-  ])
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: null }])
   await fixture
     .update(schema.libraryTrack)
     .set({ durationSec: 174 })
@@ -1769,16 +1779,12 @@ it('previews and applies a saved exact match offline, and respects newer searche
     status: 'matched',
     targetId: recordingId,
   })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-    { spotifyTrackId: null },
-  ])
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: null }])
   await queueSpotifyTrackSearches({ trackIds: [recordingId] }, otherUserId)
   expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
     status: 'stale',
   })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-    { spotifyTrackId: null },
-  ])
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: null }])
   await fixture
     .delete(schema.scrapeJob)
     .where(eq(schema.scrapeJob.requestedByUserId, otherUserId))
@@ -1789,9 +1795,7 @@ it('previews and applies a saved exact match offline, and respects newer searche
   expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual({
     status: 'stale',
   })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-    { spotifyTrackId: candidateId },
-  ])
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: candidateId }])
   expect(request).not.toHaveBeenCalled()
 })
 
@@ -1817,7 +1821,7 @@ it.each([false, true])(
         { spotifyTrackId: otherCandidateId },
       ],
     })
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       {
         mediaItemId: recordingId,
         spotifyTrackId: knownRelease ? otherCandidateId : candidateId,
@@ -1882,9 +1886,7 @@ it('prefers the requested title version over a more popular remaster', async () 
   await processQueuedJobs()
   const { job } = await getSpotifyTrackSearch(source.trackMediaItemId, userId)
   expect(job?.matchMethod).toBe('automatic')
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
-    { spotifyTrackId: candidateId },
-  ])
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: candidateId }])
 })
 
 it('skips a recording that gains a Spotify ID while queued', async () => {
@@ -1936,7 +1938,7 @@ it.each([
       job: { jobId: job.id, status: 'succeeded', resultCount: 1 },
       candidates: [{ spotifyTrackId: candidateId }],
     })
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       { mediaItemId: recordingId, spotifyTrackId: null },
     ])
   },
@@ -1953,7 +1955,7 @@ it('records a real zero-result search as a successful attempt', async () => {
     job: { jobId: job.id, status: 'succeeded', resultCount: 0 },
     candidates: [],
   })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { mediaItemId: recordingId, spotifyTrackId: null },
   ])
   expect(
@@ -1984,7 +1986,7 @@ it.each([
       job: { jobId: job.id, status: 'succeeded', resultCount: 0 },
       candidates: [],
     })
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       { mediaItemId: recordingId, spotifyTrackId: null },
     ])
   },
@@ -2022,6 +2024,10 @@ it('searches the text entered for one track and leaves the results for that list
     job: { jobId: retry.id, status: 'succeeded', resultCount: 2 },
   })
   expect(search.job?.acceptedTrackId).toBeUndefined()
+  const outsideId = search.candidates.find(
+    (candidate) => candidate.spotifyTrackId === otherCandidateId,
+  )?.catalogMediaItemId
+  if (!outsideId) throw new Error('Expected outside catalog candidate')
   expect(
     await reconcileSavedSpotifyTrackSearch({
       trackId: recordingId,
@@ -2037,9 +2043,21 @@ it('searches the text entered for one track and leaves the results for that list
       userId,
     }),
   ).toEqual({ targetId: recordingId })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { spotifyTrackId: otherCandidateId },
   ])
+  expect(await resolveCatalogMediaId(fixture, outsideId)).toBe(recordingId)
+  const [change] = await fixture
+    .select()
+    .from(schema.libraryChange)
+    .orderBy(sql`${schema.libraryChange.createdAt} desc`)
+    .limit(1)
+  if (!change) throw new Error('Expected a change for the match')
+  await undoLibraryChange(change.id)
+  expect(await resolveCatalogMediaId(fixture, outsideId)).toBe(outsideId)
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: null }])
+  await redoLibraryChange(change.id)
+  expect(await resolveCatalogMediaId(fixture, outsideId)).toBe(recordingId)
   expect(request).toHaveBeenCalledTimes(2)
 })
 
@@ -2226,7 +2244,7 @@ it.each(['cancelled', 'covered'])(
         candidates: [{ spotifyTrackId: candidateId }],
       })
     }
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       {
         mediaItemId: recordingId,
         spotifyTrackId: change === 'covered' ? otherCandidateId : null,
@@ -2453,8 +2471,12 @@ it('reports saved search history on the retained track after acceptance changes 
     status: 'succeeded',
   })
 
-  const retained = 'retained-recording'
-  await addTrack(retained, 'Retained Recording', candidateId)
+  const retained = completed.candidates[0]?.catalogMediaItemId
+  if (!retained) throw new Error('Expected an outside track')
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: true })
+    .where(eq(schema.mediaItem.id, retained))
   await fixture
     .update(schema.scrapeJob)
     .set({
@@ -2468,7 +2490,10 @@ it('reports saved search history on the retained track after acceptance changes 
 
   const result = {
     job: { jobId: original.id, status: 'succeeded', acceptedTrackId: retained },
-    candidates: completed.candidates,
+    candidates: completed.candidates.map((candidate) => ({
+      ...candidate,
+      inLibrary: true,
+    })),
   }
   expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject(result)
   expect(await getSpotifyTrackSearch(retained, userId)).toMatchObject(result)
@@ -2587,7 +2612,7 @@ it.each(['failed', 'empty', 'skipped'])(
     expect(await acceptSpotifyTrackSearch({ ...selection, userId })).toEqual({
       targetId: recordingId,
     })
-    expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+    expect(await memberTracks()).toMatchObject([
       { spotifyTrackId: candidateId },
     ])
     expect(request).not.toHaveBeenCalled()
@@ -2653,7 +2678,7 @@ it('keeps older saved candidates read-only when a search or the recording has ch
   expect(await fixture.select().from(schema.lastfmTrackSource)).toMatchObject([
     { trackMediaItemId: trackId, manuallyMatched: true },
   ])
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { mediaItemId: trackId, spotifyTrackId: null },
   ])
   expect(request).not.toHaveBeenCalled()
@@ -2734,7 +2759,7 @@ it('keeps distinct candidates from more than one successful search selectable', 
       spotifyTrackId: otherCandidateId,
     }),
   ).toEqual({ targetId: recordingId })
-  expect(await fixture.select().from(schema.libraryTrack)).toMatchObject([
+  expect(await memberTracks()).toMatchObject([
     { spotifyTrackId: otherCandidateId },
   ])
   expect(request).not.toHaveBeenCalled()

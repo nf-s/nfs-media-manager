@@ -120,6 +120,9 @@ export function spotifyPlayable(
     title: spotify.title,
     artist: spotify.artists.join(', '),
     albumId: null,
+    ...(kind === 'track' && spotify.spotifyAlbumId
+      ? { albumUri: `spotify:album:${spotify.spotifyAlbumId}` }
+      : {}),
     albumTitle: kind === 'album' ? spotify.title : (spotify.albumName ?? ''),
     artworkUrl: spotify.artworkUrl,
     trackCount: kind === 'album' ? spotify.trackCount : 1,
@@ -248,11 +251,15 @@ export function SimilarRow({
   })
   const title = item.library?.title ?? tidalSuggestionTitle(item)
   const libraryId = add.data?.id ?? item.library?.id
-  const detailId = item.catalogMediaItemId ?? libraryId
+  const detailId = libraryId ?? item.catalogMediaItemId
   const inLibrary = Boolean(detailId && libraryId === detailId)
   const place = inLibrary
     ? 'library'
-    : item.state === 'library' ? (item.spotify ? 'spotify' : 'unsearched') : item.state
+    : item.state === 'library'
+      ? item.spotify
+        ? 'spotify'
+        : 'unsearched'
+      : item.state
   const match = item.libraryMatch
   return (
     <>

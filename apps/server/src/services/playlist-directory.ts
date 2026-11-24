@@ -57,14 +57,17 @@ const optionalDate = (value: string | null) => (value ? new Date(value) : null)
 export const playlistAlbumMembers = sql`
   select pi.media_item_id as album_id, pi.position, pi.added_at from playlist_item pi
   join album a on a.media_item_id = pi.media_item_id
+  join media_item mi on mi.id = a.media_item_id and mi.in_library
   where pi.playlist_id = p.id
   union all
   select lt.album_media_item_id, pi.position, pi.added_at from playlist_item pi
   join library_track lt on lt.media_item_id = pi.media_item_id
+  join media_item mi on mi.id = lt.album_media_item_id and mi.in_library
   where pi.playlist_id = p.id and lt.album_media_item_id is not null
   union all
   select t.album_media_item_id, pi.position, pi.added_at from playlist_item pi
   join track t on t.track_media_item_id = pi.media_item_id
+  join media_item mi on mi.id = t.album_media_item_id and mi.in_library
   where pi.playlist_id = p.id
 `
 
@@ -72,10 +75,11 @@ const playlistAlbumCount = sql`(select count(distinct album_id)::int from (${pla
 
 const playlistTrackStats = sql`
   select count(*)::int as track_count,
-    count(lt.album_media_item_id)::int as linked_track_count,
+    count(album_media.id)::int as linked_track_count,
     coalesce(sum(lt.duration_sec), 0)::int as duration_sec
   from playlist_item pi
   join library_track lt on lt.media_item_id = pi.media_item_id
+  left join media_item album_media on album_media.id = lt.album_media_item_id and album_media.in_library
   where pi.playlist_id = p.id
 `
 
@@ -354,7 +358,14 @@ export async function listPlaylists(
 }
 
 export async function getPlaylistSummary(id: string) {
-  const [summary] = await loadPlaylistSummaries([id])
+  const [stored] = await loadPlaylistSummaries([id])
+  if (stored) return stored
+  const result = await db.execute(sql`
+    select target_id as id from catalog_observation
+    where target_kind = 'playlist' and subject_kind = 'playlist'
+      and operation = 'playlist-identity' and subject_id = ${id} limit 1`)
+  const alias = z.object({ id: z.string() }).safeParse(result.rows[0]).data
+  const [summary] = await loadPlaylistSummaries(alias ? [alias.id] : [])
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Playlist not found' })
   return summary

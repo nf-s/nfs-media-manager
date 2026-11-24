@@ -82,7 +82,8 @@ async function libraryTracks(database: Transaction) {
             select array_agg(a.name order by c.billing_order)
             from media_credit c join artist a on a.id = c.artist_id
             where c.media_item_id = lt.media_item_id and c.role = 'artist'), '{}') as artists
-        from library_track lt join media_item mi on mi.id = lt.media_item_id`)
+        from library_track lt join media_item mi on mi.id = lt.media_item_id
+        where mi.in_library`)
     ).rows,
   )
 }
@@ -118,6 +119,7 @@ export async function linkTracksToAlbums(batchId: string | null = null) {
             from track t where t.album_media_item_id = mi.id), '[]'::jsonb) as tracks
         from media_item mi join album al on al.media_item_id = mi.id
         where mi.media_type = 'album'
+          and mi.in_library
           and mi.metadata->>'legacyHidden' is distinct from 'true'`)
       ).rows,
     )

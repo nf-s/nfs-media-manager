@@ -238,6 +238,7 @@ export async function addTidalSimilarToLibrary(
         statusCode: 404,
         message: 'Similar item not found.',
       })
+    if (item.library) return { id: item.library.id }
     if (item.catalogMediaItemId) {
       const { mediaItemId } = await promoteCatalogMediaInTransaction(
         tx,
@@ -245,7 +246,6 @@ export async function addTidalSimilarToLibrary(
       )
       return { id: mediaItemId }
     }
-    if (item.library) return { id: item.library.id }
     // A Sonovault link stays in the removable lookup cache. Only a match
     // returned by Spotify becomes the library item's Spotify identity.
     const verified = {

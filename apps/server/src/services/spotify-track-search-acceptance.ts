@@ -18,6 +18,7 @@ import {
 } from './album-library-tracks'
 import {
   createdTracksEntry,
+  spotifyCatalogBindingEntry,
   membershipDetails,
   readJobOptions,
   readTrackRowImage,
@@ -26,6 +27,7 @@ import {
   trackRowStateEntry,
 } from './automatic-match-effects'
 import { readKeptSeparateTest } from './keep-separate-effects'
+import { setCatalogMediaAlias } from './catalog-discoveries'
 import type { ChangeEffectEntry } from './library-change-effect'
 import {
   beginTrackChange,
@@ -51,6 +53,7 @@ import {
 } from './spotify-track-search-evidence'
 import { resolveSpotifyTrackIds, spotifyTrackItemId } from './spotify-playlists'
 import {
+  findManualTrackMatches,
   libraryRecording,
   storeConfirmedRecording,
 } from './spotify-track-recordings'
@@ -136,6 +139,7 @@ async function rankSpotifySearchCandidates(
 ) {
   const targets = await resolveSpotifyTrackIds(tx, candidates, {
     choosingOneCandidate: true,
+    memberTargets: true,
   })
   const targetIds = [...new Set(targets.values())]
   const libraryTargets = targetIds.length
@@ -229,10 +233,19 @@ async function linkSpotifyRecording(
   const unnamed =
     merged && !draft.before.length ? await archiveTracks(tx, [trackId]) : []
   const before = await readTrackRowImage(tx, targetId)
+  const aliasId = before
+    ? await outsideSpotifyIdentity(tx, targetId, candidate)
+    : null
   const source = merged ? await libraryRecording(tx, trackId) : null
   const jobBefore = automatic
     ? {}
     : await readJobOptions(tx, jobId, ACCEPTANCE_KEYS)
+  if (aliasId) {
+    await tx.execute(sql`
+      update library_track set spotify_track_id = null
+      where media_item_id = ${aliasId} and spotify_track_id = ${candidate.spotifyTrackId}`)
+    await setCatalogMediaAlias(tx, aliasId, targetId)
+  }
   await storeConfirmedRecording(tx, targetId, candidate, {
     jobId,
     matchMethod,
@@ -247,6 +260,16 @@ async function linkSpotifyRecording(
   const after = before && (await readTrackRowImage(tx, targetId))
   const changed = before && after && trackRowStateEntry(targetId, before, after)
   if (!before) effects.push(createdTracksEntry([targetId]))
+  else if (aliasId && after)
+    effects.push(
+      spotifyCatalogBindingEntry(
+        targetId,
+        aliasId,
+        candidate.spotifyTrackId,
+        before,
+        after,
+      ),
+    )
   else if (changed) effects.push(changed)
   // A track the change made takes the album of the positions it receives
   // with it, so Redo makes it again as the move left it.
@@ -322,6 +345,35 @@ async function linkSpotifyRecording(
       effects,
     },
   )
+}
+
+async function outsideSpotifyIdentity(
+  tx: Transaction,
+  targetId: string,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const match = (
+    await findManualTrackMatches([candidate.spotifyTrackId], tx)
+  ).get(candidate.spotifyTrackId)
+  return match && !match.hidden && !match.inLibrary && match.id !== targetId
+    ? match.id
+    : null
+}
+
+async function conflictsWithOutsideIdentity(
+  tx: Transaction,
+  sourceId: string,
+  targetId: string,
+  candidate: SpotifyTrackSearchCandidate,
+) {
+  const aliasId = await outsideSpotifyIdentity(tx, targetId, candidate)
+  if (!aliasId) return false
+  const separated = await readKeptSeparateTest(tx, 'track', [
+    sourceId,
+    targetId,
+    aliasId,
+  ])
+  return separated(sourceId, aliasId) || separated(targetId, aliasId)
 }
 
 /** Resolve the same retained-recording checks for automatic matches and their explanations. */
@@ -435,6 +487,8 @@ export async function reconcileSpotifyTrackSearchInTransaction(
     const { candidate } = choice
     const targetId = choice.targetId ?? newRecordingTarget(source, candidate)
     if (forbidden(targetId)) continue
+    if (await conflictsWithOutsideIdentity(tx, source.id, targetId, candidate))
+      continue
     const destination = await checkSpotifySearchDestination(
       tx,
       source.id,
@@ -535,9 +589,16 @@ export async function acceptSpotifyTrackSearchInTransaction(
       message:
         'This recording already has a Spotify match. Refresh the track to review it.',
     })
-  const targets = await resolveSpotifyTrackIds(tx, [candidate])
+  const targets = await resolveSpotifyTrackIds(tx, [candidate], {
+    memberTargets: true,
+  })
   const targetId =
     targets.get(spotifyTrackId) ?? newRecordingTarget(source, candidate)
+  if (await conflictsWithOutsideIdentity(tx, source.id, targetId, candidate))
+    throw new ServerError({
+      statusCode: 409,
+      message: 'These recordings are marked Keep separate.',
+    })
   const conflict = await spotifyRecordingTransferConflict(
     tx,
     source,

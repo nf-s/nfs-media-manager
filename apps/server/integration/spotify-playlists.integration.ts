@@ -1933,7 +1933,7 @@ describe('Spotify playlist imports', () => {
     )
     expect(job).toMatchObject({ status: 'failed' })
     expect(job?.errorMessage).toContain('more than 10,000 tracks')
-    expect(await databaseClient.select().from(schema.playlist)).toEqual([])
+    expect(await listPlaylists()).toEqual([])
     expect(
       await databaseClient
         .select()
@@ -2085,7 +2085,7 @@ describe('Spotify playlist imports', () => {
       albumCount: 1,
       acceptsAdditions: true,
       sync: { syncable: true, schedule: 'off', nextScheduledAt: null },
-      items: { page: 1, size: 2, totalCount: 4, pageCount: 2 },
+      items: { page: 1, size: 2, totalCount: 5, pageCount: 3 },
     })
     const summarize = (detail: typeof first) =>
       detail.items.items.map((entry) =>
@@ -2094,7 +2094,7 @@ describe('Spotify playlist imports', () => {
           : [entry.kind, entry.position, entry.album.title, entry.addedAt],
       )
     expect(summarize(first)).toEqual([
-      ['track', 1, 'Opening', '2023-01-01T00:00:00.000Z'],
+      ['track', 1, 'Opening', '2024-03-01T10:00:00.000Z'],
       ['track', 2, 'Night Drive - Other Remix', '2024-03-01T10:00:00.000Z'],
     ])
     expect(first.items.items[0]).toMatchObject({
@@ -2106,16 +2106,20 @@ describe('Spotify playlist imports', () => {
     )
     expect(summarize(second)).toEqual([
       ['track', 3, 'Closing', '2024-03-01T10:00:00.000Z'],
-      ['album', 1, 'Legacy Album', null],
+      ['track', 6, 'Opening', '2023-01-01T00:00:00.000Z'],
     ])
-    expect(second.items.items[1]).toMatchObject({
+    const third = await getPlaylistDetail(
+      'legacy-morning',
+      detailQuery({ size: 2, page: 3 }),
+    )
+    expect(third.items.items[0]).toMatchObject({
       album: { id: 'legacy-album', artists: ['The Examples'] },
     })
     const filtered = await getPlaylistDetail(
       'legacy-morning',
       detailQuery({ q: 'THE EXAMPLES', kind: 'track', size: 1, page: 3 }),
     )
-    expect(filtered.items).toMatchObject({ totalCount: 3, pageCount: 3 })
+    expect(filtered.items).toMatchObject({ totalCount: 4, pageCount: 4 })
     expect(summarize(filtered)).toEqual([
       ['track', 3, 'Closing', '2024-03-01T10:00:00.000Z'],
     ])
@@ -2132,10 +2136,10 @@ describe('Spotify playlist imports', () => {
       detailQuery({
         kinds: JSON.stringify(['track', 'album']),
         size: 1,
-        page: 4,
+        page: 5,
       }),
     )
-    expect(bothKinds.items).toMatchObject({ totalCount: 4, pageCount: 4 })
+    expect(bothKinds.items).toMatchObject({ totalCount: 5, pageCount: 5 })
     expect(summarize(bothKinds)).toEqual([['album', 1, 'Legacy Album', null]])
     const onlyAlbums = await getPlaylistDetail(
       'legacy-morning',
@@ -2186,7 +2190,7 @@ describe('Spotify playlist imports', () => {
       detailQuery({ size: 1, sortBy: 'title', direction: 'desc' }),
     )
     expect(summarize(descending)).toEqual([
-      ['track', 1, 'Opening', '2023-01-01T00:00:00.000Z'],
+      ['track', 1, 'Opening', '2024-03-01T10:00:00.000Z'],
     ])
     for (const sortBy of PlaylistEntrySortSchema.options) {
       for (const direction of ['asc', 'desc']) {
@@ -2194,8 +2198,8 @@ describe('Spotify playlist imports', () => {
           'legacy-morning',
           detailQuery({ sortBy, direction }),
         )
-        expect(sorted.items.totalCount).toBe(4)
-        expect(sorted.items.items).toHaveLength(4)
+        expect(sorted.items.totalCount).toBe(5)
+        expect(sorted.items.items).toHaveLength(5)
         if (sortBy === 'added')
           expect(sorted.items.items.at(-1)?.addedAt).toBeNull()
       }
@@ -2595,9 +2599,28 @@ describe('Spotify playlist imports', () => {
       'Opening',
       'Night Drive - Other Remix',
       'Closing',
+      'Opening',
       'New One',
       'New Two',
     ])
+    const admission = await databaseClient
+      .select({
+        title: schema.mediaItem.title,
+        admitted: schema.playlistItem.admitsToLibrary,
+      })
+      .from(schema.playlistItem)
+      .innerJoin(
+        schema.mediaItem,
+        eq(schema.mediaItem.id, schema.playlistItem.mediaItemId),
+      )
+      .where(eq(schema.playlistItem.playlistId, morning))
+    expect(admission).toEqual(
+      expect.arrayContaining([
+        { title: 'Opening', admitted: true },
+        { title: 'New One', admitted: false },
+        { title: 'New Two', admitted: false },
+      ]),
+    )
     logQuery.mockClear()
     expect(await listSpotifyPlaylistAdditions('added-album')).toEqual({
       additions: [
@@ -2687,7 +2710,7 @@ describe('Spotify playlist imports', () => {
     expect(
       (await getPlaylistDetail(morning, detailQuery({ size: 1 }))).items
         .totalCount,
-    ).toBe(208)
+    ).toBe(209)
   })
 
   it('refuses additions the account cannot make before queueing anything', async () => {

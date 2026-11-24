@@ -711,6 +711,7 @@ export const playlistItem = pgTable(
       .notNull()
       .references(() => mediaItem.id, { onDelete: 'cascade' }),
     position: integer('position').default(0).notNull(),
+    admitsToLibrary: boolean('admits_to_library').default(true).notNull(),
     addedAt: timestamp('added_at', { mode: 'date', withTimezone: false }),
   },
   (table) => [

@@ -671,8 +671,14 @@ export async function getPlaylistDetail(
     : null
   const { members, columns, order } =
     query.groupBy === 'album'
-      ? groupedPlaylistAlbumsQuery(id, query, pattern, direction, albumIds)
-      : playlistEntriesQuery(id, query, pattern, direction, albumIds)
+      ? groupedPlaylistAlbumsQuery(
+          summary.id,
+          query,
+          pattern,
+          direction,
+          albumIds,
+        )
+      : playlistEntriesQuery(summary.id, query, pattern, direction, albumIds)
   const [count] = CountRowsSchema.parse(
     (await db.execute(sql`select count(*) as count ${members}`)).rows,
   )
