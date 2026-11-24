@@ -24,10 +24,8 @@ import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
 import { ProviderResponseStorageError } from '@/lib/provider-response-history'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
-import {
-  AlbumCountSchema,
-  requestAlbumJson,
-} from '@/plugins/builtin/album-provider-helpers'
+import { requestAlbumJson } from '@/plugins/builtin/album-provider-helpers'
+import { RecentTracksSchema } from '@/lib/lastfm-recent-tracks'
 import {
   LASTFM_USER_AGENT,
   lastFmErrorCode,
@@ -75,28 +73,6 @@ const MAX_ALBUM_SOURCES = 50
 const OVERLAP_SECONDS = 7 * 24 * 60 * 60
 // Earlier timestamps come from devices with an unset clock.
 const EARLIEST_UTS = Date.UTC(2002, 0, 1) / 1000
-
-const NamedSchema = z.object({
-  '#text': z.string(),
-  mbid: z.string().optional(),
-})
-const ScrobbleSchema = z.object({
-  artist: NamedSchema,
-  album: NamedSchema.optional(),
-  name: z.string(),
-  mbid: z.string().optional(),
-  date: z.object({ uts: AlbumCountSchema }).optional(),
-})
-const RecentTracksSchema = z.object({
-  recenttracks: z.object({
-    // Last.fm returns a bare object when a page holds one track.
-    track: z.union([z.array(ScrobbleSchema), ScrobbleSchema]).optional(),
-    '@attr': z.object({
-      page: AlbumCountSchema,
-      totalPages: AlbumCountSchema,
-    }),
-  }),
-})
 
 type SyncRow = typeof lastfmSync.$inferSelect
 

@@ -31,6 +31,7 @@ const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
 const dispatch = vi.fn<(shouldDispatch?: () => boolean) => Promise<void>>()
+const flushDueLastfmPlays = vi.fn<() => Promise<void>>()
 const fatal = vi.fn<(error: unknown) => void>()
 const network = vi.fn<typeof fetch>()
 const workers: JobWorker[] = []
@@ -43,6 +44,9 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/services/jobs', () => ({
   processQueuedJobs: (shouldDispatch?: () => boolean) =>
     dispatch(shouldDispatch),
+}))
+vi.mock('@/services/lastfm-scrobbling', () => ({
+  flushDueLastfmPlays: () => flushDueLastfmPlays(),
 }))
 
 function signal() {
@@ -70,6 +74,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   dispatch.mockReset().mockResolvedValue(undefined)
+  flushDueLastfmPlays.mockReset().mockResolvedValue(undefined)
   fatal.mockReset()
   network.mockReset().mockRejectedValue(new Error('Outbound network forbidden'))
   await databaseClient.delete(schema.providerCurrentState)
@@ -376,6 +381,32 @@ describe('exclusive worker lifecycle', () => {
         delete from track_facet_state;
         delete from recording_browse_order_state;
       `)
+    }
+  })
+
+  it('scrobbles due Sonos plays without blocking dispatch and drains the flush on shutdown', async () => {
+    const held = signal()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    flushDueLastfmPlays.mockImplementation(async () => {
+      await held.promise
+      throw new Error('Provider failure')
+    })
+    const worker = await start(10)
+    try {
+      await vi.waitFor(() => expect(dispatch).toHaveBeenCalled())
+      expect(flushDueLastfmPlays).toHaveBeenCalledTimes(1)
+      const stop = worker.stop()
+      await expect(start()).rejects.toThrow('Another job worker')
+      held.release()
+      await stop
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        'Last.fm scrobble flush failed.',
+      )
+      expect(fatal).not.toHaveBeenCalled()
+    } finally {
+      held.release()
+      await worker.stop()
+      log.mockRestore()
     }
   })
 

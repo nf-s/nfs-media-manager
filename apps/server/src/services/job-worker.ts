@@ -11,6 +11,7 @@ import {
   refreshRecordingBrowseOrderForMaintenance,
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
+import { flushDueLastfmPlays } from '@/services/lastfm-scrobbling'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -47,6 +48,7 @@ export async function startJobWorker({
   let timer: ReturnType<typeof setInterval> | undefined = undefined
   let processing: Promise<void> | undefined
   let maintenance: Promise<boolean[]> | undefined
+  let scrobbling: Promise<void> | undefined
   let checking: Promise<void> | undefined
   let stopPromise: Promise<void> | undefined
   let nextScheduleCheck = 0
@@ -195,6 +197,15 @@ export async function startJobWorker({
     if (stopping || processing !== undefined) return
     if (Date.now() >= nextScheduleCheck) {
       nextScheduleCheck = Date.now() + scheduleCheckMs
+      if (!scrobbling) {
+        scrobbling = flushDueLastfmPlays()
+          .catch(() => {
+            console.error('Last.fm scrobble flush failed.')
+          })
+          .finally(() => {
+            scrobbling = undefined
+          })
+      }
       await queueDueLastfmSync()
       await queueDueYoutubeSync()
       await queueDueSpotifyPodcastSync()
@@ -248,7 +259,7 @@ export async function startJobWorker({
       stopPromise ??= (async () => {
         try {
           await checking
-          await Promise.all([processing, maintenance])
+          await Promise.all([processing, maintenance, scrobbling])
           if (!failed) {
             const ownership = lockResultSchema.parse(
               await client.query('select pg_advisory_unlock($1) as locked', [

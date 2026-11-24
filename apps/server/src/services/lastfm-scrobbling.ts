@@ -1,5 +1,18 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { and, asc, count, eq, gte, inArray, lt, lte, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gte,
+  inArray,
+  lt,
+  lte,
+  between,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import {
@@ -23,6 +36,8 @@ import { db } from '@/lib/db'
 import { env } from '@/env'
 import { decryptSecretValue, encryptSecretValue } from '@/lib/crypto'
 import { ServerError } from '@/lib/error'
+import { albumNameKey } from '@/lib/album-import-candidates'
+import { RecentTracksSchema } from '@/lib/lastfm-recent-tracks'
 import {
   LASTFM_API_ROOT,
   lastfmAuthorizationUrl,
@@ -76,6 +91,10 @@ const MAX_DUPLICATE_WINDOW_MS = DAY_MS
 // Advisory lock classes: one for storing a user's plays, one for sending them.
 const STORE_LOCK = 72042
 const SEND_LOCK = 72043
+// Give a service reporting at the end of the track time to reach Last.fm.
+const HISTORY_GRACE_MS = MINUTE_MS
+const UNKNOWN_LENGTH_MS = 4 * MINUTE_MS
+const HISTORY_TOLERANCE_MS = 10_000
 // Last.fm sends its error numbers with these statuses; it says whether the
 // account or the app was refused, so the caller classifies them.
 const ANSWERED_STATUSES = [400, 401, 403]
@@ -510,21 +529,145 @@ async function storePlays(userId: string, plays: readonly LastfmPlay[]) {
   })
 }
 
-/**
- * Sends the user's waiting plays, oldest first, until Last.fm fails a request.
- * One sender runs per user at a time, so no play is sent twice. Plays Last.fm
- * would refuse as too old are dropped first. Returns how many were scrobbled.
- */
+type StoredPlay = typeof lastfmPlay.$inferSelect
+
+function dueForHistory(now: number) {
+  return sql`${lastfmPlay.startedAt}
+    + (coalesce(nullif(${lastfmPlay.durationMs}, 0), ${UNKNOWN_LENGTH_MS}) + ${HISTORY_GRACE_MS})
+      * interval '1 millisecond' <= ${new Date(now).toISOString()}::timestamp`
+}
+
+function historyKey(artist: string, title: string, timestamp: number) {
+  return JSON.stringify([
+    albumNameKey(artist),
+    albumNameKey(title),
+    Math.floor(timestamp / 1000),
+  ])
+}
+
+type HistoryEntry = { artist: string; title: string; timestamp: number }
+
+/** Read the whole time range before deciding that a qualifying play is missing. */
+async function readPlayHistory(
+  request: MediaPluginTestContext['request'],
+  config: Settings,
+  session: StoredSession,
+  from: number,
+  to: number,
+): Promise<
+  { ok: true; entries: HistoryEntry[] } | Extract<LastfmAnswer, { ok: false }>
+> {
+  const entries: HistoryEntry[] = []
+  let expectedPages: number | undefined
+  for (let page = 1; ; page++) {
+    const answer = await callLastfm(
+      request,
+      {
+        method: 'user.getRecentTracks',
+        api_key: config.apiKey,
+        sk: session.sessionKey,
+        user: session.name,
+        from: String(Math.floor(from / 1000) - 1),
+        to: String(Math.ceil(to / 1000) + 1),
+        limit: '200',
+        page: String(page),
+      },
+      config.apiSecret,
+    )
+    if (!answer.ok) return answer
+    const parsed = RecentTracksSchema.safeParse(answer.body)
+    if (!parsed.success) break
+    const { track, '@attr': attr } = parsed.data.recenttracks
+    const listed = Array.isArray(track) ? track : track ? [track] : []
+    expectedPages ??= attr.totalPages
+    if (
+      (attr.user && attr.user.toLowerCase() !== session.name.toLowerCase()) ||
+      (attr.page !== page && !(page === 1 && attr.totalPages === 0)) ||
+      attr.totalPages !== expectedPages ||
+      (listed.length === 0 && (attr.totalPages > 1 || (attr.total ?? 0) > 0)) ||
+      listed.some((item) => !item.date && item['@attr']?.nowplaying !== 'true')
+    )
+      break
+    for (const item of listed)
+      if (item.date && item['@attr']?.nowplaying !== 'true')
+        entries.push({
+          artist: albumNameKey(item.artist['#text']),
+          title: albumNameKey(item.name),
+          timestamp: item.date.uts * 1000,
+        })
+    if (page >= expectedPages) return { ok: true, entries }
+  }
+  await recordLastfmFailure(
+    'failed',
+    null,
+    'Last.fm returned an invalid listening history page.',
+  )
+  return { ok: false, failure: 'failed' }
+}
+
+/** Each dated scrobble can explain one room play, including across retries. */
+function matchHistory(
+  play: StoredPlay,
+  history: HistoryEntry[],
+  claimed: Set<string>,
+) {
+  const start = play.startedAt.getTime()
+  const end = start + (play.durationMs ?? 0)
+  const artist = albumNameKey(play.artist)
+  const title = albumNameKey(play.track)
+  let best: HistoryEntry | undefined
+  let closest = Infinity
+  for (const entry of history) {
+    if (
+      entry.artist !== artist ||
+      entry.title !== title ||
+      claimed.has(historyKey(artist, title, entry.timestamp))
+    )
+      continue
+    const startDistance = Math.abs(start - entry.timestamp)
+    const endDistance = Math.abs(end - entry.timestamp)
+    // A consecutive replay can start at this play's end. Claim a start
+    // match first, leaving that boundary for the replay when both exist.
+    const distance =
+      startDistance <= HISTORY_TOLERANCE_MS
+        ? startDistance
+        : endDistance <= HISTORY_TOLERANCE_MS
+          ? HISTORY_TOLERANCE_MS + 1 + endDistance
+          : Infinity
+    if (distance < closest) {
+      best = entry
+      closest = distance
+    }
+  }
+  if (best) claimed.add(historyKey(artist, title, best.timestamp))
+  return best
+}
+
+/** Check and send one user's due plays under the existing sender lock. */
 async function sendWaitingPlays(
   userId: string,
   config: Settings,
   session: StoredSession,
+  now: number,
 ) {
   return db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(${SEND_LOCK}, hashtext(${userId}))`,
     )
-    const now = Date.now()
+    // A scheduled sender can have read the sign-in before a disconnect.
+    const [connected] = await tx
+      .select({ id: providerSecret.id })
+      .from(providerSecret)
+      .where(
+        and(
+          eq(providerSecret.id, session.rowId),
+          eq(providerSecret.encryptedValue, session.encryptedValue),
+        ),
+      )
+      .for('update')
+    if (!connected) return 0
+    const invalidateSession = () =>
+      tx.delete(providerSecret).where(eq(providerSecret.id, connected.id))
     await tx
       .update(lastfmPlay)
       .set({ status: 'ignored', ignoredCode: null })
@@ -551,7 +694,11 @@ async function sendWaitingPlays(
       .select()
       .from(lastfmPlay)
       .where(
-        and(eq(lastfmPlay.userId, userId), eq(lastfmPlay.status, 'waiting')),
+        and(
+          eq(lastfmPlay.userId, userId),
+          eq(lastfmPlay.status, 'waiting'),
+          dueForHistory(now),
+        ),
       )
       .orderBy(asc(lastfmPlay.startedAt), asc(lastfmPlay.id))
     const request = createDirectProviderRequest(lastfmPlugin, ANSWERED_STATUSES)
@@ -561,7 +708,76 @@ async function sendWaitingPlays(
       start < waiting.length;
       start += LASTFM_SCROBBLE_BATCH
     ) {
-      const batch = waiting.slice(start, start + LASTFM_SCROBBLE_BATCH)
+      const due = waiting.slice(start, start + LASTFM_SCROBBLE_BATCH)
+      const from =
+        Math.min(...due.map((play) => play.startedAt.getTime())) -
+        HISTORY_TOLERANCE_MS
+      const to =
+        Math.max(
+          ...due.map(
+            (play) => play.startedAt.getTime() + (play.durationMs ?? 0),
+          ),
+        ) + HISTORY_TOLERANCE_MS
+      const history = await readPlayHistory(request, config, session, from, to)
+      if (!history.ok) {
+        if (history.failure === 'session') await invalidateSession()
+        break
+      }
+      const previous =
+        history.entries.length === 0
+          ? []
+          : await tx
+              .select({
+                artist: lastfmPlay.artist,
+                title: lastfmPlay.track,
+                status: lastfmPlay.status,
+                startedAt: lastfmPlay.startedAt,
+                sentAt: lastfmPlay.sentAt,
+              })
+              .from(lastfmPlay)
+              .where(
+                and(
+                  eq(lastfmPlay.userId, userId),
+                  or(
+                    and(
+                      eq(lastfmPlay.status, 'sent'),
+                      between(
+                        lastfmPlay.startedAt,
+                        new Date(from - 1000),
+                        new Date(to + 1000),
+                      ),
+                    ),
+                    and(
+                      eq(lastfmPlay.status, 'ignored'),
+                      isNull(lastfmPlay.ignoredCode),
+                      between(lastfmPlay.sentAt, new Date(from), new Date(to)),
+                    ),
+                  ),
+                ),
+              )
+      const claimed = new Set<string>()
+      for (const play of previous) {
+        const timestamp = play.status === 'sent' ? play.startedAt : play.sentAt
+        if (timestamp)
+          claimed.add(historyKey(play.artist, play.title, timestamp.getTime()))
+      }
+      const batch: StoredPlay[] = []
+      for (const play of due) {
+        const existing = matchHistory(play, history.entries, claimed)
+        if (existing) {
+          // A locally skipped play has no provider rejection code. Keep the
+          // timestamp Last.fm reported so a replay cannot claim it again.
+          await tx
+            .update(lastfmPlay)
+            .set({
+              status: 'ignored',
+              ignoredCode: null,
+              sentAt: new Date(existing.timestamp),
+            })
+            .where(eq(lastfmPlay.id, play.id))
+        } else batch.push(play)
+      }
+      if (!batch.length) continue
       const answer = await callLastfm(
         request,
         scrobbleParams(config.apiKey, session.sessionKey, batch),
@@ -569,15 +785,7 @@ async function sendWaitingPlays(
       )
       if (!answer.ok) {
         // A refused session asks for a new sign-in; the plays keep waiting.
-        if (answer.failure === 'session')
-          await tx
-            .delete(providerSecret)
-            .where(
-              and(
-                eq(providerSecret.id, session.rowId),
-                eq(providerSecret.encryptedValue, session.encryptedValue),
-              ),
-            )
+        if (answer.failure === 'session') await invalidateSession()
         break
       }
       const codes = parseScrobbleAnswer(answer.body, batch.length)
@@ -618,10 +826,25 @@ async function waitingCount(userId: string) {
   return row?.waiting ?? 0
 }
 
+/** Finish due room plays even after the last player page closes. */
+export async function flushDueLastfmPlays() {
+  const now = Date.now()
+  const users = await db
+    .selectDistinct({ userId: lastfmPlay.userId })
+    .from(lastfmPlay)
+    .where(and(eq(lastfmPlay.status, 'waiting'), dueForHistory(now)))
+  if (!users.length) return
+  const config = await settings()
+  if (!config) return
+  for (const { userId } of users) {
+    const session = activeSession(config, await storedSession(userId))
+    if (session) await sendWaitingPlays(userId, config, session, now)
+  }
+}
+
 /**
- * Keeps the reported plays not seen before and sends every waiting play of
- * the user to Last.fm. A failed send leaves plays waiting for the next report;
- * it does not fail the report.
+ * Queues new plays and checks eligible plays against the connected account.
+ * A failed history read or send leaves plays waiting for a later check.
  */
 export async function scrobbleLastfmPlays(
   userId: string,
@@ -638,7 +861,7 @@ export async function scrobbleLastfmPlays(
       waiting: 0,
     })
   const accepted = await storePlays(userId, plays)
-  const scrobbled = await sendWaitingPlays(userId, config, session)
+  const scrobbled = await sendWaitingPlays(userId, config, session, Date.now())
   return LastfmScrobbleResultSchema.parse({
     connected: true,
     accepted,

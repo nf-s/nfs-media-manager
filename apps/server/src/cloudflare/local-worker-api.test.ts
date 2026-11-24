@@ -35,6 +35,9 @@ const mocks = vi.hoisted(() => ({
   getCoordinator: vi.fn(),
   protect: vi.fn(),
   withDatabase: vi.fn(),
+  dispatchQueuedImports: vi.fn(),
+  runDatabaseMaintenance: vi.fn(),
+  flushDueLastfmPlays: vi.fn(),
   fetch: vi.fn<typeof fetch>(),
   enqueue: vi.fn(),
   readResult: vi.fn(),
@@ -52,6 +55,18 @@ vi.mock('@/plugins/registry', () => ({
   listLoadedScrapePlugins: vi.fn(),
 }))
 vi.mock('@/cloudflare/db', () => ({ withCloudDatabase: mocks.withDatabase }))
+vi.mock('@/cloudflare/database-maintenance', () => ({
+  runDatabaseMaintenance: mocks.runDatabaseMaintenance,
+  runRecordingOrderMaintenance: vi.fn(),
+}))
+vi.mock('@/services/imports', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/imports')>()),
+  dispatchQueuedImports: mocks.dispatchQueuedImports,
+}))
+vi.mock('@/services/lastfm-scrobbling', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/lastfm-scrobbling')>()),
+  flushDueLastfmPlays: mocks.flushDueLastfmPlays,
+}))
 vi.mock('@/cloudflare/provider-coordinator', () => ({
   ProviderCoordinator: class {},
 }))
@@ -67,7 +82,7 @@ vi.mock('@/services/provider-requests', async (importOriginal) => ({
 }))
 
 import app from '@/app'
-import { workerBindings } from '@/cloudflare/worker'
+import worker, { workerBindings } from '@/cloudflare/worker'
 import {
   handleLocalWorkerRequest,
   localProviderTransport,
@@ -235,6 +250,45 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
   expect(mocks.fetch).not.toHaveBeenCalled()
+})
+
+describe('scheduled Worker tasks', () => {
+  it('flushes due Sonos scrobbles with scraping disabled and isolates failures from imports', async () => {
+    const bindings = bindingContext.getStore()
+    if (!bindings) throw new Error('Missing test worker bindings')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.env.SCRAPING_ENABLED = false
+    mocks.flushDueLastfmPlays.mockRejectedValue(new Error('Provider failure'))
+    const background: Promise<unknown>[] = []
+    const scheduledTime = Date.now()
+
+    await worker.scheduled(
+      { cron: '*/5 * * * *', scheduledTime, noRetry: vi.fn() },
+      bindings,
+      {
+        waitUntil: (promise: Promise<unknown>) => background.push(promise),
+        passThroughOnException: vi.fn(),
+        get exports(): ExecutionContext['exports'] {
+          throw new Error('Unexpected use of Worker exports')
+        },
+        props: {},
+        get tracing(): ExecutionContext['tracing'] {
+          throw new Error('Unexpected use of Worker tracing')
+        },
+        abort: vi.fn(),
+      },
+    )
+    await Promise.all(background)
+
+    expect(mocks.flushDueLastfmPlays).toHaveBeenCalledTimes(1)
+    expect(mocks.dispatchQueuedImports).toHaveBeenCalledTimes(1)
+    expect(mocks.runDatabaseMaintenance).toHaveBeenCalledExactlyOnceWith(
+      scheduledTime,
+    )
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      'Last.fm scrobble flush failed.',
+    )
+  })
 })
 
 describe('dedicated local worker capability routes', () => {

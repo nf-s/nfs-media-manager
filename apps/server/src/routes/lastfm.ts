@@ -472,7 +472,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       responses: {
         200: {
           description:
-            'Keep tracks played on Sonos rooms and scrobble every waiting play to the signed-in Last.fm account',
+            'Queue qualifying Sonos room plays and submit due plays missing from the connected Last.fm account',
           content: {
             'application/json': {
               schema: createResponseSchema(LastfmScrobbleResultSchema),

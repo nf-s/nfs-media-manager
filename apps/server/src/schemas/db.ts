@@ -2045,9 +2045,11 @@ export const lastfmPlay = pgTable(
     startedAt: timestamp('started_at').notNull(),
     // waiting, sent, or ignored.
     status: text('status').notNull().default('waiting'),
-    // Last.fm's ignoredMessage code; null for a play dropped here as too old.
+    // Last.fm's ignoredMessage code; null for a play skipped locally.
     ignoredCode: integer('ignored_code'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    // On a local history match, the matched scrobble's timestamp. An expired
+    // play has no timestamp. For a submission, the time Last.fm answered.
     sentAt: timestamp('sent_at'),
   },
   (table) => [

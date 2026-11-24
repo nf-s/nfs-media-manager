@@ -27,6 +27,7 @@ import {
   runDatabaseMaintenance,
   runRecordingOrderMaintenance,
 } from './database-maintenance'
+import { flushDueLastfmPlays } from '@/services/lastfm-scrobbling'
 import { queueDueLastfmSync } from '@/services/lastfm-sync-jobs'
 import { queueDueYoutubeSync } from '@/services/youtube-sync-jobs'
 import { queueDueSpotifyPodcastSync } from '@/services/spotify-podcast-sync-jobs'
@@ -307,6 +308,11 @@ export default {
   async scheduled(event, bindings, ctx) {
     ctx.waitUntil(
       run(bindings, () => runDatabaseMaintenance(event.scheduledTime)),
+    )
+    ctx.waitUntil(
+      run(bindings, flushDueLastfmPlays).catch(() => {
+        console.error('Last.fm scrobble flush failed.')
+      }),
     )
     await run(bindings, async () => {
       await dispatchQueuedImports()
