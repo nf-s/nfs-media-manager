@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   catalogMatches: vi.fn(),
   libraryRows: vi.fn(),
   observe: vi.fn(),
+  recordCodes: vi.fn(),
   filmMatches: vi.fn(),
   addAlbum: vi.fn(),
   addFilm: vi.fn(),
@@ -25,6 +26,9 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/services/catalog-discoveries', () => ({
   observeCatalogMedia: mocks.observe,
   promoteCatalogMediaInTransaction: vi.fn(),
+}))
+vi.mock('@/services/spotify-catalog-codes', () => ({
+  recordSpotifyCatalogCodes: mocks.recordCodes,
 }))
 vi.mock('@/services/film-catalog-observations', () => ({
   observeFilmCandidate: vi.fn(async () => 'discovered-film'),
@@ -151,6 +155,14 @@ describe('manual provider search and library additions', () => {
     })
     expect(mocks.request).toHaveBeenCalledTimes(2)
     expect(mocks.requestFactory).toHaveBeenCalledWith(spotifyPlugin, undefined)
+    expect(mocks.recordCodes).toHaveBeenCalledWith(expect.any(Object), [
+      {
+        mediaItemId: 'discovered-album',
+        kind: 'album',
+        value: '012345678901',
+        origin: expect.objectContaining({ operation: 'catalog-search' }),
+      },
+    ])
     expect(mocks.addAlbum).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
   })
