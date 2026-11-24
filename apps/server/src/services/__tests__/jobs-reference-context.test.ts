@@ -71,7 +71,9 @@ describe('job reference context', () => {
         query,
         select: () => ({
           from: () => ({
-            where: () => ({ for: async () => [{ status: 'running' }] }),
+            where: () => ({
+              for: async () => [{ status: 'running', options: {} }],
+            }),
           }),
         }),
         update: () => ({

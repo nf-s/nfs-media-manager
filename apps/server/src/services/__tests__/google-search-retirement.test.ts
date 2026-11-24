@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   set: vi.fn(),
   request: vi.fn(),
   persist: vi.fn(),
+  log: vi.fn(),
 }))
 
 vi.mock('@/env', () => ({ env: { MEDIA_PLUGIN_PATHS: [] } }))
@@ -19,6 +20,7 @@ vi.mock('@/lib/db', () => {
       }),
     }),
     update: mocks.update,
+    insert: () => ({ values: mocks.log }),
   }
   return {
     db: {
@@ -181,6 +183,12 @@ describe('Google Custom Search retirement', () => {
         }),
       )
       expect(mocks.update).toHaveBeenCalledTimes(2)
+      expect(mocks.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          level: 'error',
+          message: 'No executable plugin is loaded for this provider.',
+        }),
+      )
     },
   )
 

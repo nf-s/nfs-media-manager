@@ -66,7 +66,6 @@ import { refreshTrackLinks } from './track-links'
 import { observeSpotifyPlaylistPageBatch } from './spotify-playlist-observations'
 
 const WRITE_BATCH = 500
-const LOG_EVERY_PAGES = 40
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -304,7 +303,11 @@ export async function readSpotifyTrackEntries(
   let invalid = 0
   let offset = 0
   let total: number | null = null
-  await context.activity('Reading playlist tracks')
+  await context.activity('Reading playlist tracks', {
+    done: 0,
+    ...(expectedTotal === null ? {} : { total: expectedTotal }),
+    unit: 'tracks',
+  })
   await context.progress({
     pagesRead: 0,
     totalPages: expectedTotal === null ? null : pagesFor(expectedTotal),
@@ -372,8 +375,6 @@ export async function readSpotifyTrackEntries(
       unit: 'tracks',
     })
     if (done) break
-    if (pages % LOG_EVERY_PAGES === 0)
-      await context.log('info', `Read ${offset} of ${page.total} tracks.`)
   }
   if (invalid > 0 && invalid >= tracks.size)
     throw refused(

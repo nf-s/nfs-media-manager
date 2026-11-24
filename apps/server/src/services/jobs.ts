@@ -7,6 +7,8 @@ import {
   JobScopeSchema,
   JobListQuerySchema,
   JobActivitySchema,
+  JobActivityStageSchema,
+  getJobActivityStage,
   getJobDismissal,
   getJobProgressCount,
   getJobTask,
@@ -110,11 +112,7 @@ import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { writeRequestLog } from '@/lib/request-log'
-import {
-  jobActivityEnding,
-  jobActivityOptions,
-  storedJobActivitySchema,
-} from '@/lib/job-stage-history'
+import { jobActivityEnding } from '@/lib/job-stage-history'
 import { env } from '@/env'
 import { dispatchPriorityOrder } from '@/lib/job-dispatch-order'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
@@ -289,7 +287,7 @@ function jobActivityWriter(jobId: string) {
       jobId,
       async (tx, job) => {
         const now = new Date()
-        const current = jobActivityOptions(job.options)
+        const current = getJobActivityStage(job.options)
         const stageChanged =
           current?.stage !== stage || current.unit !== progress?.unit
         if (stageChanged)
@@ -299,6 +297,7 @@ function jobActivityWriter(jobId: string) {
             stage,
             ...(current
               ? {
+                  previousStage: current.stage,
                   previousDurationMs: Math.max(
                     0,
                     now.getTime() - Date.parse(current.startedAt),
@@ -306,7 +305,7 @@ function jobActivityWriter(jobId: string) {
                 }
               : {}),
           }
-        const next = storedJobActivitySchema.parse({
+        const next = JobActivityStageSchema.parse({
           stage,
           ...progress,
           startedAt: stageChanged ? now.toISOString() : current.startedAt,
@@ -2209,7 +2208,12 @@ async function processTaskJob(
     result.persist,
   ).catch(async (error: unknown) => {
     if (!result.persist) throw error
-    await fail(new Error('Could not save the job result.'), {}, undefined, true)
+    await fail(
+      new Error('Could not save the job result.', { cause: error }),
+      {},
+      undefined,
+      true,
+    )
     return false
   })
   if (!saved) return

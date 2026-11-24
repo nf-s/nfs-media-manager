@@ -1,24 +1,11 @@
 import type { JsonValue } from '@repo/schemas/common'
-import { z } from 'zod'
-
-export const storedJobActivitySchema = z.object({
-  stage: z.string(),
-  done: z.number().int().nonnegative().optional(),
-  total: z.number().int().nonnegative().optional(),
-  unit: z.string().optional(),
-  startedAt: z.iso.datetime(),
-})
-
-export function jobActivityOptions(options: Record<string, JsonValue>) {
-  const activity = storedJobActivitySchema.safeParse(options.activity)
-  return activity.success ? activity.data : undefined
-}
+import { getJobActivityStage } from '@repo/schemas/job'
 
 export function jobActivityEnding(
   options: Record<string, JsonValue>,
   now: Date,
 ): Record<string, JsonValue> {
-  const activity = jobActivityOptions(options)
+  const activity = getJobActivityStage(options)
   return activity
     ? {
         previousActivity: {

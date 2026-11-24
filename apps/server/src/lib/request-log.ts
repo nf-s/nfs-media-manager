@@ -96,6 +96,7 @@ type RequestEvent =
       event: 'job.activity'
       outcome: 'stage' | 'failed'
       stage: string
+      previousStage?: string
       previousDurationMs?: number
     }
   | { event: 'database.probe'; outcome: 'ok' | 'failed'; durationMs: number }

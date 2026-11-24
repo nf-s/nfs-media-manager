@@ -51,9 +51,15 @@ periodic milestones. The final log records the last stage on completion,
 cancellation or worker recovery when a stage was saved.
 
 Activity commits independently of the work it describes so an interruption or
-rollback leaves a useful record of where the job stopped. Completion messages
-and confirmed counts still depend on the work being saved. Workers also emit
-structured `job.activity` events at stage changes and reported failures.
+rollback leaves a record of where the job stopped. Batch counts describe work
+performed in the current stage. For a playlist import, the save confirmation
+appears after the transaction commits.
+
+In Cloudflare Workers Logs, filter on `event = job.activity` for stage changes
+and failures. Open the associated API worker invocation for the queue trigger,
+outcome and runtime. The API worker persists invocation logs with query strings
+redacted. Job history in the application remains available after Cloudflare's
+log retention window expires.
 
 ## Hosted queue recovery
 

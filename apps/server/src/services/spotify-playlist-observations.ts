@@ -24,15 +24,9 @@ import {
   type CatalogOrigin,
 } from './catalog-discoveries'
 import { spotifyTrackAndAlbumObservations } from './music-catalog-observations'
-import type { spotifyPlaylistOccurrences } from './spotify-playlists'
+import type { PlaylistPage } from './spotify-playlists'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
-type PlaylistPage = {
-  page: number
-  total: number
-  responseId?: string
-  entries: ReturnType<typeof spotifyPlaylistOccurrences>
-}
 type Evidence = {
   jobId?: string
   snapshot?: string | null
