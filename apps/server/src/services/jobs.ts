@@ -1977,10 +1977,9 @@ async function processTaskJob(
     message: string,
     metadata: Record<string, JsonValue> = {},
     write?: (tx: JobTransaction) => Promise<void>,
-    persist?: TaskJobResult['persist'],
+    measurePersistence = false,
   ) => {
     const saved = await withRunningJob(nextJob.id, async (tx, job) => {
-      await persist?.(tx)
       const finishedAt = new Date()
       await tx
         .update(scrapeJob)
@@ -1991,17 +1990,36 @@ async function processTaskJob(
           updatedAt: finishedAt,
         })
         .where(eq(scrapeJob.id, nextJob.id))
-      await logJob(
-        nextJob.id,
+      const logId = nanoid()
+      await tx.insert(scrapeJobLog).values({
+        id: logId,
+        jobId: nextJob.id,
         level,
         message,
-        {
+        metadata: {
           ...metadata,
           ...jobActivityEnding(job.options, finishedAt),
         },
-        tx,
-      )
+      })
       await write?.(tx)
+      if (measurePersistence) {
+        // Result handlers can read the succeeded job and its diagnostics in
+        // this transaction. Publish the final timing with those same results.
+        const savedAt = new Date()
+        await tx
+          .update(scrapeJob)
+          .set({ finishedAt: savedAt, updatedAt: savedAt })
+          .where(eq(scrapeJob.id, nextJob.id))
+        await tx
+          .update(scrapeJobLog)
+          .set({
+            metadata: {
+              ...metadata,
+              ...jobActivityEnding(job.options, savedAt),
+            },
+          })
+          .where(eq(scrapeJobLog.id, logId))
+      }
     })
     if (saved && status === 'failed')
       writeRequestLog({
@@ -2188,6 +2206,7 @@ async function processTaskJob(
             options: sql`${scrapeJob.options} || ${JSON.stringify(result.options)}::jsonb`,
           })
           .where(eq(scrapeJob.id, nextJob.id))
+      await result.persist?.(tx)
       if (result.outcome !== 'continue') return
       const nextJobId = await insertTaskJob(
         tx,
@@ -2205,7 +2224,7 @@ async function processTaskJob(
       )
       continued = true
     },
-    result.persist,
+    result.persist !== undefined,
   ).catch(async (error: unknown) => {
     if (!result.persist) throw error
     await fail(
