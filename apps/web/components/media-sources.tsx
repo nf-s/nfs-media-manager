@@ -3,20 +3,26 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { JobSchema } from '@repo/schemas/job'
-import { canIdentifyMedia } from '@repo/schemas/provider-identification'
+import {
+  canIdentifyMedia,
+  hasProviderIdentifier,
+} from '@repo/schemas/provider-identification'
 import {
   MediaSourcesSchema,
   type AlbumDetail,
   type FilmDetail,
   type MediaHistory,
+  type MediaSources as MediaSourceSummary,
 } from '@repo/schemas/media'
 import { KeyValues } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
+import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { IDENTIFIER_REQUIRED } from '@/utils/source-rows'
 import AlbumProviderDetails from './album-provider-details'
+import { useDetailView } from './detail-inspector-context'
 import { ListeningSources, useAlbumListening } from './album-listening'
 import { useMediaProvenance } from './field-provenance'
 import JsonTree from './json-tree'
@@ -35,11 +41,63 @@ import {
 } from './provider-sources'
 import { relationshipSourceBlocks } from './relationship-source-blocks'
 
+export const albumTagsSourceField = 'albumTag'
+const albumTags = 'Album tags'
+const sourceCapabilities: Record<'album' | 'film', Record<string, string[]>> = {
+  album: {
+    discogs: [
+      albumTags,
+      'Artwork',
+      'Label and catalogue number',
+      'Formats',
+      'Release ratings',
+    ],
+    lastfm: [albumTags, 'Description', 'Listeners', 'Track list'],
+    musicbrainz: [
+      albumTags,
+      'Release group type',
+      'Release date',
+      'Relationships',
+    ],
+    serply: [albumTags, 'RYM rating'],
+    spotify: ['Artists', 'Release date', 'Artwork', 'Track list', 'Barcode'],
+    tidal: ['Artists', 'Release date', 'Artwork', 'Track list', 'Barcode'],
+    metacritic: ['Metacritic ratings'],
+  },
+  film: {
+    tmdb: [
+      'Description',
+      'Artwork',
+      'Release date',
+      'Credits',
+      'Genres',
+      'Collections',
+      'TMDb rating',
+    ],
+    omdb: [
+      'Description',
+      'Artwork',
+      'Release date',
+      'Credits',
+      'Genres',
+      'Ratings',
+    ],
+  },
+}
+
 function useMediaSourceSummary(id: string, enabled = true) {
   const { apiBaseUrl } = useConfig()
-  return useQuery({
+  return useQuery<MediaSourceSummary>({
     queryKey: ['history', id, 'sources'],
     enabled,
+    refetchInterval: ({ state }) =>
+      state.data?.providers.some(
+        ({ latestAttempt }) =>
+          latestAttempt?.status === 'queued' ||
+          latestAttempt?.status === 'running',
+      )
+        ? 3000
+        : false,
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
@@ -127,7 +185,10 @@ export default function MediaSources({
   const summary = useMediaSourceSummary(item.id)
   const catalog = useSourceCatalog()
   const provenance = useMediaProvenance(item.id)
+  const view = useDetailView()
   const isAlbum = item.mediaType === 'album'
+  const focused =
+    isAlbum && view.params.get('sourceField') === albumTagsSourceField
   const listening = useAlbumListening(item.id, '', isAlbum)
   const supported = (catalog.data ?? []).filter(
     (provider) =>
@@ -183,10 +244,13 @@ export default function MediaSources({
     // A provider that runs its jobs in the request returns the job finished.
     if (job.status !== 'queued' && job.status !== 'running')
       await client.invalidateQueries({ queryKey: [item.mediaType, item.id] })
+    await client.invalidateQueries({ queryKey: ['history', item.id] })
     return job
   }
   const rows = [...ids].map<ProviderSourceRow>((id) => {
     const provider = supported.find((provider) => provider.id === id)
+    const source = summary.data?.providers.find((row) => row.id === id)
+    const capabilities = sourceCapabilities[item.mediaType][id]
     const providerDetails = details.filter((detail) => detail.provider === id)
     const collections = collectionSources.filter(
       (source) => source.provider === id,
@@ -224,10 +288,30 @@ export default function MediaSources({
           )
           .map((field) => field.label),
       ),
+      ...((source?.returnedTags?.length ?? 0) > 0 ? [albumTags] : []),
+      ...(source?.returnedTrackList ? ['Track list'] : []),
     ]
     const scrobbles =
       isAlbum && id === 'lastfm' && listening.data ? listening.data : undefined
     const blocks = relationshipSourceBlocks(relationshipSource?.relationships)
+    if (isAlbum && source?.returnedTags?.length)
+      blocks.push({
+        title: albumTags,
+        content: (
+          <Pills wrap label={`Tags returned by ${label}`}>
+            {source.returnedTags.map((tag) => (
+              <Pill key={tag}>{tag}</Pill>
+            ))}
+          </Pills>
+        ),
+      })
+    else if (focused && source?.latestSnapshot)
+      blocks.push({
+        title: albumTags,
+        content: (
+          <p className="ds-muted">The saved response returned no album tags.</p>
+        ),
+      })
     if (scrobbles)
       blocks.push({
         title: 'Scrobble names',
@@ -289,13 +373,22 @@ export default function MediaSources({
             : { state: 'attention', label: 'No names linked' }
           : undefined,
       updatedAt:
-        summary.data?.providers.find((row) => row.id === id)?.latestSnapshot
-          ?.createdAt ?? relationshipSource?.createdAt,
+        source?.latestSnapshot?.createdAt ?? relationshipSource?.createdAt,
+      latestAttempt: source?.latestAttempt,
       links,
       provides,
+      capabilities,
       unavailable: provider?.supportsScrape
         ? (sourceUnavailable(provider) ??
-          (canIdentifyMedia(provider, identity)
+          ((
+            focused && provider.supportsMatchSearch
+              ? hasProviderIdentifier(
+                  provider,
+                  identity.mediaType,
+                  identity.providerReferences,
+                )
+              : canIdentifyMedia(provider, identity)
+          )
             ? undefined
             : IDENTIFIER_REQUIRED))
         : undefined,
@@ -358,15 +451,41 @@ export default function MediaSources({
         ? 'Could not load providers.'
         : undefined
   return (
-    <ProviderSources
-      rows={rows}
-      scope={{ kind: item.mediaType, id: item.id }}
-      pending={summary.isPending || catalog.isPending}
-      unavailable={unavailable}
-      onRetry={() => {
-        if (summary.isError) void summary.refetch()
-        if (catalog.isError) void catalog.refetch()
-      }}
-    />
+    <>
+      {focused && (
+        <Notice
+          action={
+            <Button
+              type="button"
+              size="xs"
+              variant="link"
+              onClick={() => {
+                view.params.delete('sourceField')
+                view.replace(view.params)
+              }}
+            >
+              Show all sources
+            </Button>
+          }
+        >
+          Sources that can supply album tags
+        </Notice>
+      )}
+      <ProviderSources
+        rows={
+          focused
+            ? rows.filter((row) => row.capabilities?.includes(albumTags))
+            : rows
+        }
+        scope={{ kind: item.mediaType, id: item.id }}
+        pending={summary.isPending || catalog.isPending}
+        unavailable={unavailable}
+        allowRefreshAll={!focused}
+        onRetry={() => {
+          if (summary.isError) void summary.refetch()
+          if (catalog.isError) void catalog.refetch()
+        }}
+      />
+    </>
   )
 }

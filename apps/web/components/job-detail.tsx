@@ -42,7 +42,7 @@ import {
 import { fetchApiData } from '@/utils/api'
 import {
   activeJobProgressLabel,
-  isArtistEnrichmentJob,
+  isArtistJob,
   isSpotifyTrackSearchJob,
 } from '@/utils/job-selection'
 import { jobDetailOptions } from '@/utils/job-data'
@@ -109,7 +109,7 @@ function fallbackSummary(job: Job): JobSummary {
 function matchTarget(
   job: Job,
 ): { kind: 'album' | 'film' | 'artist'; id: string } | null {
-  if (isArtistEnrichmentJob(job) && typeof job.options.artistId === 'string')
+  if (isArtistJob(job) && typeof job.options.artistId === 'string')
     return { kind: 'artist', id: job.options.artistId }
   const item = job.items.find((entry) => entry.mediaItemId && entry.mediaType)
   return item?.mediaItemId && item.mediaType
@@ -442,8 +442,7 @@ export function JobDetail({
                       },
                     ]
                   : []),
-                ...(isArtistEnrichmentJob(job) &&
-                typeof job.options.artistId === 'string'
+                ...(isArtistJob(job) && typeof job.options.artistId === 'string'
                   ? [
                       {
                         label: 'Artist',

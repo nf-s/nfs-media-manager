@@ -225,7 +225,7 @@ type JobTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 // Original IDs never run again: retries always create a new job. The row lock
 // fences every worker write against cancellation, including provider persistence.
-async function withRunningJob(
+export async function withRunningJob(
   jobId: string,
   write: (tx: JobTransaction) => Promise<void>,
 ): Promise<boolean> {
@@ -2039,6 +2039,7 @@ export async function createJob(
     retryOf?: string
     skipExistingRetry?: boolean
     confirmRunning?: boolean
+    reuseSpotifyAlbumReferenceAttempt?: boolean
   } = {},
 ): Promise<Job> {
   const parsedInput = CreateJobSchema.parse(input)
@@ -2230,6 +2231,23 @@ export async function createJob(
       .limit(1)
     // A job queued before the provider ran in the request runs now instead.
     const [queued] = active
+    if (scheduling.reuseSpotifyAlbumReferenceAttempt) {
+      if (queued) return queued.jobId
+      const [previous] = await tx
+        .select({ jobId: scrapeJob.id })
+        .from(scrapeJobItem)
+        .innerJoin(scrapeJob, eq(scrapeJob.id, scrapeJobItem.jobId))
+        .where(
+          and(
+            eq(scrapeJobItem.provider, parsedInput.provider),
+            inArray(scrapeJobItem.mediaItemId, mediaItemIds),
+            sql`${scrapeJob.options}->>'spotifyAlbumReference' = ${parsedInput.options.spotifyAlbumReference}`,
+          ),
+        )
+        .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
+        .limit(1)
+      if (previous) return previous.jobId
+    }
     if (inRequest && !scheduling.retryOf && queued?.status === 'queued')
       return queued.jobId
     if (active.length)
@@ -2279,7 +2297,8 @@ export async function createJob(
   if (inRequest)
     return runJobInRequest(queuedJobId, plugin, queuedJobId === jobId)
 
-  await wakeJobProvider(parsedInput.provider)
+  if (queuedJobId === jobId || !scheduling.reuseSpotifyAlbumReferenceAttempt)
+    await wakeJobProvider(parsedInput.provider)
 
   const job = await getJobRecord(queuedJobId)
 
@@ -2783,7 +2802,7 @@ async function readJobActivity() {
 }
 
 /**
- * Artist enrichment, subscription syncs and mix syncs have their own
+ * Artist tasks, subscription syncs and mix syncs have their own
  * libraries. Legacy jobs were stored with the album scope, so the task decides.
  */
 function jobsInMediaScope(
@@ -2799,8 +2818,8 @@ function jobsInMediaScope(
     sql`, `,
   )})`
   if (mediaType === 'mix') return mixSync
-  const artistEnrichment = sql`coalesce(${scrapeJob.options}->>'task', '') = ${ARTIST_ENRICHMENT_TASK}`
-  if (mediaType === 'artist') return artistEnrichment
+  const artistTasks = sql`coalesce(${scrapeJob.options}->>'task', '') in (${ARTIST_ENRICHMENT_TASK}, ${SPOTIFY_ARTIST_ALBUMS_TASK})`
+  if (mediaType === 'artist') return artistTasks
   if (mediaType === 'track')
     return sql`(${scrapeJob.options}->>'task' in (${SPOTIFY_TRACK_SEARCH_TASK}, ${TIDAL_TRACK_MATCH_TASK}, ${SONOVAULT_TRACK_LOOKUP_TASK})
       or (${scrapeJob.options}->>'task' in (${TIDAL_SIMILAR_TASK}, ${SPOTIFY_SIMILAR_LOOKUP_TASK})
@@ -2808,7 +2827,7 @@ function jobsInMediaScope(
   return sql`((${scrapeJob.scope}->>'mediaType' = ${mediaType} or exists (
     select 1 from scrape_job_item scoped_item join media_item scoped_media on scoped_media.id = scoped_item.media_item_id
     where scoped_item.job_id = ${scrapeJob.id} and scoped_media.media_type = ${mediaType}
-  )) and not ${subscriptionSync} and not ${mixSync} and not (${artistEnrichment}))`
+  )) and not ${subscriptionSync} and not ${mixSync} and not ${artistTasks})`
 }
 
 export async function cancelQueuedJobs(

@@ -50,7 +50,12 @@ import {
   saveArtistProviderResult,
 } from './artist-profiles'
 import { observeCatalogMedia } from './catalog-discoveries'
-import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
+import {
+  createTaskJob,
+  withRunningJob,
+  type TaskJobContext,
+  type TaskJobResult,
+} from './jobs'
 import {
   createProviderRequest,
   getProviderSafety,
@@ -80,13 +85,14 @@ const groupKey = (artistId: string, market: string) =>
   createStableId(SPOTIFY_ARTIST_ALBUMS_TASK, JSON.stringify([artistId, market]))
 
 async function loadTarget(artistId: string, tx?: Transaction) {
-  const target = await loadArtistProviderTarget(artistId, 'spotify', tx, { includeCatalog: true })
+  const target = await loadArtistProviderTarget(artistId, 'spotify', tx, {
+    includeCatalog: true,
+  })
   if (!target)
     throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
-  const nativeId = target.catalogProvider === 'spotify' ? target.catalogExternalId : null
-  const result = SpotifyIdSchema.safeParse(
-    target.providerArtistId ?? nativeId,
-  )
+  const nativeId =
+    target.catalogProvider === 'spotify' ? target.catalogExternalId : null
+  const result = SpotifyIdSchema.safeParse(target.providerArtistId ?? nativeId)
   return {
     name: target.name,
     spotifyArtistId: result.success ? result.data : null,
@@ -220,6 +226,8 @@ async function resolveTarget(
   options: ListingOptions,
   request: SpotifyRequest,
   secrets: Record<string, string>,
+  getToken: () => Promise<string>,
+  assertStored: () => void,
   recordDiagnostic: (diagnostic: unknown) => void,
 ) {
   const { artistId } = options
@@ -236,6 +244,7 @@ async function resolveTarget(
   const result = await lookupArtistProvider('spotify', target.name, inferred, {
     secrets,
     request,
+    getSpotifyToken: getToken,
     recordDiagnostic,
     searched: async () => undefined,
     ...(inferred
@@ -248,24 +257,28 @@ async function resolveTarget(
             }),
         }),
   })
+  assertStored()
   const resolvedId = SpotifyIdSchema.parse(result.profile.externalId)
   await context.assertActive()
-  await saveArtistProviderResult(
-    artistId,
-    'spotify',
-    {
-      profile: {
-        name: result.profile.name,
-        externalId: resolvedId,
-        url: result.profile.url,
-        tags: [],
+  const saved = await withRunningJob(context.jobId, (tx) =>
+    saveArtistProviderResult(
+      artistId,
+      'spotify',
+      {
+        profile: {
+          name: result.profile.name,
+          externalId: resolvedId,
+          url: result.profile.url,
+          tags: [],
+        },
+        payload: result.payload,
+        scrapeJobId: context.jobId,
       },
-      payload: result.payload,
-      scrapeJobId: context.jobId,
-    },
-    undefined,
-    { onlyIfMissing: true },
+      tx,
+      { onlyIfMissing: true },
+    ),
   )
+  if (!saved) return null
   const resolved = (await loadTarget(artistId)).spotifyArtistId
   if (!resolved)
     throw new Error('The Spotify artist match changed during the lookup.')
@@ -288,7 +301,10 @@ async function savePage(
     await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
     const target = await loadTarget(scope.artistId, tx)
     if (target.spotifyArtistId !== scope.spotifyArtistId)
-      throw new ServerError({statusCode: 409, message: 'The Spotify artist match changed during the fetch.'})
+      throw new ServerError({
+        statusCode: 409,
+        message: 'The Spotify artist match changed during the fetch.',
+      })
     const [saved] = await tx
       .select()
       .from(spotifyArtistAlbumListing)
@@ -396,13 +412,19 @@ export async function runSpotifyArtistAlbums(
     const request = createProviderRequest(spotifyPlugin, context.assertActive, {
       beginResponseCapture: capture('task'),
     })
+    let tokenRequest: Promise<string> | undefined
+    const getToken = () =>
+      (tokenRequest ??= spotifyClientToken(secrets, request))
     const spotifyArtistId = await resolveTarget(
       context,
       options,
       request,
       secrets,
+      getToken,
+      capture.assertStored,
       diagnostics.recordDiagnostic,
     )
+    if (!spotifyArtistId) return { outcome: 'stopped' }
     capture.assertStored()
     const scope = { artistId, spotifyArtistId, market }
     let saved = await readCheckpoint(scope)
@@ -412,7 +434,7 @@ export async function runSpotifyArtistAlbums(
         message: 'Using saved Spotify artist albums.',
         noProviderRequests: true,
       }
-    const token = await spotifyClientToken(secrets, request)
+    const token = await getToken()
     for (let index = 0; index < PAGES_PER_JOB; index += 1) {
       const offset = saved?.nextOffset ?? 0
       const page = parseSpotifyArtistAlbumPage(
@@ -426,6 +448,7 @@ export async function runSpotifyArtistAlbums(
             limit: String(spotifyArtistAlbumsPageSize),
             offset: String(offset),
           },
+          { notFoundOn404: true },
         ),
         spotifyArtistId,
         offset,

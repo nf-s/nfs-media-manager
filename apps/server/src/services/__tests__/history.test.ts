@@ -17,6 +17,7 @@ vi.mock('@/lib/db', () => {
           return query
         },
         leftJoin: () => query,
+        innerJoin: () => query,
         orderBy: () => query,
         limit: () => query,
         offset: () => query,
@@ -159,17 +160,41 @@ describe('media history read projections', () => {
       createdAt,
     }
     mocks.rows
-      .mockResolvedValueOnce([{ provider: 'example', snapshot }])
+      .mockResolvedValueOnce([
+        {
+          provider: 'example',
+          snapshot: {
+            ...snapshot,
+            tags: [{ name: 'Fixture tag' }],
+            tracks: true,
+          },
+        },
+      ])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ provider: 'failed-provider' }])
+      .mockResolvedValueOnce([
+        {
+          provider: 'example',
+          jobId: 'failed-refresh',
+          status: 'failed',
+          createdAt,
+          finishedAt: createdAt,
+        },
+      ])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
     await expect(getMediaSources('film-1')).resolves.toEqual({
       providers: [
-        { id: 'failed-provider', latestSnapshot: null },
         {
           id: 'example',
           latestSnapshot: { ...snapshot, createdAt: createdAt.toISOString() },
+          latestAttempt: {
+            jobId: 'failed-refresh',
+            status: 'failed',
+            createdAt: createdAt.toISOString(),
+            finishedAt: createdAt.toISOString(),
+          },
+          returnedTags: ['Fixture tag'],
+          returnedTrackList: true,
         },
       ],
       changes: [],

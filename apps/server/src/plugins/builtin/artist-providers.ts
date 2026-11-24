@@ -206,6 +206,7 @@ type ArtistRequestContext = MediaPluginTestContext & {
   recordDiagnostic(diagnostic: unknown): void
   searched(): Promise<void>
   spotifyRecordings?: readonly SpotifyArtistRecording[]
+  getSpotifyToken?: () => Promise<string>
   loadLastfmRecordings?: () => Promise<readonly LastFmRecording[]>
   inferredLastfmMbid?: boolean
   loadSpotifyCatalogRecordings?: () => Promise<
@@ -706,7 +707,8 @@ export async function lookupArtistProvider(
 
   switch (provider) {
     case 'spotify': {
-      const token = await spotifyClientToken(context.secrets, context.request)
+      const token = await (context.getSpotifyToken?.() ??
+        spotifyClientToken(context.secrets, context.request))
       secrets.push(token)
       if (!id && context.spotifyRecordings?.length) {
         const verified = await verifySpotifyArtistRecordings(
@@ -733,6 +735,8 @@ export async function lookupArtistProvider(
         ),
       )
       const artist = SpotifyArtistSchema.parse(evidence.artist)
+      if (artist.id !== id)
+        throw new Error('Spotify returned a different artist than requested.')
       profile = {
         name: artist.name,
         externalId: artist.id,

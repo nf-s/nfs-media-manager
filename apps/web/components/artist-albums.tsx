@@ -14,6 +14,7 @@ import { formatDateTime, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { providerLogoUrl } from '@/utils/provider-logos'
 import { DetailLink } from './detail-link'
+import { errorMessage } from './lastfm-sync'
 import { EmbeddedMediaBrowser } from './media-browser'
 import { useConfig } from './providers'
 
@@ -33,18 +34,23 @@ function listingSummary(listing: SpotifyArtistAlbumListing) {
   } = listing
   const coverage =
     formatItemCount(pagesSaved, { one: 'page', other: 'pages' }) + ' saved'
-  if (completedAt)
-    return `Complete for ${market} · ${coverage} · ${formatItemCount(releasesSeen, { one: 'release entry', other: 'release entries' })}`
+  const releases = formatItemCount(releasesSeen, {
+    one: 'release entry',
+    other: 'release entries',
+  })
+  if (completedAt) return `Complete for ${market} · ${coverage} · ${releases}`
   if (retryAt)
-    return `Spotify is cooling down until ${formatDateTime(retryAt)} · ${coverage}`
+    return `Spotify is cooling down until ${formatDateTime(retryAt)} · ${coverage} · ${releases}`
   if (unavailableReason) return unavailableReason
   if (job?.status === 'queued') return `Queued · ${coverage}`
   if (job?.status === 'running')
     return listing.artistUrl
-      ? `Fetching page ${pagesSaved + 1} · ${coverage}`
+      ? `Fetching page ${pagesSaved + 1} · ${coverage} · ${releases}`
       : 'Finding the Spotify artist match'
-  if (job?.status === 'failed') return `Fetch stopped · ${coverage}`
-  if (job?.status === 'cancelled') return `Fetch cancelled · ${coverage}`
+  if (job?.status === 'failed')
+    return `Fetch stopped · ${coverage} · ${releases}`
+  if (job?.status === 'cancelled')
+    return `Fetch cancelled · ${coverage} · ${releases}`
   return pagesSaved ? coverage : null
 }
 
@@ -82,6 +88,7 @@ export function ArtistAlbums({
       }),
     onSuccess: (listing) => {
       client.setQueryData(queryKey, listing)
+      void client.invalidateQueries({ queryKey: ['job-activity'] })
       setOpen(false)
     },
     onError: () => {
@@ -90,11 +97,16 @@ export function ArtistAlbums({
   })
   const listing = query.data
   const pagesSaved = listing?.pagesSaved ?? 0
+  const knownArtist = Boolean(listing?.artistUrl)
   useEffect(() => {
     if (!pagesSaved) return
     for (const key of ['browse', 'browse-count', 'facets'])
       void client.invalidateQueries({ queryKey: ['albums', key] })
   }, [client, pagesSaved])
+  useEffect(() => {
+    if (knownArtist)
+      void client.invalidateQueries({ queryKey: ['artist', artistId] })
+  }, [client, artistId, knownArtist])
 
   const summary = listing ? listingSummary(listing) : null
   const details = listing?.job ? (
@@ -125,7 +137,7 @@ export function ArtistAlbums({
           type="button"
           variant="link"
           aria-expanded={open}
-          aria-controls={panelId}
+          aria-controls={open ? panelId : undefined}
           onClick={() => setOpen(!open)}
         >
           <Download className="ds-i" aria-hidden />
@@ -198,7 +210,10 @@ export function ArtistAlbums({
               )}
               {fetch.isError && (
                 <Notice tone="danger">
-                  Could not start the Spotify fetch.
+                  {errorMessage(
+                    fetch.error,
+                    'Could not start the Spotify fetch.',
+                  )}
                 </Notice>
               )}
             </div>

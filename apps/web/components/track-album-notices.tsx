@@ -1,17 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { CatalogMembershipInput } from '@repo/schemas/manual-add'
 import type { TrackDetail } from '@repo/schemas/tracks'
+import { SpotifyAlbumReferenceResultSchema } from '@repo/schemas/spotify-album-reference'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
 import { useCatalogMembership } from '@/hooks/use-catalog-membership'
-import {
-  addManualMediaItem,
-  invalidateManualMediaAddition,
-} from '@/utils/manual-media-add'
+import { fetchApiData } from '@/utils/api'
+import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import {
   describeScrobbledAlbum,
   describeUnlistedAlbum,
@@ -25,13 +24,19 @@ import { DetailLink } from './detail-link'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
+import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 
 /** Overview and Sources share the add result while the track detail stays open. */
 export function useTrackAlbumAddition(item: TrackDetail) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const missing = missingTrackAlbum(item)
-  const exactId = missing?.kind === 'id' ? missing.spotifyAlbumId : null
+  const exactId =
+    missing?.kind === 'id'
+      ? missing.spotifyAlbumId
+      : item.albumLinkStrategy === 'spotify-album'
+        ? item.spotifyAlbumId
+        : null
   const identities: CatalogMembershipInput['items'] = exactId
     ? [{ mediaType: 'album', externalId: exactId }]
     : []
@@ -43,15 +48,20 @@ export function useTrackAlbumAddition(item: TrackDetail) {
   const add = useMutation({
     retry: false,
     mutationFn: async (spotifyAlbumId: string) => {
-      const albumId = await addManualMediaItem(apiBaseUrl, 'album', {
-        externalId: spotifyAlbumId,
-        mediaItemId: null,
-      })
+      const { mediaItemId } = await fetchApiData(
+        apiBaseUrl,
+        '/api/v1/catalog/spotify-album-reference',
+        SpotifyAlbumReferenceResultSchema,
+        {
+          method: 'POST',
+          body: JSON.stringify({ trackId: item.id, spotifyAlbumId, add: true }),
+        },
+      )
       await Promise.all([
         invalidateManualMediaAddition(client, 'album'),
         invalidateAlbumReferences(client),
       ])
-      return albumId
+      return mediaItemId
     },
   })
   const addedId =
@@ -59,7 +69,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
   const unlisted = item.album ? null : (addedId ?? exact?.mediaItemId ?? null)
   const confirmation = missing?.kind === 'search' || Boolean(exact?.ambiguous)
   const query = missing?.query
-  const saved = Boolean(unlisted || (addedId && item.album?.id === addedId))
+  const saved = Boolean(addedId || exact?.mediaItemId)
   const error = add.isError
     ? errorMessage(add.error, 'Could not add album.')
     : exact?.ambiguous && !query
@@ -75,7 +85,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
     : Boolean(exactId && !membership.isPending)
   const name = item.album?.title ?? missing?.name
   const libraryAction =
-    name && (saved || missing) ? (
+    name && (saved || missing || exactId) ? (
       <LibraryAction
         name={name}
         kind="album"
@@ -109,7 +119,43 @@ export function useTrackAlbumAddition(item: TrackDetail) {
       onClose={() => setSearchQuery(null)}
     />
   )
-  return { missing, unlisted, action, error, dialog }
+  return {
+    missing,
+    unlisted,
+    exactId: exact?.ambiguous ? null : exactId,
+    action,
+    error,
+    dialog,
+  }
+}
+
+export function TrackAlbumReferenceLink({
+  item,
+  addition,
+  children,
+}: {
+  item: TrackDetail
+  addition: ReturnType<typeof useTrackAlbumAddition>
+  children: ReactNode
+}) {
+  const albumId = item.album?.id ?? addition.unlisted
+  if (addition.exactId)
+    return (
+      <SpotifyAlbumReferenceLink
+        trackId={item.id}
+        spotifyAlbumId={addition.exactId}
+        catalogId={albumId}
+      >
+        {children}
+      </SpotifyAlbumReferenceLink>
+    )
+  return albumId ? (
+    <DetailLink kind="album" id={albumId}>
+      {children}
+    </DetailLink>
+  ) : (
+    children
+  )
 }
 
 /** Shows the release and any library albums counting scrobbles from this track. */
@@ -139,7 +185,15 @@ export function TrackAlbumNotices({
         </Notice>
       )}
       {missing && !unlisted && (
-        <Notice action={action}>{missing.message}</Notice>
+        <Notice action={action}>
+          {addition.exactId ? (
+            <TrackAlbumReferenceLink item={item} addition={addition}>
+              {missing.name}
+            </TrackAlbumReferenceLink>
+          ) : (
+            missing.message
+          )}
+        </Notice>
       )}
       {error && <Notice tone="danger">{error}</Notice>}
       {item.scrobbledAlbums.map((album) => {

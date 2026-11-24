@@ -1,5 +1,5 @@
-import { and, count, desc, eq, inArray } from 'drizzle-orm'
-import type { z } from 'zod'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { z } from 'zod'
 import type { PaginationQuerySchema } from '@repo/schemas/common'
 import { AlbumMatchRejectionInputSchema } from '@repo/schemas/match-diagnostics'
 import type {
@@ -31,10 +31,25 @@ const snapshotSummaryColumns = {
   createdAt: providerSnapshot.createdAt,
 }
 
-function formatSnapshotSummary(
-  row: Omit<SourceSnapshotSummary, 'createdAt'> & { createdAt: Date },
-) {
-  return { ...row, createdAt: row.createdAt.toISOString() }
+const snapshotSourceColumns = {
+  ...snapshotSummaryColumns,
+  tags: sql<unknown>`${providerSnapshot.normalizedData}->'tags'`,
+  tracks: sql<boolean>`case
+    when jsonb_typeof(${providerSnapshot.normalizedData}->'tracks') = 'array'
+    then jsonb_array_length(${providerSnapshot.normalizedData}->'tracks') > 0
+    else false
+  end`,
+}
+const SnapshotTagsSchema = z.array(z.object({ name: z.string().min(1) }))
+
+function formatSnapshotSummary({
+  id,
+  provider,
+  source,
+  jobId,
+  createdAt,
+}: Omit<SourceSnapshotSummary, 'createdAt'> & { createdAt: Date }) {
+  return { id, provider, source, jobId, createdAt: createdAt.toISOString() }
 }
 
 function formatFieldOverride(
@@ -109,7 +124,7 @@ export async function getMediaSources(
       db
         .select({
           provider: providerCurrentState.provider,
-          snapshot: snapshotSummaryColumns,
+          snapshot: snapshotSourceColumns,
         })
         .from(providerCurrentState)
         .leftJoin(
@@ -118,7 +133,7 @@ export async function getMediaSources(
         )
         .where(eq(providerCurrentState.mediaItemId, mediaItemId)),
       db
-        .selectDistinctOn([providerSnapshot.provider], snapshotSummaryColumns)
+        .selectDistinctOn([providerSnapshot.provider], snapshotSourceColumns)
         .from(providerSnapshot)
         .where(eq(providerSnapshot.mediaItemId, mediaItemId))
         .orderBy(
@@ -127,9 +142,22 @@ export async function getMediaSources(
           desc(providerSnapshot.id),
         ),
       db
-        .selectDistinct({ provider: scrapeJobItem.provider })
+        .selectDistinctOn([scrapeJobItem.provider], {
+          provider: scrapeJobItem.provider,
+          jobId: scrapeJobItem.jobId,
+          status: scrapeJobItem.status,
+          createdAt: scrapeJob.createdAt,
+          finishedAt: scrapeJobItem.finishedAt,
+        })
         .from(scrapeJobItem)
-        .where(eq(scrapeJobItem.mediaItemId, mediaItemId)),
+        .innerJoin(scrapeJob, eq(scrapeJob.id, scrapeJobItem.jobId))
+        .where(eq(scrapeJobItem.mediaItemId, mediaItemId))
+        .orderBy(
+          scrapeJobItem.provider,
+          desc(scrapeJob.createdAt),
+          desc(scrapeJob.id),
+          desc(scrapeJobItem.id),
+        ),
       db
         .select()
         .from(mediaOverride)
@@ -139,19 +167,33 @@ export async function getMediaSources(
         .from(providerReferenceOverride)
         .where(eq(providerReferenceOverride.mediaItemId, mediaItemId)),
     ])
-  const providers = new Map<string, SourceSnapshotSummary | null>()
+  const providers = new Map<string, (typeof snapshots)[number] | null>()
   for (const { provider } of [...jobs, ...referenceOverrides])
     providers.set(provider, null)
-  for (const snapshot of snapshots)
-    providers.set(snapshot.provider, formatSnapshotSummary(snapshot))
+  for (const snapshot of snapshots) providers.set(snapshot.provider, snapshot)
   for (const { provider, snapshot } of current)
-    if (snapshot || !providers.has(provider))
-      providers.set(provider, snapshot ? formatSnapshotSummary(snapshot) : null)
+    if (snapshot || !providers.has(provider)) providers.set(provider, snapshot)
+  const attempts = new Map(jobs.map(({ provider, ...job }) => [provider, job]))
   return {
-    providers: [...providers].map(([id, latestSnapshot]) => ({
-      id,
-      latestSnapshot,
-    })),
+    providers: [...providers].map(([id, snapshot]) => {
+      const attempt = attempts.get(id)
+      const parsed = SnapshotTagsSchema.safeParse(snapshot?.tags)
+      return {
+        id,
+        latestSnapshot: snapshot ? formatSnapshotSummary(snapshot) : null,
+        ...(attempt && {
+          latestAttempt: {
+            ...attempt,
+            createdAt: attempt.createdAt.toISOString(),
+            finishedAt: attempt.finishedAt?.toISOString() ?? null,
+          },
+        }),
+        ...(parsed.success && {
+          returnedTags: [...new Set(parsed.data.map(({ name }) => name))],
+        }),
+        ...(snapshot?.tracks && { returnedTrackList: true }),
+      }
+    }),
     changes: [
       ...overrides.map(formatFieldOverride),
       ...referenceOverrides.map(formatReferenceOverride),

@@ -14,6 +14,7 @@ import { JobPageSchema, type Job, type JobPage } from '@repo/schemas/job'
 import {
   SourceSnapshotPageSchema,
   SourceSnapshotSchema,
+  type MediaSourceAttempt,
   type SourceSnapshotSummary,
 } from '@repo/schemas/media'
 import {
@@ -75,6 +76,8 @@ export type ProviderSourceRow = {
   match?: SourceMatch
   /** Fields this provider supplies to the item. */
   provides?: string[]
+  capabilities?: readonly string[]
+  latestAttempt?: MediaSourceAttempt
   /** Further blocks shown in the open row, such as scrobble names. */
   blocks?: { title: string; content: ReactNode }[]
   /** Searches the provider for candidates: Find match, or Choose. */
@@ -407,12 +410,18 @@ function SourceHistory({
 
 function SourceState({
   job,
+  attempt,
   unavailable,
 }: {
   job?: Job
+  attempt?: MediaSourceAttempt
   unavailable?: string
 }) {
   if (job) return <Status state={jobState(job)} />
+  if (attempt)
+    return (
+      <Status state={jobState({ status: attempt.status, waiting: null })} />
+    )
   if (!unavailable) return null
   const state = unavailableState(unavailable)
   if (!state) return null
@@ -426,6 +435,7 @@ export function ProviderSources({
   pending,
   unavailable,
   onRetry,
+  allowRefreshAll = true,
 }: {
   rows: ProviderSourceRow[]
   scope?: SourceScope
@@ -433,6 +443,7 @@ export function ProviderSources({
   pending?: boolean
   unavailable?: string
   onRetry?: () => void
+  allowRefreshAll?: boolean
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -596,7 +607,7 @@ export function ProviderSources({
           <span className="ds-muted" role="status">
             {sourcesSummary([...matches.values()])}
           </span>
-          {refreshable && (
+          {refreshable && allowRefreshAll && (
             <span className="ds-section-aside">
               <Button
                 size="xs"
@@ -732,6 +743,16 @@ export function ProviderSources({
                     </Pills>
                   </SourceBlock>,
                 )
+              if (row.capabilities?.length)
+                body.push(
+                  <SourceBlock key="capabilities" title="Can supply">
+                    <Pills wrap label={`Available from ${row.label}`}>
+                      {row.capabilities.map((field) => (
+                        <Pill key={field}>{field}</Pill>
+                      ))}
+                    </Pills>
+                  </SourceBlock>,
+                )
               for (const block of row.blocks ?? [])
                 body.push(
                   <SourceBlock key={`block:${block.title}`} title={block.title}>
@@ -794,7 +815,13 @@ export function ProviderSources({
                     'Never'
                   )
                 }
-                state={<SourceState job={job} unavailable={row.unavailable} />}
+                state={
+                  <SourceState
+                    job={job}
+                    attempt={row.latestAttempt}
+                    unavailable={row.unavailable}
+                  />
+                }
                 actions={
                   <>
                     {findMatchAction && (

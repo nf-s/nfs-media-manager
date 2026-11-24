@@ -5,6 +5,7 @@ import {
 } from '@repo/media-plugin-sdk'
 import {
   SpotifyAlbumSchema,
+  SpotifyIdSchema,
   SpotifyTracksPageSchema,
   UpcSchema,
   normalizeSpotifyAlbum,
@@ -144,13 +145,21 @@ export const spotifyPlugin: MediaProviderPlugin = {
   async scrapeMediaItem(context) {
     if (context.mediaType !== 'album')
       throw new Error('Spotify supports albums only')
+    const exact = SpotifyIdSchema.optional().parse(
+      context.options?.spotifyAlbumReference,
+    )
     const spotifyRef = context.existingReferences.find(
       (ref) =>
         (ref.referenceType === 'spotify' ||
           (ref.referenceType === 'album' &&
             ref.metadata?.['sourceProvider'] === 'spotify')) &&
-        !context.isRejectedMatch?.(ref),
+        !context.isRejectedMatch?.(ref) &&
+        (!exact || spotifyAlbumId(ref.externalId) === exact),
     )
+    if (exact && !spotifyRef)
+      throw new ProviderItemNotFoundError(
+        'The Spotify album reference is no longer available.',
+      )
     let id = spotifyRef ? spotifyAlbumId(spotifyRef.externalId) : null
     if (spotifyRef && !id) throw new Error('Invalid Spotify album identifier')
     const upc = (
@@ -200,7 +209,9 @@ export const spotifyPlugin: MediaProviderPlugin = {
     }
     if (!id) throw new ProviderItemNotFoundError('No exact Spotify album match')
     const data = SpotifyAlbumSchema.parse(
-      await spotifyJson(context.request, token, `albums/${id}`, params),
+      await spotifyJson(context.request, token, `albums/${id}`, params, {
+        notFoundOn404: true,
+      }),
     )
     if (
       data.id !== id ||

@@ -4,6 +4,7 @@ import { SourceNavigationLinkSchema } from './tags'
 import { AlbumProviderDetailsSchema } from './album-provider-details'
 import { EntityRelationshipSourceSchema } from './entity-relationships'
 import { TrackListItemSchema } from './tracks'
+import { JobStatusSchema } from './job'
 import {
   ListeningFilterParamSchema,
   ListeningHistogramPeriodParamSchema,
@@ -243,11 +244,22 @@ export const SourceSnapshotSchema = SourceSnapshotSummarySchema.extend({
 })
 export type SourceSnapshot = z.infer<typeof SourceSnapshotSchema>
 
+export const MediaSourceAttemptSchema = z.object({
+  jobId: z.string(),
+  status: JobStatusSchema,
+  createdAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+})
+export type MediaSourceAttempt = z.infer<typeof MediaSourceAttemptSchema>
+
 export const MediaSourcesSchema = z.object({
   providers: z.array(
     z.object({
       id: z.string(),
       latestSnapshot: SourceSnapshotSummarySchema.nullable(),
+      latestAttempt: MediaSourceAttemptSchema.optional(),
+      returnedTags: z.array(z.string()).optional(),
+      returnedTrackList: z.boolean().optional(),
     }),
   ),
   changes: z.array(MediaHistoryEventSchema),

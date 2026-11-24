@@ -46,6 +46,13 @@ export function isArtistEnrichmentJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === ARTIST_ENRICHMENT_TASK
 }
 
+export function isArtistJob(job: Pick<Job, 'options'>): boolean {
+  return (
+    isArtistEnrichmentJob(job) ||
+    getJobTask(job.options) === SPOTIFY_ARTIST_ALBUMS_TASK
+  )
+}
+
 /** Scrobble sync jobs are account-level and have no media items. */
 export function isScrobbleSyncJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === LASTFM_SCROBBLE_SYNC_TASK
@@ -293,7 +300,7 @@ export function canRetryJob(job: Job): boolean {
       isMixSyncJob(job) ||
       isScrobbleSpotifySearchJob(job) ||
       isSpotifyTrackSearchJob(job) ||
-      isArtistEnrichmentJob(job) ||
+      isArtistJob(job) ||
       isPlaylistImportJob(job) ||
       isPlaylistListingJob(job) ||
       isPlaylistAdditionJob(job))

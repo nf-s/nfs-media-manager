@@ -8,6 +8,7 @@ import {
   type JobEntryPage,
 } from '@repo/schemas/job'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
+import { SPOTIFY_ARTIST_ALBUMS_TASK } from '@repo/schemas/spotify-artist-albums'
 import {
   MIX_SYNC_TASKS,
   SUBSCRIPTION_SYNC_TASKS,
@@ -97,7 +98,7 @@ async function loadBatches(ids: string[], now: number) {
           string[]
         >`coalesce(array_agg(distinct ${jobs.provider}) filter (where ${jobs.status} = 'queued'), '{}')`,
         mediaType: sql<string | null>`case
-          when bool_and(${task} = ${ARTIST_ENRICHMENT_TASK}) then 'artist'
+          when bool_and(${task} in (${ARTIST_ENRICHMENT_TASK}, ${SPOTIFY_ARTIST_ALBUMS_TASK})) then 'artist'
           when bool_and(${task} in (${subscriptionTasks})) then 'subscription'
           when bool_and(${task} in (${mixTasks})) then 'mix'
           when count(${jobs.scopeType}) = count(*) and count(distinct ${jobs.scopeType}) = 1 then min(${jobs.scopeType})
