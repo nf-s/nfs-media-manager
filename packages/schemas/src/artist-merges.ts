@@ -58,6 +58,12 @@ export const ArtistMergePlanArtistSchema = z.object({
   spotify: z.boolean(),
   /** Providers with a stored profile of this artist. */
   providers: z.array(z.string()),
+  profiles: z
+    .array(
+      z.object({ provider: z.string(), externalId: z.string().nullable() }),
+    )
+    .optional(),
+  inLibrary: z.boolean().optional(),
   /** Other names merged into this artist before. */
   names: z.array(z.string()),
   blocked: ArtistMergeBlockSchema.nullable(),

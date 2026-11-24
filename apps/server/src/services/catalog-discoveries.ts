@@ -293,7 +293,37 @@ async function observeCredits(
   origin: CatalogOrigin,
   outside: boolean,
 ) {
-  const credits = media.credits ?? []
+  let credits = media.credits ?? []
+  const [sole] = credits
+  if (
+    media.kind === 'track' &&
+    media.provider === 'spotify' &&
+    media.externalId &&
+    sole &&
+    !sole.externalId &&
+    credits.length === 1
+  ) {
+    const [recording] = await tx
+      .select({ metadata: mediaItem.metadata })
+      .from(mediaItem)
+      .innerJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
+      .where(
+        and(
+          eq(mediaItem.id, id),
+          eq(libraryTrack.spotifyTrackId, media.externalId),
+        ),
+      )
+    const billing = z
+      .tuple([
+        z.object({
+          id: z.string().regex(/^[A-Za-z0-9]{22}$/),
+          name: z.string(),
+        }),
+      ])
+      .safeParse(recording?.metadata?.spotifyArtistCredits)
+    if (billing.success && billing.data[0].name === sole.name)
+      credits = [{ ...sole, externalId: billing.data[0].id }]
+  }
   const native = await observeNamedArtistIdentities(
     tx,
     media.provider,
@@ -309,12 +339,13 @@ async function observeCredits(
     const role = credit.role ?? 'artist'
     const key = [media.provider, id, role, position, credit.name]
     const creatorId = createStableId('catalog-artist', JSON.stringify(key))
-    const creditedId =
+    const observedId =
       (position === 0 ? media.artistId : undefined) ??
       (credit.externalId ? native.get(credit.externalId) : undefined) ??
       creatorId
+    let creditedId = observedId
     if (creditedId === creatorId) {
-      await tx
+      const inserted = await tx
         .insert(artist)
         .values({
           id: creatorId,
@@ -323,6 +354,8 @@ async function observeCredits(
           catalogProvider: media.provider,
         })
         .onConflictDoNothing()
+        .returning({ id: artist.id })
+      if (!inserted.length) creditedId = await currentArtistId(tx, creatorId)
     }
     if (outside)
       await tx
@@ -336,7 +369,7 @@ async function observeCredits(
         .onConflictDoNothing()
     await observeCatalogOccurrence(
       tx,
-      { kind: media.kind === 'film' ? 'person' : 'artist', id: creditedId },
+      { kind: media.kind === 'film' ? 'person' : 'artist', id: observedId },
       {
         ...origin,
         subjectKind: media.kind,

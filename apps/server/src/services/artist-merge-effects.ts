@@ -191,7 +191,10 @@ async function undoMerge(tx: ChangeTransaction, payload: MergePayload) {
     where source.id = ${sourceId} and c.artist_id = ${targetId}
       and lower(c.credited_as) in (
         select lower(n.name) from artist n
-        where n.id in (${idList([sourceId, ...names])}))
+        where n.id in (${idList([sourceId, ...names])})
+          and not exists (select 1 from artist kept
+            where (kept.id = ${targetId} or kept.merged_into_id = ${targetId})
+              and lower(kept.name) = lower(n.name)))
       and not exists (select 1 from media_credit o
         where o.media_item_id = c.media_item_id and o.role = c.role
           and o.artist_id = ${sourceId})`)

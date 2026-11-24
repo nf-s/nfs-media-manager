@@ -95,6 +95,7 @@ async function searchTracks(
       url: track.spotifyUrl,
       title: track.title,
       artists: track.artists,
+      artistCredits: track.artistCredits,
       albumName: track.albumName,
       spotifyAlbumId: track.spotifyAlbumId,
       artworkUrl: track.artworkUrl,

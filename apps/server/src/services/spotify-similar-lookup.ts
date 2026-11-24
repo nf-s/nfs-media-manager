@@ -4,6 +4,7 @@ import {
   SPOTIFY_SIMILAR_LOOKUP_TASK,
   TIDAL_SIMILAR_LIMIT,
   TidalSimilarKindSchema,
+  TidalSuggestionSchema,
   type SpotifyCodeLookupSource,
   type SpotifyCodeMatch,
   type TidalSimilarKind,
@@ -11,7 +12,8 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId, parseOptionalDate } from '@/lib/media-utils'
-import { mediaItem, spotifyCodeLookup } from '@/schemas/db'
+import { mediaItem, spotifyCodeLookup, tidalSimilar } from '@/schemas/db'
+import { reconcileSimilarArtistCredits } from './catalog-artist-reconciliation'
 import type { TaskJobContext, TaskJobResult } from './jobs'
 import { observeCatalogMedia } from './catalog-discoveries'
 import {
@@ -91,6 +93,7 @@ export async function storeSpotifyCodeLookup(input: {
   key: string
   match: SpotifyCodeMatch | null
   jobId: string
+  itemId?: string
   sonovault?: { responseId: string; fetchedAt: Date }
 }) {
   const source: SpotifyCodeLookupSource = input.sonovault
@@ -104,17 +107,38 @@ export async function storeSpotifyCodeLookup(input: {
     scrapeJobId: input.jobId,
     searchedAt: input.sonovault?.fetchedAt ?? new Date(),
   }
-  await db
-    .insert(spotifyCodeLookup)
-    .values({
-      codeType: input.kind === 'album' ? 'upc' : 'isrc',
-      code: input.key,
-      ...values,
-    })
-    .onConflictDoUpdate({
-      target: [spotifyCodeLookup.codeType, spotifyCodeLookup.code],
-      set: { ...values, updatedAt: sql`now()` },
-    })
+  await db.transaction(async (tx) => {
+    if (input.itemId && input.kind === 'track')
+      await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+    await tx
+      .insert(spotifyCodeLookup)
+      .values({
+        codeType: input.kind === 'album' ? 'upc' : 'isrc',
+        code: input.key,
+        ...values,
+      })
+      .onConflictDoUpdate({
+        target: [spotifyCodeLookup.codeType, spotifyCodeLookup.code],
+        set: { ...values, updatedAt: sql`now()` },
+      })
+    if (
+      source === 'spotify' &&
+      input.itemId &&
+      input.kind === 'track' &&
+      input.match?.artistCredits?.length
+    ) {
+      const [saved] = await tx
+        .select({ items: tidalSimilar.items })
+        .from(tidalSimilar)
+        .where(eq(tidalSimilar.mediaItemId, input.itemId))
+      const items =
+        z.array(TidalSuggestionSchema).safeParse(saved?.items).data ?? []
+      await reconcileSimilarArtistCredits(
+        tx,
+        items.filter((item) => codeKey('track', item.code ?? '') === input.key),
+      )
+    }
+  })
 }
 
 /**
@@ -173,7 +197,19 @@ export async function runSpotifySimilarLookup(
                       spotifyAlbumId: candidate.spotifyAlbumId,
                       durationSec: candidate.durationSec,
                       trackCount: candidate.trackCount ?? undefined,
-                      credits: candidate.artists.map((name) => ({ name })),
+                      credits: [
+                        ...(candidate.artistCredits ?? []).map(
+                          ({ id, name }) => ({ name, externalId: id }),
+                        ),
+                        ...candidate.artists
+                          .filter(
+                            (name) =>
+                              !candidate.artistCredits?.some(
+                                (credit) => credit.name === name,
+                              ),
+                          )
+                          .map((name) => ({ name })),
+                      ],
                     },
                     {
                       provider: 'spotify',
@@ -214,6 +250,7 @@ export async function runSpotifySimilarLookup(
                   url: chosen.url,
                   title: chosen.title,
                   artists: chosen.artists,
+                  artistCredits: chosen.artistCredits,
                   albumName: chosen.albumName,
                   spotifyAlbumId: chosen.spotifyAlbumId,
                   artworkUrl: chosen.artworkUrl,
@@ -225,6 +262,7 @@ export async function runSpotifySimilarLookup(
           await context.assertActive()
           await storeSpotifyCodeLookup({
             kind: options.kind,
+            itemId: options.itemId,
             key,
             match,
             jobId: context.jobId,

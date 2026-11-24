@@ -9,7 +9,11 @@ import {
   artistTitleFollowEffect,
   mergeArtistInto,
 } from './artist-merge-effects'
-import { readArtistMerge, type ArtistMergeSelection } from './artist-merge-plan'
+import {
+  readArtistMerge,
+  type ArtistMergeSelection,
+  type ArtistMergeReading,
+} from './artist-merge-plan'
 import { clearKeptSeparate } from './keep-separate-effects'
 import type {
   ChangeEffectEntry,
@@ -93,63 +97,74 @@ export async function mergeArtists({
         statusCode: 409,
         message: 'Review this merge before it is made.',
       })
-    const sources = plan.artists.filter((artist) => artist.id !== plan.targetId)
-    const ids = plan.artists.map((artist) => artist.id)
-    const [target] = await readChangeRecords(tx, 'artist', [plan.targetId])
-    const records = await readChangeRecords(
-      tx,
-      'artist',
-      sources.map((artist) => artist.id),
-    )
-    const draft = follows.length
-      ? await beginTrackChange(tx, {
-          names: follows.map(({ username, artistKey, trackKey }) => ({
-            username,
-            artist_key: artistKey,
-            track_key: trackKey,
-          })),
-        })
-      : undefined
-    const effects: ChangeEffectEntry[] = []
-    let credits = 0
-    let names = 0
-    for (const source of sources) {
-      const merged = await mergeArtistInto(tx, source, plan.targetId)
-      effects.push(merged.entry)
-      credits += merged.credits
-      names += merged.names
-    }
-    const followed = await moveFollowedNames(tx, follows)
-    const separate = await clearKeptSeparate(tx, 'artist', ids)
-    if (separate) effects.push(separate)
-    if (followed.length) {
-      effects.push(artistTitleFollowEffect(followed))
-      await refreshTrackDuplicates(tx, { trackIds: followed })
-    }
-    await refreshArtistListeningTotals(tx, ids)
-    const changeId = await recordChange(
-      tx,
-      {
-        kind: 'artist',
-        action: 'merge',
-        target: target ?? null,
-        sources: records,
-        details: {
-          counts: {
-            credit: credits,
-            'artist-name': names,
-            ...(follows.length ? { title: follows.length } : {}),
-          },
-          labels: sources.slice(0, 5).map((artist) => artist.name),
-        },
-      },
-      { draft, effects },
-    )
-    if (!changeId)
-      throw new ServerError({
-        statusCode: 409,
-        message: 'The selected artists have nothing to merge.',
-      })
-    return getLibraryChange(changeId, tx)
+    const id = await persistArtistMerge(tx, { plan, follows })
+    return getLibraryChange(id, tx)
   })
+}
+
+/** Caller holds the recording writer lock and has reviewed this plan's cautions. */
+export async function persistArtistMerge(
+  tx: ChangeTransaction,
+  { plan, follows }: ArtistMergeReading,
+  rule?: string,
+) {
+  const sources = plan.artists.filter((artist) => artist.id !== plan.targetId)
+  const ids = plan.artists.map((artist) => artist.id)
+  const [target] = await readChangeRecords(tx, 'artist', [plan.targetId])
+  const records = await readChangeRecords(
+    tx,
+    'artist',
+    sources.map((artist) => artist.id),
+  )
+  const draft = follows.length
+    ? await beginTrackChange(tx, {
+        names: follows.map(({ username, artistKey, trackKey }) => ({
+          username,
+          artist_key: artistKey,
+          track_key: trackKey,
+        })),
+      })
+    : undefined
+  const effects: ChangeEffectEntry[] = []
+  let credits = 0
+  let names = 0
+  for (const source of sources) {
+    const merged = await mergeArtistInto(tx, source, plan.targetId)
+    effects.push(merged.entry)
+    credits += merged.credits
+    names += merged.names
+  }
+  const followed = await moveFollowedNames(tx, follows)
+  const separate = await clearKeptSeparate(tx, 'artist', ids)
+  if (separate) effects.push(separate)
+  if (followed.length) {
+    effects.push(artistTitleFollowEffect(followed))
+    await refreshTrackDuplicates(tx, { trackIds: followed })
+  }
+  await refreshArtistListeningTotals(tx, ids)
+  const changeId = await recordChange(
+    tx,
+    {
+      kind: 'artist',
+      action: 'merge',
+      ...(rule ? { actor: 'automatic', rule } : {}),
+      target: target ?? null,
+      sources: records,
+      details: {
+        counts: {
+          credit: credits,
+          'artist-name': names,
+          ...(follows.length ? { title: follows.length } : {}),
+        },
+        labels: sources.slice(0, 5).map((artist) => artist.name),
+      },
+    },
+    { draft, effects },
+  )
+  if (!changeId)
+    throw new ServerError({
+      statusCode: 409,
+      message: 'The selected artists have nothing to merge.',
+    })
+  return changeId
 }

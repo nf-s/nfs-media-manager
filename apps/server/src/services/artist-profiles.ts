@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
   ArtistProfileSchema,
@@ -257,31 +257,49 @@ export async function listCurrentArtistProfiles(artistId: string) {
         artistProviderCurrentState.latestSnapshotId,
       ),
     )
-    .where(eq(artistProviderCurrentState.artistId, artistId))
+    .where(
+      or(
+        eq(artistProviderCurrentState.artistId, artistId),
+        inArray(artistProviderCurrentState.artistId, mergedArtistIds(artistId)),
+      ),
+    )
     .orderBy(
+      desc(eq(artistProviderCurrentState.artistId, artistId)),
       desc(artistProviderSnapshot.createdAt),
       desc(artistProviderSnapshot.id),
     )
   return Promise.all(
-    rows.map(async (row) => {
-      const snapshot = formatSnapshot(row)
-      if (!snapshot.profile.relationships?.length) return snapshot
-      const candidates = snapshot.profile.relationships.map((relationship) =>
-        EntityRelationshipCandidateSchema.parse(relationship),
+    rows
+      .filter(
+        (row, index) =>
+          rows.findIndex((other) => other.provider === row.provider) === index,
       )
-      return {
-        ...snapshot,
-        profile: {
-          ...snapshot.profile,
-          relationships: await resolveEntityRelationships(
-            { type: 'artist', id: artistId },
-            snapshot.provider,
-            candidates,
-          ),
-        },
-      }
-    }),
+      .map(async (row) => {
+        const snapshot = formatSnapshot(row)
+        if (!snapshot.profile.relationships?.length) return snapshot
+        const candidates = snapshot.profile.relationships.map((relationship) =>
+          EntityRelationshipCandidateSchema.parse(relationship),
+        )
+        return {
+          ...snapshot,
+          profile: {
+            ...snapshot.profile,
+            relationships: await resolveEntityRelationships(
+              { type: 'artist', id: artistId },
+              snapshot.provider,
+              candidates,
+            ),
+          },
+        }
+      }),
   )
+}
+
+function mergedArtistIds(id: string) {
+  return db
+    .select({ id: artist.id })
+    .from(artist)
+    .where(eq(artist.mergedIntoId, id))
 }
 
 function profileHistoryFilter(
@@ -289,7 +307,10 @@ function profileHistoryFilter(
   provider: ArtistProviderId | undefined,
 ) {
   return and(
-    eq(artistProviderSnapshot.artistId, artistId),
+    or(
+      eq(artistProviderSnapshot.artistId, artistId),
+      inArray(artistProviderSnapshot.artistId, mergedArtistIds(artistId)),
+    ),
     provider === undefined
       ? undefined
       : eq(artistProviderSnapshot.provider, provider),

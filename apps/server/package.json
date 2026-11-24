@@ -42,6 +42,7 @@
     "backfill:film-added": "tsx scripts/backfill-film-added.ts",
     "backfill:spotify-track-searches": "tsx scripts/backfill-spotify-track-searches.ts",
     "backfill:music-catalog": "tsx scripts/backfill-music-catalog.ts",
+    "repair:catalog-artists": "tsx scripts/repair-catalog-artists.ts",
     "recover:track-isrcs": "tsx scripts/recover-track-isrcs.ts",
     "apply:sonovault-track-facts": "tsx scripts/apply-sonovault-track-facts.ts",
     "apply:sonovault-track-tags": "tsx scripts/apply-sonovault-track-tags.ts",

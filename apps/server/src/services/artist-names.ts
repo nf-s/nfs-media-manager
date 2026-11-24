@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
@@ -8,6 +8,16 @@ type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'execute'>
 
 const WRITE_BATCH = 500
+
+/** Explicit additions and discoveries stay on the identity that received them so undo restores its membership. */
+export function artistFamilyAdded(id: SQL) {
+  return sql`exists (select 1 from artist n where (n.id = ${id} or n.merged_into_id = ${id}) and n.added_to_library)`
+}
+
+export function artistFamilyObserved(id: SQL) {
+  return sql`exists (select 1 from catalog_observation o where o.target_kind = 'artist' and
+    (o.target_id = ${id} or o.target_id in (select n.id from artist n where n.merged_into_id = ${id})))`
+}
 
 const ResolvedRowsSchema = z.array(
   z.object({

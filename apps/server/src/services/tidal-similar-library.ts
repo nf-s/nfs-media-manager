@@ -155,7 +155,7 @@ async function addTrack(
       spotifyUrl: `https://open.spotify.com/track/${spotify.spotifyId}`,
       title: spotify.title,
       artists: spotify.artists.length ? spotify.artists : item.artists,
-      artistCredits: [],
+      artistCredits: spotify.artistCredits ?? [],
       albumName: spotify.albumName,
       spotifyAlbumId: spotify.spotifyAlbumId,
       durationSec: spotify.durationSec ?? item.durationSec,

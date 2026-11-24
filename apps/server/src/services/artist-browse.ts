@@ -47,6 +47,7 @@ import { matchingTagNames } from './music-tags'
 import { tagAncestorKeys, visibleSubtagCounts } from './tag-hierarchy'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { catalogScopeCondition, memberScope } from './catalog-scope'
+import { artistFamilyAdded, artistFamilyObserved } from './artist-names'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 
 type Query = ArtistQuery | ArtistMetadataQuery
@@ -58,9 +59,10 @@ const musicCredits = sql`media_credit credit
 const visibleMusic = sql`credit.role = 'artist' and item.metadata->>'legacyHidden' is distinct from 'true'
   and (release.media_item_id is not null or recording.media_item_id is not null)`
 // A merged artist is a name another artist keeps, not an artist of its own.
-const observedArtist = sql`exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = a.id)`
+const observedArtist = artistFamilyObserved(id)
+const addedArtist = artistFamilyAdded(id)
 const memberArtist = sql`(exists (select 1 from ${musicCredits}
-  where credit.artist_id = a.id and ${visibleMusic} and item.in_library) or (a.added_to_library and ${observedArtist}))`
+  where credit.artist_id = a.id and ${visibleMusic} and item.in_library) or (${addedArtist} and ${observedArtist}))`
 function scopedArtists(query: CatalogScopeQuery) {
   if (memberScope(query))
     return sql`a.merged_into_id is null and ${memberArtist}`
@@ -380,7 +382,7 @@ async function loadArtists(
     ) select a.id, a.name, a.sort_name as "sortName", a.created_at at time zone 'UTC' as "createdAt",
       a.scrobble_count as "scrobbleCount",
       coalesce(counts.albums,0) as "albumCount", coalesce(counts.tracks,0) as "trackCount",
-      (counts.artist_id is not null or (a.added_to_library and ${observedArtist})) as "inLibrary",
+      (counts.artist_id is not null or (${addedArtist} and ${observedArtist})) as "inLibrary",
       coalesce(playlists.count,0) as "playlistCount", ${artistArtwork(id)} as "artworkUrl",
       jsonb_build_object('playlist',coalesce(playlists.names,'{}'::text[])) as browse
       from artist a left join counts on counts.artist_id = a.id left join playlists on playlists.artist_id = a.id

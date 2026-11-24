@@ -39,6 +39,7 @@ const PlanArtistsSchema = z.array(
     track_count: z.number().int().nonnegative(),
     credit_count: z.number().int().nonnegative(),
     film_count: z.number().int().nonnegative(),
+    in_library: z.boolean(),
     profiles: z.array(
       z.object({ provider: z.string(), externalId: z.string().nullable() }),
     ),
@@ -167,13 +168,22 @@ export async function readArtistMerge(
             join media_item m on m.id = c.media_item_id
             where c.artist_id = a.id
               and m.media_type not in ('album', 'track')) as film_count,
-          coalesce((
-            select jsonb_agg(jsonb_build_object('provider', s.provider,
-              'externalId', p.normalized_data->>'externalId')
-              order by s.provider)
-            from artist_provider_current_state s
-            left join artist_provider_snapshot p on p.id = s.latest_snapshot_id
-            where s.artist_id = a.id), '[]'::jsonb) as profiles,
+          (a.added_to_library or exists (select 1 from artist n
+            where n.merged_into_id = a.id and n.added_to_library)
+            or exists (select 1 from media_credit c join media_item m on m.id = c.media_item_id
+              where c.artist_id = a.id and c.role = 'artist' and m.media_type in ('album','track')
+                and m.in_library and m.metadata->>'legacyHidden' is distinct from 'true')) as in_library,
+          coalesce((select jsonb_agg(jsonb_build_object('provider', e.provider,
+              'externalId', e.external_id) order by e.provider, e.external_id)
+            from (
+              select n.catalog_provider as provider, n.catalog_external_id as external_id
+              from artist n where (n.id = a.id or n.merged_into_id = a.id) and n.catalog_provider is not null
+              union
+              select s.provider, p.normalized_data->>'externalId'
+              from artist n join artist_provider_current_state s on s.artist_id = n.id
+              left join artist_provider_snapshot p on p.id = s.latest_snapshot_id
+              where n.id = a.id or n.merged_into_id = a.id
+            ) e), '[]'::jsonb) as profiles,
           coalesce((select array_agg(n.name order by lower(n.name), n.id)
             from artist n where n.merged_into_id = a.id), '{}') as names
         from artist a where a.id in (${idList(ids)})
@@ -268,7 +278,11 @@ export async function readArtistMerge(
       trackCount: artist.track_count,
       creditCount: artist.credit_count,
       spotify: hasSpotify(artist),
-      providers: artist.profiles.map((profile) => profile.provider),
+      providers: [
+        ...new Set(artist.profiles.map((profile) => profile.provider)),
+      ],
+      profiles: artist.profiles,
+      inLibrary: artist.in_library,
       names: artist.names,
       blocked: artist.film_count > 0 ? 'film' : null,
     })),

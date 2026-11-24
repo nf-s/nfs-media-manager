@@ -296,6 +296,10 @@ export const SpotifyCodeMatchSchema = z.object({
   url: z.url({ protocol: /^https$/ }).max(2000),
   title: name,
   artists: z.array(name).max(50),
+  artistCredits: z
+    .array(z.object({ id: z.string().regex(/^[A-Za-z0-9]{22}$/), name }))
+    .max(50)
+    .optional(),
   albumName: name.nullable(),
   spotifyAlbumId: z
     .string()

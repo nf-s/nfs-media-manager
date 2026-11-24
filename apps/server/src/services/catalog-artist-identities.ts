@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
+import { reconcileArtistPair } from './catalog-artist-reconciliation'
 import {
   artist,
   artistProviderCurrentState,
@@ -23,6 +24,7 @@ export async function observeNamedArtistIdentities(
       externalId,
       artistId: sql<string>`coalesce(${artist.mergedIntoId}, ${artist.id})`,
       verified: sql<boolean>`true`,
+      alias: sql<boolean>`false`,
     })
     .from(artistProviderCurrentState)
     .innerJoin(
@@ -55,6 +57,7 @@ export async function observeNamedArtistIdentities(
           externalId: sql<string>`${artist.catalogExternalId}`,
           artistId: sql<string>`coalesce(${artist.mergedIntoId}, ${artist.id})`,
           verified: sql<boolean>`false`,
+          alias: sql<boolean>`${artist.mergedIntoId} is not null`,
         })
         .from(artist)
         .where(
@@ -67,13 +70,29 @@ export async function observeNamedArtistIdentities(
   const conflicts = new Set<string>()
   for (const { externalId, artistId, verified } of stored) {
     if (!verified) continue
-    if (identities.has(externalId)) conflicts.add(externalId)
+    if (identities.has(externalId) && identities.get(externalId) !== artistId)
+      conflicts.add(externalId)
     identities.set(externalId, artistId)
   }
   for (const id of conflicts) identities.delete(id)
-  for (const { externalId, artistId, verified } of stored)
-    if (!verified && !identities.has(externalId))
-      identities.set(externalId, artistId)
+  for (const { externalId, artistId, verified, alias } of stored) {
+    if (verified) continue
+    const target = identities.get(externalId)
+    if (
+      target &&
+      target !== artistId &&
+      !alias &&
+      (await reconcileArtistPair(
+        tx,
+        artistId,
+        target,
+        'exact-provider-artist-id',
+        true,
+      ))
+    )
+      continue
+    identities.set(externalId, artistId)
+  }
 
   const native = [...names].filter(([id]) => !identities.has(id))
   if (native.length) {

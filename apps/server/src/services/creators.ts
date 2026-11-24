@@ -64,7 +64,12 @@ import { listAlbums, listFilms } from './media'
 import { loadTracks } from './tracks'
 import { listArtistIdentifiers } from './artist-provider-evidence'
 import { visibleArtist } from './entity-relationships'
-import { currentArtistId, listKeptArtistNames } from './artist-names'
+import {
+  artistFamilyAdded,
+  artistFamilyObserved,
+  currentArtistId,
+  listKeptArtistNames,
+} from './artist-names'
 import { loadArtistMetadata } from './artist-metadata'
 import {
   countMixesNamingArtist,
@@ -131,7 +136,7 @@ function artistDirectory(id?: string) {
     .select({
       ...identityColumns,
       inLibrary:
-        sql<boolean>`(${artist.addedToLibrary} or coalesce(bool_or(${mediaItem.inLibrary} and (${isAlbum} or ${isTrack}) and ${visible}),false))`.as(
+        sql<boolean>`(${artistFamilyAdded(sql`${artist.id}`)} or coalesce(bool_or(${mediaItem.inLibrary} and (${isAlbum} or ${isTrack}) and ${visible}),false))`.as(
           'in_library',
         ),
       albumCount:
@@ -157,10 +162,9 @@ function artistDirectory(id?: string) {
     .where(
       and(
         creatorFilter(undefined, id),
-        sql`((${isAlbum} or ${isTrack}) or exists (select 1 from catalog_observation o
-          where o.target_kind = 'artist' and o.target_id = ${artist.id}))`,
+        sql`((${isAlbum} or ${isTrack}) or ${artistFamilyObserved(sql`${artist.id}`)})`,
         id === undefined
-          ? sql`(${artist.addedToLibrary} or ${mediaItem.inLibrary})`
+          ? sql`(${artistFamilyAdded(sql`${artist.id}`)} or ${mediaItem.inLibrary})`
           : undefined,
       ),
     )
@@ -394,7 +398,7 @@ async function requireLibraryArtist(requestedId: string) {
     .where(
       and(
         eq(artist.id, await currentArtistId(db, requestedId)),
-        sql`(${visibleArtist} or exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = ${artist.id}) or exists (
+        sql`(${visibleArtist} or ${artistFamilyObserved(sql`${artist.id}`)} or exists (
         select 1 from media_credit credit join media_item item on item.id = credit.media_item_id
         where credit.artist_id = ${artist.id} and credit.role = 'artist'
           and item.media_type in ('album', 'track') and item.metadata->>'legacyHidden' is distinct from 'true'
