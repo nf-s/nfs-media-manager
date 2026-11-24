@@ -17,6 +17,7 @@ import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
 import { errorMessage } from './lastfm-sync'
+import { DetailLink } from './detail-link'
 import { MediaThumb } from './media-artwork'
 import { useConfig } from './providers'
 
@@ -228,7 +229,17 @@ export function FindMatch({
                 }
                 title={
                   <RowTitle>
-                    <span title={candidate.title}>{candidate.title}</span>
+                    {candidate.catalogMediaItemId ? (
+                      <DetailLink
+                        kind={scope.kind}
+                        id={candidate.catalogMediaItemId}
+                        title={candidate.title}
+                      >
+                        {candidate.title}
+                      </DetailLink>
+                    ) : (
+                      <span title={candidate.title}>{candidate.title}</span>
+                    )}
                   </RowTitle>
                 }
                 by={[

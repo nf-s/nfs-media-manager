@@ -1018,6 +1018,69 @@ describe('reviewed film import and enrichment', () => {
     expect(await databaseClient.select().from(schema.scrapeJob)).toHaveLength(2)
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it('replays saved film candidates offline without changing job state or library membership', async () => {
+    const { NonMusicBackfillInput, runNonMusicCatalogBackfill } =
+      await import('@/services/nonmusic-catalog-backfill')
+    const jobId = 'historical-tmdb-fixture'
+    const responseId = 'historical-tmdb-response'
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: jobId,
+      provider: 'tmdb',
+      scope: {},
+      options: {},
+      status: 'failed',
+    })
+    const text = JSON.stringify({
+      movie_results: [
+        { id: 73101, title: 'First Search Fixture' },
+        { id: 73102, title: 'Second Search Fixture' },
+        { title: 'Malformed Search Fixture' },
+      ],
+    })
+    await databaseClient.insert(schema.providerResponse).values({
+      id: responseId,
+      jobId,
+      provider: 'tmdb',
+      attempt: 1,
+      ordinal: 1,
+      phase: 'media',
+      method: 'GET',
+      requestUrl: 'https://api.themoviedb.org/3/find/tt900001',
+      status: 200,
+      contentType: 'application/json',
+      bodyState: 'captured',
+      retainedBytes: Buffer.byteLength(text),
+      body: { state: 'captured', text },
+    })
+    const input = NonMusicBackfillInput.parse({ family: 'responses', limit: 1 })
+    expect(await runNonMusicCatalogBackfill(input)).toMatchObject({
+      scanned: 1,
+      projected: 1,
+      next: responseId,
+    })
+    expect(await databaseClient.select().from(schema.mediaItem)).toHaveLength(0)
+    await runNonMusicCatalogBackfill(input, true)
+    await runNonMusicCatalogBackfill(input, true)
+    const films = await databaseClient.select().from(schema.mediaItem)
+    expect(films.map((item) => item.title).sort()).toEqual([
+      'First Search Fixture',
+      'Second Search Fixture',
+    ])
+    expect(films.every((item) => !item.inLibrary)).toBe(true)
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.catalogObservation)
+        .where(eq(schema.catalogObservation.responseId, responseId)),
+    ).toHaveLength(2)
+    expect(
+      await databaseClient.query.scrapeJob.findFirst({
+        where: eq(schema.scrapeJob.id, jobId),
+      }),
+    ).toMatchObject({ status: 'failed' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
   it('rejects broad runs, expired previews and previews owned by another user', async () => {
     const { confirmFilmImport } = await import('@/services/film-imports')
     const preview = await previewCsv(

@@ -18,6 +18,7 @@ import { readAlbumRecord, readEditionCounts } from './album-editions'
 import { albumTrackPlaylistNames } from './album-playlists'
 import { loadTracks } from './tracks'
 import { loadArtistTags } from './music-tags'
+import { observeCatalogOccurrence } from './catalog-discoveries'
 import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
 import {
@@ -901,6 +902,9 @@ export async function patchFilm(
   userId: string | null,
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
+    )
     await tx
       .update(mediaItem)
       .set({
@@ -956,8 +960,12 @@ export async function patchFilm(
         ['imdb', 'tmdb'].includes(override.referenceType) &&
         override.provider === override.referenceType
       if (shared) {
-        const [conflict] = await tx
-          .select({ title: mediaItem.title })
+        const related = await tx
+          .selectDistinct({
+            id: mediaItem.id,
+            title: mediaItem.title,
+            inLibrary: mediaItem.inLibrary,
+          })
           .from(providerReference)
           .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
           .where(
@@ -969,12 +977,28 @@ export async function patchFilm(
               sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
             ),
           )
-          .limit(1)
+        const conflict = related.find((match) => match.inLibrary)
         if (conflict)
           throw new ServerError({
             statusCode: 409,
             message: `This ID already belongs to ${conflict.title}. Resolve the duplicate before assigning it.`,
           })
+        for (const candidate of related)
+          await observeCatalogOccurrence(
+            tx,
+            { kind: 'film', id: candidate.id },
+            {
+              provider: override.provider,
+              operation: 'film-match-chosen',
+              occurrenceKey: JSON.stringify([
+                override.referenceType,
+                override.externalId,
+              ]),
+              subjectKind: 'film',
+              subjectId: id,
+              relationshipRole: 'chosen-match',
+            },
+          )
       }
       await tx
         .delete(providerReference)

@@ -92,6 +92,7 @@ export const ArtistHistoryPageSchema = PaginatedDataSchema(
 export type ArtistHistoryPage = z.infer<typeof ArtistHistoryPageSchema>
 
 export const PersonSummarySchema = CreatorIdentitySchema.extend({
+  inLibrary: z.boolean().optional(),
   filmCount: CountSchema,
   directorCount: CountSchema,
   actorCount: CountSchema,

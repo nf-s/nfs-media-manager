@@ -731,6 +731,33 @@ const LibraryArtistRowsSchema = z.array(
   z.object({ id: z.string(), name: z.string() }),
 )
 
+const MixTrackRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    title: z.string(),
+    artist: z.string().nullable(),
+    position: z.number().int().positive(),
+  }),
+)
+
+async function mixTracklist(id: string) {
+  return MixTrackRowsSchema.parse(
+    (
+      await db.execute(sql`
+    select distinct on (o.position) t.id, t.title,
+      o.details->>'creditedArtist' as artist, o.position
+    from catalog_observation o
+    join media_item t on t.id = o.media_item_id
+    where o.subject_kind = 'subscription-item' and o.subject_id = ${id}
+      and o.relationship_role = 'mix-track' and o.position > 0
+      and t.media_type = 'track' and t.metadata->>'legacyHidden' is distinct from 'true'
+    order by o.position, o.observed_at desc, o.id
+    limit 100
+  `)
+    ).rows,
+  )
+}
+
 /**
  * Library artists, with albums or tracks to show, whose name equals one of
  * the names ignoring case and surrounding spaces. Reads only; no artist is
@@ -768,12 +795,15 @@ export async function getSubscriptionItem(id: string) {
   })
   const [row] = await readPage(1)
   if (!row) return null
-  return subscriptionItem(
-    row,
-    subscriptionLibraryOf(row.type) === 'mixes'
-      ? await libraryArtistsNamed([...row.artists, row.source_title])
-      : [],
-  )
+  if (subscriptionLibraryOf(row.type) !== 'mixes') return subscriptionItem(row)
+  const [artists, tracklist] = await Promise.all([
+    libraryArtistsNamed([...row.artists, row.source_title]),
+    row.type === 'lotradio' ? mixTracklist(id) : [],
+  ])
+  return SubscriptionItemSchema.parse({
+    ...subscriptionItem(row, artists),
+    ...(tracklist.length ? { tracklist } : {}),
+  })
 }
 
 const UpdatedRowsSchema = z.array(z.object({ id: z.string() }))

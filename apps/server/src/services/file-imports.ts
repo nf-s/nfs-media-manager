@@ -20,7 +20,7 @@ import { normalizeImdbCsv, normalizeNfo } from '@/lib/film-file-normalizers'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { film, mediaItem, providerReference } from '@/schemas/db'
 import {
-  observeCatalogOccurrence,
+  observeCatalogOccurrences,
   promoteCatalogMediaInTransaction,
 } from './catalog-discoveries'
 import { observeFilmRelations } from './film-catalog-observations'
@@ -383,9 +383,11 @@ export async function matchFilmCandidates(
     }
   }
   return candidates.map((candidate) => {
-    const found = filmCandidateKeys(candidate).flatMap(
-      (key) => matches.get(key) ?? [],
-    )
+    const found = filmCandidateKeys(candidate).flatMap((key) => {
+      const rows = matches.get(key) ?? []
+      const members = rows.filter((row) => row.inLibrary && !row.hidden)
+      return members.length ? members : rows
+    })
     const fallback = fallbackIds.get(unidentifiedFilmId(candidate))
     if (fallback) found.push(fallback)
     const visible = found.filter((row) => !row.hidden)
@@ -426,65 +428,93 @@ export async function observeFilmImportPreview(
     sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
   )
   const matches = await matchFilmCandidates(candidates, tx)
-  for (const [position, candidate] of candidates.entries()) {
+  const entries = candidates.flatMap((candidate, position) => {
     const match = matches[position]
-    if (match?.error) continue
+    if (match?.error) return []
     const { provider, result } = candidate
     const patch = result.normalized.mediaPatch
-    if (!patch?.title?.trim()) continue
+    if (!patch?.title?.trim()) return []
     const id = match?.id ?? newFilmId(candidate)
-    if (!match?.id) {
+    return [
+      {
+        id,
+        result,
+        provider,
+        position,
+        isNew: !match?.id,
+        title: patch.title,
+        releaseDate: parseOptionalDate(patch.releaseDate),
+      },
+    ]
+  })
+  for (let offset = 0; offset < entries.length; offset += 100) {
+    const page = entries.slice(offset, offset + 100)
+    const newFilms = page.filter((entry) => entry.isNew)
+    if (newFilms.length) {
       await tx
         .insert(mediaItem)
-        .values({
-          id,
-          mediaType: 'film',
-          title: patch.title,
-          slug: slugifyParts(patch.title, id),
-          artworkUrl: patch.artworkUrl,
-          releaseDate: parseOptionalDate(patch.releaseDate),
-          inLibrary: false,
-        })
-        .onConflictDoNothing()
-      await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
-      for (const reference of result.normalized.references)
-        if (
-          reference.referenceType === 'tmdb' ||
-          reference.referenceType === 'imdb'
+        .values(
+          newFilms.map((entry): typeof mediaItem.$inferInsert => ({
+            id: entry.id,
+            mediaType: 'film',
+            title: entry.title,
+            slug: slugifyParts(entry.title, entry.id),
+            releaseDate: entry.releaseDate,
+            inLibrary: false,
+          })),
         )
-          await tx
-            .insert(providerReference)
-            .values({
-              id: createStableId(
-                'pref',
-                JSON.stringify([
-                  id,
-                  provider,
-                  reference.referenceType,
-                  reference.externalId,
-                ]),
-              ),
-              mediaItemId: id,
-              provider,
-              referenceType: reference.referenceType,
-              externalId: reference.externalId,
-            })
-            .onConflictDoNothing()
+        .onConflictDoNothing()
+      await tx
+        .insert(film)
+        .values(newFilms.map(({ id }) => ({ mediaItemId: id })))
+        .onConflictDoNothing()
+      const references = newFilms.flatMap(({ id, provider, result }) =>
+        result.normalized.references
+          .filter(
+            (ref) =>
+              (ref.referenceType === 'imdb' &&
+                /^tt\d+$/.test(ref.externalId)) ||
+              (ref.referenceType === 'tmdb' &&
+                /^[1-9]\d*$/.test(ref.externalId)),
+          )
+          .map(({ referenceType, externalId }) => ({
+            id: createStableId(
+              'pref',
+              JSON.stringify([id, provider, referenceType, externalId]),
+            ),
+            mediaItemId: id,
+            provider,
+            referenceType,
+            externalId,
+          })),
+      )
+      if (references.length)
+        await tx
+          .insert(providerReference)
+          .values(references)
+          .onConflictDoNothing()
     }
-    const origin = {
-      provider,
-      operation: 'film-import-preview',
-      occurrenceKey: previewId,
-      position: position + 1,
+    const observations = page.map(({ id, provider, position }) => ({
+      target: { kind: 'film', id },
+      origin: {
+        provider,
+        operation: 'film-import-preview',
+        occurrenceKey: previewId,
+        position: position + 1,
+      },
+    }))
+    await observeCatalogOccurrences(tx, observations)
+    for (const [index, { id, result }] of page.entries()) {
+      const observation = observations[index]
+      if (observation)
+        await observeFilmRelations(
+          tx,
+          id,
+          result.payload,
+          result.normalized,
+          observation.origin,
+        )
     }
-    await observeCatalogOccurrence(tx, { kind: 'film', id }, origin)
-    await observeFilmRelations(
-      tx,
-      id,
-      result.payload,
-      result.normalized,
-      origin,
-    )
   }
 }
 

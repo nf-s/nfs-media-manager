@@ -19,6 +19,7 @@ import {
 } from '@repo/ui/components/ds/detail-header'
 import { Facts, Section, Stats } from '@repo/ui/components/ds/facts'
 import { Pill, PillLabel } from '@repo/ui/components/ds/pill'
+import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import { EMPTY_VALUE, formatCount, formatDate } from '@repo/ui/lib/format'
 import { DetailLink } from './detail-link'
@@ -47,6 +48,7 @@ import type { BrowseFilterHref } from '@/utils/browse-items'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
+import { MediaThumb } from './media-artwork'
 
 type ItemTab = 'overview' | 'sources'
 const itemTabs: readonly [ItemTab, ...ItemTab[]] = ['overview', 'sources']
@@ -506,11 +508,32 @@ function MixDetails({
               ]}
             />
           </Section>
-          {item.description && (
-            <Section title="About">
-              {/* Line breaks are kept: a station may list the tracks here, one per line. */}
-              <p className="dtl-text">{item.description}</p>
+          {item.tracklist?.length ? (
+            <Section title="Tracklist">
+              <List compact aria-label="Tracklist">
+                {item.tracklist.map((track) => (
+                  <ListRow
+                    key={track.position}
+                    thumb={<MediaThumb kind="track" src={null} />}
+                    title={
+                      <RowTitle>
+                        <DetailLink kind="track" id={track.id}>
+                          {track.title}
+                        </DetailLink>
+                      </RowTitle>
+                    }
+                    by={track.artist}
+                  />
+                ))}
+              </List>
             </Section>
+          ) : (
+            item.description && (
+              <Section title="About">
+                {/* Line breaks are kept: a station may list the tracks here, one per line. */}
+                <p className="dtl-text">{item.description}</p>
+              </Section>
+            )
           )}
         </TabsContent>
         <TabsContent value="sources">

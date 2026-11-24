@@ -21,6 +21,7 @@ import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
 import { EmbeddedMediaBrowser } from './media-browser'
 import { usePersonRoleFilter } from './person-role-filter'
 import { ProviderSources } from './provider-sources'
+import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { useConfig } from './providers'
 
 type PersonTab = 'overview' | 'sources'
@@ -64,9 +65,16 @@ export function PersonDetail({ id }: { id: string }) {
         facts={[
           person.roles.map((role) => personRoleLabels[role]).join(', '),
           `${formatCount(person.filmCount)} ${person.filmCount === 1 ? 'film' : 'films'}`,
+          person.inLibrary === false ? 'Outside library' : null,
         ]}
         actions={
           <>
+            <CatalogLibraryAction
+              kind="person"
+              id={person.id}
+              title={person.name}
+              inLibrary={person.inLibrary !== false}
+            />
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: person.name }}
@@ -105,6 +113,7 @@ export function PersonDetail({ id }: { id: string }) {
           </Section>
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries kind="person" id={person.id} />
           <ProviderSources
             rows={[]}
             unavailable="No provider sources are stored for this person."

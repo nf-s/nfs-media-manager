@@ -204,6 +204,16 @@ export const MixSubscriptionItemSchema = z.object({
   libraryArtists: z
     .array(z.object({ id: z.string(), name: z.string() }))
     .default([]),
+  tracklist: z
+    .array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        artist: z.string().nullable(),
+        position: z.number().int().positive(),
+      }),
+    )
+    .optional(),
 })
 /** A YouTube video, a podcast episode or a station mix. */
 export const SubscriptionItemSchema = z.discriminatedUnion('type', [

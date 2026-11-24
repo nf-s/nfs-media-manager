@@ -361,8 +361,84 @@ describe('creator directories and related library items', () => {
     })
   })
 
+  it('opens provider-identified same-name people and keeps them outside the legacy directory', async () => {
+    const { observeFilmRelations } =
+      await import('@/services/film-catalog-observations')
+    const { normalizeTmdbPayload } = await import('@/lib/provider-normalizers')
+    const { promoteNativeResource } =
+      await import('@/services/catalog-discoveries')
+    const payload = {
+      id: 1234567,
+      title: 'Studio story',
+      credits: {
+        cast: [
+          {
+            id: 231,
+            name: 'Morgan Fixture',
+            credit_id: 'synthetic-credit-1',
+            character: 'Archivist',
+            order: 0,
+          },
+          {
+            id: 232,
+            name: 'Morgan Fixture',
+            credit_id: 'synthetic-credit-2',
+            character: 'Pilot',
+            order: 1,
+          },
+        ],
+      },
+    }
+    const origin = {
+      provider: 'tmdb',
+      operation: 'film-details',
+      occurrenceKey: 'catalog-film-fixture',
+    }
+    await databaseClient.transaction(async (tx) => {
+      for (let retry = 0; retry < 2; retry++)
+        await observeFilmRelations(
+          tx,
+          'film-one',
+          payload,
+          normalizeTmdbPayload(payload).normalized,
+          origin,
+        )
+    })
+    const filters = { q: 'Morgan Fixture', discoverySources: 'film-details' }
+    expect(await listPeople(PersonQuerySchema.parse(filters))).toMatchObject({
+      totalCount: 0,
+    })
+    const outside = await listPeople(
+      PersonQuerySchema.parse({ ...filters, libraryScope: 'outside' }),
+    )
+    expect(outside.totalCount).toBe(2)
+    expect(new Set(outside.items.map((person) => person.id)).size).toBe(2)
+    const [person] = outside.items
+    if (!person) throw new Error('Expected the observed person to be available')
+    expect(await getPerson(person.id)).toMatchObject({
+      id: person.id,
+      filmCount: 1,
+      inLibrary: false,
+    })
+    expect(
+      await listPersonFilms(
+        person.id,
+        PersonFilmQuerySchema.parse({ role: 'actor' }),
+      ),
+    ).toMatchObject({ items: [{ id: 'film-one' }], totalCount: 1 })
+    expect(await promoteNativeResource('person', person.id)).toMatchObject({
+      created: true,
+    })
+    expect(await listPeople(PersonQuerySchema.parse(filters))).toMatchObject({
+      items: [{ id: person.id, inLibrary: true }],
+      totalCount: 1,
+    })
+  })
+
   it('keeps provider history and moves only that provider’s current state', async () => {
     expect(await loadArtistProviderTarget('dual', 'spotify')).toEqual({
+      catalogExternalId: null,
+      catalogProvider: null,
       name: 'Delta Fixture',
       providerArtistId: null,
       snapshotId: null,

@@ -26,6 +26,11 @@ import { fetchApiData } from '@/utils/api'
 import type { DetailTarget } from '@/utils/detail-inspector'
 import { embeddedScrollClass } from '@/utils/embedded-browse'
 import {
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+} from '@/utils/library-scope'
+import {
   defaultBrowseView,
   parseBrowseView,
   type BrowseView,
@@ -99,6 +104,22 @@ export function CreatorLibraryTable<Row extends { id: string }>({
 }) {
   const { apiBaseUrl } = useConfig()
   const view = useDetailView()
+  const libraryScope = kind === 'person' ? readLibraryScope(view.params) : null
+  const scopeControls = libraryScope
+    ? {
+        value: libraryScope,
+        onChange: (next: typeof libraryScope) => {
+          const params = new URLSearchParams(view.params)
+          for (const [key, value] of Object.entries(
+            libraryScopeUpdates(next),
+          )) {
+            if (value) params.set(key, value)
+            else params.delete(key)
+          }
+          view.replace(params)
+        },
+      }
+    : undefined
   const scope = `creator-library-${kind}`
   const table = useTableColumns(scope, columns, { reorder: true })
   // Lists without cards have only the table.
@@ -145,6 +166,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
     direction,
     ...(search ? { q: search } : {}),
     ...filters,
+    ...(libraryScope ? libraryScopeQuery(libraryScope) : {}),
   })
   const query = useVirtualTable({
     queryKey: [...queryKey, params.toString()],
@@ -165,7 +187,12 @@ export function CreatorLibraryTable<Row extends { id: string }>({
     .order(columns)
     .filter((column) => table.visible(column.key))
   const layout = table.layout(visible.map((column) => column.key))
-  const narrowed = Boolean(search || (filters && Object.keys(filters).length))
+  const narrowed = Boolean(
+    search ||
+    (filters && Object.keys(filters).length) ||
+    libraryScope?.scope === 'outside' ||
+    libraryScope?.sources.length,
+  )
   const empty = narrowed ? `No matching ${label}.` : `No ${label} stored.`
 
   function setSort(key: string, nextDirection: 'asc' | 'desc') {
@@ -233,12 +260,14 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           }
           count={count}
           compact={!workspace}
+          libraryScope={scopeControls}
         />
       ) : (
         <SecondaryTableToolbar
           search={searchControl}
           count={count}
           columns={table.controls}
+          libraryScope={scopeControls}
         />
       )}
       {query.isError && (

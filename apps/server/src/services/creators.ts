@@ -36,11 +36,13 @@ import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
   album,
   artist,
+  catalogObservation,
   film,
   libraryTrack,
   mediaCredit,
@@ -52,6 +54,7 @@ import {
   listCurrentArtistProfiles,
 } from './artist-profiles'
 import { queryBrowseIds } from './browse'
+import { catalogScopeCondition, memberScope } from './catalog-scope'
 import {
   artistPlaylistMembership,
   artistArtwork,
@@ -255,12 +258,59 @@ export async function getArtist(
   })
 }
 
-function personDirectory(q?: string, role?: PersonRole, id?: string) {
+function personDirectory(
+  q?: string,
+  role?: PersonRole,
+  id?: string,
+  scope: CatalogScopeQuery = {},
+) {
+  const known = id !== undefined || !memberScope(scope)
+  const normalized = db
+    .select({
+      artistId: mediaCredit.artistId,
+      filmId: mediaCredit.mediaItemId,
+      role: mediaCredit.role,
+    })
+    .from(mediaCredit)
+    .where(
+      and(
+        inArray(mediaCredit.role, personRoles),
+        id ? eq(mediaCredit.artistId, id) : undefined,
+      ),
+    )
+  const observations = db
+    .select({
+      artistId: catalogObservation.targetId,
+      filmId: sql<string>`${catalogObservation.subjectId}`.as('film_id'),
+      role: sql<string>`${catalogObservation.relationshipRole}`.as(
+        'credit_role',
+      ),
+    })
+    .from(catalogObservation)
+    .where(
+      and(
+        eq(catalogObservation.targetKind, 'person'),
+        eq(catalogObservation.subjectKind, 'film'),
+        id ? eq(catalogObservation.targetId, id) : undefined,
+      ),
+    )
+  const credits = (known ? normalized.union(observations) : normalized).as(
+    'person_credit',
+  )
+  const explicitlyAdded = sql`(${artist.addedToLibrary} and exists (
+    select 1 from catalog_observation o
+    where o.target_kind = 'person' and o.target_id = ${artist.id}))`
+  const member = sql`(${explicitlyAdded} or exists (
+    select 1 from media_credit c join media_item i on i.id = c.media_item_id
+    where c.artist_id = ${artist.id} and c.role in ('director', 'actor')
+    and i.media_type = 'film' and i.in_library
+    and i.metadata->>'legacyHidden' is distinct from 'true'))`
   const countRole = (role: PersonRole) =>
-    sql<number>`count(distinct ${mediaItem.id}) filter (where ${mediaCredit.role} = ${role})::int`
+    sql<number>`count(distinct ${mediaItem.id}) filter (where ${credits.role} = ${role})::int`
   return db
     .select({
       ...identityColumns,
+      inLibrary: sql<boolean>`${member}`.as('in_library'),
       filmCount: sql<number>`count(distinct ${mediaItem.id})::int`.as(
         'film_count',
       ),
@@ -268,20 +318,30 @@ function personDirectory(q?: string, role?: PersonRole, id?: string) {
       actorCount: countRole('actor').as('actor_count'),
     })
     .from(artist)
-    .innerJoin(mediaCredit, eq(mediaCredit.artistId, artist.id))
-    .innerJoin(mediaItem, eq(mediaItem.id, mediaCredit.mediaItemId))
-    .innerJoin(film, eq(film.mediaItemId, mediaItem.id))
+    .leftJoin(credits, eq(credits.artistId, artist.id))
+    .leftJoin(
+      mediaItem,
+      and(
+        eq(mediaItem.id, credits.filmId),
+        eq(mediaItem.mediaType, 'film'),
+        visible,
+        known ? undefined : eq(mediaItem.inLibrary, true),
+      ),
+    )
     .where(
       and(
         creatorFilter(q, id),
-        eq(mediaItem.mediaType, 'film'),
-        inArray(mediaCredit.role, personRoles),
-        visible,
-        id === undefined ? eq(mediaItem.inLibrary, true) : undefined,
+        id === undefined
+          ? catalogScopeCondition(sql`${artist.id}`, member, scope, 'person')
+          : undefined,
       ),
     )
     .groupBy(artist.id)
-    .having(role ? sql`${countRole(role)} > 0` : undefined)
+    .having(
+      role
+        ? sql`${countRole(role)} > 0`
+        : sql`count(${mediaItem.id}) > 0 or ${explicitlyAdded}`,
+    )
 }
 
 function personSummary(
@@ -297,7 +357,9 @@ function personSummary(
 }
 
 export async function listPeople(query: PersonQuery) {
-  const directory = personDirectory(query.q, query.role).as('directory')
+  const directory = personDirectory(query.q, query.role, undefined, query).as(
+    'directory',
+  )
   const sortColumns = {
     name: sql`lower(coalesce(${directory.sortName}, ${directory.name}))`,
     createdAt: sql`${directory.createdAt}`,
@@ -324,7 +386,8 @@ export async function listPeople(query: PersonQuery) {
 }
 
 export async function getPerson(id: string) {
-  const [summary] = await personDirectory(undefined, undefined, id)
+  const currentId = await currentArtistId(db, id)
+  const [summary] = await personDirectory(undefined, undefined, currentId)
   if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Person not found' })
   return personSummary(summary)
@@ -357,7 +420,10 @@ async function requireLibraryArtist(requestedId: string) {
  */
 export async function requireCreator(id: string, kind: 'artist' | 'person') {
   if (kind === 'artist') return (await requireLibraryArtist(id)).id
-  const directory = personDirectory(undefined, undefined, id).as('directory')
+  const currentId = await currentArtistId(db, id)
+  const directory = personDirectory(undefined, undefined, currentId).as(
+    'directory',
+  )
   const [row] = await db.select({ id: directory.id }).from(directory)
   if (!row)
     throw new ServerError({ statusCode: 404, message: 'Person not found' })
@@ -462,9 +528,9 @@ export async function listArtistPlaylists(
 }
 
 export async function listPersonFilms(id: string, query: PersonFilmQuery) {
-  await requireCreator(id, 'person')
+  const creatorId = await requireCreator(id, 'person')
   const data = await listFilms(
-    FilmQuerySchema.parse({ ...query, creatorId: id, creatorRole: query.role }),
+    FilmQuerySchema.parse({ ...query, creatorId, creatorRole: query.role }),
     {
       conditions: [sql`${film.mediaItemId} is not null`],
     },

@@ -1534,11 +1534,17 @@ async function browseQueries(
       eq(mediaCredit.artistId, query.creatorId),
       inArray(mediaCredit.role, roles),
     )})`
-    creatorCredit = mediaType === 'album' && !memberScope(query)
-      ? sql`(${credit} or exists (select 1 from catalog_observation o
+    creatorCredit =
+      mediaType === 'album' && !memberScope(query)
+        ? sql`(${credit} or exists (select 1 from catalog_observation o
           where o.subject_kind = 'artist' and o.subject_id = ${query.creatorId}
           and o.operation = 'artist-albums' and o.media_item_id = ${mediaItem.id}))`
-      : credit
+        : mediaType === 'film'
+          ? sql`(${credit} or exists (select 1 from catalog_observation o
+            where o.subject_kind = 'film' and o.subject_id = ${mediaItem.id}
+            and o.target_kind = 'person' and o.target_id = ${query.creatorId}
+            ${role ? sql`and o.relationship_role = ${role}` : sql``}))`
+          : credit
     conditions.push(creatorCredit)
   }
   conditions.push(...(options.conditions ?? []))

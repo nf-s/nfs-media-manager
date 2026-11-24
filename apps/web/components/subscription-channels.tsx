@@ -34,6 +34,12 @@ import {
 } from './detail-inspector-context'
 import { fetchApiData } from '@/utils/api'
 import {
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
+import {
   filterSubscriptionSources,
   formatSubscriptionSourceSize,
   parseSubscriptionType,
@@ -81,11 +87,21 @@ const sourceColumnsFor: Record<
   mixes: sourceColumns('mixes'),
 }
 
-function useSubscriptionSources(library: SubscriptionLibrary) {
+function useSubscriptionSources(
+  library: SubscriptionLibrary,
+  scope: LibraryScopeState,
+) {
   const { apiBaseUrl } = useConfig()
-  const params = new URLSearchParams(subscriptionLibraryParams(library))
+  const params = new URLSearchParams({
+    ...subscriptionLibraryParams(library),
+    ...libraryScopeQuery(scope),
+  })
   return useQuery({
-    queryKey: [subscriptionLibraryPages[library].collection, 'sources'],
+    queryKey: [
+      subscriptionLibraryPages[library].collection,
+      'sources',
+      params.toString(),
+    ],
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
@@ -271,7 +287,8 @@ export default function SubscriptionChannels({
   const inspector = useDetailInspector()
   const selectedId =
     inspector?.root?.kind === page.sourceKind ? inspector.root.id : null
-  const sources = useSubscriptionSources(library)
+  const libraryScope = readLibraryScope(search)
+  const sources = useSubscriptionSources(library, libraryScope)
   const sortBy = subscriptionSourceSort(search.get('sortBy'), library)
   const direction = search.get('direction') === 'desc' ? 'desc' : 'asc'
   const type = parseSubscriptionType(search.get('type'), library)
@@ -316,6 +333,10 @@ export default function SubscriptionChannels({
     <section className="bi-workspace" aria-label={page.sourcesTitle}>
       <PageHead title={page.sourcesTitle} />
       <SecondaryTableToolbar
+        libraryScope={{
+          value: libraryScope,
+          onChange: (next) => replaceParams(libraryScopeUpdates(next)),
+        }}
         search={
           <SecondaryTableSearch
             label="Filter by name"

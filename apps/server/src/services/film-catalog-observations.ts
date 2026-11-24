@@ -12,6 +12,7 @@ import {
   mediaItem,
   playlist,
   playlistItem,
+  providerReference,
 } from '@/schemas/db'
 import {
   observeCatalogMedia,
@@ -109,6 +110,31 @@ export async function observeFilmCandidate(
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
   )
+  if (nativeType === 'tmdb' || nativeType === 'imdb') {
+    const members = await tx
+      .selectDistinct({ id: mediaItem.id })
+      .from(providerReference)
+      .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
+      .where(
+        and(
+          eq(mediaItem.mediaType, 'film'),
+          eq(mediaItem.inLibrary, true),
+          eq(providerReference.referenceType, nativeType),
+          eq(providerReference.externalId, candidate.externalId),
+          sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+        ),
+      )
+      .limit(2)
+    const member = members.length === 1 ? members[0] : undefined
+    if (member) {
+      await observeCatalogOccurrence(
+        tx,
+        { kind: 'film', id: member.id },
+        origin,
+      )
+      return member.id
+    }
+  }
   return observeCatalogMedia(
     tx,
     {
@@ -287,6 +313,8 @@ export async function observeFilmRelations(
     .from(mediaItem)
     .where(eq(mediaItem.id, filmId))
   if (!film) return
+  if (source.snapshotId)
+    await observeCatalogOccurrence(tx, { kind: 'film', id: filmId }, source)
   const origin = { ...source, subjectKind: 'film', subjectId: filmId }
   const data = filmPayload(payload)
   for (const credit of filmCredits(origin.provider, data, normalized))
@@ -332,7 +360,8 @@ export async function observeFilmRelations(
         ),
       )
       .limit(1)
-    const collectionId = existing?.id ?? linked?.id ?? nativeId
+    const collectionId =
+      existing?.id ?? (exact ? nativeId : linked?.id) ?? nativeId
     if (collectionId === nativeId) {
       await tx
         .insert(playlist)
@@ -350,7 +379,7 @@ export async function observeFilmRelations(
         .values({ playlistId: nativeId, mediaItemId: filmId })
         .onConflictDoNothing()
     }
-    if (existing && !linked)
+    if (existing && (exact || !linked))
       await tx
         .insert(playlistItem)
         .values({ playlistId: collectionId, mediaItemId: filmId })
