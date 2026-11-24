@@ -8,6 +8,31 @@ import { createStableId } from '@/lib/media-utils'
 import { mediaItem, providerReference } from '@/schemas/db'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type FilmIdentity = Pick<PluginReference, 'referenceType' | 'externalId'>
+type StoredFilmIdentity = FilmIdentity & {
+  metadata?: PluginReference['metadata'] | null
+}
+
+export function isBlockedFilmReference({ metadata }: StoredFilmIdentity) {
+  return (
+    metadata?.['rejected'] === true ||
+    metadata?.['rejected'] === 'true' ||
+    metadata?.['verified'] === false ||
+    metadata?.['verified'] === 'false'
+  )
+}
+
+export function hasBlockedFilmReference(
+  storedReferences: readonly StoredFilmIdentity[],
+  identity: FilmIdentity,
+) {
+  return storedReferences.some(
+    (stored) =>
+      stored.referenceType === identity.referenceType &&
+      stored.externalId === identity.externalId &&
+      isBlockedFilmReference(stored),
+  )
+}
 
 export async function lockFilmReferenceWrites(tx: Transaction) {
   await tx.execute(
@@ -26,6 +51,7 @@ async function reviewMdblistFilmReferences(
       provider: providerReference.provider,
       referenceType: providerReference.referenceType,
       externalId: providerReference.externalId,
+      metadata: providerReference.metadata,
     })
     .from(providerReference)
     .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
@@ -67,7 +93,16 @@ async function reviewMdblistFilmReferences(
           : row.externalId === reference.externalId),
     ),
   )
-  if (!hasAnchor || hasConflict)
+  const ownReferences = existing.filter(
+    (row) => row.mediaItemId === mediaItemId,
+  )
+  if (
+    !hasAnchor ||
+    hasConflict ||
+    references.some((reference) =>
+      hasBlockedFilmReference(ownReferences, reference),
+    )
+  )
     throw new ProviderItemAmbiguousError(
       'MDBList identities conflict with the current film references. Review the match before refreshing.',
     )
@@ -89,9 +124,18 @@ export async function saveMdblistFilmReferences(
   tx: Transaction,
   mediaItemId: string,
   references: PluginReference[],
+  snapshotId: string,
 ) {
   const missing = await reviewMdblistFilmReferences(tx, mediaItemId, references)
-  return insertMdblistFilmReferences(tx, [{ mediaItemId, missing }])
+  return insertMdblistFilmReferences(tx, [
+    {
+      mediaItemId,
+      missing: missing.map((reference) => ({
+        ...reference,
+        metadata: { ...reference.metadata, snapshotId },
+      })),
+    },
+  ])
 }
 
 export async function insertMdblistFilmReferences(

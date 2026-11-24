@@ -82,6 +82,7 @@ import {
   isProviderItemAmbiguousError,
   isProviderItemNotFoundError,
   type MediaProviderPlugin,
+  type PluginReference,
 } from '@repo/media-plugin-sdk'
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
@@ -126,6 +127,7 @@ import {
   scrapeJobLog,
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from '@/services/provider-state'
+import { hasBlockedFilmReference } from '@/services/film-reference-state'
 import { readAlbumMatchRejections } from '@/services/album-match-rejections'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
 import { getAlbumReleaseHints } from '@/services/album-release-hints'
@@ -905,14 +907,21 @@ async function runClaimedJob(
         plugin.manifest.id,
         rejections,
       )
-      const {
-        active: overrides,
-        latestCount,
-        keepStoredReference,
-      } = effectiveReferenceOverrides(storedOverrides, isRejectedMatch)
+      const { active, latestCount, keepStoredReference } =
+        effectiveReferenceOverrides(storedOverrides, isRejectedMatch)
+      const blockedFilmReference = (
+        reference: Pick<PluginReference, 'referenceType' | 'externalId'>,
+      ) =>
+        mediaRecord.mediaType === 'film' &&
+        hasBlockedFilmReference(storedReferences, reference)
+      const overrides = active.filter(
+        (reference) => !blockedFilmReference(reference),
+      )
       const references = storedReferences.filter(
         (reference) =>
-          keepStoredReference(reference) && !isRejectedMatch(reference),
+          keepStoredReference(reference) &&
+          !isRejectedMatch(reference) &&
+          !blockedFilmReference(reference),
       )
       const effectiveIds = new Map(
         overrides.map(({ referenceType, externalId }) => [
@@ -1019,7 +1028,9 @@ async function runClaimedJob(
         })
       )
         throw new ProviderItemNotFoundError(
-          'The album match was previously rejected.',
+          mediaRecord.mediaType === 'film'
+            ? 'The film reference was rejected or is unverified.'
+            : 'The album match was previously rejected.',
         )
       const releaseHints =
         mediaRecord.mediaType === 'album' && plugin.manifest.albumReleaseHints

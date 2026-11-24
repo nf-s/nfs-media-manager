@@ -104,13 +104,21 @@ async function fetchTmdbMovieDetails(
   apiKey: string,
   movieId: string,
   request: MediaPluginTestContext['request'],
+  imdbId: string | null = null,
 ): Promise<JsonRecord> {
   if (!/^\d+$/.test(movieId)) throw new Error('Invalid TMDb identifier')
   const url = new URL(`${TMDB_API_URL}/movie/${movieId}`)
   url.searchParams.set('api_key', apiKey)
   url.searchParams.set('append_to_response', 'credits,keywords')
 
-  return fetchTmdbJson(url, request)
+  const payload = await fetchTmdbJson(url, request)
+  const returnedImdb = readJsonString(payload, 'imdb_id')
+  if (
+    readJsonString(payload, 'id') !== movieId ||
+    (imdbId && returnedImdb && returnedImdb !== imdbId)
+  )
+    throw new Error('TMDb response does not match the requested film.')
+  return payload
 }
 
 async function resolveTmdbMovieIdFromImdbId(
@@ -222,7 +230,12 @@ export const tmdbPlugin: MediaProviderPlugin = {
 
     await context.log('info', `Fetching TMDb payload for ${tmdbId}`)
 
-    const payload = await fetchTmdbMovieDetails(apiKey, tmdbId, context.request)
+    const payload = await fetchTmdbMovieDetails(
+      apiKey,
+      tmdbId,
+      context.request,
+      imdbId,
+    )
     return normalizeTmdbPayload(payload)
   },
 }

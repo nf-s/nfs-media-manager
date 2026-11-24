@@ -139,4 +139,68 @@ describe('builtin film scrape plugins', () => {
       },
     ])
   })
+
+  const imdb = {
+    referenceType: 'imdb',
+    externalId: 'tt0000123',
+    isPrimary: true,
+  }
+  const tmdb = { referenceType: 'tmdb', externalId: '123', isPrimary: true }
+
+  it.each([
+    {
+      label: 'TMDb details for a different movie',
+      plugin: tmdbPlugin,
+      existingReferences: [tmdb],
+      responses: [{ id: 456, title: 'Different fixture movie' }],
+    },
+    {
+      label: 'TMDb details for a different IMDb movie',
+      plugin: tmdbPlugin,
+      existingReferences: [imdb],
+      responses: [
+        { movie_results: [{ id: 123 }] },
+        { id: 123, imdb_id: 'tt0000456', title: 'Different fixture movie' },
+      ],
+    },
+    {
+      label: 'OMDb details for a different movie',
+      plugin: omdbPlugin,
+      existingReferences: [imdb],
+      responses: [{ imdbID: 'tt0000456', Type: 'movie', Response: 'True' }],
+    },
+    {
+      label: 'OMDb details for a series at the requested ID',
+      plugin: omdbPlugin,
+      existingReferences: [imdb],
+      responses: [{ imdbID: 'tt0000123', Type: 'series', Response: 'True' }],
+    },
+    {
+      label: 'OMDb details with conflicting IMDb spellings',
+      plugin: omdbPlugin,
+      existingReferences: [imdb],
+      responses: [
+        { imdbID: 'tt0000123', imdbid: 'tt0000456', Response: 'True' },
+      ],
+    },
+  ])(
+    'rejects $label before normalization',
+    async ({ plugin, existingReferences, responses }) => {
+      const request = vi.fn<typeof fetch>()
+      for (const response of responses) {
+        request.mockResolvedValueOnce(createJsonResponse(response))
+      }
+      await expect(
+        plugin.scrapeMediaItem?.({
+          mediaItemId: 'film_fixture',
+          mediaType: 'film',
+          existingReferences,
+          secrets: { apiKey: 'offline-key' },
+          log: vi.fn(async () => undefined),
+          request,
+        }),
+      ).rejects.toThrow(/does not match the requested film/)
+      expect(request).toHaveBeenCalledTimes(responses.length)
+    },
+  )
 })

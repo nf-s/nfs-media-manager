@@ -1516,6 +1516,12 @@ describe('reviewed film import and enrichment', () => {
         ),
       })
     await persist({ imdb, tmdb: 1234, trakt: 5678 })
+    const firstSnapshot = await databaseClient.query.providerSnapshot.findFirst(
+      {
+        where: eq(schema.providerSnapshot.mediaItemId, id),
+      },
+    )
+    if (!firstSnapshot) throw new Error('Missing MDBList fixture snapshot')
     await persist({ imdb })
     const references = () =>
       databaseClient.query.providerReference.findMany({
@@ -1532,11 +1538,13 @@ describe('reviewed film import and enrichment', () => {
           provider: 'mdblist',
           referenceType: 'tmdb',
           externalId: '1234',
+          metadata: { snapshotId: firstSnapshot.id },
         }),
         expect.objectContaining({
           provider: 'mdblist',
           referenceType: 'trakt',
           externalId: '5678',
+          metadata: { snapshotId: firstSnapshot.id },
         }),
       ]),
     )
@@ -1617,6 +1625,96 @@ describe('reviewed film import and enrichment', () => {
     ).toEqual([expect.objectContaining({ mediaItemId: other })])
   })
 
+  it.each([{ rejected: true }, { verified: false }])(
+    'keeps blocked film references out of queued lookups and provider results: %j',
+    async (metadata) => {
+      const { createJob, processQueuedJobs } = await import('@/services/jobs')
+      const { patchFilm } = await import('@/services/media')
+      const { applyProviderResult } = await import('@/services/provider-state')
+      const id = 'blocked-film-fixture'
+      const selected = { referenceType: 'imdb', externalId: 'tt9999901' }
+      await databaseClient
+        .insert(schema.mediaItem)
+        .values({ id, mediaType: 'film', title: id, slug: id })
+      await databaseClient.insert(schema.film).values({ mediaItemId: id })
+      await patchFilm(
+        id,
+        { referenceOverrides: [{ provider: 'imdb', ...selected }] },
+        null,
+      )
+      await databaseClient
+        .update(schema.providerReference)
+        .set({ metadata })
+        .where(eq(schema.providerReference.mediaItemId, id))
+
+      await createJob(
+        CreateJobSchema.parse({
+          provider: 'fixture-one',
+          scope: { mediaItemIds: [id] },
+        }),
+        null,
+      )
+      await processQueuedJobs()
+      expect(execute).not.toHaveBeenCalled()
+
+      for (const provider of ['mdblist', 'omdb']) {
+        await expect(
+          applyProviderResult({
+            mediaItemId: id,
+            mediaType: 'film',
+            provider,
+            source: 'scrape-job',
+            ...PluginResultSchema.parse({
+              payload: {},
+              normalized: { references: [selected] },
+            }),
+          }),
+        ).rejects.toThrow(/review the match/i)
+      }
+      expect(
+        await databaseClient.select().from(schema.providerSnapshot),
+      ).toEqual([])
+      expect(
+        await databaseClient.select().from(schema.providerReference),
+      ).toEqual([
+        expect.objectContaining({ provider: 'imdb', ...selected, metadata }),
+      ])
+
+      const replacement = { referenceType: 'imdb', externalId: 'tt9999902' }
+      await patchFilm(
+        id,
+        { referenceOverrides: [{ provider: 'imdb', ...replacement }] },
+        null,
+      )
+      await databaseClient.insert(schema.providerReference).values({
+        id: 'blocked-omdb-secondary-reference',
+        mediaItemId: id,
+        provider: 'omdb',
+        referenceType: 'trakt',
+        externalId: '1234',
+        metadata,
+      })
+      await applyProviderResult({
+        mediaItemId: id,
+        mediaType: 'film',
+        provider: 'omdb',
+        source: 'scrape-job',
+        ...PluginResultSchema.parse({
+          payload: {},
+          normalized: { references: [replacement] },
+        }),
+      })
+      expect(
+        await databaseClient.query.providerReference.findFirst({
+          where: eq(
+            schema.providerReference.id,
+            'blocked-omdb-secondary-reference',
+          ),
+        }),
+      ).toMatchObject({ metadata })
+    },
+  )
+
   it('recovers from current successful MDBList snapshots with independent, consistent identity evidence', async () => {
     const { backfillMdblistReferences } =
       await import('../scripts/backfill-mdblist-references')
@@ -1684,6 +1782,12 @@ describe('reviewed film import and enrichment', () => {
       'tt9999905',
       4567,
     )
+    const blockedId = 'mdblist-recovery-blocked'
+    await saveHistoricalResult(blockedId, 'tt9999906', 5678)
+    await databaseClient
+      .update(schema.providerReference)
+      .set({ metadata: { verified: false } })
+      .where(eq(schema.providerReference.mediaItemId, blockedId))
     await databaseClient.insert(schema.providerReferenceOverride).values({
       id: 'mdblist-old-override',
       mediaItemId: conflictedId,
@@ -1704,8 +1808,8 @@ describe('reviewed film import and enrichment', () => {
     if (!targetSnapshot) throw new Error('Missing snapshot fixture')
     const preview = await backfillMdblistReferences()
     expect(preview).toMatchObject({
-      scanned: 4,
-      conflicts: 1,
+      scanned: 5,
+      conflicts: 2,
       competingFilms: 2,
       eligibleFilms: 1,
       eligibleReferences: 2,

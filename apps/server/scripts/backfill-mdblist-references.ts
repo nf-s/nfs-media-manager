@@ -16,6 +16,7 @@ import {
 } from '@/schemas/db'
 import {
   insertMdblistFilmReferences,
+  isBlockedFilmReference,
   lockFilmReferenceWrites,
 } from '@/services/film-reference-state'
 
@@ -73,7 +74,10 @@ function currentSnapshots(tx: Transaction, scope?: SQL) {
 type Snapshot = Awaited<ReturnType<typeof currentSnapshots>>[number]
 
 type Reference = Pick<PluginReference, 'referenceType' | 'externalId'>
-type CurrentReference = Reference & { provider: string }
+type CurrentReference = Reference & {
+  provider: string
+  metadata: PluginReference['metadata'] | null
+}
 
 function matchingSnapshotReferences(
   row: Snapshot,
@@ -84,6 +88,7 @@ function matchingSnapshotReferences(
   const imdb = independent.find(({ referenceType }) => referenceType === 'imdb')
   const tmdb = independent.find(({ referenceType }) => referenceType === 'tmdb')
   if (!imdb && !tmdb) return null
+  if (current.some(isBlockedFilmReference)) return null
   const known = [...current, ...historical]
   let references: PluginReference[]
   try {
@@ -137,6 +142,7 @@ async function planSnapshots(tx: Transaction, snapshots: Snapshot[]) {
         provider: true,
         referenceType: true,
         externalId: true,
+        metadata: true,
       },
       where: and(
         inArray(providerReference.mediaItemId, filmIds),

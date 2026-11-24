@@ -47,6 +47,19 @@ async function fetchOmdbPayload(
     throw new Error('OMDb returned no result.')
   }
 
+  const imdbIds = ['imdbID', 'imdbid']
+    .map((key) => readJsonString(parsedPayload, key))
+    .filter((id) => id !== null)
+  const types = ['Type', 'type']
+    .map((key) => readJsonString(parsedPayload, key))
+    .filter((type) => type !== null)
+  if (
+    !imdbIds.length ||
+    imdbIds.some((id) => id !== imdbId) ||
+    types.some((type) => type.trim().toLowerCase() !== 'movie')
+  )
+    throw new Error('OMDb response does not match the requested film.')
+
   return parsedPayload
 }
 

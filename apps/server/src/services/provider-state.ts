@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { observeCatalogOccurrence } from './catalog-discoveries'
 import {
@@ -20,6 +20,8 @@ import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
 import { observeFilmRelations } from './film-catalog-observations'
 import {
+  hasBlockedFilmReference,
+  isBlockedFilmReference,
   lockFilmReferenceWrites,
   saveMdblistFilmReferences,
 } from './film-reference-state'
@@ -80,6 +82,7 @@ async function replaceProviderReferences(
   providerId: string,
   references: PluginNormalizedResult['references'],
   isRejectedMatch?: ReturnType<typeof createAlbumMatchRejectionPredicate>,
+  checkFilmReferenceStatus = false,
 ): Promise<void> {
   const overrides = await database
     .select()
@@ -136,14 +139,39 @@ async function replaceProviderReferences(
     )
       effectiveReferences.push({ referenceType, externalId, isPrimary: false })
   }
-  await database
-    .delete(providerReference)
-    .where(
-      and(
-        eq(providerReference.mediaItemId, mediaItemId),
-        eq(providerReference.provider, providerId),
-      ),
+  const blockedReferences = checkFilmReferenceStatus
+    ? (
+        await database.query.providerReference.findMany({
+          columns: {
+            id: true,
+            referenceType: true,
+            externalId: true,
+            metadata: true,
+          },
+          where: eq(providerReference.mediaItemId, mediaItemId),
+        })
+      ).filter(isBlockedFilmReference)
+    : []
+  if (
+    effectiveReferences.some((reference) =>
+      hasBlockedFilmReference(blockedReferences, reference),
     )
+  )
+    throw new ProviderItemAmbiguousError(
+      'The film reference was rejected or is unverified. Review the match before refreshing.',
+    )
+  await database.delete(providerReference).where(
+    and(
+      eq(providerReference.mediaItemId, mediaItemId),
+      eq(providerReference.provider, providerId),
+      blockedReferences.length
+        ? notInArray(
+            providerReference.id,
+            blockedReferences.map(({ id }) => id),
+          )
+        : undefined,
+    ),
+  )
 
   for (const reference of new Map(
     effectiveReferences.map((reference) => [
@@ -562,10 +590,12 @@ export async function applyProviderResultInTransaction(
   }
 
   if (filmReferences && input.provider === 'mdblist') {
+    if (!latestSnapshotId) throw new Error('Missing MDBList result snapshot.')
     await saveMdblistFilmReferences(
       database,
       input.mediaItemId,
       input.normalized.references,
+      latestSnapshotId,
     )
   } else if (input.normalized.references.length > 0) {
     await replaceProviderReferences(
@@ -574,6 +604,7 @@ export async function applyProviderResultInTransaction(
       input.provider,
       input.normalized.references,
       isRejectedMatch,
+      filmReferences && input.source === 'scrape-job',
     )
   }
 
