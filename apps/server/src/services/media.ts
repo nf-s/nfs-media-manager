@@ -6,6 +6,7 @@ import {
 } from './browse'
 import type { ArchivableBrowseFacetQuery } from '@repo/schemas/browse'
 import { getCollectionSourceLinks } from './source-navigation'
+import { lockFilmReferenceWrites } from './film-reference-state'
 import { withStoredTrailerLinks } from './stored-trailers'
 import { getAlbumProviderDetails } from './album-provider-details'
 import {
@@ -914,9 +915,7 @@ export async function patchFilm(
   userId: string | null,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
-    )
+    await lockFilmReferenceWrites(tx)
     await tx
       .update(mediaItem)
       .set({

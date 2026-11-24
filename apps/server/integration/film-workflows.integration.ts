@@ -1479,4 +1479,264 @@ describe('reviewed film import and enrichment', () => {
     expect((await previewFilmRefresh(request)).jobs).toBe(2)
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it('keeps corroborated MDBList references after a sparse refresh and respects film ID edits', async () => {
+    const { normalizeMdblistPayload } = await import('@/lib/mdblist-normalizer')
+    const { patchFilm } = await import('@/services/media')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const id = 'mdblist-fixture-film'
+    const imdb = 'tt9999901'
+    await databaseClient.insert(schema.mediaItem).values({
+      id,
+      mediaType: 'film',
+      title: 'MDBList fixture film',
+      slug: id,
+    })
+    await databaseClient.insert(schema.film).values({ mediaItemId: id })
+    const setImdb = (externalId: string) =>
+      patchFilm(
+        id,
+        {
+          referenceOverrides: [
+            { provider: 'imdb', referenceType: 'imdb', externalId },
+          ],
+        },
+        null,
+      )
+    await setImdb(imdb)
+    const persist = (ids: { imdb: string; tmdb?: number; trakt?: number }) =>
+      applyProviderResult({
+        mediaItemId: id,
+        mediaType: 'film',
+        provider: 'mdblist',
+        source: 'scrape-job',
+        ...normalizeMdblistPayload(
+          { type: 'movie', ids, keywords: [] },
+          { imdb },
+        ),
+      })
+    await persist({ imdb, tmdb: 1234, trakt: 5678 })
+    await persist({ imdb })
+    const references = () =>
+      databaseClient.query.providerReference.findMany({
+        where: eq(schema.providerReference.mediaItemId, id),
+      })
+    expect(await references()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: 'imdb',
+          referenceType: 'imdb',
+          externalId: imdb,
+        }),
+        expect.objectContaining({
+          provider: 'mdblist',
+          referenceType: 'tmdb',
+          externalId: '1234',
+        }),
+        expect.objectContaining({
+          provider: 'mdblist',
+          referenceType: 'trakt',
+          externalId: '5678',
+        }),
+      ]),
+    )
+    expect(
+      await databaseClient.select().from(schema.providerSnapshot),
+    ).toContainEqual(
+      expect.objectContaining({
+        provider: 'mdblist',
+        normalizedData: expect.objectContaining({
+          references: expect.arrayContaining([
+            expect.objectContaining({
+              referenceType: 'trakt',
+              externalId: '5678',
+            }),
+          ]),
+        }),
+      }),
+    )
+
+    const replacement = 'tt9999902'
+    await setImdb(replacement)
+    await expect(persist({ imdb, tmdb: 1234 })).rejects.toThrow(/conflict/)
+    expect(
+      (await references()).filter((ref) => ref.referenceType === 'imdb'),
+    ).toEqual([
+      expect.objectContaining({ provider: 'imdb', externalId: replacement }),
+    ])
+    expect(
+      await databaseClient.select().from(schema.providerSnapshot),
+    ).toHaveLength(2)
+  })
+
+  it('keeps an MDBList cross-ID off a film when another film already owns it', async () => {
+    const { normalizeMdblistPayload } = await import('@/lib/mdblist-normalizer')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const imdb = 'tt9999901'
+    const preview = await previewCsv(
+      `Const,Title,Created\n${imdb},Lookup fixture,2026-01-01`,
+    )
+    const { confirmFilmImport } = await import('@/services/film-imports')
+    const run = await confirmFilmImport(
+      ConfirmFilmImportSchema.parse({ previewId: preview.id, rows: [0] }),
+      null,
+    )
+    await finishImport(run.id)
+    const [target] = await databaseClient.select().from(schema.mediaItem)
+    if (!target) throw new Error('Missing film fixture')
+    const other = 'mdblist-conflicting-film'
+    await databaseClient.insert(schema.mediaItem).values({
+      id: other,
+      mediaType: 'film',
+      title: 'Other fixture film',
+      slug: other,
+    })
+    await databaseClient.insert(schema.providerReference).values({
+      id: 'mdblist-conflicting-reference',
+      mediaItemId: other,
+      provider: 'tmdb',
+      referenceType: 'tmdb',
+      externalId: '1234',
+    })
+    await expect(
+      applyProviderResult({
+        mediaItemId: target.id,
+        mediaType: 'film',
+        provider: 'mdblist',
+        source: 'scrape-job',
+        ...normalizeMdblistPayload(
+          { type: 'movie', ids: { imdb, tmdb: 1234 }, keywords: [] },
+          { imdb },
+        ),
+      }),
+    ).rejects.toThrow(/conflict/)
+    expect(
+      await databaseClient.query.providerReference.findMany({
+        where: eq(schema.providerReference.referenceType, 'tmdb'),
+      }),
+    ).toEqual([expect.objectContaining({ mediaItemId: other })])
+  })
+
+  it('recovers from current successful MDBList snapshots with independent, consistent identity evidence', async () => {
+    const { backfillMdblistReferences } =
+      await import('../scripts/backfill-mdblist-references')
+    const { applyProviderResult } = await import('@/services/provider-state')
+    const saveHistoricalResult = async (
+      id: string,
+      imdb: string,
+      tmdb: number,
+      matchingJobItem = true,
+    ) => {
+      const jobId = `${id}-job`
+      const payload = { type: 'movie', ids: { imdb, tmdb }, keywords: [] }
+      await databaseClient
+        .insert(schema.mediaItem)
+        .values({ id, mediaType: 'film', title: id, slug: id })
+      await databaseClient.insert(schema.film).values({ mediaItemId: id })
+      await databaseClient.insert(schema.scrapeJob).values({
+        id: jobId,
+        provider: 'mdblist',
+        status: 'succeeded',
+        scope: { mediaType: 'film', mediaItemIds: [id] },
+        options: {},
+      })
+      await databaseClient.insert(schema.scrapeJobItem).values({
+        id: `${jobId}-item`,
+        jobId,
+        mediaItemId: id,
+        provider: 'mdblist',
+        status: 'succeeded',
+        payload: matchingJobItem ? payload : {},
+      })
+      await databaseClient.insert(schema.providerReference).values({
+        id: `${id}-ref`,
+        mediaItemId: id,
+        provider: 'imdb',
+        referenceType: 'imdb',
+        externalId: imdb,
+      })
+      await applyProviderResult({
+        mediaItemId: id,
+        mediaType: 'film',
+        provider: 'mdblist',
+        source: 'scrape-job',
+        scrapeJobId: jobId,
+        ...PluginResultSchema.parse({ payload, normalized: {} }),
+      })
+    }
+    const targetId = 'mdblist-recovery-target'
+    const conflictedId = 'mdblist-recovery-conflicted'
+    await saveHistoricalResult(targetId, 'tt9999901', 1234)
+    await saveHistoricalResult(conflictedId, 'tt9999902', 2345)
+    await saveHistoricalResult(
+      'mdblist-recovery-unverified',
+      'tt9999903',
+      3456,
+      false,
+    )
+    await saveHistoricalResult(
+      'mdblist-recovery-competing-one',
+      'tt9999904',
+      4567,
+    )
+    await saveHistoricalResult(
+      'mdblist-recovery-competing-two',
+      'tt9999905',
+      4567,
+    )
+    await databaseClient.insert(schema.providerReferenceOverride).values({
+      id: 'mdblist-old-override',
+      mediaItemId: conflictedId,
+      provider: 'tmdb',
+      referenceType: 'tmdb',
+      externalId: '9999',
+    })
+    const readRefs = () =>
+      databaseClient.query.providerReference.findMany({
+        where: eq(schema.providerReference.provider, 'mdblist'),
+      })
+    const snapshots = await databaseClient
+      .select()
+      .from(schema.providerSnapshot)
+    const targetSnapshot = snapshots.find(
+      ({ mediaItemId }) => mediaItemId === targetId,
+    )
+    if (!targetSnapshot) throw new Error('Missing snapshot fixture')
+    const preview = await backfillMdblistReferences()
+    expect(preview).toMatchObject({
+      scanned: 4,
+      conflicts: 1,
+      competingFilms: 2,
+      eligibleFilms: 1,
+      eligibleReferences: 2,
+      added: 0,
+    })
+    expect(await readRefs()).toEqual([])
+    await expect(backfillMdblistReferences('stale-review')).rejects.toThrow(
+      /changed/,
+    )
+    expect(await backfillMdblistReferences(preview.review)).toMatchObject({
+      applied: true,
+      added: 2,
+    })
+    expect(await readRefs()).toEqual([
+      expect.objectContaining({
+        mediaItemId: targetId,
+        referenceType: 'imdb',
+        metadata: { snapshotId: targetSnapshot.id },
+      }),
+      expect.objectContaining({
+        mediaItemId: targetId,
+        referenceType: 'tmdb',
+        metadata: { snapshotId: targetSnapshot.id },
+      }),
+    ])
+    expect(await backfillMdblistReferences()).toMatchObject({
+      eligibleFilms: 0,
+      eligibleReferences: 0,
+    })
+    expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
+      snapshots,
+    )
+  })
 })

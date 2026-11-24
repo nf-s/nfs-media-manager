@@ -1,6 +1,7 @@
 import {
   isProviderItemNotFoundError,
   type MediaProviderPlugin,
+  type MediaPluginScrapeContext,
   type MediaPluginTestContext,
   type PluginReference,
 } from '@repo/media-plugin-sdk'
@@ -40,7 +41,12 @@ function getMovieReferences(references: PluginReference[]) {
 }
 
 async function fetchMdblistMovie(
-  { secrets, request }: MediaPluginTestContext,
+  {
+    secrets,
+    request,
+    existingReferences,
+  }: MediaPluginTestContext &
+    Partial<Pick<MediaPluginScrapeContext, 'existingReferences'>>,
   referenceType: string,
   externalId: string,
   expectedIds: Parameters<typeof normalizeMdblistPayload>[1] = referenceType ===
@@ -66,7 +72,11 @@ async function fetchMdblistMovie(
     throw new Error(`MDBList request failed with status ${response.status}.`)
   }
 
-  return normalizeMdblistPayload(await response.json(), expectedIds)
+  return normalizeMdblistPayload(
+    await response.json(),
+    expectedIds,
+    existingReferences,
+  )
 }
 
 export const mdblistPlugin: MediaProviderPlugin = {

@@ -20,6 +20,10 @@ import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
 import { observeFilmRelations } from './film-catalog-observations'
 import {
+  lockFilmReferenceWrites,
+  saveMdblistFilmReferences,
+} from './film-reference-state'
+import {
   discogsMasterReleaseMatch,
   readAlbumMatchRejections,
 } from './album-match-rejections'
@@ -298,6 +302,9 @@ export async function applyProviderResultInTransaction(
       ...sanitizeAlbumProviderResult(input.payload, input.normalized),
     }
   }
+  const filmReferences =
+    input.mediaType === 'film' && input.normalized.references.length > 0
+  if (filmReferences) await lockFilmReferenceWrites(database)
   if (input.normalized.tags.length > 0) await lockTagWrites(database)
   if (input.mediaType === 'album' && input.normalized.tracks.length > 0)
     await lockLibraryTrackWrites(database)
@@ -554,7 +561,13 @@ export async function applyProviderResultInTransaction(
       .where(eq(film.mediaItemId, input.mediaItemId))
   }
 
-  if (input.normalized.references.length > 0) {
+  if (filmReferences && input.provider === 'mdblist') {
+    await saveMdblistFilmReferences(
+      database,
+      input.mediaItemId,
+      input.normalized.references,
+    )
+  } else if (input.normalized.references.length > 0) {
     await replaceProviderReferences(
       database,
       input.mediaItemId,

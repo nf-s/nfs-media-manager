@@ -5,6 +5,7 @@ import {
   type PluginTag,
   type JsonValue,
   type PluginLink,
+  type PluginReference,
 } from '@repo/media-plugin-sdk'
 import { isJsonRecord } from '@/lib/provider-normalizers'
 
@@ -198,6 +199,10 @@ function normalizeKeyword(rawName: string, id: number): PluginTag | null {
 export function normalizeMdblistPayload(
   value: unknown,
   expectedIds: { imdb?: string; tmdb?: string } = {},
+  knownReferences: readonly Pick<
+    PluginReference,
+    'referenceType' | 'externalId'
+  >[] = [],
 ): PluginResult {
   const payload = JsonValueSchema.parse(value)
 
@@ -224,14 +229,31 @@ export function normalizeMdblistPayload(
   const tmdbIds = [parsed.data.ids?.tmdb, parsed.data.tmdbid]
     .filter((id) => id !== undefined && id !== null)
     .map(String)
-  for (const [expected, ids] of [
-    [expectedIds.imdb, imdbIds],
-    [expectedIds.tmdb, tmdbIds],
-  ] satisfies Array<[string | undefined, string[]]>) {
-    if (expected && (!ids.length || ids.some((id) => id !== expected))) {
-      throw new Error(
-        'MDBList returned a different or missing lookup identifier.',
-      )
+  const traktId = parsed.data.ids?.trakt
+  const references: PluginReference[] = []
+  if (expectedIds.imdb || expectedIds.tmdb) {
+    for (const { referenceType, ids, expected } of [
+      { referenceType: 'imdb', ids: imdbIds, expected: expectedIds.imdb },
+      { referenceType: 'tmdb', ids: tmdbIds, expected: expectedIds.tmdb },
+      { referenceType: 'trakt', ids: traktId ? [String(traktId)] : [] },
+    ]) {
+      const externalId = ids[0]
+      if (
+        (expected && externalId !== expected) ||
+        ids.some((id) => id !== externalId) ||
+        (externalId &&
+          knownReferences.some(
+            (reference) =>
+              reference.referenceType === referenceType &&
+              reference.externalId !== externalId,
+          ))
+      ) {
+        throw new Error(
+          'MDBList returned a different or missing lookup identifier.',
+        )
+      }
+      if (externalId)
+        references.push({ referenceType, externalId, isPrimary: false })
     }
   }
 
@@ -282,7 +304,7 @@ export function normalizeMdblistPayload(
         const tag = normalizeKeyword(name, id)
         return tag ? [tag] : []
       }),
-      references: [],
+      references,
       links,
       credits: [],
       tracks: [],

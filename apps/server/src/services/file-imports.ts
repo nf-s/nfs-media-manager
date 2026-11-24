@@ -25,6 +25,7 @@ import {
 } from './catalog-discoveries'
 import { observeFilmRelations } from './film-catalog-observations'
 import { applyProviderResultInTransaction } from './provider-state'
+import { lockFilmReferenceWrites } from './film-reference-state'
 import { lockTagWrites } from './tag-state'
 import {
   describeFilmImport,
@@ -542,9 +543,7 @@ export async function commitFilmImportRecord(
     changes: FilmImportPreview['items'][number]['changes']
   }> => {
     // Recheck and create atomically across file import entry points, including shared IDs.
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
-    )
+    await lockFilmReferenceWrites(tx)
     if (result.normalized.tags.length > 0) await lockTagWrites(tx)
     const [match] = await matchFilmCandidates([candidate], tx)
     if (match?.error) throw new Error(match.error)

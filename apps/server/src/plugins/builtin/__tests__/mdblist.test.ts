@@ -74,7 +74,10 @@ describe('MDBList keyword provider', () => {
     expect(result.payload).toEqual(mdblistMovieFixture)
     expect(result.normalized.mediaPatch).toBeUndefined()
     expect(result.normalized.filmPatch).toBeUndefined()
-    expect(result.normalized.references).toEqual([])
+    expect(result.normalized.references).toEqual([
+      { referenceType: 'imdb', externalId: 'tt0133093', isPrimary: false },
+      { referenceType: 'tmdb', externalId: '603', isPrimary: false },
+    ])
     expect(result.normalized.playlists).toEqual([])
     expect(PluginResultSchema.parse(result)).toEqual(result)
   })
@@ -171,7 +174,12 @@ describe('MDBList keyword provider', () => {
         { referenceType: 'tmdb', externalId: '603', isPrimary: true },
       ],
     })
-    await scrape(context)
+    const result = await scrape(context)
+    expect(result.normalized.references).toContainEqual({
+      referenceType: 'imdb',
+      externalId: 'tt0133093',
+      isPrimary: false,
+    })
     expect(context.request).toHaveBeenCalledExactlyOnceWith(
       new URL(
         'https://api.mdblist.com/tmdb/movie/603/?apikey=offline-key&append_to_response=keyword',
@@ -179,6 +187,53 @@ describe('MDBList keyword provider', () => {
       undefined,
       { notFoundOn404: true },
     )
+  })
+
+  it('publishes IMDb, TMDb and Trakt IDs from an exact IMDb match before a rating exists', async () => {
+    const payload = {
+      ...mdblistMovieFixture,
+      ids: { ...mdblistMovieFixture.ids, trakt: 12345 },
+    }
+    const context = createContext({
+      existingReferences: [
+        { referenceType: 'imdb', externalId: 'tt0133093', isPrimary: true },
+      ],
+      request: vi.fn(async () => Response.json(payload)),
+    })
+    const result = await scrape(context)
+    expect(result.normalized.references).toEqual([
+      { referenceType: 'imdb', externalId: 'tt0133093', isPrimary: false },
+      { referenceType: 'tmdb', externalId: '603', isPrimary: false },
+      { referenceType: 'trakt', externalId: '12345', isPrimary: false },
+    ])
+    expect(normalizeMdblistPayload(payload).normalized.references).toEqual([])
+  })
+
+  it.each([
+    { ...mdblistMovieFixture, ids: { imdb: 'tt0133093', tmdb: 999 } },
+    { ...mdblistMovieFixture, tmdbid: 999 },
+  ])(
+    'rejects conflicting secondary IDs after an exact primary match',
+    async (payload) => {
+      const context = createContext({
+        request: vi.fn(async () => Response.json(payload)),
+      })
+      await expect(scrape(context)).rejects.toThrow(
+        'MDBList returned a different or missing lookup identifier.',
+      )
+      expect(context.request).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('accepts an exact primary match when the response omits a known secondary ID', async () => {
+    const context = createContext({
+      request: vi.fn(async () =>
+        Response.json({ ...mdblistMovieFixture, ids: { imdb: 'tt0133093' } }),
+      ),
+    })
+    expect((await scrape(context)).normalized.references).toEqual([
+      { referenceType: 'imdb', externalId: 'tt0133093', isPrimary: false },
+    ])
   })
 
   it('accepts the maintained documentation shape and validates ids.tmdb, not the unrelated top-level id', async () => {
@@ -190,6 +245,10 @@ describe('MDBList keyword provider', () => {
     })
     const result = await scrape(context)
     expect(result.payload).toEqual(mdblistDocumentedFixture)
+    expect(result.normalized.references).toEqual([
+      { referenceType: 'imdb', externalId: 'tt0025100', isPrimary: false },
+      { referenceType: 'tmdb', externalId: '184940', isPrimary: false },
+    ])
     expect(result.normalized.tags).toContainEqual({
       name: 'convent nunnery',
       kind: 'keyword',
@@ -361,6 +420,10 @@ describe('MDBList keyword provider', () => {
       .mockResolvedValueOnce(Response.json(mdblistMovieFixture))
     const result = await scrape(createContext({ request }))
     expect(result.payload).toEqual(mdblistMovieFixture)
+    expect(result.normalized.references).toEqual([
+      { referenceType: 'imdb', externalId: 'tt0133093', isPrimary: false },
+      { referenceType: 'tmdb', externalId: '603', isPrimary: false },
+    ])
     expect(PluginResultSchema.parse(result)).toEqual(result)
     expect(request).toHaveBeenCalledTimes(2)
     expect(request).toHaveBeenNthCalledWith(
