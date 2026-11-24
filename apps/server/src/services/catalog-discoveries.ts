@@ -86,9 +86,9 @@ export async function clearCatalogMediaAlias(tx: Transaction, aliasId: string) {
     )
 }
 
-type CatalogCredit = { name: string; externalId?: string; role?: string }
+export type CatalogCredit = { name: string; externalId?: string; role?: string }
 
-type CatalogMedia = {
+export type CatalogMedia = {
   kind: 'album' | 'track' | 'film'
   title: string
   provider: string
@@ -134,11 +134,7 @@ function nativeReference(media: CatalogMedia) {
   return { type: media.referenceType, aliases: [media.referenceType] }
 }
 
-async function existingMedia(
-  tx: Transaction,
-  media: CatalogMedia,
-  aliases: string[],
-) {
+async function existingMedia(tx: Transaction, media: CatalogMedia) {
   if (!media.externalId) return
   const externalId = media.externalId
   const spotifyTrack = media.provider === 'spotify' && media.kind === 'track'
@@ -149,13 +145,52 @@ async function existingMedia(
       .where(eq(libraryTrack.spotifyTrackId, media.externalId))
     if (match) return match.id
   }
+  const match = (await resolveCatalogReferences(tx, [media])).get(externalId)
+  return (
+    match && {
+      id:
+        match.references.size === 1
+          ? match.references.values().next().value
+          : undefined,
+      blocked: match.blocked,
+    }
+  )
+}
+
+/** Resolve references of the same kind and provider. Spotify release URLs use their native IDs. */
+export async function resolveCatalogReferences(
+  tx: Transaction,
+  entries: readonly CatalogMedia[],
+) {
+  const [media] = entries
+  const identities = new Map(
+    entries.flatMap((entry) =>
+      entry.externalId ? [[entry.externalId, entry]] : [],
+    ),
+  )
+  const externalIds = [...identities.keys()]
+  const matches = new Map<
+    string,
+    { references: Set<string>; blocked: Set<string> }
+  >(
+    externalIds.map((id) => [
+      id,
+      { references: new Set(), blocked: new Set() },
+    ]),
+  )
+  if (!media || !matches.size) return matches
+  const { aliases } = nativeReference(media)
   const nativeReferences = await tx
-    .selectDistinct({ id: mediaItem.id, metadata: providerReference.metadata })
+    .selectDistinct({
+      id: mediaItem.id,
+      externalId: providerReference.externalId,
+      metadata: providerReference.metadata,
+    })
     .from(providerReference)
     .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
     .where(
       and(
-        eq(providerReference.externalId, externalId),
+        inArray(providerReference.externalId, externalIds),
         media.kind === 'film' && ['imdb', 'tmdb'].includes(media.referenceType)
           ? undefined
           : eq(providerReference.provider, media.provider),
@@ -163,61 +198,76 @@ async function existingMedia(
         eq(mediaItem.mediaType, media.kind),
       ),
     )
-  const blocked = new Set(
-    nativeReferences
-      .filter(
-        ({ metadata }) =>
-          String(metadata?.verified) === 'false' ||
-          String(metadata?.rejected) === 'true',
-      )
-      .map(({ id }) => id),
-  )
-  const references = new Set(
-    nativeReferences.filter(({ id }) => !blocked.has(id)).map(({ id }) => id),
-  )
-  if (
-    !references.size &&
-    media.provider === 'spotify' &&
-    media.kind === 'album'
-  ) {
-    const byUrl = await tx
-      .select({ id: album.mediaItemId })
-      .from(album)
-      .where(
-        sql`${album.spotifyUrl} is not null and substring(${album.spotifyUrl} from '/album/([A-Za-z0-9]{22})') = ${externalId}`,
-      )
-    for (const { id } of byUrl) if (!blocked.has(id)) references.add(id)
+  for (const { id, externalId, metadata } of nativeReferences) {
+    const match = matches.get(externalId)
+    if (
+      String(metadata?.verified) === 'false' ||
+      String(metadata?.rejected) === 'true'
+    )
+      match?.blocked.add(id)
+    else match?.references.add(id)
   }
-  if (media.kind === 'album' && references.size) {
-    const rejections = await readAlbumMatchRejectionsForItems(tx, [
-      ...references,
-    ])
-    for (const [id, rejected] of rejections) {
-      const isRejected = createAlbumMatchRejectionPredicate(
-        media.provider,
-        rejected,
-      )
-      if (
-        aliases.some((referenceType) =>
-          isRejected({ referenceType, externalId }),
-        ) ||
-        (media.spotifyUrl &&
-          isRejected({ referenceType: 'url', externalId: media.spotifyUrl })) ||
-        (typeof media.referenceMetadata?.url === 'string' &&
-          isRejected({
-            referenceType: 'url',
-            externalId: media.referenceMetadata.url,
-          }))
-      ) {
-        references.delete(id)
-        blocked.add(id)
+  for (const { references, blocked } of matches.values())
+    for (const id of blocked) references.delete(id)
+
+  const spotifyAlbum = media.provider === 'spotify' && media.kind === 'album'
+  if (spotifyAlbum) {
+    const withoutReferences = [...matches]
+      .filter(([, match]) => !match.references.size)
+      .map(([id]) => id)
+    if (withoutReferences.length) {
+      const externalId = sql<string>`substring(${album.spotifyUrl} from '/album/([A-Za-z0-9]{22})')`
+      const byUrl = await tx
+        .select({ id: album.mediaItemId, externalId })
+        .from(album)
+        .where(
+          and(
+            sql`${album.spotifyUrl} is not null`,
+            inArray(externalId, withoutReferences),
+          ),
+        )
+      for (const { id, externalId } of byUrl) {
+        const match = matches.get(externalId)
+        if (match && !match.blocked.has(id)) match.references.add(id)
       }
     }
   }
-  return {
-    id: references.size === 1 ? references.values().next().value : undefined,
-    blocked,
+  if (media.kind === 'album') {
+    const rejections = await readAlbumMatchRejectionsForItems(tx, [
+      ...new Set(
+        [...matches.values()].flatMap(({ references }) => [...references]),
+      ),
+    ])
+    for (const [externalId, { references, blocked }] of matches) {
+      const identity = identities.get(externalId)
+      const spotifyUrl = identity?.spotifyUrl
+      const referenceUrl = identity?.referenceMetadata?.url
+      for (const id of references) {
+        const rejected = rejections.get(id)
+        if (!rejected) continue
+        const isRejected = createAlbumMatchRejectionPredicate(
+          media.provider,
+          rejected,
+        )
+        if (
+          aliases.some((referenceType) =>
+            isRejected({ referenceType, externalId }),
+          ) ||
+          (spotifyUrl &&
+            isRejected({ referenceType: 'url', externalId: spotifyUrl })) ||
+          (typeof referenceUrl === 'string' &&
+            isRejected({
+              referenceType: 'url',
+              externalId: referenceUrl,
+            }))
+        ) {
+          references.delete(id)
+          blocked.add(id)
+        }
+      }
+    }
   }
+  return matches
 }
 
 function originKey(origin: CatalogOrigin) {
@@ -233,11 +283,11 @@ function originKey(origin: CatalogOrigin) {
 }
 
 type CatalogTarget = { kind: string; id: string }
-type Occurrence = { target: CatalogTarget; origin: CatalogOrigin }
+export type CatalogOccurrence = { target: CatalogTarget; origin: CatalogOrigin }
 
 export async function observeCatalogOccurrences(
   tx: Transaction,
-  occurrences: Occurrence[],
+  occurrences: CatalogOccurrence[],
 ) {
   for (let start = 0; start < occurrences.length; start += 500) {
     const rows = occurrences
@@ -288,6 +338,65 @@ export function observeCatalogOccurrence(
   return observeCatalogOccurrences(tx, [{ target, origin }])
 }
 
+export function spotifyTrackCatalogCredits(
+  credits: CatalogCredit[],
+  metadata: unknown,
+) {
+  const [sole] = credits
+  const billing = z
+    .tuple([
+      z.object({
+        id: z.string().regex(/^[A-Za-z0-9]{22}$/),
+        name: z.string(),
+      }),
+    ])
+    .safeParse(metadata)
+  return sole && billing.success && billing.data[0].name === sole.name
+    ? [{ ...sole, externalId: billing.data[0].id }]
+    : credits
+}
+
+export function catalogCreditOccurrence(
+  target: CatalogTarget,
+  origin: CatalogOrigin,
+  subjectKind: CatalogMedia['kind'],
+  subjectId: string,
+  relationshipRole: string,
+  position: number,
+): CatalogOccurrence {
+  return {
+    target,
+    origin: {
+      ...origin,
+      subjectKind,
+      subjectId,
+      relationshipRole,
+      position: position + 1,
+      occurrenceKey: JSON.stringify([
+        origin.occurrenceKey,
+        origin.subjectKind,
+        origin.subjectId,
+        origin.page,
+        origin.position,
+        'credit',
+      ]),
+    },
+  }
+}
+
+export function provisionalCatalogArtistId(
+  provider: string,
+  id: string,
+  role: string,
+  position: number,
+  name: string,
+) {
+  return createStableId(
+    'catalog-artist',
+    JSON.stringify([provider, id, role, position, name]),
+  )
+}
+
 async function observeCredits(
   tx: Transaction,
   id: string,
@@ -315,16 +424,10 @@ async function observeCredits(
           eq(libraryTrack.spotifyTrackId, media.externalId),
         ),
       )
-    const billing = z
-      .tuple([
-        z.object({
-          id: z.string().regex(/^[A-Za-z0-9]{22}$/),
-          name: z.string(),
-        }),
-      ])
-      .safeParse(recording?.metadata?.spotifyArtistCredits)
-    if (billing.success && billing.data[0].name === sole.name)
-      credits = [{ ...sole, externalId: billing.data[0].id }]
+    credits = spotifyTrackCatalogCredits(
+      credits,
+      recording?.metadata?.spotifyArtistCredits,
+    )
   }
   const observedNativeIds = new Map<string, string>()
   const native = await observeNamedArtistIdentities(
@@ -341,8 +444,13 @@ async function observeCredits(
   )
   for (const [position, credit] of credits.entries()) {
     const role = credit.role ?? 'artist'
-    const key = [media.provider, id, role, position, credit.name]
-    const creatorId = createStableId('catalog-artist', JSON.stringify(key))
+    const creatorId = provisionalCatalogArtistId(
+      media.provider,
+      id,
+      role,
+      position,
+      credit.name,
+    )
     const observedId =
       (position === 0 ? media.artistId : undefined) ??
       (credit.externalId ? native.get(credit.externalId) : undefined) ??
@@ -371,8 +479,7 @@ async function observeCredits(
           billingOrder: position,
         })
         .onConflictDoNothing()
-    await observeCatalogOccurrence(
-      tx,
+    const occurrence = catalogCreditOccurrence(
       {
         kind: media.kind === 'film' ? 'person' : 'artist',
         id:
@@ -380,22 +487,13 @@ async function observeCredits(
             ? observedNativeIds.get(credit.externalId)
             : undefined) ?? observedId,
       },
-      {
-        ...origin,
-        subjectKind: media.kind,
-        subjectId: id,
-        relationshipRole: role,
-        position: position + 1,
-        occurrenceKey: JSON.stringify([
-          origin.occurrenceKey,
-          origin.subjectKind,
-          origin.subjectId,
-          origin.page,
-          origin.position,
-          'credit',
-        ]),
-      },
+      origin,
+      media.kind,
+      id,
+      role,
+      position,
     )
+    await observeCatalogOccurrence(tx, occurrence.target, occurrence.origin)
   }
   if (
     outside &&
@@ -409,6 +507,138 @@ async function observeCredits(
       .onConflictDoNothing()
 }
 
+export function newCatalogMediaId(
+  media: CatalogMedia,
+  origin: CatalogOrigin,
+  blocked?: ReadonlySet<string>,
+) {
+  const { type } = nativeReference(media)
+  const key = media.externalId
+    ? [media.provider, type, media.externalId]
+    : [
+        media.provider,
+        type,
+        media.provisionalKey ?? [...originKey(origin), media.title],
+      ]
+  const id =
+    media.provider === 'spotify' && media.kind === 'track' && media.externalId
+      ? createStableId('library-track', `spotify:${media.externalId}`)
+      : createStableId(`catalog-${media.kind}`, JSON.stringify(key))
+  return blocked?.has(id)
+    ? createStableId(
+        `catalog-${media.kind}`,
+        JSON.stringify([...key, 'separate']),
+      )
+    : id
+}
+
+export function catalogReferenceValues(id: string, media: CatalogMedia) {
+  const { externalId } = media
+  if (!externalId) return
+  const { type } = nativeReference(media)
+  return {
+    id: createStableId(
+      'catalog-ref',
+      JSON.stringify([id, media.provider, type, externalId]),
+    ),
+    mediaItemId: id,
+    provider: media.provider,
+    referenceType: type,
+    externalId,
+    metadata: media.referenceMetadata,
+  }
+}
+
+export async function writeOutsideCatalogMedia(
+  tx: Transaction,
+  entries: { id: string; media: CatalogMedia }[],
+) {
+  if (!entries.length) return
+  await tx
+    .insert(mediaItem)
+    .values(
+      entries.map(({ id, media }) => ({
+        id,
+        mediaType: media.kind,
+        title: media.title,
+        slug: slugifyParts(media.title, id),
+        artworkUrl: media.artworkUrl,
+        releaseDate: media.releaseDate,
+        sourceLabel: media.provider,
+        inLibrary: false,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: mediaItem.id,
+      set: {
+        artworkUrl: sql`coalesce(${mediaItem.artworkUrl}, excluded.artwork_url)`,
+        releaseDate: sql`coalesce(${mediaItem.releaseDate}, excluded.release_date)`,
+      },
+      setWhere: sql`not ${mediaItem.inLibrary} and (
+      (${mediaItem.artworkUrl} is null and excluded.artwork_url is not null) or
+      (${mediaItem.releaseDate} is null and excluded.release_date is not null))`,
+    })
+  const releases = entries.filter(({ media }) => media.kind === 'album')
+  if (releases.length)
+    await tx
+      .insert(album)
+      .values(
+        releases.map(({ id, media }) => ({
+          mediaItemId: id,
+          spotifyUrl: media.spotifyUrl,
+          trackCount: media.trackCount,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: album.mediaItemId,
+        set: {
+          spotifyUrl: sql`coalesce(${album.spotifyUrl}, excluded.spotify_url)`,
+          trackCount: sql`case when ${album.trackCount} = 0 then excluded.track_count else ${album.trackCount} end`,
+        },
+        setWhere: sql`(${album.spotifyUrl} is null and excluded.spotify_url is not null) or (${album.trackCount} = 0 and excluded.track_count > 0)`,
+      })
+  const films = entries.filter(({ media }) => media.kind === 'film')
+  if (films.length)
+    await tx
+      .insert(film)
+      .values(films.map(({ id }) => ({ mediaItemId: id })))
+      .onConflictDoNothing()
+  const recordings = entries.filter(({ media }) => media.kind === 'track')
+  if (recordings.length)
+    await tx
+      .insert(libraryTrack)
+      .values(
+        recordings.map(({ id, media }) => ({
+          mediaItemId: id,
+          spotifyTrackId:
+            media.provider === 'spotify' && media.playable !== false
+              ? media.externalId
+              : undefined,
+          spotifyUrl: media.spotifyUrl,
+          durationSec: media.durationSec,
+          albumMediaItemId: media.albumId,
+          albumName: media.albumName,
+          spotifyAlbumId: media.spotifyAlbumId,
+          albumLinkStrategy:
+            media.albumId && media.spotifyAlbumId ? 'spotify-album' : undefined,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: libraryTrack.mediaItemId,
+        set: {
+          spotifyTrackId: sql`coalesce(${libraryTrack.spotifyTrackId}, excluded.spotify_track_id)`,
+          durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
+          albumMediaItemId: sql`coalesce(${libraryTrack.albumMediaItemId}, excluded.album_media_item_id)`,
+          albumName: sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`,
+          spotifyAlbumId: sql`coalesce(${libraryTrack.spotifyAlbumId}, excluded.spotify_album_id)`,
+        },
+        setWhere: sql`(${libraryTrack.spotifyTrackId} is null and excluded.spotify_track_id is not null) or (${libraryTrack.durationSec} is null and excluded.duration_sec is not null)
+        or (${libraryTrack.albumMediaItemId} is null and excluded.album_media_item_id is not null)
+        or (${libraryTrack.albumName} is null and excluded.album_name is not null)
+        or (${libraryTrack.spotifyAlbumId} is null and excluded.spotify_album_id is not null)`,
+      })
+}
+
 /** Resolve exact provider representations and retain each independent occurrence. */
 export async function observeCatalogMedia(
   tx: Transaction,
@@ -417,26 +647,15 @@ export async function observeCatalogMedia(
 ): Promise<string> {
   // Share the lock used by existing Spotify recording, merge and track writers.
   await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-  const { type, aliases } = nativeReference(media)
-  const resolved = await existingMedia(tx, media, aliases)
+  const resolved = await existingMedia(tx, media)
   const existingId = typeof resolved === 'string' ? resolved : resolved?.id
   const spotifyTrack = media.provider === 'spotify' && media.kind === 'track'
-  const key = media.externalId
-    ? [media.provider, type, media.externalId]
-    : [
-        media.provider,
-        type,
-        media.provisionalKey ?? [...originKey(origin), media.title],
-      ]
-  let id =
+  const id =
     existingId ??
-    (spotifyTrack && media.externalId
-      ? createStableId('library-track', `spotify:${media.externalId}`)
-      : createStableId(`catalog-${media.kind}`, JSON.stringify(key)))
-  if (typeof resolved !== 'string' && resolved?.blocked.has(id))
-    id = createStableId(
-      `catalog-${media.kind}`,
-      JSON.stringify([...key, 'separate']),
+    newCatalogMediaId(
+      media,
+      origin,
+      typeof resolved === 'string' ? undefined : resolved?.blocked,
     )
 
   const outside =
@@ -447,79 +666,7 @@ export async function observeCatalogMedia(
         and(eq(mediaItem.id, id), eq(mediaItem.inLibrary, false)),
       ),
     )
-  if (outside) {
-    await tx
-      .insert(mediaItem)
-      .values({
-        id,
-        mediaType: media.kind,
-        title: media.title,
-        slug: slugifyParts(media.title, id),
-        artworkUrl: media.artworkUrl,
-        releaseDate: media.releaseDate,
-        sourceLabel: media.provider,
-        inLibrary: false,
-      })
-      .onConflictDoUpdate({
-        target: mediaItem.id,
-        set: {
-          artworkUrl: sql`coalesce(${mediaItem.artworkUrl}, excluded.artwork_url)`,
-          releaseDate: sql`coalesce(${mediaItem.releaseDate}, excluded.release_date)`,
-        },
-        setWhere: sql`not ${mediaItem.inLibrary} and (
-      (${mediaItem.artworkUrl} is null and excluded.artwork_url is not null) or
-      (${mediaItem.releaseDate} is null and excluded.release_date is not null))`,
-      })
-    if (media.kind === 'album')
-      await tx
-        .insert(album)
-        .values({
-          mediaItemId: id,
-          spotifyUrl: media.spotifyUrl,
-          trackCount: media.trackCount,
-        })
-        .onConflictDoUpdate({
-          target: album.mediaItemId,
-          set: {
-            spotifyUrl: sql`coalesce(${album.spotifyUrl}, excluded.spotify_url)`,
-            trackCount: sql`case when ${album.trackCount} = 0 then excluded.track_count else ${album.trackCount} end`,
-          },
-          setWhere: sql`(${album.spotifyUrl} is null and excluded.spotify_url is not null) or (${album.trackCount} = 0 and excluded.track_count > 0)`,
-        })
-    if (media.kind === 'film')
-      await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
-    if (media.kind === 'track')
-      await tx
-        .insert(libraryTrack)
-        .values({
-          mediaItemId: id,
-          spotifyTrackId:
-            spotifyTrack && media.playable !== false
-              ? media.externalId
-              : undefined,
-          spotifyUrl: media.spotifyUrl,
-          durationSec: media.durationSec,
-          albumMediaItemId: media.albumId,
-          albumName: media.albumName,
-          spotifyAlbumId: media.spotifyAlbumId,
-          albumLinkStrategy:
-            media.albumId && media.spotifyAlbumId ? 'spotify-album' : undefined,
-        })
-        .onConflictDoUpdate({
-          target: libraryTrack.mediaItemId,
-          set: {
-            spotifyTrackId: sql`coalesce(${libraryTrack.spotifyTrackId}, excluded.spotify_track_id)`,
-            durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
-            albumMediaItemId: sql`coalesce(${libraryTrack.albumMediaItemId}, excluded.album_media_item_id)`,
-            albumName: sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`,
-            spotifyAlbumId: sql`coalesce(${libraryTrack.spotifyAlbumId}, excluded.spotify_album_id)`,
-          },
-          setWhere: sql`(${libraryTrack.spotifyTrackId} is null and excluded.spotify_track_id is not null) or (${libraryTrack.durationSec} is null and excluded.duration_sec is not null)
-        or (${libraryTrack.albumMediaItemId} is null and excluded.album_media_item_id is not null)
-        or (${libraryTrack.albumName} is null and excluded.album_name is not null)
-        or (${libraryTrack.spotifyAlbumId} is null and excluded.spotify_album_id is not null)`,
-        })
-  }
+  if (outside) await writeOutsideCatalogMedia(tx, [{ id, media }])
   await observeCredits(tx, id, media, origin, outside)
 
   const existingNativeTrack =
@@ -533,21 +680,9 @@ export async function observeCatalogMedia(
         eq(libraryTrack.spotifyTrackId, media.externalId),
       ),
     ))
-  if (media.externalId && !existingNativeTrack)
-    await tx
-      .insert(providerReference)
-      .values({
-        id: createStableId(
-          'catalog-ref',
-          JSON.stringify([id, media.provider, type, media.externalId]),
-        ),
-        mediaItemId: id,
-        provider: media.provider,
-        referenceType: type,
-        externalId: media.externalId,
-        metadata: media.referenceMetadata,
-      })
-      .onConflictDoNothing()
+  const reference = catalogReferenceValues(id, media)
+  if (reference && !existingNativeTrack)
+    await tx.insert(providerReference).values(reference).onConflictDoNothing()
 
   await observeCatalogOccurrence(tx, { kind: media.kind, id }, origin)
   return id

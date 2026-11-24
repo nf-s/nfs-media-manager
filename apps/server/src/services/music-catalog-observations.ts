@@ -9,7 +9,11 @@ import { db } from '@/lib/db'
 import { parseOptionalDate } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { providerResponse } from '@/schemas/db'
-import { observeCatalogMedia, type CatalogOrigin } from './catalog-discoveries'
+import {
+  observeCatalogMedia,
+  type CatalogMedia,
+  type CatalogOrigin,
+} from './catalog-discoveries'
 import type { SpotifySearchObservation } from './provider-search-task-replay'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -54,8 +58,7 @@ function occurrence(
   }
 }
 
-export async function observeSpotifyTrackAndAlbum(
-  tx: Transaction,
+export function spotifyTrackAndAlbumObservations(
   track: Omit<
     Pick<
       SpotifyTrackSearchCandidate,
@@ -81,10 +84,9 @@ export async function observeSpotifyTrackAndAlbum(
   const trackOrigin = occurrence('spotify', origin)
   const spotifyAlbumId = SpotifyIdSchema.safeParse(track.spotifyAlbumId).data
   const releaseDate = parseOptionalDate(track.releaseDate)
-  const albumId = track.albumName
-    ? await observeCatalogMedia(
-        tx,
-        {
+  const album = track.albumName
+    ? {
+        media: {
           kind: 'album',
           title: track.albumName,
           provider: 'spotify',
@@ -104,16 +106,15 @@ export async function observeSpotifyTrackAndAlbum(
             externalId: id,
             name,
           })),
-        },
-        {
+        } satisfies CatalogMedia,
+        origin: {
           ...trackOrigin,
           relationshipRole: 'candidate_album',
         },
-      )
+      }
     : undefined
-  const trackId = await observeCatalogMedia(
-    tx,
-    {
+  const recording = {
+    media: {
       kind: 'track',
       title: track.title,
       provider: 'spotify',
@@ -125,7 +126,6 @@ export async function observeSpotifyTrackAndAlbum(
       playable: track.playable,
       durationSec: track.durationSec,
       spotifyAlbumId,
-      albumId,
       albumName: track.albumName ?? undefined,
       credits: [
         ...track.artistCredits.map(({ id, name }) => ({
@@ -139,8 +139,25 @@ export async function observeSpotifyTrackAndAlbum(
           )
           .map((name) => ({ name })),
       ],
-    },
-    trackOrigin,
+    } satisfies CatalogMedia,
+    origin: trackOrigin,
+  }
+  return { album, recording }
+}
+
+export async function observeSpotifyTrackAndAlbum(
+  tx: Transaction,
+  track: Parameters<typeof spotifyTrackAndAlbumObservations>[0],
+  origin: MusicObservationOrigin,
+) {
+  const { album, recording } = spotifyTrackAndAlbumObservations(track, origin)
+  const albumId = album
+    ? await observeCatalogMedia(tx, album.media, album.origin)
+    : undefined
+  const trackId = await observeCatalogMedia(
+    tx,
+    { ...recording.media, albumId },
+    recording.origin,
   )
   return { trackId, albumId }
 }

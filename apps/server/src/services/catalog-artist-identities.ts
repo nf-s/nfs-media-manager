@@ -17,6 +17,35 @@ export async function observeNamedArtistIdentities(
   names: ReadonlyMap<string, string>,
   observedIds?: Map<string, string>,
 ) {
+  const identities = await observeArtistIdentities(
+    tx,
+    provider,
+    names,
+    observedIds,
+    true,
+  )
+  if (!identities)
+    throw new Error('Catalog artist identities could not be resolved.')
+  return identities
+}
+
+/** A merge can change the identity or credits of later entries in a page. */
+export function observeNamedArtistIdentitiesWithoutMerging(
+  tx: Transaction,
+  provider: string,
+  names: ReadonlyMap<string, string>,
+  observedIds: Map<string, string>,
+) {
+  return observeArtistIdentities(tx, provider, names, observedIds, false)
+}
+
+async function observeArtistIdentities(
+  tx: Transaction,
+  provider: string,
+  names: ReadonlyMap<string, string>,
+  observedIds: Map<string, string> | undefined,
+  reconcile: boolean,
+) {
   const identities = new Map<string, string>()
   if (!names.size) return identities
   const externalId = sql<string>`${artistProviderSnapshot.normalizedData}->>'externalId'`
@@ -82,19 +111,19 @@ export async function observeNamedArtistIdentities(
     if (verified) continue
     observedIds?.set(externalId, original)
     const target = identities.get(externalId)
-    if (
-      target &&
-      target !== artistId &&
-      !alias &&
-      (await reconcileArtistPair(
-        tx,
-        artistId,
-        target,
-        'exact-provider-artist-id',
-        true,
-      ))
-    )
-      continue
+    if (target && target !== artistId && !alias) {
+      if (!reconcile) return
+      if (
+        await reconcileArtistPair(
+          tx,
+          artistId,
+          target,
+          'exact-provider-artist-id',
+          true,
+        )
+      )
+        continue
+    }
     identities.set(externalId, artistId)
   }
 
