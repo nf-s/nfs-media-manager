@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
@@ -197,7 +197,12 @@ it('resolves the artist, retains pages and relationships, resumes once and serve
   const firstDiscoveries = await fixture
     .select()
     .from(schema.catalogObservation)
-    .where(eq(schema.catalogObservation.operation, 'artist-albums'))
+    .where(
+      and(
+        eq(schema.catalogObservation.operation, 'artist-albums'),
+        isNotNull(schema.catalogObservation.mediaItemId),
+      ),
+    )
   expect(firstDiscoveries).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
