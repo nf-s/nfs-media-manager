@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { getJobProgress } from '@repo/schemas/job'
+import { getJobActivityStage, getJobProgress } from '@repo/schemas/job'
 import {
   PlaylistSyncScheduleSchema,
   SpotifyPlaylistJobSchema,
@@ -131,6 +131,7 @@ export async function latestSpotifyJobs(
           errorMessage: job.errorMessage,
           finishedAt: job.finishedAt?.toISOString() ?? null,
           progress: getJobProgress(job.options),
+          activity: getJobActivityStage(job.options),
         }),
         options: job.options,
       })

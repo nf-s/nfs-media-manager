@@ -185,6 +185,31 @@ export function getJobProgress(
   return result.success ? result.data : null
 }
 
+/** The latest recorded stage of a job, stored in `options.activity`. */
+export const JobActivityStageSchema = z.object({
+  stage: z.string().trim().min(1),
+  done: z.number().int().nonnegative().optional(),
+  total: z.number().int().nonnegative().optional(),
+  unit: z.string().trim().min(1).optional(),
+  startedAt: z.string().datetime(),
+})
+export type JobActivityStage = z.infer<typeof JobActivityStageSchema>
+
+export function getJobActivityStage(
+  options: Record<string, unknown>,
+): JobActivityStage | null {
+  const result = JobActivityStageSchema.safeParse(options.activity)
+  return result.success ? result.data : null
+}
+
+/** Stage transitions retain the preceding stage's progress and duration. */
+export const JobActivityLogMetadataSchema = z.object({
+  activity: JobActivityStageSchema.optional(),
+  previousActivity: JobActivityStageSchema.extend({
+    durationMs: z.number().int().nonnegative(),
+  }).optional(),
+})
+
 export const JobLogSchema = z.object({
   id: z.string(),
   level: z.enum(['info', 'warn', 'error']),

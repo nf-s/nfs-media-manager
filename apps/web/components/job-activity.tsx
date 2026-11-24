@@ -7,6 +7,7 @@ import { Activity, ChevronDown } from 'lucide-react'
 import {
   JobActivitySchema,
   JobEntryPageSchema,
+  getJobActivityStage,
   type JobEntry,
 } from '@repo/schemas/job'
 import type { ProviderSummary } from '@repo/schemas/provider'
@@ -18,6 +19,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { formatCount, formatUntil } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
+import { jobActivityLabel } from '@/utils/job-activity'
 import {
   invalidateChangedJobActivity,
   jobActivityPollInterval,
@@ -82,6 +84,8 @@ export function ActivityEntry({
     entry.kind === 'batch'
       ? `${batchTitle(entry)} · ${batchTarget(entry)}`
       : jobTitle(entry.job)
+  const activity =
+    entry.kind === 'job' ? getJobActivityStage(entry.job.options) : null
   const progress =
     entry.kind === 'batch'
       ? { done: batchDone(entry), total: entry.total }
@@ -103,7 +107,11 @@ export function ActivityEntry({
         </Link>
         <span className="ds-muted">{provider}</span>
       </div>
-      {progress && <Progress done={progress.done} total={progress.total} />}
+      {activity ? (
+        <span className="ds-muted">{jobActivityLabel(activity)}</span>
+      ) : (
+        progress && <Progress done={progress.done} total={progress.total} />
+      )}
       {state === 'waiting' && waiting && (
         <Status state="waiting" title={waiting.detail}>
           {waiting.until

@@ -176,4 +176,24 @@ test('a running task job links to its page and shows its pages read', () => {
   assert.match(html, /href="\/jobs\/job-1"[^>]*>Scrobble sync</)
   assert.match(html, /aria-valuenow="3"/)
   assert.doesNotMatch(html, /Waiting/)
+  const saving = renderToStaticMarkup(
+    <ActivityEntry
+      entry={{
+        kind: 'job',
+        job: {
+          ...job,
+          options: {
+            ...job.options,
+            activity: {
+              stage: 'Saving scrobbles',
+              startedAt: job.createdAt,
+            },
+          },
+        },
+      }}
+      providers={undefined}
+    />,
+  )
+  assert.match(saving, /Saving scrobbles/)
+  assert.doesNotMatch(saving, /progressbar/)
 })

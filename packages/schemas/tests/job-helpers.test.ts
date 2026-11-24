@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { getJobProgress, shouldPollJobList, type Job } from '../src/job'
+import {
+  getJobActivityStage,
+  getJobProgress,
+  shouldPollJobList,
+  type Job,
+} from '../src/job'
 
 function createJob(status: Job['status']): Job {
   return {
@@ -54,5 +59,30 @@ describe('getJobProgress', () => {
   it('is null for a job without valid progress', () => {
     expect(getJobProgress({})).toBeNull()
     expect(getJobProgress({ progress: { pagesRead: -1 } })).toBeNull()
+  })
+})
+
+describe('getJobActivityStage', () => {
+  it('reads stages with known, unknown and absent counts', () => {
+    const stage = {
+      stage: 'Saving releases',
+      startedAt: '2026-04-03T06:00:00.000Z',
+    }
+    for (const activity of [
+      stage,
+      { ...stage, done: 2, unit: 'releases' },
+      { ...stage, done: 0, total: 0, unit: 'releases' },
+    ])
+      expect(getJobActivityStage({ activity })).toEqual(activity)
+  })
+
+  it('ignores missing or invalid stage data on older jobs', () => {
+    expect(getJobActivityStage({})).toBeNull()
+    expect(getJobActivityStage({ activity: { stage: 'Saving' } })).toBeNull()
+    expect(
+      getJobActivityStage({
+        activity: { stage: '', startedAt: '2026-04-03T06:00:00.000Z' },
+      }),
+    ).toBeNull()
   })
 })

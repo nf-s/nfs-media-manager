@@ -67,7 +67,7 @@ import { scopedHref } from '@/utils/media-scope'
 import {
   invalidatePlaylists,
   playlistJobActive,
-  playlistJobProgress,
+  playlistJobActivityLabel,
 } from '@/utils/playlist-sync'
 import { runStatusLabel, runStatusStates } from '@/utils/run-status'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
@@ -307,11 +307,9 @@ function JobStatus({
   )
 }
 
-/** Status, page progress and failure message of a playlist job. */
+/** Status, stage and failure message of a playlist job. */
 function JobState({ job }: { job: SpotifyPlaylistJob }) {
-  const progress = playlistJobActive(job)
-    ? playlistJobProgress(job.progress)
-    : null
+  const progress = playlistJobActivityLabel(job)
   return (
     <>
       <JobStatus job={job} />
@@ -346,7 +344,7 @@ function ImportState({ playlist }: { playlist: SpotifyPlaylist }) {
   const reason = cannotImportReason(playlist)
   const hasJobDetails =
     showJob &&
-    ((playlistJobActive(job) && playlistJobProgress(job.progress)) ||
+    (playlistJobActivityLabel(job) ||
       (job.status === 'failed' && job.errorMessage))
   const label = showJob
     ? runStatusLabel(job.status)

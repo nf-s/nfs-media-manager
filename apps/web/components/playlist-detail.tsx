@@ -74,6 +74,7 @@ import {
   invalidatePlaylists,
   playlistImportRequest,
   playlistJobActive,
+  playlistJobActivityLabel,
   playlistJobProgress,
   playlistNextSync,
   playlistSourceLabel,
@@ -680,7 +681,10 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
     )
   const { job } = sync
   const active = playlistJobActive(job)
-  const progress = job ? playlistJobProgress(job.progress) : null
+  const progress = job
+    ? (playlistJobActivityLabel(job) ??
+      (job.activity ? null : playlistJobProgress(job.progress)))
+    : null
   const refused = queue.data?.queued === 0
   return (
     <Section
@@ -754,7 +758,7 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
             : []),
         ]}
       />
-      {job && active && job.progress?.totalPages ? (
+      {job && active && !job.activity && job.progress?.totalPages ? (
         <div aria-label="Import progress">
           <Progress
             done={job.progress.pagesRead}

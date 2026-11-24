@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { JsonValueSchema } from '@repo/schemas/common'
 import {
+  JobActivityLogMetadataSchema,
   JobSchema,
   JobErrorDetailsSchema,
   type Job,
@@ -13,8 +14,9 @@ import {
 import { KeyValues } from '@repo/ui/components/ds/facts'
 import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
-import { formatCount, formatDateTime } from '@repo/ui/lib/format'
+import { formatCount, formatDateTime, formatElapsed } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
+import { jobActivityCount, jobActivityLabel } from '@/utils/job-activity'
 import { useConfig } from './providers'
 import JsonTree from './json-tree'
 
@@ -159,6 +161,10 @@ export function JobLogEntry({
     }
   }
   const diagnosticMetadata = DiagnosticMetadataSchema.safeParse(log.metadata)
+  const stage = JobActivityLogMetadataSchema.safeParse(log.metadata)
+  const activity = stage.success ? stage.data.activity : undefined
+  const previous = stage.success ? stage.data.previousActivity : undefined
+  const count = activity ? jobActivityCount(activity) : null
   return (
     <li className="ops-log-entry" data-level={log.level}>
       <time className="ds-muted ds-num" dateTime={log.createdAt}>
@@ -214,6 +220,21 @@ export function JobLogEntry({
         ) : null}
       </span>
       <div className="ops-log-detail">
+        {(count || previous) && (
+          <KeyValues
+            items={[
+              ...(count ? [{ label: 'Progress', value: count }] : []),
+              ...(previous
+                ? [
+                    {
+                      label: 'Previous stage',
+                      value: `${jobActivityLabel(previous)} · ${formatElapsed(previous.durationMs)}`,
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        )}
         {LegacyJobContextSchema.safeParse(log.metadata).success && (
           <p className="ds-help">
             Original batch context, not an item-specific event.

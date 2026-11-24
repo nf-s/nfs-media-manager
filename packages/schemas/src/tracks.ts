@@ -16,7 +16,11 @@ import {
   PaginatedDataSchema,
   PaginationQuerySchema,
 } from './common'
-import { JobProgressSchema, JobStatusSchema } from './job'
+import {
+  JobActivityStageSchema,
+  JobProgressSchema,
+  JobStatusSchema,
+} from './job'
 import { ListeningMonthSchema } from './lastfm'
 import {
   ListeningFilterParamSchema,
@@ -47,13 +51,14 @@ export const PlaylistSyncSettingsSchema = z
   .object({ schedule: PlaylistSyncScheduleSchema })
   .strict()
 
-/** The latest job of a playlist task, with its progress while it reads. */
+/** The latest job of a playlist task, with its stored stage and page progress. */
 export const SpotifyPlaylistJobSchema = z.object({
   jobId: z.string(),
   status: JobStatusSchema,
   errorMessage: z.string().nullable(),
   finishedAt: z.string().nullable(),
   progress: JobProgressSchema.nullable().default(null),
+  activity: JobActivityStageSchema.nullable().optional(),
 })
 export type SpotifyPlaylistJob = z.infer<typeof SpotifyPlaylistJobSchema>
 

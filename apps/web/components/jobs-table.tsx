@@ -28,6 +28,7 @@ import {
   JobPageSchema,
   JobEntryPageSchema,
   EnrichmentResultSchema,
+  getJobActivityStage,
   getJobDismissal,
   type Job,
   type JobBatchEntry,
@@ -61,6 +62,7 @@ import {
   formatUntil,
 } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
+import { jobActivityLabel } from '@/utils/job-activity'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { parseLibraryView, type Library } from '@/utils/media-scope'
 import {
@@ -148,7 +150,7 @@ const jobColumns: {
   { key: 'title', label: 'Job', width: 280, sort: 'title', required: true },
   { key: 'status', label: 'Status', width: 120, sort: 'status' },
   { key: 'provider', label: 'Provider', width: 120, sort: 'provider' },
-  { key: 'progress', label: 'Progress', width: 110 },
+  { key: 'progress', label: 'Progress', width: 240 },
   { key: 'createdAt', label: 'Created', width: 96, sort: 'createdAt' },
   {
     key: 'startedAt',
@@ -514,6 +516,11 @@ export function JobsTable({ provider }: { provider?: string }) {
     const title = jobTitle(job)
     const state = jobStatus(job)
     const result = jobResult(job, undefined, now)
+    const activity = getJobActivityStage(job.options)
+    const activityLabel =
+      activity && (canCancelJob(job) || job.status === 'failed')
+        ? jobActivityLabel(activity)
+        : null
     const progressLabel = activeJobProgressLabel(job)
     const actionable = actionableIds.includes(job.id)
     const rowAction: JobActionRequest['action'] | null = !actionable
@@ -586,7 +593,17 @@ export function JobsTable({ provider }: { provider?: string }) {
               {providerName(job.provider)}
             </Link>
           ),
-          progress: job.progress?.total ? (
+          progress: activityLabel ? (
+            <DetailLink
+              kind="job"
+              id={job.id}
+              tab="logs"
+              className="ds-muted"
+              title={activityLabel}
+            >
+              {activityLabel}
+            </DetailLink>
+          ) : job.progress?.total ? (
             <Progress
               done={job.progress.done}
               total={job.progress.total}

@@ -4,6 +4,7 @@ import { PlaylistSummarySchema } from '@repo/schemas/tracks'
 import {
   formatPlaylistDuration,
   playlistImportRequest,
+  playlistJobActivityLabel,
   playlistJobProgress,
   playlistNextSync,
   playlistSourceLabel,
@@ -49,6 +50,32 @@ test('import progress counts pages, with the total once it is known', () => {
   assert.equal(
     playlistJobProgress({ pagesRead: 2, totalPages: null }),
     '2 pages',
+  )
+})
+
+test('a Spotify playlist job shows its saved stage in place of earlier pages', () => {
+  const running = {
+    ...job('running'),
+    progress: { pagesRead: 5, totalPages: 5 },
+    activity: {
+      stage: 'Saving tracks',
+      done: 20,
+      total: 200,
+      unit: 'tracks',
+      startedAt: '2026-01-02T00:00:00.000Z',
+    },
+  }
+  assert.equal(
+    playlistJobActivityLabel(running),
+    'Saving tracks · 20 of 200 tracks',
+  )
+  assert.equal(
+    playlistJobActivityLabel({ ...running, status: 'failed' }),
+    'Last stage · Saving tracks · 20 of 200 tracks',
+  )
+  assert.equal(
+    playlistJobActivityLabel({ ...running, status: 'succeeded' }),
+    null,
   )
 })
 

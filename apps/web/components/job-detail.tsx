@@ -5,6 +5,7 @@ import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   JobSchema,
+  getJobActivityStage,
   getJobDismissal,
   type Job,
   type JobSummary,
@@ -40,8 +41,10 @@ import {
   formatUntil,
 } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
+import { jobActivityLabel } from '@/utils/job-activity'
 import {
   activeJobProgressLabel,
+  canCancelJob,
   isArtistJob,
   isSpotifyTrackSearchJob,
 } from '@/utils/job-selection'
@@ -169,7 +172,15 @@ export function JobDetail({
   const providerHref = `/providers/${encodeURIComponent(job.provider)}`
   const title = jobTitle(job)
   const dismissal = getJobDismissal(job.options)
-  const progress = activeJobProgressLabel(job)
+  const activity = getJobActivityStage(job.options)
+  const active = canCancelJob(job)
+  const progress = activity
+    ? active
+      ? jobActivityLabel(activity)
+      : job.status === 'failed'
+        ? `Last stage · ${jobActivityLabel(activity)}`
+        : null
+    : activeJobProgressLabel(job)
   const state = jobStatus(job)
   const summary = job.summary ?? fallbackSummary(job)
   const target = matchTarget(job)
@@ -458,6 +469,22 @@ export function JobDetail({
                   : []),
                 { label: 'Created', value: formatDateTime(job.createdAt) },
                 { label: 'Started', value: formatDateTime(job.startedAt) },
+                ...(activity
+                  ? [
+                      ...(!active && job.status !== 'failed'
+                        ? [
+                            {
+                              label: 'Last stage',
+                              value: jobActivityLabel(activity),
+                            },
+                          ]
+                        : []),
+                      {
+                        label: 'Stage started',
+                        value: formatDateTime(activity.startedAt),
+                      },
+                    ]
+                  : []),
                 { label: 'Finished', value: formatDateTime(job.finishedAt) },
                 {
                   label: 'Job ID',

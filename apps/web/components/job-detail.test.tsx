@@ -163,6 +163,74 @@ test('Stored JSON tab mounts only the saved-data reader and Logs exposes existin
   assert.equal(logs.dataQueries, 0)
 })
 
+test('current and failed stages take precedence over earlier page progress', () => {
+  const activity = {
+    stage: 'Saving releases',
+    done: 0,
+    total: 12,
+    unit: 'releases',
+    startedAt: timestamp,
+  }
+  const job = {
+    ...fixture,
+    options: { activity, progress: { pagesRead: 5, totalPages: 5 } },
+  }
+  const running = render({
+    job: { ...job, status: 'running', finishedAt: null, errorMessage: null },
+  }).html
+  assert.match(running, /Saving releases · 0 of 12 releases/)
+  assert.doesNotMatch(running, /5 of 5 pages|Last stage/)
+  const failed = render({ job }).html
+  assert.match(failed, /Last stage · Saving releases · 0 of 12 releases/)
+  assert.match(failed, /Synthetic failure/)
+  const done = render({
+    job: { ...job, status: 'succeeded', errorMessage: null },
+  }).html
+  assert.match(done, /data-status="done"/)
+  assert.doesNotMatch(
+    done.split('<header')[1]?.split('</header>')[0] ?? '',
+    /Saving releases/,
+  )
+  assert.match(done, /Last stage[\s\S]*Saving releases/)
+})
+
+test('stage logs show counts and the time spent in the previous stage', () => {
+  const activity = {
+    stage: 'Saving releases',
+    done: 3,
+    unit: 'releases',
+    startedAt: timestamp,
+  }
+  const job = JobSchema.parse({
+    ...fixture,
+    logs: [
+      ...fixture.logs,
+      {
+        id: 'log-2',
+        createdAt: timestamp,
+        level: 'info',
+        message: activity.stage,
+        metadata: {
+          activity,
+          previousActivity: {
+            stage: 'Reading pages',
+            done: 1,
+            total: 5,
+            unit: 'pages',
+            startedAt: timestamp,
+            durationMs: 8000,
+          },
+        },
+      },
+    ],
+  })
+  const { html } = render({ job, tab: 'logs' })
+  assert.match(html, /Saving releases/)
+  assert.match(html, /Progress[\s\S]*3 releases/)
+  assert.match(html, /Reading pages · 1 of 5 pages · 8s/)
+  assert.match(html, /Synthetic log message/)
+})
+
 test('retry and item links extend a copied inspector stack while retaining parent tabs', () => {
   const { html } = render({
     job: { ...fixture, options: { retryJobId: 'retry-1' } },

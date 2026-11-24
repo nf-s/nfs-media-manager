@@ -35,7 +35,7 @@ import { scopedHref } from '@/utils/media-scope'
 import {
   invalidatePlaylists,
   playlistJobActive,
-  playlistJobProgress,
+  playlistJobActivityLabel,
 } from '@/utils/playlist-sync'
 import {
   TrackPlaylistAdditionInputSchema,
@@ -253,9 +253,7 @@ export function AdditionState({
   name: string
 }) {
   const { job } = addition
-  const progress = playlistJobActive(job)
-    ? playlistJobProgress(job.progress)
-    : null
+  const progress = playlistJobActivityLabel(job)
   return (
     <li className="dtl-addition">
       <span>{name}</span>

@@ -82,6 +82,7 @@
           job: 'Fetch rating',
           target: 'Static Bloom',
           p: 'rym',
+          activity: 'Matching release',
           started: '13:05',
           dur: '4s',
           result: 'No search result',
@@ -100,7 +101,7 @@
           job: 'Sync scrobbles',
           target: 'Library',
           p: 'lastfm',
-          progress: [1180, 2400],
+          activity: 'Saving scrobbles · 1,180 of 2,400',
           started: '14:10',
           dur: '4m 12s',
           act: 'Cancel',
@@ -159,11 +160,13 @@
         { h: 'Provider', w: 108, c: (r) => D.provider(r.p, { short: true }) },
         {
           h: 'Progress',
-          w: 100,
+          w: 240,
           c: (r) =>
-            r.progress
-              ? D.progress(r.progress[0], r.progress[1], { compact: true })
-              : '',
+            r.activity
+              ? `<a class="ds-muted" href="#job" title="${r.activity}">${r.activity}</a>`
+              : r.progress
+                ? D.progress(r.progress[0], r.progress[1], { compact: true })
+                : '',
         },
         {
           h: 'Started',
@@ -218,6 +221,7 @@
           [
             D.provider('rym'),
             'Album · <a href="#">Static Bloom</a>',
+            'Last stage · Matching release',
             'Started 13:05',
             '4s',
           ],
@@ -320,7 +324,7 @@
           ),
       })
 
-      const activity = `<div class="ds-pop" style="width:320px"><div class="ds-pop-head">Activity</div><div style="display:grid;gap:10px;padding:4px 8px 10px"><div><div class="ds-source-line"><b>Sync scrobbles</b>${muted('Last.fm')}</div>${D.progress(1180, 2400)}</div><div><div class="ds-source-line"><b>Refresh ratings</b>${muted('Rate Your Music')}</div>${D.progress(96, 240)}<div style="margin-top:2px">${status('waiting', 'Waiting until 14:20')}</div></div><div class="ds-source-line">${status('queued', '128 queued')}${status('failed', '4 need attention')}</div></div><button type="button" class="ds-menu-item">${icon('activity', { size: 'sm' })}All jobs${muted('3 running')}</button></div>`
+      const activity = `<div class="ds-pop" style="width:320px"><div class="ds-pop-head">Activity</div><div style="display:grid;gap:10px;padding:4px 8px 10px"><div><div class="ds-source-line"><b>Sync scrobbles</b>${muted('Last.fm')}</div>${muted('Saving scrobbles · 1,180 of 2,400')}</div><div><div class="ds-source-line"><b>Refresh ratings</b>${muted('Rate Your Music')}</div>${D.progress(96, 240)}<div style="margin-top:2px">${status('waiting', 'Waiting until 14:20')}</div></div><div class="ds-source-line">${status('queued', '128 queued')}${status('failed', '4 need attention')}</div></div><button type="button" class="ds-menu-item">${icon('activity', { size: 'sm' })}All jobs${muted('3 running')}</button></div>`
 
       /* Metadata selection */
       const age = (text, stale) =>
@@ -627,7 +631,7 @@
               g.rules([
                 '<b>Summary first:</b> running, queued, needing attention, done today. Each figure filters the table.',
                 '<b>Provider state is on this page.</b> One box per provider with its queue state, so a waiting provider explains a stalled batch without a trip to Providers. Each box links to the provider.',
-                '<b>Columns:</b> Status · Job and target · Provider · Progress · Started · Duration · Result. Target and Provider are links. Result says what changed, why it failed, or when a waiting job resumes. Progress shows a percentage; the counts are in its tooltip and in the target.',
+                '<b>Columns:</b> Status · Job and target · Provider · Progress · Started · Duration · Result. Target and Provider are links. Result says what changed, why it failed, or when a waiting job resumes. Progress links to the log and shows the stage and any recorded counts on active or failed jobs. Batch progress is a percentage with counts in its tooltip.',
                 '<b>Batches are one row</b> with a progress bar and expand to their jobs. Today every job of a batch is its own row.',
                 '<b>Every row has a checkbox</b> and the action that fits its state: Cancel, Retry, Find match. The underlined View column goes; the job name opens the job.',
                 '<b>Times</b> are clock time today and a date before that, with the full timestamp on hover. Today they are <code>DD/MM/YYYY, HH:MM:SS</code>.',
@@ -642,7 +646,7 @@
               g.rules([
                 '<b>A failed job leads with the reason</b> and the two things that fix it. A finished job leads with what it changed. ' +
                   g.tag('api'),
-                "<b>Attempts</b> is the same timeline component as a source's history.",
+                "<b>Logs</b> use the same timeline component as a source's history. Stage entries show recorded counts and how long the previous stage took.",
                 '<b>Request and response</b> replaces Stored JSON: the saved request, response and snapshot, each collapsed, each with Copy.',
                 '<b>Breadcrumbs</b> show the batch, so one click returns to its siblings.',
               ]),

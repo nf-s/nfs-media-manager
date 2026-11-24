@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import type { JobProgress } from '@repo/schemas/job'
+import { formatCount } from '@repo/ui/lib/format'
 import {
   SpotifyPlaylistImportInputSchema,
   type PlaylistSource,
@@ -8,6 +9,7 @@ import {
   type SpotifyPlaylistImportInput,
   type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
+import { jobActivityLabel } from './job-activity'
 
 /** How often a playlist is read again while its import is queued or running. */
 export const PLAYLIST_SYNC_POLL_MS = 2000
@@ -53,10 +55,20 @@ export function playlistJobActive(job: SpotifyPlaylistJob | null | undefined) {
 /** Pages read so far: "2 of 5 pages", or "2 pages" while the total is unknown. */
 export function playlistJobProgress(progress: JobProgress | null) {
   if (!progress) return null
-  const read = progress.pagesRead.toLocaleString()
+  const read = formatCount(progress.pagesRead)
   return progress.totalPages === null
     ? `${read} ${progress.pagesRead === 1 ? 'page' : 'pages'}`
-    : `${read} of ${progress.totalPages.toLocaleString()} pages`
+    : `${read} of ${formatCount(progress.totalPages)} pages`
+}
+
+/** A current stage or failure context, with page progress for older jobs. */
+export function playlistJobActivityLabel(job: SpotifyPlaylistJob) {
+  if (job.activity && job.status === 'failed')
+    return `Last stage · ${jobActivityLabel(job.activity)}`
+  if (!playlistJobActive(job)) return null
+  return job.activity
+    ? jobActivityLabel(job.activity)
+    : playlistJobProgress(job.progress)
 }
 
 /** The next scheduled import, or why there is none. */
