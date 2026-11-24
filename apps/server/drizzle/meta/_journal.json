@@ -505,6 +505,13 @@
       "when": 1795488452288,
       "tag": "0071_shadow_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1795489139652,
+      "tag": "0072_catalog_native_observations",
+      "breakpoints": true
     }
   ]
 }

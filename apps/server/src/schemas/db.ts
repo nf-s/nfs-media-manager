@@ -406,6 +406,7 @@ export const artist = pgTable(
     catalogProvider: text('catalog_provider'),
     catalogExternalId: text('catalog_external_id'),
     // Scrobbles linked to the artist's library albums and tracks, counted
+    addedToLibrary: boolean('added_to_library').default(false).notNull(),
     // once. Recomputed whenever scrobble links are.
     scrobbleCount: integer('scrobble_count').default(0).notNull(),
     // The artist this name was merged into. The row stays as a name that
@@ -652,6 +653,9 @@ export const playlist = pgTable(
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     kind: playlistKindEnum('kind').notNull(),
+    catalogProvider: text('catalog_provider'),
+    catalogExternalId: text('catalog_external_id'),
+    addedToLibrary: boolean('added_to_library').default(false).notNull(),
     // spotify or spotify-liked for an imported playlist; null otherwise.
     source: text('source'),
     spotifyId: text('spotify_id'),
@@ -680,7 +684,8 @@ export const playlist = pgTable(
     ...timestampColumns,
   },
   (table) => [
-    uniqueIndex('playlist_name_kind_uidx').on(table.name, table.kind),
+    uniqueIndex('playlist_name_kind_uidx').on(table.name, table.kind).where(sql`${table.catalogProvider} is null`),
+    uniqueIndex('playlist_catalog_native_uidx').on(table.kind, table.catalogProvider, table.catalogExternalId),
     uniqueIndex('playlist_spotify_id_uidx').on(table.spotifyId),
     index('playlist_name_search_idx').using(
       'gin',
@@ -897,12 +902,17 @@ export const catalogObservation = pgTable(
   'catalog_observation',
   {
     id: text('id').primaryKey(),
-    mediaItemId: text('media_item_id').notNull().references(() => mediaItem.id, { onDelete: 'cascade' }),
+    mediaItemId: text('media_item_id').references(() => mediaItem.id, { onDelete: 'cascade' }),
+    targetKind: text('target_kind').notNull(),
+    targetId: text('target_id').notNull(),
     provider: text('provider').notNull(),
     operation: text('operation').notNull(),
     subjectKind: text('subject_kind'),
     subjectId: text('subject_id'),
     relationshipRole: text('relationship_role'),
+    details: jsonb('details').$type<Record<string, JsonValue>>(),
+    snapshotId: text('snapshot_id'),
+    importId: text('import_id'),
     page: integer('page'),
     position: integer('position'),
     jobId: text('job_id').references(() => scrapeJob.id, { onDelete: 'set null' }),
@@ -911,6 +921,7 @@ export const catalogObservation = pgTable(
   },
   (table) => [
     index('catalog_observation_target_operation_idx').on(table.mediaItemId, table.operation),
+    index('catalog_observation_native_idx').on(table.targetKind, table.targetId, table.operation),
     index('catalog_observation_subject_idx').on(table.subjectKind, table.subjectId, table.operation, table.mediaItemId),
   ],
 )
@@ -2003,6 +2014,7 @@ export const subscriptionSource = pgTable(
     readItemTotal: integer('read_item_total'),
     // Cleared when a sync no longer lists the subscription; items are kept.
     subscribed: boolean('subscribed').notNull().default(true),
+    addedToLibrary: boolean('added_to_library').default(false).notNull(),
     // The sync run that last listed the subscription.
     seenRunId: text('seen_run_id'),
     // Every page of the source's items has been read at least once.
@@ -2041,6 +2053,7 @@ export const subscriptionItem = pgTable(
       .references(() => subscriptionSource.id, { onDelete: 'cascade' }),
     type: text('type').notNull(),
     title: text('title').notNull(),
+    addedToLibrary: boolean('added_to_library').default(false).notNull(),
     description: text('description').notNull().default(''),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
     // Station mixes: the billed performers as the station names them.

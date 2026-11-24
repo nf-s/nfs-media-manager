@@ -41,6 +41,9 @@ export type CatalogOrigin = {
   position?: number
   jobId?: string
   responseId?: string
+  snapshotId?: string
+  importId?: string
+  details?: Record<string, JsonValue>
   observedAt?: Date
 }
 
@@ -63,7 +66,7 @@ async function existingMedia(tx: Transaction, media: CatalogMedia, aliases: stri
   const references = await tx.selectDistinct({ id: mediaItem.id })
     .from(providerReference).innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
     .where(and(eq(providerReference.externalId, media.externalId),
-      eq(providerReference.provider, media.provider), inArray(providerReference.referenceType, aliases),
+      media.kind === 'film' && ['imdb', 'tmdb'].includes(media.referenceType) ? undefined : eq(providerReference.provider, media.provider), inArray(providerReference.referenceType, aliases),
       eq(mediaItem.mediaType, media.kind))).limit(2)
   if (references.length === 1) return references[0]?.id
   if (references.length === 0 && media.provider === 'spotify' && media.kind === 'album') {
@@ -77,6 +80,29 @@ function originKey(origin: CatalogOrigin) {
   return [origin.provider, origin.operation, origin.subjectKind, origin.subjectId, origin.occurrenceKey, origin.page, origin.position]
 }
 
+type CatalogTarget = { kind: string; id: string }
+type Occurrence = { target: CatalogTarget; origin: CatalogOrigin }
+
+export async function observeCatalogOccurrences(tx: Transaction, occurrences: Occurrence[]) {
+  for (let start = 0; start < occurrences.length; start += 500) {
+    const rows = occurrences.slice(start, start + 500).map(({ target, origin }) => ({
+      id: createStableId('discovery', JSON.stringify([target.kind, target.id, ...originKey(origin), origin.relationshipRole,
+        origin.responseId, origin.jobId, origin.snapshotId, origin.importId])),
+      targetKind: target.kind, targetId: target.id,
+      mediaItemId: ['film', 'track', 'album'].includes(target.kind) ? target.id : null,
+      provider: origin.provider, operation: origin.operation,
+      subjectKind: origin.subjectKind, subjectId: origin.subjectId, relationshipRole: origin.relationshipRole,
+      page: origin.page, position: origin.position, jobId: origin.jobId, responseId: origin.responseId,
+      snapshotId: origin.snapshotId, importId: origin.importId, details: origin.details, observedAt: origin.observedAt,
+    }))
+    await tx.insert(catalogObservation).values(rows).onConflictDoNothing()
+  }
+}
+
+export function observeCatalogOccurrence(tx: Transaction, target: CatalogTarget, origin: CatalogOrigin) {
+  return observeCatalogOccurrences(tx, [{ target, origin }])
+}
+
 async function observeCredits(tx: Transaction, id: string, media: CatalogMedia, origin: CatalogOrigin) {
   const credits = media.credits ?? []
   for (const [position, credit] of credits.entries()) {
@@ -85,15 +111,25 @@ async function observeCredits(tx: Transaction, id: string, media: CatalogMedia, 
       ? [media.provider, credit.externalId]
       : [media.provider, id, role, position, credit.name]
     const creatorId = createStableId('catalog-artist', JSON.stringify(key))
-    const creditedId = media.artistId && position === 0 ? media.artistId : creatorId
-    if (creditedId === creatorId)
+    let creditedId = media.artistId && position === 0 ? media.artistId : creatorId
+    if (creditedId === creatorId) {
       await tx.insert(artist).values({
         id: creatorId, name: credit.name, sortName: credit.name,
         catalogProvider: media.provider, catalogExternalId: credit.externalId,
       }).onConflictDoNothing()
+      if (credit.externalId) {
+        const [native] = await tx.select({ id: artist.id, merged: artist.mergedIntoId }).from(artist).where(and(
+          eq(artist.catalogProvider, media.provider), eq(artist.catalogExternalId, credit.externalId)))
+        if (native) creditedId = native.merged ?? native.id
+      }
+    }
     await tx.insert(mediaCredit).values({
       mediaItemId: id, artistId: creditedId, role, billingOrder: position,
     }).onConflictDoNothing()
+    await observeCatalogOccurrence(tx, { kind: media.kind === 'film' ? 'person' : 'artist', id: creditedId }, {
+      ...origin, subjectKind: media.kind, subjectId: id, relationshipRole: role, position: position + 1,
+      occurrenceKey: JSON.stringify([origin.occurrenceKey, origin.subjectKind, origin.subjectId, origin.page, origin.position, 'credit']),
+    })
   }
   if (media.artistId && !credits.length && origin.relationshipRole !== 'appears_on')
     await tx.insert(mediaCredit).values({ mediaItemId: id, artistId: media.artistId, role: 'artist' }).onConflictDoNothing()
@@ -144,13 +180,7 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
       mediaItemId: id, provider: media.provider, referenceType: type, externalId: media.externalId, metadata: media.referenceMetadata,
     }).onConflictDoNothing()
 
-  await tx.insert(catalogObservation).values({
-    id: createStableId('discovery', JSON.stringify([id, ...originKey(origin)])),
-    mediaItemId: id, provider: origin.provider, operation: origin.operation,
-    subjectKind: origin.subjectKind, subjectId: origin.subjectId, relationshipRole: origin.relationshipRole,
-    page: origin.page, position: origin.position, jobId: origin.jobId, responseId: origin.responseId,
-    observedAt: origin.observedAt,
-  }).onConflictDoNothing()
+  await observeCatalogOccurrence(tx, { kind: media.kind, id }, origin)
   return id
 }
 
