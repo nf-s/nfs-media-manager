@@ -131,6 +131,16 @@ export const TidalAlbumTrackAlignmentSchema = z.enum([
   'title-duration',
 ])
 
+export const TidalSimilarEditionSchema = z.object({
+  tidalTrackId: TidalIdSchema,
+  url: TidalTrackDataSchema.shape.url,
+  sourceItemId: trackId,
+  jobId: id.optional(),
+  responseId: id.optional(),
+  code: z.string().max(40).nullish(),
+})
+export type TidalSimilarEdition = z.infer<typeof TidalSimilarEditionSchema>
+
 /**
  * A library track's current TIDAL track: its `tidal` `track` reference,
  * written by an album job or a track match.
@@ -140,6 +150,7 @@ export const TidalTrackMatchSchema = TidalTrackDataSchema.extend({
   source: z.enum(['tidal-album', 'tidal-track-match', 'tidal-similar']),
   matchReason: TidalTrackMatchReasonSchema.nullable(),
   alignment: TidalAlbumTrackAlignmentSchema.nullable(),
+  recommendation: TidalSimilarEditionSchema.optional(),
 })
 export type TidalTrackMatch = z.infer<typeof TidalTrackMatchSchema>
 
@@ -194,6 +205,7 @@ export type TidalTrackMatchJob = z.infer<typeof TidalTrackMatchJobSchema>
 export const TidalTrackMatchReviewSchema = z.object({
   trackId,
   match: TidalTrackMatchSchema.nullable(),
+  similarEditions: z.array(TidalSimilarEditionSchema).optional(),
   job: TidalTrackMatchJobSchema.nullable(),
   candidates: z
     .array(TidalTrackCandidateSchema)

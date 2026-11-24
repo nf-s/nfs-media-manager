@@ -29,6 +29,61 @@ async function openTrackSimilar(page: Page) {
   await page.getByRole('tab', { name: 'Similar', exact: true }).click()
 }
 
+test('Sources keeps the selected TIDAL edition and links the recommendation evidence', async ({
+  page,
+}) => {
+  await page.route('**/api/v1/tidal/tracks/match/*', async (route) => {
+    const id = new URL(route.request().url()).pathname.split('/').at(-1)
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: {
+          trackId: id,
+          job: null,
+          candidates: [],
+          match: {
+            tidalTrackId: '910001',
+            source: 'tidal-track-match',
+            matchReason: 'manual',
+            alignment: null,
+            url: 'https://tidal.com/browse/track/910001',
+            version: null,
+            durationSec: 191,
+            popularity: null,
+          },
+          similarEditions: [
+            {
+              tidalTrackId: '910002',
+              url: 'https://tidal.com/browse/track/910002',
+              sourceItemId: 'example-seed',
+              code: 'QZFX12700004',
+              jobId: 'example-job',
+              responseId: 'example-response',
+            },
+          ],
+        },
+      },
+    })
+  })
+  await page.goto('/tracks?view=list&q=Hidden+Letter')
+  await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
+  await page.getByRole('tab', { name: 'Sources', exact: true }).click()
+  await page.locator('summary').filter({ hasText: 'TIDAL' }).click()
+  await expect(
+    page.getByText(/TIDAL track 910001.*Chosen in review/),
+  ).toBeVisible()
+  const editions = page.getByLabel('Other TIDAL editions', { exact: true })
+  await expect(editions.getByText('TIDAL track 910002')).toBeVisible()
+  await expect(editions.getByText(/ISRC QZFX12700004/)).toBeVisible()
+  await expect(
+    editions.getByRole('link', { name: 'Source job' }),
+  ).toHaveAttribute('href', /example-response/)
+  await expect(
+    editions.getByRole('link', { name: 'Source track' }),
+  ).toHaveAttribute('href', /example-seed/)
+})
+
 test('track appearances link back to the album and the originating Similar list', async ({
   page,
 }) => {

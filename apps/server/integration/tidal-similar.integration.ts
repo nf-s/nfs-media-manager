@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -61,6 +61,7 @@ vi.mock('@/lib/provider-secrets', () => ({
 }))
 
 import { getJob, processQueuedJobs } from '@/services/jobs'
+import { repairTidalSimilarReferences } from '@/services/tidal-similar-reference-repair'
 import { observeCatalogMedia } from '@/services/catalog-discoveries'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
 import {
@@ -512,6 +513,74 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
     expect(tidalPaths()).toHaveLength(1)
   })
 
+  it('recovers earlier lists without replacing choices or choosing between editions', async () => {
+    const recorded = await refreshTidalSimilar(
+      { kind: 'tracks', id: trackId },
+      userId,
+    )
+    const first = recorded.items[0]
+    if (!first) throw new Error('Missing fixture track')
+    const readMatch = async () =>
+      (await getTidalTrackMatch('track-library')).match
+    const clear = () =>
+      databaseClient
+        .delete(schema.providerReference)
+        .where(
+          and(
+            eq(schema.providerReference.mediaItemId, 'track-library'),
+            eq(schema.providerReference.provider, 'tidal'),
+          ),
+        )
+    await clear()
+    expect(await readMatch()).toBeNull()
+    await getTidalSimilar({ kind: 'tracks', id: trackId })
+    expect(await readMatch()).toMatchObject({ tidalTrackId: first.tidalId })
+    await clear()
+    await databaseClient
+      .update(schema.tidalSimilar)
+      .set({ items: [], scrapeJobId: null })
+      .where(eq(schema.tidalSimilar.mediaItemId, trackId))
+    expect(
+      (await repairTidalSimilarReferences(databaseClient, false)).writes,
+    ).toBeGreaterThan(0)
+    expect(await readMatch()).toBeNull()
+    await repairTidalSimilarReferences(databaseClient, true)
+    expect(await readMatch()).toMatchObject({
+      tidalTrackId: first.tidalId,
+      source: 'tidal-similar',
+    })
+    expect(
+      (await repairTidalSimilarReferences(databaseClient, true)).writes,
+    ).toBe(0)
+    await clear()
+    await databaseClient
+      .insert(schema.providerReference)
+      .values(
+        reference(
+          'other-edition',
+          'track-unmatched',
+          'spotify',
+          'isrc',
+          isrc(1),
+        ),
+      )
+    await repairTidalSimilarReferences(databaseClient, true)
+    expect(await readMatch()).toBeNull()
+    await databaseClient
+      .delete(schema.providerReference)
+      .where(eq(schema.providerReference.id, 'other-edition'))
+    await databaseClient
+      .update(schema.tidalSimilar)
+      .set({
+        items: [{ ...first, tidalId: '99999', catalogMediaItemId: undefined }],
+      })
+      .where(eq(schema.tidalSimilar.mediaItemId, trackId))
+    expect(
+      (await repairTidalSimilarReferences(databaseClient, true)).disputedCodes,
+    ).toBe(1)
+    expect(await readMatch()).toBeNull()
+  })
+
   it('reads similar albums, maps them to the library and Spotify, and keeps the responses', async () => {
     await databaseClient.insert(schema.tag).values([
       {
@@ -591,6 +660,18 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       albumName: null,
       trackCount: 9,
     })
+    expect(
+      (await getTidalSimilar({ kind: 'albums', id: 'album-library' })).matched,
+    ).toBe(true)
+    expect(
+      await databaseClient.query.providerReference.findFirst({
+        where: and(
+          eq(schema.providerReference.mediaItemId, 'album-library'),
+          eq(schema.providerReference.referenceType, 'album'),
+          eq(schema.providerReference.provider, 'tidal'),
+        ),
+      }),
+    ).toMatchObject({ externalId: '810001' })
     expect(result.items[0]?.libraryMatch).toEqual({
       basis: 'upc',
       value: '000000000031',
@@ -858,6 +939,10 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       },
     ])
     expect(result.items[1]?.artists).toEqual(['Halcyon Grid', 'Vela Rooms'])
+    expect((await getTidalTrackMatch('track-library')).match).toMatchObject({
+      tidalTrackId: result.items[0]?.tidalId,
+      source: 'tidal-similar',
+    })
     expect(result.items[0]?.libraryMatch).toEqual({
       basis: 'isrc',
       value: isrc(1),

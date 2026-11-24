@@ -17,6 +17,10 @@ import {
 } from './catalog-discoveries'
 import type { SpotifySearchObservation } from './provider-search-task-replay'
 import { mapSuggestions } from './similar-library-matches'
+import {
+  shareSimilarReferences,
+  type SimilarOrigin,
+} from './tidal-similar-references'
 import { spotifyTrackBilling } from './spotify-artist-credits'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -267,18 +271,14 @@ export async function observeTidalSuggestion(
   return trackId
 }
 
-/** Preserve the link to the library track a saved Similar result opens. */
+/** Preserve the identity and the evidence for the library item a Similar result opens. */
 export async function observeTidalSimilarLibraryMatches(
   tx: Transaction,
   suggestions: readonly TidalSuggestion[],
-  input: {
-    seedId: string
-    jobId?: string
-    responseId?: string
-    observedAt?: Date
-  },
+  input: SimilarOrigin,
+  kind: TidalSimilarKind = 'track',
 ) {
-  const items = await mapSuggestions(tx, 'track', suggestions)
+  const items = await mapSuggestions(tx, kind, suggestions)
   await observeCatalogOccurrences(
     tx,
     items.flatMap((item, index) => {
@@ -292,11 +292,11 @@ export async function observeTidalSimilarLibraryMatches(
         return []
       return [
         {
-          target: { kind: 'track', id },
+          target: { kind, id },
           origin: occurrence('tidal', {
             operation: 'similar',
             key: input.jobId ?? input.seedId,
-            subjectKind: 'track',
+            subjectKind: kind,
             subjectId: input.seedId,
             jobId: input.jobId,
             responseId: input.responseId,
@@ -310,4 +310,5 @@ export async function observeTidalSimilarLibraryMatches(
       ]
     }),
   )
+  await shareSimilarReferences(tx, kind, items, input)
 }

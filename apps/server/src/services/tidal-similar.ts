@@ -159,6 +159,7 @@ function currentTidalReference(
   return sql<string | null>`(select ${column} from provider_reference r
     where r.media_item_id = ${mediaItem.id} and r.provider = 'tidal'
       and r.reference_type = ${kind}
+      and r.metadata->>'selection' is distinct from 'alternate'
     order by (r.metadata->>'source' = 'tidal-track-match') desc nulls last,
       r.metadata->>'recordedAt' desc nulls last, r.id
     limit 1)`
@@ -236,6 +237,7 @@ async function similarTarget(
       tidalJobId: currentTidalReference(kind, 'jobId'),
       items: tidalSimilar.items,
       readAt: tidalSimilar.readAt,
+      savedJobId: tidalSimilar.scrapeJobId,
       readOptions: scrapeJob.options,
     })
     .from(mediaItem)
@@ -266,6 +268,8 @@ async function similarTarget(
       : null
   return {
     title: target.title.trim(),
+    id,
+    savedJobId: target.savedJobId,
     tidalId: source?.tidalId ?? null,
     source,
     items: items.success ? items.data : [],
@@ -688,13 +692,18 @@ async function observeStoredTidalSuggestions(
     )
     items.push({ ...item, catalogMediaItemId })
   }
-  if (input.kind === 'track') {
-    await observeTidalSimilarLibraryMatches(tx, items, {
+  await observeTidalSimilarLibraryMatches(
+    tx,
+    items,
+    {
       seedId: input.itemId,
       jobId: input.jobId ?? undefined,
       responseId,
       observedAt: input.observedAt,
-    })
+    },
+    input.kind,
+  )
+  if (input.kind === 'track') {
     if (input.jobId) await reconcileTidalJobArtists(tx, input.jobId)
     await reconcileSimilarArtistCredits(tx, items)
   }
@@ -1024,6 +1033,34 @@ async function presentSimilarItems(
   target: NonNullable<Awaited<ReturnType<typeof similarTarget>>>,
 ) {
   const mapped = await mapSuggestions(database, kind, target.items)
+  // Imports can identify a library release after this Similar page was saved.
+  // Already linked results and in-flight previews stay on the read-only path.
+  const newlyLinked = mapped.filter(
+    (item) =>
+      item.missingLibraryTidalId &&
+      (item.libraryMatch?.basis !== 'spotify-id' ||
+        (kind === 'track' && item.spotifySource === 'spotify')),
+  )
+  if (target.readAt && newlyLinked.length) {
+    const origin = {
+      seedId: target.id,
+      jobId: target.savedJobId ?? undefined,
+      observedAt: target.readAt,
+    }
+    await db.transaction(async (tx) => {
+      await observeTidalSimilarLibraryMatches(
+        tx,
+        newlyLinked,
+        {
+          ...origin,
+          responseId: origin.jobId
+            ? await latestCatalogResponseId(tx, origin.jobId, 'tidal')
+            : undefined,
+        },
+        kind,
+      )
+    })
+  }
   if (kind === 'album') return mapSimilarGenres(database, kind, mapped, target)
   const idOf = (item: TidalSimilarItem) =>
     item.library?.id ?? item.catalogMediaItemId

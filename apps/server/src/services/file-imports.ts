@@ -425,9 +425,7 @@ export async function observeFilmImportPreview(
   previewId: string,
   candidates: FilmImportCandidate[],
 ) {
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
-  )
+  await lockFilmReferenceWrites(tx)
   const matches = await matchFilmCandidates(candidates, tx)
   const entries = candidates.flatMap((candidate, position) => {
     const match = matches[position]

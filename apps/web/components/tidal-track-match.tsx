@@ -21,6 +21,7 @@ import {
   TidalTrackMatchStatusInputSchema,
   TidalTrackMatchStatusSchema,
   type TidalTrackCandidate,
+  type TidalSimilarEdition,
   type TidalTrackMatch,
   type TidalTrackMatchJob,
   type TidalTrackMatchReview,
@@ -334,6 +335,34 @@ const matchSources = {
   'tidal-similar': 'Similar suggestion',
 }
 
+function SimilarEditionEvidence({ edition }: { edition: TidalSimilarEdition }) {
+  return (
+    <>
+      {edition.code && `ISRC ${edition.code} · `}
+      <DetailLink kind="track" id={edition.sourceItemId} tab="similar">
+        Source track
+      </DetailLink>
+      {edition.jobId && (
+        <>
+          {' '}
+          ·{' '}
+          <DetailLink
+            kind="job"
+            id={edition.jobId}
+            view={
+              edition.responseId
+                ? { jobResponse: edition.responseId }
+                : undefined
+            }
+          >
+            Source job
+          </DetailLink>
+        </>
+      )}
+    </>
+  )
+}
+
 /** The track's current TIDAL track, with its link and how it was found. */
 export function TidalTrackMatchLine({ match }: { match: TidalTrackMatch }) {
   return (
@@ -550,7 +579,17 @@ export function TidalTrackMatchBody({
   const accept = useAcceptTidalTrackMatch(track.id)
   const [chosen, setChosen] = useState<TidalTrackCandidate | null>(null)
   const { job, candidates, match } = review
-  if (match) return <TidalTrackMatchLine match={match} />
+  if (match)
+    return (
+      <>
+        <TidalTrackMatchLine match={match} />
+        {match.recommendation && (
+          <p className="ds-help">
+            <SimilarEditionEvidence edition={match.recommendation} />
+          </p>
+        )}
+      </>
+    )
   if (!job) return <p className="ds-muted">No TIDAL match yet.</p>
   if (isActiveTidalTrackMatch(job))
     return <TidalTrackMatchJobStatus job={job} />
@@ -839,6 +878,31 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
             />
           )}
         </SourceBlock>
+        {Boolean(review.data?.similarEditions?.length) && (
+          <SourceBlock title="Other TIDAL editions from Similar Tracks">
+            <List compact aria-label="Other TIDAL editions">
+              {review.data?.similarEditions?.map((edition) => (
+                <ListRow
+                  key={edition.tidalTrackId}
+                  thumb={<MediaThumb kind="track" src={null} size={40} />}
+                  title={
+                    <span className="ds-row-title">
+                      TIDAL track {edition.tidalTrackId}
+                    </span>
+                  }
+                  by={<SimilarEditionEvidence edition={edition} />}
+                  action={
+                    <ServiceIconLinks
+                      links={[
+                        { provider: 'tidal', label: 'TIDAL', url: edition.url },
+                      ]}
+                    />
+                  }
+                />
+              ))}
+            </List>
+          </SourceBlock>
+        )}
       </SourceRow>
       {(review.isError || match.isError) && (
         <Notice

@@ -4,8 +4,6 @@ import {
   TidalSuggestionSchema,
   tidalSuggestionTitle,
   type TidalSimilarItem,
-  type TidalSimilarKind,
-  type TidalSuggestion,
 } from '@repo/schemas/tidal'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -29,32 +27,14 @@ import { applyProviderResultInTransaction } from './provider-state'
 import { storeManualTrackInTransaction } from './spotify-track-recordings'
 import { findStoredTidalSuggestion } from './tidal-similar'
 import { recordTrackIsrcs } from './track-isrcs'
+import {
+  shareSimilarReferences,
+  similarReference,
+} from './tidal-similar-references'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 const SOURCE = 'tidal-similar'
-
-function tidalReference(
-  kind: TidalSimilarKind,
-  item: TidalSuggestion,
-  sourceItemId: string,
-  addedAt: Date,
-) {
-  return {
-    referenceType: kind,
-    externalId: item.tidalId,
-    isPrimary: true,
-    metadata: {
-      source: SOURCE,
-      sourceItemId,
-      recordedAt: addedAt.toISOString(),
-      url: item.url,
-      version: item.version,
-      durationSec: item.durationSec,
-      popularity: null,
-    },
-  }
-}
 
 function credits(artists: string[]) {
   return artists.map((name, billingOrder) => ({
@@ -104,7 +84,10 @@ async function addAlbum(
       },
       normalized: PluginNormalizedResultSchema.parse({
         references: [
-          tidalReference('album', item, sourceItemId, addedAt),
+          similarReference('album', item, {
+            seedId: sourceItemId,
+            observedAt: addedAt,
+          }),
           ...(upc.success
             ? [{ referenceType: 'upc', externalId: upc.data }]
             : []),
@@ -199,7 +182,10 @@ async function addTrack(
       id: createStableId('pref', `${id}:tidal:track:${item.tidalId}`),
       mediaItemId: id,
       provider: 'tidal',
-      ...tidalReference('track', item, sourceItemId, addedAt),
+      ...similarReference('track', item, {
+        seedId: sourceItemId,
+        observedAt: addedAt,
+      }),
     })
     .onConflictDoNothing()
   await recordTrackIsrcs(
@@ -240,13 +226,17 @@ export async function addTidalSimilarToLibrary(
         statusCode: 404,
         message: 'Similar item not found.',
       })
-    if (item.library) return { id: item.library.id }
+    if (item.library) {
+      await shareSimilarReferences(tx, kind, [item], { seedId: sourceItemId })
+      return { id: item.library.id }
+    }
     if (item.hiddenLibraryMatch)
       throw new ServerError({
         statusCode: 409,
         message: 'The selected item is hidden in the library.',
       })
     if (item.catalogMediaItemId) {
+      await shareSimilarReferences(tx, kind, [item], { seedId: sourceItemId })
       const { mediaItemId } = await promoteCatalogMediaInTransaction(
         tx,
         await resolveCatalogMediaId(tx, item.catalogMediaItemId),

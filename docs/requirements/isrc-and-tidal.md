@@ -49,6 +49,12 @@ The owner asked for this stage on 2026-11-22 ("give it a go"); the interface is 
 - SIMILAR-05: A track's TIDAL ID for the read is TIDAL's own match or album job, including a match the owner chose in review; for a track without one, the TIDAL link of its verified Sonovault record (SONO-27 in [Sonovault](sonovault.md)). Such a track is read without a TIDAL track match first. An unverified Sonovault record does not count. If TIDAL answers 404 for a Sonovault ID, the same request matches the track by ISRC and reads it once with that match; the ID is not tried again until the track's Sonovault record is read again. The count line above the list says "TIDAL ID from Sonovault" or "TIDAL match" and opens the job that recorded the ID.
 - SIMILAR-06: Each suggestion shows available genres and subgenres as small badges. Genres taken from an album, its tracks or a credited artist are labelled with that source. Each suggestion outside the library offers **Add to Library** next to its service link, including suggestions without a Spotify match. Repeat additions reuse the existing library item.
 
+### Sharing identifiers from Similar results
+
+Similar results retain the provider's track or album ID and the recording code or barcode on the identified resource. A single visible library recording with corroborating ISRC evidence, or a release with a unique matching UPC, can use the ID immediately. This also applies when a later import first identifies a recording on a saved Similar page. Tracks keep additional TIDAL editions with their originating Similar result. An existing choice stays selected, and a choice between competing editions remains available for review. Open **Sources → TIDAL** to inspect the recording code, source track and available job evidence.
+
+Run `pnpm --filter @repo/server repair:similar-references --dry-run` to check retained Similar lists and successful older reads. Use `--apply` to save the eligible references. The repair uses stored data and can be repeated. A dry run rolls back each page, so repeated observations can count the same proposed write more than once.
+
 ## Not in scope
 
 TIDAL account sign-in, TIDAL playlists and TIDAL playback. A later stage that needs the owner's TIDAL account uses the callback route `/api/v1/tidal/callback`, which is registered with TIDAL.

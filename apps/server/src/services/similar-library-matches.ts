@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   SpotifyCodeMatchSchema,
+  TidalSimilarItemSchema,
   TidalSimilarTrackSchema,
   normalizeSimilarGenres,
   type SpotifyCodeLookupSource,
@@ -74,17 +75,24 @@ function collect(rows: unknown[]) {
 const LibraryMembershipRowSchema = LibraryRowSchema.extend({
   hidden: z.boolean(),
   in_library: z.boolean(),
+  matched_by: z.unknown().optional(),
 })
 
 function collectMembership(rows: unknown[]) {
   const visible = new Map<string, SimilarLibraryItem>()
   const hidden = new Set<string>()
+  const evidence = new Map<string, TidalSimilarItem['libraryMatch']>()
   for (const row of z.array(LibraryMembershipRowSchema).parse(rows)) {
     if (row.hidden) hidden.add(row.code)
-    else if (row.in_library && !visible.has(row.code))
+    else if (row.in_library && !visible.has(row.code)) {
       visible.set(row.code, toItem(row))
+      const match = TidalSimilarItemSchema.shape.libraryMatch.safeParse(
+        row.matched_by,
+      ).data
+      if (match) evidence.set(row.code, match)
+    }
   }
-  return { visible, hidden }
+  return { visible, hidden, evidence }
 }
 
 /**
@@ -182,7 +190,7 @@ export async function libraryMembershipByTidalId(
   const result =
     kind === 'track'
       ? await database.execute(sql`
-          select r.external_id as code, m.id, m.title,
+          select r.external_id as code, r.metadata->'libraryMatch' as matched_by, m.id, m.title,
             coalesce(m.artwork_url, am.artwork_url) as artwork_url,
             lt.spotify_track_id as spotify_id, am.id as album_id,
             am.title as album_title, lt.album_name,
@@ -195,7 +203,7 @@ export async function libraryMembershipByTidalId(
             and r.external_id = any(${ids}::text[])
           order by m.created_at, m.id`)
       : await database.execute(sql`
-          select r.external_id as code, m.id, m.title, m.artwork_url,
+          select r.external_id as code, r.metadata->'libraryMatch' as matched_by, m.id, m.title, m.artwork_url,
             ${spotifyAlbumIdFromUrl} as spotify_id, null as album_id,
             null as album_title, null as album_name, a.track_count,
             ${legacyHidden('m')} as hidden, m.in_library
@@ -238,6 +246,7 @@ function stateOf(
 }
 
 export type MappedSimilarItem = TidalSimilarItem & {
+  missingLibraryTidalId: boolean
   spotifySource: SpotifyCodeLookupSource | null
   sonovaultResponseId: string | null
 }
@@ -290,7 +299,10 @@ export async function mapSuggestions(
           bySpotifyId.hidden.has(spotifyId),
         ))
     const libraryMatch: TidalSimilarItem['libraryMatch'] = tidal
-      ? { basis: 'tidal-id', value: suggestion.tidalId }
+      ? (byTidalId.evidence.get(suggestion.tidalId) ?? {
+          basis: 'tidal-id',
+          value: suggestion.tidalId,
+        })
       : code && suggestion.code
         ? { basis: kind === 'track' ? 'isrc' : 'upc', value: suggestion.code }
         : spotifyLibrary && spotifyId
@@ -304,6 +316,7 @@ export async function mapSuggestions(
       genreEvidence: null,
       state: stateOf(library, lookup),
       library: library ?? null,
+      missingLibraryTidalId: Boolean(library && !tidal),
       libraryMatch,
       ...(hiddenLibraryMatch ? { hiddenLibraryMatch: true } : {}),
       spotify:

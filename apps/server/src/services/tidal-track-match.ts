@@ -698,6 +698,12 @@ function currentMatch(
   const match = TidalTrackMatchSchema.safeParse({
     ...parsed.data,
     tidalTrackId,
+    ...(parsed.data.source === 'tidal-similar' && {
+      recommendation: TidalSimilarEditionSchema.safeParse({
+        ...metadata,
+        tidalTrackId,
+      }).data,
+    }),
     matchReason: parsed.data.matchReason ?? null,
     alignment: parsed.data.alignment ?? null,
   })
