@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
 import { TidalSimilarSchema } from '@repo/schemas/tidal'
 
@@ -21,6 +21,12 @@ async function headerLayout(header: Locator) {
       },
     )
   })
+}
+
+async function openTrackSimilar(page: Page) {
+  await page.goto('/tracks?view=list&q=Hidden+Letter')
+  await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
+  await page.getByRole('tab', { name: 'Similar', exact: true }).click()
 }
 
 test('a first read shows recommendations while the catalog save is pending', async ({
@@ -71,14 +77,12 @@ test('a first read shows recommendations while the catalog save is pending', asy
     })
   })
   try {
-    await page.goto('/tracks?view=list&q=Hidden+Letter')
-    await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
-    await page.getByRole('tab', { name: 'Similar', exact: true }).click()
+    await openTrackSimilar(page)
     await expect(
       page.getByText('Received from TIDAL · updating library matches'),
     ).toBeVisible()
     await expect(
-      page.getByRole('heading', { name: 'Tidal Basin Edit' }),
+      page.getByRole('row', { name: /Tidal Basin Edit/ }),
     ).toBeVisible()
     await expect(
       page.getByLabel('Add track to library · Tidal Basin Edit'),
@@ -94,11 +98,56 @@ test('a first read shows recommendations while the catalog save is pending', asy
 test('Similar tracks open discovered track, artist and album inspectors', async ({
   page,
 }) => {
-  await page.goto('/tracks?view=list&q=Hidden+Letter')
-  await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
-  await page.getByRole('tab', { name: 'Similar', exact: true }).click()
+  await openTrackSimilar(page)
 
-  const row = page
+  const panel = page.getByRole('tabpanel', { name: 'Similar', exact: true })
+  const tableView = panel.getByRole('button', { name: 'Table view' })
+  await expect(tableView).toHaveAttribute('aria-pressed', 'true')
+  const tableRow = panel.getByRole('row', { name: /Tidal Basin Edit/ })
+  const tableTitle = tableRow.getByRole('link', {
+    name: 'Tidal Basin Edit',
+    exact: true,
+  })
+  await expect(tableTitle).toBeVisible()
+  const trackHref = await tableTitle.getAttribute('href')
+  if (!trackHref) throw new Error('Missing recommended track link')
+  await expect(tableRow.getByText('4:23')).toBeVisible()
+  await tableTitle.focus()
+  await expect(
+    tableRow.getByRole('button', { name: /^Play Tidal Basin Edit/ }),
+  ).toBeDisabled()
+  await expect(
+    tableRow.getByRole('button', { name: /^Add Tidal Basin Edit to queue/ }),
+  ).toBeDisabled()
+  await expect(
+    tableRow.getByLabel('Add track to library · Tidal Basin Edit'),
+  ).toBeVisible()
+
+  const gridView = panel.getByRole('button', { name: 'Grid view' })
+  await gridView.click()
+  await expect(gridView).toHaveAttribute('aria-pressed', 'true')
+  await expect(tableRow).toHaveCount(0)
+  const gridTitle = panel.getByRole('link', {
+    name: 'Tidal Basin Edit',
+    exact: true,
+  })
+  await expect(gridTitle).toHaveAttribute('href', trackHref)
+  await gridTitle.focus()
+  await expect(
+    panel.getByRole('button', { name: /^Play Tidal Basin Edit/ }),
+  ).toBeVisible()
+  await gridTitle.click()
+  await expect(
+    page.getByRole('heading', { name: 'Tidal Basin Edit' }),
+  ).toBeVisible()
+  await page.goBack()
+  await expect(gridView).toHaveAttribute('aria-pressed', 'true')
+
+  const detailView = panel.getByRole('button', { name: 'Detail view' })
+  await detailView.click()
+  await expect(detailView).toHaveAttribute('aria-pressed', 'true')
+
+  const row = panel
     .getByLabel('Similar tracks', { exact: true })
     .locator('section')
     .filter({ hasText: 'Tidal Basin Edit' })
@@ -141,4 +190,42 @@ test('Similar tracks open discovered track, artist and album inspectors', async 
   expect(
     await headerLayout(page.locator('.dtl-detail > header').last()),
   ).toEqual(suggested)
+})
+
+test('Similar albums and tracks remember their views independently', async ({
+  page,
+}) => {
+  const panel = page.getByRole('tabpanel', { name: 'Similar', exact: true })
+  const detail = panel.getByRole('button', { name: 'Detail view' })
+  const grid = panel.getByRole('button', { name: 'Grid view' })
+  const table = panel.getByRole('button', { name: 'Table view' })
+  const similar = page.getByRole('tab', { name: 'Similar', exact: true })
+  const albumTitle = panel.getByText('Evening Transmissions', { exact: true })
+
+  await openTrackSimilar(page)
+  await grid.click()
+  await expect(grid).toHaveAttribute('aria-pressed', 'true')
+
+  await page.goto('/albums/pv-album-01')
+  await similar.click()
+  await expect(detail).toHaveAttribute('aria-pressed', 'true')
+  await expect(albumTitle).toBeVisible()
+  await grid.click()
+  await expect(grid).toHaveAttribute('aria-pressed', 'true')
+  await expect(albumTitle).toBeVisible()
+  await table.click()
+  await expect(table).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    panel.getByRole('row', { name: /Evening Transmissions/ }),
+  ).toBeVisible()
+
+  await page.reload()
+  await similar.click()
+  await expect(table).toHaveAttribute('aria-pressed', 'true')
+
+  await openTrackSimilar(page)
+  await expect(grid).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    panel.getByRole('link', { name: 'Tidal Basin Edit', exact: true }),
+  ).toBeVisible()
 })

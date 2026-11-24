@@ -17,6 +17,7 @@ import { idlePlaybackState } from '@/utils/playback-engine'
 import {
   SimilarBody,
   SimilarItems,
+  SimilarRow,
   similarCounts,
   spotifyAlbumPlayable,
 } from './similar-items'
@@ -121,6 +122,31 @@ const body = (values: Partial<TidalSimilar> = {}, requestFailed = false) =>
     />,
   )
 
+const detailRow = (
+  kind: TidalSimilar['kind'],
+  item: TidalSimilar['items'][number],
+) => <SimilarRow kind={kind} itemId="example-item" item={item} />
+
+test('albums default to Detail and tracks default to Table', () => {
+  const albums = body()
+  const tracks = body({ kind: 'track' })
+  for (const { html, selected } of [
+    { html: albums, selected: 'Detail' },
+    { html: tracks, selected: 'Table' },
+  ]) {
+    for (const view of ['Grid', 'Detail', 'Table']) {
+      assert.match(
+        html,
+        new RegExp(
+          `<button(?=[^>]*aria-label="${view} view")(?=[^>]*aria-pressed="${view === selected}")[^>]*>`,
+        ),
+      )
+    }
+    for (const item of items) assert.ok(html.includes(item.title))
+  }
+  assert.match(tracks, /<table\b/)
+})
+
 test('each suggestion says where it plays and links where it opens', () => {
   const html = body()
   assert.match(html, /4 from TIDAL · 1 in library · 1 on Spotify/)
@@ -153,7 +179,13 @@ test('each suggestion says where it plays and links where it opens', () => {
 test('every external album and track offers Add to Library beside its service link', () => {
   const kinds: TidalSimilar['kind'][] = ['album', 'track']
   for (const kind of kinds) {
-    const html = body({ kind })
+    const html = render(
+      items.map((item) => (
+        <React.Fragment key={item.tidalId}>
+          {detailRow(kind, item)}
+        </React.Fragment>
+      )),
+    )
     assert.equal(html.match(/lucide-book-plus/g)?.length, 3)
     assert.doesNotMatch(html, /lucide-book-check/)
     for (const item of items) {
@@ -190,18 +222,15 @@ test('similar rows show genre names with generic grouping and keep stored eviden
         source === 'artist'
           ? { id: 'example-artist', name: 'Genre artist' }
           : null
-      const html = body({
-        kind,
-        items: [
-          {
-            ...item,
-            genreSource: source,
-            genreEvidence,
-            genreArtist,
-            genres: ['Ambient', 'Dub'],
-          },
-        ],
-      })
+      const html = render(
+        detailRow(kind, {
+          ...item,
+          genreSource: source,
+          genreEvidence,
+          genreArtist,
+          genres: ['Ambient', 'Dub'],
+        }),
+      )
       assert.match(html, /aria-label="Genres for External suggestion"/)
       assert.match(html, /class="ds-pill-label">Ambient</)
       assert.match(html, /class="ds-pill-label">Dub</)
@@ -212,7 +241,7 @@ test('similar rows show genre names with generic grouping and keep stored eviden
       if (genreEvidence) assert.match(html, /example-job[^"]+example-response/)
       if (genreArtist) assert.match(html, /example-artist[^"]*"/)
     }
-    assert.doesNotMatch(body({ kind, items: [item] }), /class="ds-pills"/)
+    assert.doesNotMatch(render(detailRow(kind, item)), /class="ds-pills"/)
   }
 })
 
@@ -494,29 +523,26 @@ test('a Spotify-only suggestion plays by its Spotify URI', () => {
 })
 
 test('a discovered track uses the detail header with linked credits, album and artwork', () => {
-  const html = body({
-    kind: 'track',
-    items: [
-      {
-        ...suggestion('100008', 'unsearched', 'External title'),
-        catalogMediaItemId: 'old-track-id',
-        track: {
-          id: 'discovered-track',
-          title: 'Discovered track',
-          inLibrary: false,
-          artistCredits: [
-            { id: 'first-artist', name: 'Fixture Ensemble' },
-            { id: 'second-artist', name: 'Fixture Orchestra' },
-          ],
-          album: { id: 'discovered-album', title: 'Recorded album' },
-          albumName: null,
-          artworkUrl: 'https://example.test/cover.jpg',
-          spotifyTrackId: null,
-          spotifyAlbumId: null,
-        },
+  const html = render(
+    detailRow('track', {
+      ...suggestion('100008', 'unsearched', 'External title'),
+      catalogMediaItemId: 'old-track-id',
+      track: {
+        id: 'discovered-track',
+        title: 'Discovered track',
+        inLibrary: false,
+        artistCredits: [
+          { id: 'first-artist', name: 'Fixture Ensemble' },
+          { id: 'second-artist', name: 'Fixture Orchestra' },
+        ],
+        album: { id: 'discovered-album', title: 'Recorded album' },
+        albumName: null,
+        artworkUrl: 'https://example.test/cover.jpg',
+        spotifyTrackId: null,
+        spotifyAlbumId: null,
       },
-    ],
-  })
+    }),
+  )
   assert.match(html, /aria-label="Open details for Discovered track"/)
   assert.match(html, /src="https:\/\/example\.test\/cover\.jpg"/)
   assert.match(html, /href="[^"]*first-artist"[^>]*>Fixture Ensemble</)
@@ -530,27 +556,30 @@ test('a discovered track uses the detail header with linked credits, album and a
   assert.doesNotMatch(html, /old-track-id|Outside library|looked up on Spotify/)
 })
 
-test('cached provider-only tracks use detail headers without inventing catalog links', () => {
+test('cached provider-only tracks appear in the table without inventing catalog links', () => {
+  const item = suggestion('100010', 'none', 'Unlinked recording')
   const client = new QueryClient()
   client.setQueryData(
     ['tidal-similar', 'track', 'example-track'],
     similar({
       kind: 'track',
       itemId: 'example-track',
-      items: [suggestion('100010', 'none', 'Unlinked recording')],
+      items: [item],
     }),
   )
   const html = render(<SimilarItems kind="track" id="example-track" />, client)
-  assert.match(html, /<header class="ds-detail-head"/)
-  assert.match(html, /<h2 class="ds-detail-title">Unlinked recording<\/h2>/)
-  assert.match(html, /class="ds-detail-play"/)
-  assert.match(html, /class="ds-detail-links"/)
-  assert.match(html, /class="ds-detail-facts"><span>5:48<\/span>/)
-  assert.match(html, />Unavailable</)
-  assert.doesNotMatch(
-    html,
-    /Open details for Unlinked recording|class="ds-row"/,
-  )
+  assert.match(html, /<table\b/)
+  assert.match(html, />Unlinked recording</)
+  assert.match(html, />5:48</)
+  assert.doesNotMatch(html, /<a [^>]*>Unlinked recording<\/a>/)
+
+  const detail = render(detailRow('track', item))
+  assert.match(detail, /<h2 class="ds-detail-title">Unlinked recording<\/h2>/)
+  assert.match(detail, /class="ds-detail-play"/)
+  assert.match(detail, /class="ds-detail-links"/)
+  assert.match(detail, /class="ds-detail-facts"><span>5:48<\/span>/)
+  assert.match(detail, />Unavailable</)
+  assert.doesNotMatch(detail, /Open details for Unlinked recording/)
 })
 
 test('a connected player enables the detail play pair for a Spotify match without a local ID', () => {
@@ -559,11 +588,7 @@ test('a connected player enables the detail play pair for a Spotify match withou
     <PlaybackViewContext.Provider
       value={{ ...idlePlaybackState, enabled: true, connection: 'connected' }}
     >
-      <SimilarBody
-        similar={similar({ kind: 'track', items: [item] })}
-        requesting={false}
-        onRequest={() => assert.fail('Rendering must not request')}
-      />
+      {detailRow('track', item)}
     </PlaybackViewContext.Provider>,
   )
   for (const label of [

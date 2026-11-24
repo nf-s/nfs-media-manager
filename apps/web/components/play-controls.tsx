@@ -56,11 +56,13 @@ function UnavailablePlayButton({
   available,
   position,
   compact = true,
+  place = 'row',
 }: {
   title: string
   available: boolean
   position?: number
   compact?: boolean
+  place?: 'row' | 'tile'
 }) {
   const playback = usePlayback()
   const reason = unavailableReason(available, playback.enabled)
@@ -78,7 +80,7 @@ function UnavailablePlayButton({
     <>
       <Position value={position} />
       <PlayPair
-        place="row"
+        place={place}
         title={title}
         disabled
         disabledReason={reason}
@@ -105,10 +107,12 @@ export function AlbumReferencePlayButton({
   id,
   title,
   source,
+  place = 'row',
 }: {
   id: string
   title: string
   source?: PlaybackSourceFactory
+  place?: 'row' | 'tile'
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -137,12 +141,16 @@ export function AlbumReferencePlayButton({
   })
   if (!view.enabled || playback.data === null)
     return (
-      <UnavailablePlayButton title={title} available={playback.data !== null} />
+      <UnavailablePlayButton
+        title={title}
+        available={playback.data !== null}
+        place={place}
+      />
     )
   return (
     <>
       <PlayPair
-        place="row"
+        place={place}
         title={title}
         playing={playing}
         disabled={playback.isPending}

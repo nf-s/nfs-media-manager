@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   LayoutGrid,
+  PanelsTopLeft,
   List as ListIcon,
   SlidersHorizontal,
   Table2,
@@ -60,19 +61,32 @@ const views = [
 export function BrowseViewSwitch({
   view,
   onChange,
+  detail = false,
 }: {
   view: BrowseView
   onChange: (view: BrowseView) => void
+  /** The middle view shows a recommendation's detail layout. */
+  detail?: boolean
 }) {
   return (
     <Segmented
       label="Browse views"
       value={view}
-      options={views}
+      options={detail ? detailViews : views}
       onChange={onChange}
     />
   )
 }
+
+const detailViews = views.map((option) =>
+  option.value === 'list'
+    ? {
+        ...option,
+        label: 'Detail view',
+        icon: <PanelsTopLeft className="ds-i" data-size="sm" aria-hidden />,
+      }
+    : option,
+)
 
 const densityLabels: Record<GridDensity, string> = {
   compact: 'Compact',
