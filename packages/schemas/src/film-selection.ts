@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { FilmListItemSchema, FilmQuerySchema } from './media'
 import { PaginatedDataSchema } from './common'
 import type { BrowseField } from './browse'
@@ -103,6 +104,7 @@ export const FilmSelectionPageSchema = PaginatedDataSchema(
 )
 export type FilmSelectionItem = z.infer<typeof FilmSelectionItemSchema>
 export const QueueFilmSelectionSchema = z.object({
+  ...CatalogScopeQuerySchema.shape,
   providers: z.array(z.string().min(1)).min(1).max(20),
   mediaItemIds: z.array(z.string().min(1)).min(1).max(100),
   olderThanDays: z.number().int().min(1).max(3650).optional(),

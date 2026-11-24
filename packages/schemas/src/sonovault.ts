@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { JobStatusSchema } from './job'
 
 /** The task that looks up to 100 library tracks on Sonovault in one request. */
@@ -113,6 +114,7 @@ export const SonovaultTrackLookupParamsSchema = z.object({
 /** Tracks to look up; each call queues at most two jobs (one per input type). */
 export const SonovaultTrackLookupInputSchema = z
   .object({
+    catalogScope: CatalogScopeQuerySchema.optional(),
     trackIds: z.array(trackId).min(1).max(SONOVAULT_BULK_LIMIT),
     batchId: id.optional(),
     /** Look up tracks whose records are older than 11 months again. */

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { JsonValueSchema, PaginatedDataSchema } from './common'
 import {
   ProviderRequestDiagnosticsSchema,
@@ -396,6 +397,7 @@ export const EnrichmentResultSchema = z.object({
   warnings: z.array(z.string()),
 })
 export const RefreshFilmsSchema = z.object({
+  ...CatalogScopeQuerySchema.shape,
   providers: z.array(z.string().min(1)).min(1).max(20),
   olderThanDays: z.number().int().min(1).max(3650).default(180),
   limit: z.number().int().min(1).max(100).default(5),

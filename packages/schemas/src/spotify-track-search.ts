@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { ProviderFreshnessFiltersSchema } from './film-selection'
 import { JobStatusSchema } from './job'
 import { spotifyIdPattern } from './playback'
@@ -61,6 +62,7 @@ export const SpotifyTrackSearchQuerySchema = z.string().trim().pipe(id)
 
 export const SpotifyTrackSearchInputSchema =
   SpotifyTrackSearchStatusInputSchema.extend({
+    catalogScope: CatalogScopeQuerySchema.optional(),
     batchId: id.optional(),
     query: SpotifyTrackSearchQuerySchema.optional(),
     confirmBroadRun: z.boolean().default(false),

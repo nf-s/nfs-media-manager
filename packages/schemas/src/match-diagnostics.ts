@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import {
   DirectionSchema,
   PaginatedDataSchema,
@@ -84,6 +85,7 @@ export const TrackMatchFreshnessSchema = ProviderFreshnessFiltersSchema.refine(
 
 export const TrackMatchDiagnosticsQuerySchema =
   MatchDiagnosticsQuerySchema.extend({
+    ...CatalogScopeQuerySchema.shape,
     /** Coverage lists read library recordings without hydrating provider payloads. */
     view: z
       .enum(['providers', 'spotify-coverage', 'spotify-search-metadata'])

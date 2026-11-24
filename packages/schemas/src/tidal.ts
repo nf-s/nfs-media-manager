@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { JobStatusSchema } from './job'
 import { normalizeTagName } from './tags'
 
@@ -150,6 +151,7 @@ export const TIDAL_TRACK_MATCH_REQUEST_LIMIT = 10
 
 export const TidalTrackMatchInputSchema = z
   .object({
+    catalogScope: CatalogScopeQuerySchema.optional(),
     trackIds: z.array(trackId).min(1).max(TIDAL_TRACK_MATCH_REQUEST_LIMIT),
     batchId: id.optional(),
     confirmBroadRun: z.boolean().default(false),

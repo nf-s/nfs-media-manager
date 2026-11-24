@@ -1,5 +1,8 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
+import { db } from '@/lib/db'
+import { ServerError } from '@/lib/error'
+import { libraryTrack, mediaItem } from '@/schemas/db'
 
 export function catalogScopeCondition(
   id: SQL,
@@ -48,4 +51,33 @@ export function memberScope(query: CatalogScopeQuery) {
     (!query.libraryScope || query.libraryScope === 'library') &&
     !(query.discoverySources && query.discoverySourceScope === 'selection')
   )
+}
+
+/** Metadata sends its scope with each batch. Individual detail actions already name the target. */
+export async function requireTrackSelectionScope(
+  ids: string[],
+  scope: CatalogScopeQuery | undefined,
+) {
+  if (!scope) return
+  const unique = [...new Set(ids)]
+  const total = await db.$count(
+    mediaItem,
+    and(
+      inArray(mediaItem.id, unique),
+      eq(mediaItem.mediaType, 'track'),
+      sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+      sql`exists (select 1 from ${libraryTrack} where ${libraryTrack.mediaItemId} = ${mediaItem.id})`,
+      catalogScopeCondition(
+        sql`${mediaItem.id}`,
+        sql`${mediaItem.inLibrary}`,
+        scope,
+      ),
+    ),
+  )
+  if (total !== unique.length)
+    throw new ServerError({
+      statusCode: 422,
+      message:
+        'Some selected tracks are outside the current scope. Reload and select again.',
+    })
 }
