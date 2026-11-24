@@ -239,8 +239,15 @@ function lookupPaths() {
   return request.mock.calls.map(([url]) => new URL(String(url)).pathname)
 }
 
+function albumReferences() {
+  return databaseClient
+    .select()
+    .from(schema.providerReference)
+    .where(eq(schema.providerReference.mediaItemId, albumId))
+}
+
 describe('find match', () => {
-  it('previews an alternate album tracklist through the request gate without saving data or sending a username', async () => {
+  it('retains an alternate tracklist without changing the album or sending a username', async () => {
     const { previewAlbumCandidate } =
       await import('@/services/album-candidate-preview')
     const url = 'https://www.last.fm/music/Fixture+Artist/Alternate'
@@ -268,8 +275,22 @@ describe('find match', () => {
       masterId: null,
       mainReleaseId: null,
       trackCount: 1,
-      tracks: [{ position: 1, title: 'First Track', durationSec: 200 }],
+      tracks: [
+        {
+          position: 1,
+          title: 'First Track',
+          durationSec: 200,
+          catalogMediaItemId: expect.any(String),
+        },
+      ],
     })
+    const trackId = result.tracks[0]?.catalogMediaItemId
+    if (!trackId) throw new Error('Missing discovered preview track')
+    expect(
+      await databaseClient.query.mediaItem.findFirst({
+        where: eq(schema.mediaItem.id, trackId),
+      }),
+    ).toMatchObject({ inLibrary: false, title: 'First Track' })
     expect(request).toHaveBeenCalledTimes(1)
     const outgoing = new URL(String(request.mock.calls[0]?.[0]))
     expect(outgoing.searchParams.get('method')).toBe('album.getInfo')
@@ -277,9 +298,7 @@ describe('find match', () => {
     expect(
       await databaseClient.select().from(schema.providerSnapshot),
     ).toHaveLength(0)
-    expect(
-      await databaseClient.select().from(schema.providerReference),
-    ).toHaveLength(0)
+    expect(await albumReferences()).toHaveLength(0)
     await databaseClient.insert(schema.mediaOverride).values({
       id: 'fixture-match-rejection',
       mediaItemId: albumId,
@@ -371,9 +390,7 @@ describe('find match', () => {
     mockDiscogsLookup()
     for (const choice of choices) {
       await selectDiscogs(choice)
-      expect(
-        await databaseClient.select().from(schema.providerReference),
-      ).toEqual([expect.objectContaining(choice)])
+      expect(await albumReferences()).toEqual([expect.objectContaining(choice)])
 
       // Simulate a stored reference left by the previous version of the app.
       await insertOldDiscogsReference(
@@ -401,9 +418,7 @@ describe('find match', () => {
           ? ['/masters/22', '/releases/33']
           : ['/releases/11'],
       )
-      expect(
-        await databaseClient.select().from(schema.providerReference),
-      ).toEqual([expect.objectContaining(choice)])
+      expect(await albumReferences()).toEqual([expect.objectContaining(choice)])
       expect(await databaseClient.select().from(schema.externalLink)).toEqual([
         expect.objectContaining({
           url: `https://www.discogs.com/${choice.referenceType}/${choice.externalId}`,
@@ -514,9 +529,9 @@ describe('find match', () => {
     expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
       [],
     )
-    expect(
-      await databaseClient.select().from(schema.providerReference),
-    ).toEqual([expect.objectContaining(discogsMaster)])
+    expect(await albumReferences()).toEqual([
+      expect.objectContaining(discogsMaster),
+    ])
     expect(await databaseClient.select().from(schema.externalLink)).toEqual([])
   })
 
@@ -634,9 +649,7 @@ describe('find match', () => {
         expect.objectContaining({ scrapeJobId: replacement.id }),
       ]),
     )
-    expect(
-      await databaseClient.select().from(schema.providerReference),
-    ).toEqual([
+    expect(await albumReferences()).toEqual([
       expect.objectContaining({
         ...reference(secondMbid),
         mediaItemId: albumId,
