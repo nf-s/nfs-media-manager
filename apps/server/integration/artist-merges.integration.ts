@@ -635,6 +635,21 @@ it('recovers a queue artist from the exact track in a stored legacy Spotify albu
   const [old] = (await credits()).filter((c) => c.mediaItemId === id)
   if (!old) throw new Error('Missing queue artist')
   await fixture
+    .insert(schema.mediaItem)
+    .values({
+      id: 'legacy-film-role',
+      slug: 'legacy-film-role',
+      title: 'Fixture performer film',
+      mediaType: 'film',
+    })
+  await fixture
+    .insert(schema.mediaCredit)
+    .values({
+      mediaItemId: 'legacy-film-role',
+      artistId: keptId,
+      role: 'actor',
+    })
+  await fixture
     .update(schema.artistProviderSnapshot)
     .set({ normalizedData: { tags: [], externalId: nativeId } })
     .where(eq(schema.artistProviderSnapshot.artistId, keptId))
@@ -666,6 +681,210 @@ it('recovers a queue artist from the exact track in a stored legacy Spotify albu
   })
   expect(await repairScopedSpotifyCredits(true, fixture)).toBe(1)
   expect((await artistOf(old.artistId))?.mergedIntoId).toBe(keptId)
+})
+
+it('repairs scoped Spotify billing only from exact and consistent retained recording evidence', async () => {
+  const nativeId = 'R'.repeat(22)
+  const otherId = 'X'.repeat(22)
+  const releaseId = 'A'.repeat(22)
+  const playlistId = 'P'.repeat(22)
+  const cases = [
+    'snapshot',
+    'lookup',
+    'track',
+    'search',
+    'playlist',
+    'album',
+    'conflict',
+    'nested',
+    'wrong-slot',
+    'wrong-track',
+    'invalid',
+  ]
+  const evidence = new Map<
+    string,
+    { id: string; spotifyId: string; artistId: string }
+  >()
+  for (const [index, name] of cases.entries()) {
+    const spotifyId = `recording${String(index).padStart(2, '0')}`.padEnd(
+      22,
+      '0',
+    )
+    const id = await fixture.transaction((tx) =>
+      observeCatalogMedia(
+        tx,
+        {
+          kind: 'track',
+          provider: 'spotify',
+          referenceType: 'track',
+          externalId: spotifyId,
+          title: name,
+          credits: [{ name: KEPT }],
+          albumId: name === 'snapshot' ? spellingAlbum : undefined,
+        },
+        {
+          provider: 'spotify',
+          operation: 'playback-queue',
+          occurrenceKey: spotifyId,
+        },
+      ),
+    )
+    const [credit] = (await credits()).filter((row) => row.mediaItemId === id)
+    if (!credit) throw new Error('Expected a scoped artist credit')
+    evidence.set(name, { id, spotifyId, artistId: credit.artistId })
+  }
+  const entry = (name: string) => {
+    const track = evidence.get(name)
+    if (!track) throw new Error(`Missing fixture ${name}`)
+    return track
+  }
+  const song = (name: string, artistId = nativeId) => ({
+    id: entry(name).spotifyId,
+    artists: [{ id: artistId, name: KEPT }],
+  })
+  await fixture
+    .update(schema.artistProviderSnapshot)
+    .set({ normalizedData: { tags: [], externalId: nativeId } })
+    .where(eq(schema.artistProviderSnapshot.artistId, keptId))
+  await fixture.insert(schema.providerSnapshot).values({
+    id: 'fixture-scoped-album-snapshot',
+    mediaItemId: spellingAlbum,
+    provider: 'spotify',
+    source: 'legacy-import',
+    checksum: 'fixture',
+    normalizedData: {},
+    payload: { spotify: { tracks: { items: [song('snapshot')] } } },
+  })
+  await fixture.insert(schema.spotifyCodeLookup).values(
+    ['lookup', 'conflict'].map((name, index) => {
+      const spotifyId = entry(name).spotifyId
+      return {
+        codeType: 'isrc',
+        code: `USXYZ240010${index}`,
+        spotifyId,
+        searchedAt: new Date(),
+        result: SpotifyCodeMatchSchema.parse({
+          spotifyId,
+          url: `https://open.spotify.com/track/${spotifyId}`,
+          title: name,
+          artists: [KEPT],
+          artistCredits: [{ id: nativeId, name: KEPT }],
+          spotifyAlbumId: null,
+          albumName: null,
+          durationSec: 180,
+          artworkUrl: null,
+          trackCount: null,
+        }),
+      }
+    }),
+  )
+  await fixture.insert(schema.scrapeJob).values({
+    id: 'fixture-scoped-receipts',
+    provider: 'spotify',
+    scope: {},
+    options: {},
+  })
+  const sources: { name: string; path: string; body: string }[] = [
+    {
+      name: 'track',
+      path: `tracks/${entry('track').spotifyId}`,
+      body: JSON.stringify(song('track')),
+    },
+    {
+      name: 'search',
+      path: 'search?type=track',
+      body: JSON.stringify({
+        tracks: { items: [song('wrong-track'), song('search')] },
+      }),
+    },
+    {
+      name: 'playlist',
+      path: `playlists/${playlistId}/items`,
+      body: JSON.stringify({ items: [{ track: song('playlist') }] }),
+    },
+    {
+      name: 'album',
+      path: `albums/${releaseId}/tracks`,
+      body: JSON.stringify({ items: [song('album')] }),
+    },
+    {
+      name: 'conflict',
+      path: 'search?type=track',
+      body: JSON.stringify({ tracks: { items: [song('conflict', otherId)] } }),
+    },
+    {
+      name: 'nested',
+      path: 'search?type=track',
+      body: JSON.stringify({
+        tracks: { items: [{ arbitrary: song('nested') }] },
+      }),
+    },
+    {
+      name: 'wrong-slot',
+      path: `tracks/${entry('wrong-slot').spotifyId}`,
+      body: JSON.stringify({
+        ...song('wrong-slot'),
+        artists: [{ name: 'Fixture Guest' }, ...song('wrong-slot').artists],
+      }),
+    },
+    {
+      name: 'wrong-track',
+      path: 'search?type=track',
+      body: JSON.stringify({ tracks: { items: [song('search')] } }),
+    },
+    {
+      name: 'invalid',
+      path: 'search?type=track',
+      body: '{"tracks":{"items":[',
+    },
+  ]
+  for (const [index, { name, path, body }] of sources.entries()) {
+    const receipt = `fixture-scoped-receipt-${name}`
+    await fixture.insert(schema.providerResponse).values({
+      id: receipt,
+      jobId: 'fixture-scoped-receipts',
+      provider: 'spotify',
+      attempt: 1,
+      ordinal: index + 1,
+      phase: 'task',
+      method: 'GET',
+      requestUrl: `https://api.spotify.com/v1/${path}`,
+      status: 200,
+      bodyState: 'captured',
+      retainedBytes: Buffer.byteLength(body),
+      body: { state: 'captured', text: body },
+    })
+    await fixture.transaction((tx) =>
+      observeCatalogOccurrences(tx, [
+        {
+          target: { kind: 'track', id: entry(name).id },
+          origin: {
+            provider: 'spotify',
+            operation: 'provider-result',
+            occurrenceKey: receipt,
+            responseId: receipt,
+          },
+        },
+      ]),
+    )
+  }
+  const supported = [
+    'snapshot',
+    'lookup',
+    'track',
+    'search',
+    'playlist',
+    'album',
+  ]
+  expect(await repairScopedSpotifyCredits(false, fixture)).toBe(
+    supported.length,
+  )
+  expect(await repairScopedSpotifyCredits(true, fixture)).toBe(supported.length)
+  for (const name of cases)
+    expect((await artistOf(entry(name).artistId))?.mergedIntoId, name).toBe(
+      supported.includes(name) ? keptId : null,
+    )
+  expect(await repairScopedSpotifyCredits(true, fixture)).toBe(0)
 })
 
 it('merges, undoes and makes the merge again', async () => {
@@ -1056,14 +1275,12 @@ it('attaches an exact Spotify music identity to a film-credit holder without mov
       },
     ),
   )
-  await fixture
-    .insert(schema.mediaItem)
-    .values({
-      id: 'fixture-role',
-      slug: 'fixture-role',
-      title: 'Fixture film',
-      mediaType: 'film',
-    })
+  await fixture.insert(schema.mediaItem).values({
+    id: 'fixture-role',
+    slug: 'fixture-role',
+    title: 'Fixture film',
+    mediaType: 'film',
+  })
   await fixture
     .insert(schema.mediaCredit)
     .values({ artistId: keptId, mediaItemId: 'fixture-role', role: 'actor' })

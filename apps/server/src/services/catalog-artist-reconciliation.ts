@@ -14,6 +14,7 @@ import { createStableId } from '@/lib/media-utils'
 import { spotifyCodeLookup, tidalSimilar, providerResponse } from '@/schemas/db'
 import { normalizeSpotifyCatalogTrack } from './provider-search-task-replay'
 import type { ChangeTransaction } from './library-change-effect'
+import { scopedSpotifyRetainedBilling } from './scoped-spotify-billing'
 
 /** Both native artist IDs must identify just one current artist. Names never select a record. */
 async function exactOwners(
@@ -68,8 +69,9 @@ export async function reconcileArtistPair(
       (rule === 'recording-native-artist-credit' ||
         rule === 'exact-provider-artist-id') &&
       source?.catalog_provider === 'spotify' &&
-      typeof source.catalog_external_id === 'string' &&
-      /^[A-Za-z0-9]{22}$/.test(source.catalog_external_id) &&
+      ((typeof source.catalog_external_id === 'string' &&
+        /^[A-Za-z0-9]{22}$/.test(source.catalog_external_id)) ||
+        (source.catalog_external_id === null && sharedBilling !== undefined)) &&
       reading.plan.artists.find((row) => row.id === sourceId)?.blocked === null
     if (!keepsFilmRoles) return false
   }
@@ -222,48 +224,80 @@ export async function reconcileExactCatalogArtists(
 }
 
 async function scopedSpotifyEvidence(
-  tx: Pick<ChangeTransaction, 'execute'>,
+  tx: Pick<ChangeTransaction, 'execute' | 'select' | 'selectDistinct'>,
   onlyId?: string,
 ) {
   const rows =
-    await tx.execute(sql`select a.id, a.name, m.id as track_id, o.position, min(b.external_id) as external_id
+    await tx.execute(sql`select a.id, a.name, m.id as track_id, t.spotify_track_id as spotify_id, o.position,
+      coalesce(array_agg(distinct b.external_id) filter (where b.external_id ~ '^[a-zA-Z0-9]{22}$'), '{}'::text[]) as external_ids
       from artist a join catalog_observation o on o.target_kind='artist' and o.target_id=a.id
       join media_item m on m.id=o.subject_id join library_track t on t.media_item_id=m.id
-      cross join lateral (
-        select credit->>'id' as external_id from jsonb_array_elements(case when jsonb_typeof(m.metadata->'spotifyArtistCredits')='array'
-          then m.metadata->'spotifyArtistCredits' else '[]'::jsonb end) with ordinality as bill(credit,ordinal)
+      left join lateral (
+        select credit->>'id' as external_id from jsonb_array_elements(case
+          when jsonb_typeof(m.metadata->'spotifyArtistBilling')='array' then m.metadata->'spotifyArtistBilling'
+          when jsonb_typeof(m.metadata->'spotifyArtistCredits')='array' then m.metadata->'spotifyArtistCredits'
+          else '[]'::jsonb end) with ordinality as bill(credit,ordinal)
           where o.position=ordinal and credit->>'name'=a.name
         union all
         select n.catalog_external_id from catalog_observation x join artist n on n.id=x.target_id
           where x.subject_kind='track' and x.subject_id=m.id and x.position=o.position and x.provider='spotify'
             and x.target_kind='artist' and x.relationship_role='artist' and n.catalog_provider='spotify' and n.name=a.name
         union all
-        select bill.credit->>'id' from provider_current_state p
+        select bill.credit->>'id' from (
+          select p.payload from provider_current_state p
+            where p.provider='spotify' and p.media_item_id=t.album_media_item_id
+          union all
+          select p.payload from provider_snapshot p
+            where p.provider='spotify' and p.media_item_id=t.album_media_item_id
+        ) p
           cross join lateral (values ${sql.join(
             spotifyAlbumTrackPaths.map((path) => sql`(${path}::text)`),
             sql`, `,
           )}) path(value)
           cross join lateral jsonb_path_query(p.payload,path.value::jsonpath,jsonb_build_object('track_id',t.spotify_track_id)) song
           cross join lateral jsonb_array_elements(case when jsonb_typeof(song->'artists')='array' then song->'artists' else '[]'::jsonb end) with ordinality bill(credit,ordinal)
-          where p.provider='spotify' and p.media_item_id=t.album_media_item_id and bill.ordinal=o.position and bill.credit->>'name'=a.name
-      ) b
+          where bill.ordinal=o.position and bill.credit->>'name'=a.name
+      ) b on true
       where a.catalog_provider='spotify' and a.catalog_external_id is null and a.merged_into_id is null
         ${onlyId ? sql`and a.id=${onlyId}` : sql``}
         and o.provider='spotify' and o.subject_kind='track' and o.relationship_role='artist'
-        and b.external_id ~ '^[a-zA-Z0-9]{22}$' and t.spotify_track_id is not null
+        and o.position > 0 and t.spotify_track_id is not null
         and not exists(select 1 from media_credit c where c.artist_id=a.id and c.media_item_id<>m.id)
-      group by a.id,a.name,m.id,o.position having count(distinct b.external_id)=1`)
-  return z
+      group by a.id,a.name,m.id,t.spotify_track_id,o.position`)
+  const candidates = z
     .array(
       z.object({
         id: z.string(),
         name: z.string(),
         track_id: z.string(),
+        spotify_id: z.string(),
         position: z.number(),
-        external_id: z.string(),
+        external_ids: z.array(z.string()),
       }),
     )
     .parse(rows.rows)
+    .filter(
+      (row) =>
+        row.id ===
+        createStableId(
+          'catalog-artist',
+          JSON.stringify([
+            'spotify',
+            row.track_id,
+            'artist',
+            row.position - 1,
+            row.name,
+          ]),
+        ),
+    )
+  const retained = await scopedSpotifyRetainedBilling(tx, candidates)
+  return candidates.flatMap(({ external_ids, ...candidate }) => {
+    const [external_id, conflict] = new Set([
+      ...external_ids,
+      ...retained(candidate),
+    ])
+    return external_id && !conflict ? [{ ...candidate, external_id }] : []
+  })
 }
 
 /** Keep the shared track-write lock for just one independently reversible artist merge. */
