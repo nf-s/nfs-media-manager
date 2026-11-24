@@ -1,4 +1,5 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
+import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
 import type { JsonValue } from '@repo/media-plugin-sdk'
@@ -30,13 +31,22 @@ const referenceType = 'spotify'
 const albumReferenceTypes = [referenceType, 'album', 'spotify_album']
 const CREDIT_BATCH_SIZE = 500
 
-function uniqueAlbumMatches(rows: { externalId: string | null; id: string }[]) {
+const AlbumIdentityRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    external_id: z.string().nullable(),
+    in_library: z.boolean(),
+    blocked: z.boolean(),
+  }),
+)
+
+function uniqueAlbumMatches(rows: z.infer<typeof AlbumIdentityRowsSchema>) {
   const matches = new Map<string, Set<string>>()
-  for (const { externalId, id } of rows) {
-    if (!externalId) continue
-    const ids = matches.get(externalId) ?? new Set()
+  for (const { external_id, id, blocked } of rows) {
+    if (!external_id || blocked) continue
+    const ids = matches.get(external_id) ?? new Set()
     ids.add(id)
-    matches.set(externalId, ids)
+    matches.set(external_id, ids)
   }
   return matches
 }
@@ -54,64 +64,71 @@ export async function observeSpotifyArtistAlbumPage(
 ) {
   if (!releases.length) return new Map<string, string>()
   const externalIds = [...new Set(releases.map(({ externalId }) => externalId))]
-  const referenceRows = await tx
-    .select({
-      externalId: providerReference.externalId,
-      id: mediaItem.id,
-      metadata: providerReference.metadata,
-    })
-    .from(providerReference)
-    .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
-    .where(
-      and(
-        inArray(providerReference.externalId, externalIds),
-        eq(providerReference.provider, provider),
-        inArray(providerReference.referenceType, albumReferenceTypes),
-        eq(mediaItem.mediaType, 'album'),
+  const candidates = releases.map((release) => {
+    const key = [provider, referenceType, release.externalId]
+    return {
+      release,
+      provisional: createStableId('catalog-album', JSON.stringify(key)),
+      separate: createStableId(
+        'catalog-album',
+        JSON.stringify([...key, 'separate']),
       ),
+    }
+  })
+  const provisionalIds = [
+    ...new Set(
+      candidates.flatMap(({ provisional, separate }) => [
+        provisional,
+        separate,
+      ]),
+    ),
+  ]
+  const { rows } = await tx.execute(sql`
+    with refs as (
+      select m.id, r.external_id, m.in_library,
+        coalesce(bool_or(
+          r.metadata->>'verified' = 'false' or r.metadata->>'rejected' = 'true'
+        ), false) as blocked
+      from provider_reference r join media_item m on m.id = r.media_item_id
+      where r.external_id = any(${sql.param(externalIds)}::text[])
+        and r.provider = ${provider}
+        and r.reference_type = any(${sql.param(albumReferenceTypes)}::text[])
+        and m.media_type = 'album'
+      group by m.id, r.external_id, m.in_library
+    ), unmatched as (
+      select id from unnest(${sql.param(externalIds)}::text[]) as wanted(id)
+      where not exists (select 1 from refs where external_id = wanted.id and not blocked)
     )
+    select id, external_id, in_library, blocked from refs
+    union all
+    select m.id, unmatched.id, m.in_library, false
+    from unmatched
+    join album a on substring(a.spotify_url from '/album/([A-Za-z0-9]{22})') = unmatched.id
+    join media_item m on m.id = a.media_item_id
+    where not exists (
+      select 1 from refs where id = m.id and external_id = unmatched.id and blocked
+    )
+    union all
+    select id, null, in_library, false from media_item
+    where id = any(${sql.param(provisionalIds)}::text[]) and in_library
+  `)
+  const albumIdentities = AlbumIdentityRowsSchema.parse(rows)
   const blocked = new Map<string, Set<string>>()
-  for (const { id, externalId, metadata } of referenceRows) {
-    if (
-      String(metadata?.verified) !== 'false' &&
-      String(metadata?.rejected) !== 'true'
-    )
-      continue
-    const ids = blocked.get(externalId) ?? new Set<string>()
+  for (const { id, external_id, blocked: isBlocked } of albumIdentities) {
+    if (!isBlocked || !external_id) continue
+    const ids = blocked.get(external_id) ?? new Set<string>()
     ids.add(id)
-    blocked.set(externalId, ids)
+    blocked.set(external_id, ids)
   }
-  const byReference = uniqueAlbumMatches(
-    referenceRows.filter(
-      ({ id, externalId }) => !blocked.get(externalId)?.has(id),
-    ),
-  )
-  const withoutReference = externalIds.filter((id) => !byReference.has(id))
-  const urlId = sql<
-    string | null
-  >`substring(${album.spotifyUrl} from '/album/([A-Za-z0-9]{22})')`
-  const urlRows = withoutReference.length
-    ? await tx
-        .select({ externalId: urlId, id: album.mediaItemId })
-        .from(album)
-        .where(inArray(urlId, withoutReference))
-    : []
-  const byUrl = uniqueAlbumMatches(
-    urlRows.filter(
-      ({ id, externalId }) => !externalId || !blocked.get(externalId)?.has(id),
-    ),
-  )
-  const targets = releases.map((release) => {
-    const matches =
-      byReference.get(release.externalId) ?? byUrl.get(release.externalId)
+  const matchedAlbums = uniqueAlbumMatches(albumIdentities)
+  const targets = candidates.map(({ release, provisional, separate }) => {
+    const matches = matchedAlbums.get(release.externalId)
     const existingId =
       matches?.size === 1 ? matches.values().next().value : undefined
-    const key = [provider, referenceType, release.externalId]
-    const provisional = createStableId('catalog-album', JSON.stringify(key))
     const id =
       existingId ??
       (blocked.get(release.externalId)?.has(provisional)
-        ? createStableId('catalog-album', JSON.stringify([...key, 'separate']))
+        ? separate
         : provisional)
     const origin: CatalogOrigin = {
       ...page,
@@ -126,14 +143,8 @@ export async function observeSpotifyArtistAlbumPage(
     }
     return { id, release, origin }
   })
-  const ids = [...new Set(targets.map(({ id }) => id))]
   const members = new Set(
-    (
-      await tx
-        .select({ id: mediaItem.id })
-        .from(mediaItem)
-        .where(and(inArray(mediaItem.id, ids), eq(mediaItem.inLibrary, true)))
-    ).map(({ id }) => id),
+    albumIdentities.flatMap(({ id, in_library }) => (in_library ? [id] : [])),
   )
   const outside = targets.filter(({ id }) => !members.has(id))
   const summaries = new Map<string, Release>()

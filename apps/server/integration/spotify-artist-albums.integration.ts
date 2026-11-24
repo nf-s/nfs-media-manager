@@ -484,7 +484,12 @@ it('writes a new and repeated 20-entry artist release page in bounded database w
     credits:
       index % 2 === 0
         ? [{ externalId: spotifyArtistId, name: artistName }]
-        : [{ externalId: otherSpotifyArtistId, name: 'Another Artist' }],
+        : [
+            {
+              externalId: 'writerAppearanceArtist'.padEnd(22, '0'),
+              name: 'Artist Page Appearance Fixture',
+            },
+          ],
     artworkUrl: undefined,
     releaseDate: undefined,
     trackCount: undefined,
@@ -517,6 +522,67 @@ it('writes a new and repeated 20-entry artist release page in bounded database w
       ),
     ),
   ).toBe(20)
+})
+
+it('uses a legacy Spotify album URL only after excluding blocked reference matches', async () => {
+  const externalId = 'writerLegacyRelease'.padEnd(22, '0')
+  const blockedId = 'writer-legacy-blocked'
+  const legacyId = 'writer-legacy-member'
+  const ids = [blockedId, legacyId]
+  await fixture.insert(schema.mediaItem).values(
+    ids.map((id): typeof schema.mediaItem.$inferInsert => ({
+      id,
+      title: id,
+      slug: id,
+      mediaType: 'album',
+    })),
+  )
+  await fixture.insert(schema.album).values(
+    ids.map((mediaItemId) => ({
+      mediaItemId,
+      spotifyUrl: `https://open.spotify.com/album/${externalId}`,
+    })),
+  )
+  await fixture.insert(schema.providerReference).values([
+    {
+      id: 'writer-blocked-native',
+      mediaItemId: blockedId,
+      provider: 'spotify',
+      referenceType: 'spotify',
+      externalId,
+    },
+    {
+      id: 'writer-blocked-native-alias',
+      mediaItemId: blockedId,
+      provider: 'spotify',
+      referenceType: 'album',
+      externalId,
+      metadata: { verified: false },
+    },
+  ])
+  const { releases } = parseSpotifyArtistAlbumPage(
+    {
+      offset: 0,
+      total: 1,
+      next: null,
+      items: [{ ...outsideAlbum, id: externalId }],
+    },
+    spotifyArtistId,
+    0,
+  )
+  const observed = await fixture.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
+    return observeSpotifyArtistAlbumPage(tx, releases, {
+      occurrencePrefix: 'fixture-writer-legacy',
+      page: 1,
+    })
+  })
+  expect(observed.get(externalId)).toBe(legacyId)
+  expect(
+    await fixture.query.mediaItem.findFirst({
+      where: eq(schema.mediaItem.id, legacyId),
+    }),
+  ).toMatchObject({ inLibrary: true, title: legacyId })
 })
 
 it('preserves ambiguous album identities and duplicate response positions', async () => {
