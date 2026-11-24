@@ -957,14 +957,16 @@ describe('reviewed film import and enrichment', () => {
         .sort(),
     ).toEqual(['cancelled', 'failed', 'failed', 'failed', 'failed', 'failed'])
   })
-  it('stages previews without library writes, retains missing IDs and imports exact reviewed rows once', async () => {
+  it('stages outside films, retains missing IDs and promotes the reviewed rows in place', async () => {
     const { confirmFilmImport } = await import('@/services/film-imports')
     const preview = await previewCsv()
     expect(preview.items.map((item) => item.needsIdentification)).toEqual([
       false,
       true,
     ])
-    expect(await databaseClient.select().from(schema.mediaItem)).toHaveLength(0)
+    const observed = await databaseClient.select().from(schema.mediaItem)
+    expect(observed).toHaveLength(2)
+    expect(observed.every((row) => !row.inLibrary)).toBe(true)
     expect(await databaseClient.select().from(schema.scrapeJob)).toHaveLength(0)
     await expect(
       confirmFilmImport(
@@ -979,7 +981,11 @@ describe('reviewed film import and enrichment', () => {
     })
     const run = await confirmFilmImport(input, null)
     await finishImport(run.id)
-    expect(await databaseClient.select().from(schema.mediaItem)).toHaveLength(2)
+    const imported = await databaseClient.select().from(schema.mediaItem)
+    expect(new Set(imported.map((row) => row.id))).toEqual(
+      new Set(observed.map((row) => row.id)),
+    )
+    expect(imported.every((row) => row.inLibrary)).toBe(true)
     const jobs = await databaseClient.select().from(schema.scrapeJob)
     expect(jobs).toHaveLength(2)
     expect(jobs.every((job) => job.options['batchId'] === preview.id)).toBe(
@@ -1035,7 +1041,12 @@ describe('reviewed film import and enrichment', () => {
     await expect(
       confirmFilmImport({ ...input, confirmBroadRun: true }, null),
     ).rejects.toThrow(/expired/)
-    expect(await databaseClient.select().from(schema.mediaItem)).toHaveLength(0)
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.mediaItem)
+        .where(eq(schema.mediaItem.inLibrary, true)),
+    ).toHaveLength(0)
     expect(fetch).not.toHaveBeenCalled()
   })
   it('previews only new NFO films from the server directory, including unidentified films', async () => {
@@ -1053,7 +1064,12 @@ describe('reviewed film import and enrichment', () => {
     expect(preview.existing).toBe(1)
     expect(preview.items).toHaveLength(2)
     expect(preview.items.some((item) => item.needsIdentification)).toBe(true)
-    expect(await databaseClient.select().from(schema.mediaItem)).toHaveLength(1)
+    expect(
+      await databaseClient
+        .select()
+        .from(schema.mediaItem)
+        .where(eq(schema.mediaItem.inLibrary, true)),
+    ).toHaveLength(1)
     const imported = await confirmFilmImport(
       ConfirmFilmImportSchema.parse({
         previewId: preview.id,

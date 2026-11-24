@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { PluginMatchCandidatesSchema } from '@repo/media-plugin-sdk'
 import {
@@ -35,6 +36,7 @@ import { identifierUrl } from './artist-provider-evidence'
 import { loadArtistProviderTarget } from './artist-profiles'
 import { providerOperation } from './manual-add'
 import { sonovaultAlbumMatchCandidates } from './sonovault-album-lookup'
+import { observeFilmCandidate } from './film-catalog-observations'
 
 const SHARED_FILM_REFERENCES = ['imdb', 'tmdb']
 
@@ -155,6 +157,23 @@ async function searchMedia(
     undefined,
     'searching',
   )
+  const filmCatalogIds = new Map<string, string>()
+  if (kind === 'film') {
+    const key = nanoid()
+    await db.transaction(async (tx) => {
+      for (const [index, candidate] of candidates.entries()) {
+        const id = await observeFilmCandidate(tx, candidate, {
+          provider: input.provider,
+          operation: 'match-search',
+          occurrenceKey: key,
+          subjectKind: 'film',
+          subjectId: input.id,
+          position: index + 1,
+        })
+        if (id) filmCatalogIds.set(candidate.externalId, id)
+      }
+    })
+  }
   const current = await currentMediaIdentifiers(
     kind,
     input.id,
@@ -182,6 +201,7 @@ async function searchMedia(
           releaseDate: candidate.releaseDate ?? null,
           artworkUrl: candidate.artworkUrl ?? null,
           url: candidate.url ?? null,
+          catalogMediaItemId: filmCatalogIds.get(candidate.externalId),
           current:
             current.get(candidate.referenceType) === candidate.externalId,
         }),

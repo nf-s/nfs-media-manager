@@ -12,6 +12,7 @@ import {
   PaginationQuerySchema,
 } from './common'
 import { JobStatusSchema } from './job'
+import { CatalogScopeQuerySchema } from './catalog'
 import {
   YOUTUBE_SYNC_TASK,
   YoutubeChannelIdSchema,
@@ -151,6 +152,7 @@ export const mixStationUrls: Record<MixStation, string> = {
 const CountSchema = z.number().int().nonnegative().nullable()
 
 const itemShape = {
+  inLibrary: z.boolean().optional(),
   sourceTitle: z.string(),
   sourceThumbnailUrl: z.string().url().nullable(),
   title: z.string(),
@@ -216,6 +218,8 @@ export const SubscriptionItemPageSchema = PaginatedDataSchema(
 export type SubscriptionItemPage = z.infer<typeof SubscriptionItemPageSchema>
 
 const sourceShape = {
+  inLibrary: z.boolean().optional(),
+  subscribed: z.boolean().optional(),
   title: z.string(),
   description: z.string().nullable(),
   thumbnailUrl: z.string().url().nullable(),
@@ -255,6 +259,7 @@ export const SubscriptionSourceSchema = z.discriminatedUnion('type', [
 export type SubscriptionSource = z.infer<typeof SubscriptionSourceSchema>
 /** Selects one library; every list and count reads only rows of its types. */
 export const SubscriptionLibraryQuerySchema = z.object({
+  ...CatalogScopeQuerySchema.shape,
   library: SubscriptionLibrarySchema.default('subscriptions'),
 })
 export const SubscriptionSourceQuerySchema =
@@ -508,6 +513,7 @@ const SubscriptionFiltersParamSchema = z.preprocess(
 )
 
 export const SubscriptionItemQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   /** Which library to read; a row belongs to exactly one. */
   library: SubscriptionLibrarySchema.default('subscriptions'),
   /** Restricts the query to one channel or podcast by its stored identifier. */

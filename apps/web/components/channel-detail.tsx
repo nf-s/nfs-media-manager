@@ -24,6 +24,7 @@ import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
 import { DetailArt, DetailTabs, useDetailTab } from './detail-frame'
 import { ProviderSources } from './provider-sources'
+import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { EmbeddedSubscriptionBrowser } from './subscription-browser'
 import ServiceIconLinks from './service-icon-links'
 
@@ -97,6 +98,7 @@ export function ChannelDetail({
           source.type === 'youtube' ? source.handle : null,
           formatSubscriptionSourceSize(source),
           source.historyComplete ? null : 'Reading history',
+          source.inLibrary === false ? 'Outside library' : null,
         ]}
         links={
           <ServiceIconLinks
@@ -112,19 +114,29 @@ export function ChannelDetail({
         }
         actions={
           <>
-            <Button
-              type="button"
-              size="md"
-              aria-pressed="true"
-              aria-describedby={subscribedNote}
-              title={subscribedHelp}
-            >
-              <Check className="ds-i" data-size="sm" aria-hidden="true" />
-              Subscribed
-            </Button>
-            <span id={subscribedNote} className="sr-only">
-              {subscribedHelp}
-            </span>
+            {source.subscribed !== false && (
+              <>
+                <Button
+                  type="button"
+                  size="md"
+                  aria-pressed="true"
+                  aria-describedby={subscribedNote}
+                  title={subscribedHelp}
+                >
+                  <Check className="ds-i" data-size="sm" aria-hidden="true" />
+                  Subscribed
+                </Button>
+                <span id={subscribedNote} className="sr-only">
+                  {subscribedHelp}
+                </span>
+              </>
+            )}
+            <CatalogLibraryAction
+              kind="subscription-source"
+              id={source.id}
+              title={source.title}
+              inLibrary={source.inLibrary !== false}
+            />
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: source.title }}
@@ -164,6 +176,7 @@ export function ChannelDetail({
           </Section>
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries kind="subscription-source" id={source.id} />
           <ProviderSources
             rows={[
               {
@@ -213,6 +226,7 @@ function ShowDetail({
           station,
           formatSubscriptionSourceSize(source),
           source.historyComplete ? null : 'Reading history',
+          source.inLibrary === false ? 'Outside library' : null,
         ]}
         links={
           <ServiceIconLinks
@@ -222,6 +236,12 @@ function ShowDetail({
         }
         actions={
           <>
+            <CatalogLibraryAction
+              kind="subscription-source"
+              id={source.id}
+              title={source.title}
+              inLibrary={source.inLibrary !== false}
+            />
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: source.title }}
@@ -261,6 +281,7 @@ function ShowDetail({
           </Section>
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries kind="subscription-source" id={source.id} />
           <ProviderSources
             rows={[
               {

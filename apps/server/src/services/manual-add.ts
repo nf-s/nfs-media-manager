@@ -43,6 +43,7 @@ import { mediaItem, providerSecret } from '@/schemas/db'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { commitAlbumImportRecord, matchAlbumCandidates } from './album-imports'
 import { observeCatalogMedia } from './catalog-discoveries'
+import { observeFilmCandidate } from './film-catalog-observations'
 import {
   commitFilmImportRecord,
   matchFilmCandidates,
@@ -660,18 +661,16 @@ export async function searchManualMedia(
   const library = await libraryMatches(matches)
   const key = nanoid()
   const observed = await db.transaction(async (tx) => {
-    const ids: string[] = []
+    const ids: (string | undefined)[] = []
     for (const [index, item] of page.results.entries())
       ids.push(
-        await observeCatalogMedia(
+        await observeFilmCandidate(
           tx,
           {
-            kind: 'film',
             title: item.title,
-            provider: 'tmdb',
             referenceType: 'tmdb',
             externalId: String(item.id),
-            releaseDate: parseOptionalDate(item.release_date) ?? undefined,
+            releaseDate: item.release_date,
             artworkUrl: tmdbPosterUrl(item.poster_path),
           },
           {
@@ -824,7 +823,8 @@ export async function addManualMedia(
       : []
   if (match?.error)
     throw new ServerError({ statusCode: 409, message: match.error })
-  if (match?.id) return { mediaItemId: match.id, created: false }
+  if (match?.id && match.inLibrary)
+    return { mediaItemId: match.id, created: false }
 
   const result = await providerOperation(provider, async (context, plugin) => {
     if (!plugin.scrapeMediaItem)
@@ -901,7 +901,11 @@ export async function addManualMedia(
         },
       },
     },
-    { newOnly: true, snapshotSource: 'manual-add' },
+    {
+      newOnly: true,
+      snapshotSource: 'manual-add',
+      ownerId: userId ?? undefined,
+    },
   )
   return { mediaItemId: outcome.id, created: outcome.action === 'new' }
 }

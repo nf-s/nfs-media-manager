@@ -8,6 +8,7 @@ import {
 } from '@repo/media-plugin-sdk'
 import type { YoutubeSyncSchedule } from '@repo/schemas/youtube'
 import { db } from '@/lib/db'
+import { createStableId } from '@/lib/media-utils'
 import { ServerError } from '@/lib/error'
 import { ProviderResponseStorageError } from '@/lib/provider-response-history'
 import {
@@ -39,6 +40,8 @@ import {
 } from './provider-requests'
 import { recordAccountSyncResponses } from './provider-response-history'
 import { subscriptionSearchVector } from './subscription-library'
+import { observeCatalogOccurrences } from './catalog-discoveries'
+import { subscriptionResponseOrigin } from './subscription-catalog-observations'
 import {
   dueSubscriptionSyncUsers,
   readSubscriptionSyncStatus,
@@ -58,6 +61,7 @@ const DEFAULT_PAUSE_MS = 60 * 60 * 1000
 
 type SyncRow = typeof subscriptionSync.$inferSelect
 type VideoPage = z.infer<typeof YoutubeVideoListSchema>
+type YouTubeSyncContext = LastfmSyncJobContext & { jobId?: string }
 
 // Sources, items and checkpoints of this provider; other providers' rows share
 // the tables and are never read or changed here.
@@ -402,6 +406,7 @@ async function playlistVideoIds(
   }
   return {
     ids: [...new Set(page.items.map((item) => item.contentDetails.videoId))],
+    occurrences: page.items.map((item) => item.contentDetails.videoId),
     next: page.nextPageToken,
   }
 }
@@ -438,7 +443,7 @@ async function syncShortsPage(
   accessToken: string,
   token: string,
   run: SyncRow,
-  context: LastfmSyncJobContext,
+  context: YouTubeSyncContext,
   channel: Channel,
 ) {
   const shorts = await playlistVideoIds(
@@ -457,6 +462,33 @@ async function syncShortsPage(
         )
       : 0
     await recordShorts(tx, channel.id, run.runId, shorts.ids)
+    const origin = await subscriptionResponseOrigin(
+      tx,
+      {
+        provider: YOUTUBE,
+        operation: 'shorts-listing',
+        occurrenceKey: createStableId(
+          'shorts-page',
+          JSON.stringify([run.runId, run.shortsPageToken]),
+        ),
+        subjectKind: 'subscription-source',
+        subjectId: channel.id,
+        relationshipRole: 'short',
+        jobId: context.jobId,
+      },
+      'https://www.googleapis.com/youtube/v3/playlistItems',
+    )
+    await observeCatalogOccurrences(
+      tx,
+      shorts.occurrences.map((id, position) => ({
+        target: { kind: 'subscription-item', id },
+        origin: {
+          ...origin,
+          position: position + 1,
+          details: { playlistId: shortsPlaylistId(channel.id) },
+        },
+      })),
+    )
     const next = known === 0 ? (shorts.next ?? null) : null
     if (next === null)
       await tx
@@ -530,7 +562,7 @@ async function syncUploadsPage(
   accessToken: string,
   token: string,
   run: SyncRow,
-  context: LastfmSyncJobContext,
+  context: YouTubeSyncContext,
 ) {
   const channels = await remainingChannels(run)
   const changed = channels.findIndex((item) => !item.unchanged)
@@ -555,10 +587,11 @@ async function syncUploadsPage(
   // channel's Shorts are recorded by the next run.
   if (channel.shortsRunId !== run.runId && run.pageToken === null)
     return syncShortsPage(request, accessToken, token, run, context, channel)
+  const playlistId = channel.uploadsPlaylistId ?? uploadsPlaylistId(channel.id)
   const uploads = await playlistVideoIds(
     request,
     accessToken,
-    channel.uploadsPlaylistId ?? uploadsPlaylistId(channel.id),
+    playlistId,
     run.pageToken,
   )
   const shorts = uploads.ids.length
@@ -611,6 +644,42 @@ async function syncUploadsPage(
             updatedAt: new Date(),
           },
         })
+    const origin = await subscriptionResponseOrigin(
+      tx,
+      {
+        provider: YOUTUBE,
+        operation: 'channel-uploads',
+        occurrenceKey: createStableId(
+          'uploads-page',
+          JSON.stringify([run.runId, run.pageToken]),
+        ),
+        subjectKind: 'subscription-source',
+        subjectId: channel.id,
+        relationshipRole: 'upload',
+        jobId: context.jobId,
+      },
+      'https://www.googleapis.com/youtube/v3/playlistItems',
+    )
+    const available = new Set(videos.map((video) => video.id))
+    const shortIds = new Set(shorts.map((short) => short.id))
+    await observeCatalogOccurrences(
+      tx,
+      uploads.occurrences.map((id, position) => ({
+        target: { kind: 'subscription-item', id },
+        origin: {
+          ...origin,
+          position: position + 1,
+          details: {
+            playlistId,
+            availability: available.has(id)
+              ? 'available'
+              : shortIds.has(id)
+                ? 'short'
+                : 'detail-unavailable',
+          },
+        },
+      })),
+    )
     const added = rows.filter(
       (row) => !known.some((item) => item.id === row.id),
     ).length

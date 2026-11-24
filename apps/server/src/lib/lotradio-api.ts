@@ -307,6 +307,18 @@ export function normalizeLotRadioItem(
     durationSec: durationSeconds(item.startTimestamp, item.endTimestamp),
     artists: artists.length ? artists : names(item.show?.artists),
     tags: tags.length ? tags : names(item.show?.genres),
+    tracklist: item.tracklist?.flatMap((row, position) => {
+      const title = row?.title?.trim()
+      return title
+        ? [
+            {
+              title,
+              artist: row?.artist?.trim() || null,
+              position: position + 1,
+            },
+          ]
+        : []
+    }),
   }
   return { show, showPartial: false, episode }
 }

@@ -12,6 +12,7 @@ import {
   type SubscriptionSyncStatus,
 } from '@repo/schemas/subscriptions'
 import { db } from '@/lib/db'
+import { createStableId } from '@/lib/media-utils'
 import { ServerError } from '@/lib/error'
 import type {
   MixStationAdapter,
@@ -48,6 +49,11 @@ import {
 import { validateMixStationStep } from './mix-station-replay'
 import { subscriptionSearchVector } from './subscription-library'
 import {
+  observeStationEpisodes,
+  observeSubscriptionPage,
+  subscriptionResponseOrigin,
+} from './subscription-catalog-observations'
+import {
   dueSubscriptionSyncUsers,
   failedSyncJobStreak,
   readSubscriptionSyncStatus,
@@ -75,6 +81,7 @@ const UNANSWERED_STATUSES = [502, 503, 504]
 type SyncRow = typeof subscriptionSync.$inferSelect
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Catalogue = NonNullable<MixStationAdapter['catalogue']>
+type StationSyncContext = LastfmSyncJobContext & { jobId?: string }
 
 // Sources, items and checkpoints of one station; every other type shares the
 // tables and is never read or changed here.
@@ -445,7 +452,7 @@ async function syncShowsPage(
   request: StationRequest,
   token: string,
   run: SyncRow,
-  context: LastfmSyncJobContext,
+  context: StationSyncContext,
 ) {
   const page = await catalogue.listShows(request, run.pageToken)
   // A page that arrives after cancellation is discarded.
@@ -454,6 +461,22 @@ async function syncShowsPage(
   return db.transaction(async (tx) => {
     if (!(await ownedRun(tx, station, token, run))) return 'lost'
     await upsertShows(tx, station, run, [...shows.values()], page.partial)
+    const origin = await subscriptionResponseOrigin(tx, {
+      provider: station,
+      operation: 'station-catalogue',
+      occurrenceKey: createStableId(
+        'station-shows',
+        JSON.stringify([run.runId, run.pageToken]),
+      ),
+      jobId: context.jobId,
+      details: { partial: page.partial ?? false },
+    })
+    await observeSubscriptionPage(
+      tx,
+      'subscription-source',
+      page.entries.map((show) => show.id),
+      origin,
+    )
     if (page.next !== null) {
       const listed = await tx.$count(
         subscriptionSource,
@@ -528,7 +551,7 @@ async function syncShowEpisodesPage(
   request: StationRequest,
   token: string,
   run: SyncRow,
-  context: LastfmSyncJobContext,
+  context: StationSyncContext,
 ) {
   const show = await nextShow(station, run)
   if (!show)
@@ -556,6 +579,16 @@ async function syncShowEpisodesPage(
     if (!current) return 'lost'
     if (details) await upsertShows(tx, station, run, [details])
     const { added, known } = await upsertEpisodes(tx, station, episodes)
+    const origin = await subscriptionResponseOrigin(tx, {
+      provider: station,
+      operation: 'station-episodes',
+      occurrenceKey: createStableId(
+        'station-episodes',
+        JSON.stringify([run.runId, show.id, run.pageToken]),
+      ),
+      jobId: context.jobId,
+    })
+    await observeStationEpisodes(tx, episodes, origin)
     const stop = show.historyComplete && known > 0
     if (page.next !== null && !stop) {
       await tx
@@ -649,7 +682,7 @@ async function syncFeedPage(
   request: StationRequest,
   token: string,
   run: SyncRow,
-  context: LastfmSyncJobContext,
+  context: StationSyncContext,
 ) {
   const mode = run.historyComplete ? 'recent' : 'archive'
   const page = await adapter.listFeed(
@@ -697,6 +730,22 @@ async function syncFeedPage(
         episode: entry.episode,
       })),
     )
+    const origin = await subscriptionResponseOrigin(tx, {
+      provider: station,
+      operation: 'station-feed',
+      occurrenceKey: createStableId(
+        'station-feed',
+        JSON.stringify([run.runId, run.pageToken]),
+      ),
+      jobId: context.jobId,
+    })
+    await observeSubscriptionPage(
+      tx,
+      'subscription-source',
+      [...new Set(page.entries.map((entry) => entry.show.id))],
+      origin,
+    )
+    await observeStationEpisodes(tx, page.entries, origin)
     // A feed has no show total: the run counts the pages it has read.
     const progress = {
       phase: 'items',

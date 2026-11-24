@@ -11,10 +11,19 @@ import {
 import { PluginResultSchema } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { createStableId, slugifyParts } from '@/lib/media-utils'
+import {
+  createStableId,
+  parseOptionalDate,
+  slugifyParts,
+} from '@/lib/media-utils'
 import { normalizeImdbCsv, normalizeNfo } from '@/lib/film-file-normalizers'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import { film, mediaItem, providerReference } from '@/schemas/db'
+import {
+  observeCatalogOccurrence,
+  promoteCatalogMediaInTransaction,
+} from './catalog-discoveries'
+import { observeFilmRelations } from './film-catalog-observations'
 import { applyProviderResultInTransaction } from './provider-state'
 import { lockTagWrites } from './tag-state'
 import {
@@ -311,11 +320,21 @@ export async function matchFilmCandidates(
       ),
     ),
   ]
-  const matches = new Map<string, Array<{ id: string; hidden: boolean }>>()
-  const fallbackIds = new Set<string>()
+  const matches = new Map<
+    string,
+    Array<{ id: string; hidden: boolean; inLibrary: boolean }>
+  >()
+  const fallbackIds = new Map<
+    string,
+    { id: string; hidden: boolean; inLibrary: boolean }
+  >()
   for (let offset = 0; offset < candidates.length; offset += 1000) {
     const rows = await database
-      .select({ id: mediaItem.id })
+      .select({
+        id: mediaItem.id,
+        inLibrary: mediaItem.inLibrary,
+        metadata: mediaItem.metadata,
+      })
       .from(mediaItem)
       .where(
         inArray(
@@ -323,12 +342,18 @@ export async function matchFilmCandidates(
           candidates.slice(offset, offset + 1000).map(unidentifiedFilmId),
         ),
       )
-    for (const row of rows) fallbackIds.add(row.id)
+    for (const row of rows)
+      fallbackIds.set(row.id, {
+        id: row.id,
+        inLibrary: row.inLibrary,
+        hidden: row.metadata?.['legacyHidden'] === true,
+      })
   }
   for (let offset = 0; offset < externalIds.length; offset += 1000) {
     const rows = await database
       .select({
         id: mediaItem.id,
+        inLibrary: mediaItem.inLibrary,
         metadata: mediaItem.metadata,
         type: providerReference.referenceType,
         provider: providerReference.provider,
@@ -349,7 +374,11 @@ export async function matchFilmCandidates(
       const key = `${['imdb', 'tmdb'].includes(row.type) ? 'shared' : row.provider}:${row.type}:${row.externalId}`
       matches.set(key, [
         ...(matches.get(key) ?? []),
-        { id: row.id, hidden: row.metadata?.['legacyHidden'] === true },
+        {
+          id: row.id,
+          inLibrary: row.inLibrary,
+          hidden: row.metadata?.['legacyHidden'] === true,
+        },
       ])
     }
   }
@@ -357,14 +386,15 @@ export async function matchFilmCandidates(
     const found = filmCandidateKeys(candidate).flatMap(
       (key) => matches.get(key) ?? [],
     )
-    if (fallbackIds.has(unidentifiedFilmId(candidate)))
-      found.push({ id: unidentifiedFilmId(candidate), hidden: false })
+    const fallback = fallbackIds.get(unidentifiedFilmId(candidate))
+    if (fallback) found.push(fallback)
     const visible = found.filter((row) => !row.hidden)
     const ids = [
       ...new Set((visible.length ? visible : found).map((row) => row.id)),
     ]
     return {
       id: ids[0] ?? null,
+      inLibrary: found.some((entry) => entry.id === ids[0] && entry.inLibrary),
       error:
         ids.length > 1
           ? 'Ambiguous film identifiers; resolve duplicates before importing'
@@ -373,12 +403,98 @@ export async function matchFilmCandidates(
   })
 }
 
+function newFilmId(candidate: FilmImportCandidate) {
+  const refs = candidate.result.normalized.references.filter(
+    (ref) => ref.referenceType === 'imdb' || ref.referenceType === 'tmdb',
+  )
+  const primary = refs.find((ref) => ref.referenceType === 'imdb') ?? refs[0]
+  return primary
+    ? createStableId(
+        'film',
+        `file:${primary.referenceType}:${primary.externalId}`,
+      )
+    : unidentifiedFilmId(candidate)
+}
+
+/** Record catalog facts from a preview without applying owner data or membership. */
+export async function observeFilmImportPreview(
+  tx: ImportTransaction,
+  previewId: string,
+  candidates: FilmImportCandidate[],
+) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext('film-file-import'))`,
+  )
+  const matches = await matchFilmCandidates(candidates, tx)
+  for (const [position, candidate] of candidates.entries()) {
+    const match = matches[position]
+    if (match?.error) continue
+    const { provider, result } = candidate
+    const patch = result.normalized.mediaPatch
+    if (!patch?.title?.trim()) continue
+    const id = match?.id ?? newFilmId(candidate)
+    if (!match?.id) {
+      await tx
+        .insert(mediaItem)
+        .values({
+          id,
+          mediaType: 'film',
+          title: patch.title,
+          slug: slugifyParts(patch.title, id),
+          artworkUrl: patch.artworkUrl,
+          releaseDate: parseOptionalDate(patch.releaseDate),
+          inLibrary: false,
+        })
+        .onConflictDoNothing()
+      await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
+      for (const reference of result.normalized.references)
+        if (
+          reference.referenceType === 'tmdb' ||
+          reference.referenceType === 'imdb'
+        )
+          await tx
+            .insert(providerReference)
+            .values({
+              id: createStableId(
+                'pref',
+                JSON.stringify([
+                  id,
+                  provider,
+                  reference.referenceType,
+                  reference.externalId,
+                ]),
+              ),
+              mediaItemId: id,
+              provider,
+              referenceType: reference.referenceType,
+              externalId: reference.externalId,
+            })
+            .onConflictDoNothing()
+    }
+    const origin = {
+      provider,
+      operation: 'film-import-preview',
+      occurrenceKey: previewId,
+      position: position + 1,
+    }
+    await observeCatalogOccurrence(tx, { kind: 'film', id }, origin)
+    await observeFilmRelations(
+      tx,
+      id,
+      result.payload,
+      result.normalized,
+      origin,
+    )
+  }
+}
+
 export async function commitFilmImportRecord(
   candidate: FilmImportCandidate,
   options: {
     newOnly?: boolean
     allowCreate?: boolean
     snapshotSource?: 'manual-add'
+    ownerId?: string
   } = {},
   transaction?: ImportTransaction,
 ): Promise<{
@@ -387,10 +503,6 @@ export async function commitFilmImportRecord(
   changes: FilmImportPreview['items'][number]['changes']
 }> {
   const { result, provider, source } = candidate
-  const refs = result.normalized.references.filter(
-    (ref) => ref.referenceType === 'imdb' || ref.referenceType === 'tmdb',
-  )
-  const primary = refs.find((ref) => ref.referenceType === 'imdb') ?? refs[0]
   const title = result.normalized.mediaPatch?.title ?? 'Untitled'
   const commit = async (
     tx: ImportTransaction,
@@ -410,14 +522,7 @@ export async function commitFilmImportRecord(
       throw new Error(
         'Film disappeared since preview; preview again before creating it',
       )
-    const id =
-      match?.id ??
-      (primary
-        ? createStableId(
-            'film',
-            `file:${primary.referenceType}:${primary.externalId}`,
-          )
-        : unidentifiedFilmId(candidate))
+    const id = match?.id ?? newFilmId(candidate)
     const [inserted] = await tx
       .insert(mediaItem)
       .values({ id, mediaType: 'film', title, slug: slugifyParts(title, id) })
@@ -425,9 +530,13 @@ export async function commitFilmImportRecord(
       .returning({ id: mediaItem.id })
     await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
     await tx.execute(sql`select id from media_item where id = ${id} for update`)
-    const state = inserted ? undefined : await loadFilmImportState([id], tx)
+    const discovered = !!match?.id && !match.inLibrary
+    const isNew = Boolean(inserted) || discovered
+    if (discovered)
+      await promoteCatalogMediaInTransaction(tx, id, options.ownerId)
+    const state = isNew ? undefined : await loadFilmImportState([id], tx)
     const changes = state ? describeFilmImport(candidate, id, state) : []
-    if (!inserted && (options.newOnly || changes.length === 0))
+    if (!isNew && (options.newOnly || changes.length === 0))
       return { id, action: 'unchanged', changes: [] }
     await applyProviderResultInTransaction(
       {
@@ -442,7 +551,7 @@ export async function commitFilmImportRecord(
       },
       tx,
     )
-    return { id, action: inserted ? 'new' : 'update', changes }
+    return { id, action: isNew ? 'new' : 'update', changes }
   }
   return transaction ? commit(transaction) : db.transaction(commit)
 }

@@ -17,6 +17,7 @@ import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
+import { observeFilmRelations } from './film-catalog-observations'
 import {
   discogsMasterReleaseMatch,
   readAlbumMatchRejections,
@@ -609,6 +610,21 @@ export async function applyProviderResultInTransaction(
       input.normalized.playlists,
     )
   }
+
+  if (input.mediaType === 'film' && latestSnapshotId)
+    await observeFilmRelations(
+      database,
+      input.mediaItemId,
+      input.payload,
+      input.normalized,
+      {
+        provider: input.provider,
+        operation: 'film-details',
+        occurrenceKey: latestSnapshotId,
+        snapshotId: latestSnapshotId,
+        jobId: input.scrapeJobId ?? undefined,
+      },
+    )
 
   if (currentState) {
     await database

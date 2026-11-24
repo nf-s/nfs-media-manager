@@ -21,6 +21,7 @@ import {
   commitFilmImportRecord,
   filmCandidateKeys,
   matchFilmCandidates,
+  observeFilmImportPreview,
   unidentifiedFilmId,
 } from './file-imports'
 import {
@@ -114,12 +115,13 @@ export async function prepareFilmImport(
       continue
     }
     for (const key of identifiers) seen.add(key)
-    if (match?.id) existing++
-    if (options.kind === 'nfo' && match?.id) continue
-    const changes = match?.id ? describeFilmImport(record, match.id, state) : []
+    const memberId = match?.inLibrary ? match.id : null
+    if (memberId) existing++
+    if (options.kind === 'nfo' && memberId) continue
+    const changes = memberId ? describeFilmImport(record, memberId, state) : []
     records.push({
       ...record,
-      action: match?.id ? (changes.length ? 'update' : 'unchanged') : 'new',
+      action: memberId ? (changes.length ? 'update' : 'unchanged') : 'new',
       changes,
     })
   }
@@ -133,13 +135,16 @@ export async function prepareFilmImport(
         eq(filmImportPreview.claimed, false),
       ),
     )
-  await db.insert(filmImportPreview).values({
-    id,
-    requestedByUserId: userId,
-    kind: options.kind,
-    source: options.kind === 'csv' ? options.fileName : (source?.path ?? ''),
-    records: JsonValueSchema.parse(JSON.parse(JSON.stringify(records))),
-    expiresAt,
+  await db.transaction(async (tx) => {
+    await tx.insert(filmImportPreview).values({
+      id,
+      requestedByUserId: userId,
+      kind: options.kind,
+      source: options.kind === 'csv' ? options.fileName : (source?.path ?? ''),
+      records: JsonValueSchema.parse(JSON.parse(JSON.stringify(records))),
+      expiresAt,
+    })
+    await observeFilmImportPreview(tx, id, collected.records)
   })
   return FilmImportPreviewSchema.parse({
     id,
@@ -241,6 +246,7 @@ export async function confirmFilmImport(
             const outcome = await commitFilmImportRecord(record, {
               newOnly: preview.kind === 'nfo',
               allowCreate: record.action === 'new',
+              ownerId: userId ?? undefined,
             })
             if (outcome.action === 'new') newIds.push(outcome.id)
             else if (outcome.action === 'update') updated++

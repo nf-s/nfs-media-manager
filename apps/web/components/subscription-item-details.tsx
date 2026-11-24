@@ -33,6 +33,7 @@ import {
   useDetailTab,
 } from './detail-frame'
 import { ProviderSources } from './provider-sources'
+import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { formatCount as formatYoutubeCount } from '@/utils/youtube'
 import {
   formatSubscriptionDuration,
@@ -198,6 +199,7 @@ function ItemDetails({
             ? `${formatCount(item.viewCount)} views`
             : null,
           item.watchedAt ? `Watched ${formatDate(item.watchedAt)}` : null,
+          item.inLibrary === false ? 'Outside library' : null,
         ]}
         links={
           <ServiceIconLinks
@@ -213,7 +215,13 @@ function ItemDetails({
         }
         actions={
           <>
-            <WatchedButton item={item} />
+            {item.inLibrary !== false && <WatchedButton item={item} />}
+            <CatalogLibraryAction
+              kind="subscription-item"
+              id={item.id}
+              title={item.title}
+              inLibrary={item.inLibrary !== false}
+            />
             <DetailActionsSpacer />
             <DetailMore crumb={{ title: item.title }} />
           </>
@@ -293,6 +301,7 @@ function ItemDetails({
           </Section>
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries kind="subscription-item" id={item.id} />
           <ProviderSources
             rows={[
               {
@@ -391,6 +400,7 @@ function MixDetails({
           broadcast,
           known ? duration : null,
           item.watchedAt ? `Listened ${formatDate(item.watchedAt)}` : null,
+          item.inLibrary === false ? 'Outside library' : null,
         ]}
         links={
           <ServiceIconLinks
@@ -400,7 +410,13 @@ function MixDetails({
         }
         actions={
           <>
-            <WatchedButton item={item} />
+            {item.inLibrary !== false && <WatchedButton item={item} />}
+            <CatalogLibraryAction
+              kind="subscription-item"
+              id={item.id}
+              title={item.title}
+              inLibrary={item.inLibrary !== false}
+            />
             <DetailActionsSpacer />
             {item.audioUrl && (
               <OpenAtProvider
@@ -498,6 +514,7 @@ function MixDetails({
           )}
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries kind="subscription-item" id={item.id} />
           <ProviderSources
             rows={[
               {

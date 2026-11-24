@@ -9,7 +9,10 @@ import {
   type ProviderResponseBody,
   type ProviderResponseCapture,
 } from '@repo/schemas/provider-response'
-import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
+import {
+  JsonValueSchema,
+  type MediaProviderPlugin,
+} from '@repo/media-plugin-sdk'
 import { getJobTask } from '@repo/schemas/job'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -25,6 +28,8 @@ import {
   scrapeJob,
   scrapeJobItem,
 } from '@/schemas/db'
+import { observeTmdbFilmResponse } from './film-catalog-observations'
+import { projectSubscriptionResponse } from './subscription-catalog-observations'
 
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -111,7 +116,11 @@ export async function saveProviderResponseCapture(
           .from(scrapeJob)
           .where(jobFilter)
       : await database
-          .select({ id: scrapeJob.id, options: scrapeJob.options })
+          .select({
+            id: scrapeJob.id,
+            options: scrapeJob.options,
+            mediaItemId: scrapeJobItem.mediaItemId,
+          })
           .from(scrapeJob)
           .innerJoin(
             scrapeJobItem,
@@ -148,7 +157,7 @@ export async function saveProviderResponseCapture(
       ? { state: 'unavailable', reason: 'byte-limit' }
       : response.body
 
-  await database
+  const [stored] = await database
     .insert(providerResponse)
     .values({
       id: nanoid(),
@@ -173,6 +182,68 @@ export async function saveProviderResponseCapture(
       body,
     })
     .onConflictDoNothing()
+    .returning()
+
+  if (stored && stored.provider === 'tmdb' && jobItemId !== null) {
+    const subjectId =
+      'mediaItemId' in scope && typeof scope.mediaItemId === 'string'
+        ? scope.mediaItemId
+        : undefined
+    await database.transaction((tx) =>
+      projectTmdbResponse(tx, stored, subjectId),
+    )
+  }
+  if (
+    stored &&
+    taskPhase &&
+    ['spotify', 'youtube', 'rinse'].includes(stored.provider)
+  )
+    await database.transaction((tx) => projectSubscriptionResponse(tx, stored))
+}
+
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+export async function projectTmdbResponse(
+  tx: Transaction,
+  row: Pick<
+    typeof providerResponse.$inferSelect,
+    'id' | 'jobId' | 'requestUrl' | 'status' | 'body' | 'receivedAt'
+  >,
+  subjectId?: string,
+) {
+  const endpoint = row.requestUrl?.startsWith(
+    'https://api.themoviedb.org/3/find/',
+  )
+    ? 'find'
+    : row.requestUrl?.startsWith('https://api.themoviedb.org/3/search/movie')
+      ? 'search'
+      : null
+  if (
+    !endpoint ||
+    row.status === null ||
+    row.status < 200 ||
+    row.status >= 300 ||
+    row.body.state !== 'captured'
+  )
+    return 0
+  let value: unknown
+  try {
+    value = JSON.parse(row.body.text)
+  } catch {
+    return 0
+  }
+  const parsed = JsonValueSchema.safeParse(value)
+  if (!parsed.success) return 0
+  return observeTmdbFilmResponse(tx, parsed.data, endpoint, {
+    provider: 'tmdb',
+    operation: endpoint === 'find' ? 'tmdb-find' : 'match-search',
+    occurrenceKey: row.id,
+    subjectKind: subjectId ? 'film' : undefined,
+    subjectId,
+    jobId: row.jobId,
+    responseId: row.id,
+    observedAt: row.receivedAt ?? undefined,
+  })
 }
 
 const summaryColumns = {

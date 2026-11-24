@@ -429,6 +429,7 @@ describe('subscription items', () => {
     const { ids, items: found } = await all({}, 100)
     const episode = found[ids.indexOf(spotifyId('OrbitEpisodeOne'))]
     expect(episode).toEqual({
+      inLibrary: true,
       type: 'spotify',
       id: spotifyId('OrbitEpisodeOne'),
       sourceId: ORBIT_TALK,
@@ -678,7 +679,9 @@ describe('subscription items', () => {
       type: 'youtube',
       tags: ['Rare Rye'],
     })
-    expect(await getSubscriptionItem(videoId('r1'))).toBeNull()
+    expect(await getSubscriptionItem(videoId('r1'))).toMatchObject({
+      inLibrary: false,
+    })
     expect(await getSubscriptionItem(videoId('missing'))).toBeNull()
   })
 })
@@ -757,6 +760,8 @@ describe('subscription facets and sources', () => {
       KITCHEN,
     ])
     expect(listed[3]).toEqual({
+      inLibrary: true,
+      subscribed: true,
       type: 'spotify',
       id: ORBIT_TALK,
       title: 'Orbit Talk',
@@ -818,10 +823,85 @@ describe('subscription facets and sources', () => {
       totalCount: 2,
       items: [{ sourceId: ORBIT_TALK }],
     })
-    for (const id of [RETIRED, channelId('unknown')])
-      await expect(getSubscriptionSource(id, query)).rejects.toMatchObject({
-        response: { statusCode: 404 },
+    await expect(
+      getSubscriptionSource(channelId('unknown'), query),
+    ).rejects.toMatchObject({
+      response: { statusCode: 404 },
+    })
+    expect(
+      await getSubscriptionSource(RETIRED, {
+        ...query,
+        libraryScope: 'outside',
+      }),
+    ).toMatchObject({
+      source: { id: RETIRED, inLibrary: false, subscribed: false },
+      items: { items: [{ id: videoId('r1'), inLibrary: false }] },
+    })
+  })
+
+  it('filters outside items by independent evidence and promotes a video without following its channel', async () => {
+    const id = videoId('r1')
+    const { getSubscriptionItem, listSubscriptionSources } = await library()
+    const { observeCatalogOccurrence, promoteNativeResource } =
+      await import('@/services/catalog-discoveries')
+    await databaseClient.transaction(async (tx) => {
+      for (const operation of ['channel-uploads', 'video-details'])
+        await observeCatalogOccurrence(
+          tx,
+          { kind: 'subscription-item', id },
+          {
+            provider: 'youtube',
+            operation,
+            occurrenceKey: operation,
+          },
+        )
+    })
+    expect(await getSubscriptionItem(id)).toMatchObject({
+      inLibrary: false,
+      watchedAt: null,
+    })
+    expect(
+      (
+        await list({
+          libraryScope: 'outside',
+          discoverySources: 'channel-uploads,video-details',
+          discoverySourceMode: 'all',
+        })
+      ).ids,
+    ).toEqual([id])
+    expect(
+      (
+        await list({
+          libraryScope: 'outside',
+          discoverySources: 'channel-uploads,shorts-listing',
+          discoverySourceMode: 'all',
+        })
+      ).ids,
+    ).toEqual([])
+    expect(
+      (await list({ libraryScope: 'all', discoverySources: 'channel-uploads' }))
+        .totalCount,
+    ).toBe(visible.length + 1)
+    try {
+      expect(
+        await promoteNativeResource('subscription-item', id),
+      ).toMatchObject({ created: true })
+      expect(
+        await promoteNativeResource('subscription-item', id),
+      ).toMatchObject({ created: false })
+      expect(await getSubscriptionItem(id)).toMatchObject({
+        inLibrary: true,
+        watchedAt: null,
       })
+      expect(
+        (await listSubscriptionSources()).items.map((source) => source.id),
+      ).not.toContain(RETIRED)
+      expect((await list({ q: 'retired' })).ids).toEqual([id])
+    } finally {
+      await databaseClient.execute(
+        sql`update subscription_item set added_to_library = false where id = ${id}`,
+      )
+    }
   })
 
   it('leaves station shows and mixes out of every Subscriptions read', async () => {

@@ -62,6 +62,13 @@ import {
 } from '@/utils/embedded-browse'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import {
+  clearLibraryScope,
+  libraryScopeFilterCount,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+} from '@/utils/library-scope'
+import {
   defaultBrowseView,
   gridCardMin,
   preserveGridScroll,
@@ -247,10 +254,12 @@ function SubscriptionBrowse({
   const { q, filters, ranges, view, sourceId } = state
   // The source a list inside a detail is held to is not a filter.
   const sourceFilter = scope ? undefined : sourceId
-  const { identity, params, sortBy, direction } = subscriptionBrowseQuery(
-    state,
-    library,
-  )
+  const libraryScope = readLibraryScope(searchParams)
+  const catalogParams = libraryScopeQuery(libraryScope)
+  const { params, sortBy, direction } = subscriptionBrowseQuery(state, library)
+  for (const [key, value] of Object.entries(catalogParams))
+    params.set(key, value)
+  const identity = params.toString()
   const sourceTitle = useSubscriptionSource(sourceFilter, library).data?.source
     .title
   const selectedId =
@@ -342,6 +351,7 @@ function SubscriptionBrowse({
       fields: null,
       filters: null,
       ranges: null,
+      ...clearLibraryScope,
       ...(scope ? {} : { sourceId: null }),
     })
   }
@@ -445,13 +455,23 @@ function SubscriptionBrowse({
     inspector?.active?.kind === itemKind
       ? slots.find(({ item }) => item?.id === inspector.active?.id)?.item
       : undefined
-  const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    collection,
+    draft,
+    ready,
+    false,
+    undefined,
+    false,
+    catalogParams,
+  )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
     queryKey: [
       collection,
       'title-suggestions',
       titleFilters,
+      catalogParams,
       ...(sourceId ? [sourceId] : []),
     ],
     enabled: ready && titleFilters.length > 0,
@@ -464,6 +484,7 @@ function SubscriptionBrowse({
         direction: 'asc',
         ...(sourceId ? { sourceId } : {}),
         ...subscriptionLibraryParams(library),
+        ...catalogParams,
       })
       return fetchApiData(
         apiBaseUrl,
@@ -769,6 +790,10 @@ function SubscriptionBrowse({
             onDirectionChange: (direction) => setParams({ sortBy, direction }),
           }}
           filterCount={activeFilterCount}
+          libraryScope={{
+            value: libraryScope,
+            onChange: (next) => setParams(libraryScopeUpdates(next)),
+          }}
           filters={
             <>
               {view === 'table' && (
@@ -873,10 +898,13 @@ function SubscriptionBrowse({
           query={query}
           total={total}
           noun={page.plural}
-          filtered={hasSubscriptionFilters({
-            ...state,
-            sourceId: sourceFilter,
-          })}
+          filtered={
+            libraryScopeFilterCount(libraryScope) > 0 ||
+            hasSubscriptionFilters({
+              ...state,
+              sourceId: sourceFilter,
+            })
+          }
           onClear={clearFilters}
           empty={
             <State

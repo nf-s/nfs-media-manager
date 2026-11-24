@@ -2,6 +2,7 @@ import { and, sql, type SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 import { type BrowseFilter } from '@repo/schemas/browse'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import type { ArtistMixQuery } from '@repo/schemas/creators'
 import {
   MatchDiagnosticsPageSchema,
@@ -44,6 +45,7 @@ import { rangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { ServerError } from '@/lib/error'
+import { catalogScopeCondition } from './catalog-scope'
 import { visibleArtist } from './entity-relationships'
 import { matchingTagNames } from './music-tags'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
@@ -157,9 +159,12 @@ const countCache = createDatabaseReadCache<number>({
   maxValueBytes: 64,
 })
 const dialect = new PgDialect()
+const subscriptionItemMembership = sql`(s.subscribed or i.added_to_library)`
+const subscriptionSourceMembership = sql`(s.subscribed or s.added_to_library)`
 
 const ItemRowsSchema = z.array(
   z.object({
+    in_library: z.boolean(),
     id: z.string(),
     type: SubscriptionTypeSchema,
     source_id: z.string(),
@@ -186,6 +191,7 @@ type SubscriptionItemRow = z.infer<typeof ItemRowsSchema>[number]
 
 /** A page of stored items from subscribed sources. */
 type SubscriptionItemSearch = {
+  scope?: CatalogScopeQuery
   /** Reads rows of this library only; a read by ID leaves it out. */
   library?: SubscriptionLibrary
   /** Web-search syntax over the stored search text. */
@@ -220,7 +226,12 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
   const ranked = literal ? null : match
   const where = sql.join(
     [
-      sql`s.subscribed`,
+      catalogScopeCondition(
+        sql`i.id`,
+        subscriptionItemMembership,
+        search.scope ?? {},
+        'subscription-item',
+      ),
       ...(search.library
         ? [inSubscriptionLibrary(sql`i.type`, search.library)]
         : []),
@@ -264,6 +275,7 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
     : members
   const offset = (search.page - 1) * search.size
   const columns = sql`i.id, i.type, i.source_id, s.title as source_title,
+    ${subscriptionItemMembership} as in_library,
     s.thumbnail_url as source_thumbnail_url, i.title, i.description,
     i.tags, extract(epoch from i.published_at)::float8 as published,
     i.published_precision, i.duration_sec, i.view_count, i.like_count,
@@ -312,6 +324,7 @@ function subscriptionItem(
   libraryArtists: LibraryArtist[] = [],
 ): SubscriptionItem {
   const shared = {
+    inLibrary: row.in_library,
     id: row.id,
     sourceId: row.source_id,
     sourceTitle: row.source_title,
@@ -485,6 +498,7 @@ function subscriptionBrowseSearch(
     throw new ServerError({ statusCode: 422, message: 'Unknown sort' })
   return {
     library,
+    scope: query,
     text: query.q,
     fields: query.fields,
     conditions,
@@ -542,7 +556,7 @@ function artistMixes(names: string[], query: ArtistMixQuery) {
     union
     select i.id from subscription_source s
     join subscription_item i on i.source_id = s.id
-    where s.subscribed and ${nameKey(sql`s.title`)} in (${keys})`
+    where ${subscriptionItemMembership} and ${nameKey(sql`s.title`)} in (${keys})`
   if (names.every((name) => name.match(WORD_PARTS)))
     search.conditions.push(
       sql`(${sql.join(
@@ -621,7 +635,7 @@ export async function listSubscriptionMatchDiagnostics(
     join subscription_source s on s.id = i.source_id
     where ${sql.join(
       [
-        sql`s.subscribed`,
+        subscriptionItemMembership,
         inSubscriptionLibrary(sql`i.type`, 'subscriptions'),
         ...conditions,
       ],
@@ -745,6 +759,7 @@ async function libraryArtistsNamed(names: string[]) {
  */
 export async function getSubscriptionItem(id: string) {
   const { readPage } = await subscriptionSearchQueries({
+    scope: { libraryScope: 'all' },
     fields: 'all',
     conditions: [sql`i.id = ${id}`],
     order: () => sql`i.published_at desc`,
@@ -780,7 +795,7 @@ export async function setSubscriptionItemWatched(
       await db.execute(sql`
         update subscription_item i set watched_at = ${value}
         from subscription_source s
-        where i.id = ${id} and s.id = i.source_id and s.subscribed
+        where i.id = ${id} and s.id = i.source_id and ${subscriptionItemMembership}
         returning i.id`)
     ).rows,
   )
@@ -792,6 +807,8 @@ export async function setSubscriptionItemWatched(
 
 const SourceRowsSchema = z.array(
   z.object({
+    in_library: z.boolean(),
+    subscribed: z.boolean(),
     id: z.string(),
     type: SubscriptionTypeSchema,
     title: z.string(),
@@ -808,23 +825,27 @@ const SourceRowsSchema = z.array(
 )
 
 /** Sources with their stored item counts; a read by ID leaves the library out. */
-async function readSubscriptionSources(input: {
-  library?: SubscriptionLibrary
-  type?: SubscriptionType
-  id?: string
-}) {
+async function readSubscriptionSources(
+  input: {
+    library?: SubscriptionLibrary
+    type?: SubscriptionType
+    id?: string
+  } & CatalogScopeQuery,
+) {
   const rows = SourceRowsSchema.parse(
     (
       await db.execute(sql`
         select s.id, s.type, s.title, s.handle, s.description, s.thumbnail_url,
+          s.subscribed, ${subscriptionSourceMembership} as in_library,
           s.url, s.subscriber_count, s.item_total, s.history_complete,
           stats.stored, extract(epoch from stats.latest)::float8 as latest
         from subscription_source s
         cross join lateral (
           select count(*) as stored, max(i.published_at) as latest
-          from subscription_item i where i.source_id = s.id
+          from subscription_item i where i.source_id = s.id and
+            ${catalogScopeCondition(sql`i.id`, subscriptionItemMembership, input, 'subscription-item')}
         ) stats
-        where s.subscribed
+        where ${catalogScopeCondition(sql`s.id`, subscriptionSourceMembership, input, 'subscription-source')}
           ${input.library ? sql`and ${inSubscriptionLibrary(sql`s.type`, input.library)}` : sql``}
           ${input.type ? sql`and s.type = ${input.type}` : sql``}
           ${input.id === undefined ? sql`` : sql`and s.id = ${input.id}`}
@@ -834,6 +855,8 @@ async function readSubscriptionSources(input: {
   return SubscriptionSourceListSchema.parse({
     items: rows.map((row) => {
       const shared = {
+        inLibrary: row.in_library,
+        subscribed: row.subscribed,
         id: row.id,
         title: row.title,
         description: row.description,
@@ -872,7 +895,7 @@ export async function getSubscriptionSource(
 ) {
   const {
     items: [source],
-  } = await readSubscriptionSources({ id })
+  } = await readSubscriptionSources({ id, libraryScope: 'all' })
   if (!source)
     throw new ServerError({ statusCode: 404, message: 'Channel not found' })
   return SubscriptionSourceDetailSchema.parse({
@@ -936,7 +959,8 @@ async function queryFacets(query: SubscriptionFacetQuery) {
       from (select i.id, ${textValues[key]} as value
         from subscription_item i
         join subscription_source s on s.id = i.source_id ${arrayValues}
-        where s.subscribed and ${inSubscriptionLibrary(sql`i.type`, query.library)}) values_for_field
+        where ${catalogScopeCondition(sql`i.id`, subscriptionItemMembership, query, 'subscription-item')}
+          and ${inSubscriptionLibrary(sql`i.type`, query.library)}) values_for_field
       where value is not null and value <> '' ${search}
       group by lower(value)
       order by case when lower(value) = ${query.q?.toLowerCase() ?? ''} then 0 else 1 end,

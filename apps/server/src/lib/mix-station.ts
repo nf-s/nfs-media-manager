@@ -37,6 +37,8 @@ export type StationEpisode = {
   artists: string[]
   /** The station's genre names, without duplicates. */
   tags: string[]
+  /** Ordered credits from a structured track list, when the station supplied one. */
+  tracklist?: { position: number; artist: string | null; title: string }[]
 }
 
 export type StationPage<T> = {

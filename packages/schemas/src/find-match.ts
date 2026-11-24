@@ -19,6 +19,7 @@ export type MatchSearchInput = z.input<typeof MatchSearchInputSchema>
 
 /** One provider record the item could be matched to. */
 export const MatchCandidateSchema = z.object({
+  catalogMediaItemId: z.string().optional(),
   /** The reference type stored when this candidate is chosen. */
   referenceType: z.string().min(1),
   externalId: z.string().min(1),
