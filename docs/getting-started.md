@@ -4,7 +4,7 @@ This guide runs the app on your computer with the web interface at `http://local
 
 ## 1. Install the prerequisites
 
-- [Node.js 22](https://nodejs.org/en/download) and Corepack. The repository pins pnpm 9.12; the commands below use `corepack pnpm` so you do not need a separate global pnpm installation.
+- [Node.js 22](https://nodejs.org/en/download) and Corepack. The commands below use `corepack pnpm` to run the version pinned in the repository.
 - [Docker with Compose](https://docs.docker.com/get-started/get-docker/) for the supplied local database, or your own PostgreSQL 17 server.
 - Git, and a current browser.
 

@@ -31,10 +31,10 @@
     "turbo": "2.1.1",
     "wrangler": "4.156.0"
   },
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "pnpm@10.34.9",
   "pnpm": {
     "overrides": {
-      "next": "15.5.28",
+      "next": "15.5.29",
       "next>sharp": "0.35.5",
       "postcss@<8.5.23": "8.5.23",
       "glob@10.4.5": "10.5.0",

@@ -12,7 +12,7 @@ catalog:
   '@types/node': ^22
   '@types/eslint': ^8
   zod: ^4.6.7
-  hono: ^4.13.14
+  hono: 4.13.16
   '@hono/zod-openapi': ^1.1.5
   clsx: ^2.1.1
   autoprefixer: ^10

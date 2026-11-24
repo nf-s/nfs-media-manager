@@ -27,7 +27,7 @@
     "dotenv": "^17.4.0",
     "hono": "catalog:",
     "lucide-react": "catalog:",
-    "next": "15.5.28",
+    "next": "15.5.29",
     "react": "catalog:react19",
     "react-dom": "catalog:react19",
     "zod": "catalog:"
