@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { requireTrackSelectionScope } from './catalog-scope'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import {
@@ -541,8 +542,12 @@ export async function matchTidalTracks(
   input: TidalTrackMatchInput,
   userId: string | null,
 ) {
-  const { trackIds, batchId = nanoid() } =
-    TidalTrackMatchInputSchema.parse(input)
+  const {
+    trackIds,
+    batchId = nanoid(),
+    catalogScope,
+  } = TidalTrackMatchInputSchema.parse(input)
+  await requireTrackSelectionScope(trackIds, catalogScope)
   const unique = [...new Set(trackIds)]
   const items: TidalTrackMatchReview[] = []
   const warnings: string[] = []

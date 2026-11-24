@@ -10,6 +10,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   SONOVAULT_REFRESH_MONTHS,
   SonovaultTrackLookupInputSchema,
@@ -207,10 +208,12 @@ export function sonovaultLookupBody({
   batchId,
   refresh,
   total,
+  catalogScope,
 }: {
   trackIds: string[]
   batchId?: string
   refresh: boolean
+  catalogScope?: CatalogScopeQuery
   /** How many tracks the whole run sends; more than five needs confirming. */
   total: number
 }) {
@@ -220,6 +223,7 @@ export function sonovaultLookupBody({
       batchId,
       refresh,
       confirmBroadRun: total > 5,
+      catalogScope,
     }),
   )
 }
@@ -256,9 +260,11 @@ export function useQueueSonovaultLookups() {
 export function useSonovaultLookupSelection({
   onSelect,
   onPendingChange,
+  catalogScope,
 }: {
   onSelect: (ids: string[]) => void
   onPendingChange: (pending: boolean) => void
+  catalogScope?: CatalogScopeQuery
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -283,6 +289,7 @@ export function useSonovaultLookupSelection({
                 batchId: batch,
                 refresh: true,
                 total: ids.length,
+                catalogScope,
               }),
             },
           ),

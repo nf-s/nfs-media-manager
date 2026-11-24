@@ -22,6 +22,13 @@ import {
   RangeEditor,
 } from './browse-controls'
 import BrowseFilterPanel from './browse-filter-panel'
+import {
+  LibraryScopePills,
+  LibraryScopeSections,
+  LibraryScopeToggle,
+  type LibraryScopeControl,
+} from './library-scope-controls'
+import { libraryScopeFilterCount } from '@/utils/library-scope'
 
 export type MetadataSelectionFilters = {
   q: string
@@ -50,6 +57,7 @@ export default function MetadataSelectionToolbar({
   actions,
   columns,
   children,
+  libraryScope,
 }: {
   fields: BrowseField[]
   value: MetadataSelectionFilters
@@ -67,6 +75,7 @@ export default function MetadataSelectionToolbar({
   actions?: ReactNode
   columns: ReactNode
   children?: ReactNode
+  libraryScope?: LibraryScopeControl
 }) {
   const activeCount =
     Number(Boolean(value.q)) +
@@ -74,7 +83,8 @@ export default function MetadataSelectionToolbar({
     value.ranges.length +
     Number(value.limitResults !== undefined) +
     (value.listening?.rules.length ?? 0) +
-    providerFilters.length
+    providerFilters.length +
+    (libraryScope ? libraryScopeFilterCount(libraryScope.value) : 0)
   function change(next: MetadataSelectionFilters) {
     if (!disabled) onChange(next)
   }
@@ -160,6 +170,7 @@ export default function MetadataSelectionToolbar({
             {label}
           </BrowseFilterPill>
         ))}
+        {libraryScope && <LibraryScopePills {...libraryScope} />}
         <Button
           variant="link"
           size="xs"
@@ -180,8 +191,10 @@ export default function MetadataSelectionToolbar({
         <ToolbarCount>{count}</ToolbarCount>
         {actions}
         <ToolbarEnd>
+          {libraryScope && <LibraryScopeToggle {...libraryScope} />}
           <BrowseFilterPanel count={activeCount}>
             {activeFilters}
+            {libraryScope && <LibraryScopeSections {...libraryScope} />}
             <RangeEditor
               presentation="panel"
               fields={fields.filter((field) => field.filterable)}

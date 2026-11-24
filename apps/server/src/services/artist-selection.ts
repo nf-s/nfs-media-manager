@@ -7,7 +7,7 @@ import {
 } from '@repo/schemas/artist-profiles'
 import { ServerError } from '@/lib/error'
 import { listArtistEnrichmentProviderIds } from '@/plugins/registry'
-import { matchingArtistSelection } from './creators'
+import { matchingArtistSelection } from './artist-browse'
 import { requireEnrichmentConfirmation } from './film-enrichment'
 import { createTaskJob } from './jobs'
 
@@ -38,12 +38,16 @@ export async function queueArtistSelection(
       statusCode: 422,
       message: 'Queue freshness filters must match selected providers',
     })
-  const visible = await matchingArtistSelection(ids)
+  const visible = await matchingArtistSelection(ids, options)
   const visibleIds = new Set(visible)
   const result: ArtistEnrichmentResult = { jobs: [], skipped: [] }
   for (const provider of providers) {
     const filters = freshness.filter((filter) => filter.provider === provider)
-    const matching = new Set(await matchingArtistSelection(visible, filters))
+    const matching = new Set(
+      filters.length
+        ? await matchingArtistSelection(visible, options, filters)
+        : visible,
+    )
     for (const artistId of ids) {
       if (!matching.has(artistId)) {
         result.skipped.push({
@@ -52,7 +56,7 @@ export async function queueArtistSelection(
           reason:
             visibleIds.has(artistId) && filters.length > 0
               ? 'No longer matches the freshness filter.'
-              : 'Artist is missing or archived.',
+              : 'Artist is outside the current scope.',
         })
         continue
       }

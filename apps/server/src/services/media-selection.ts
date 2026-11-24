@@ -15,6 +15,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { listProviderCatalog } from '@/plugins/registry'
 import { mediaItem, providerCurrentState, providerSnapshot } from '@/schemas/db'
+import { catalogScopeCondition } from './catalog-scope'
 import {
   previewMediaRefresh,
   queueMediaEnrichment,
@@ -316,12 +317,17 @@ export async function queueMediaSelection(
         inArray(mediaItem.id, ids),
         eq(mediaItem.mediaType, mediaType),
         sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+        catalogScopeCondition(
+          sql`${mediaItem.id}`,
+          sql`${mediaItem.inLibrary}`,
+          options,
+        ),
       ),
     )
   if (items.length !== ids.length)
     throw new ServerError({
       statusCode: 422,
-      message: `Selection includes missing or archived ${mediaType}s. Reload and select again.`,
+      message: `Some selected ${mediaType}s are outside the current scope. Reload and select again.`,
     })
   let pairs = coverageGap
     ? await albumCoverageGapSelection(
@@ -340,6 +346,10 @@ export async function queueMediaSelection(
               providers,
               olderThanDays: options.olderThanDays,
               limit: ids.length,
+              libraryScope: options.libraryScope,
+              discoverySources: options.discoverySources,
+              discoverySourceMode: options.discoverySourceMode,
+              discoverySourceScope: options.discoverySourceScope,
             },
             mediaType,
             ids,

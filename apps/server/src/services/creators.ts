@@ -35,7 +35,6 @@ import {
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
-import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -66,10 +65,7 @@ import { loadTracks } from './tracks'
 import { listArtistIdentifiers } from './artist-provider-evidence'
 import { visibleArtist } from './entity-relationships'
 import { currentArtistId, listKeptArtistNames } from './artist-names'
-import {
-  artistFreshnessConditions,
-  loadArtistMetadata,
-} from './artist-metadata'
+import { loadArtistMetadata } from './artist-metadata'
 import {
   countMixesNamingArtist,
   listMixesNamingArtist,
@@ -134,17 +130,28 @@ function artistDirectory(id?: string) {
   return db
     .select({
       ...identityColumns,
-      inLibrary: sql<boolean>`(${artist.addedToLibrary} or coalesce(bool_or(${mediaItem.inLibrary} and (${isAlbum} or ${isTrack}) and ${visible}),false))`.as('in_library'),
-      albumCount: sql<number>`count(*) filter (where ${isAlbum} and ${mediaItem.inLibrary})::int`.as(
-        'album_count',
-      ),
-      trackCount: sql<number>`count(*) filter (where ${isTrack} and ${mediaItem.inLibrary})::int`.as(
-        'track_count',
-      ),
+      inLibrary:
+        sql<boolean>`(${artist.addedToLibrary} or coalesce(bool_or(${mediaItem.inLibrary} and (${isAlbum} or ${isTrack}) and ${visible}),false))`.as(
+          'in_library',
+        ),
+      albumCount:
+        sql<number>`count(*) filter (where ${isAlbum} and ${mediaItem.inLibrary})::int`.as(
+          'album_count',
+        ),
+      trackCount:
+        sql<number>`count(*) filter (where ${isTrack} and ${mediaItem.inLibrary})::int`.as(
+          'track_count',
+        ),
     })
     .from(artist)
-    .leftJoin(mediaCredit, and(eq(mediaCredit.artistId, artist.id), eq(mediaCredit.role, 'artist')))
-    .leftJoin(mediaItem, and(eq(mediaItem.id, mediaCredit.mediaItemId),visible))
+    .leftJoin(
+      mediaCredit,
+      and(eq(mediaCredit.artistId, artist.id), eq(mediaCredit.role, 'artist')),
+    )
+    .leftJoin(
+      mediaItem,
+      and(eq(mediaItem.id, mediaCredit.mediaItemId), visible),
+    )
     .leftJoin(album, eq(album.mediaItemId, mediaItem.id))
     .leftJoin(libraryTrack, eq(libraryTrack.mediaItemId, mediaItem.id))
     .where(
@@ -152,7 +159,9 @@ function artistDirectory(id?: string) {
         creatorFilter(undefined, id),
         sql`((${isAlbum} or ${isTrack}) or exists (select 1 from catalog_observation o
           where o.target_kind = 'artist' and o.target_id = ${artist.id}))`,
-        id === undefined ? sql`(${artist.addedToLibrary} or ${mediaItem.inLibrary})` : undefined,
+        id === undefined
+          ? sql`(${artist.addedToLibrary} or ${mediaItem.inLibrary})`
+          : undefined,
       ),
     )
     .groupBy(artist.id)
@@ -176,24 +185,6 @@ export async function listArtistMetadata(query: ArtistMetadataQuery) {
       providers: metadata.filter((row) => row.artistId === item.id),
     })),
   })
-}
-
-export async function matchingArtistSelection(
-  ids: string[],
-  freshness: ProviderFreshnessFilter[] = [],
-) {
-  if (!ids.length) return []
-  const directory = artistDirectory().as('directory')
-  const rows = await db
-    .select({ id: directory.id })
-    .from(directory)
-    .where(
-      and(
-        inArray(directory.id, ids),
-        ...artistFreshnessConditions(directory.id, freshness),
-      ),
-    )
-  return rows.map((row) => row.id)
 }
 
 function combineProfiles(providers: ArtistProviderSnapshot[]): ArtistProfile {
@@ -401,11 +392,14 @@ async function requireLibraryArtist(requestedId: string) {
     .select({ id: artist.id, name: artist.name })
     .from(artist)
     .where(
-      and(eq(artist.id, await currentArtistId(db, requestedId)), sql`(${visibleArtist} or exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = ${artist.id}) or exists (
+      and(
+        eq(artist.id, await currentArtistId(db, requestedId)),
+        sql`(${visibleArtist} or exists (select 1 from catalog_observation o where o.target_kind = 'artist' and o.target_id = ${artist.id}) or exists (
         select 1 from media_credit credit join media_item item on item.id = credit.media_item_id
         where credit.artist_id = ${artist.id} and credit.role = 'artist'
           and item.media_type in ('album', 'track') and item.metadata->>'legacyHidden' is distinct from 'true'
-      ))`),
+      ))`,
+      ),
     )
   if (!row)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })

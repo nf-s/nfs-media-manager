@@ -13,6 +13,7 @@ import {
 import { X } from 'lucide-react'
 import { z } from 'zod'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED,
   SpotifyTrackSearchAcceptInputSchema,
@@ -245,6 +246,7 @@ export function SpotifyTrackSearchSelectionBar({
   onSelect,
   onPendingChange,
   freshness,
+  catalogScope,
   disabled = false,
   total,
   otherStatus,
@@ -254,6 +256,7 @@ export function SpotifyTrackSearchSelectionBar({
   onSelect: (ids: string[]) => void
   onPendingChange: (pending: boolean) => void
   freshness?: SpotifyTrackSearchFreshness
+  catalogScope?: CatalogScopeQuery
   disabled?: boolean
   total?: number
   /** Another provider's queueing status and actions for the same selection. */
@@ -278,6 +281,7 @@ export function SpotifyTrackSearchSelectionBar({
             batchId: batch,
             confirmBroadRun: ids.length > 5,
             freshness,
+            catalogScope,
           }),
         setProgress,
       )

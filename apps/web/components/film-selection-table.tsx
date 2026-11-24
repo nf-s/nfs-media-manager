@@ -61,6 +61,13 @@ import { useFilmSelection } from '@/hooks/useFilmSelection'
 import { mediaAiSearchTarget } from '@/utils/ai-search'
 import { browseFilterHref, browseSearchHref } from '@/utils/browse-items'
 import { embeddedBrowseHref } from '@/utils/embedded-browse'
+import {
+  clearLibraryScope,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+} from '@/utils/library-scope'
+import { useDetailView } from './detail-inspector-context'
 import { updateJobSelection } from '@/utils/job-selection'
 import { dispatchFilmSelection } from '@/utils/film-selection'
 import { fetchApiData } from '@/utils/api'
@@ -249,6 +256,10 @@ function SelectionTable({
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const inspector = useDetailInspector()
+  const view = useDetailView()
+  const libraryScope = readLibraryScope(view.params)
+  const scopeQuery = libraryScopeQuery(libraryScope)
+  const scopeIdentity = JSON.stringify(scopeQuery)
   const [provider, setProvider] = useState('')
   const [freshness, setFreshness] = useState<ProviderFreshnessFilter[]>([])
   const [legacyImports, setLegacyImports] = useState<string[]>([])
@@ -274,6 +285,7 @@ function SelectionTable({
     ranges: JSON.stringify(ranges),
     freshness: JSON.stringify(freshness),
     legacyImport,
+    ...scopeQuery,
   })
   if (sortBy === 'lastScrapedAt') params.set('provider', provider)
   if (limitResults !== undefined)
@@ -286,11 +298,12 @@ function SelectionTable({
     q,
     filters: JSON.stringify(filters),
     ranges: JSON.stringify(ranges),
+    ...scopeQuery,
   })
   const queueKey = ['metadata-selection-queue', mediaType]
   const queuePending = useIsMutating({ mutationKey: queueKey }) > 0
   const { fields, facets, films, titleItems, titlesLoading, titlesError } =
-    useFilmSelection(queryIdentity, mediaType, draft, queuePending)
+    useFilmSelection(queryIdentity, mediaType, draft, queuePending, scopeQuery)
   const baseFields =
     fields.data ??
     (mediaType === 'album' ? albumBrowseFields : filmBrowseFields)
@@ -341,7 +354,11 @@ function SelectionTable({
     )
     .map((item) => item.id)
   const operations = selected.length * launchProviders.length
-  const confirmationKey = JSON.stringify([selected, launchProviders, freshness])
+  const confirmationKey = JSON.stringify([
+    queryIdentity,
+    selected,
+    launchProviders,
+  ])
   const [confirmedKey, setConfirmedKey] = useState('')
   const broadConfirmed = confirmed && confirmedKey === confirmationKey
   const [batchId, setBatchId] = useState('')
@@ -368,6 +385,7 @@ function SelectionTable({
                     launchProviders.includes(filter.provider),
                   ),
                   confirmBroadRun: operations > 5 && broadConfirmed,
+                  ...scopeQuery,
                 }),
               ),
             },
@@ -393,6 +411,11 @@ function SelectionTable({
   useEffect(() => {
     if (all.current) all.current.indeterminate = partiallyChecked
   }, [partiallyChecked])
+  useEffect(() => {
+    setSelected([])
+    setAnchor(null)
+    setConfirmed(false)
+  }, [scopeIdentity])
   function clear() {
     setSelected([])
     setAnchor(null)
@@ -405,6 +428,16 @@ function SelectionTable({
   function changeFilters(next: MetadataSelectionFilters) {
     if (queue.isPending) return
     setBrowseFilters(next)
+    clear()
+  }
+  function applyScope(updates: Record<string, string | null>) {
+    if (queue.isPending) return
+    const settings = new URLSearchParams(view.params)
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) settings.set(key, value)
+      else settings.delete(key)
+    }
+    view.replace(settings)
     clear()
   }
   function sort(key: string, nextProvider = '') {
@@ -424,6 +457,10 @@ function SelectionTable({
     <div className="ops-fill">
       <MetadataSelectionToolbar
         disabled={queue.isPending}
+        libraryScope={{
+          value: libraryScope,
+          onChange: (next) => applyScope(libraryScopeUpdates(next)),
+        }}
         fields={available}
         value={browseFilters}
         filterHref={(filter) => browseFilterHref(browseHref, [filter])}
@@ -443,6 +480,7 @@ function SelectionTable({
         otherFiltersActive={legacyImport !== 'all'}
         onChange={changeFilters}
         onClear={() => {
+          applyScope(clearLibraryScope)
           setDraft('')
           setFreshness([])
           setLegacyImports([])
@@ -776,13 +814,20 @@ function SelectionTable({
                           stickyEdge={field.key === 'title'}
                         >
                           {field.key === 'title' ? (
-                            <DetailLink
-                              kind={mediaType}
-                              id={item.id}
-                              className="ds-cell-title"
-                            >
-                              {item.title}
-                            </DetailLink>
+                            <span className="ds-cell-id">
+                              <DetailLink
+                                kind={mediaType}
+                                id={item.id}
+                                className="ds-cell-title"
+                              >
+                                {item.title}
+                              </DetailLink>
+                              {item.inLibrary === false && (
+                                <span className="ds-muted">
+                                  Outside library
+                                </span>
+                              )}
+                            </span>
                           ) : (
                             formatBrowseValue(field, values[field.key])
                           )}

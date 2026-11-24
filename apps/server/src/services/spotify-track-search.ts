@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm'
+import { requireTrackSelectionScope } from './catalog-scope'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { EnrichmentResultSchema, JobScopeSchema } from '@repo/schemas/job'
@@ -429,7 +430,9 @@ export async function queueSpotifyTrackSearches(
     freshness,
     market,
     query,
+    catalogScope,
   } = SpotifyTrackSearchInputSchema.parse(input)
+  await requireTrackSelectionScope(trackIds, catalogScope)
   const eligible = await listTracksNeedingSpotifyMatch(db, [
     ...new Set(trackIds),
   ])

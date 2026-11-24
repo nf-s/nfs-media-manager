@@ -2,6 +2,7 @@ import type { ArtistEnrichmentResult } from '@repo/schemas/artist-profiles'
 import { ArtistMetadataQuerySchema } from '@repo/schemas/creators'
 import type { ArtistSelectionSnapshotPage } from '@repo/schemas/artist-selection'
 import { parseListeningParams } from './listening-filters'
+import { libraryScopeQuery, readLibraryScope } from './library-scope'
 
 export function artistMetadataQuery(params: URLSearchParams) {
   const fields = ArtistMetadataQuerySchema.shape
@@ -31,6 +32,7 @@ export function artistMetadataQuery(params: URLSearchParams) {
     ranges: ranges.success ? ranges.data : [],
     limitResults: limit.success ? limit.data : undefined,
     ...parseListeningParams(params),
+    ...libraryScopeQuery(readLibraryScope(params)),
   })
 }
 

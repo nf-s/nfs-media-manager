@@ -11,6 +11,7 @@ import {
 import { X } from 'lucide-react'
 import { z } from 'zod'
 import { AlbumDetailSchema } from '@repo/schemas/media'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   TIDAL_TRACK_MATCH_REQUEST_LIMIT,
   TidalTrackMatchAcceptInputSchema,
@@ -158,7 +159,11 @@ export function useMatchTidalTracks() {
   const client = useQueryClient()
   return useMutation({
     retry: false,
-    mutationFn: (input: { trackIds: string[]; batchId?: string }) =>
+    mutationFn: (input: {
+      trackIds: string[]
+      batchId?: string
+      catalogScope?: CatalogScopeQuery
+    }) =>
       fetchApiData(apiBaseUrl, tidalMatchPath, TidalTrackMatchRunSchema, {
         method: 'POST',
         body: JSON.stringify(
@@ -210,9 +215,11 @@ function tallyRun(tally: MatchTally, run: TidalTrackMatchRun): MatchTally {
 export function useTidalTrackMatchSelection({
   onSelect,
   onPendingChange,
+  catalogScope,
 }: {
   onSelect: (ids: string[]) => void
   onPendingChange: (pending: boolean) => void
+  catalogScope?: CatalogScopeQuery
 }) {
   const match = useMatchTidalTracks()
   const [progress, setProgress] = useState({ done: 0, total: 0 })
@@ -240,7 +247,11 @@ export function useTidalTrackMatchSelection({
           offset + TIDAL_TRACK_MATCH_REQUEST_LIMIT,
         )
         try {
-          const result = await match.mutateAsync({ trackIds: chunk, batchId })
+          const result = await match.mutateAsync({
+            trackIds: chunk,
+            batchId,
+            catalogScope,
+          })
           tally = tallyRun(tally, result)
           done += chunk.length - result.notRun
           setProgress({ done, total: ids.length })

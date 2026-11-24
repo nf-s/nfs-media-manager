@@ -26,6 +26,7 @@ export function useFilmSelection(
   mediaType: MediaScope = 'film',
   draft = '',
   paused = false,
+  catalogParams?: Readonly<Record<string, string>>,
 ) {
   const resource = mediaType === 'album' ? 'albums' : 'films'
   const { apiBaseUrl } = useConfig()
@@ -38,10 +39,25 @@ export function useFilmSelection(
         z.array(BrowseFieldSchema),
       ),
   })
-  const facets = useBrowseFacets(apiBaseUrl, resource, draft, !paused)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    resource,
+    draft,
+    !paused,
+    false,
+    undefined,
+    false,
+    catalogParams,
+  )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const matches = useQuery({
-    queryKey: [resource, 'title-suggestions', titleFilters, false],
+    queryKey: [
+      resource,
+      'title-suggestions',
+      titleFilters,
+      false,
+      catalogParams,
+    ],
     enabled: !paused && titleFilters.length > 0,
     queryFn: ({ signal }) => {
       const query = new URLSearchParams({
@@ -51,6 +67,7 @@ export function useFilmSelection(
         sortBy: 'title',
         direction: 'asc',
         includeArchived: 'false',
+        ...catalogParams,
       })
       return fetchApiData(
         apiBaseUrl,

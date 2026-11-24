@@ -11,6 +11,7 @@ import { ServerError } from '@/lib/error'
 import { providerCurrentState, scrapeJob } from '@/schemas/db'
 import { createJob, retryJob } from './jobs'
 import { listProviders } from './providers'
+import { catalogScopeCondition } from './catalog-scope'
 
 export async function validateFilmProviders(ids: string[]) {
   return validateMediaProviders(ids, 'film')
@@ -201,6 +202,7 @@ export async function previewMediaRefresh(
     from media_item m cross join unnest(${providerArray}) as p(id)
     left join provider_current_state s on s.media_item_id = m.id and s.provider = p.id
     where m.media_type = ${mediaType} and coalesce(m.metadata->>'legacyHidden', 'false') <> 'true'
+      and ${catalogScopeCondition(sql`m.id`, sql`m.in_library`, options)}
       and (${eligible})
       and (s.last_scraped_at is null or s.last_scraped_at < ${cutoff.toISOString()}::timestamp)
       ${

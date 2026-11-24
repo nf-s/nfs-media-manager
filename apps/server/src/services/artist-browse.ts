@@ -1,6 +1,7 @@
 import { and, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { ArtistProfileSchema } from '@repo/schemas/artist-profiles'
+import type { ProviderFreshnessFilter } from '@repo/schemas/film-selection'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { formatTagName } from '@repo/schemas/tags'
@@ -61,9 +62,26 @@ const observedArtist = sql`exists (select 1 from catalog_observation o where o.t
 const memberArtist = sql`(exists (select 1 from ${musicCredits}
   where credit.artist_id = a.id and ${visibleMusic} and item.in_library) or (a.added_to_library and ${observedArtist}))`
 function scopedArtists(query: CatalogScopeQuery) {
-  if (memberScope(query)) return sql`a.merged_into_id is null and ${memberArtist}`
+  if (memberScope(query))
+    return sql`a.merged_into_id is null and ${memberArtist}`
   const known = sql`(${observedArtist} or exists (select 1 from ${musicCredits} where credit.artist_id = a.id and ${visibleMusic}))`
-  return sql`a.merged_into_id is null and ${known} and ${catalogScopeCondition(id, memberArtist,query,'artist')}`
+  return sql`a.merged_into_id is null and ${known} and ${catalogScopeCondition(id, memberArtist, query, 'artist')}`
+}
+
+export async function matchingArtistSelection(
+  ids: string[],
+  query: CatalogScopeQuery,
+  freshness: ProviderFreshnessFilter[] = [],
+) {
+  if (!ids.length) return []
+  const conditions = [
+    sql`${id} = any(${sql.param(ids)}::text[])`,
+    scopedArtists(query),
+    ...artistFreshnessConditions(id, freshness),
+  ]
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select ${id} from artist a where ${sql.join(conditions, sql` and `)}`)
+  return rows.map((row) => row.id)
 }
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,

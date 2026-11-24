@@ -44,6 +44,7 @@ import {
 } from './track-duplicate-refresh'
 import { trackSpotifyMatchExpression } from './track-values'
 import { createBrowseListening } from './browse-listening'
+import { catalogScopeCondition } from './catalog-scope'
 
 const providers = [
   { key: 'spotify', label: trackMatchProviderLabels.spotify },
@@ -543,7 +544,9 @@ function trackMatchDiagnosticsRows(
     (filter) => filter.field === 'source' && filter.mode === 'required',
   )
   const scope = [
-    visibleLibraryTracks,
+    metadata
+      ? sql`${visibleTracks} and ${catalogScopeCondition(trackId, sql`media_item.in_library`, query)}`
+      : visibleLibraryTracks,
     ...trackBrowseFieldConditions(sources, [], ordinaryFields, evidenceFilter),
   ]
   if (query.creatorId)

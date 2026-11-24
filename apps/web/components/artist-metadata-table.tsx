@@ -82,6 +82,13 @@ import { useSourceAvailability, useSourceCatalog } from './provider-sources'
 import AiSearch from './ai-search'
 import MetadataSelectionToolbar from './metadata-selection-toolbar'
 import {
+  clearLibraryScope,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+} from '@/utils/library-scope'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
+import {
   SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
@@ -122,6 +129,7 @@ const selectionWidth = 36
 const queueKey = ['metadata-selection-queue', 'artist']
 const snapshotKey = ['artist-selection-snapshot']
 type QueueSelection = {
+  catalog: CatalogScopeQuery
   selectionKey: string
   snapshot: ArtistSelectionSnapshot | null
   selected: string[]
@@ -165,6 +173,8 @@ export default function ArtistMetadataTable({
   const pending = queuePending || snapshotPending
   const playlist = useArtistPlaylistFilter(pending)
   const query = artistMetadataQuery(view.params)
+  const libraryScope = readLibraryScope(view.params)
+  const scopeQuery = libraryScopeQuery(libraryScope)
   const q = query.q ?? ''
   const catalog = useSourceCatalog()
   const available = catalog.data?.filter(supportsArtistEnrichment) ?? []
@@ -175,7 +185,16 @@ export default function ArtistMetadataTable({
     artistProviderLabel(provider, catalog.data)
   const unavailable = useSourceAvailability(available)
   const [draft, setDraft] = useState('')
-  const facets = useBrowseFacets(apiBaseUrl, 'artists', draft, !pending)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    'artists',
+    draft,
+    !pending,
+    false,
+    undefined,
+    false,
+    scopeQuery,
+  )
   const libraryColumns: ArtistColumn[] = [
     ...artistColumns,
     {
@@ -206,6 +225,7 @@ export default function ArtistMetadataTable({
     filters: JSON.stringify(query.filters),
     ranges: JSON.stringify(query.ranges),
     ...playlist.filters,
+    ...scopeQuery,
   })
   const params = new URLSearchParams({
     q,
@@ -221,6 +241,7 @@ export default function ArtistMetadataTable({
     ...(query.listening ? { listening: JSON.stringify(query.listening) } : {}),
     ...(listeningSort ? { listeningSort: JSON.stringify(listeningSort) } : {}),
     ...playlist.filters,
+    ...scopeQuery,
   })
   const identity = params.toString()
   const currentIdentity = useRef(identity)
@@ -399,6 +420,7 @@ export default function ArtistMetadataTable({
                 providers: input.providers,
                 freshness: input.freshness,
                 confirmBroadRun: input.confirmBroadRun,
+                ...input.catalog,
               }),
             ),
           },
@@ -476,6 +498,10 @@ export default function ArtistMetadataTable({
   return (
     <div className="ops-fill">
       <MetadataSelectionToolbar
+        libraryScope={{
+          value: libraryScope,
+          onChange: (next) => setParams(libraryScopeUpdates(next)),
+        }}
         disabled={pending}
         fields={artistBrowseFields}
         filterHref={(filter) => browseFilterHref(browseHref, [filter])}
@@ -520,6 +546,7 @@ export default function ArtistMetadataTable({
             freshness: null,
             limitResults: null,
             listening: null,
+            ...clearLibraryScope,
           })
         }
         search={
@@ -881,11 +908,16 @@ export default function ArtistMetadataTable({
                       stickyEdge={column.key === 'name'}
                     >
                       {column.key === 'name' ? (
-                        <CreatorLibraryTitle
-                          kind="artist"
-                          id={artist.id}
-                          title={artist.name}
-                        />
+                        <span className="ds-cell-id">
+                          <CreatorLibraryTitle
+                            kind="artist"
+                            id={artist.id}
+                            title={artist.name}
+                          />
+                          {artist.inLibrary === false && (
+                            <span className="ds-muted">Outside library</span>
+                          )}
+                        </span>
                       ) : column.key === 'createdAt' ? (
                         <CreatorLibraryDate value={artist.createdAt} />
                       ) : (
@@ -985,6 +1017,7 @@ export default function ArtistMetadataTable({
                     onClick={() =>
                       queue.mutate({
                         selectionKey,
+                        catalog: scopeQuery,
                         snapshot,
                         selected: [...selected],
                         omitted,

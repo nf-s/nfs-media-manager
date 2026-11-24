@@ -67,6 +67,12 @@ import {
 } from './film-selection-table'
 import { ListeningControls } from './listening-controls'
 import MetadataSelectionToolbar from './metadata-selection-toolbar'
+import {
+  clearLibraryScope,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+} from '@/utils/library-scope'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
@@ -154,6 +160,8 @@ export default function TrackMetadataTable({
   const { apiBaseUrl } = useConfig()
   const path = usePathname()
   const params = useSearchParams()
+  const libraryScope = readLibraryScope(params)
+  const scopeQuery = libraryScopeQuery(libraryScope)
   const inspector = useDetailInspector()
   const [pending, setPending] = useState(false)
   const [review, setReview] = useState<TrackListItem | null>(null)
@@ -259,6 +267,7 @@ export default function TrackMetadataTable({
         : undefined,
     view: 'spotify-search-metadata',
     ...creator,
+    ...scopeQuery,
   }
   const identity = JSON.stringify(query)
   const [selected, setSelected] = useState<string[]>([])
@@ -279,6 +288,7 @@ export default function TrackMetadataTable({
   const tidalSelection = useTidalTrackMatchSelection({
     onSelect: (next) => select(next),
     onPendingChange: setPending,
+    catalogScope: scopeQuery,
   })
   const sonovault = useSonovaultTrackLookupStatusForPages(
     tracks.windowPageItems,
@@ -286,6 +296,7 @@ export default function TrackMetadataTable({
   const sonovaultSelection = useSonovaultLookupSelection({
     onSelect: (next) => select(next),
     onPendingChange: setPending,
+    catalogScope: scopeQuery,
   })
   // A track can be selected while Spotify or TIDAL can match it or Sonovault
   // can look it up; each action skips the selected tracks it cannot act on.
@@ -386,11 +397,16 @@ export default function TrackMetadataTable({
     filters: JSON.stringify(filters),
     ranges: JSON.stringify(ranges),
     ...creator,
+    ...scopeQuery,
   })
   return (
     <div className="ops-fill">
       <MetadataSelectionToolbar
         disabled={pending}
+        libraryScope={{
+          value: libraryScope,
+          onChange: (next) => setParams(libraryScopeUpdates(next)),
+        }}
         fields={fields}
         value={{ q, filters, ranges, limitResults, listening }}
         filterHref={(filter) => browseFilterHref(browseHref, [filter])}
@@ -417,6 +433,7 @@ export default function TrackMetadataTable({
             limitResults: null,
             listening: null,
             ...clearCreatorScope,
+            ...clearLibraryScope,
           })
         }
         search={
@@ -433,6 +450,7 @@ export default function TrackMetadataTable({
             searchHref={(value) => browseSearchHref(browseHref, { q: value })}
             setParams={setParams}
             disabled={pending}
+            catalogParams={scopeQuery}
           />
         }
         filters={
@@ -737,9 +755,16 @@ export default function TrackMetadataTable({
                         >
                           {field.key === 'title' ? (
                             <SecondaryCell text={track.title}>
-                              <DetailLink kind="track" id={track.id}>
-                                {track.title}
-                              </DetailLink>
+                              <span className="ds-cell-id">
+                                <DetailLink kind="track" id={track.id}>
+                                  {track.title}
+                                </DetailLink>
+                                {track.inLibrary === false && (
+                                  <span className="ds-muted">
+                                    Outside library
+                                  </span>
+                                )}
+                              </span>
                             </SecondaryCell>
                           ) : (
                             <TrackBrowseValue
@@ -835,6 +860,7 @@ export default function TrackMetadataTable({
         onSelect={select}
         onPendingChange={setPending}
         freshness={spotifyFreshness.length ? spotifyFreshness : undefined}
+        catalogScope={scopeQuery}
         disabled={tracks.isError}
         total={tracks.hasTotal ? tracks.total : undefined}
         otherStatus={

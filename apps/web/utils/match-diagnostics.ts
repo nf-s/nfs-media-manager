@@ -1,3 +1,4 @@
+import { CatalogScopeQuerySchema } from '@repo/schemas/catalog'
 import {
   AlbumMatchRejectionInputSchema,
   AlbumMatchRejectionPageSchema,
@@ -173,6 +174,9 @@ function trackMatchDiagnosticsRequest(query: TrackMatchDiagnosticsQuery) {
   const params = new URLSearchParams({
     sortBy: query.sortBy,
     direction: query.direction,
+    ...(query.view === 'spotify-search-metadata'
+      ? CatalogScopeQuerySchema.parse(query)
+      : {}),
   })
   if (query.q) params.set('q', query.q)
   if (query.filters.length) params.set('filters', JSON.stringify(query.filters))
