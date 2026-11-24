@@ -247,6 +247,7 @@ export const tidalPlugin: MediaProviderPlugin = {
       pages,
     )
     const url = tidalUrl('album', album)
+    const barcode = UpcSchema.safeParse(album.attributes.barcodeId?.trim())
     return {
       payload: JsonValueSchema.parse({
         album: raw,
@@ -266,6 +267,15 @@ export const tidalPlugin: MediaProviderPlugin = {
                 : {}),
             },
           },
+          ...(barcode.success
+            ? [
+                {
+                  referenceType: 'upc',
+                  externalId: barcode.data,
+                  isPrimary: false,
+                },
+              ]
+            : []),
         ],
         links: [{ provider: 'tidal', label: 'TIDAL', url }],
         tags: [],

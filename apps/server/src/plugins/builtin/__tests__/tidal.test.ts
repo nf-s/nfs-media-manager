@@ -585,6 +585,7 @@ describe('TIDAL normalized result', () => {
         isPrimary: true,
         metadata: { url, matchedBy: 'upc', barcodeId: tidalUpc },
       },
+      { referenceType: 'upc', externalId: tidalUpc, isPrimary: false },
     ])
     expect(result.normalized.links).toEqual([
       { provider: 'tidal', label: 'TIDAL', url },

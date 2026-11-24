@@ -151,6 +151,23 @@ export async function recordAlbumTrackProviderReferences(
     .orderBy(asc(track.position))
   const aligned = alignProviderAlbumTracks(library, input.tracks)
 
+  if (input.provider === 'tidal')
+    await database
+      .update(providerReference)
+      .set({
+        metadata: sql`${providerReference.metadata} - 'priorReference'`,
+        updatedAt: recordedAt,
+      })
+      .where(
+        and(
+          eq(providerReference.provider, input.provider),
+          eq(providerReference.referenceType, 'track'),
+          sql`${providerReference.metadata}->>'source' = 'tidal-track-match'`,
+          sql`${providerReference.metadata}->'priorReference'->'metadata'->>'source' = ${source}`,
+          sql`${providerReference.metadata}->'priorReference'->'metadata'->>'albumMediaItemId' = ${input.albumId}`,
+        ),
+      )
+
   await database
     .delete(providerReference)
     .where(
@@ -191,11 +208,32 @@ export async function recordAlbumTrackProviderReferences(
     }
   const values = [...rows.values()]
   for (let start = 0; start < values.length; start += WRITE_BATCH)
-    // A reference a track job already wrote for the same track is kept.
+    // Keep a direct match current and retain the independent album alignment.
     await database
       .insert(providerReference)
       .values(values.slice(start, start + WRITE_BATCH))
-      .onConflictDoNothing()
+      .onConflictDoUpdate({
+        target: [
+          providerReference.mediaItemId,
+          providerReference.provider,
+          providerReference.referenceType,
+          providerReference.externalId,
+        ],
+        set: {
+          metadata: sql`${providerReference.metadata} || jsonb_build_object(
+            'priorReference', jsonb_build_object(
+              'metadata', excluded.metadata,
+              'isPrimary', excluded.is_primary
+            )
+          )`,
+          updatedAt: recordedAt,
+        },
+        setWhere: and(
+          eq(providerReference.provider, 'tidal'),
+          sql`${providerReference.metadata}->>'source' = 'tidal-track-match'`,
+          sql`not (${providerReference.metadata} ? 'priorReference')`,
+        ),
+      })
 
   // ISRC sources are typed per provider; only TIDAL albums report them today.
   const jobId = input.jobId

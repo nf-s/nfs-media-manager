@@ -54,12 +54,15 @@ import {
   replayProviderTask,
 } from '@/services/provider-task-replay'
 import { replaceAlbumTracks } from '@/services/album-library-tracks'
+import { recordAlbumTrackProviderReferences } from '@/services/album-track-provider-references'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
 import {
   acceptTidalTrackMatch,
   getTidalTrackMatch,
   listTidalTrackMatchStatuses,
   matchTidalTracks,
+  repairStoredTidalCodeReferences,
+  repairTidalTrackMatchReferences,
 } from '@/services/tidal-track-match'
 
 const userId = 'fixture-owner'
@@ -430,6 +433,212 @@ describe('TIDAL track match in the request, with offline HTTP', () => {
     expect(request).toHaveBeenCalledTimes(calls)
   }, 30_000)
 
+  it('keeps a direct match when the same TIDAL ID already came from the album', async () => {
+    await databaseClient.insert(schema.providerReference).values({
+      id: 'aligned-track-fixture',
+      mediaItemId: trackId(scenario.single),
+      provider: 'tidal',
+      referenceType: 'track',
+      externalId: '900101',
+      isPrimary: true,
+      metadata: {
+        url: 'https://tidal.com/browse/track/900101',
+        version: null,
+        durationSec: libraryDuration(scenario.single),
+        popularity: 0.3,
+        source: 'tidal-album',
+        jobId: 'album-job-fixture',
+        albumMediaItemId: albumId,
+        alignment: 'position-duration',
+      },
+    })
+
+    const { review, job } = await match(scenario.single)
+    expect(review.match).toMatchObject({
+      tidalTrackId: '900101',
+      source: 'tidal-track-match',
+      matchReason: 'single',
+    })
+    expect(await references(scenario.single, 'track')).toEqual([
+      expect.objectContaining({
+        id: 'aligned-track-fixture',
+        metadata: expect.objectContaining({
+          source: 'tidal-track-match',
+          jobId: job.id,
+        }),
+      }),
+    ])
+  }, 30_000)
+
+  it('refreshes album evidence independently of the current direct match', async () => {
+    const position = scenario.ambiguous
+    const { job } = await match(position)
+    const accept = (tidalTrackId: string) =>
+      acceptTidalTrackMatch({
+        trackId: trackId(position),
+        jobId: job.id,
+        tidalTrackId,
+      })
+    const align = (externalId: string) =>
+      databaseClient.transaction((tx) =>
+        recordAlbumTrackProviderReferences(tx, {
+          albumId,
+          provider: 'tidal',
+          jobId: 'album-job-fixture',
+          tracks: [
+            {
+              position,
+              title: `Fixture ${position}`,
+              durationSec: libraryDuration(position),
+              references: [
+                {
+                  referenceType: 'track',
+                  externalId,
+                  isPrimary: true,
+                  metadata: {
+                    url: `https://tidal.com/browse/track/${externalId}`,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      )
+
+    await accept('900401')
+    await align('900401')
+    await accept('900402')
+    expect(await references(position, 'track')).toEqual([
+      expect.objectContaining({
+        externalId: '900401',
+        metadata: expect.objectContaining({ source: 'tidal-album' }),
+      }),
+      expect.objectContaining({
+        externalId: '900402',
+        metadata: expect.objectContaining({ source: 'tidal-track-match' }),
+      }),
+    ])
+
+    await align('900402')
+    await align('900404')
+    expect((await getTidalTrackMatch(trackId(position))).match).toMatchObject({
+      tidalTrackId: '900402',
+      source: 'tidal-track-match',
+    })
+    await accept('900403')
+    expect(
+      (await references(position, 'track')).map(({ externalId }) => externalId),
+    ).toEqual(['900403', '900404'])
+  }, 30_000)
+
+  it('repairs a historically suppressed direct match from its saved decision', async () => {
+    const position = scenario.single
+    const { job } = await match(position)
+    const [reference] = await references(position, 'track')
+    if (!reference) throw new Error('Missing match reference')
+    await databaseClient
+      .update(schema.providerReference)
+      .set({ metadata: { source: 'tidal-album', albumMediaItemId: albumId } })
+      .where(eq(schema.providerReference.id, reference.id))
+    const calls = request.mock.calls.length
+
+    const conflictingJob = 'second-accepted-match-fixture'
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: conflictingJob,
+      provider: 'tidal',
+      status: 'succeeded',
+      scope: { mediaItemIds: [trackId(position)], limit: 1 },
+      options: {
+        task: TIDAL_TRACK_MATCH_TASK,
+        trackId: trackId(position),
+        acceptedTidalTrackId: '900102',
+      },
+    })
+    expect(
+      await repairTidalTrackMatchReferences({ apply: true, limit: 1 }),
+    ).toEqual({ scanned: 0, eligible: 0, repaired: 0 })
+    await databaseClient
+      .delete(schema.scrapeJob)
+      .where(eq(schema.scrapeJob.id, conflictingJob))
+
+    expect(
+      await repairTidalTrackMatchReferences({ apply: false, limit: 1 }),
+    ).toEqual({ scanned: 1, eligible: 1, repaired: 0 })
+    expect(await references(position, 'track')).toEqual([
+      expect.objectContaining({
+        metadata: expect.objectContaining({ source: 'tidal-album' }),
+      }),
+    ])
+
+    expect(
+      await repairTidalTrackMatchReferences({ apply: true, limit: 1 }),
+    ).toEqual({ scanned: 1, eligible: 1, repaired: 1 })
+    expect(await references(position, 'track')).toEqual([
+      expect.objectContaining({
+        id: reference.id,
+        metadata: expect.objectContaining({
+          source: 'tidal-track-match',
+          jobId: job.id,
+          matchReason: 'single',
+        }),
+      }),
+    ])
+    expect(
+      await repairTidalTrackMatchReferences({ apply: true, limit: 1 }),
+    ).toEqual({ scanned: 0, eligible: 0, repaired: 0 })
+    expect(request).toHaveBeenCalledTimes(calls)
+  }, 30_000)
+
+  it('only makes an alternate Similar ID the current match after selection', async () => {
+    const position = scenario.ambiguous
+    await databaseClient.insert(schema.providerReference).values({
+      id: 'alternate-similar-track-fixture',
+      mediaItemId: trackId(position),
+      provider: 'tidal',
+      referenceType: 'track',
+      externalId: '900401',
+      isPrimary: false,
+      metadata: {
+        source: 'tidal-similar',
+        selection: 'alternate',
+        url: 'https://tidal.com/browse/track/900401',
+        version: null,
+        durationSec: libraryDuration(position),
+        popularity: 0.4,
+      },
+    })
+    expect((await getTidalTrackMatch(trackId(position))).match).toBeNull()
+    const { job } = await match(position)
+    const accepted = await acceptTidalTrackMatch({
+      trackId: trackId(position),
+      jobId: job.id,
+      tidalTrackId: '900401',
+    })
+    expect(accepted.match).toMatchObject({
+      tidalTrackId: '900401',
+      source: 'tidal-track-match',
+      matchReason: 'manual',
+    })
+
+    await acceptTidalTrackMatch({
+      trackId: trackId(position),
+      jobId: job.id,
+      tidalTrackId: '900402',
+    })
+    expect(await references(position, 'track')).toEqual([
+      expect.objectContaining({
+        externalId: '900401',
+        isPrimary: false,
+        metadata: expect.objectContaining({ selection: 'alternate' }),
+      }),
+      expect.objectContaining({
+        externalId: '900402',
+        isPrimary: true,
+        metadata: expect.objectContaining({ source: 'tidal-track-match' }),
+      }),
+    ])
+  }, 30_000)
+
   it('chooses the track on the library album by its UPC', async () => {
     const { review } = await match(scenario.albumUpc)
     expect(review.job).toMatchObject({
@@ -442,6 +651,73 @@ describe('TIDAL track match in the request, with offline HTTP', () => {
         metadata: expect.objectContaining({ matchReason: 'album-upc' }),
       }),
     ])
+
+    const [candidate] = await databaseClient
+      .select({ mediaItemId: schema.providerReference.mediaItemId })
+      .from(schema.providerReference)
+      .where(
+        and(
+          eq(schema.providerReference.provider, 'tidal'),
+          eq(schema.providerReference.referenceType, 'track'),
+          eq(schema.providerReference.externalId, '900201'),
+        ),
+      )
+    const [release] = await databaseClient
+      .select({ mediaItemId: schema.providerReference.mediaItemId })
+      .from(schema.providerReference)
+      .where(
+        and(
+          eq(schema.providerReference.provider, 'tidal'),
+          eq(schema.providerReference.referenceType, 'album'),
+          eq(schema.providerReference.externalId, '910201'),
+        ),
+      )
+    if (!candidate || !release) throw new Error('Missing catalog evidence')
+    expect(candidate.mediaItemId).not.toBe(trackId(scenario.albumUpc))
+    const candidateIsrc = and(
+      eq(schema.providerReference.mediaItemId, candidate.mediaItemId),
+      eq(schema.providerReference.provider, 'tidal'),
+      eq(schema.providerReference.referenceType, 'isrc'),
+      eq(schema.providerReference.externalId, isrc(scenario.albumUpc)),
+    )
+    const releaseUpc = and(
+      eq(schema.providerReference.mediaItemId, release.mediaItemId),
+      eq(schema.providerReference.provider, 'tidal'),
+      eq(schema.providerReference.referenceType, 'upc'),
+      eq(schema.providerReference.externalId, '000000000099'),
+    )
+    expect(
+      await databaseClient.$count(schema.providerReference, candidateIsrc),
+    ).toBe(1)
+    expect(
+      await databaseClient.$count(schema.providerReference, releaseUpc),
+    ).toBe(1)
+
+    await databaseClient.delete(schema.providerReference).where(candidateIsrc)
+    await databaseClient.delete(schema.providerReference).where(releaseUpc)
+    const calls = request.mock.calls.length
+    expect(
+      await repairStoredTidalCodeReferences({ apply: false, limit: 10 }),
+    ).toEqual({ eligible: 2, repaired: 0 })
+    expect(
+      await databaseClient.$count(schema.providerReference, candidateIsrc),
+    ).toBe(0)
+    expect(
+      await databaseClient.$count(schema.providerReference, releaseUpc),
+    ).toBe(0)
+    expect(
+      await repairStoredTidalCodeReferences({ apply: true, limit: 10 }),
+    ).toEqual({ eligible: 2, repaired: 2 })
+    expect(
+      await databaseClient.$count(schema.providerReference, candidateIsrc),
+    ).toBe(1)
+    expect(
+      await databaseClient.$count(schema.providerReference, releaseUpc),
+    ).toBe(1)
+    expect(
+      await repairStoredTidalCodeReferences({ apply: true, limit: 10 }),
+    ).toEqual({ eligible: 0, repaired: 0 })
+    expect(request).toHaveBeenCalledTimes(calls)
   }, 30_000)
 
   it('chooses the track nearest the library duration', async () => {

@@ -9,6 +9,7 @@ import {
 import {
   TIDAL_TRACK_CANDIDATE_LIMIT,
   TIDAL_TRACK_MATCH_TASK,
+  TidalIdSchema,
   TidalTrackCandidateSchema,
   TidalTrackMatchAcceptInputSchema,
   TidalTrackMatchInputSchema,
@@ -28,13 +29,14 @@ import {
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { validIsrc } from '@/lib/isrc'
+import { validIsrc, validIsrcSql } from '@/lib/isrc'
 import { plainKey } from '@/lib/lastfm-album-matching'
 import { createStableId, parseOptionalDate } from '@/lib/media-utils'
 import {
   createProviderResponseRecorder,
   providerResponseSecretValues,
 } from '@/lib/provider-response-history'
+import { UpcSchema } from '@/lib/spotify-api'
 import { tidalCountry, tidalToken } from '@/lib/tidal-api'
 import { trackVersionQualifiers } from '@/lib/track-matching'
 import {
@@ -252,7 +254,7 @@ function referenceMetadata(
   candidate: TidalTrackCandidate,
   input: {
     jobId: string
-    matchReason: z.infer<typeof TidalTrackMatchReasonSchema>
+    matchReason?: z.infer<typeof TidalTrackMatchReasonSchema>
     recordedAt: Date
   },
 ): Record<string, JsonValue> {
@@ -268,14 +270,17 @@ function referenceMetadata(
     ...(keyScale === undefined ? {} : { keyScale }),
     source: SOURCE,
     jobId: input.jobId,
-    matchReason: input.matchReason,
+    ...(input.matchReason === undefined
+      ? {}
+      : { matchReason: input.matchReason }),
     recordedAt: input.recordedAt.toISOString(),
   }
 }
 
 /**
  * Replaces the track's earlier TIDAL track match with this one and records
- * its ISRC. A reference an album job wrote for the same TIDAL track is kept.
+ * its ISRC. An independent reference to the same TIDAL track is restored
+ * if a later match selects another ID.
  */
 async function writeTidalTrackMatch(
   tx: Transaction,
@@ -284,20 +289,27 @@ async function writeTidalTrackMatch(
     isrc: string
     candidate: TidalTrackCandidate
     jobId: string
-    matchReason: z.infer<typeof TidalTrackMatchReasonSchema>
+    matchReason?: z.infer<typeof TidalTrackMatchReasonSchema>
   },
 ) {
   const recordedAt = new Date()
+  const directMatch = and(
+    eq(providerReference.mediaItemId, input.trackId),
+    eq(providerReference.provider, PROVIDER),
+    eq(providerReference.referenceType, 'track'),
+    sql`${providerReference.metadata}->>'source' = ${SOURCE}`,
+  )
   await tx
-    .delete(providerReference)
+    .update(providerReference)
+    .set({
+      metadata: sql`nullif(${providerReference.metadata}->'priorReference'->'metadata', 'null'::jsonb)`,
+      isPrimary: sql`coalesce(${providerReference.metadata}->'priorReference'->>'isPrimary' = 'true', false)`,
+      updatedAt: recordedAt,
+    })
     .where(
-      and(
-        eq(providerReference.mediaItemId, input.trackId),
-        eq(providerReference.provider, PROVIDER),
-        eq(providerReference.referenceType, 'track'),
-        sql`${providerReference.metadata}->>'source' = ${SOURCE}`,
-      ),
+      and(directMatch, sql`${providerReference.metadata} ? 'priorReference'`),
     )
+  await tx.delete(providerReference).where(directMatch)
   await tx
     .insert(providerReference)
     .values({
@@ -312,7 +324,24 @@ async function writeTidalTrackMatch(
       isPrimary: true,
       metadata: referenceMetadata(input.candidate, { ...input, recordedAt }),
     })
-    .onConflictDoNothing()
+    .onConflictDoUpdate({
+      target: [
+        providerReference.mediaItemId,
+        providerReference.provider,
+        providerReference.referenceType,
+        providerReference.externalId,
+      ],
+      set: {
+        isPrimary: true,
+        metadata: sql`excluded.metadata || jsonb_build_object(
+          'priorReference', jsonb_build_object(
+            'metadata', ${providerReference.metadata},
+            'isPrimary', ${providerReference.isPrimary}
+          )
+        )`,
+        updatedAt: recordedAt,
+      },
+    })
   await recordTrackIsrcs(
     tx,
     [
@@ -380,8 +409,16 @@ async function observeTidalLookup(
           subjectId,
         },
       )
+      await recordTrackIsrcs(tx, [
+        {
+          mediaItemId: trackId,
+          isrc: candidate.isrc,
+          provider: PROVIDER,
+          source: { kind: SOURCE, jobId },
+        },
+      ])
       for (const [albumIndex, item] of candidate.albums.entries()) {
-        await observeCatalogMedia(
+        const albumId = await observeCatalogMedia(
           tx,
           {
             kind: 'album',
@@ -408,6 +445,22 @@ async function observeTidalLookup(
             relationshipRole: 'release',
           },
         )
+        const barcode = UpcSchema.safeParse(item.barcodeId?.trim())
+        if (barcode.success)
+          await tx
+            .insert(providerReference)
+            .values({
+              id: createStableId(
+                'pref',
+                `${albumId}:tidal:upc:${barcode.data}`,
+              ),
+              mediaItemId: albumId,
+              provider: PROVIDER,
+              referenceType: 'upc',
+              externalId: barcode.data,
+              metadata: { source: SOURCE, jobId },
+            })
+            .onConflictDoNothing()
       }
     }
   }
@@ -609,6 +662,7 @@ const latestMatchJobId = sql`(select j.id from scrape_job j
 const currentReferenceId = sql`(select r.id from provider_reference r
   where r.media_item_id = ${mediaItem.id} and r.provider = ${PROVIDER}
     and r.reference_type = 'track'
+    and r.metadata->>'selection' is distinct from 'alternate'
   order by (r.metadata->>'source' = ${SOURCE}) desc nulls last,
     r.metadata->>'recordedAt' desc nulls last, r.id
   limit 1)`
@@ -820,5 +874,162 @@ export async function acceptTidalTrackMatch(input: {
       })
       .where(eq(scrapeJob.id, jobId))
     return readTidalTrackMatch(tx, trackId)
+  })
+}
+
+/** Repair exact-ID collisions using only an unambiguous retained selection. */
+export async function repairTidalTrackMatchReferences(input: {
+  apply: boolean
+  limit: number
+}) {
+  const limit = z.number().int().min(1).max(100).parse(input.limit)
+  return db.transaction(async (tx) => {
+    if (input.apply) await lockLibraryTrackWrites(tx)
+    const { rows } = await tx.execute(sql`
+      select j.id as job_id, m.id as track_id,
+        j.options->>'acceptedTidalTrackId' as tidal_id, j.options->>'isrc' as isrc
+      from scrape_job j
+      join media_item m on m.id = j.options->>'trackId' and m.media_type = 'track'
+      join library_track t on t.media_item_id = m.id
+      join provider_reference r on r.media_item_id = m.id and r.provider = 'tidal'
+        and r.reference_type = 'track' and r.external_id = j.options->>'acceptedTidalTrackId'
+      where j.provider = 'tidal' and j.options->>'task' = 'tidal-track-match'
+        and j.status = 'succeeded'
+        and j.options->>'acceptedTidalTrackId' ~ '^[0-9]{1,20}$'
+        and m.metadata->>'legacyHidden' is distinct from 'true'
+        and r.metadata->>'source' is distinct from 'tidal-track-match'
+        and r.metadata->>'rejected' is distinct from 'true'
+        and r.metadata->>'verified' is distinct from 'false'
+        and not exists (
+          select 1 from provider_reference current_match
+          where current_match.media_item_id = m.id and current_match.provider = 'tidal'
+            and current_match.reference_type = 'track'
+            and current_match.metadata->>'source' = 'tidal-track-match'
+        )
+        and not exists (
+          select 1 from scrape_job other
+          where other.provider = 'tidal' and other.options->>'task' = 'tidal-track-match'
+            and other.options->>'trackId' = m.id and other.id <> j.id
+            and (other.status in ('queued', 'running') or
+              (other.status = 'succeeded' and other.options->>'acceptedTidalTrackId' is not null))
+        )
+      order by j.created_at, j.id
+      limit ${limit}`)
+    const matches = z
+      .array(
+        z.object({
+          job_id: z.string(),
+          track_id: z.string(),
+          tidal_id: TidalIdSchema,
+          isrc: z.string().nullable(),
+        }),
+      )
+      .parse(rows)
+    let eligible = 0
+    for (const match of matches) {
+      const stored = await storedMatch(tx, match.job_id)
+      const candidate = stored?.candidates.find(
+        ({ tidalTrackId }) => tidalTrackId === match.tidal_id,
+      )
+      const isrc = validIsrc(match.isrc)
+      if (!stored || !candidate || !isrc || validIsrc(stored.isrc) !== isrc)
+        continue
+      eligible += 1
+      if (!input.apply) continue
+      // An ambiguous job could only have gained its accepted ID by review.
+      // A multi-candidate automatic choice may have been changed in review.
+      const matchReason =
+        stored.reason === 'ambiguous'
+          ? 'manual'
+          : stored.candidates.length === 1
+            ? stored.reason
+            : undefined
+      await writeTidalTrackMatch(tx, {
+        trackId: match.track_id,
+        isrc,
+        candidate,
+        jobId: match.job_id,
+        matchReason,
+      })
+    }
+    return {
+      scanned: matches.length,
+      eligible,
+      repaired: input.apply ? eligible : 0,
+    }
+  })
+}
+
+/** Materialize codes already stored on exact native TIDAL resources. */
+export async function repairStoredTidalCodeReferences(input: {
+  apply: boolean
+  limit: number
+}) {
+  const limit = z.number().int().min(1).max(100).parse(input.limit)
+  return db.transaction(async (tx) => {
+    if (input.apply) await lockLibraryTrackWrites(tx)
+    const { rows } = await tx.execute(sql`
+      with stored as (
+        select r.id, r.media_item_id, r.metadata->>'jobId' as job_id,
+          case when r.reference_type = 'track' then 'isrc' else 'upc' end as reference_type,
+          case when r.reference_type = 'track' then ${validIsrcSql(sql`r.metadata->>'isrc'`)}
+            else btrim(r.metadata->>'barcodeId') end as code
+        from provider_reference r
+        join media_item m on m.id = r.media_item_id and m.media_type::text = r.reference_type
+        where r.provider = 'tidal' and r.reference_type in ('track', 'album')
+          and r.external_id ~ '^[0-9]{1,20}$'
+          and m.metadata->>'legacyHidden' is distinct from 'true'
+          and r.metadata->>'rejected' is distinct from 'true'
+          and r.metadata->>'verified' is distinct from 'false'
+      )
+      select distinct on (s.media_item_id, s.reference_type, s.code)
+        s.id, s.media_item_id, s.reference_type, s.code, s.job_id
+      from stored s
+      where ((s.reference_type = 'isrc' and s.code is not null)
+        or (s.reference_type = 'upc' and s.code ~ '^[0-9]{8,14}$'))
+        and not exists (
+          select 1 from provider_reference r
+          where r.media_item_id = s.media_item_id and r.provider = 'tidal'
+            and r.reference_type = s.reference_type and r.external_id = s.code
+        )
+      order by s.media_item_id, s.reference_type, s.code, s.id
+      limit ${limit}`)
+    const references = z
+      .array(
+        z.object({
+          id: z.string(),
+          media_item_id: z.string(),
+          reference_type: z.enum(['isrc', 'upc']),
+          code: z.string(),
+          job_id: z.string().nullable(),
+        }),
+      )
+      .parse(rows)
+    if (!input.apply || !references.length)
+      return { eligible: references.length, repaired: 0 }
+    const inserted = await tx
+      .insert(providerReference)
+      .values(
+        references.map(
+          ({ id, media_item_id, reference_type, code, job_id }) => ({
+            id: createStableId(
+              'pref',
+              `${media_item_id}:tidal:${reference_type}:${code}`,
+            ),
+            mediaItemId: media_item_id,
+            provider: PROVIDER,
+            referenceType: reference_type,
+            externalId: code,
+            metadata: {
+              source: 'tidal-native-reference',
+              referenceId: id,
+              ...(job_id ? { jobId: job_id } : {}),
+            },
+          }),
+        ),
+      )
+      .onConflictDoNothing()
+      .returning({ id: providerReference.id })
+    return { eligible: references.length, repaired: inserted.length }
   })
 }

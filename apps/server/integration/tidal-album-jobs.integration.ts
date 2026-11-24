@@ -291,6 +291,9 @@ describe('TIDAL album match in the request, with offline HTTP', () => {
         barcodeId: upc,
       },
     })
+    expect(await trackReferences('upc')).toEqual([
+      expect.objectContaining({ mediaItemId: albumId, externalId: upc }),
+    ])
     expect(
       await databaseClient
         .select()
