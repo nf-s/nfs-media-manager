@@ -39,6 +39,11 @@ import {
   listArtistBrowsePage,
 } from '@/services/artist-browse'
 import { refreshArtistListeningTotals } from '@/services/artist-listening'
+import {
+  listCatalogObservations,
+  observeCatalogOccurrences,
+  promoteNativeResource,
+} from '@/services/catalog-discoveries'
 import { getArtist, listArtistTracks } from '@/services/creators'
 import { importLastfmLibraryTracks } from '@/services/lastfm-library-tracks'
 import {
@@ -300,6 +305,84 @@ it('merges, undoes and makes the merge again', async () => {
   expect((await artistOf(keptId))?.scrobbleCount).toBe(5)
   await undoLibraryChange(merged.id)
   expect(await credits()).toEqual(before)
+})
+
+it('opens both names’ Sources and adds the current artist through an old address', async () => {
+  await fixture.transaction((tx) =>
+    observeCatalogOccurrences(tx, [
+      {
+        target: { kind: 'artist', id: keptId },
+        origin: {
+          provider: 'spotify',
+          operation: 'album-credits',
+          occurrenceKey: keptId,
+        },
+      },
+      {
+        target: { kind: 'artist', id: spellingId },
+        origin: {
+          provider: 'lastfm',
+          operation: 'scrobbled-credit',
+          occurrenceKey: spellingId,
+        },
+      },
+      {
+        target: { kind: 'person', id: spellingId },
+        origin: {
+          provider: 'tmdb',
+          operation: 'film-credits',
+          occurrenceKey: spellingId,
+        },
+      },
+    ]),
+  )
+  const change = await mergeArtists({
+    artistIds: [spellingId, keptId],
+    reviewed: false,
+  })
+  const sources = (id: string, kind: 'artist' | 'person') =>
+    listCatalogObservations(id, { page: 1, size: 10 }, kind)
+  expect((await sources(keptId, 'artist')).items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ targetId: keptId, provider: 'spotify' }),
+      expect.objectContaining({ targetId: spellingId, provider: 'lastfm' }),
+    ]),
+  )
+  expect(await sources(spellingId, 'artist')).toMatchObject({ totalCount: 2 })
+  expect(await sources(keptId, 'person')).toMatchObject({
+    totalCount: 1,
+    items: [{ targetId: spellingId, provider: 'tmdb' }],
+  })
+  expect(await promoteNativeResource('artist', spellingId)).toEqual({
+    mediaItemId: keptId,
+    created: true,
+  })
+  expect(await promoteNativeResource('artist', keptId)).toEqual({
+    mediaItemId: keptId,
+    created: false,
+  })
+  expect(await promoteNativeResource('person', spellingId)).toEqual({
+    mediaItemId: keptId,
+    created: true,
+  })
+  expect(await fixture.select().from(schema.catalogNativeAddition)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ targetKind: 'artist', targetId: keptId }),
+      expect.objectContaining({ targetKind: 'person', targetId: keptId }),
+    ]),
+  )
+
+  await undoLibraryChange(change.id)
+  expect(await sources(keptId, 'artist')).toMatchObject({
+    totalCount: 1,
+    items: [{ targetId: keptId }],
+  })
+  expect(await sources(spellingId, 'artist')).toMatchObject({
+    totalCount: 1,
+    items: [{ targetId: spellingId }],
+  })
+  await redoLibraryChange(change.id)
+  expect(await sources(spellingId, 'artist')).toMatchObject({ totalCount: 2 })
 })
 
 it('credits the artist kept when an import names the merged artist', async () => {
