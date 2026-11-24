@@ -51,7 +51,14 @@ import {
   tableWidthLimits,
 } from '@/utils/column-widths'
 import { useColumnWidths } from '@/hooks/useColumnWidths'
+import { libraryScopeFilterCount } from '@/utils/library-scope'
 import { ColumnOrderList } from './column-order'
+import BrowseFilterPanel from './browse-filter-panel'
+import {
+  LibraryScopeSections,
+  LibraryScopeToggle,
+  type LibraryScopeControl,
+} from './library-scope-controls'
 
 /** Column placement in the one table: right-aligned numbers and pinned identity. */
 export type ColumnLayout = {
@@ -494,11 +501,13 @@ export function SecondaryTableToolbar({
   filters,
   count,
   columns,
+  libraryScope,
 }: {
   search?: ReactNode
   filters?: ReactNode
   count?: ReactNode
   columns?: ReactNode
+  libraryScope?: LibraryScopeControl
 }) {
   const toolbar = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -532,11 +541,22 @@ export function SecondaryTableToolbar({
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [])
-  if (!search && !filters && count == null && !columns) return null
+  if (!search && !filters && count == null && !columns && !libraryScope)
+    return null
   return (
     <Toolbar ref={toolbar}>
       {search}
       {filters}
+      {libraryScope && (
+        <>
+          <LibraryScopeToggle {...libraryScope} />
+          <BrowseFilterPanel
+            count={libraryScopeFilterCount(libraryScope.value)}
+          >
+            <LibraryScopeSections {...libraryScope} />
+          </BrowseFilterPanel>
+        </>
+      )}
       {count != null && <ToolbarCount>{count}</ToolbarCount>}
       {columns && <ToolbarEnd>{columns}</ToolbarEnd>}
     </Toolbar>
