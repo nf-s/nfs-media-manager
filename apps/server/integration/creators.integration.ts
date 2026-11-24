@@ -433,7 +433,10 @@ describe('creator directories and related library items', () => {
       promoteNativeResource('artist', person.id),
       promoteNativeResource('artist', person.id),
     ])
-    expect(musicAdds.map((result) => result.created).sort()).toEqual([false, true])
+    expect(musicAdds.map((result) => result.created).sort()).toEqual([
+      false,
+      true,
+    ])
     expect(await listPeople(PersonQuerySchema.parse(filters))).toMatchObject({
       items: [{ id: person.id, inLibrary: true }],
       totalCount: 1,

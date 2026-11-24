@@ -231,7 +231,9 @@ describe('manual provider search and library additions', () => {
         },
       ],
     })
-    mocks.filmMatches.mockResolvedValue([{ id: 'existing-film', error: null, inLibrary: true }])
+    mocks.filmMatches.mockResolvedValue([
+      { id: 'existing-film', error: null, inLibrary: true },
+    ])
     expect(
       await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
     ).toEqual({ mediaItemId: 'existing-album', created: false })

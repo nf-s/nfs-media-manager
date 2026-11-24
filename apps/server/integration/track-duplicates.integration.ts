@@ -406,17 +406,15 @@ it('omits outside tracks and drops a published group when its retained peer leav
   const member = 'duplicate-scope-member'
   const observed = 'duplicate-scope-observed'
   const ids = [member, observed]
-  await fixture
-    .insert(schema.mediaItem)
-    .values(
-      ids.map((id) => ({
-        id,
-        slug: id,
-        title: name,
-        mediaType: 'track',
-        inLibrary: id === member,
-      })),
-    )
+  await fixture.insert(schema.mediaItem).values(
+    ids.map((id) => ({
+      id,
+      slug: id,
+      title: name,
+      mediaType: 'track',
+      inLibrary: id === member,
+    })),
+  )
   await fixture
     .insert(schema.libraryTrack)
     .values(ids.map((mediaItemId) => ({ mediaItemId, durationSec: 200 })))

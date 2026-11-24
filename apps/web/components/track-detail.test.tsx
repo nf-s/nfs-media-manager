@@ -24,8 +24,13 @@ require.extensions['.css'] = (module) => {
 }
 let TrackDetailView: typeof import('./track-detail').default
 const router = {
-  back: mock.fn(), forward: mock.fn(), refresh: mock.fn(),
-  hmrRefresh: mock.fn(), push: mock.fn(), replace: mock.fn(), prefetch: mock.fn(),
+  back: mock.fn(),
+  forward: mock.fn(),
+  refresh: mock.fn(),
+  hmrRefresh: mock.fn(),
+  push: mock.fn(),
+  replace: mock.fn(),
+  prefetch: mock.fn(),
 }
 before(async () => {
   const detail = await import('./track-detail')

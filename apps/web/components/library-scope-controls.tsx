@@ -77,7 +77,9 @@ export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
                     onChange({
                       ...value,
                       scope:
-                        target.checked && !value.selection && value.scope === 'library'
+                        target.checked &&
+                        !value.selection &&
+                        value.scope === 'library'
                           ? 'all'
                           : value.scope,
                       sources: target.checked
@@ -97,7 +99,12 @@ export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
               onChange={({ target }) =>
                 onChange({
                   ...value,
-                  mode: target.value === 'exclude' ? 'exclude' : target.value === 'all' ? 'all' : 'any',
+                  mode:
+                    target.value === 'exclude'
+                      ? 'exclude'
+                      : target.value === 'all'
+                        ? 'all'
+                        : 'any',
                 })
               }
             >
@@ -107,7 +114,14 @@ export function LibraryScopeSections({ value, onChange }: LibraryScopeControl) {
             </Select>
           </label>
           <label className="ds-checkrow">
-            <input type="checkbox" className="ds-check" checked={Boolean(value.selection)} onChange={({target}) => onChange({...value, selection:target.checked})} />
+            <input
+              type="checkbox"
+              className="ds-check"
+              checked={Boolean(value.selection)}
+              onChange={({ target }) =>
+                onChange({ ...value, selection: target.checked })
+              }
+            />
             Apply source filters to library items
           </label>
         </div>

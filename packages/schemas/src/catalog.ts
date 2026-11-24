@@ -2,12 +2,23 @@ import { z } from 'zod'
 import { PaginationQuerySchema } from './common'
 
 export const LibraryScopeSchema = z.enum(['library', 'outside', 'all'])
-export const CatalogNativeKindSchema = z.enum(['artist', 'person', 'playlist', 'collection', 'subscription-source', 'subscription-item'])
+export const CatalogNativeKindSchema = z.enum([
+  'artist',
+  'person',
+  'playlist',
+  'collection',
+  'subscription-source',
+  'subscription-item',
+])
 export type CatalogNativeKind = z.infer<typeof CatalogNativeKindSchema>
 
 export const CatalogScopeQuerySchema = z.object({
   libraryScope: LibraryScopeSchema.optional(),
-  discoverySources: z.string().regex(/^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$/).max(500).optional(),
+  discoverySources: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$/)
+    .max(500)
+    .optional(),
   discoverySourceMode: z.enum(['any', 'all', 'exclude']).optional(),
   discoverySourceScope: z.literal('selection').optional(),
 })

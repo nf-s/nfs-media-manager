@@ -195,7 +195,9 @@ async function collectionLinks(
 }
 
 function collectionMemberStatus(mediaType: CollectionMediaType) {
-  const qualifying = collectionMembers(mediaType, {}).where(and(eq(playlistItem.playlistId, playlist.id), visibleMember(mediaType, {})))
+  const qualifying = collectionMembers(mediaType, {}).where(
+    and(eq(playlistItem.playlistId, playlist.id), visibleMember(mediaType, {})),
+  )
   return sql<boolean>`(${playlist.addedToLibrary} or (${playlist.catalogProvider} is null and exists (${qualifying})))`
 }
 
@@ -206,14 +208,19 @@ function matchingCollections(
   const matchingMember = collectionMembers(mediaType, {}).where(
     and(
       eq(playlistItem.playlistId, playlist.id),
-      visibleMember(mediaType, {libraryScope:'all'}),
+      visibleMember(mediaType, { libraryScope: 'all' }),
     ),
   )
   return and(
     eq(playlist.kind, 'collection'),
     query.q ? ilike(playlist.name, containsPattern(query.q)) : undefined,
     exists(matchingMember),
-    catalogScopeCondition(sql`${playlist.id}`, collectionMemberStatus(mediaType),query,'collection'),
+    catalogScopeCondition(
+      sql`${playlist.id}`,
+      collectionMemberStatus(mediaType),
+      query,
+      'collection',
+    ),
   )
 }
 
@@ -254,7 +261,11 @@ async function listCollectionBrowsePage(
   }
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
   const rows = await db
-    .select({ ...collectionColumns, memberCount, inLibrary: collectionMemberStatus(mediaType) })
+    .select({
+      ...collectionColumns,
+      memberCount,
+      inLibrary: collectionMemberStatus(mediaType),
+    })
     .from(playlist)
     .where(matchingCollections(mediaType, query))
     .orderBy(

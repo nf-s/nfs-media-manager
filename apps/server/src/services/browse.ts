@@ -789,11 +789,14 @@ function groupedTrackBrowse(
   const artistTagScope = sharedArtistTags
     ? sql`browse_artist_tag_labels as (${artistTagLabels()}), `
     : sql``
-  const memberships = sql`with ${artistTagScope}${recordingMemberships(matches, {
-    creatorId: query.creatorId,
-    libraryScope: query.libraryScope,
-    versionId,
-  })}`
+  const memberships = sql`with ${artistTagScope}${recordingMemberships(
+    matches,
+    {
+      creatorId: query.creatorId,
+      libraryScope: query.libraryScope,
+      versionId,
+    },
+  )}`
   const groupRanges = query.ranges.flatMap((range) => {
     const value = recordingGroupValue(range.field)
     if (!value) return []
@@ -1510,7 +1513,11 @@ async function browseQueries(
       : undefined
   const conditions: SQL[] = [
     eq(mediaItem.mediaType, mediaType),
-    catalogScopeCondition(sql`${mediaItem.id}`, sql`${mediaItem.inLibrary}`, query),
+    catalogScopeCondition(
+      sql`${mediaItem.id}`,
+      sql`${mediaItem.inLibrary}`,
+      query,
+    ),
   ]
   // A playlist member already has a library identity.
   const hideRedundant =
@@ -1653,7 +1660,8 @@ async function browseQueries(
       countedListening,
       !options.conditions?.length &&
         !options.includeLastfmSourceRows &&
-        !options.sort && memberScope(query),
+        !options.sort &&
+        memberScope(query),
       versionId,
     )
   const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
@@ -2502,7 +2510,7 @@ function textRows(
 ): SQL {
   const visible = sql`media_item.media_type = ${mediaType}
     ${options.includeArchived ? sql`` : sql`and media_item.metadata->>'legacyHidden' is distinct from 'true'`}
-    ${options.scope ? sql`and ${catalogScopeCondition(sql`media_item.id`,sql`media_item.in_library`,options.scope)}` : sql``}`
+    ${options.scope ? sql`and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, options.scope)}` : sql``}`
   if (key === 'title')
     return sql`select media_item.id, media_item.title as value from media_item where ${visible}`
   if (key === 'summary')
@@ -2644,7 +2652,7 @@ function albumTagFacetRows(
 ) {
   const visible = sql`media_item.media_type = 'album'
     ${includeArchived ? sql`` : sql`and media_item.metadata->>'legacyHidden' is distinct from 'true'`}
-    and ${catalogScopeCondition(sql`media_item.id`,sql`media_item.in_library`,scope)}`
+    and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, scope)}`
   const release = sql`select media_item.id, labels.value from media_item
     join media_item_tag mt on mt.media_item_id = media_item.id
     join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
@@ -3051,9 +3059,14 @@ function browseFacetQuery(
       (field.key === 'trackTag' || singleTagLevel(trackLevels) === 'track')
     const source =
       musicTagFacet && !trackTagFacet
-        ? albumTagFacetRows(field.key, query.tagLevels, options.includeArchived, query)
+        ? albumTagFacetRows(
+            field.key,
+            query.tagLevels,
+            options.includeArchived,
+            query,
+          )
         : trackTagFacet
-          ? sql`${trackTagFacetRows} and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`,query)}`
+          ? sql`${trackTagFacetRows} and ${catalogScopeCondition(sql`media_item.id`, sql`media_item.in_library`, query)}`
           : textRows(field.key, mediaType, {
               includeArchived: options.includeArchived,
               normalizeTags: true,

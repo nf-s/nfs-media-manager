@@ -616,7 +616,13 @@ export function CollectionEntries({
         actions={
           summary && (
             <>
-              <CatalogLibraryAction key={summary.id} id={summary.id} title={summary.name} kind="collection" inLibrary={summary.inLibrary ?? true} />
+              <CatalogLibraryAction
+                key={summary.id}
+                id={summary.id}
+                title={summary.name}
+                kind="collection"
+                inLibrary={summary.inLibrary ?? true}
+              />
               <DetailActionsSpacer />
               <DetailMore
                 crumb={{ title: summary.name }}

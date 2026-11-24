@@ -26,7 +26,12 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
-import {readLibraryScope, libraryScopeQuery, libraryScopeUpdates, type LibraryScopeState} from '@/utils/library-scope'
+import {
+  readLibraryScope,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
 import { DetailLink } from './detail-link'
 import { useCountedVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
@@ -58,8 +63,8 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
   const scopeParams = libraryScopeQuery(scope)
   function changeScope(next: LibraryScopeState) {
     const params = new URLSearchParams(view.params)
-    for (const [key,value] of Object.entries(libraryScopeUpdates(next))) {
-      if (value) params.set(key,value)
+    for (const [key, value] of Object.entries(libraryScopeUpdates(next))) {
+      if (value) params.set(key, value)
       else params.delete(key)
     }
     view.replace(params)
@@ -102,7 +107,14 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     (inspector.root.mediaType ?? 'film') === mediaType
       ? inspector.root.id
       : null
-  const viewportKey = [directoryKey, 'browse', q, sortBy, direction, scopeParams]
+  const viewportKey = [
+    directoryKey,
+    'browse',
+    q,
+    sortBy,
+    direction,
+    scopeParams,
+  ]
   const {
     window: query,
     isCounting,
@@ -157,7 +169,7 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     <section className="browse-workspace" aria-label="Collections">
       <PageHead title="Collections" />
       <SecondaryTableToolbar
-        libraryScope={{value:scope,onChange:changeScope}}
+        libraryScope={{ value: scope, onChange: changeScope }}
         search={
           <SecondaryTableSearch
             label="Search collections"

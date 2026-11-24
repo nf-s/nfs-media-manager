@@ -73,7 +73,12 @@ export async function loadArtistProviderTarget(
         eq(artistProviderSnapshot.provider, provider),
       ),
     )
-    .where(and(eq(artist.id, artistId), options?.includeCatalog ? isNull(artist.mergedIntoId) : visibleArtist))
+    .where(
+      and(
+        eq(artist.id, artistId),
+        options?.includeCatalog ? isNull(artist.mergedIntoId) : visibleArtist,
+      ),
+    )
   return target
     ? {
         name: target.name,

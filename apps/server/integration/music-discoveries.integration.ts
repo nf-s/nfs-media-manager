@@ -449,14 +449,12 @@ it('keeps rejected and uncertain Spotify references off the linked library album
   for (const [index, externalId] of ids.entries()) {
     const member = `spotify-reference-member-${index}`
     const spotifyUrl = `https://open.spotify.com/album/${externalId}`
-    await fixture
-      .insert(schema.mediaItem)
-      .values({
-        id: member,
-        slug: member,
-        title: 'Incorrect Local Match',
-        mediaType: 'album',
-      })
+    await fixture.insert(schema.mediaItem).values({
+      id: member,
+      slug: member,
+      title: 'Incorrect Local Match',
+      mediaType: 'album',
+    })
     await fixture
       .insert(schema.album)
       .values({ mediaItemId: member, spotifyUrl })

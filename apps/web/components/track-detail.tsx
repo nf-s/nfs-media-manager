@@ -69,7 +69,11 @@ import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
 import { LibraryRecordChanges } from './library-changes'
-import { TrackAlbumNotices, TrackAlbumReferenceLink, useTrackAlbumAddition } from './track-album-notices'
+import {
+  TrackAlbumNotices,
+  TrackAlbumReferenceLink,
+  useTrackAlbumAddition,
+} from './track-album-notices'
 import { TrackLastfmSources } from './track-lastfm-sources'
 import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { TrackRecordParts } from './track-record-parts'
@@ -428,7 +432,10 @@ function TrackOverview({
                 title={
                   albumId || albumAddition.exactId ? (
                     <RowTitle>
-                      <TrackAlbumReferenceLink item={item} addition={albumAddition}>
+                      <TrackAlbumReferenceLink
+                        item={item}
+                        addition={albumAddition}
+                      >
                         {albumTitle}
                       </TrackAlbumReferenceLink>
                     </RowTitle>
@@ -659,7 +666,9 @@ function TrackDetailContent({
             {(item.album || item.albumName) && (
               <>
                 {item.artists.length > 0 ? ' · on ' : 'on '}
-                {item.album || albumAddition.unlisted || albumAddition.exactId ? (
+                {item.album ||
+                albumAddition.unlisted ||
+                albumAddition.exactId ? (
                   <TrackAlbumReferenceLink item={item} addition={albumAddition}>
                     {item.album?.title ?? item.albumName ?? 'Album'}
                   </TrackAlbumReferenceLink>
@@ -686,7 +695,13 @@ function TrackDetailContent({
         }
         actions={
           <>
-            <CatalogLibraryAction key={item.id} id={item.id} kind="track" title={item.title} inLibrary={item.inLibrary ?? true} />
+            <CatalogLibraryAction
+              key={item.id}
+              id={item.id}
+              kind="track"
+              title={item.title}
+              inLibrary={item.inLibrary ?? true}
+            />
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: item.title }}

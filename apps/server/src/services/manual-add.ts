@@ -43,7 +43,10 @@ import { mediaItem, providerSecret } from '@/schemas/db'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { commitAlbumImportRecord, matchAlbumCandidates } from './album-imports'
 import { observeFilmCandidate } from './film-catalog-observations'
-import { observeCatalogMedia, promoteCatalogMediaInTransaction } from './catalog-discoveries'
+import {
+  observeCatalogMedia,
+  promoteCatalogMediaInTransaction,
+} from './catalog-discoveries'
 import {
   commitFilmImportRecord,
   matchFilmCandidates,

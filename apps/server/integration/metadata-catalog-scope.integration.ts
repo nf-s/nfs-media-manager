@@ -101,15 +101,13 @@ beforeAll(async () => {
   await fixture
     .insert(schema.libraryTrack)
     .values(variants.map((variant) => ({ mediaItemId: `track-${variant}` })))
-  await fixture
-    .insert(schema.artist)
-    .values(
-      variants.map((variant) => ({
-        id: `artist-${variant}`,
-        name: `Scope ${variant}`,
-        addedToLibrary: variant === 'member',
-      })),
-    )
+  await fixture.insert(schema.artist).values(
+    variants.map((variant) => ({
+      id: `artist-${variant}`,
+      name: `Scope ${variant}`,
+      addedToLibrary: variant === 'member',
+    })),
+  )
   await fixture.insert(schema.catalogObservation).values(
     ['album', 'film', 'track', 'artist'].flatMap((kind) =>
       variants.map((variant) => ({

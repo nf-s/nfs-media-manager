@@ -771,7 +771,13 @@ export default function MediaDetail({
       }
       actions={
         <>
-          <CatalogLibraryAction key={item.id} id={item.id} kind={item.mediaType} title={item.title} inLibrary={item.inLibrary ?? true} />
+          <CatalogLibraryAction
+            key={item.id}
+            id={item.id}
+            kind={item.mediaType}
+            title={item.title}
+            inLibrary={item.inLibrary ?? true}
+          />
           {item.mediaType === 'film' && <WatchedButton item={item} />}
           {needsId && (
             <Button
@@ -964,7 +970,16 @@ export default function MediaDetail({
             },
             { label: 'Artist tags', field: 'artistTag', values: artistTags },
           ])}
-          {!item.tags.length && <DetailLink kind="album" id={item.id} tab="sources" view={{sourceField:'albumTag'}}>Find album tags</DetailLink>}
+          {!item.tags.length && (
+            <DetailLink
+              kind="album"
+              id={item.id}
+              tab="sources"
+              view={{ sourceField: 'albumTag' }}
+            >
+              Find album tags
+            </DetailLink>
+          )}
           <AlbumPlaylists key={item.id} albumId={item.id} />
           {item.playlists.some(({ kind }) => kind === 'collection') && (
             <Section title="Collections">
