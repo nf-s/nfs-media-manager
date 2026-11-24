@@ -63,6 +63,7 @@ import { queueSpotifyPlaylistImports } from '@/services/spotify-playlists'
 import { listPlaylistBrowsePage } from '@/services/playlist-directory'
 import { getPlaylistDetail } from '@/services/tracks'
 import { observePlaybackCatalog } from '@/services/playback-catalog'
+import { backfillMusicCatalog } from '@/services/music-catalog-backfill'
 import { promoteCatalogMedia } from '@/services/catalog-discoveries'
 import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
 
@@ -244,6 +245,18 @@ describe('Spotify playlist job responses', () => {
       { position: 2, track: { title: 'Fixture Track', inLibrary: true } },
       { position: 3, track: { title: 'No identifier', inLibrary: false } },
     ])
+    const calls = request.mock.calls.length
+    const before = await databaseClient.$count(schema.catalogObservation)
+    expect(await backfillMusicCatalog()).toMatchObject({
+      apply: false,
+      spotifyPlaylistPages: { candidates: 3, skipped: 0 },
+    })
+    expect(await databaseClient.$count(schema.catalogObservation)).toBe(before)
+    await backfillMusicCatalog(true)
+    const applied = await databaseClient.$count(schema.catalogObservation)
+    await backfillMusicCatalog(true)
+    expect(await databaseClient.$count(schema.catalogObservation)).toBe(applied)
+    expect(request.mock.calls).toHaveLength(calls)
   })
 
   it('opens the observed recording, album and artist and promotes only that recording', async () => {
