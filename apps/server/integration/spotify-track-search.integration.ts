@@ -710,6 +710,51 @@ it.each(['automatic', 'manual', 'saved search'])(
         .where(eq(schema.libraryTrack.mediaItemId, trackId))
       request.mockClear()
       const selection = { trackId: sourceId, jobId: saved.jobId, userId }
+      const catalogIsrc = await fixture.query.providerReference.findFirst({
+        where: eq(schema.providerReference.mediaItemId, trackId),
+      })
+      if (!catalogIsrc) throw new Error('Expected a retained Spotify ISRC')
+      expect(catalogIsrc).toMatchObject({
+        provider: 'spotify',
+        referenceType: 'isrc',
+        externalId: 'AAFI12000001',
+        metadata: {
+          source: 'spotify-search-response',
+          responseId: expect.any(String),
+        },
+      })
+
+      const independentReferenceId = 'fixture-compilation-independent-isrc'
+      await fixture.insert(schema.providerReference).values({
+        id: independentReferenceId,
+        mediaItemId: trackId,
+        provider: 'tidal',
+        referenceType: 'isrc',
+        externalId: catalogIsrc.externalId,
+      })
+      expect(
+        await reconcileSavedSpotifyTrackSearch(selection, { dryRun: true }),
+      ).toEqual({ status: 'unmatched' })
+      await fixture
+        .delete(schema.providerReference)
+        .where(eq(schema.providerReference.id, independentReferenceId))
+
+      await fixture
+        .update(schema.providerReference)
+        .set({
+          metadata: { ...catalogIsrc.metadata, verified: false },
+        })
+        .where(eq(schema.providerReference.id, catalogIsrc.id))
+      expect(
+        await reconcileSavedSpotifyTrackSearch(selection, { dryRun: true }),
+      ).toEqual({ status: 'unmatched' })
+      await fixture
+        .update(schema.providerReference)
+        .set({
+          metadata: catalogIsrc.metadata,
+        })
+        .where(eq(schema.providerReference.id, catalogIsrc.id))
+
       const matched = {
         status: 'matched',
         targetId: trackId,
@@ -722,6 +767,16 @@ it.each(['automatic', 'manual', 'saved search'])(
         artists: ['Various Artists'],
       })
       expect(await reconcileSavedSpotifyTrackSearch(selection)).toEqual(matched)
+      expect(
+        await fixture.query.providerReference.findFirst({
+          where: eq(schema.providerReference.id, catalogIsrc.id),
+        }),
+      ).toMatchObject({
+        provider: catalogIsrc.provider,
+        referenceType: catalogIsrc.referenceType,
+        externalId: catalogIsrc.externalId,
+        metadata: catalogIsrc.metadata,
+      })
       expect(request).not.toHaveBeenCalled()
     }
     const { job } = await getSpotifyTrackSearch(sourceId, userId)

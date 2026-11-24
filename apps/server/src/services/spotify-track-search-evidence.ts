@@ -13,7 +13,7 @@ import {
   titleCredit,
 } from '@/lib/album-track-aliases'
 import type { db } from '@/lib/db'
-import { isrcPattern, normalizedIsrc } from '@/lib/isrc'
+import { isrcPattern, normalizedIsrc, validIsrc } from '@/lib/isrc'
 import {
   artistKeys,
   artistNameKey,
@@ -905,7 +905,7 @@ export async function readSpotifyAlbumFallbackArtistCreditCorrection(
         where r.album_id = release.id and r.spotify_id = ${candidate.spotifyAlbumId})
       and array(select c.artist_id from media_credit c where c.media_item_id = release.id and c.role = 'artist')
         = array(select c.artist_id from media_credit c where c.media_item_id = item.id and c.role = 'artist')
-      and not ${independentTrackData(sql`item.id`)}`)
+      and not ${independentTrackData(sql`item.id`, validIsrc(candidate.isrc))}`)
   if (!rows.length) return undefined
 
   // Manual review normally omits target listening evidence. This repair must also respect it.

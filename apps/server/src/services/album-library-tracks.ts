@@ -33,6 +33,7 @@ import { refreshTrackAddedDates } from './spotify-playlists'
 import { archiveTracks } from './track-archive'
 import { refreshTrackDuplicates } from './track-duplicate-refresh'
 import { refreshTrackListeningTotals } from './track-links'
+import { spotifyRecordingSources } from './track-isrcs'
 import { moveTrackMemberships } from './track-version-effects'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -460,14 +461,27 @@ export function spotifyAlbumReleaseIds(albumId?: string | SQL) {
 }
 
 /** Data owned by the recording that cannot be moved with its release and listening memberships. */
-export function independentTrackData(id: SQL) {
+export function independentTrackData(
+  id: SQL,
+  corroboratingSpotifyIsrc: string | null = null,
+) {
+  // A credit repair on the exact recording retains corroborating Spotify evidence in place.
+  const otherReference = corroboratingSpotifyIsrc
+    ? sql`and (
+        r.provider = 'spotify' and r.reference_type = 'isrc'
+        and r.external_id = ${corroboratingSpotifyIsrc}
+        and ${inArray(sql`r.metadata->>'source'`, spotifyRecordingSources)}
+        and r.metadata->>'rejected' is distinct from 'true'
+        and r.metadata->>'verified' is distinct from 'false'
+      ) is not true`
+    : sql``
   return sql`exists (
               select 1 from media_credit where media_item_id = ${id} and role <> 'artist'
               union all select 1 from media_item_tag where media_item_id = ${id}
               union all select 1 from tag_occurrence where media_item_id = ${id}
               union all select 1 from track_tag where media_item_id = ${id} and owner is not null
               union all select 1 from external_link where media_item_id = ${id}
-              union all select 1 from provider_reference where media_item_id = ${id}
+              union all select 1 from provider_reference r where r.media_item_id = ${id} ${otherReference}
               union all select 1 from provider_snapshot where media_item_id = ${id}
               union all select 1 from provider_current_state where media_item_id = ${id}
               union all select 1 from scrape_job_item where media_item_id = ${id}
