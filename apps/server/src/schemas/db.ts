@@ -94,6 +94,9 @@ export const mediaItem = pgTable(
       sql`lower(${table.title})`,
       table.id,
     ),
+    index('media_item_library_title_idx')
+      .on(table.mediaType, sql`lower(${table.title})`, table.id)
+      .where(sql`${table.inLibrary}`),
   ],
 )
 
@@ -941,6 +944,13 @@ export const catalogAddition = pgTable('catalog_addition', {
   ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
   addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(),
 })
+
+export const catalogNativeAddition = pgTable('catalog_native_addition', {
+  targetKind: text('target_kind').notNull(),
+  targetId: text('target_id').notNull(),
+  ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
+  addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [primaryKey({ columns: [table.targetKind, table.targetId] })])
 
 export const scrapeJob = pgTable(
   'scrape_job',

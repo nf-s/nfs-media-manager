@@ -28,6 +28,17 @@ export const discoverySourceLabels = new Map([
   ['album-tracks', 'Album tracks'],
   ['provider-result', 'Provider results'],
   ['import', 'Import'],
+  ['album-import-preview', 'Album import preview'],
+  ['film-details', 'Film details'],
+  ['playlist-identity', 'Playlist identity'],
+  ['scrobble', 'Listening history'],
+  ['parent-reference', 'Parent link'],
+  ['station-feed', 'Station feed'],
+  ['station-show-detail', 'Station show details'],
+  ['station-episode-response', 'Station episode details'],
+  ['stored-short', 'Saved Shorts listing'],
+  ['stored-subscription-source', 'Saved subscription source'],
+  ['stored-subscription-item', 'Saved subscription item'],
 ])
 
 export const clearLibraryScope = {

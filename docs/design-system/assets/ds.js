@@ -30,6 +30,7 @@
     prev: '<path d="M19 5.5v13L9.5 12z"/><rect x="5" y="5.5" width="2.5" height="13" rx="1"/>',
     next: '<path d="M5 5.5v13l9.5-6.5z"/><rect x="16.5" y="5.5" width="2.5" height="13" rx="1"/>',
     queue: '<path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"/>',
+    library: '<path d="M4 19.5v-15m4 15v-15m4 15v-15m4-1 4 15"/>',
     bookPlus: `${BOOK}<path d="M12 7v6M9 10h6"/>`,
     bookCheck: `${BOOK}<path d="m9 9.5 2 2 4-4"/>`,
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
@@ -488,7 +489,7 @@
   /* A toolbar button that switches the list to another view of its rows and
      back: an icon, the label, then how many the view holds (o.count). */
   const toolbarToggle = (label, o = {}) =>
-    `<button type="button" class="ds-btn" aria-pressed="${Boolean(o.pressed)}">${o.icon ? icon(o.icon, { size: 'sm' }) : ''}${esc(label)}${o.count === undefined ? '' : count(Number(o.count).toLocaleString('en'))}</button>`
+    `<button type="button" class="ds-btn" aria-pressed="${Boolean(o.pressed)}"${attrs(o.iconOnly ? { 'aria-label': label, title: label, 'data-icon': true } : {})}>${o.icon ? icon(o.icon, { size: 'sm' }) : ''}${o.iconOnly ? '' : esc(label)}${o.count === undefined ? '' : count(Number(o.count).toLocaleString('en'))}</button>`
 
   function card(item, o = {}) {
     const playable =

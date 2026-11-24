@@ -21,7 +21,7 @@ catalog.openapi(createRoute({
 }), async (c) => {
   const owner = requireOwnerUser(c)
   const {kind, id} = c.req.valid('param')
-  return generateJsonResponse(c, kind === 'media' ? await promoteCatalogMedia(id, owner.id) : await promoteNativeResource(kind, id), 200)
+  return generateJsonResponse(c, kind === 'media' ? await promoteCatalogMedia(id, owner.id) : await promoteNativeResource(kind, id, owner.id), 200)
 })
 
 catalog.openapi(createRoute({

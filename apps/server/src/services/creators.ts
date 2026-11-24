@@ -297,9 +297,8 @@ function personDirectory(
   const credits = (known ? normalized.union(observations) : normalized).as(
     'person_credit',
   )
-  const explicitlyAdded = sql`(${artist.addedToLibrary} and exists (
-    select 1 from catalog_observation o
-    where o.target_kind = 'person' and o.target_id = ${artist.id}))`
+  const explicitlyAdded = sql`exists (select 1 from catalog_native_addition addition
+    where addition.target_kind = 'person' and addition.target_id = ${artist.id})`
   const member = sql`(${explicitlyAdded} or exists (
     select 1 from media_credit c join media_item i on i.id = c.media_item_id
     where c.artist_id = ${artist.id} and c.role in ('director', 'actor')

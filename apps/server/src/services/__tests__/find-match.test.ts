@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/db', () => ({
   db: {
+    transaction: (run: (tx: object) => unknown) => run({}),
     select: () => ({ from: () => ({ where: async () => [] }) }),
     query: {
       mediaItem: { findFirst: mocks.media },
@@ -24,6 +25,21 @@ vi.mock('@/lib/db', () => ({
       providerReference: { findMany: mocks.references },
     },
   },
+}))
+vi.mock('@/services/catalog-discoveries', () => ({
+  observeCatalogMedia: async (_tx: object, candidate: { externalId: string }) =>
+    `outside-${candidate.externalId}`,
+  observeCatalogOccurrence: async () => undefined,
+}))
+vi.mock('@/services/catalog-artist-identities', () => ({
+  observeNamedArtistIdentities: async (
+    _tx: object,
+    _provider: string,
+    candidates: Map<string, string>,
+  ) => new Map([...candidates.keys()].map((id) => [id, `outside-${id}`])),
+}))
+vi.mock('@/services/film-catalog-observations', () => ({
+  observeFilmCandidate: async () => 'film-1',
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: mocks.secrets,
@@ -377,6 +393,7 @@ describe('find match', () => {
     expect(result.items).toEqual([
       {
         referenceType: 'tmdb',
+        catalogMediaItemId: 'film-1',
         externalId: '701',
         title: 'Example Film',
         subtitle: null,
@@ -407,13 +424,19 @@ describe('find match', () => {
       id: 'artist-1',
       provider: 'musicbrainz',
     })
-    expect(mocks.artist).toHaveBeenCalledWith('artist-1', 'musicbrainz')
+    expect(mocks.artist).toHaveBeenCalledWith(
+      'artist-1',
+      'musicbrainz',
+      undefined,
+      { includeCatalog: true },
+    )
     expect(result).toEqual({
       provider: 'musicbrainz',
       query: 'Example Artist',
       items: [
         {
           referenceType: 'artist',
+          catalogMediaItemId: 'artist-1',
           externalId: artistMbid,
           title: 'Example Artist',
           subtitle: 'Band',
@@ -424,6 +447,7 @@ describe('find match', () => {
         },
         {
           referenceType: 'artist',
+          catalogMediaItemId: `outside-${otherMbid}`,
           externalId: otherMbid,
           title: 'Example Artist',
           subtitle: null,

@@ -648,6 +648,7 @@
               g.spec(
                 D.toolbar({
                   placeholder: 'Search albums',
+                  actions: D.toolbarToggle('Include outside library', { icon: 'library', iconOnly: true }),
                   sort: ['Added'],
                   filterCount: 2,
                   view: 0,
@@ -695,6 +696,7 @@
               g.rules([
                 '<b>One toolbar order</b> on every Browse page and every Browse list inside a detail: actions, search, sort picker, direction, view switch, Filters button, count. Grid size and columns are in the Filters drawer, not in the row. Tables without a view switch drop the sort picker and view switch and keep their Columns button.',
                 '<b>Every control is 28px.</b> Native selects use the same border, radius and chevron as buttons; the sort picker uses the select’s box.',
+                '<b>Include outside library</b> is an icon toggle in the toolbar actions. Its pressed state shows All known. Filters also offers Outside library and lets the owner choose which discovery sources to include.',
                 '<b>A radio</b> is the checkbox’s box on <code>input type="radio"</code> (<code>ds-check</code>). It picks one row of a table, in a column of its own, such as the version a track is shown as.',
                 '<b>The count reads the same everywhere:</b> <code>128 albums</code>, or <code>14 of 128 albums</code> when filtered. A Browse list inside a detail puts it on the filter line instead.',
                 '<b>On a phone</b> the toolbar wraps: the search takes the first line; the sort picker, direction, view switch and Filters button share the second, the sort picker taking the room the others leave, and the count follows where it fits. The Filters button is short on every phone toolbar.',

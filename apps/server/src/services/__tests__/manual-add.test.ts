@@ -26,6 +26,9 @@ vi.mock('@/services/catalog-discoveries', () => ({
   observeCatalogMedia: mocks.observe,
   promoteCatalogMediaInTransaction: vi.fn(),
 }))
+vi.mock('@/services/film-catalog-observations', () => ({
+  observeFilmCandidate: vi.fn(async () => 'discovered-film'),
+}))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: mocks.secrets,
 }))
@@ -228,7 +231,7 @@ describe('manual provider search and library additions', () => {
         },
       ],
     })
-    mocks.filmMatches.mockResolvedValue([{ id: 'existing-film', error: null }])
+    mocks.filmMatches.mockResolvedValue([{ id: 'existing-film', error: null, inLibrary: true }])
     expect(
       await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
     ).toEqual({ mediaItemId: 'existing-album', created: false })

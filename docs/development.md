@@ -82,6 +82,12 @@ corepack pnpm preview
 
 The preview uses its own Next.js process in the checkout, so stop `corepack pnpm dev` in the same checkout first, or run the preview from a worktree.
 
+## Replaying catalog discoveries
+
+Run `corepack pnpm --filter @repo/server backfill:music-catalog --dry-run` to inspect recoverable music observations. Use `--apply` for a confirmed replay. For film and subscription evidence, run `corepack pnpm --filter @repo/server exec tsx scripts/backfill-nonmusic-catalog.ts --family responses --limit 1`. This dry run rolls the projection back. Add `--apply` to keep the batch and pass its returned cursor to `--after` for the next one. Other supported families are `film-snapshots`, `subscription-sources`, `subscription-items` and `shorts`.
+
+Both commands read retained inputs. A missing or truncated provider response limits what the replay can recover. A repeated occurrence retains its catalog identity and evidence. Inspect a small batch on a disposable database before selecting a production batch.
+
 ## Browser tests
 
 ```sh
