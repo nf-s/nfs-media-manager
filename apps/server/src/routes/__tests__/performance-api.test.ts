@@ -63,4 +63,44 @@ describe('browser Browse timings', () => {
       ...report,
     })
   })
+
+  it('logs only consistent phase timings for slow Tracks filter changes with rows', async () => {
+    writeRequestLog.mockClear()
+    getSession.mockResolvedValue({
+      user: {
+        id: 'example-owner',
+        email: 'owner@example.test',
+        name: 'Example',
+      },
+      session: { id: 'example-session', userId: 'example-owner' },
+    })
+    const phased = {
+      screen: 'tracks',
+      action: 'change',
+      outcome: 'rows',
+      durationMs: 2_285,
+      phases: {
+        source: 'request',
+        waitMs: 2_000,
+        loadMs: 210,
+        commitMs: 50,
+        paintMs: 25,
+      },
+    }
+    for (const invalid of [
+      { ...phased, screen: 'albums' },
+      { ...phased, outcome: 'empty' },
+      { ...phased, action: 'open' },
+      { ...phased, durationMs: 2_300 },
+      { ...phased, phases: { ...phased.phases, path: '/tracks' } },
+      { ...phased, phases: { ...phased.phases, waitMs: -1 } },
+    ])
+      expect((await submit(invalid)).status).toBe(422)
+    expect(writeRequestLog).not.toHaveBeenCalled()
+    expect((await submit(phased)).status).toBe(204)
+    expect(writeRequestLog).toHaveBeenCalledExactlyOnceWith({
+      event: 'browser.browse',
+      ...phased,
+    })
+  })
 })

@@ -22,6 +22,7 @@ import { clientQueryDefaults } from '@/utils/query-cache'
 import { isBrowseCounting } from '@/utils/browse-items'
 import {
   useBrowsePerformance,
+  type BrowsePageTiming,
   type BrowsePerformanceScreen,
 } from './useBrowsePerformance'
 
@@ -87,6 +88,8 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     const query = new URLSearchParams(params)
     query.set('page', String(page))
     query.set('size', String(size))
+    const requestedAt =
+      performanceScreen === 'tracks' ? performance.now() : undefined
     const result = await fetchApiData(
       apiBaseUrl,
       `/api/v1/${endpoint}/browse-page?${query}`,
@@ -95,6 +98,10 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     )
     return {
       ...result,
+      pageTiming:
+        requestedAt === undefined
+          ? undefined
+          : { requestedAt, readyAt: performance.now() },
       totalCount:
         page === 1 && !result.hasMore ? result.items.length : undefined,
     }
@@ -185,6 +192,7 @@ export type VirtualPageData = {
   items: readonly unknown[]
   totalCount?: number
   hasMore?: boolean
+  pageTiming?: BrowsePageTiming
 }
 
 export type VirtualPageOptions<Page extends VirtualPageData> = {
@@ -356,6 +364,8 @@ export function useVirtualPages<Page extends VirtualPageData>({
     enabled,
     page: visiblePage,
     scrollTop,
+    pageTiming:
+      visibleSlot?.item === undefined ? undefined : visible?.data?.pageTiming,
     outcome:
       visibleSlot?.item !== undefined
         ? 'rows'

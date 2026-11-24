@@ -1,7 +1,10 @@
 'use client'
 
 import { useLayoutEffect, useRef } from 'react'
-import type { BrowserBrowseTiming } from '@repo/schemas/performance'
+import {
+  slowTracksChangeMs,
+  type BrowserBrowseTiming,
+} from '@repo/schemas/performance'
 
 export type BrowsePerformanceScreen = BrowserBrowseTiming['screen']
 type Outcome = BrowserBrowseTiming['outcome']
@@ -65,6 +68,40 @@ type Measurement = {
   startedAt: number
 }
 
+export type BrowsePageTiming = {
+  requestedAt: number
+  readyAt: number
+}
+
+type CommittedOutcome = {
+  measurement: Measurement
+  committedAt: number
+  pageTiming?: BrowsePageTiming
+}
+
+export function tracksChangePhases(
+  { measurement, committedAt, pageTiming }: CommittedOutcome,
+  durationMs: number,
+): BrowserBrowseTiming['phases'] {
+  if (!pageTiming || durationMs < slowTracksChangeMs) return
+  const elapsed = (at: number) =>
+    Math.max(0, Math.min(durationMs, Math.round(at - measurement.startedAt)))
+  const commit = elapsed(committedAt)
+  const paintMs = durationMs - commit
+  // A cached page was ready when the query committed, even if it is refreshing.
+  if (pageTiming.readyAt <= measurement.startedAt)
+    return { source: 'cache', commitMs: commit, paintMs }
+  const ready = Math.min(commit, elapsed(pageTiming.readyAt))
+  const requested = Math.min(ready, elapsed(pageTiming.requestedAt))
+  return {
+    source: 'request',
+    waitMs: requested,
+    loadMs: ready - requested,
+    commitMs: commit - ready,
+    paintMs,
+  }
+}
+
 export class BrowsePerformanceTracker {
   private previous?: View
   private pending?: Measurement
@@ -123,7 +160,16 @@ export class BrowsePerformanceTracker {
 
 export function useBrowsePerformance(
   screen: BrowsePerformanceScreen | undefined,
-  { identity, enabled, page, scrollTop, outcome }: View,
+  {
+    identity,
+    enabled,
+    page,
+    scrollTop,
+    outcome,
+    pageTiming,
+  }: View & {
+    pageTiming?: BrowsePageTiming
+  },
   kind: 'browse' | 'detail' = 'browse',
 ) {
   const active = useRef<{
@@ -131,7 +177,7 @@ export function useBrowsePerformance(
     kind: 'browse' | 'detail'
     tracker: BrowsePerformanceTracker
   }>(null)
-  const committed = useRef<Measurement | undefined>(undefined)
+  const committed = useRef<CommittedOutcome | undefined>(undefined)
 
   useLayoutEffect(() => {
     if (!screen) return
@@ -160,26 +206,36 @@ export function useBrowsePerformance(
       }
     }
     const { tracker } = active.current
-    committed.current = tracker.observe(
+    const committedAt = performance.now()
+    const measurement = tracker.observe(
       { identity, enabled, page, scrollTop, outcome },
-      performance.now(),
+      committedAt,
       documentStart,
     )
+    committed.current = measurement
+      ? { measurement, committedAt, pageTiming }
+      : undefined
     if (document.visibilityState !== 'visible') tracker.discard()
-  }, [screen, identity, enabled, page, scrollTop, outcome, kind])
+  }, [screen, identity, enabled, page, scrollTop, outcome, pageTiming, kind])
 
   useLayoutEffect(() => {
-    const measurement = committed.current
+    const settled = committed.current
     const current = active.current?.tracker
-    if (!screen || !current || !measurement || !outcome) return
+    if (!screen || !current || !settled || !outcome) return
     if (typeof requestAnimationFrame !== 'function') return
 
     let afterPaint: number | undefined
     // Allow the committed outcome to paint before reporting it.
     const beforePaint = requestAnimationFrame(() => {
       afterPaint = requestAnimationFrame(() => {
-        const sample = current.finish(measurement, performance.now())
+        const sample = current.finish(settled.measurement, performance.now())
         if (!sample || document.visibilityState !== 'visible') return
+        const phases =
+          screen === 'tracks' &&
+          sample.action === 'change' &&
+          outcome === 'rows'
+            ? tracksChangePhases(settled, sample.durationMs)
+            : undefined
         void fetch('/api/v1/performance/browse', {
           method: 'POST',
           credentials: 'same-origin',
@@ -187,7 +243,7 @@ export function useBrowsePerformance(
           redirect: 'error',
           headers: { 'Content-Type': 'application/json' },
           keepalive: true,
-          body: JSON.stringify({ screen, outcome, ...sample }),
+          body: JSON.stringify({ screen, outcome, ...sample, phases }),
         }).catch(() => {})
       })
     })

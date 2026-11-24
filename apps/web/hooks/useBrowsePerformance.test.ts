@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   BrowsePerformanceTracker,
   navigationMatchesPath,
+  tracksChangePhases,
 } from './useBrowsePerformance'
 
 const initial = {
@@ -90,6 +91,78 @@ test('drops hidden and expired measurements', () => {
   )
   assert.ok(change)
   assert.equal(tracker.finish(change, 300_031), undefined)
+})
+
+test('splits a slow Tracks change at request, validated page and commit boundaries', () => {
+  const tracker = new BrowsePerformanceTracker()
+  const view = { ...initial, enabled: true }
+  tracker.observe(view, 0)
+  tracker.observe({ ...view, identity: 'filter' }, 99.6)
+  const measurement = tracker.observe(
+    { ...view, identity: 'filter', outcome: 'rows' },
+    2_300.2,
+  )
+  assert.ok(measurement)
+  assert.deepEqual(
+    tracksChangePhases(
+      {
+        measurement,
+        committedAt: 2_300.2,
+        pageTiming: { requestedAt: 2_100.1, readyAt: 2_240 },
+      },
+      2_230,
+    ),
+    {
+      source: 'request',
+      waitMs: 2_001,
+      loadMs: 139,
+      commitMs: 61,
+      paintMs: 29,
+    },
+  )
+})
+
+test('distinguishes slow paint of cached rows and clips a request already under way', () => {
+  const tracker = new BrowsePerformanceTracker()
+  const view = { ...initial, enabled: true }
+  tracker.observe(view, 0)
+  const measurement = tracker.observe(
+    { ...view, identity: 'filter', outcome: 'rows' },
+    100,
+  )
+  assert.ok(measurement)
+  const outcome = { measurement, committedAt: 140 }
+  assert.deepEqual(
+    tracksChangePhases(
+      {
+        ...outcome,
+        pageTiming: { requestedAt: 1, readyAt: 99 },
+      },
+      1_200,
+    ),
+    { source: 'cache', commitMs: 40, paintMs: 1_160 },
+  )
+  assert.deepEqual(
+    tracksChangePhases(
+      {
+        ...outcome,
+        pageTiming: { requestedAt: 80, readyAt: 120 },
+      },
+      1_200,
+    ),
+    { source: 'request', waitMs: 0, loadMs: 20, commitMs: 20, paintMs: 1_160 },
+  )
+  assert.equal(tracksChangePhases(outcome, 1_200), undefined)
+  assert.equal(
+    tracksChangePhases(
+      {
+        ...outcome,
+        pageTiming: { requestedAt: 1, readyAt: 99 },
+      },
+      999,
+    ),
+    undefined,
+  )
 })
 
 test('the document candidate is matched by origin and pathname only', () => {
