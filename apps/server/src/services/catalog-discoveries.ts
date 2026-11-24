@@ -171,11 +171,11 @@ export async function resolveCatalogReferences(
   const externalIds = [...identities.keys()]
   const matches = new Map<
     string,
-    { references: Set<string>; blocked: Set<string> }
+    { references: Set<string>; blocked: Set<string>; usedAlbumUrl: boolean }
   >(
     externalIds.map((id) => [
       id,
-      { references: new Set(), blocked: new Set() },
+      { references: new Set(), blocked: new Set(), usedAlbumUrl: false },
     ]),
   )
   if (!media || !matches.size) return matches
@@ -228,7 +228,10 @@ export async function resolveCatalogReferences(
         )
       for (const { id, externalId } of byUrl) {
         const match = matches.get(externalId)
-        if (match && !match.blocked.has(id)) match.references.add(id)
+        if (match && !match.blocked.has(id)) {
+          match.references.add(id)
+          match.usedAlbumUrl = true
+        }
       }
     }
   }

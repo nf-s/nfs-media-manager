@@ -162,15 +162,38 @@ async function withRollback<T>(run: (tx: Transaction) => Promise<T>) {
 }
 
 it.each([
-  { name: 'new releases', ambiguous: false, budget: 18 },
-  { name: 'one ambiguous release', ambiguous: true, budget: 110 },
+  { name: 'new releases', match: null, budget: 18 },
+  { name: 'one ambiguous release', match: 'native', budget: 18 },
+  {
+    name: 'repeated ambiguous native release references',
+    match: 'native',
+    repeated: true,
+    budget: 18,
+  },
+  {
+    name: 'repeated ambiguous album URLs',
+    match: 'url',
+    repeated: true,
+    budget: 110,
+  },
 ])(
   'retains a full page with $name within its statement budget',
-  async ({ ambiguous, budget }) => {
+  async ({ match, repeated, budget }) => {
+    const spotifyAlbumId = nativeId('R', 25)
+    const input = repeated
+      ? {
+          ...page,
+          entries: page.entries.map((entry) =>
+            entry.track
+              ? { ...entry, track: { ...entry.track, spotifyAlbumId } }
+              : entry,
+          ),
+        }
+      : page
     const run = (observe: typeof observeSpotifyPlaylistPage) =>
       withRollback(async (tx) => {
-        await seedTracks(tx, page.entries)
-        if (ambiguous) {
+        await seedTracks(tx, input.entries)
+        if (match) {
           const matches = ['first-release-match', 'second-release-match']
           await tx.insert(schema.mediaItem).values(
             matches.map((id) => ({
@@ -181,25 +204,35 @@ it.each([
               inLibrary: true,
             })),
           )
-          await tx
-            .insert(schema.album)
-            .values(matches.map((id) => ({ mediaItemId: id })))
-          await tx.insert(schema.providerReference).values(
+          await tx.insert(schema.album).values(
             matches.map((id) => ({
-              id: `ref-${id}`,
               mediaItemId: id,
-              provider: 'spotify',
-              referenceType: 'spotify',
-              externalId: nativeId('R', 25),
+              spotifyUrl:
+                match === 'url'
+                  ? `https://open.spotify.com/album/${spotifyAlbumId}`
+                  : null,
             })),
           )
+          if (match === 'native')
+            await tx.insert(schema.providerReference).values(
+              matches.map((id) => ({
+                id: `ref-${id}`,
+                mediaItemId: id,
+                provider: 'spotify',
+                referenceType: 'spotify',
+                externalId: spotifyAlbumId,
+              })),
+            )
         }
         logQuery.mockClear()
-        await observe(tx, 'fixture-playlist', page, evidence)
-        return {
-          statements: logQuery.mock.calls.length,
-          state: await catalogState(tx),
+        await observe(tx, 'fixture-playlist', input, evidence)
+        const statements = logQuery.mock.calls.length
+        const state = await catalogState(tx)
+        if (repeated) {
+          await observe(tx, 'fixture-playlist', input, evidence)
+          expect(await catalogState(tx)).toEqual(state)
         }
+        return { statements, state }
       })
     const baseline = await run(observeSpotifyPlaylistPage)
     const batch = await run(observeSpotifyPlaylistPageBatch)

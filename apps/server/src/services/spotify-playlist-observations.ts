@@ -163,18 +163,27 @@ async function resolveObservations(
     tx,
     releases.map(({ media }) => media),
   )
-  // An ambiguous release may acquire a new reference that changes the next match.
-  if ([...matches.values()].some(({ references }) => references.size > 1))
+  // Writing a native reference can supersede ambiguous URL matches. Two or
+  // more native matches stay ambiguous when another native reference is added.
+  if (
+    [...matches.values()].some(
+      ({ references, usedAlbumUrl }) => usedAlbumUrl && references.size > 1,
+    )
+  )
     return
 
   const releaseTargets = releases.map(({ media, origin }) => {
     const match = media.externalId ? matches.get(media.externalId) : undefined
-    const existingId = match?.references.values().next().value
+    const existingId =
+      match?.references.size === 1
+        ? match.references.values().next().value
+        : undefined
     return {
       media,
       origin,
       existing: Boolean(existingId),
       id: existingId ?? newCatalogMediaId(media, origin, match?.blocked),
+      match,
     }
   })
   const releaseItemIds = [...new Set(releaseTargets.map(({ id }) => id))]
@@ -192,8 +201,11 @@ async function resolveObservations(
   // duplicate occurrence resolves once the first reference is written.
   if (
     releaseTargets.some(
-      ({ id, media, existing }) =>
-        media.externalId && !existing && stored.has(id),
+      ({ id, media, existing, match }) =>
+        media.externalId &&
+        !existing &&
+        stored.has(id) &&
+        !match?.references.has(id),
     )
   )
     return
