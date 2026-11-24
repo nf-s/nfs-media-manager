@@ -573,6 +573,7 @@ describe('mix rows', () => {
   it('maps a mix with its stored addresses, artists and recording', async () => {
     const { items } = await list({ size: 2 })
     expect(items[0]).toEqual({
+      inLibrary: true,
       type: 'nts',
       id: 'nts.night-shift-1',
       sourceId: NIGHT_SHIFT,
@@ -603,6 +604,8 @@ describe('mix rows', () => {
     const { listSubscriptionSources } = await library()
     const { items } = await listSubscriptionSources({ library: 'mixes' })
     expect(items.find((source) => source.id === NIGHT_SHIFT)).toEqual({
+      inLibrary: true,
+      subscribed: true,
       type: 'nts',
       id: NIGHT_SHIFT,
       title: 'Night Shift',
@@ -1119,5 +1122,38 @@ describe('artist mixes', () => {
     expect(plan.rows.map((row) => row['QUERY PLAN']).join('\n')).toContain(
       'subscription_item_search_idx',
     )
+  })
+
+  it('includes a manually saved mix when a matching show is no longer followed', async () => {
+    await pool.query(
+      'update subscription_source set subscribed = false where id = $1',
+      [NIGHT_SHIFT],
+    )
+    await pool.query(
+      'update subscription_item set added_to_library = true where id = $1',
+      ['nts.night-shift-2'],
+    )
+    try {
+      const { listMixesNamingArtist, countMixesNamingArtist } = await library()
+      expect(
+        await listMixesNamingArtist(
+          'Night Shift',
+          ArtistMixQuerySchema.parse({}),
+        ),
+      ).toMatchObject({
+        items: [{ id: 'nts.night-shift-2', inLibrary: true }],
+        totalCount: 1,
+      })
+      expect(await countMixesNamingArtist('Night Shift')).toBe(1)
+    } finally {
+      await pool.query(
+        'update subscription_item set added_to_library = false where id = $1',
+        ['nts.night-shift-2'],
+      )
+      await pool.query(
+        'update subscription_source set subscribed = true where id = $1',
+        [NIGHT_SHIFT],
+      )
+    }
   })
 })

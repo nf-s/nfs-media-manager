@@ -556,7 +556,12 @@ function artistMixes(names: string[], query: ArtistMixQuery) {
     union
     select i.id from subscription_source s
     join subscription_item i on i.source_id = s.id
-    where ${subscriptionItemMembership} and ${nameKey(sql`s.title`)} in (${keys})`
+    where s.subscribed and ${nameKey(sql`s.title`)} in (${keys})
+    union
+    select i.id from subscription_item i
+    join subscription_source s on s.id = i.source_id
+    where i.added_to_library and not s.subscribed
+      and ${nameKey(sql`s.title`)} in (${keys})`
   if (names.every((name) => name.match(WORD_PARTS)))
     search.conditions.push(
       sql`(${sql.join(

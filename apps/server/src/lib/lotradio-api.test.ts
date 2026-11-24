@@ -314,6 +314,9 @@ describe('lotRadioAdapter', () => {
           durationSec: 3540,
           artists: ['Fixture Guest'],
           tags: ['House'],
+          tracklist: [
+            { artist: 'Imaginary Band', title: 'Made Up Song', position: 1 },
+          ],
         },
       },
     ])
