@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import {
@@ -154,6 +154,17 @@ function requestedQueries() {
   )
 }
 
+const readFixtureAlbum = () =>
+  databaseClient.query.mediaItem.findFirst({
+    where: eq(schema.mediaItem.id, 'album-fixture'),
+  })
+
+const readFixtureAlbumReferences = () =>
+  databaseClient
+    .select()
+    .from(schema.providerReference)
+    .where(eq(schema.providerReference.mediaItemId, 'album-fixture'))
+
 describe('Serply indexed metadata through the queue, with offline HTTP', () => {
   it('uses six bounded soundtrack searches and persists the fresh date-prefixed result without a rating', async () => {
     const title =
@@ -198,7 +209,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
       'Jonny Greenwood One Battle After Another Rate Your Music rating genres',
     ]
     expect(requestedQueries()).toEqual(queries)
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata?.['plugin.serply.provenance']).toMatchObject({
       matchStatus: 'genres-only',
       ratingSourceUrl: null,
@@ -246,7 +257,8 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
   })
 
   it('persists the indexed payload, rating and RYM genre provenance', async () => {
-    expect((await runJob(indexed))?.status).toBe('succeeded')
+    const job = await runJob(indexed)
+    expect(job?.status).toBe('succeeded')
     const payload = {
       searches: [{ query: albumQuery, response: indexed }],
     }
@@ -259,7 +271,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
       .select()
       .from(schema.providerCurrentState)
     expect(current?.payload).toEqual(payload)
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata).toMatchObject({
       browse: { ratingRymValue: 3.4, ratingRymVotes: 1836 },
       'plugin.serply.provenance': {
@@ -282,15 +294,42 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
         (origin) => origin.provider === 'serply' && origin.source === 'rym',
       ),
     ).toBe(true)
-    const references = await databaseClient
-      .select()
-      .from(schema.providerReference)
+    const references = await readFixtureAlbumReferences()
     expect(references).toEqual([
       expect.objectContaining({
         provider: 'serply',
         referenceType: 'rym-url',
         externalId: sourceUrl,
       }),
+    ])
+    const discoveries = await databaseClient
+      .select({
+        inLibrary: schema.mediaItem.inLibrary,
+        jobId: schema.providerResponse.jobId,
+        body: schema.providerResponse.body,
+      })
+      .from(schema.catalogObservation)
+      .innerJoin(
+        schema.mediaItem,
+        eq(schema.mediaItem.id, schema.catalogObservation.mediaItemId),
+      )
+      .innerJoin(
+        schema.providerReference,
+        eq(schema.providerReference.mediaItemId, schema.mediaItem.id),
+      )
+      .innerJoin(
+        schema.providerResponse,
+        eq(schema.providerResponse.id, schema.catalogObservation.responseId),
+      )
+      .where(
+        and(
+          eq(schema.catalogObservation.subjectId, 'album-fixture'),
+          eq(schema.catalogObservation.provider, 'serply'),
+          eq(schema.providerReference.externalId, sourceUrl),
+        ),
+      )
+    expect(discoveries).toMatchObject([
+      { inLibrary: false, jobId: job?.id, body: { state: 'captured' } },
     ])
     expect(JSON.stringify(snapshot?.payload)).not.toContain(
       'offline-fixture-key',
@@ -330,7 +369,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
         })),
       ],
     })
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata?.['browse']).toEqual({
       ratingRymValue: 3.4,
       ratingRymVotes: 1836,
@@ -406,7 +445,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
         )
         if (manualOverride)
           expect(requestedQueries()).not.toContain(`site:${legacyUrl}`)
-        const [item] = await databaseClient.select().from(schema.mediaItem)
+        const item = await readFixtureAlbum()
         expect(item?.metadata?.['browse']).toEqual({
           ratingRymValue: 3.4,
           ratingRymVotes: 1836,
@@ -415,9 +454,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
           ratingSourceUrl: sourceUrl,
           matchStatus: 'rated',
         })
-        expect(
-          await databaseClient.select().from(schema.providerReference),
-        ).toEqual([
+        expect(await readFixtureAlbumReferences()).toEqual([
           expect.objectContaining({
             provider: 'serply',
             referenceType: 'rym-url',
@@ -492,10 +529,12 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
         ? await runJob(payload)
         : await runJob(payload, payload, payload, payload, payload)
       expect(job?.status).toBe(manual ? 'succeeded' : 'failed')
-      const [item] = await databaseClient.select().from(schema.mediaItem)
+      const item = await readFixtureAlbum()
       expect(item?.title).toBe('Pripyat')
       expect(item?.releaseDate).toEqual(new Date('2022-05-20T00:00:00Z'))
-      const [artist] = await databaseClient.select().from(schema.artist)
+      const artist = await databaseClient.query.artist.findFirst({
+        where: eq(schema.artist.id, 'artist-fixture'),
+      })
       expect(artist?.name).toBe('Marina Herlop')
       if (manual) {
         expect(item?.metadata?.['plugin.serply.provenance']).toMatchObject({
@@ -569,7 +608,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
       .from(schema.providerCurrentState)
     expect(snapshot?.payload).toEqual(payload)
     expect(current?.payload).toEqual(payload)
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata).toMatchObject({
       'plugin.serply.provenance': {
         matchStatus: 'identity-only',
@@ -588,9 +627,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
       'ratingRymVotes',
     )
     expect(await databaseClient.select().from(schema.tag)).toEqual([])
-    expect(
-      await databaseClient.select().from(schema.providerReference),
-    ).toEqual([
+    expect(await readFixtureAlbumReferences()).toEqual([
       expect.objectContaining({
         provider: 'serply',
         referenceType: 'rym-url',
@@ -621,7 +658,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
     expect(
       (await runJob(identity, identity, identity, identity, identity))?.status,
     ).toBe('succeeded')
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata?.['browse']).toEqual({
       ratingRymValue: 3.2,
       ratingRymVotes: 1500,
@@ -645,7 +682,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
       results: [{ ...pripyat, metadata: { rating: '3.4' } }],
     }
     expect((await runJob(payload))?.status).toBe('succeeded')
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata?.['browse']).toEqual({
       ratingRymValue: 3.4,
       ratingRymVotes: null,
@@ -678,7 +715,7 @@ describe('Serply indexed metadata through the queue, with offline HTTP', () => {
       await databaseClient.select().from(schema.providerReference),
     ).toEqual([])
     expect(await databaseClient.select().from(schema.tag)).toEqual([])
-    const [item] = await databaseClient.select().from(schema.mediaItem)
+    const item = await readFixtureAlbum()
     expect(item?.metadata).toBeNull()
     const [safety] = await databaseClient
       .select()
