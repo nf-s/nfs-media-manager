@@ -288,7 +288,9 @@ export default function MediaSources({
           )
           .map((field) => field.label),
       ),
-      ...((source?.returnedTags?.length ?? 0) > 0 ? [albumTags] : []),
+      ...((source?.returnedTags?.length ?? 0) > 0
+        ? [isAlbum ? albumTags : 'Tags']
+        : []),
       ...(source?.returnedTrackList ? ['Track list'] : []),
     ]
     const scrobbles =

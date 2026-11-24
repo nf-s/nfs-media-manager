@@ -53,6 +53,7 @@ import {
   ArtistProfileSources,
 } from './artist-profile-sources'
 import { ArtistAlbums } from './artist-albums'
+import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
 import { CreatorDetailState } from './creator-detail-state'
 import {
   InspectorEntryContext,
@@ -650,6 +651,7 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
             : undefined
         }
         facts={[
+          artist.inLibrary === false ? 'Outside library' : undefined,
           profile.country,
           profile.type,
           `${formatCount(artist.albumCount)} ${artist.albumCount === 1 ? 'album' : 'albums'}`,
@@ -666,6 +668,13 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
         }
         actions={
           <>
+            <CatalogLibraryAction
+              key={artist.id}
+              id={artist.id}
+              kind="artist"
+              title={artist.name}
+              inLibrary={artist.inLibrary ?? true}
+            />
             <DetailActionsSpacer />
             <DetailMore crumb={{ title: artist.name }} />
           </>
@@ -725,6 +734,7 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
           <MetadataCoverage kind="artist" id={artist.id} />
         </TabsContent>
         <TabsContent value="sources">
+          <CatalogDiscoveries id={artist.id} kind="artist" />
           <ArtistProfileSources
             id={artist.id}
             snapshots={artist.providers}
