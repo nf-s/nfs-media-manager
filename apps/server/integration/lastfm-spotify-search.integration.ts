@@ -265,7 +265,7 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('persists candidates only on the originating job, reuses them without requests and never adds library albums', async () => {
+  it('links outside candidates to the originating job and replays the provider result without another request', async () => {
     await addGroup()
     // A second track scrobbled under the name, and one under another name.
     await databaseClient.insert(schema.lastfmScrobble).values({
@@ -331,6 +331,10 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
     expect(JSON.stringify(captures)).not.toContain(
       spotifyTokenFixture.access_token,
     )
+    const candidate = stored.result?.items[0]
+    if (!candidate?.catalogMediaItemId)
+      throw new Error('Expected a catalog link on the saved candidate')
+    const { catalogMediaItemId, ...providerCandidate } = candidate
     expect(
       await replayProviderTask(
         LASTFM_SPOTIFY_SEARCH_TASK,
@@ -338,8 +342,28 @@ describe('scrobbled album Spotify searches through persistent jobs', () => {
         steps,
         captures,
       ),
-    ).toEqual([stored.result])
-    expect(await databaseClient.select().from(schema.mediaItem)).toEqual([])
+    ).toEqual([{ ...stored.result, items: [providerCandidate] }])
+    expect(
+      await databaseClient
+        .select({
+          id: schema.mediaItem.id,
+          inLibrary: schema.mediaItem.inLibrary,
+        })
+        .from(schema.mediaItem),
+    ).toEqual([{ id: catalogMediaItemId, inLibrary: false }])
+    expect(
+      await databaseClient
+        .select({
+          jobId: schema.catalogObservation.jobId,
+          responseJobId: schema.providerResponse.jobId,
+        })
+        .from(schema.catalogObservation)
+        .innerJoin(
+          schema.providerResponse,
+          eq(schema.providerResponse.id, schema.catalogObservation.responseId),
+        )
+        .where(eq(schema.catalogObservation.mediaItemId, catalogMediaItemId)),
+    ).toContainEqual({ jobId: id, responseJobId: id })
     expect(await databaseClient.select().from(schema.providerSnapshot)).toEqual(
       [],
     )
