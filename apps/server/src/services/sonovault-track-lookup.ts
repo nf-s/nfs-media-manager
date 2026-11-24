@@ -68,6 +68,7 @@ import {
   trackFact,
 } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
+import { requireTrackSelectionScope } from './catalog-scope'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
 import { createProviderRequest } from './provider-requests'
@@ -846,7 +847,9 @@ export async function queueSonovaultTrackLookups(
     trackIds,
     refresh,
     batchId = nanoid(),
+    catalogScope,
   } = SonovaultTrackLookupInputSchema.parse(input)
+  await requireTrackSelectionScope(trackIds, catalogScope)
   const unique = [...new Set(trackIds)]
   const now = new Date()
   const groups = new Map<SonovaultLookupInputType, string[]>()
@@ -894,8 +897,10 @@ export async function queueSonovaultTrackRefresh(
   const due = await db
     .select({ id: sonovaultTrackLookup.mediaItemId })
     .from(sonovaultTrackLookup)
+    .innerJoin(mediaItem, eq(mediaItem.id, sonovaultTrackLookup.mediaItemId))
     .where(
       and(
+        eq(mediaItem.inLibrary, true),
         eq(sonovaultTrackLookup.status, 'matched'),
         sql`${sonovaultTrackLookup.inputType} <> 'release'`,
         sql`${sonovaultTrackLookup.lookedUpAt} < ${refreshCutoff(new Date()).toISOString()}::timestamp`,
@@ -1096,6 +1101,7 @@ export async function getSonovaultSummary() {
       verified: sql<number>`count(*) filter (where ${sonovaultTrackLookup.verified})::int`,
       notFound: sql<number>`count(*) filter (where ${sonovaultTrackLookup.status} = 'not_found')::int`,
       dueForRefresh: sql<number>`count(*) filter (where ${sonovaultTrackLookup.status} = 'matched'
+        and ${mediaItem.inLibrary}
         and ${sonovaultTrackLookup.lookedUpAt} < ${refreshCutoff(now).toISOString()}::timestamp)::int`,
       primaryIsrcs: sql<number>`count(*) filter (where exists (
         select 1 from library_track lt
@@ -1103,6 +1109,7 @@ export async function getSonovaultSummary() {
           and ${sonovaultPrimaryIsrcSql(sql`lt.media_item_id`, sql`lt.isrc`)}))::int`,
     })
     .from(sonovaultTrackLookup)
+    .innerJoin(mediaItem, eq(mediaItem.id, sonovaultTrackLookup.mediaItemId))
   const [references] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(providerReference)

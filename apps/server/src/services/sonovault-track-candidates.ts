@@ -593,6 +593,7 @@ export async function listSonovaultTrackNameLookupTargets(limit: number) {
       select mi.id, lt.scrobble_count as scrobbles from media_item mi
       join library_track lt on lt.media_item_id = mi.id
       where mi.media_type = 'track'
+        and mi.in_library
         and mi.metadata->>'legacyHidden' is distinct from 'true'
         and coalesce(lt.spotify_track_id, '') !~ '^[0-9A-Za-z]{22}$'
         and lt.isrc is null

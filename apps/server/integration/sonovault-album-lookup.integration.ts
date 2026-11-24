@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { z } from 'zod'
@@ -61,6 +61,7 @@ import {
   getSonovaultAlbumSummary,
   listSonovaultAlbumReview,
   queueSonovaultAlbumLookups,
+  queueSonovaultRefresh,
 } from '@/services/sonovault-album-lookup'
 import { backfillSonovaultTrackRecords } from '@/services/sonovault-track-records'
 import {
@@ -204,6 +205,43 @@ const trackId = (position: number) => {
   if (!found) throw new Error('Missing library track')
   return found.id
 }
+
+it('refreshes stored matches for library members only', async () => {
+  const outsideTrack = trackId(1)
+  const memberTrack = trackId(2)
+  const lookedUpAt = new Date('2010-01-01T00:00:00Z')
+  await databaseClient
+    .update(schema.mediaItem)
+    .set({ inLibrary: false })
+    .where(inArray(schema.mediaItem.id, [albumId, outsideTrack]))
+  await databaseClient.insert(schema.sonovaultAlbumLookup).values({
+    mediaItemId: albumId,
+    status: 'confirmed',
+    lookedUpAt,
+  })
+  await databaseClient.insert(schema.sonovaultTrackLookup).values(
+    [outsideTrack, memberTrack].map((mediaItemId) => ({
+      mediaItemId,
+      status: 'matched',
+      inputType: 'spotify_id',
+      input: mediaItemId === outsideTrack ? spotifyId(1) : spotifyId(2),
+      lookedUpAt,
+    })),
+  )
+
+  expect((await getSonovaultSummary()).lookups.dueForRefresh).toBe(1)
+  expect(await queueSonovaultRefresh(userId)).toMatchObject({
+    queued: 1,
+    skipped: 0,
+  })
+  const jobs = await databaseClient
+    .select({ options: schema.scrapeJob.options })
+    .from(schema.scrapeJob)
+  expect(jobs).toEqual([
+    { options: expect.objectContaining({ trackIds: [memberTrack] }) },
+  ])
+  expect(bodies).toEqual([])
+})
 
 async function addAlbumReference(
   provider: string,

@@ -940,8 +940,10 @@ async function queueSonovaultAlbumRefresh(
   const due = await db
     .select({ id: sonovaultAlbumLookup.mediaItemId })
     .from(sonovaultAlbumLookup)
+    .innerJoin(mediaItem, eq(mediaItem.id, sonovaultAlbumLookup.mediaItemId))
     .where(
       and(
+        eq(mediaItem.inLibrary, true),
         eq(sonovaultAlbumLookup.status, 'confirmed'),
         sql`${sonovaultAlbumLookup.lookedUpAt} < ${refreshCutoff(new Date()).toISOString()}::timestamp`,
       ),

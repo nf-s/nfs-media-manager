@@ -55,6 +55,7 @@ async function main(args: string[]) {
           from media_item m
           left join sonovault_album_lookup l on l.media_item_id = m.id
           where m.media_type = 'album'
+            and m.in_library
             and m.metadata->>'legacyHidden' is distinct from 'true'
             and exists (select 1 from provider_reference r where r.media_item_id = m.id
               and r.provider = 'spotify' and r.reference_type = 'album')
