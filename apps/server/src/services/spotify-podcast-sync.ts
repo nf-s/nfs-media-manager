@@ -537,6 +537,7 @@ export async function runSpotifyPodcastSyncJob(
   let access: { userId: string; token: string; readAt: number } | null = null
   let steps = 0
   try {
+    await context.activity?.('Checking for an open podcast sync')
     const capture = await recordAccountSyncResponses(context, spotifyPlugin)
     const request = createProviderRequest(spotifyPlugin, context.assertActive, {
       beginResponseCapture: capture?.('task'),
@@ -545,6 +546,13 @@ export async function runSpotifyPodcastSyncJob(
       if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(token)
       if (!run) return { outcome: 'complete', message: 'No sync run was open.' }
+      if (run.phase === 'items')
+        await context.activity?.('Reading podcast episodes', {
+          done: run.sourcesDone,
+          total: run.sourcesTotal,
+          unit: 'podcasts',
+        })
+      else await context.activity?.('Reading saved podcasts')
       if (
         !access ||
         access.userId !== run.userId ||
@@ -561,6 +569,13 @@ export async function runSpotifyPodcastSyncJob(
           : await syncShowsPage(request, access.token, token, run, context)
       if (step === 'lost') return { outcome: 'stopped' }
       if (step === 'fetched-all') {
+        if (run.phase === 'items')
+          await context.activity?.('Reading podcast episodes', {
+            done: run.sourcesTotal,
+            total: run.sourcesTotal,
+            unit: 'podcasts',
+          })
+        await context.activity?.('Finishing podcast sync')
         await db
           .update(subscriptionSync)
           .set({
@@ -579,6 +594,12 @@ export async function runSpotifyPodcastSyncJob(
       }
       steps += 1
       const done = run.sourcesDone + 1
+      if (step === 'show-done')
+        await context.activity?.('Reading podcast episodes', {
+          done,
+          total: run.sourcesTotal,
+          unit: 'podcasts',
+        })
       if (step === 'show-done' && done % LOG_EVERY_SHOWS === 0)
         await context.log(
           'info',

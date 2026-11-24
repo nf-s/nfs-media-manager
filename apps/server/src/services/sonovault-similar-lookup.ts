@@ -479,6 +479,10 @@ export async function runSonovaultSimilarLookup(
   try {
     const options = LookupOptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Matching similar tracks through Sonovault', {
+      total: options.tracks.length,
+      unit: 'tracks',
+    })
     const mapping = await mapSimilarTracksThroughSonovault(context, {
       userId: context.requestedByUserId,
       itemId: options.itemId,

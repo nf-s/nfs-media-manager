@@ -271,8 +271,8 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
       ['lastfm', 'succeeded'],
       ['lastfm', 'succeeded'],
     ])
-    expect(jobs[0]?.options).toEqual({ task: 'lastfm-scrobble-sync' })
-    expect(jobs[1]?.options).toEqual({
+    expect(jobs[0]?.options).toMatchObject({ task: 'lastfm-scrobble-sync' })
+    expect(jobs[1]?.options).toMatchObject({
       task: 'lastfm-scrobble-sync',
       continues: jobs[0]?.id,
     })

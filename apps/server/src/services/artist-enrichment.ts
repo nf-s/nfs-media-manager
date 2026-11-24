@@ -295,6 +295,7 @@ async function runSavedVerification(
   diagnostics: ReturnType<typeof createJobDiagnostics>,
   capture: ReturnType<typeof recordArtistResponses>,
 ): Promise<TaskJobResult> {
+  await context.activity('Verifying the saved artist match')
   const request = createProviderRequest(plugin, context.assertActive, {
     beginResponseCapture: capture('artist', artistId),
   })
@@ -395,6 +396,7 @@ export async function runArtistEnrichment(
     const { artistId, provider, providerArtistId, verifySnapshotId } =
       ArtistEnrichmentOptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the artist’s saved profile')
     const target = await loadArtistProviderTarget(artistId, provider)
     if (verifySnapshotId) {
       const supportedProvider = ArtistVerificationProviderSchema.parse(provider)
@@ -465,6 +467,9 @@ export async function runArtistEnrichment(
       Boolean(id && normalizeArtistProviderId('musicbrainz', id))
     let totalPages = !builtin || id ? 1 : 2
     await context.progress({ pagesRead: 0, totalPages })
+    await context.activity(
+      id ? 'Reading the artist profile' : 'Finding the artist profile',
+    )
     const capture = recordArtistResponses(
       context.jobId,
       artistId,
@@ -478,9 +483,10 @@ export async function runArtistEnrichment(
         beginResponseCapture: capture('artist', artistId),
       }),
       recordDiagnostic: diagnostics.recordDiagnostic,
-      searched: () => {
+      searched: async () => {
         totalPages = 2
-        return context.progress({ pagesRead: 1, totalPages })
+        await context.progress({ pagesRead: 1, totalPages })
+        await context.activity('Reading the artist profile')
       },
       ...(builtin === 'lastfm' && !savedOrExplicitId
         ? {

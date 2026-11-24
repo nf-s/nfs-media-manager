@@ -411,6 +411,7 @@ export async function runSonovaultTrackNameLookup(
     const options = JobOptionsSchema.parse(input)
     await context.assertActive()
     const now = new Date()
+    await context.activity('Checking tracks due for name lookup')
     const sent = (await readNameTargets(db, options.trackIds)).flatMap(
       (target) =>
         target.item && dueForNameLookup(target, now, { running: true })
@@ -454,6 +455,11 @@ export async function runSonovaultTrackNameLookup(
             }),
           providerResponseSecretValues({ apiKey: settings.apiKey }),
         )
+        await context.activity('Looking up tracks by artist and title', {
+          done: 0,
+          total: sent.length,
+          unit: 'tracks',
+        })
         const payload = await resolveSonovaultTracks(
           createProviderRequest(
             sonovaultGatedPlugin(plugin, settings),
@@ -465,6 +471,11 @@ export async function runSonovaultTrackNameLookup(
           sent.map(({ item }) => item),
         )
         recorder.assertStored()
+        await context.activity('Looking up tracks by artist and title', {
+          done: sent.length,
+          total: sent.length,
+          unit: 'tracks',
+        })
         return { kind: 'resolved', payload }
       },
       context.assertActive,

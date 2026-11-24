@@ -509,14 +509,37 @@ describe('Spotify podcast sync jobs with offline HTTP and a temporary database',
     expect(new Set(jobs.map((job) => `${job.provider}:${job.status}`))).toEqual(
       new Set(['spotify:succeeded']),
     )
-    expect(jobs[0]?.options).toEqual({ task: 'spotify-podcast-sync' })
-    expect(jobs[1]?.options).toEqual({
+    expect(jobs[0]?.options).toMatchObject({
+      task: 'spotify-podcast-sync',
+      activity: { stage: 'Reading saved podcasts' },
+    })
+    expect(jobs[1]?.options).toMatchObject({
       task: 'spotify-podcast-sync',
       continues: jobs[0]?.id,
     })
     const { getJob } = await import('@/services/jobs')
-    expect((await getJob(jobs.at(-1)?.id ?? ''))?.logs.at(-1)?.message).toBe(
-      'Sync complete. 9 new episodes; 9 episodes from 3 saved podcasts are stored.',
+    const finalJob = await getJob(jobs.at(-1)?.id ?? '')
+    expect(finalJob?.logs.at(-1)).toMatchObject({
+      message:
+        'Sync complete. 9 new episodes; 9 episodes from 3 saved podcasts are stored.',
+      metadata: {
+        previousActivity: {
+          stage: 'Finishing podcast sync',
+          durationMs: expect.any(Number),
+        },
+      },
+    })
+    expect(finalJob?.logs).toContainEqual(
+      expect.objectContaining({
+        message: 'Finishing podcast sync',
+        metadata: expect.objectContaining({
+          previousActivity: expect.objectContaining({
+            done: 3,
+            total: 3,
+            unit: 'podcasts',
+          }),
+        }),
+      }),
     )
 
     const { listSubscriptionSources } =

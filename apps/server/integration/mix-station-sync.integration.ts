@@ -682,8 +682,8 @@ describe('mix station sync jobs with offline HTTP and a temporary database', () 
     expect(new Set(jobs.map((job) => `${job.provider}:${job.status}`))).toEqual(
       new Set(['rinse:succeeded']),
     )
-    expect(jobs[0]?.options).toEqual({ task: 'rinse-mix-sync' })
-    expect(jobs[1]?.options).toEqual({
+    expect(jobs[0]?.options).toMatchObject({ task: 'rinse-mix-sync' })
+    expect(jobs[1]?.options).toMatchObject({
       task: 'rinse-mix-sync',
       continues: jobs[0]?.id,
     })

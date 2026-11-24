@@ -514,6 +514,7 @@ export async function runTidalSimilar(
   try {
     const options = SimilarOptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the saved TIDAL match')
     const target = await similarTarget(db, options.kind, options.itemId)
     if (
       !target?.source ||
@@ -526,6 +527,7 @@ export async function runTidalSimilar(
         noProviderRequests: true,
       }
     const fromSonovault = options.tidalIdSource === 'sonovault'
+    await context.activity('Reading similar items from TIDAL')
     const suggestions = await providerOperation(
       PROVIDER,
       async ({ secrets, request }, plugin) => {
@@ -596,6 +598,7 @@ export async function runTidalSimilar(
       mapSuggestions(db, options.kind, suggestions),
       suggestionsNeedingSpotify(db, options.kind, suggestions),
     ])
+    await context.activity('Matching similar items to Spotify')
     const spotify = await mapToSpotify(context, {
       kind: options.kind,
       itemId: options.itemId,
@@ -604,6 +607,8 @@ export async function runTidalSimilar(
       previousTrackResponses: target.sonovaultTrackResponses,
     })
     if (!spotify) return { outcome: 'stopped' }
+    if (options.kind === 'album')
+      await context.activity('Looking up similar album genres')
     const albums =
       options.kind === 'album'
         ? await lookupSimilarAlbumGenres(

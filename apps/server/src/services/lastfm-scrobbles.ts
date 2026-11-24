@@ -539,10 +539,18 @@ async function storePage(
   })
 }
 
-async function completeRun(account: string, token: string, run: SyncRow) {
+async function completeRun(
+  account: string,
+  token: string,
+  run: SyncRow,
+  activity?: LastfmSyncJobContext['activity'],
+) {
+  await activity?.('Linking scrobbles to albums')
   await linkScrobblesToAlbums(account)
+  await activity?.('Updating album listening totals')
   await refreshAlbumListeningFields()
-  await refreshTrackLinks(account, 'lastfm-sync')
+  await refreshTrackLinks(account, 'lastfm-sync', activity)
+  await activity?.('Saving the Last.fm sync checkpoint')
   await db
     .update(lastfmSync)
     .set({
@@ -590,6 +598,7 @@ export interface LastfmSyncJobContext {
   assertActive(): Promise<void>
   isActive(): Promise<boolean>
   log(level: 'info' | 'warn', message: string): Promise<void>
+  activity?: import('./jobs').TaskJobContext['activity']
 }
 
 export type LastfmSyncJobResult =
@@ -622,6 +631,7 @@ export async function runLastfmSyncJob(
   let account: string | null = null
   let pages = 0
   try {
+    await context.activity?.('Checking for an open scrobble sync')
     const configured = await requireCredentials()
     account = configured.account
     // The username names the account whose scrobbles are read; it stays in the data.
@@ -637,6 +647,11 @@ export async function runLastfmSyncJob(
       if (!run) return { outcome: 'complete', message: 'No sync run was open.' }
       // A run interrupted after its last page only has linking left to do.
       if (run.totalPages === null || run.nextPage <= run.totalPages) {
+        await context.activity?.('Reading Last.fm scrobble pages', {
+          done: run.nextPage - 1,
+          total: run.totalPages ?? undefined,
+          unit: 'pages',
+        })
         const page = await fetchPageWithRetry(
           request,
           configured,
@@ -655,8 +670,13 @@ export async function runLastfmSyncJob(
           context.jobId,
         )
         if (stored === 'lost') return { outcome: 'stopped' }
+        const total = page.recenttracks['@attr'].totalPages
+        await context.activity?.('Reading Last.fm scrobble pages', {
+          done: Math.min(run.nextPage, total),
+          total,
+          unit: 'pages',
+        })
         if (stored === 'more') {
-          const total = page.recenttracks['@attr'].totalPages
           if (pages >= maxPages || Date.now() + spacingMs >= deadline) {
             await recordProviderSuccess('lastfm')
             return {
@@ -673,7 +693,7 @@ export async function runLastfmSyncJob(
           continue
         }
       }
-      await completeRun(configured.account, token, run)
+      await completeRun(configured.account, token, run, context.activity)
       if (pages > 0) await recordProviderSuccess('lastfm')
       const status = await getLastfmSyncStatus()
       return {

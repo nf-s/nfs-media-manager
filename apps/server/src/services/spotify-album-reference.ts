@@ -623,6 +623,7 @@ export async function runSpotifyTrackAlbumLookup(
 ): Promise<TaskJobResult> {
   try {
     const { trackId, spotifyTrackId } = TrackAlbumLookupInputSchema.parse(input)
+    await context.activity('Checking the track’s saved release')
     const target = await trackReference(db, trackId)
     if (
       !target ||
@@ -634,6 +635,7 @@ export async function runSpotifyTrackAlbumLookup(
         message: 'The track no longer needs a Spotify release lookup.',
         noProviderRequests: true,
       }
+    await context.activity('Reading the track’s Spotify release')
     const parent = await providerOperation(
       'spotify',
       async ({ secrets, request }, plugin) => {

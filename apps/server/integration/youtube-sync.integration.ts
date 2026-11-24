@@ -753,8 +753,10 @@ describe('YouTube subscription sync jobs with offline HTTP and a temporary datab
     expect(new Set(jobs.map((job) => `${job.provider}:${job.status}`))).toEqual(
       new Set(['youtube:succeeded']),
     )
-    expect(jobs[0]?.options).toEqual({ task: 'youtube-subscription-sync' })
-    expect(jobs[1]?.options).toEqual({
+    expect(jobs[0]?.options).toMatchObject({
+      task: 'youtube-subscription-sync',
+    })
+    expect(jobs[1]?.options).toMatchObject({
       task: 'youtube-subscription-sync',
       continues: jobs[0]?.id,
     })

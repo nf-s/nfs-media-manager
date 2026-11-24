@@ -420,6 +420,7 @@ export async function runTidalTrackMatch(
   try {
     const options = MatchOptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the track’s ISRC')
     const target = await matchTarget(db, options.trackId)
     if (!target || target.isrc !== options.isrc)
       return {
@@ -427,6 +428,10 @@ export async function runTidalTrackMatch(
         message: 'Match skipped: the track or its ISRC has changed.',
         noProviderRequests: true,
       }
+    await context.activity('Searching TIDAL by ISRC', {
+      done: 0,
+      unit: 'pages',
+    })
     const pages: Array<TidalTrackLookupPage & { responseId?: string }> = []
     const candidates = await providerOperation(
       PROVIDER,
@@ -468,6 +473,10 @@ export async function runTidalTrackMatch(
               PROVIDER,
             )
             pages.push({ ...page, responseId })
+            await context.activity('Searching TIDAL by ISRC', {
+              done: pages.length,
+              unit: 'pages',
+            })
           },
         )
         recorder.assertStored()
@@ -478,6 +487,7 @@ export async function runTidalTrackMatch(
       context.maxSlotWaitMs,
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
+    await context.activity('Checking TIDAL track candidates')
     const kept = candidates.slice(0, TIDAL_TRACK_CANDIDATE_LIMIT)
     const { reason, chosen } = chooseTidalTrack(kept, target)
     const diagnostics = [

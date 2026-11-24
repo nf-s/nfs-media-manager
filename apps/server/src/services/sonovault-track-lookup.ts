@@ -712,6 +712,7 @@ export async function runSonovaultTrackLookup(
     const options = JobOptionsSchema.parse(input)
     await context.assertActive()
     const now = new Date()
+    await context.activity('Checking tracks due for lookup')
     const sent = (await readSonovaultTargets(db, options.trackIds)).flatMap(
       (target) => {
         const lookup = sonovaultLookupInput(target)
@@ -754,6 +755,11 @@ export async function runSonovaultTrackLookup(
           // appear in response bodies and must not be scrubbed from them.
           providerResponseSecretValues({ apiKey: settings.apiKey }),
         )
+        await context.activity('Looking up tracks by identifier', {
+          done: 0,
+          total: sent.length,
+          unit: 'tracks',
+        })
         const payload = await resolveSonovaultTracks(
           createProviderRequest(
             sonovaultGatedPlugin(plugin, settings),
@@ -765,6 +771,11 @@ export async function runSonovaultTrackLookup(
           sent.map(({ input: value }) => value),
         )
         recorder.assertStored()
+        await context.activity('Looking up tracks by identifier', {
+          done: sent.length,
+          total: sent.length,
+          unit: 'tracks',
+        })
         return { kind: 'resolved', payload }
       },
       context.assertActive,

@@ -43,6 +43,18 @@ Every request still goes through the provider's request gate (`createProviderReq
 
 A job run in the request can also make another provider's request through that provider's gate, with the same wait. A TIDAL similar-tracks read sends its Sonovault bulk lookup this way (SONO-26) instead of queuing a Sonovault job, which could wait hours behind a bulk run. Its response is stored on the TIDAL job under provider `sonovault`, numbered after the job's own responses; replay reads the job's own provider's responses only (`readProviderResponseAttempt` with `provider`). When Sonovault is busy past the wait, cooling down or halted, nothing is sent and the read still succeeds: the suggestions go to the queued Spotify search.
 
+## Job activity history
+
+Running jobs save their current stage and any confirmed progress on the job.
+The Logs tab records stage changes, elapsed time for the previous stage and
+periodic milestones. The final log records the last stage on completion,
+cancellation or worker recovery when a stage was saved.
+
+Activity commits independently of the work it describes so an interruption or
+rollback leaves a useful record of where the job stopped. Completion messages
+and confirmed counts still depend on the work being saved. Workers also emit
+structured `job.activity` events at stage changes and reported failures.
+
 ## Hosted queue recovery
 
 In the hosted runtime, queued jobs can wait while their provider's dispatcher is

@@ -92,6 +92,12 @@ interface SonosDispatch {
 
 type RequestEvent =
   | ({ event: 'browser.browse' } & BrowserBrowseTiming)
+  | {
+      event: 'job.activity'
+      outcome: 'stage' | 'failed'
+      stage: string
+      previousDurationMs?: number
+    }
   | { event: 'database.probe'; outcome: 'ok' | 'failed'; durationMs: number }
   | {
       event:
@@ -149,7 +155,7 @@ const methods = new Set([
 export function writeRequestLog(event: RequestEvent) {
   const record = {
     timestamp: new Date().toISOString(),
-    ...context.getStore()?.details,
+    ...(event.event === 'job.activity' ? {} : context.getStore()?.details),
     ...event,
   }
   // Workers indexes object fields. Node process logs use one JSON record per line.

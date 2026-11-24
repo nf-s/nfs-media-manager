@@ -740,6 +740,7 @@ export async function runYoutubeSyncJob(
   let access: { userId: string; token: string; readAt: number } | null = null
   let steps = 0
   try {
+    await context.activity?.('Checking for an open YouTube sync')
     const capture = await recordAccountSyncResponses(context, youtubePlugin)
     const request = createProviderRequest(youtubePlugin, context.assertActive, {
       beginResponseCapture: capture?.('task'),
@@ -748,6 +749,13 @@ export async function runYoutubeSyncJob(
       if (!(await context.isActive())) return { outcome: 'stopped' }
       const run = await claim(token)
       if (!run) return { outcome: 'complete', message: 'No sync run was open.' }
+      if (run.phase === 'items')
+        await context.activity?.('Reading channel uploads', {
+          done: run.sourcesDone,
+          total: run.sourcesTotal,
+          unit: 'channels',
+        })
+      else await context.activity?.('Reading subscribed channels')
       if (
         !access ||
         access.userId !== run.userId ||
@@ -770,6 +778,13 @@ export async function runYoutubeSyncJob(
             )
       if (step === 'lost') return { outcome: 'stopped' }
       if (step === 'fetched-all') {
+        if (run.phase === 'items')
+          await context.activity?.('Reading channel uploads', {
+            done: run.sourcesTotal,
+            total: run.sourcesTotal,
+            unit: 'channels',
+          })
+        await context.activity?.('Finishing YouTube sync')
         await db
           .update(subscriptionSync)
           .set({
@@ -788,6 +803,12 @@ export async function runYoutubeSyncJob(
       }
       steps += 1
       const done = run.sourcesDone + 1
+      if (step === 'channel-done')
+        await context.activity?.('Reading channel uploads', {
+          done,
+          total: run.sourcesTotal,
+          unit: 'channels',
+        })
       if (step === 'channel-done' && done % LOG_EVERY_CHANNELS === 0)
         await context.log(
           'info',

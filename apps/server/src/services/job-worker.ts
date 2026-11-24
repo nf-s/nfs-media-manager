@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { jobActivityEnding } from '@/lib/job-stage-history'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
 import {
@@ -95,7 +96,7 @@ export async function startJobWorker({
     // transaction back. Lock parent rows just like all normal worker writes.
     await drizzle(client).transaction(async (tx) => {
       const interrupted = await tx
-        .select({ id: scrapeJob.id })
+        .select({ id: scrapeJob.id, options: scrapeJob.options })
         .from(scrapeJob)
         .where(eq(scrapeJob.status, 'running'))
         .orderBy(scrapeJob.id)
@@ -126,7 +127,10 @@ export async function startJobWorker({
             level: 'info',
             message:
               'Worker recovered a job whose items had already succeeded.',
-            metadata: { reason: 'worker_recovered_completed' },
+            metadata: {
+              reason: 'worker_recovered_completed',
+              ...jobActivityEnding(job.options, finishedAt),
+            },
           })
           continue
         }
@@ -158,7 +162,10 @@ export async function startJobWorker({
           jobId: job.id,
           level: 'error',
           message: interruptionReason,
-          metadata: { reason: 'worker_interrupted' },
+          metadata: {
+            reason: 'worker_interrupted',
+            ...jobActivityEnding(job.options, finishedAt),
+          },
         })
       }
     })

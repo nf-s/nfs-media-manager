@@ -109,6 +109,12 @@ import { scrapeMediaType } from '@/lib/scrape-media-type'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { importMediaTypeExpression } from '@/lib/import-media-type'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
+import { writeRequestLog } from '@/lib/request-log'
+import {
+  jobActivityEnding,
+  jobActivityOptions,
+  storedJobActivitySchema,
+} from '@/lib/job-stage-history'
 import { env } from '@/env'
 import { dispatchPriorityOrder } from '@/lib/job-dispatch-order'
 import { getScrapePlugin, listLoadedScrapePlugins } from '@/plugins/registry'
@@ -232,16 +238,20 @@ type JobTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 // fences every worker write against cancellation, including provider persistence.
 export async function withRunningJob(
   jobId: string,
-  write: (tx: JobTransaction) => Promise<void>,
+  write: (
+    tx: JobTransaction,
+    job: typeof scrapeJob.$inferSelect,
+  ) => Promise<void>,
+  lock: 'update' | 'no key update' = 'update',
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [job] = await tx
       .select()
       .from(scrapeJob)
       .where(eq(scrapeJob.id, jobId))
-      .for('update')
+      .for(lock)
     if (job?.status !== 'running') return false
-    await write(tx)
+    await write(tx, job)
     return true
   })
 }
@@ -260,6 +270,86 @@ export async function logJob(
     message,
     metadata,
   })
+}
+
+export type JobActivityProgress = {
+  done?: number
+  total?: number
+  unit?: string
+}
+
+function jobActivityWriter(jobId: string) {
+  // The current count is saved as work advances. Persist milestone log rows
+  // at most twice per minute per stage, except when the full count is reached.
+  let lastMilestoneAt = 0
+  let activeStage: string | undefined
+  const activity = async (stage: string, progress?: JobActivityProgress) => {
+    let stageEvent: Parameters<typeof writeRequestLog>[0] | undefined
+    await withRunningJob(
+      jobId,
+      async (tx, job) => {
+        const now = new Date()
+        const current = jobActivityOptions(job.options)
+        const stageChanged =
+          current?.stage !== stage || current.unit !== progress?.unit
+        if (stageChanged)
+          stageEvent = {
+            event: 'job.activity',
+            outcome: 'stage',
+            stage,
+            ...(current
+              ? {
+                  previousDurationMs: Math.max(
+                    0,
+                    now.getTime() - Date.parse(current.startedAt),
+                  ),
+                }
+              : {}),
+          }
+        const next = storedJobActivitySchema.parse({
+          stage,
+          ...progress,
+          startedAt: stageChanged ? now.toISOString() : current.startedAt,
+        })
+        if (
+          !stageChanged &&
+          current.done === next.done &&
+          current.total === next.total
+        )
+          return
+        const value = JSON.stringify({ activity: next })
+        await tx
+          .update(scrapeJob)
+          .set({
+            options: sql`${scrapeJob.options} || ${value}::jsonb`,
+            updatedAt: now,
+          })
+          .where(eq(scrapeJob.id, jobId))
+        const done = next.done !== undefined && next.done === next.total
+        if (stageChanged || done || now.getTime() - lastMilestoneAt >= 30_000) {
+          await logJob(
+            jobId,
+            'info',
+            stage,
+            {
+              activity: next,
+              ...(stageChanged ? jobActivityEnding(job.options, now) : {}),
+            },
+            tx,
+          )
+          lastMilestoneAt = now.getTime()
+        }
+      },
+      // Catalog evidence may hold a foreign-key share lock on the same job
+      // while an import runs. This still serializes writes and cancellation.
+      'no key update',
+    )
+    if (stageEvent) {
+      activeStage = stage
+      writeRequestLog(stageEvent)
+    }
+  }
+  return { activity, activeStage: () => activeStage }
 }
 
 function mapJob(
@@ -652,20 +742,32 @@ async function runClaimedJob(
         )
       await logJob(nextJob.id, 'error', message, {}, tx)
     })
+    writeRequestLog({
+      event: 'job.activity',
+      outcome: 'failed',
+      stage: 'Validating metadata job',
+    })
     return
   }
 
   if (!plugin?.scrapeMediaItem) {
+    const message = 'No executable plugin is loaded for this provider.'
     await withRunningJob(nextJob.id, async (tx) => {
       await tx
         .update(scrapeJob)
         .set({
           status: 'failed',
-          errorMessage: 'No executable plugin is loaded for this provider.',
+          errorMessage: message,
           finishedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(scrapeJob.id, nextJob.id))
+      await logJob(nextJob.id, 'error', message, {}, tx)
+    })
+    writeRequestLog({
+      event: 'job.activity',
+      outcome: 'failed',
+      stage: 'Loading metadata provider',
     })
     return
   }
@@ -673,6 +775,7 @@ async function runClaimedJob(
   await withRunningJob(nextJob.id, (tx) =>
     logJob(nextJob.id, 'info', `Started job for ${nextJob.provider}`, {}, tx),
   )
+  const { activity, activeStage } = jobActivityWriter(nextJob.id)
   let stopped = false
   const stoppedError = new Error(
     'Stopped to protect provider limits. No retry scheduled.',
@@ -705,10 +808,6 @@ async function runClaimedJob(
     if (item.status !== 'queued') return
     const mediaItemId = item.mediaItemId
 
-    if (!mediaItemId) {
-      return
-    }
-
     let itemStarted = false
     const started = await withRunningJob(nextJob.id, async (tx) => {
       if (stopped || execution.stopped) return
@@ -732,10 +831,13 @@ async function runClaimedJob(
     if (!started) stopped = true
     if (!itemStarted) return
 
-    const storedRecord = await db.query.mediaItem.findFirst({
-      where: (table, operators) => operators.eq(table.id, mediaItemId),
-      with: { credits: { with: { artist: true } } },
-    })
+    await activity('Preparing metadata lookup')
+    const storedRecord = mediaItemId
+      ? await db.query.mediaItem.findFirst({
+          where: (table, operators) => operators.eq(table.id, mediaItemId),
+          with: { credits: { with: { artist: true } } },
+        })
+      : null
     // A library track is never queued for scraping; treat one as missing.
     const storedType = storedRecord
       ? scrapeMediaType(storedRecord.mediaType)
@@ -745,8 +847,8 @@ async function runClaimedJob(
         ? { ...storedRecord, mediaType: storedType }
         : null
 
-    if (!mediaRecord) {
-      await withRunningJob(nextJob.id, async (tx) => {
+    if (!mediaRecord || !mediaItemId) {
+      await withRunningJob(nextJob.id, async (tx, job) => {
         await tx
           .update(scrapeJobItem)
           .set({
@@ -759,10 +861,15 @@ async function runClaimedJob(
         await logJob(
           nextJob.id,
           'error',
-          `Missing media item ${item.mediaItemId}`,
-          {},
+          'Media item not found.',
+          jobActivityEnding(job.options, new Date()),
           tx,
         )
+      })
+      writeRequestLog({
+        event: 'job.activity',
+        outcome: 'failed',
+        stage: 'Preparing metadata lookup',
       })
       return
     }
@@ -924,6 +1031,11 @@ async function runClaimedJob(
                 plugin.manifest.id === 'lastfm',
             )
           : undefined
+      if (
+        mediaRecord.mediaType === 'album' &&
+        plugin.manifest.bootstrapAlbumArtists
+      )
+        await activity('Checking artist profiles')
       const artistProfiles =
         mediaRecord.mediaType === 'album' &&
         plugin.manifest.bootstrapAlbumArtists
@@ -951,6 +1063,7 @@ async function runClaimedJob(
             )
           : undefined
       await assertActive()
+      await activity('Fetching provider metadata')
       const scraped = PluginResultSchema.parse(
         await scrapeMediaItem({
           mediaItemId: mediaRecord.id,
@@ -1019,7 +1132,8 @@ async function runClaimedJob(
           ? sanitizeAlbumProviderResult(scraped.payload, scraped.normalized)
           : scraped
 
-      const saved = await withRunningJob(nextJob.id, async (tx) => {
+      await activity('Saving provider metadata')
+      const saved = await withRunningJob(nextJob.id, async (tx, job) => {
         await applyProviderResultInTransaction(
           {
             mediaItemId: mediaRecord.id,
@@ -1047,9 +1161,10 @@ async function runClaimedJob(
         await logJob(
           nextJob.id,
           'info',
-          `Completed ${mediaRecord.title}`,
+          'Saved provider metadata.',
           {
             mediaItemId,
+            ...jobActivityEnding(job.options, new Date()),
           },
           tx,
         )
@@ -1070,7 +1185,7 @@ async function runClaimedJob(
           : null
       const stoppedBeforeRequest = error === stoppedError
       noteRateLimit(execution, error)
-      const handled = await withRunningJob(nextJob.id, async (tx) => {
+      const handled = await withRunningJob(nextJob.id, async (tx, job) => {
         if (
           !classification &&
           !stoppedBeforeRequest &&
@@ -1114,6 +1229,7 @@ async function runClaimedJob(
           {
             mediaItemId,
             error: details,
+            ...jobActivityEnding(job.options, new Date()),
             ...(evidence.length ? { diagnostics: evidence } : {}),
             ...(classification ? { classification } : {}),
           },
@@ -1152,6 +1268,12 @@ async function runClaimedJob(
           )
         }
       })
+      if (handled && !stoppedBeforeRequest)
+        writeRequestLog({
+          event: 'job.activity',
+          outcome: 'failed',
+          stage: activeStage() ?? 'Fetching provider metadata',
+        })
       if (!handled) stopped = true
       else if (!classification && !stoppedBeforeRequest)
         await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
@@ -1161,9 +1283,9 @@ async function runClaimedJob(
 
   if (!stopped && !execution.stopped) await processItem(item)
 
-  await withRunningJob(nextJob.id, async (tx) => {
-    if (execution.stopped)
-      await tx
+  await withRunningJob(nextJob.id, async (tx, job) => {
+    if (execution.stopped) {
+      const stoppedItems = await tx
         .update(scrapeJobItem)
         .set({
           status: 'cancelled',
@@ -1177,6 +1299,16 @@ async function runClaimedJob(
             eq(scrapeJobItem.status, 'queued'),
           ),
         )
+        .returning({ id: scrapeJobItem.id })
+      if (stoppedItems.length)
+        await logJob(
+          nextJob.id,
+          'warn',
+          stoppedError.message,
+          jobActivityEnding(job.options, new Date()),
+          tx,
+        )
+    }
     const remainingFailures = await tx.query.scrapeJobItem.findMany({
       where: (table, operators) =>
         operators.and(
@@ -1187,7 +1319,6 @@ async function runClaimedJob(
     const failedCount = remainingFailures.filter(
       (item) => item.status === 'failed',
     ).length
-
     await tx
       .update(scrapeJob)
       .set({
@@ -1228,6 +1359,7 @@ export interface TaskJobContext extends LastfmSyncJobContext {
   maxSlotWaitMs?: number
   /** Records how far the job has read, in `options.progress`. */
   progress(progress: JobProgress): Promise<void>
+  activity(stage: string, progress?: JobActivityProgress): Promise<void>
 }
 
 type TaskJobDefinition = {
@@ -1577,8 +1709,11 @@ export async function createTaskJob(
   const definition = taskJobs.get(task)
   if (!definition)
     throw new ServerError({ statusCode: 422, message: 'Unknown job task' })
-  const { providerReplaySteps: _historicalSteps, ...input } =
-    scheduling.taskOptions ?? {}
+  const {
+    activity: _priorActivity,
+    providerReplaySteps: _historicalSteps,
+    ...input
+  } = scheduling.taskOptions ?? {}
   const provider = taskProvider(definition, input)
   if (!provider)
     throw new ServerError({ statusCode: 422, message: 'Invalid task provider' })
@@ -1838,26 +1973,47 @@ async function processTaskJob(
   execution: ProviderExecution,
   control?: QueuedJobExecution,
 ): Promise<void> {
-  const finish = (
+  const { activity, activeStage } = jobActivityWriter(nextJob.id)
+  const finish = async (
     status: 'succeeded' | 'failed' | 'cancelled',
     level: 'info' | 'warn' | 'error',
     message: string,
     metadata: Record<string, JsonValue> = {},
     write?: (tx: JobTransaction) => Promise<void>,
-  ) =>
-    withRunningJob(nextJob.id, async (tx) => {
+    persist?: TaskJobResult['persist'],
+  ) => {
+    const saved = await withRunningJob(nextJob.id, async (tx, job) => {
+      await persist?.(tx)
+      const finishedAt = new Date()
       await tx
         .update(scrapeJob)
         .set({
           status,
           errorMessage: status === 'succeeded' ? null : message,
-          finishedAt: new Date(),
-          updatedAt: new Date(),
+          finishedAt,
+          updatedAt: finishedAt,
         })
         .where(eq(scrapeJob.id, nextJob.id))
-      await logJob(nextJob.id, level, message, metadata, tx)
+      await logJob(
+        nextJob.id,
+        level,
+        message,
+        {
+          ...metadata,
+          ...jobActivityEnding(job.options, finishedAt),
+        },
+        tx,
+      )
       await write?.(tx)
     })
+    if (saved && status === 'failed')
+      writeRequestLog({
+        event: 'job.activity',
+        outcome: 'failed',
+        stage: activeStage() ?? 'Loading job handler',
+      })
+    return saved
+  }
 
   const definition = taskJobs.get(task)
   if (
@@ -1896,45 +2052,53 @@ async function processTaskJob(
     }
   }
 
-  const result = await definition.run(
-    {
-      jobId: nextJob.id,
-      requestedByUserId: nextJob.requestedByUserId,
-      ...(execution.maxSlotWaitMs === undefined
-        ? {}
-        : { maxSlotWaitMs: execution.maxSlotWaitMs }),
-      assertActive,
-      isActive: async () => {
-        try {
-          await assertActive()
-          return true
-        } catch (error) {
-          if (error instanceof JobExecutionControlError) throw error
-          return false
-        }
+  let handlerThrew = false
+  const result = await definition
+    .run(
+      {
+        jobId: nextJob.id,
+        requestedByUserId: nextJob.requestedByUserId,
+        ...(execution.maxSlotWaitMs === undefined
+          ? {}
+          : { maxSlotWaitMs: execution.maxSlotWaitMs }),
+        assertActive,
+        activity,
+        isActive: async () => {
+          try {
+            await assertActive()
+            return true
+          } catch (error) {
+            if (error instanceof JobExecutionControlError) throw error
+            return false
+          }
+        },
+        log: async (level, message) => {
+          await withRunningJob(nextJob.id, (tx) =>
+            logJob(nextJob.id, level, message, {}, tx),
+          )
+        },
+        progress: async (progress) => {
+          const value = JSON.stringify({
+            progress: JobProgressSchema.parse(progress),
+          })
+          await withRunningJob(nextJob.id, async (tx) => {
+            await tx
+              .update(scrapeJob)
+              .set({
+                options: sql`${scrapeJob.options} || ${value}::jsonb`,
+                updatedAt: new Date(),
+              })
+              .where(eq(scrapeJob.id, nextJob.id))
+          })
+        },
       },
-      log: async (level, message) => {
-        await withRunningJob(nextJob.id, (tx) =>
-          logJob(nextJob.id, level, message, {}, tx),
-        )
-      },
-      progress: async (progress) => {
-        const value = JSON.stringify({
-          progress: JobProgressSchema.parse(progress),
-        })
-        await withRunningJob(nextJob.id, async (tx) => {
-          await tx
-            .update(scrapeJob)
-            .set({
-              options: sql`${scrapeJob.options} || ${value}::jsonb`,
-              updatedAt: new Date(),
-            })
-            .where(eq(scrapeJob.id, nextJob.id))
-        })
-      },
-    },
-    nextJob.options,
-  )
+      nextJob.options,
+    )
+    .catch((error: unknown): TaskJobResult => {
+      if (error instanceof JobExecutionControlError) throw error
+      handlerThrew = true
+      return { outcome: 'failed', error }
+    })
 
   if (result.outcome === 'stopped') {
     // A user cancellation has already closed the job; this covers a dispatcher stop.
@@ -1945,6 +2109,7 @@ async function processTaskJob(
     error: unknown,
     metadata: Record<string, JsonValue> = {},
     classification?: TaskJobResult['failureClassification'],
+    localFailure = false,
   ) => {
     noteRateLimit(execution, error)
     const providerSecrets = await db.query.providerSecret.findMany({
@@ -1959,7 +2124,10 @@ async function processTaskJob(
       ),
     )
     const details = jobErrorDetails(error, credentials)
-    const evidenceStorageFailed = error instanceof ProviderResponseStorageError
+    const shouldCountFailure =
+      !localFailure &&
+      !classification &&
+      !(error instanceof ProviderResponseStorageError)
     const evidence = providerResponseEvidence(error, credentials)
     const diagnostics = Array.isArray(metadata.diagnostics)
       ? [...metadata.diagnostics, ...evidence]
@@ -1975,7 +2143,7 @@ async function processTaskJob(
         ...(classification ? { classification } : {}),
       },
       async (tx) => {
-        if (classification || evidenceStorageFailed) return
+        if (!shouldCountFailure) return
         execution.failures += 1
         const safety = await getProviderSafety(plugin.manifest.id)
         if (
@@ -1995,15 +2163,21 @@ async function processTaskJob(
         }
       },
     )
-    if (handled && !classification && !evidenceStorageFailed)
+    if (handled && shouldCountFailure)
       await control?.recordOutcome(execution.stopped ? 'stopped' : 'failure')
   }
   if (result.outcome === 'failed') {
-    await fail(result.error, result.metadata, result.failureClassification)
+    await fail(
+      result.error,
+      result.metadata,
+      result.failureClassification,
+      handlerThrew,
+    )
     return
   }
 
   let continued = false
+  if (result.persist) await activity('Saving job results')
   const saved = await finish(
     'succeeded',
     'info',
@@ -2017,7 +2191,6 @@ async function processTaskJob(
             options: sql`${scrapeJob.options} || ${JSON.stringify(result.options)}::jsonb`,
           })
           .where(eq(scrapeJob.id, nextJob.id))
-      await result.persist?.(tx)
       if (result.outcome !== 'continue') return
       const nextJobId = await insertTaskJob(
         tx,
@@ -2035,9 +2208,10 @@ async function processTaskJob(
       )
       continued = true
     },
+    result.persist,
   ).catch(async (error: unknown) => {
     if (!result.persist) throw error
-    await fail(new Error('Could not save the job result.'))
+    await fail(new Error('Could not save the job result.'), {}, undefined, true)
     return false
   })
   if (!saved) return
@@ -2059,6 +2233,7 @@ export async function createJob(
   } = {},
 ): Promise<Job> {
   const parsedInput = CreateJobSchema.parse(input)
+  const { activity: _priorActivity, ...options } = parsedInput.options
   if (
     parsedInput.options.task === ARTIST_ENRICHMENT_TASK ||
     parsedInput.options.task === SPOTIFY_ARTIST_ALBUMS_TASK
@@ -2268,7 +2443,7 @@ export async function createJob(
         ...parsedInput.scope,
         mediaItemIds,
       },
-      options: parsedInput.options,
+      options,
       confirmBroadRun: parsedInput.confirmBroadRun,
       requestedByUserId: userId,
     })
@@ -2284,17 +2459,17 @@ export async function createJob(
         payload: {},
       })
     }
-    return jobId
-  })
-
-  if (queuedJobId === jobId)
     await logJob(
       jobId,
       'info',
       inRequest
         ? `Running ${mediaItemIds.length} item(s) for ${parsedInput.provider} in the request`
         : `Queued ${mediaItemIds.length} item(s) for ${parsedInput.provider}`,
+      {},
+      tx,
     )
+    return jobId
+  })
 
   if (inRequest)
     return runJobInRequest(queuedJobId, plugin, queuedJobId === jobId)
@@ -2879,7 +3054,7 @@ async function cancelActiveJobsInTransaction(
       ? 'Cancelled by user before execution. No requests scheduled.'
       : 'Cancelled by user. In-flight results will be discarded.'
   const now = new Date()
-  await tx
+  const cancelled = await tx
     .update(scrapeJob)
     .set({
       status: 'cancelled',
@@ -2889,6 +3064,7 @@ async function cancelActiveJobsInTransaction(
       options: sql`${scrapeJob.options} || ${JSON.stringify({ cancellation: { requestedByUser: true, userId, cancelledAt: now.toISOString() } })}::jsonb`,
     })
     .where(inArray(scrapeJob.id, jobIds))
+    .returning({ id: scrapeJob.id, options: scrapeJob.options })
   await tx
     .update(scrapeJobItem)
     .set({
@@ -2904,12 +3080,12 @@ async function cancelActiveJobsInTransaction(
       ),
     )
   await tx.insert(scrapeJobLog).values(
-    jobIds.map((jobId) => ({
+    cancelled.map((job) => ({
       id: nanoid(),
-      jobId,
+      jobId: job.id,
       level: 'warn',
       message: reason,
-      metadata: { userId },
+      metadata: { userId, ...jobActivityEnding(job.options, now) },
     })),
   )
 }

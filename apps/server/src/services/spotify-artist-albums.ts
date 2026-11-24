@@ -360,6 +360,7 @@ export async function runSpotifyArtistAlbums(
     const options = ListingOptionsSchema.parse(input)
     const { artistId, market } = options
     await context.assertActive()
+    await context.activity('Checking access to Spotify artist releases')
     const access = await listingAccess()
     if (access.unavailableReason || access.market !== market)
       return {
@@ -392,6 +393,7 @@ export async function runSpotifyArtistAlbums(
     let tokenRequest: Promise<string> | undefined
     const getToken = () =>
       (tokenRequest ??= spotifyClientToken(secrets, request))
+    await context.activity('Resolving the Spotify artist match')
     const spotifyArtistId = await resolveTarget(
       context,
       options,
@@ -411,6 +413,10 @@ export async function runSpotifyArtistAlbums(
         message: 'Using saved Spotify artist albums.',
         noProviderRequests: true,
       }
+    await context.activity('Reading and saving artist release pages', {
+      done: saved?.pagesSaved ?? 0,
+      unit: 'pages',
+    })
     const token = await getToken()
     for (let index = 0; index < PAGES_PER_JOB; index += 1) {
       const offset = saved?.nextOffset ?? 0
@@ -436,14 +442,17 @@ export async function runSpotifyArtistAlbums(
       if (!checkpoint) return { outcome: 'stopped' }
       saved = checkpoint
       await recordProviderSuccess('spotify')
-      await context.progress({
-        pagesRead: saved.pagesSaved,
-        totalPages: saved.completedAt
-          ? saved.pagesSaved
-          : Math.max(
-              saved.pagesSaved + 1,
-              Math.ceil(page.total / spotifyArtistAlbumsPageSize),
-            ),
+      const totalPages = saved.completedAt
+        ? saved.pagesSaved
+        : Math.max(
+            saved.pagesSaved + 1,
+            Math.ceil(page.total / spotifyArtistAlbumsPageSize),
+          )
+      await context.progress({ pagesRead: saved.pagesSaved, totalPages })
+      await context.activity('Reading and saving artist release pages', {
+        done: saved.pagesSaved,
+        total: totalPages,
+        unit: 'pages',
       })
       if (saved.completedAt)
         return {

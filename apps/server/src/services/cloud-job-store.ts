@@ -5,6 +5,8 @@ import { CloudDispatchJobIdsSchema } from '@repo/schemas/job'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
 import { dispatchPriorityOrder } from '@/lib/job-dispatch-order'
+import { jobActivityEnding } from '@/lib/job-stage-history'
+import { writeRequestLog } from '@/lib/request-log'
 import { getScrapePlugin } from '@/plugins/registry'
 import {
   providerRequestEvent,
@@ -152,7 +154,7 @@ export async function recoverCloudJobById(
   jobId: string,
   provider: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
+  const interrupted = await db.transaction(async (tx) => {
     const [job] = await tx
       .select()
       .from(scrapeJob)
@@ -200,7 +202,15 @@ export async function recoverCloudJobById(
       message,
       metadata: {
         reason: completed ? 'worker_recovered_completed' : 'worker_interrupted',
+        ...jobActivityEnding(job.options, finishedAt),
       },
     })
+    return !completed
   })
+  if (interrupted)
+    writeRequestLog({
+      event: 'job.activity',
+      outcome: 'failed',
+      stage: 'Recovering interrupted cloud job',
+    })
 }

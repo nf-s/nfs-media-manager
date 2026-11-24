@@ -715,6 +715,7 @@ export async function runSonovaultAlbumLookup(
     const options = JobOptionsSchema.parse(input)
     await context.assertActive()
     const now = new Date()
+    await context.activity('Checking album tracks for release candidates')
     const [album] = await readAlbumTargets(db, [options.albumId])
     if (!album || !dueForLookup(album, options.refresh, now, options.retry))
       return {
@@ -775,16 +776,27 @@ export async function runSonovaultAlbumLookup(
         let releases = 0
         let confirmed: Confirmed | null = null
         const observed: Extract<Run, { kind: 'done' }>['observed'] = []
-        for (const candidate of candidates.releases.slice(
+        const selected = candidates.releases.slice(
           0,
           SONOVAULT_RELEASE_CANDIDATE_LIMIT,
-        )) {
+        )
+        await context.activity('Checking Sonovault releases', {
+          done: 0,
+          total: selected.length,
+          unit: 'releases',
+        })
+        for (const candidate of selected) {
           const release = await getSonovaultRelease(
             request,
             settings.apiKey,
             candidate,
           )
           releases += 1
+          await context.activity('Checking Sonovault releases', {
+            done: releases,
+            total: selected.length,
+            unit: 'releases',
+          })
           observed.push({ release, occurrence: 1 })
           const confirmation = confirmSonovaultRelease(release, album.identity)
           if (!confirmation) continue

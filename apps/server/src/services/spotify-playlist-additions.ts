@@ -294,9 +294,11 @@ export async function appendSpotifyPlaylistTracks(
   options: Pick<Options, 'playlistId' | 'spotifyPlaylistId' | 'userId'>,
   trackIds: (request: SpotifyRequest, token: string) => Promise<string[]>,
 ) {
+  await context.activity('Checking Spotify playlist access')
   return spotifyOperation(async (request) => {
     const token = await spotifyPlaylistChangeToken(options.userId, request)
     const ids = await trackIds(request, token)
+    await context.activity('Checking tracks already in the playlist')
     const current = await readSpotifyPlaylist(
       request,
       token,
@@ -321,6 +323,12 @@ export async function appendSpotifyPlaylistTracks(
         `Spotify playlists hold at most ${SPOTIFY_PLAYLIST_ITEM_LIMIT.toLocaleString('en')} items. Nothing was added.`,
       )
     let added = 0
+    if (adding)
+      await context.activity('Adding playlist tracks', {
+        done: 0,
+        total: adding,
+        unit: 'tracks',
+      })
     for (const uris of batches) {
       if (!(await context.isActive())) return null
       SpotifySnapshotSchema.parse(
@@ -332,6 +340,11 @@ export async function appendSpotifyPlaylistTracks(
         ),
       )
       added += uris.length
+      await context.activity('Adding playlist tracks', {
+        done: added,
+        total: adding,
+        unit: 'tracks',
+      })
     }
     return {
       added,
@@ -357,6 +370,7 @@ export async function runSpotifyPlaylistAddition(
       context,
       options,
       async (request, token) => {
+        await context.activity('Reading the album’s tracks')
         const albumTracks = await albumTrackIds(request, token, options)
         if (!albumTracks.length)
           throw refused(

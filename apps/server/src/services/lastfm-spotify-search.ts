@@ -116,6 +116,7 @@ export async function runLastfmSpotifySearch(
   try {
     const options = SearchOptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the scrobbled album')
     const account = await requireAccount()
     if (lastfmSpotifyGroupKey(account, options) !== options.groupKey)
       throw new ServerError({
@@ -136,6 +137,7 @@ export async function runLastfmSpotifySearch(
         }
       throw error
     }
+    await context.activity('Searching Spotify for the album')
     const result = await searchManualMedia(
       { mediaType: 'album', q: options.query, page: 1 },
       {

@@ -63,6 +63,10 @@ async function listAccountPlaylists(
   const listed = new Map<string, ListedPlaylist>()
   let offset = 0
   await context.progress({ pagesRead: 0, totalPages: null })
+  await context.activity('Reading Spotify playlist pages', {
+    done: 0,
+    unit: 'pages',
+  })
   for (let pages = 1; ; pages += 1) {
     // Cancellation is a return value: a thrown error would count against Spotify.
     if (!(await context.isActive())) return null
@@ -104,9 +108,12 @@ async function listAccountPlaylists(
     const expected = Math.ceil(
       Math.min(page.total, MAX_LISTED_PLAYLISTS) / SPOTIFY_PLAYLIST_PAGE_SIZE,
     )
-    await context.progress({
-      pagesRead: pages,
-      totalPages: done ? pages : Math.max(pages, expected),
+    const totalPages = done ? pages : Math.max(pages, expected)
+    await context.progress({ pagesRead: pages, totalPages })
+    await context.activity('Reading Spotify playlist pages', {
+      done: pages,
+      total: totalPages,
+      unit: 'pages',
     })
     if (done) break
   }
@@ -204,6 +211,7 @@ export async function runSpotifyPlaylistListing(
   try {
     const options = OptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the Spotify account')
     const listed = await spotifyOperation(
       async (request) =>
         listAccountPlaylists(
@@ -214,6 +222,7 @@ export async function runSpotifyPlaylistListing(
       context.jobId,
     )
     if (!listed || !(await context.isActive())) return { outcome: 'stopped' }
+    await context.activity('Saving the Spotify playlist list')
     const listedAt = new Date()
     await db.transaction(async (tx) => {
       await tx

@@ -153,6 +153,11 @@ export async function runSpotifySimilarLookup(
     const options = LookupOptionsSchema.parse(input)
     const codes = searchableCodes(options.kind, options.codes)
     await context.assertActive()
+    await context.activity('Searching Spotify for similar items', {
+      done: 0,
+      total: codes.length,
+      unit: 'items',
+    })
     let found = 0
     let searched = 0
     await runSpotifyCatalogSearches(
@@ -268,6 +273,11 @@ export async function runSpotifySimilarLookup(
             jobId: context.jobId,
           })
           searched += 1
+          await context.activity('Searching Spotify for similar items', {
+            done: searched,
+            total: codes.length,
+            unit: 'items',
+          })
           if (match) found += 1
         }
       },

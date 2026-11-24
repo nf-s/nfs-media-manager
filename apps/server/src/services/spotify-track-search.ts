@@ -285,6 +285,7 @@ export async function runSpotifyTrackSearch(
   try {
     const options = SearchOptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the track match')
     const eligible = await db.transaction(async (tx) => {
       await lockLibraryTrackWrites(tx)
       return needsMatch(tx, options.trackId)
@@ -318,6 +319,11 @@ export async function runSpotifyTrackSearch(
     const capture = (results: SpotifySearchObservation[]) => {
       observed = results
     }
+    await context.activity(
+      sonovault
+        ? 'Reading the Spotify track'
+        : 'Searching Spotify for the track',
+    )
     const candidates = sonovault
       ? await lookupSpotifyTrackCandidates(
           sonovault.spotifyTrackId,

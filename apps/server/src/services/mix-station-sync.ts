@@ -891,6 +891,7 @@ export async function runMixStationSyncJob(
   )
   let steps = 0
   try {
+    await context.activity?.('Checking for an open station sync')
     const request = createProviderRequest(plugin, context.assertActive, {
       beginResponseCapture: capture?.('task'),
     })
@@ -899,6 +900,18 @@ export async function runMixStationSyncJob(
       const run = await claim(station, token)
       if (!run) return { outcome: 'complete', message: 'No sync run was open.' }
       const catalogue = run.historyComplete ? null : adapter.catalogue
+      if (!catalogue)
+        await context.activity?.('Reading the station feed', {
+          done: run.sourcesDone,
+          unit: 'pages',
+        })
+      else if (run.phase === 'items')
+        await context.activity?.('Reading mixes from station shows', {
+          done: run.sourcesDone,
+          total: run.sourcesTotal,
+          unit: 'shows',
+        })
+      else await context.activity?.('Reading the station show list')
       const step = !catalogue
         ? await syncFeedPage(station, adapter, request, token, run, context)
         : run.phase === 'items'
@@ -920,6 +933,12 @@ export async function runMixStationSyncJob(
             )
       if (step === 'lost') return { outcome: 'stopped' }
       if (step === 'fetched-all') {
+        if (!catalogue)
+          await context.activity?.('Reading the station feed', {
+            done: run.sourcesDone + 1,
+            unit: 'pages',
+          })
+        await context.activity?.('Finishing station sync')
         await recordProviderSuccess(station)
         const status = await getMixStationSyncStatus(station, run.userId)
         return {
@@ -929,6 +948,17 @@ export async function runMixStationSyncJob(
       }
       steps += 1
       const done = run.sourcesDone + 1
+      if (!catalogue)
+        await context.activity?.('Reading the station feed', {
+          done,
+          unit: 'pages',
+        })
+      else if (step === 'show-done')
+        await context.activity?.('Reading mixes from station shows', {
+          done,
+          total: run.sourcesTotal,
+          unit: 'shows',
+        })
       if (catalogue && step === 'show-done' && done % LOG_EVERY_SHOWS === 0)
         await context.log('info', `Read ${done} of ${run.sourcesTotal} shows.`)
       if (!catalogue && done % LOG_EVERY_PAGES === 0)

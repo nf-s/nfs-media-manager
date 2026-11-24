@@ -200,16 +200,43 @@ describe('bounded concurrent one-item jobs', () => {
     ])
     try {
       await vi.waitFor(() => expect(requests.pending).toHaveLength(1))
+      expect((await jobs.getJob(job.id))?.options.activity).toMatchObject({
+        stage: 'Fetching provider metadata',
+        startedAt: expect.any(String),
+      })
       requests.releaseAll()
       await work
       await jobs.processQueuedJobById(job.id, job.provider, control)
       expect(execute).toHaveBeenCalledOnce()
       expect(network).toHaveBeenCalledOnce()
       expect(control.recordOutcome).toHaveBeenCalledExactlyOnceWith('success')
-      expect((await jobs.getJob(job.id))?.items[0]).toMatchObject({
+      const finished = await jobs.getJob(job.id)
+      expect(finished?.items[0]).toMatchObject({
         status: 'succeeded',
         attemptCount: 1,
       })
+      expect(finished?.logs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: 'Saving provider metadata',
+            metadata: expect.objectContaining({
+              previousActivity: expect.objectContaining({
+                stage: 'Fetching provider metadata',
+                durationMs: expect.any(Number),
+              }),
+            }),
+          }),
+          expect.objectContaining({
+            message: 'Saved provider metadata.',
+            metadata: expect.objectContaining({
+              previousActivity: expect.objectContaining({
+                stage: 'Saving provider metadata',
+                durationMs: expect.any(Number),
+              }),
+            }),
+          }),
+        ]),
+      )
     } finally {
       requests.releaseAll()
       await work
