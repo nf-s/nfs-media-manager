@@ -35,7 +35,7 @@ export async function repairTidalSimilarReferences(
     .select()
     .from(tidalSimilar)
     .orderBy(tidalSimilar.mediaItemId)
-  const savedJobs = new Set<string>()
+  const savedJobs = new Map<string, Page>()
   for (const row of saved) {
     const kind = TidalSimilarKindSchema.safeParse(row.kind).data
     const items = z.array(TidalSuggestionSchema).safeParse(row.items).data
@@ -43,7 +43,7 @@ export async function repairTidalSimilarReferences(
       unreadable++
       continue
     }
-    pages.push({
+    const page: Page = {
       kind,
       items,
       origin: {
@@ -51,8 +51,9 @@ export async function repairTidalSimilarReferences(
         jobId: row.scrapeJobId ?? undefined,
         observedAt: row.readAt,
       },
-    })
-    if (row.scrapeJobId) savedJobs.add(row.scrapeJobId)
+    }
+    pages.push(page)
+    if (row.scrapeJobId) savedJobs.set(row.scrapeJobId, page)
   }
   const receipts = await database
     .select({
@@ -82,9 +83,9 @@ export async function repairTidalSimilarReferences(
     )
   for (const receipt of receipts) {
     if (!receipt.job || typeof receipt.seed !== 'string') continue
-    if (savedJobs.has(receipt.job)) {
-      const page = pages.find((page) => page.origin.jobId === receipt.job)
-      if (page) page.origin.responseId = receipt.id
+    const page = savedJobs.get(receipt.job)
+    if (page) {
+      page.origin.responseId = receipt.id
       continue
     }
     const path =

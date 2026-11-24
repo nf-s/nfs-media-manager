@@ -948,8 +948,8 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       value: isrc(1),
     })
     expect(result.items[1]?.libraryMatch).toEqual({
-      basis: 'spotify-id',
-      value: spotifyId(22),
+      basis: 'isrc',
+      value: isrc(2),
     })
     expect(result.items[2]?.durationSec).toBe(348)
     const [release] = await databaseClient

@@ -349,6 +349,7 @@ function SimilarEditionEvidence({ edition }: { edition: TidalSimilarEdition }) {
           <DetailLink
             kind="job"
             id={edition.jobId}
+            tab={edition.responseId ? 'data' : undefined}
             view={
               edition.responseId
                 ? { jobResponse: edition.responseId }
