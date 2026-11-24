@@ -45,7 +45,7 @@ export async function reconcileArtistPair(
   if (sourceId === targetId) return false
   if (apply) await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
   const active = await tx.execute(
-    sql`select id from artist where id in (${sourceId},${targetId}) and merged_into_id is null order by id ${apply ? sql`for update` : sql``}`,
+    sql`select id, catalog_provider, catalog_external_id from artist where id in (${sourceId},${targetId}) and merged_into_id is null order by id ${apply ? sql`for update` : sql``}`,
   )
   if (active.rows.length !== 2) return false
   const previous = await tx.execute(sql`
@@ -60,7 +60,19 @@ export async function reconcileArtistPair(
     { artistIds: [sourceId, targetId], targetId, follow: false },
     apply,
   )
-  if (reading.plan.blocked) return false
+  if (reading.plan.blocked) {
+    // Only the source's credits move. A confirmed native Spotify artist can
+    // point to an existing performer while that performer's film roles stay put.
+    const source = active.rows.find((row) => row.id === sourceId)
+    const keepsFilmRoles =
+      (rule === 'recording-native-artist-credit' ||
+        rule === 'exact-provider-artist-id') &&
+      source?.catalog_provider === 'spotify' &&
+      typeof source.catalog_external_id === 'string' &&
+      /^[A-Za-z0-9]{22}$/.test(source.catalog_external_id) &&
+      reading.plan.artists.find((row) => row.id === sourceId)?.blocked === null
+    if (!keepsFilmRoles) return false
+  }
   for (const caution of reading.plan.cautions) {
     if (caution.code === 'names' && rule === 'exact-provider-artist-id')
       continue

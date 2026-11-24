@@ -67,6 +67,7 @@ import {
   undoLibraryChange,
 } from '@/services/library-changes'
 import { replaceSpotifyTrackCredits } from '@/services/spotify-playlists'
+import { repairLibrarySpotifyArtists } from '@/services/catalog-artist-identities'
 import { linkScrobblesToTracks } from '@/services/track-links'
 
 const account = 'fixture-artist-merges'
@@ -1032,4 +1033,57 @@ it('refuses to merge an artist with film credits', async () => {
     mergeArtists({ artistIds: [spellingId, keptId], reviewed: true }),
   ).rejects.toMatchObject({ response: { statusCode: 409 } })
   expect(await artistOf(spellingId)).toMatchObject({ mergedIntoId: null })
+})
+
+it('attaches an exact Spotify music identity to a film-credit holder without moving their film credit', async () => {
+  await fixture.delete(schema.artistProviderCurrentState)
+  const externalId = 'W'.repeat(22)
+  const shadow = await fixture.transaction((tx) =>
+    observeCatalogMedia(
+      tx,
+      {
+        kind: 'track',
+        provider: 'spotify',
+        referenceType: 'track',
+        externalId: 'S'.repeat(22),
+        title: 'Fixture Spotify recording',
+        credits: [{ name: KEPT, externalId }],
+      },
+      {
+        provider: 'spotify',
+        operation: 'playback',
+        occurrenceKey: 'fixture-film-target',
+      },
+    ),
+  )
+  await fixture
+    .insert(schema.mediaItem)
+    .values({
+      id: 'fixture-role',
+      slug: 'fixture-role',
+      title: 'Fixture film',
+      mediaType: 'film',
+    })
+  await fixture
+    .insert(schema.mediaCredit)
+    .values({ artistId: keptId, mediaItemId: 'fixture-role', role: 'actor' })
+  await fixture
+    .update(schema.mediaItem)
+    .set({
+      metadata: { spotifyArtistCredits: [{ id: externalId, name: KEPT }] },
+    })
+    .where(eq(schema.mediaItem.id, spotifyTrack))
+  const before = await credits()
+  expect(await repairLibrarySpotifyArtists(false, fixture)).toBe(1)
+  expect(await repairLibrarySpotifyArtists(true, fixture)).toBe(1)
+  const after = await credits()
+  expect(after.filter((c) => c.mediaItemId === 'fixture-role')).toEqual(
+    before.filter((c) => c.mediaItemId === 'fixture-role'),
+  )
+  expect(after.find((c) => c.mediaItemId === shadow)?.artistId).toBe(keptId)
+  const [change] = (await artistChanges(keptId)).items
+  if (!change) throw new Error('Expected a reversible artist correction')
+  await undoLibraryChange(change.id)
+  expect(await credits()).toEqual(before)
+  expect(await repairLibrarySpotifyArtists(true, fixture)).toBe(0)
 })
