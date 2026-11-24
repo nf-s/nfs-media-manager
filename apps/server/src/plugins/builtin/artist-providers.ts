@@ -735,8 +735,6 @@ export async function lookupArtistProvider(
         ),
       )
       const artist = SpotifyArtistSchema.parse(evidence.artist)
-      if (artist.id !== id)
-        throw new Error('Spotify returned a different artist than requested.')
       profile = {
         name: artist.name,
         externalId: artist.id,
