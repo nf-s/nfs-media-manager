@@ -82,6 +82,7 @@ import { MetadataCoverage } from './metadata-coverage'
 import MetadataSourceControl from './metadata-source-control'
 import { useConfig } from './providers'
 import { useTableWidths } from './secondary-table'
+import { TrackAlbumTableValue } from './track-browse-cells'
 
 type ArtistTab =
   | 'overview'
@@ -423,7 +424,7 @@ function ArtistOverview({
                           {track.album.title}
                         </DetailLink>
                       ) : (
-                        (track.albumName ?? EMPTY_VALUE)
+                        <TrackAlbumTableValue track={track} />
                       )}
                     </TableCell>
                     <TableCell align="end">

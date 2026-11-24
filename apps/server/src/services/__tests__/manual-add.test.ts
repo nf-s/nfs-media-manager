@@ -7,13 +7,17 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   failure: vi.fn(),
   albumMatches: vi.fn(),
+  catalogMatches: vi.fn(),
   filmMatches: vi.fn(),
   addAlbum: vi.fn(),
   addFilm: vi.fn(),
   plugin: vi.fn(),
 }))
 vi.mock('@/lib/db', () => ({
-  db: { select: () => ({ from: () => ({ where: async () => [] }) }) },
+  db: {
+    select: () => ({ from: () => ({ where: async () => [] }) }),
+    execute: mocks.catalogMatches,
+  },
 }))
 vi.mock('@/lib/provider-secrets', () => ({
   resolveProviderSecrets: mocks.secrets,
@@ -63,6 +67,7 @@ describe('manual provider search and library additions', () => {
       market: 'AU',
     })
     mocks.albumMatches.mockResolvedValue([{ id: null, error: null }])
+    mocks.catalogMatches.mockResolvedValue({ rows: [] })
     mocks.filmMatches.mockResolvedValue([{ id: null, error: null }])
     mocks.addAlbum.mockResolvedValue({ id: 'new-album', created: true })
     mocks.addFilm.mockResolvedValue({
@@ -198,9 +203,15 @@ describe('manual provider search and library additions', () => {
   })
 
   it('returns existing items without fetching or overwriting them', async () => {
-    mocks.albumMatches.mockResolvedValue([
-      { id: 'existing-album', error: null },
-    ])
+    mocks.catalogMatches.mockResolvedValue({
+      rows: [
+        {
+          spotify_id: spotifyAlbumId,
+          library_id: 'existing-album',
+          hidden: false,
+        },
+      ],
+    })
     mocks.filmMatches.mockResolvedValue([{ id: 'existing-film', error: null }])
     expect(
       await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
@@ -288,9 +299,9 @@ describe('manual provider search and library additions', () => {
   })
 
   it('rejects ambiguous identities and incorrect provider metadata before persisting', async () => {
-    mocks.albumMatches.mockResolvedValueOnce([
-      { id: 'one', error: 'Ambiguous album identity' },
-    ])
+    mocks.catalogMatches.mockResolvedValueOnce({
+      rows: [{ spotify_id: spotifyAlbumId, library_id: null, hidden: false }],
+    })
     await expect(
       addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
     ).rejects.toThrow('Ambiguous album identity')

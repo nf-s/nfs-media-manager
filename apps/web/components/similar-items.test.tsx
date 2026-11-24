@@ -4,10 +4,10 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  SimilarGenreSourceSchema,
   TidalSimilarItemSchema,
   TidalSimilarSchema,
   type TidalSimilar,
-  type TidalSimilarItem,
   type TidalSimilarUnmatched,
 } from '@repo/schemas/tidal'
 import { TrackDetailSchema } from '@repo/schemas/tracks'
@@ -152,11 +152,17 @@ test('every external album and track offers Add to Library beside its service li
   const kinds: TidalSimilar['kind'][] = ['album', 'track']
   for (const kind of kinds) {
     const html = body({ kind })
-    assert.equal(html.match(/>Add to Library<\/button>/g)?.length, 3)
+    assert.equal(html.match(/lucide-book-plus/g)?.length, 3)
+    assert.equal(html.match(/lucide-book-check/g)?.length, 1)
     for (const item of items) {
-      const action = `aria-label="Add to Library · ${item.title}"`
+      const action = `aria-label="Add ${kind} to library · ${item.title}"`
       if (item.library) {
         assert.ok(!html.includes(action))
+        assert.ok(
+          html.includes(
+            `aria-label="${item.title} is in your library (${kind})"`,
+          ),
+        )
       } else {
         const url = item.spotify?.url ?? item.url
         const link = html.indexOf(`href="${url}"`)
@@ -170,29 +176,56 @@ test('every external album and track offers Add to Library beside its service li
   }
 })
 
-test('similar details show available genre badges and identify an album or track fallback', () => {
-  const examples: [
-    TidalSimilar['kind'],
-    TidalSimilarItem['genreSource'],
-    string,
-  ][] = [
-    ['album', 'album-tracks', 'Track genres'],
-    ['track', 'track-album', 'Album genres'],
-  ]
-  for (const [kind, source, label] of examples) {
-    const item = suggestion('100005', 'none', 'External suggestion')
-    const html = body({
-      kind,
-      items: [{ ...item, genreSource: source, genres: ['Ambient', 'Dub'] }],
-    })
-    assert.match(
-      html,
-      new RegExp(`aria-label="${label} for External suggestion"`),
-    )
-    assert.match(html, /class="ds-pill-label">Ambient</)
-    assert.match(html, /class="ds-pill-label">Dub</)
+test('similar rows show genre names with generic grouping and keep stored evidence links', () => {
+  const item = suggestion('100005', 'none', 'External suggestion')
+  const kinds: TidalSimilar['kind'][] = ['album', 'track']
+  for (const kind of kinds) {
+    for (const source of SimilarGenreSourceSchema.options) {
+      const genreEvidence = source.startsWith('sonovault')
+        ? { jobId: 'example-job', responseId: 'example-response' }
+        : null
+      const genreArtist =
+        source === 'artist'
+          ? { id: 'example-artist', name: 'Genre artist' }
+          : null
+      const html = body({
+        kind,
+        items: [
+          {
+            ...item,
+            genreSource: source,
+            genreEvidence,
+            genreArtist,
+            genres: ['Ambient', 'Dub'],
+          },
+        ],
+      })
+      assert.match(html, /aria-label="Genres for External suggestion"/)
+      assert.match(html, /class="ds-pill-label">Ambient</)
+      assert.match(html, /class="ds-pill-label">Dub</)
+      assert.doesNotMatch(
+        html,
+        /(?:Track|Album|Artist|Library|TIDAL|Spotify|Sonovault) (?:track )?genres|Genre artist|title="[^"]*genres/i,
+      )
+      if (genreEvidence) assert.match(html, /example-job[^"]+example-response/)
+      if (genreArtist) assert.match(html, /example-artist[^"]*"/)
+    }
     assert.doesNotMatch(body({ kind, items: [item] }), /class="ds-pills"/)
   }
+})
+
+test('the library match opens Sources and names the reference used', () => {
+  const item = suggestion('100006', 'library', 'Library track')
+  const html = body({
+    kind: 'track',
+    items: [
+      { ...item, libraryMatch: { basis: 'isrc', value: 'QZFX22800001' } },
+    ],
+  })
+  assert.match(
+    html,
+    /<a [^>]*title="Matched by ISRC QZFX22800001"[^>]*href="[^"]*library-100006[^"]*tab=sources"[^>]*>In library<\/a>/,
+  )
 })
 
 test('the counts say which TIDAL ID the list was read with', () => {

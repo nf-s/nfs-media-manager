@@ -21,6 +21,8 @@
 
   /* Icons: 24px grid, 1.75 stroke, the same drawing style as lucide-react */
 
+  const BOOK =
+    '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>'
   const ICON = {
     play: '<path d="M7 4.5v15l12-7.5z"/>',
     pause:
@@ -28,6 +30,8 @@
     prev: '<path d="M19 5.5v13L9.5 12z"/><rect x="5" y="5.5" width="2.5" height="13" rx="1"/>',
     next: '<path d="M5 5.5v13l9.5-6.5z"/><rect x="16.5" y="5.5" width="2.5" height="13" rx="1"/>',
     queue: '<path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"/>',
+    bookPlus: `${BOOK}<path d="M12 7v6M9 10h6"/>`,
+    bookCheck: `${BOOK}<path d="m9 9.5 2 2 4-4"/>`,
     search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
     sparkles:
       '<path d="m11 4 1.8 4.7 4.7 1.8-4.7 1.8L11 17l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="M18.5 15.5v4M16.5 17.5h4"/>',
@@ -161,6 +165,26 @@
       disabled: o.disabled,
       title: o.title,
     })}>${inner}</button>`
+  }
+
+  function libraryAction(kind, name, o = {}) {
+    const label = o.saved
+      ? `${name} is in your library (${kind})`
+      : o.pending
+        ? `Adding ${kind} to library · ${name}`
+        : o.action === 'find'
+          ? `Find ${kind} in library · ${name}`
+          : `Add ${kind} to library · ${name}`
+    return `<button type="button" class="ds-btn ds-library-action" data-variant="ghost" data-size="xs" data-icon${attrs(
+      {
+        'data-touch': o.touch,
+        'aria-label': label,
+        'aria-disabled':
+          o.saved || o.pending || o.disabled ? 'true' : undefined,
+        'aria-busy': o.pending ? 'true' : undefined,
+        title: label,
+      },
+    )}>${icon(o.saved ? 'bookCheck' : 'bookPlus')}</button>`
   }
 
   /* The header pair goes under the artwork (detailHead's o.play): a labelled
@@ -481,8 +505,8 @@
   /* A similar album or track from TIDAL, in a compact list. s.state is
      library, spotify, none or unsearched; s.meta is the year or length. In
      the library the title opens the item; otherwise it is text and the
-     trailing button opens it on Spotify, or on TIDAL without a Spotify
-     match. Only library and Spotify suggestions have the play pair. */
+     trailing actions open it on Spotify or TIDAL and add it to the
+     library. Only library and Spotify suggestions have the play pair. */
   const SUGGESTION = {
     library: 'In library',
     spotify: 'On Spotify',
@@ -506,12 +530,10 @@
         })
     const playable = linked || s.state === 'spotify'
     const badges = s.genres?.length
-      ? `<span class="ds-pills" data-wrap>${s.genres.map((genre) => pill(genre, { static: true })).join('')}</span>`
+      ? `<span class="ds-pills" data-wrap role="group" aria-label="Genres">${s.genres.map((genre) => pill(genre, { static: true })).join('')}</span>`
       : ''
-    const actions = linked
-      ? ''
-      : `<span class="ds-actions">${open}${btn('Add to Library', { size: 'xs' })}</span>`
-    return `<div class="ds-row ds-suggestion"${linked ? '' : ' data-action'}${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))}</span>${badges}</div>${playable ? play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${actions}</div>`
+    const actions = `<span class="ds-actions">${open}${libraryAction(s.kind, s.title, { saved: linked })}</span>`
+    return `<div class="ds-row ds-suggestion" data-action${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))}</span>${badges}</div>${playable ? play('row') : '<span></span>'}<div class="ds-row-tags"></div><div class="ds-row-meta"></div>${actions}</div>`
   }
   /* A list row still loading, in a compact list with a trailing action */
   const skelRow = () =>
@@ -1638,6 +1660,7 @@
     thumb,
     btn,
     play,
+    libraryAction,
     pill,
     pills,
     count,

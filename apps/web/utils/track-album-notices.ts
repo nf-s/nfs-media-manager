@@ -1,29 +1,49 @@
-import type { TrackDetail } from '@repo/schemas/tracks'
+import { ManualMediaAddInputSchema } from '@repo/schemas/manual-add'
+import type { TrackDetail, TrackListItem } from '@repo/schemas/tracks'
 import { formatItemCount } from '@repo/ui/lib/format'
 
-/** A release that can be added by Spotify ID or looked up from the recorded name. */
+/** The label and search for a release reported without a library track link. */
+export function recordedTrackAlbum(
+  item: Pick<TrackListItem, 'album' | 'albumName' | 'artists'>,
+) {
+  if (item.album) return null
+  const name = item.albumName?.trim()
+  return name
+    ? { name, query: [item.artists[0], name].filter(Boolean).join(' ') }
+    : null
+}
+
+/** An unlinked release that can be added by Spotify ID or looked up by name. */
 export function missingTrackAlbum(
   item: Pick<TrackDetail, 'album' | 'albumName' | 'artists' | 'spotifyAlbumId'>,
 ):
-  | { kind: 'id'; spotifyAlbumId: string; message: string }
-  | { kind: 'search'; query: string; message: string }
+  | {
+      kind: 'id'
+      spotifyAlbumId: string
+      name: string
+      query: string | undefined
+      message: string
+    }
+  | { kind: 'search'; name: string; query: string; message: string }
   | null {
   if (item.album) return null
-  const albumName = item.albumName?.trim()
-  if (item.spotifyAlbumId)
+  const recorded = recordedTrackAlbum(item)
+  const message = recorded
+    ? `“${recorded.name}” has no linked library album.`
+    : 'This track has no linked library album.'
+  const exact = ManualMediaAddInputSchema.safeParse({
+    mediaType: 'album',
+    externalId: item.spotifyAlbumId,
+  })
+  if (exact.success)
     return {
       kind: 'id',
-      spotifyAlbumId: item.spotifyAlbumId,
-      message: albumName
-        ? `“${albumName}” is not in the library.`
-        : 'The album is not in the library.',
+      spotifyAlbumId: exact.data.externalId,
+      name: recorded?.name ?? 'Spotify release',
+      query: recorded?.query,
+      message,
     }
-  if (!albumName) return null
-  return {
-    kind: 'search',
-    query: [item.artists[0], albumName].filter(Boolean).join(' '),
-    message: `“${albumName}” has no linked library album.`,
-  }
+  return recorded ? { kind: 'search', ...recorded, message } : null
 }
 
 /**

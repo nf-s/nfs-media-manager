@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
+import type { CatalogMembershipResult } from '@repo/schemas/manual-add'
 import {
   SpotifyTrackSearchCandidateSchema,
   SpotifyTrackSearchJobSchema,
@@ -93,11 +94,17 @@ function render(
   searchCandidates: SpotifyTrackSearchCandidate[] = [],
   resultJob?: SpotifyTrackSearchJob | null,
   earlierResults?: SpotifyTrackSearch['earlierResults'],
+  albumMembership?: CatalogMembershipResult['items'][number],
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['track', item.id], item)
+  if (albumMembership)
+    client.setQueryData(
+      ['catalog-membership', [`album:${albumMembership.externalId}`]],
+      { items: [albumMembership] },
+    )
   client.setQueryData(['tracks', 'spotify-track-search', item.id], {
     job: searchJob,
     query: item.title,
@@ -174,7 +181,7 @@ test('unmatched Last.fm tracks show recorded metadata, listening and an actionab
   assert.match(html, /<h3>Appears on<\/h3>/)
   assert.match(
     html,
-    /Recorded album<\/span><span class="ds-row-by">Album, not in the library<\/span>.*aria-haspopup="dialog"[^>]*>Add to Library<\/button>/,
+    /Recorded album<\/span><span class="ds-row-by">Recorded album<\/span>.*aria-label="Find album in library · Recorded album"/,
   )
   assert.match(html, /No playlist memberships\./)
   assert.match(html, /Match this track to Spotify to add it to a playlist/)
@@ -219,7 +226,7 @@ test('tracks with a Spotify match keep album metadata, playback and every source
   })
   const html = render(matched)
   assert.match(html, /href="\/albums\/album-1">Library album<\/a>/)
-  assert.doesNotMatch(html, />Add to Library<\/button>/)
+  assert.doesNotMatch(html, /aria-label="Add album to library/)
   assert.deepEqual(pillHref(html, 'Electronic'), [
     { field: 'albumTag', value: 'Electronic' },
   ])
@@ -572,11 +579,10 @@ test('Sources offers to add a missing Spotify album and warns about albums that 
     '',
     'sources',
   )
-  assert.equal(html.match(/is not in the library\./g)?.length, 1)
   assert.equal(html.match(/<h3>Album<\/h3>/g)?.length, 1)
   assert.match(
     html,
-    /“Harbour Lights” is not in the library\.<\/span><button(?![^>]*aria-haspopup)[^>]*>Add to Library<\/button>/,
+    /“Harbour Lights” has no linked library album\.<\/span><span class="ds-actions">.*?href="https:\/\/open\.spotify\.com\/album\/1234567890ABCDEFGHIJKL".*?<button[^>]*aria-label="Add album to library · Harbour Lights"/,
   )
   assert.match(
     html,
@@ -598,15 +604,40 @@ test('offers an exact Spotify album add on Overview even without an album name',
   )
   assert.match(
     html,
-    />Album<\/span><span class="ds-row-by">Album, not in the library<\/span>.*<button(?![^>]*aria-haspopup)[^>]*>Add to Library<\/button>/,
+    />Album<\/span><span class="ds-row-by">Recorded album<\/span>.*aria-label="Add album to library · Spotify release"/,
   )
 })
 
 test('offers an album search from Sources when only the recorded name is known', () => {
   assert.match(
     render(scrobbled, '', 'sources'),
-    /“Recorded album” has no linked library album\.<\/span><button[^>]*aria-haspopup="dialog"[^>]*>Add to Library<\/button>/,
+    /“Recorded album” has no linked library album\.<\/span><button[^>]*aria-label="Find album in library · Recorded album"/,
   )
+})
+
+test('Sources marks an exact Spotify release saved even when the track is absent from it', () => {
+  const externalId = '1234567890ABCDEFGHIJKL'
+  const html = render(
+    { ...scrobbled, spotifyAlbumId: externalId },
+    '',
+    'sources',
+    null,
+    [],
+    undefined,
+    undefined,
+    {
+      mediaType: 'album',
+      externalId,
+      mediaItemId: 'saved-release',
+      ambiguous: false,
+    },
+  )
+  assert.match(
+    html,
+    /href="\/albums\/saved-release"[^>]*>Recorded album<\/a>” is in the library but does not list this track\./,
+  )
+  assert.match(html, /aria-label="Recorded album is in your library \(album\)"/)
+  assert.doesNotMatch(html, /aria-label="Add album to library/)
 })
 
 test('Sources shows no album notices for a track on its library album', () => {
@@ -621,6 +652,6 @@ test('Sources shows no album notices for a track on its library album', () => {
   )
   assert.doesNotMatch(
     html,
-    /<h3>Album<\/h3>|not in the library|Add to Library|does not list it/,
+    /<h3>Album<\/h3>|has no linked library album|aria-label="Add album to library|does not list it/,
   )
 })

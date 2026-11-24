@@ -447,7 +447,7 @@ function TrackOverview({
                     ? 'Album'
                     : albumId
                       ? 'Album does not list this track'
-                      : 'Album, not in the library'
+                      : 'Recorded album'
                 }
                 action={albumAddition.action}
               />

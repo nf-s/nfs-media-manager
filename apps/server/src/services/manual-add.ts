@@ -1,4 +1,5 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+import { z } from 'zod'
 import {
   PluginResultSchema,
   ProviderRequestError,
@@ -10,6 +11,8 @@ import {
   ManualMediaAddInputSchema,
   ManualMediaSearchInputSchema,
   ManualMediaSearchResultSchema,
+  type CatalogMembershipInput,
+  type CatalogMembershipResult,
   type ManualMediaAddInput,
   type ManualMediaAddResult,
   type ManualMediaSearchInput,
@@ -35,6 +38,7 @@ import { spotifyClientToken } from '@/plugins/builtin/spotify'
 import { searchTmdbMovies, tmdbPosterUrl } from '@/plugins/builtin/tmdb'
 import { getScrapePlugin } from '@/plugins/registry'
 import { providerSecret } from '@/schemas/db'
+import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { commitAlbumImportRecord, matchAlbumCandidates } from './album-imports'
 import {
   commitFilmImportRecord,
@@ -515,6 +519,21 @@ export async function searchManualMedia(
       assertActive,
     )
     const result = projectSpotifyCatalogAlbums(page, options.page)
+    if (options.exactMembership) {
+      const matches = await findCatalogAlbumMembership(
+        result.items.map((item) => item.externalId),
+      )
+      return {
+        ...result,
+        items: result.items.map((item) => {
+          const match = matches.get(item.externalId)
+          return {
+            ...item,
+            mediaItemId: match?.hidden ? null : (match?.id ?? null),
+          }
+        }),
+      }
+    }
     const candidates = page.items.map((item) =>
       AlbumImportCandidateSchema.parse({
         provider: 'spotify',
@@ -569,6 +588,63 @@ export async function searchManualMedia(
   })
 }
 
+/** Resolve catalog IDs against stored identities without requesting provider data. */
+export async function readCatalogMembership({
+  items,
+}: CatalogMembershipInput): Promise<CatalogMembershipResult> {
+  const trackIds = items
+    .filter((item) => item.mediaType === 'track')
+    .map((item) => item.externalId)
+  const albumIds = items
+    .filter((item) => item.mediaType === 'album')
+    .map((item) => item.externalId)
+  const [tracks, albums] = await Promise.all([
+    findManualTrackMatches(trackIds),
+    findCatalogAlbumMembership(albumIds),
+  ])
+  return {
+    items: items.map((item) => {
+      const match =
+        item.mediaType === 'track'
+          ? tracks.get(item.externalId)
+          : albums.get(item.externalId)
+      const ambiguous =
+        match !== undefined && (match.hidden || match.id === null)
+      return {
+        ...item,
+        mediaItemId: ambiguous ? null : (match?.id ?? null),
+        ambiguous,
+      }
+    }),
+  }
+}
+
+async function findCatalogAlbumMembership(albumIds: string[]) {
+  const matches = new Map<string, { id: string | null; hidden: boolean }>()
+  if (!albumIds.length) return matches
+  const result = await db.execute(sql`
+    select release.spotify_id,
+      case when count(*) = 1 then min(release.album_id) end as library_id,
+      bool_or(coalesce(mi.metadata->>'legacyHidden' = 'true', false)) as hidden
+    from (${spotifyAlbumReleaseIds()}) release
+    join media_item mi on mi.id = release.album_id
+    where release.spotify_id = any(${sql.param(albumIds)}::text[])
+    group by release.spotify_id
+  `)
+  const rows = z
+    .array(
+      z.object({
+        spotify_id: z.string(),
+        library_id: z.string().nullable(),
+        hidden: z.boolean(),
+      }),
+    )
+    .parse(result.rows)
+  for (const row of rows)
+    matches.set(row.spotify_id, { id: row.library_id, hidden: row.hidden })
+  return matches
+}
+
 const SPOTIFY_RELEASE_WITHDRAWN =
   'Spotify no longer has this release. Choose another release with Add album in Albums.'
 
@@ -597,6 +673,18 @@ export async function addManualMedia(
   const options = ManualMediaAddInputSchema.parse(input)
   if (options.mediaType === 'track')
     return addManualSpotifyTrack(options.externalId, userId)
+  if (options.mediaType === 'album') {
+    const match = (await findCatalogAlbumMembership([options.externalId])).get(
+      options.externalId,
+    )
+    if (match?.hidden || match?.id === null)
+      throw new ServerError({
+        statusCode: 409,
+        message:
+          'Ambiguous album identity. Resolve existing matches before importing.',
+      })
+    if (match) return { mediaItemId: match.id, created: false }
+  }
   const provider = options.mediaType === 'album' ? 'spotify' : 'tmdb'
   const referenceType = options.mediaType === 'album' ? 'album' : 'tmdb'
   const reference = {
@@ -605,20 +693,10 @@ export async function addManualMedia(
     isPrimary: true,
     metadata: { sourceProvider: provider },
   }
-  const preliminary = PluginResultSchema.parse({
-    payload: {},
-    normalized: { references: [reference] },
-  })
   const [match] =
-    options.mediaType === 'album'
-      ? await matchAlbumCandidates([
-          AlbumImportCandidateSchema.parse({
-            provider,
-            source: 'manual-add',
-            result: preliminary,
-          }),
-        ])
-      : await matchFilmCandidates([filmCandidate(options.externalId)])
+    options.mediaType === 'film'
+      ? await matchFilmCandidates([filmCandidate(options.externalId)])
+      : []
   if (match?.error)
     throw new ServerError({ statusCode: 409, message: match.error })
   if (match?.id) return { mediaItemId: match.id, created: false }

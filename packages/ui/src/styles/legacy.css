@@ -972,6 +972,9 @@
   padding-left: 14px;
 }
 .player-now {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-1);
   min-width: 0;
 }
 .player-track {
@@ -1034,9 +1037,18 @@ button.player-track:hover strong,
   font-size: 13px;
   font-weight: 600;
 }
-.player-text span {
+.player-text span:not(.player-identity-line) {
   font-size: 11px;
   color: var(--ds-ink-3);
+}
+.player-text .player-identity-line {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-1);
+  overflow: visible;
+}
+.player-text .player-identity-line > :is(strong, span) {
+  min-width: 0;
 }
 .player-transport {
   display: grid;
@@ -1543,7 +1555,7 @@ button.player-track:hover strong,
   font-size: 15px;
   white-space: normal;
 }
-.player-sheet-body > .player-text span {
+.player-sheet-body > .player-text span:not(.player-identity-line) {
   font-size: 12px;
 }
 .player-sheet-body .player-buttons {

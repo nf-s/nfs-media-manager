@@ -492,9 +492,9 @@ test('album Sources link verified relationships and offer to add unresolved albu
   )
   assert.match(
     html,
-    />Unresolved fixture album<\/span><button[^>]*aria-label="Add to Library: Unresolved fixture album" aria-haspopup="dialog"[^>]*>Add to Library<\/button>/,
+    />Unresolved fixture album<\/span><button[^>]*aria-label="Find album in library · Unresolved fixture album"/,
   )
-  assert.equal(html.match(/>Add to Library<\/button>/g)?.length, 1)
+  assert.equal(html.match(/aria-label="Find album in library/g)?.length, 1)
   assert.doesNotMatch(html, /href="https:\/\/example.test\/albums\/fixture"/)
   const closed = renderSources(
     { ...provider, mediaTypes: ['album'] },
@@ -504,7 +504,7 @@ test('album Sources link verified relationships and offer to add unresolved albu
   assert.match(closed, /relationship-fixture/)
   assert.doesNotMatch(
     closed,
-    /Resolved fixture album|Unresolved fixture album|Add to Library/,
+    /Resolved fixture album|Unresolved fixture album|Find album in library/,
   )
 })
 

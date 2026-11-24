@@ -70,6 +70,7 @@ export async function loadManualSearchPage({
   page,
   stored,
   liveSearch,
+  exactMembership,
   tracksPlayed,
   signal,
 }: {
@@ -79,6 +80,7 @@ export async function loadManualSearchPage({
   page: number
   stored: ManualMediaSearchResult | undefined
   liveSearch: boolean
+  exactMembership?: boolean
   /** See `holdsFewerTracks`; each page is ordered by it. */
   tracksPlayed?: number
   signal: AbortSignal
@@ -99,7 +101,12 @@ export async function loadManualSearchPage({
             method: 'POST',
             signal,
             body: JSON.stringify(
-              ManualMediaSearchInputSchema.parse({ mediaType, q: query, page }),
+              ManualMediaSearchInputSchema.parse({
+                mediaType,
+                q: query,
+                page,
+                exactMembership,
+              }),
             ),
           },
         )
@@ -141,6 +148,8 @@ export function invalidateManualMediaAddition(
     return Promise.all(
       [
         'tracks',
+        'catalog-membership',
+        'tidal-similar',
         'track',
         'album',
         'artists',
@@ -150,6 +159,12 @@ export function invalidateManualMediaAddition(
       ].map((key) => client.invalidateQueries({ queryKey: [key] })),
     )
   return Promise.all([
+    ...(mediaType === 'album'
+      ? [
+          client.invalidateQueries({ queryKey: ['catalog-membership'] }),
+          client.invalidateQueries({ queryKey: ['tidal-similar'] }),
+        ]
+      : []),
     client.invalidateQueries({
       queryKey: [mediaType === 'album' ? 'albums' : 'films'],
     }),

@@ -50,6 +50,7 @@ test('an explicit search loads only its requested distant page and preserves the
         mediaType: 'album',
         q: 'Example',
         page: 20,
+        exactMembership: true,
       })
       return Response.json({
         statusCode: 200,
@@ -67,6 +68,7 @@ test('an explicit search loads only its requested distant page and preserves the
         page: 20,
         stored: { items: [item], page: 1, hasMore: true, totalCount: 500 },
         liveSearch: true,
+        exactMembership: true,
         signal: new AbortController().signal,
       }),
       { items: [item], totalCount: 500 },

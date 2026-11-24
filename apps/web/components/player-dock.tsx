@@ -41,6 +41,12 @@ import { MediaInspector } from './media-inspector'
 import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
 import {
+  PlayerLibraryAction,
+  PlayerLibraryActions,
+  usePlayerLibraryMembership,
+  type PlayerLibraryMembership,
+} from './player-library-actions'
+import {
   ConnectionOutcome,
   ConnectPrompt,
   PlayerConnections,
@@ -62,6 +68,12 @@ import {
   type PlaybackSnapshot,
   type QueueEntry,
 } from '@/utils/playback'
+import {
+  playbackItemMembership,
+  playingLibraryItems,
+  queuedLibraryItem,
+  type PlaybackLibraryItem,
+} from '@/utils/playback-library'
 import type { DetailTarget } from '@/utils/detail-inspector'
 import type {
   PlaybackRejoin,
@@ -109,7 +121,7 @@ function describe(view: PlaybackView) {
     detail: snapshot
       ? [snapshot.artists, snapshot.albumName].filter(Boolean).join(' · ')
       : (current?.artist ?? ''),
-    artwork: current?.artworkUrl ?? snapshot?.artworkUrl ?? null,
+    artwork: snapshot?.artworkUrl ?? current?.artworkUrl ?? null,
     spotifyUrl: spotifyWebUrl(snapshot?.trackUri ?? current?.uri ?? null),
   }
 }
@@ -121,27 +133,22 @@ type Reference = {
   url: string | null
 }
 
+type PlayingIdentity = {
+  items: ReturnType<typeof playingLibraryItems>
+  links: ReturnType<typeof references>
+  membership: PlayerLibraryMembership
+}
+
 /** Where the playing track, its artists and its album lead. */
-function references(view: PlaybackView) {
+function references(
+  view: PlaybackView,
+  playing: ReturnType<typeof playingLibraryItems>,
+  membership: PlayerLibraryMembership,
+) {
   const { snapshot, current } = view
   const credits = current?.credits ?? []
-  const album: Reference = {
-    label: snapshot?.albumName || current?.albumTitle || '',
-    detail: current?.albumId ? { kind: 'album', id: current.albumId } : null,
-    url: spotifyWebUrl(
-      snapshot?.albumUri ?? (current?.kind === 'album' ? current.uri : null),
-    ),
-  }
-  const track: Reference = {
-    label: snapshot?.trackName ?? current?.title ?? 'Nothing playing',
-    detail:
-      current?.kind === 'track' && current.trackId
-        ? { kind: 'track', id: current.trackId }
-        : album.detail,
-    url: spotifyWebUrl(
-      snapshot?.trackUri ?? (current?.kind === 'track' ? current.uri : null),
-    ),
-  }
+  const album = libraryReference(playing.album, membership)
+  const track = libraryReference(playing.track, membership)
   const named = snapshot
     ? snapshot.artistLinks
     : credits.map(({ name }) => ({ name, uri: null }))
@@ -159,6 +166,19 @@ function references(view: PlaybackView) {
       ? [{ label: plain, detail: null, url: null }]
       : []
   return { track, artists, album }
+}
+
+function libraryReference(
+  item: PlaybackLibraryItem | null,
+  membership: PlayerLibraryMembership,
+): Reference {
+  if (!item) return { label: '', detail: null, url: null }
+  const { mediaItemId } = playbackItemMembership(item, membership.data)
+  return {
+    label: item.title,
+    detail: mediaItemId ? { kind: item.kind, id: mediaItemId } : null,
+    url: spotifyWebUrl(item.uri),
+  }
 }
 
 function PlayerLink({
@@ -200,28 +220,60 @@ function PlayerLink({
 
 /** The playing track, its artists and its album, each linked. */
 function NowPlaying({
-  view,
+  shown,
+  playing,
+  membership,
   onNavigate,
+  touch,
 }: {
-  view: PlaybackView
+  shown: ReturnType<typeof references>
+  playing: ReturnType<typeof playingLibraryItems>
+  membership: PlayerLibraryMembership
   onNavigate?: () => void
+  touch?: boolean
 }) {
-  const { track, artists, album } = references(view)
+  const { track, artists, album } = shown
+  const title = playing.track ? track : album
+  const titleItem = playing.track ?? playing.album
+  const release = playing.track ? playing.album : null
   return (
     <span className="player-text">
-      <strong>
-        <PlayerLink to={track} onNavigate={onNavigate} />
-      </strong>
-      <span>
-        {artists.map((artist, index) => (
-          <Fragment key={`${artist.label}:${index}`}>
-            {index > 0 && ', '}
-            <PlayerLink to={artist} onNavigate={onNavigate} />
-          </Fragment>
-        ))}
-        {artists.length > 0 && album.label && ' · '}
-        {album.label && <PlayerLink to={album} onNavigate={onNavigate} />}
+      <span className="player-identity-line">
+        <strong>
+          <PlayerLink
+            to={title.label ? title : { ...title, label: 'Nothing playing' }}
+            onNavigate={onNavigate}
+          />
+        </strong>
+        {titleItem && (
+          <PlayerLibraryAction
+            item={titleItem}
+            membership={membership}
+            touch={touch}
+          />
+        )}
       </span>
+      {(artists.length > 0 || release) && (
+        <span className="player-identity-line">
+          <span>
+            {artists.map((artist, index) => (
+              <Fragment key={`${artist.label}:${index}`}>
+                {index > 0 && ', '}
+                <PlayerLink to={artist} onNavigate={onNavigate} />
+              </Fragment>
+            ))}
+            {artists.length > 0 && release && ' · '}
+            {release && <PlayerLink to={album} onNavigate={onNavigate} />}
+          </span>
+          {release && (
+            <PlayerLibraryAction
+              item={release}
+              membership={membership}
+              touch={touch}
+            />
+          )}
+        </span>
+      )}
     </span>
   )
 }
@@ -460,10 +512,28 @@ function VolumeControl({ volume }: { volume: number | null }) {
   )
 }
 
-function ItemText({ item }: { item: PlayableItem }) {
+function ItemText({
+  item,
+  library,
+  membership,
+  onNavigate,
+}: {
+  item: PlayableItem
+  library: PlaybackLibraryItem
+  membership: PlayerLibraryMembership
+  onNavigate: () => void
+}) {
   return (
     <span className="player-text">
-      <strong>{item.title}</strong>
+      <span className="player-identity-line">
+        <strong>
+          <PlayerLink
+            to={libraryReference(library, membership)}
+            onNavigate={onNavigate}
+          />
+        </strong>
+        <PlayerLibraryAction item={library} membership={membership} touch />
+      </span>
       <span>{itemDetail(item)}</span>
     </span>
   )
@@ -519,12 +589,21 @@ function QueueRows({
   section,
   entries,
   drag,
+  onNavigate,
 }: {
   section: QueueSection
   entries: QueueEntry[]
   drag: QueueDrag
+  onNavigate: () => void
 }) {
   const controls = usePlaybackControls()
+  const rows = entries.map((entry) => ({
+    ...entry,
+    identity: queuedLibraryItem(entry.item),
+  }))
+  const membership = usePlayerLibraryMembership(
+    rows.map(({ identity }) => identity),
+  )
   const queued = section === 'queue'
   const from =
     drag.dragging?.section === section
@@ -545,7 +624,7 @@ function QueueRows({
   }
   return (
     <ol className="queue-list">
-      {entries.map((entry, index) => {
+      {rows.map((entry, index) => {
         const { title } = entry.item
         const play = queued ? `Play ${title} now` : `Skip to ${title}`
         const remove = queued
@@ -592,7 +671,12 @@ function QueueRows({
             </span>
             <span className="queue-item">
               <Artwork src={entry.item.artworkUrl} className="queue-art" />
-              <ItemText item={entry.item} />
+              <ItemText
+                item={entry.item}
+                library={entry.identity}
+                membership={membership}
+                onNavigate={onNavigate}
+              />
             </span>
             <span className="queue-actions">
               <button
@@ -657,9 +741,11 @@ function QueueRows({
 
 function QueueContents({
   view,
+  playing,
   onNavigate,
 }: {
   view: PlaybackView
+  playing: PlayingIdentity
   onNavigate: () => void
 }) {
   const { target, sharing } = view
@@ -710,13 +796,18 @@ function QueueContents({
           <span>Back to source: {view.source.label}</span>
         </Link>
       )}
-      {view.current && (
+      {(playing.items.track || playing.items.album) && (
         <section>
           <h3>Playing</h3>
           <div className="queue-row">
             <span className="queue-item">
-              <Artwork src={view.current.artworkUrl} className="queue-art" />
-              <ItemText item={view.current} />
+              <Artwork src={describe(view).artwork} className="queue-art" />
+              <NowPlaying
+                shown={playing.links}
+                playing={playing.items}
+                membership={playing.membership}
+                onNavigate={onNavigate}
+              />
             </span>
           </div>
         </section>
@@ -732,7 +823,12 @@ function QueueContents({
             <p className="quiet">Press Next to start the queue.</p>
           )}
         {view.queue.length ? (
-          <QueueRows section="queue" entries={view.queue} drag={drag} />
+          <QueueRows
+            section="queue"
+            entries={view.queue}
+            drag={drag}
+            onNavigate={onNavigate}
+          />
         ) : (
           <p
             className="quiet queue-empty"
@@ -762,7 +858,12 @@ function QueueContents({
         <section>
           <h3>Next from {view.source.label}</h3>
           {upcoming.length > 0 && (
-            <QueueRows section="upcoming" entries={upcoming} drag={drag} />
+            <QueueRows
+              section="upcoming"
+              entries={upcoming}
+              drag={drag}
+              onNavigate={onNavigate}
+            />
           )}
           {view.sourceLoading ? (
             <p className="quiet" role="status">
@@ -986,9 +1087,11 @@ function TargetIcon({ view }: { view: PlaybackView }) {
 
 function NowPlayingSheet({
   view,
+  playing,
   onClose,
 }: {
   view: PlaybackView
+  playing: PlayingIdentity
   onClose: () => void
 }) {
   const controls = usePlaybackControls()
@@ -1044,7 +1147,13 @@ function NowPlayingSheet({
         <div className="inspector-scroll">
           <div className="player-sheet-body">
             <Artwork src={shown.artwork} className="player-sheet-art" />
-            <NowPlaying view={view} onNavigate={onClose} />
+            <NowPlaying
+              shown={playing.links}
+              playing={playing.items}
+              membership={playing.membership}
+              onNavigate={onClose}
+              touch
+            />
             <Scrubber
               snapshot={view.snapshot}
               readOnly={!seekable(view.target)}
@@ -1084,7 +1193,7 @@ function NowPlayingSheet({
               />
             )}
             <VolumeControl volume={view.volume} />
-            <QueueContents view={view} onNavigate={onClose} />
+            <QueueContents view={view} playing={playing} onNavigate={onClose} />
           </div>
         </div>
       </MediaInspector>
@@ -1135,6 +1244,14 @@ function Dock({ view }: { view: PlaybackView }) {
   })
   const shown = describe(view)
   const { failure } = view
+  const items = playingLibraryItems(view.snapshot, view.current)
+  const membership = usePlayerLibraryMembership([items.track, items.album])
+  const playing = {
+    items,
+    links: references(view, items, membership),
+    membership,
+  }
+  const miniTitle = items.track ?? items.album
 
   if (failure?.status === 'expired')
     return (
@@ -1192,22 +1309,35 @@ function Dock({ view }: { view: PlaybackView }) {
       <div className="player-row">
         <div className="player-now">
           {phone ? (
-            <button
-              type="button"
-              className="player-track"
-              aria-label={`Open player: ${shown.title}`}
-              onClick={() => setSheet(true)}
-            >
-              {artwork}
-              <span className="player-text">
-                <strong>{shown.title}</strong>
-                <span>{shown.detail}</span>
-              </span>
-            </button>
+            <>
+              <button
+                type="button"
+                className="player-track"
+                aria-label={`Open player: ${shown.title}`}
+                onClick={() => setSheet(true)}
+              >
+                {artwork}
+                <span className="player-text">
+                  <strong>{shown.title}</strong>
+                  <span>{shown.detail}</span>
+                </span>
+              </button>
+              {miniTitle && (
+                <PlayerLibraryAction
+                  item={miniTitle}
+                  membership={membership}
+                  touch
+                />
+              )}
+            </>
           ) : (
             <div className="player-track">
-              <PlayerLink to={references(view).album}>{artwork}</PlayerLink>
-              <NowPlaying view={view} />
+              <PlayerLink to={playing.links.album}>{artwork}</PlayerLink>
+              <NowPlaying
+                shown={playing.links}
+                playing={playing.items}
+                membership={membership}
+              />
             </div>
           )}
         </div>
@@ -1245,7 +1375,9 @@ function Dock({ view }: { view: PlaybackView }) {
               </Button>
             }
           >
-            {(close) => <QueueContents view={view} onNavigate={close} />}
+            {(close) => (
+              <QueueContents view={view} playing={playing} onNavigate={close} />
+            )}
           </DockPopover>
           <DockPopover
             label={`Play on: ${targetLabel(view.target)}`}
@@ -1286,7 +1418,11 @@ function Dock({ view }: { view: PlaybackView }) {
         {view.announcement}
       </p>
       {sheet && phone && (
-        <NowPlayingSheet view={view} onClose={() => setSheet(false)} />
+        <NowPlayingSheet
+          view={view}
+          playing={playing}
+          onClose={() => setSheet(false)}
+        />
       )}
     </section>
   )
@@ -1301,5 +1437,9 @@ export default function PlayerDock() {
   if (view.connection === 'loading') return null
   if (view.connection !== 'connected')
     return <ConnectPrompt configured={view.connection === 'disconnected'} />
-  return view.enabled ? <Dock view={view} /> : null
+  return view.enabled ? (
+    <PlayerLibraryActions>
+      <Dock view={view} />
+    </PlayerLibraryActions>
+  ) : null
 }

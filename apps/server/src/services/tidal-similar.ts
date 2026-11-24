@@ -837,10 +837,18 @@ async function mapSuggestions(
     const key = keyOf(suggestion)
     const lookup = key ? lookups.get(key) : undefined
     const spotify = SpotifyCodeMatchSchema.safeParse(lookup?.result)
-    const library =
-      byTidalId.get(suggestion.tidalId) ??
-      (key ? byCode.get(key) : undefined) ??
-      (lookup?.spotifyId ? bySpotifyId.get(lookup.spotifyId) : undefined)
+    const tidal = byTidalId.get(suggestion.tidalId)
+    const code = key ? byCode.get(key) : undefined
+    const spotifyId = lookup?.spotifyId
+    const spotifyLibrary = spotifyId ? bySpotifyId.get(spotifyId) : undefined
+    const library = tidal ?? code ?? spotifyLibrary
+    const libraryMatch: TidalSimilarItem['libraryMatch'] = tidal
+      ? { basis: 'tidal-id', value: suggestion.tidalId }
+      : code && suggestion.code
+        ? { basis: kind === 'track' ? 'isrc' : 'upc', value: suggestion.code }
+        : spotifyLibrary && spotifyId
+          ? { basis: 'spotify-id', value: spotifyId }
+          : null
     return {
       ...suggestion,
       genres: suggestion.genres ?? [],
@@ -849,6 +857,7 @@ async function mapSuggestions(
       genreEvidence: null,
       state: stateOf(library, lookup),
       library: library ?? null,
+      libraryMatch,
       spotify:
         spotify.success && spotify.data.spotifyId === lookup?.spotifyId
           ? spotify.data

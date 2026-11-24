@@ -173,6 +173,22 @@
   cursor: not-allowed;
 }
 
+.ds-library-action {
+  flex: none;
+}
+.ds-btn.ds-library-action[aria-disabled='true'] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ds-ink-3);
+  cursor: default;
+}
+@media (max-width: 700px) {
+  .ds-btn.ds-library-action[data-touch] {
+    width: var(--ds-h-touch);
+    height: var(--ds-h-touch);
+  }
+}
+
 /* 3 Play control ---------------------------------------------------------
    One component, three placements. Order is always Play, then Queue.
    tile   floats on artwork, shown on hover or focus (always on touch)

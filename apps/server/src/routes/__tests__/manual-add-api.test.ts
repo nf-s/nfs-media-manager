@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   search: vi.fn(),
   add: vi.fn(),
+  membership: vi.fn(),
 }))
 vi.mock('@/env', () => ({
   env: {
@@ -15,6 +16,7 @@ vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: mocks.session } } }))
 vi.mock('@/services/manual-add', () => ({
   searchManualMedia: mocks.search,
   addManualMedia: mocks.add,
+  readCatalogMembership: mocks.membership,
 }))
 import manualAdd from '../manual-add'
 
@@ -60,6 +62,34 @@ describe('manual additions API', () => {
     ).toBe(403)
     expect(mocks.search).not.toHaveBeenCalled()
     expect(mocks.add).not.toHaveBeenCalled()
+  })
+
+  it('checks Spotify membership for the owner and validates each catalog ID', async () => {
+    const input = {
+      items: [{ mediaType: 'track', externalId: 'AAAAAAAAAAAAAAAAAAAAAA' }],
+    }
+    const invalid = await manualAdd.request(
+      post('/membership', {
+        items: [{ mediaType: 'track', externalId: 'bad' }],
+      }),
+    )
+    expect(invalid.status).toBe(422)
+    expect(mocks.membership).not.toHaveBeenCalled()
+    mocks.membership.mockResolvedValue({
+      items: [
+        { ...input.items[0], mediaItemId: 'track-one', ambiguous: false },
+      ],
+    })
+    const response = await manualAdd.request(post('/membership', input))
+    expect(response.status).toBe(200)
+    expect(mocks.membership).toHaveBeenCalledExactlyOnceWith(input)
+    expect(await response.json()).toMatchObject({
+      data: { items: [{ mediaItemId: 'track-one', ambiguous: false }] },
+    })
+    mocks.session.mockResolvedValue(null)
+    expect((await manualAdd.request(post('/membership', input))).status).toBe(
+      401,
+    )
   })
 
   it('validates search and identifier input before invoking services', async () => {

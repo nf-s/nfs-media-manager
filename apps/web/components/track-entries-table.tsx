@@ -33,6 +33,7 @@ import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
 import { AlbumReferencePlayButton } from './play-controls'
+import { TrackAlbumTableValue } from './track-browse-cells'
 import {
   SecondaryCell,
   SecondaryColumnFilter,
@@ -305,13 +306,7 @@ function TrackEntryCell({
     case 'album':
       return (
         <SecondaryCell text={albumName ?? undefined}>
-          {track?.album ? (
-            <DetailLink kind="album" id={track.album.id}>
-              {albumName}
-            </DetailLink>
-          ) : (
-            (albumName ?? EMPTY_VALUE)
-          )}
+          {track ? <TrackAlbumTableValue track={track} /> : EMPTY_VALUE}
         </SecondaryCell>
       )
     case 'duration':

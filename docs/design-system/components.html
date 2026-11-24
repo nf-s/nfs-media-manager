@@ -133,7 +133,14 @@
       ].map(suggestionOf('album'))
       const SIM_TRACKS = [
         ['Glass Arcade', 'Halcyon Grid', '5:48', 'library', 3],
-        ['Afterhours Telex', 'Vela Rooms', '6:30', 'spotify', 8],
+        [
+          'Afterhours Telex',
+          'Vela Rooms',
+          '6:30',
+          'spotify',
+          8,
+          ['Deep House'],
+        ],
         ['Halogen', 'Oskar Brandt', '7:02', 'spotify', 1],
         ['Wet Pavement', 'Lumen Drift', '5:15', 'library', 10],
         ['Lantern Code', 'Mirela Tan', '6:44', 'none', 4],
@@ -382,6 +389,36 @@
                 'Replaces',
                 'nine play controls in four positions: dark circles over artwork, bare icons before the title, a dedicated playback column, and trailing icons at the far end of the row.',
               ),
+          },
+          {
+            id: 'library-action',
+            title: 'Add to Library',
+            body:
+              g.spec(
+                g.flow([
+                  g.item(D.libraryAction('track', 'Glass Meridian'), 'Add'),
+                  g.item(
+                    D.libraryAction('album', 'Tidal Geometry', {
+                      action: 'find',
+                    }),
+                    'Find and confirm',
+                  ),
+                  g.item(
+                    D.libraryAction('film', 'Paper Harbor', { pending: true }),
+                    'Adding',
+                  ),
+                  g.item(
+                    D.libraryAction('track', 'Glass Meridian', { saved: true }),
+                    'In library',
+                  ),
+                ]),
+              ) +
+              g.rules([
+                'Use the outlined book with a plus for adding a track, album or film. Use the book with a check for a confirmed library item.',
+                'Include the item kind and title in the tooltip and accessible name.',
+                'Put the action beside the title in the player and queue, or beside the service link in external results. Use the larger touch target beside the title on the phone player.',
+                'Open the catalog search for an uncertain match so the user can confirm the item. Adding to the library preserves playback and queue order.',
+              ]),
           },
           {
             id: 'pill',
@@ -1206,10 +1243,10 @@
               g.rules([
                 '<b>A Similar tab after Overview</b> in the album and track drawers. Album: Overview · Similar · Listening · Sources · Edit. Track: Overview · Similar · Sources.',
                 '<b>One list row per suggestion,</b> in a compact list, in TIDAL’s order. The second line starts with where it can be played, then the artists, then the year (albums) or length (tracks).',
-                'Show available genres as small pills below the details. Label genres drawn from the album or its tracks. For every external suggestion, place <b>Add to Library</b> immediately after its service link.',
-                '<b>In library</b> (Pressure Systems): the title opens the library item; the play pair plays it. No trailing button.',
-                '<b>On Spotify</b> (Night Shift Utopia): the title is text; the play pair plays or queues it on Spotify; the trailing button opens it on Spotify.',
-                '<b>Not on Spotify</b> (Concrete Bloom): no play pair, its space kept so titles line up; the trailing button opens it on TIDAL.',
+                'Show genre names in small pills below the details. Put <b>Add to Library</b> after the external suggestion’s service link.',
+                '<b>In library</b> (Pressure Systems): the title opens the library item and the play pair plays it. The book with a check shows its saved state.',
+                '<b>On Spotify</b> (Night Shift Utopia): the title is text and the play pair plays or queues it on Spotify. The service link opens it on Spotify.',
+                '<b>Not on Spotify</b> (Concrete Bloom): reserve the play pair’s space so titles line up. The service link opens it on TIDAL.',
                 '<b>Not looked up on Spotify</b> (Strobe Hymnal): drawn as Not on Spotify until the Spotify lookup has run.',
                 '<b>The line above the list</b> counts the suggestions, those in the library and those on Spotify. The refresh button queues the TIDAL read again; its title gives the date of the last read.',
                 '<b>Nothing plays</b> until Play or Add to queue is pressed.',

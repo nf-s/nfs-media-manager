@@ -1,5 +1,7 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi'
 import {
+  CatalogMembershipInputSchema,
+  CatalogMembershipResultSchema,
   ManualMediaAddInputSchema,
   ManualMediaAddResultSchema,
   ManualMediaSearchInputSchema,
@@ -19,10 +21,49 @@ import {
   mutationOriginMiddleware,
   requireOwnerUser,
 } from '@/middlewares/auth'
-import { addManualMedia, searchManualMedia } from '@/services/manual-add'
+import {
+  addManualMedia,
+  readCatalogMembership,
+  searchManualMedia,
+} from '@/services/manual-add'
 
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
 app.use('*', mutationOriginMiddleware())
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/membership',
+    middleware: [authMiddleware()],
+    request: {
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: CatalogMembershipInputSchema },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Library matches for the supplied Spotify catalog IDs',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(CatalogMembershipResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Unauthorized'),
+      422: validationErrorResponse,
+    },
+  }),
+  async (c) => {
+    requireOwnerUser(c)
+    return generateJsonResponse(
+      c,
+      await readCatalogMembership(c.req.valid('json')),
+      200,
+    )
+  },
+)
 app.openapi(
   createRoute({
     method: 'post',

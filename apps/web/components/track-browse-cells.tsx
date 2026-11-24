@@ -12,8 +12,10 @@ import {
   textValues,
   type BrowseFilterHref,
 } from '@/utils/browse-items'
+import { recordedTrackAlbum } from '@/utils/track-album-notices'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
+import { AlbumReferenceSearch } from './album-reference-search'
 import { BrowseTagBadges } from './browse-controls'
 import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
@@ -46,12 +48,34 @@ export function TrackBrowseAlbum({
             tabIndex: 0,
           }
         : undefined)}
-      className="ds-muted"
-      title="Not in the album library"
+      className="ds-muted truncate"
+      title={track.albumName}
     >
       {track.albumName}
     </span>
   ) : null
+}
+
+export function TrackRecordedAlbumAction({ track }: { track: TrackListItem }) {
+  const release = recordedTrackAlbum(track)
+  return release ? <AlbumReferenceSearch {...release} /> : null
+}
+
+export function TrackAlbumTableValue({
+  track,
+  filterHref,
+}: {
+  track: TrackListItem
+  filterHref?: BrowseFilterHref
+}) {
+  if (track.album) return <TrackBrowseAlbum track={track} />
+  if (!track.albumName) return <EmptyValue />
+  return (
+    <span className="ds-cell-id">
+      <TrackBrowseAlbum track={track} filterHref={filterHref} />
+      <TrackRecordedAlbumAction track={track} />
+    </span>
+  )
 }
 
 export function TrackBrowseTags({
@@ -109,11 +133,7 @@ export function TrackBrowseValue({
       />
     )
   if (field.key === 'album')
-    return track.album || track.albumName ? (
-      <TrackBrowseAlbum track={track} filterHref={filterHref} />
-    ) : (
-      <EmptyValue />
-    )
+    return <TrackAlbumTableValue track={track} filterHref={filterHref} />
   if (field.key === 'playlist')
     return track.playlists.length ? (
       <Pills max={2} label="Playlists">

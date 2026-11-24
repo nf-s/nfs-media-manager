@@ -351,6 +351,14 @@ export const TidalSimilarItemSchema = TidalSuggestionSchema.extend({
       trackCount: z.number().int().nonnegative().nullable(),
     })
     .nullable(),
+  /** The reference that linked this suggestion to its library item. */
+  libraryMatch: z
+    .object({
+      basis: z.enum(['tidal-id', 'isrc', 'upc', 'spotify-id']),
+      value: z.string().min(1),
+    })
+    .nullable()
+    .default(null),
   /** The Spotify album or track, for `spotify` (and `library` when known). */
   spotify: SpotifyCodeMatchSchema.nullable(),
 })

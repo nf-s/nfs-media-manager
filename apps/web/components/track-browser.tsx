@@ -109,6 +109,7 @@ import {
   TrackBrowseAlbum,
   TrackBrowseTags,
   TrackBrowseValue,
+  TrackRecordedAlbumAction,
 } from './track-browse-cells'
 import {
   TrackBrowseFilterChips,
@@ -811,6 +812,7 @@ function TrackBrowse({
             playPair(item, index)
           )
         }
+        action={<TrackRecordedAlbumAction track={item} />}
         tags={
           <TrackBrowseTags
             track={item}
@@ -1135,6 +1137,7 @@ function TrackBrowse({
                   <ListHead
                     title="Track"
                     tags="Tags"
+                    action
                     meta={
                       <>
                         <RowValue kind="num">Duration</RowValue>

@@ -146,7 +146,11 @@ vi.mock('@/services/provider-requests', () => ({
   recordProviderFailure: async () => {},
   recordProviderSuccess: async () => {},
 }))
-import { addManualMedia, searchManualMedia } from '@/services/manual-add'
+import {
+  addManualMedia,
+  readCatalogMembership,
+  searchManualMedia,
+} from '@/services/manual-add'
 import { removeOrphanTracks } from '@/services/album-library-tracks'
 import { refreshTrackAddedDates } from '@/services/spotify-playlists'
 import { trackSourcesExpression } from '@/services/track-values'
@@ -177,6 +181,58 @@ afterAll(async () => {
 })
 
 describe('manual additions through the canonical persistence path', () => {
+  it('looks up catalog identities independently without requesting the provider', async () => {
+    const added = await addManualMedia({
+      mediaType: 'track',
+      externalId: spotifyTrackId,
+    })
+    await databaseClient.insert(schema.mediaItem).values({
+      id: 'url-only-album',
+      mediaType: 'album',
+      title: 'Example Release',
+      slug: 'url-only-album',
+    })
+    await databaseClient.insert(schema.album).values({
+      mediaItemId: 'url-only-album',
+      spotifyUrl: `https://open.spotify.com/album/${spotifyAlbumId}`,
+    })
+    request.mockClear()
+    expect(
+      await readCatalogMembership({
+        items: [
+          { mediaType: 'track', externalId: spotifyTrackId },
+          { mediaType: 'album', externalId: spotifyAlbumId },
+          { mediaType: 'album', externalId: extendedAlbumId },
+        ],
+      }),
+    ).toEqual({
+      items: [
+        {
+          mediaType: 'track',
+          externalId: spotifyTrackId,
+          mediaItemId: added.mediaItemId,
+          ambiguous: false,
+        },
+        {
+          mediaType: 'album',
+          externalId: spotifyAlbumId,
+          mediaItemId: 'url-only-album',
+          ambiguous: false,
+        },
+        {
+          mediaType: 'album',
+          externalId: extendedAlbumId,
+          mediaItemId: null,
+          ambiguous: false,
+        },
+      ],
+    })
+    expect(
+      await addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),
+    ).toEqual({ mediaItemId: 'url-only-album', created: false })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('serializes concurrent album additions and retains original metadata on repeat', async () => {
     const results = await Promise.all([
       addManualMedia({ mediaType: 'album', externalId: spotifyAlbumId }),

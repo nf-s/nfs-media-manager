@@ -15,6 +15,7 @@ import {
 } from '@repo/schemas/tidal'
 import { TrackDetailSchema, type TrackDetail } from '@repo/schemas/tracks'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
+import { LibraryAction } from '@repo/ui/components/ds/library-action'
 import { List, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { PlayPair } from '@repo/ui/components/ds/play'
@@ -57,15 +58,11 @@ const similarKey = (kind: TidalSimilarKind, id: string) => [
   id,
 ]
 const plural = { album: 'albums', track: 'tracks' }
-const similarGenreLabels = {
-  'album-tracks': 'Track genres',
-  'track-album': 'Album genres',
-  artist: 'Artist genres',
-  library: 'Library genres',
-  tidal: 'TIDAL genres',
-  spotify: 'Spotify genres',
-  sonovault: 'Sonovault genres',
-  'sonovault-album-tracks': 'Sonovault track genres',
+const libraryMatchLabels = {
+  'tidal-id': 'TIDAL ID',
+  isrc: 'ISRC',
+  upc: 'UPC',
+  'spotify-id': 'Spotify ID',
 }
 const TIDAL_TRACKS = { one: 'TIDAL track', other: 'TIDAL tracks' }
 
@@ -190,6 +187,43 @@ function suggestionPlay(
   return undefined
 }
 
+function SimilarGenres({
+  item,
+  title,
+}: {
+  item: TidalSimilarItem
+  title: string
+}) {
+  if (item.genres.length === 0) return null
+  const genres = (
+    <Pills wrap label={`Genres for ${title}`}>
+      {item.genres.map((genre) => (
+        <Pill key={genre}>{genre}</Pill>
+      ))}
+    </Pills>
+  )
+  if (item.genreEvidence) {
+    return (
+      <DetailLink
+        kind="job"
+        id={item.genreEvidence.jobId}
+        tab="data"
+        view={{ jobResponse: item.genreEvidence.responseId }}
+      >
+        {genres}
+      </DetailLink>
+    )
+  }
+  if (item.genreSource === 'artist' && item.genreArtist) {
+    return (
+      <DetailLink kind="artist" id={item.genreArtist.id}>
+        {genres}
+      </DetailLink>
+    )
+  }
+  return genres
+}
+
 export function SimilarRow({
   kind,
   itemId,
@@ -210,17 +244,11 @@ export function SimilarRow({
         TidalSimilarAddResultSchema,
         { method: 'POST' },
       ),
-    onSuccess: () =>
-      Promise.all([
-        client.invalidateQueries({ queryKey: ['tidal-similar', kind] }),
-        invalidateManualMediaAddition(client, kind),
-      ]),
+    onSuccess: () => invalidateManualMediaAddition(client, kind),
   })
   const title = item.library?.title ?? tidalSuggestionTitle(item)
   const libraryId = item.library?.id ?? add.data?.id
-  const genreLabel = item.genreSource
-    ? similarGenreLabels[item.genreSource]
-    : 'Genres'
+  const match = item.libraryMatch
   return (
     <>
       <SuggestionRow
@@ -253,60 +281,44 @@ export function SimilarRow({
               ? formatTrackDuration(item.durationSec)
               : null,
         ]}
-        badges={
-          item.genres.length > 0 && (
-            <Pills wrap label={`${genreLabel} for ${title}`}>
-              {item.genreEvidence ? (
-                <DetailLink
-                  kind="job"
-                  id={item.genreEvidence.jobId}
-                  tab="data"
-                  view={{ jobResponse: item.genreEvidence.responseId }}
-                  title="Open saved genre evidence"
-                >
-                  {genreLabel}
-                </DetailLink>
-              ) : item.genreSource === 'artist' && item.genreArtist ? (
-                <DetailLink
-                  kind="artist"
-                  id={item.genreArtist.id}
-                  title={item.genreArtist.name}
-                >
-                  {genreLabel}
-                </DetailLink>
-              ) : (
-                (item.genreSource === 'album-tracks' ||
-                  item.genreSource === 'track-album') && (
-                  <span className="ds-row-by">{genreLabel}</span>
-                )
-              )}
-              {item.genres.map((genre) => (
-                <Pill key={genre} title={`${genreLabel} · ${genre}`}>
-                  {genre}
-                </Pill>
-              ))}
-            </Pills>
-          )
+        placeEvidence={
+          libraryId && match ? (
+            <DetailLink
+              kind={kind}
+              id={libraryId}
+              tab="sources"
+              title={`Matched by ${libraryMatchLabels[match.basis]} ${match.value}`}
+            >
+              In library
+            </DetailLink>
+          ) : undefined
         }
+        badges={<SimilarGenres item={item} title={title} />}
         play={suggestionPlay(kind, item, title)}
         actions={
-          libraryId ? undefined : (
-            <span className="ds-actions">
-              {item.state === 'spotify' && item.spotify ? (
-                <SuggestionLink href={item.spotify.url} service="Spotify" />
+          <span className="ds-actions">
+            {!libraryId &&
+              (item.state === 'spotify' && item.spotify ? (
+                <SuggestionLink
+                  href={item.spotify.url}
+                  service="Spotify"
+                  itemTitle={title}
+                />
               ) : (
-                <SuggestionLink href={item.url} service="TIDAL" />
-              )}
-              <Button
-                size="xs"
-                aria-label={`Add to Library · ${title}`}
-                disabled={add.isPending}
-                onClick={() => add.mutate()}
-              >
-                {add.isPending ? 'Adding…' : 'Add to Library'}
-              </Button>
-            </span>
-          )
+                <SuggestionLink
+                  href={item.url}
+                  service="TIDAL"
+                  itemTitle={title}
+                />
+              ))}
+            <LibraryAction
+              kind={kind}
+              name={title}
+              saved={Boolean(libraryId)}
+              pending={add.isPending}
+              onAdd={() => add.mutate()}
+            />
+          </span>
         }
       />
       {add.isError && (

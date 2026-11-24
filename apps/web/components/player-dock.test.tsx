@@ -133,13 +133,15 @@ test('the dock shows the track, transport, queue count, device and Spotify link'
     volume: 0.8,
   })
   assert.match(html, /<section class="player-dock" aria-label="Player"/)
-  // Artwork, track and album open the library album; the artist has no page to open.
+  // The album context supplies a saved release while the track is checked separately.
   assert.match(
     html,
     /<a [^>]*aria-label="Open Fixture album"[^>]*href="\/albums[^"]*library-album[^"]*"/,
   )
   assert.match(html, /<strong><a [^>]*>Second track<\/a><\/strong>/)
   assert.match(html, /Example artist · <a [^>]*>Fixture album<\/a>/)
+  assert.match(html, /aria-label="Fixture album is in your library \(album\)"/)
+  assert.match(html, /aria-label="Add track to library · Second track"/)
   assert.match(html, /aria-label="Play"/)
   assert.match(html, /1:05/)
   assert.match(html, /3:20/)
@@ -289,7 +291,9 @@ test('playback started elsewhere is shown without a library album', () => {
   assert.match(html, /aria-label="Pause"/)
   assert.match(html, /aria-label="Play on: Fixture speaker"/)
   assert.match(html, /Press Next to start the queue\./)
-  assert.doesNotMatch(html, /<h3>Playing<\/h3>/)
+  assert.match(html, /<h3>Playing<\/h3>/)
+  assert.match(html, /aria-label="Add track to library · Second track"/)
+  assert.match(html, /aria-label="Add album to library · Fixture album"/)
 })
 
 test('a device apps cannot control is shown with its transport disabled', () => {

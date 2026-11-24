@@ -5,6 +5,8 @@ export const ManualMediaSearchInputSchema = z
     mediaType: z.enum(['album', 'film', 'track']),
     q: z.string().trim().min(1).max(200),
     page: z.number().int().min(1).max(50).default(1),
+    /** Show saved catalog releases only when their identity matches exactly. */
+    exactMembership: z.boolean().optional(),
   })
   .strict()
 
@@ -27,19 +29,20 @@ export const ManualMediaSearchResultSchema = z.object({
   totalCount: z.number().int().nonnegative().optional(),
 })
 
+const SpotifyAlbumInputSchema = z
+  .object({
+    mediaType: z.literal('album'),
+    externalId: z.string().regex(/^[A-Za-z0-9]{22}$/),
+  })
+  .strict()
+
+const SpotifyTrackInputSchema = SpotifyAlbumInputSchema.extend({
+  mediaType: z.literal('track'),
+})
+
 export const ManualMediaAddInputSchema = z.discriminatedUnion('mediaType', [
-  z
-    .object({
-      mediaType: z.literal('album'),
-      externalId: z.string().regex(/^[A-Za-z0-9]{22}$/),
-    })
-    .strict(),
-  z
-    .object({
-      mediaType: z.literal('track'),
-      externalId: z.string().regex(/^[A-Za-z0-9]{22}$/),
-    })
-    .strict(),
+  SpotifyAlbumInputSchema,
+  SpotifyTrackInputSchema,
   z
     .object({
       mediaType: z.literal('film'),
@@ -52,6 +55,38 @@ export const ManualMediaAddResultSchema = z.object({
   mediaItemId: z.string().min(1),
   created: z.boolean(),
 })
+
+export const CatalogMembershipInputSchema = z
+  .object({
+    items: z
+      .array(
+        z.discriminatedUnion('mediaType', [
+          SpotifyAlbumInputSchema,
+          SpotifyTrackInputSchema,
+        ]),
+      )
+      .min(1)
+      .max(2000),
+  })
+  .strict()
+
+export const CatalogMembershipResultSchema = z.object({
+  items: z.array(
+    z.object({
+      mediaType: z.enum(['track', 'album']),
+      externalId: z.string(),
+      mediaItemId: z.string().nullable(),
+      ambiguous: z.boolean(),
+    }),
+  ),
+})
+
+export type CatalogMembershipInput = z.infer<
+  typeof CatalogMembershipInputSchema
+>
+export type CatalogMembershipResult = z.infer<
+  typeof CatalogMembershipResultSchema
+>
 
 export type ManualMediaSearchInput = z.input<
   typeof ManualMediaSearchInputSchema

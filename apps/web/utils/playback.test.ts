@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import type { CatalogMembershipResult } from '@repo/schemas/manual-add'
 import {
   albumPlayable,
   formatClock,
@@ -24,6 +25,11 @@ import {
   type PlaybackSession,
   type PlaybackSnapshot,
 } from './playback'
+import {
+  catalogLookups,
+  playbackItemMembership,
+  playingLibraryItems,
+} from './playback-library'
 
 const albumId = '1234567890ABCDEFGHIJKL'
 const trackId = 'ABCDEFGHIJKL1234567890'
@@ -65,6 +71,68 @@ function snapshot(values: Partial<PlaybackSnapshot>): PlaybackSnapshot {
     ...values,
   }
 }
+
+test('playing library actions use the device track independently of a stale queue item', () => {
+  const observed = 'AAAAAAAAAAAAAAAAAAAAAA'
+  const relinked = 'BBBBBBBBBBBBBBBBBBBBBB'
+  const { track, album: release } = playingLibraryItems(
+    snapshot({
+      trackUri: `spotify:track:${observed}`,
+      linkedFromUri: `spotify:track:${relinked}`,
+      albumUri,
+    }),
+    {
+      kind: 'track',
+      title: 'Stale',
+      artist: '',
+      uri: trackUri,
+      albumId: 'previous-album',
+      albumTitle: 'Stale album',
+      artworkUrl: null,
+      trackCount: 1,
+      trackId: 'previous-track',
+    },
+  )
+  assert.ok(track)
+  assert.ok(release)
+  assert.deepEqual(catalogLookups([track, release]), [
+    { mediaType: 'track', externalId: observed },
+    { mediaType: 'track', externalId: relinked },
+    { mediaType: 'album', externalId: albumId },
+  ])
+  const matches: CatalogMembershipResult = {
+    items: [
+      {
+        mediaType: 'track',
+        externalId: relinked,
+        mediaItemId: 'saved-track',
+        ambiguous: false,
+      },
+    ],
+  }
+  assert.deepEqual(playbackItemMembership(track, matches), {
+    mediaItemId: 'saved-track',
+    ambiguous: false,
+  })
+  assert.deepEqual(playbackItemMembership(release, matches), {
+    mediaItemId: null,
+    ambiguous: false,
+  })
+  assert.deepEqual(
+    playbackItemMembership(track, {
+      items: [
+        ...matches.items,
+        {
+          mediaType: 'track',
+          externalId: observed,
+          mediaItemId: 'other-track',
+          ambiguous: false,
+        },
+      ],
+    }),
+    { mediaItemId: null, ambiguous: true },
+  )
+})
 
 function playing(
   item: PlayableItem,

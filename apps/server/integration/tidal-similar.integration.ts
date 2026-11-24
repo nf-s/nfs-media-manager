@@ -529,6 +529,10 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       albumName: null,
       trackCount: 9,
     })
+    expect(result.items[0]?.libraryMatch).toEqual({
+      basis: 'upc',
+      value: '000000000031',
+    })
     expect(result.items[1]?.spotify).toEqual({
       spotifyId: spotifyId(48),
       url: `https://open.spotify.com/album/${spotifyId(48)}`,
@@ -775,6 +779,14 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       },
     ])
     expect(result.items[1]?.artists).toEqual(['Halcyon Grid', 'Vela Rooms'])
+    expect(result.items[0]?.libraryMatch).toEqual({
+      basis: 'isrc',
+      value: isrc(1),
+    })
+    expect(result.items[1]?.libraryMatch).toEqual({
+      basis: 'spotify-id',
+      value: spotifyId(22),
+    })
     expect(result.items[2]?.durationSec).toBe(348)
     expect(searches()).toEqual([
       `isrc:${isrc(2)}`,

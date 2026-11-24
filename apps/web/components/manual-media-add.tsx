@@ -23,6 +23,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { LibraryAction } from '@repo/ui/components/ds/library-action'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -88,6 +89,8 @@ export function ManualMediaSearch({
   const [showInitialResult, setShowInitialResult] = useState(true)
   const { provider, placeholder } = searchFields[mediaType]
   const inputId = useId()
+  const isLinking = Boolean(onChoose) || existingActionLabel !== 'Open'
+  const exactMembership = isLinking ? undefined : true
   const search = useMutation({
     retry: false,
     mutationFn: (input: ManualMediaSearchInput) =>
@@ -97,6 +100,7 @@ export function ManualMediaSearch({
           input.mediaType,
           input.q,
           input.page ?? 1,
+          input.exactMembership ?? false,
         ],
         staleTime: 0,
         retry: false,
@@ -143,10 +147,16 @@ export function ManualMediaSearch({
     )
       return
     automaticallySearched.current = true
-    searchMedia({ mediaType, q: initialQuery.trim().slice(0, 200), page: 1 })
+    searchMedia({
+      mediaType,
+      q: initialQuery.trim().slice(0, 200),
+      page: 1,
+      exactMembership,
+    })
   }, [
     autoSearch,
     disabled,
+    exactMembership,
     initialQuery,
     initialResult,
     mediaType,
@@ -161,7 +171,12 @@ export function ManualMediaSearch({
     if (busy || !query.trim()) return
     add.reset()
     setShowInitialResult(false)
-    search.mutate({ mediaType, q: query.trim(), page })
+    search.mutate({
+      mediaType,
+      q: query.trim(),
+      page,
+      exactMembership,
+    })
   }
 
   return (
@@ -218,23 +233,38 @@ export function ManualMediaSearch({
             revision={search.submittedAt}
             loading={search.isPending}
             liveSearch={liveSearch}
+            exactMembership={exactMembership}
             tracksPlayed={tracksPlayed}
             disabled={disabled || add.isPending}
             renderItem={(item) => {
-              const inLibrary = Boolean(
-                item.mediaItemId || addedIds.current.has(item.externalId),
-              )
+              const libraryId =
+                item.mediaItemId ?? addedIds.current.get(item.externalId)
+              const inLibrary = Boolean(libraryId)
               const pending =
                 add.isPending && add.variables?.externalId === item.externalId
               return (
                 <ListRow
                   title={
                     <RowTitle>
-                      {item.mediaItemId ? (
+                      {libraryId ? (
                         <DetailLink
                           kind={mediaType}
-                          id={item.mediaItemId}
+                          id={libraryId}
                           title={item.title}
+                          onClick={(event) => {
+                            if (
+                              isLinking ||
+                              event.defaultPrevented ||
+                              event.button !== 0 ||
+                              event.metaKey ||
+                              event.altKey ||
+                              event.ctrlKey ||
+                              event.shiftKey
+                            )
+                              return
+                            event.preventDefault()
+                            if (!busy) add.mutate(item)
+                          }}
                         >
                           {item.title}
                         </DetailLink>
@@ -255,22 +285,34 @@ export function ManualMediaSearch({
                     <span className="ds-actions">
                       <ServiceIconLinks
                         links={[{ provider, label: provider, url: item.url }]}
+                        itemTitle={item.title}
                       />
-                      <Button
-                        type="button"
-                        size="xs"
-                        disabled={busy}
-                        aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
-                        onClick={() =>
-                          onChoose ? onChoose(item) : add.mutate(item)
-                        }
-                      >
-                        {pending
-                          ? 'Saving…'
-                          : inLibrary
-                            ? existingActionLabel
-                            : 'Add'}
-                      </Button>
+                      {isLinking ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          disabled={busy}
+                          aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
+                          onClick={() =>
+                            onChoose ? onChoose(item) : add.mutate(item)
+                          }
+                        >
+                          {pending
+                            ? 'Saving…'
+                            : inLibrary
+                              ? existingActionLabel
+                              : 'Add'}
+                        </Button>
+                      ) : (
+                        <LibraryAction
+                          kind={mediaType}
+                          name={item.title}
+                          saved={inLibrary}
+                          pending={pending}
+                          disabled={busy}
+                          onAdd={() => add.mutate(item)}
+                        />
+                      )}
                     </span>
                   }
                 />
@@ -312,6 +354,7 @@ function ManualSearchResults({
   revision,
   loading,
   liveSearch,
+  exactMembership,
   tracksPlayed,
   disabled,
   renderItem,
@@ -322,6 +365,7 @@ function ManualSearchResults({
   revision: number
   loading: boolean
   liveSearch: boolean
+  exactMembership?: boolean
   tracksPlayed: number | undefined
   disabled: boolean
   renderItem: (item: ManualMediaSearchItem) => ReactNode
@@ -345,6 +389,7 @@ function ManualSearchResults({
       query,
       revision,
       liveSearch,
+      exactMembership,
     ],
     pageSize,
     rowHeight,
@@ -359,6 +404,7 @@ function ManualSearchResults({
         page,
         stored: result,
         liveSearch,
+        exactMembership,
         tracksPlayed,
         signal,
       }),
