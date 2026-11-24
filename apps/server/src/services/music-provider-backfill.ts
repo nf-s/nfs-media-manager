@@ -1,5 +1,6 @@
-import { and, asc, eq, gt, gte, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, lt, ne, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import { db } from '@/lib/db'
 import {
   musicObservationProviders,
@@ -187,6 +188,7 @@ export async function backfillMusicAlbumSnapshots({
     .where(
       and(
         eq(mediaItem.mediaType, 'album'),
+        ne(providerSnapshot.source, DIRECT_PROVIDER_RESPONSE_SOURCE),
         inArray(providerSnapshot.provider, [
           ...musicObservationProviders,
           'album-csv',

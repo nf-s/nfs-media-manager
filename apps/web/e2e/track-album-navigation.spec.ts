@@ -1,9 +1,15 @@
 import { expect, test, type Page } from '@playwright/test'
 import { BrowsePageSliceSchema } from '@repo/schemas/browse'
+import { CatalogObservationPageSchema } from '@repo/schemas/catalog'
+import {
+  SourceSnapshotPageSchema,
+  SourceSnapshotSchema,
+} from '@repo/schemas/media'
 import {
   PlaybackCatalogInputSchema,
   PlaybackCatalogResultSchema,
 } from '@repo/schemas/playback'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import {
   SpotifyTrackSearchAcceptInputSchema,
   SpotifyTrackSearchSchema,
@@ -61,7 +67,7 @@ async function blockTextSearch(page: Page) {
 }
 
 function albumDetails(page: Page) {
-  return page.getByLabel('Album details', { exact: true })
+  return page.getByRole('complementary', { name: 'Album details' })
 }
 
 async function expectAlbumOpen(page: Page, id: string, title: string) {
@@ -73,12 +79,125 @@ async function expectAlbumOpen(page: Page, id: string, title: string) {
   ).toBeVisible()
 }
 
+async function mockDirectResponseEvidence(page: Page, albumId: string) {
+  const observedAt = '2026-01-03T00:00:00.000Z'
+  const evidence = [
+    {
+      mediaItemId: albumId,
+      mediaType: 'album',
+      operation: 'provider-result',
+      body: { id: spotifyAlbumId, name: albumTitle },
+    },
+    {
+      mediaItemId: matchedTrackId,
+      mediaType: 'track',
+      operation: 'parent-reference',
+      body: {
+        id: spotifyTrackId,
+        album: { id: spotifyAlbumId, name: albumTitle },
+      },
+    },
+  ]
+  const pagination = { page: 1, size: 10, pageCount: 1 }
+  const items = evidence.map(({ mediaItemId, mediaType, operation }) => ({
+    id: `fixture-${operation}`,
+    provider: 'spotify',
+    operation,
+    subjectKind: mediaType,
+    subjectId: mediaItemId,
+    relationshipRole: mediaType === 'track' ? 'album' : null,
+    page: null,
+    position: null,
+    jobId: null,
+    responseId: null,
+    details: [],
+    snapshotId: `fixture-${mediaType}-snapshot`,
+    directResponse: { mediaItemId, mediaType },
+    importId: null,
+    observedAt,
+  }))
+  await page.route(
+    `${webOrigin}/api/v1/catalog/media/${albumId}/discoveries?*`,
+    (route) =>
+      route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: CatalogObservationPageSchema.parse({
+            ...pagination,
+            totalCount: items.length,
+            items,
+          }),
+        },
+      }),
+  )
+  for (const { mediaItemId, mediaType, body } of evidence) {
+    const sourcePath = `${webOrigin}/api/v1/media/${mediaItemId}/sources/spotify`
+    const snapshot = {
+      id: `fixture-${mediaType}-snapshot`,
+      provider: 'spotify',
+      source: DIRECT_PROVIDER_RESPONSE_SOURCE,
+      jobId: null,
+      createdAt: observedAt,
+    }
+    await page.route(`${sourcePath}/history?*`, (route) =>
+      route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: SourceSnapshotPageSchema.parse({
+            ...pagination,
+            totalCount: 1,
+            items: [snapshot],
+          }),
+        },
+      }),
+    )
+    await page.route(`${sourcePath}/snapshots/${snapshot.id}`, (route) =>
+      route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: SourceSnapshotSchema.parse({
+            ...snapshot,
+            normalizedData: null,
+            data: {
+              request: {
+                method: 'GET',
+                url: `https://api.spotify.com/v1/${mediaType}s/${body.id}`,
+              },
+              response: {
+                status: 200,
+                body: { state: 'captured', text: JSON.stringify(body) },
+              },
+            },
+          }),
+        },
+      }),
+    )
+  }
+}
+
 test('a saved track offers manual Spotify matching in its title and opens the exact release after matching', async ({
   page,
   isMobile,
 }) => {
   const outsideAlbumId = await recordOutsideAlbum(page)
   const searches = await blockTextSearch(page)
+  const lookups: unknown[] = []
+  await page.context().route(resolvePath, async (route) => {
+    expect(route.request().method()).toBe('POST')
+    lookups.push(route.request().postDataJSON())
+    // Playback saved a catalog stub. Use a synthetic resolution result so the
+    // preview never needs Spotify to open the same album in a panel or tab.
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: { mediaItemId: outsideAlbumId },
+      },
+    })
+  })
   const jobId = 'fixture-saved-spotify-search'
   const match = SpotifyTrackSearchSchema.parse({
     job: {
@@ -197,11 +316,29 @@ test('a saved track offers manual Spotify matching in its title and opens the ex
   await expectAlbumOpen(page, outsideAlbumId, albumTitle)
   await page.getByRole('button', { name: 'Close details' }).click()
 
+  await trackLink.click()
+  const trackDetails = page.getByRole('complementary', {
+    name: 'Track details',
+  })
+  await trackDetails
+    .getByRole('link', { name: albumTitle, exact: true })
+    .first()
+    .click()
+  await expectAlbumOpen(page, outsideAlbumId, albumTitle)
+  await albumDetails(page).getByRole('button', { name: 'Back' }).click()
+  await expect(trackDetails).toBeVisible()
+  await page.getByRole('button', { name: 'Close details' }).click()
+
   const albumHref = await albumLink.getAttribute('href')
   if (!albumHref) throw new Error('The release title has no link destination')
-  const albumPage = await page.context().newPage()
+  const albumPage = isMobile
+    ? await page.context().newPage()
+    : await Promise.all([
+        page.context().waitForEvent('page', { timeout: 8_000 }),
+        albumLink.click({ modifiers: ['ControlOrMeta'] }),
+      ]).then(([newTab]) => newTab)
   try {
-    await albumPage.goto(new URL(albumHref, page.url()).href)
+    if (isMobile) await albumPage.goto(new URL(albumHref, page.url()).href)
     await expect(albumPage).toHaveURL(
       (url) => url.pathname === `/albums/${outsideAlbumId}`,
     )
@@ -212,13 +349,20 @@ test('a saved track offers manual Spotify matching in its title and opens the ex
     await albumPage.close()
   }
   expect(await recordOutsideAlbum(page)).toBe(outsideAlbumId)
+  expect(lookups).toEqual(
+    Array.from({ length: 4 }, () => ({
+      trackId: matchedTrackId,
+      spotifyAlbumId,
+    })),
+  )
   expect(searches).toEqual([])
 })
 
-test('an album with only a matched Spotify track ID can open by ID after a failed attempt', async ({
+test('a legacy Spotify track can retry opening its album and inspect both stored responses', async ({
   page,
 }) => {
   const outsideAlbumId = await recordOutsideAlbum(page)
+  await mockDirectResponseEvidence(page, outsideAlbumId)
   const searches = await blockTextSearch(page)
   await page.route(
     `${webOrigin}/api/v1/tracks/browse-page?*`,
@@ -238,11 +382,20 @@ test('an album with only a matched Spotify track ID can open by ID after a faile
     },
   )
   const lookups: unknown[] = []
-  const failure = 'Could not load this Spotify release. Try again.'
+  const failure = 'Spotify is temporarily unavailable. Try again.'
+  let releaseFailure: () => void = () => {}
+  const failedResponse = new Promise<void>((resolve) => {
+    releaseFailure = resolve
+  })
+  let releaseSuccess: () => void = () => {}
+  const successfulResponse = new Promise<void>((resolve) => {
+    releaseSuccess = resolve
+  })
   await page.route(resolvePath, async (route) => {
     expect(route.request().method()).toBe('POST')
     lookups.push(route.request().postDataJSON())
     if (lookups.length === 1) {
+      await failedResponse
       await route.fulfill({
         status: 502,
         json: { statusCode: 502, message: failure },
@@ -251,6 +404,7 @@ test('an album with only a matched Spotify track ID can open by ID after a faile
     }
     // The preview has no live Spotify access. Simulate a successful exact
     // lookup while leaving rendering and album details on the real preview.
+    await successfulResponse
     await route.fulfill({
       json: {
         statusCode: 200,
@@ -270,11 +424,65 @@ test('an album with only a matched Spotify track ID can open by ID after a faile
     row.getByRole('button', { name: `Match ${legacyTitle} to Spotify` }),
   ).toHaveCount(0)
   await albumLink.click()
-  await expect(row.getByRole('alert')).toHaveText(failure)
+  const loading = albumDetails(page).getByRole('status', {
+    name: 'Loading album from Spotify',
+  })
+  try {
+    await expect(loading).toBeVisible({ timeout: 3_000 })
+    await expect(loading.getByText('Opening Spotify album')).toBeVisible()
+  } finally {
+    releaseFailure()
+  }
+  await expect(albumDetails(page).getByRole('alert')).toContainText(failure)
+  await albumDetails(page).getByRole('button', { name: 'Retry' }).click()
+  try {
+    await expect(loading).toBeVisible({ timeout: 3_000 })
+  } finally {
+    releaseSuccess()
+  }
+  await expectAlbumOpen(page, outsideAlbumId, albumTitle)
+  await page.getByRole('button', { name: 'Close details' }).click()
   await expect(albumDetails(page)).toHaveCount(0)
+  await expect(albumLink).toBeFocused()
   await albumLink.click()
   await expectAlbumOpen(page, outsideAlbumId, albumTitle)
+  const album = albumDetails(page)
+  await album.getByRole('tab', { name: 'Sources' }).click()
+  const albumEvidence = album.locator('details.ds-source').filter({
+    has: page.getByText('Provider results', { exact: true }),
+  })
+  await albumEvidence.locator('summary').first().click()
+  await albumEvidence.getByRole('link', { name: 'Open response' }).click()
+  const albumHistory = album.getByRole('region', { name: 'Spotify history' })
+  await expect(albumHistory.getByText('Direct provider response')).toBeVisible()
+  const albumSnapshot = albumHistory.getByRole('region', {
+    name: 'Snapshot data',
+  })
+  await albumSnapshot.getByText('Raw JSON', { exact: true }).click()
+  await expect(albumSnapshot.locator('pre')).toContainText(spotifyAlbumId)
+
+  const parentEvidence = album.locator('details.ds-source').filter({
+    has: page.getByText('Parent link', { exact: true }),
+  })
+  await parentEvidence.locator('summary').first().click()
+  await parentEvidence.getByRole('link', { name: 'Open response' }).click()
+  const track = page.getByRole('complementary', { name: 'Track details' })
+  await expect(
+    track.getByRole('tab', { name: 'Sources', selected: true }),
+  ).toBeVisible()
+  const trackHistory = track.getByRole('region', { name: 'Spotify history' })
+  await expect(trackHistory.getByText('Direct provider response')).toBeVisible()
+  await expect(
+    trackHistory.getByRole('link', { name: 'Job', exact: true }),
+  ).toHaveCount(0)
+  const trackSnapshot = trackHistory.getByRole('region', {
+    name: 'Snapshot data',
+  })
+  await trackSnapshot.getByText('Raw JSON', { exact: true }).click()
+  await expect(trackSnapshot.locator('pre')).toContainText(spotifyTrackId)
+  await expect(trackSnapshot.locator('pre')).toContainText(spotifyAlbumId)
   expect(lookups).toEqual([
+    { trackId: matchedTrackId },
     { trackId: matchedTrackId },
     { trackId: matchedTrackId },
   ])

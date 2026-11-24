@@ -1,14 +1,17 @@
 import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { Status } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
 
 /** Loading, failed and stale states of a detail drawer or page. */
 export function CreatorDetailState({
   pending,
+  pendingLabel,
   retry,
   subject,
   stale,
 }: {
   pending?: boolean
+  pendingLabel?: string
   retry: () => void
   subject: string
   stale?: boolean
@@ -22,7 +25,11 @@ export function CreatorDetailState({
       >
         <Skeleton width={112} height={112} />
         <div className="dtl-loading-lines">
-          <Skeleton width="30%" height={12} />
+          {pendingLabel ? (
+            <Status state="running">{pendingLabel}</Status>
+          ) : (
+            <Skeleton width="30%" height={12} />
+          )}
           <Skeleton width="60%" height={20} />
           <Skeleton width="45%" height={12} />
         </div>

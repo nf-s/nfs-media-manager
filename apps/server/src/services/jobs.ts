@@ -2056,7 +2056,6 @@ export async function createJob(
     retryOf?: string
     skipExistingRetry?: boolean
     confirmRunning?: boolean
-    reuseSpotifyAlbumReferenceAttempt?: boolean
   } = {},
 ): Promise<Job> {
   const parsedInput = CreateJobSchema.parse(input)
@@ -2237,7 +2236,6 @@ export async function createJob(
       .select({
         jobId: scrapeJob.id,
         status: scrapeJob.status,
-        options: scrapeJob.options,
       })
       .from(scrapeJobItem)
       .innerJoin(scrapeJob, eq(scrapeJob.id, scrapeJobItem.jobId))
@@ -2252,29 +2250,6 @@ export async function createJob(
       .limit(1)
     // A job queued before the provider ran in the request runs now instead.
     const [queued] = active
-    if (scheduling.reuseSpotifyAlbumReferenceAttempt) {
-      if (
-        queued &&
-        queued.options.spotifyAlbumReference ===
-          parsedInput.options.spotifyAlbumReference
-      )
-        return queued.jobId
-      const [previous] = await tx
-        .select({ jobId: scrapeJob.id })
-        .from(scrapeJobItem)
-        .innerJoin(scrapeJob, eq(scrapeJob.id, scrapeJobItem.jobId))
-        .where(
-          and(
-            eq(scrapeJobItem.provider, parsedInput.provider),
-            inArray(scrapeJobItem.mediaItemId, mediaItemIds),
-            sql`${scrapeJob.options}->>'spotifyAlbumReference' = ${parsedInput.options.spotifyAlbumReference}`,
-            eq(scrapeJob.status, 'succeeded'),
-          ),
-        )
-        .orderBy(desc(scrapeJob.createdAt), desc(scrapeJob.id))
-        .limit(1)
-      if (previous) return previous.jobId
-    }
     if (inRequest && !scheduling.retryOf && queued?.status === 'queued')
       return queued.jobId
     if (active.length)
@@ -2324,8 +2299,7 @@ export async function createJob(
   if (inRequest)
     return runJobInRequest(queuedJobId, plugin, queuedJobId === jobId)
 
-  if (queuedJobId === jobId || !scheduling.reuseSpotifyAlbumReferenceAttempt)
-    await wakeJobProvider(parsedInput.provider)
+  await wakeJobProvider(parsedInput.provider)
 
   const job = await getJobRecord(queuedJobId)
 

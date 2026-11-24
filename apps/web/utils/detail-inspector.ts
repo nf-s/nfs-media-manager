@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { spotifyIdPattern } from '@repo/schemas/playback'
 import { mediaScope, scopedHref } from './media-scope'
 
 const inspectorParam = 'inspect'
@@ -14,6 +15,7 @@ const browseDetailKinds = {
 const DetailTargetSchema = z.object({
   kind: z.enum([
     'album',
+    'spotify-album-reference',
     'film',
     'track',
     'playlist',
@@ -30,6 +32,7 @@ const DetailTargetSchema = z.object({
   ]),
   id: z.string().min(1).max(500),
   mediaType: z.enum(['album', 'film']).optional(),
+  spotifyAlbumId: z.string().regex(spotifyIdPattern).optional(),
 })
 export type DetailTarget = z.infer<typeof DetailTargetSchema>
 
@@ -39,6 +42,10 @@ const DetailEntrySchema = DetailTargetSchema.extend({
   .refine(({ kind, id }) => kind !== 'user' || id === userDetailId)
   .refine(({ kind, id }) => kind !== 'tag' || parseTagDetailId(id) !== null)
   .refine(({ kind, mediaType }) => kind === 'collection' || !mediaType)
+  .refine(
+    ({ kind, spotifyAlbumId }) =>
+      kind === 'spotify-album-reference' || !spotifyAlbumId,
+  )
 export type DetailEntry = z.infer<typeof DetailEntrySchema>
 
 /** A tag's drawer entry carries its library, because tag IDs are per library. */
@@ -77,6 +84,7 @@ export function sameDetail(
   return (
     a?.kind === b?.kind &&
     a?.id === b?.id &&
+    a?.spotifyAlbumId === b?.spotifyAlbumId &&
     (a?.kind !== 'collection' ||
       (a.mediaType ?? 'film') === (b?.mediaType ?? 'film'))
   )
@@ -122,6 +130,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
   if (!parsed.success) return null
   const keys = {
     album: ['item', 'tab', 'albumTrackView'],
+    'spotify-album-reference': [],
     film: ['item', 'tab'],
     track: ['item'],
     subscription: ['item'],
@@ -201,6 +210,7 @@ export function detailEntryParams(
 
 export const detailKindNames: Record<DetailTarget['kind'], string> = {
   album: 'Album',
+  'spotify-album-reference': 'Album',
   film: 'Film',
   track: 'Track',
   playlist: 'Playlist',
@@ -243,6 +253,7 @@ const pathLibraries: readonly LibraryPage[] = Object.values(libraries)
 /** The library page each kind belongs to. */
 const kindLibraries: Record<DetailTarget['kind'], LibraryPage> = {
   album: libraries.albums,
+  'spotify-album-reference': libraries.albums,
   film: libraries.films,
   track: libraries.tracks,
   playlist: libraries.playlists,
@@ -272,6 +283,8 @@ export type DetailCrumbStep =
   | { label: string; to: 'current' }
 
 export function detailCrumbKey(target: DetailTarget) {
+  if (target.kind === 'spotify-album-reference')
+    return JSON.stringify([target.kind, target.id, target.spotifyAlbumId])
   return target.kind === 'collection' && target.mediaType === 'album'
     ? `album-collection:${target.id}`
     : `${target.kind}:${target.id}`
@@ -324,6 +337,12 @@ export function detailCrumbTrail(
 }
 
 export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
+  if (target.kind === 'spotify-album-reference') {
+    const params = new URLSearchParams({ trackId: target.id })
+    if (target.spotifyAlbumId)
+      params.set('spotifyAlbumId', target.spotifyAlbumId)
+    return detailLocation('/albums/from-track', params)
+  }
   if (target.kind === 'user')
     return detailLocation('/user', new URLSearchParams(view))
   if (target.kind === 'tag') {

@@ -1180,7 +1180,7 @@ export function createProviderRequest(
       if (responseResult.status === 'rejected') throw responseResult.reason
       const { response: result, receivedAt: responseReceivedAt } =
         responseResult.value
-      const response = result instanceof Response ? result : result.response
+      const response = 'response' in result ? result.response : result
       const paired = transport
         ? pairedProviderResponseCapture(result)
         : undefined
@@ -1552,7 +1552,7 @@ export function createProviderRequest(
         retryEnabled ? { attempt, pending } : null,
         ...args,
       )
-      if (result instanceof Response) return result
+      if (!('retryBefore' in result)) return result
       pending = result
       if (Date.now() >= result.retryBefore) await expireRetry(result)
       try {

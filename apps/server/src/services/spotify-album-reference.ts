@@ -1,31 +1,39 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import {
+  ProviderRequestError,
+  isProviderItemNotFoundError,
+} from '@repo/media-plugin-sdk'
 import { spotifyIdPattern } from '@repo/schemas/playback'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import {
   SPOTIFY_TRACK_ALBUM_LOOKUP_TASK,
   type SpotifyAlbumReferenceInput,
 } from '@repo/schemas/spotify-album-reference'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
-import { db } from '@/lib/db'
+import { db, providerLookupDb } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { spotifyReleaseObservation } from '@/lib/music-provider-discoveries'
 import { createStableId } from '@/lib/media-utils'
 import {
+  ProviderResponseStorageError,
   createProviderResponseRecorder,
   providerResponseSecretValues,
 } from '@/lib/provider-response-history'
-import { resolveProviderSecrets } from '@/lib/provider-secrets'
-import { SpotifyIdSchema, spotifyAlbumId, spotifyJson } from '@/lib/spotify-api'
 import {
-  spotifyClientToken,
-  spotifyMarket,
-  spotifyPlugin,
-} from '@/plugins/builtin/spotify'
+  SpotifyAlbumSchema,
+  SpotifyIdSchema,
+  normalizeSpotifyAlbum,
+  spotifyAlbumId,
+  spotifyJson,
+} from '@/lib/spotify-api'
+import { spotifyClientToken, spotifyMarket } from '@/plugins/builtin/spotify'
 import {
   catalogMediaAlias,
   libraryTrack,
   mediaItem,
   providerCurrentState,
-  providerSecret,
+  providerSnapshot,
 } from '@/schemas/db'
 import {
   lockLibraryTrackWrites,
@@ -36,15 +44,18 @@ import {
   promoteCatalogMediaInTransaction,
 } from './catalog-discoveries'
 import {
-  createJob,
-  createTaskJob,
+  IN_REQUEST_SLOT_WAIT_MS,
   type TaskJobContext,
   type TaskJobResult,
 } from './jobs'
 import { assertProviderConfigured, providerOperation } from './manual-add'
 import { latestCatalogResponseId } from './music-catalog-observations'
+import { observeMusicDiscovery } from './music-provider-observations'
+import { readMediaProviderWithEvidence } from './interactive-media-provider-response'
+import { applyProviderResultInTransaction } from './provider-state'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
+import { lockTagWrites } from './tag-state'
 import { spotifySearchRecordingId } from './track-match-diagnostics'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -62,6 +73,7 @@ const ReleaseEvidenceSchema = z.object({
   title: z.string().nullable(),
   jobId: z.string().nullable(),
   responseId: z.string().nullable(),
+  snapshotId: z.string().optional(),
 })
 type ReleaseEvidence = z.infer<typeof ReleaseEvidenceSchema>
 type StoredParent =
@@ -111,7 +123,8 @@ async function storedReleaseEvidence(
         then (r.body->>'text')::jsonb end as data
       from related_jobs j join provider_response r on r.job_id = j.id
       where r.provider = 'spotify' and r.body_state = 'captured' and r.status between 200 and 299
-        and (r.request_url like 'https://api.spotify.com/v1/search?%'
+        and (r.request_url = 'https://api.spotify.com/v1/search'
+          or r.request_url like 'https://api.spotify.com/v1/search?%'
           or r.request_url like 'https://api.spotify.com/v1/tracks/%')
     ), raw_items as (
       select r.id, r.job_id, item from raw_responses r
@@ -201,13 +214,32 @@ async function resolveStoredParent(
 
     const [saved] = stored
     if (saved) await cacheTrackAlbum(tx, track.id, saved)
-    const evidence =
+    let evidence =
       saved ??
       (lookup?.trackId === track.id &&
       lookup.spotifyTrackId === spotifyTrackId &&
       lookup.evidence.id === releaseId
         ? lookup.evidence
         : undefined)
+    // A stale player link can reject navigation after the legacy lookup has
+    // already confirmed and saved the actual parent. Keep that source on reopen.
+    if (!evidence && spotifyTrackId && storedId) {
+      const direct = await storedExactResponse(
+        track.id,
+        `https://api.spotify.com/v1/tracks/${spotifyTrackId}`,
+        spotifyTrackId,
+        SpotifyTrackParentSchema,
+        tx,
+      )
+      if (direct?.data.album.id === releaseId)
+        evidence = {
+          id: releaseId,
+          title: direct.data.album.name,
+          snapshotId: direct.snapshotId,
+          jobId: null,
+          responseId: null,
+        }
+    }
     const mediaItemId = await observeTrackParent(
       tx,
       track.id,
@@ -216,7 +248,9 @@ async function resolveStoredParent(
       evidence,
     )
     if (add) await promoteCatalogMediaInTransaction(tx, mediaItemId, userId)
-    return { mediaItemId, releaseId }
+    return add || (await albumIsCached(tx, mediaItemId, releaseId))
+      ? { mediaItemId }
+      : { mediaItemId, releaseId }
   })
 }
 
@@ -274,6 +308,7 @@ async function observeTrackParent(
       occurrenceKey: releaseId,
       jobId: evidence?.jobId ?? undefined,
       responseId: evidence?.responseId ?? undefined,
+      snapshotId: evidence?.snapshotId,
     },
   )
   const [visible] = await tx
@@ -304,45 +339,195 @@ async function cacheTrackAlbum(
     .where(eq(libraryTrack.mediaItemId, trackId))
 }
 
-/** Resolve an exact parent recorded on a track. Opening it never adds membership. */
-export async function openSpotifyAlbumReference(
-  input: SpotifyAlbumReferenceInput,
-  userId: string,
+/** Serialize competing clicks for one provider identity across API instances. */
+async function withLookupLock<T>(
+  path: string,
+  run: (tx: Transaction) => Promise<T>,
 ) {
-  let parent = await resolveStoredParent(input, userId)
-  if ('spotifyTrackId' in parent) {
-    const { trackId, spotifyTrackId } = parent
-    const job = await createTaskJob(SPOTIFY_TRACK_ALBUM_LOOKUP_TASK, userId, {
-      taskOptions: { trackId, spotifyTrackId },
-    })
-    if (job.status === 'running' || job.status === 'queued')
+  return providerLookupDb.transaction(async (tx) => {
+    await tx.execute(sql`set local lock_timeout = '5s'`)
+    try {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${'spotify-open:' + path}, 0))`,
+      )
+    } catch (error) {
+      const timeout = z.object({ code: z.literal('55P03') })
+      if (
+        !timeout.safeParse(error).success &&
+        !(error instanceof Error && timeout.safeParse(error.cause).success)
+      )
+        throw error
       throw new ServerError({
-        statusCode: 409,
-        message:
-          'The Spotify track is already being read. Try opening the release again.',
+        statusCode: 429,
+        message: 'This Spotify release is already loading. Try again shortly.',
       })
-    if (job.status !== 'succeeded')
-      throw new ServerError({
-        statusCode: 502,
-        message:
-          'Could not confirm this track’s release on Spotify. Try opening the release again.',
-      })
-    const { data: evidence } = ReleaseEvidenceSchema.safeParse(
-      job.options.releaseEvidence,
+    }
+    await tx.execute(sql`set local lock_timeout = default`)
+    return run(tx)
+  })
+}
+
+async function readExactSpotifyResource<T extends { id: string }>(
+  mediaItemId: string,
+  kind: 'tracks' | 'albums',
+  id: string,
+  schema: z.ZodType<T>,
+) {
+  const path = `${kind}/${id}`
+  const url = `https://api.spotify.com/v1/${path}`
+  const saved = await storedExactResponse(mediaItemId, url, id, schema)
+  if (saved) return saved
+  try {
+    return await providerOperation(
+      'spotify',
+      async ({ secrets }, plugin) => {
+        const { result, responses } = await readMediaProviderWithEvidence(
+          {
+            mediaItemId,
+            plugin,
+            secrets,
+            maxSlotWaitMs: IN_REQUEST_SLOT_WAIT_MS,
+          },
+          async (request) => {
+            const token = await spotifyClientToken(secrets, request)
+            return schema.safeParse(
+              await spotifyJson(request, token, path, spotifyMarket(secrets), {
+                notFoundOn404: true,
+              }),
+            )
+          },
+        )
+        const evidence = responses.find(
+          (response) =>
+            response.requestUrl === url &&
+            response.status !== null &&
+            response.status >= 200 &&
+            response.status < 300,
+        )
+        if (!evidence) throw new ProviderResponseStorageError()
+        if (!result.success || result.data.id !== id)
+          throw new ServerError({
+            statusCode: 502,
+            message: 'Spotify returned invalid details for the requested item.',
+          })
+        return {
+          data: result.data,
+          snapshotId: evidence.snapshotId,
+          observedAt: evidence.observedAt,
+        }
+      },
+      undefined,
+      'opening this album',
+      IN_REQUEST_SLOT_WAIT_MS,
     )
-    parent = await resolveStoredParent(
-      input,
-      userId,
-      evidence ? { trackId, spotifyTrackId, evidence } : undefined,
-    )
+  } catch (error) {
+    if (error instanceof ServerError) {
+      if (isProviderItemNotFoundError(error.cause))
+        throw new ServerError({
+          statusCode: 404,
+          message: `Spotify could not find this ${kind === 'tracks' ? 'track' : 'album'}.`,
+        })
+      if (
+        error.cause instanceof ProviderRequestError &&
+        ['cooldown', 'rate-limit'].includes(error.cause.code)
+      )
+        throw new ServerError({ statusCode: 429, message: error.message })
+    }
+    throw error
   }
-  if (!('mediaItemId' in parent)) throw releaseUnavailable()
-  const { mediaItemId, releaseId } = parent
-  if (input.add || !releaseId) return { mediaItemId }
-  const [stored] = await db
+}
+
+async function storedExactResponse<T extends { id: string }>(
+  mediaItemId: string,
+  url: string,
+  id: string,
+  schema: z.ZodType<T>,
+  reader: Pick<Transaction, 'select'> = db,
+) {
+  const [row] = await reader
+    .select({
+      snapshotId: providerSnapshot.id,
+      observedAt: providerSnapshot.createdAt,
+      text: sql<unknown>`${providerSnapshot.payload} #>> '{response,body,text}'`,
+    })
+    .from(providerSnapshot)
+    .where(
+      and(
+        eq(providerSnapshot.mediaItemId, mediaItemId),
+        eq(providerSnapshot.provider, 'spotify'),
+        eq(providerSnapshot.source, DIRECT_PROVIDER_RESPONSE_SOURCE),
+        sql`${providerSnapshot.payload} #>> '{request,url}' = ${url}
+        and (${providerSnapshot.payload} #>> '{response,status}')::integer between 200 and 299
+        and ${providerSnapshot.payload} #>> '{response,body,state}' = 'captured'`,
+      ),
+    )
+    .orderBy(desc(providerSnapshot.createdAt), desc(providerSnapshot.id))
+    .limit(1)
+  if (!row || typeof row.text !== 'string') return
+  try {
+    const parsed = schema.safeParse(JSON.parse(row.text))
+    if (parsed.success && parsed.data.id === id)
+      return {
+        data: parsed.data,
+        snapshotId: row.snapshotId,
+        observedAt: row.observedAt,
+      }
+  } catch {
+    // An invalid retained body remains available in Sources for diagnosis.
+  }
+}
+
+async function loadTrackParent(trackId: string, spotifyTrackId: string) {
+  return withLookupLock(`tracks/${spotifyTrackId}`, async (tx) => {
+    const current = await trackReference(tx, trackId)
+    if (
+      !current ||
+      current.spotifyTrackId !== spotifyTrackId ||
+      (current.spotifyAlbumId && spotifyAlbumId(current.spotifyAlbumId))
+    )
+      return
+    const { data, snapshotId } = await readExactSpotifyResource(
+      trackId,
+      'tracks',
+      spotifyTrackId,
+      SpotifyTrackParentSchema,
+    )
+    const evidence = {
+      id: data.album.id,
+      title: data.album.name,
+      jobId: null,
+      responseId: null,
+      snapshotId,
+    }
+    await lockLibraryTrackWrites(tx)
+    const latest = await trackReference(tx, trackId)
+    if (
+      latest?.spotifyTrackId === spotifyTrackId &&
+      !(latest.spotifyAlbumId && spotifyAlbumId(latest.spotifyAlbumId))
+    )
+      await cacheTrackAlbum(tx, latest.id, evidence)
+    return { trackId, spotifyTrackId, evidence }
+  })
+}
+
+async function albumIsCached(
+  tx: Transaction,
+  mediaItemId: string,
+  releaseId: string,
+) {
+  const [cached] = await tx
     .select({
       inLibrary: mediaItem.inLibrary,
       snapshot: providerCurrentState.latestSnapshotId,
+      // A prior enrichment can retain and project the album page before
+      // failing on a later track page, without producing a current snapshot.
+      observed: sql<boolean>`exists (
+        select 1 from catalog_observation o join provider_response r on r.id = o.response_id
+        where o.media_item_id = ${mediaItemId} and o.provider = 'spotify'
+          and o.relationship_role = 'release_detail' and r.provider = 'spotify'
+          and r.status between 200 and 299 and r.body_state = 'captured'
+          and split_part(r.request_url, '?', 1) = ${'https://api.spotify.com/v1/albums/' + releaseId}
+      )`,
     })
     .from(mediaItem)
     .leftJoin(
@@ -353,39 +538,68 @@ export async function openSpotifyAlbumReference(
       ),
     )
     .where(eq(mediaItem.id, mediaItemId))
-  if (stored?.inLibrary || stored?.snapshot) return { mediaItemId }
+  if (!cached) throw releaseUnavailable()
+  return Boolean(cached.inLibrary || cached.snapshot || cached.observed)
+}
 
-  const rows = await db.query.providerSecret.findMany({
-    where: eq(providerSecret.provider, 'spotify'),
-  })
-  const secrets = resolveProviderSecrets(
-    'spotify',
-    rows,
-    spotifyPlugin.manifest.secrets,
-  )
-  if (!secrets.clientId?.trim() || !secrets.clientSecret?.trim())
-    return { mediaItemId }
-  try {
-    const job = await createJob(
+async function loadAlbum(mediaItemId: string, releaseId: string) {
+  return withLookupLock(`albums/${releaseId}`, async (tx) => {
+    if (await albumIsCached(tx, mediaItemId, releaseId)) return
+    const { data, snapshotId, observedAt } = await readExactSpotifyResource(
+      mediaItemId,
+      'albums',
+      releaseId,
+      SpotifyAlbumSchema,
+    )
+    const { payload, normalized } = normalizeSpotifyAlbum(data)
+    // Follow the normal provider write lock order. A full refresh or identity
+    // correction may have finished while the interactive read was in flight.
+    if (normalized.tags.length) await lockTagWrites(tx)
+    await lockLibraryTrackWrites(tx)
+    const current = await readLinkedAlbum(tx, mediaItemId)
+    if (!current?.spotifyIds.includes(releaseId)) throw releaseUnavailable()
+    if (await albumIsCached(tx, mediaItemId, releaseId)) return
+    await applyProviderResultInTransaction(
+      {
+        mediaItemId,
+        mediaType: 'album',
+        provider: 'spotify',
+        source: 'album-open',
+        payload,
+        normalized,
+      },
+      tx,
+    )
+    await observeMusicDiscovery(
+      tx,
+      spotifyReleaseObservation(data, 1, 'release_detail'),
       {
         provider: 'spotify',
-        scope: { mediaItemIds: [mediaItemId], mediaType: 'album', limit: 1 },
-        options: { spotifyAlbumReference: releaseId },
-        confirmBroadRun: true,
+        operation: 'provider-result',
+        subjectKind: 'album',
+        subjectId: mediaItemId,
+        occurrenceKey: snapshotId,
+        snapshotId,
+        observedAt,
       },
-      userId,
-      { reuseSpotifyAlbumReferenceAttempt: true, deferUntilReady: true },
     )
-    return { mediaItemId, jobId: job.id }
-  } catch (error) {
-    // The saved parent can be opened while its provider is unavailable.
-    if (
-      error instanceof ServerError &&
-      [422, 429].includes(error.response.statusCode)
-    )
-      return { mediaItemId }
-    throw error
+  })
+}
+
+/** Resolve an exact parent recorded on a track. Opening it never adds membership. */
+export async function openSpotifyAlbumReference(
+  input: SpotifyAlbumReferenceInput,
+  userId: string,
+) {
+  let parent = await resolveStoredParent(input, userId)
+  if ('spotifyTrackId' in parent) {
+    const lookup = await loadTrackParent(parent.trackId, parent.spotifyTrackId)
+    parent = await resolveStoredParent(input, userId, lookup)
   }
+  if (!('mediaItemId' in parent)) throw releaseUnavailable()
+  if (!input.add && parent.releaseId)
+    await loadAlbum(parent.mediaItemId, parent.releaseId)
+  return { mediaItemId: parent.mediaItemId }
 }
 
 export async function prepareSpotifyTrackAlbumLookup(

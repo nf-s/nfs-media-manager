@@ -162,6 +162,9 @@ describe('scrape-provider request evidence', () => {
         headers: { 'Content-Type': 'application/json' },
       }),
     )
+    // The Node HTTP adapter replaces the global constructor. Fetch still
+    // returns native responses, including for token exchanges.
+    vi.stubGlobal('Response', class extends Response {})
     const response = await request('https://fixture.invalid/metadata?fixture=1')
     expect(archive[0]?.response.body).toEqual({
       state: 'captured',

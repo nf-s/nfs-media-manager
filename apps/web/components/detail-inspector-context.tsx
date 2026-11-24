@@ -105,7 +105,8 @@ type Navigation = {
   /** The workspace URL with the drawer closed. */
   closedHref: string
   open: (target: DetailEntry, trigger?: HTMLElement) => void
-  replace: (target: DetailEntry) => void
+  /** With `from`, discard the replacement if the drawer has moved on. */
+  replace: (target: DetailEntry, from?: DetailEntry) => void
   replaceView: (params: URLSearchParams) => void
   back: () => void
   /** Steps back to the entry at `index`, as Back would one step at a time. */
@@ -172,8 +173,9 @@ export function DetailInspectorProvider({ children }: { children: ReactNode }) {
         openedFromWorkspace: history?.openedFromWorkspace ?? !current.length,
       })
     },
-    replace(target) {
+    replace(target, from) {
       const current = currentLocation().entries
+      if (from && !sameDetail(current.at(-1), from)) return
       changeHistory('replaceState', [...current.slice(0, -1), target])
     },
     replaceView(view) {

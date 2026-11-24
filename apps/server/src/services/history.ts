@@ -1,7 +1,8 @@
-import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { PaginationQuerySchema } from '@repo/schemas/common'
 import { AlbumMatchRejectionInputSchema } from '@repo/schemas/match-diagnostics'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import type {
   MediaHistory,
   MediaSources,
@@ -138,6 +139,10 @@ export async function getMediaSources(
         .where(eq(providerSnapshot.mediaItemId, mediaItemId))
         .orderBy(
           providerSnapshot.provider,
+          // Keep the provider in Sources even if it only has response history.
+          asc(
+            sql`${providerSnapshot.source} = ${DIRECT_PROVIDER_RESPONSE_SOURCE}`,
+          ),
           desc(providerSnapshot.createdAt),
           desc(providerSnapshot.id),
         ),
@@ -170,7 +175,11 @@ export async function getMediaSources(
   const providers = new Map<string, (typeof snapshots)[number] | null>()
   for (const { provider } of [...jobs, ...referenceOverrides])
     providers.set(provider, null)
-  for (const snapshot of snapshots) providers.set(snapshot.provider, snapshot)
+  for (const snapshot of snapshots)
+    providers.set(
+      snapshot.provider,
+      snapshot.source === DIRECT_PROVIDER_RESPONSE_SOURCE ? null : snapshot,
+    )
   for (const { provider, snapshot } of current)
     if (snapshot || !providers.has(provider)) providers.set(provider, snapshot)
   const attempts = new Map(jobs.map(({ provider, ...job }) => [provider, job]))

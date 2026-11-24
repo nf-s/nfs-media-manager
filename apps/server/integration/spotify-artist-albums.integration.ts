@@ -4,7 +4,10 @@ import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { SPOTIFY_TRACK_ALBUM_LOOKUP_TASK } from '@repo/schemas/spotify-album-reference'
+import {
+  DIRECT_PROVIDER_RESPONSE_SOURCE,
+  ProviderResponseCaptureSchema,
+} from '@repo/schemas/provider-response'
 import { SPOTIFY_TRACK_SEARCH_TASK } from '@repo/schemas/spotify-track-search'
 import { env } from '@/env'
 import { parseSpotifyArtistAlbumPage } from '@/lib/spotify-artist-albums'
@@ -42,6 +45,9 @@ const appearanceAlbumId = 'appearancealbum'.padEnd(22, '0')
 const listingPath = `/v1/artists/${spotifyArtistId}/albums`
 
 vi.mock('@/lib/db', () => ({
+  get providerLookupDb() {
+    return fixture
+  },
   get db() {
     return fixture
   },
@@ -59,14 +65,19 @@ vi.mock('@/lib/provider-secrets', () => ({
   }),
 }))
 
-import { processQueuedJobById, processQueuedJobs } from '@/services/jobs'
-import { getMediaSources } from '@/services/history'
+import { processQueuedJobs } from '@/services/jobs'
+import {
+  getMediaSourceSnapshot,
+  getMediaSources,
+  listMediaSourceSnapshots,
+} from '@/services/history'
 import { openSpotifyAlbumReference } from '@/services/spotify-album-reference'
 import { loadTracks } from '@/services/tracks'
 import { observeSpotifyArtistAlbumPage } from '@/services/spotify-artist-album-discoveries'
 import {
   getJobProviderResponse,
   listJobProviderResponses,
+  saveProviderResponseCapture,
 } from '@/services/provider-response-history'
 import {
   getSpotifyArtistAlbumListing,
@@ -105,6 +116,33 @@ const lastPage = {
   total: 3,
   offset: 2,
   next: null,
+}
+
+async function directSpotifyResponses(mediaItemId: string) {
+  const history = await listMediaSourceSnapshots(mediaItemId, 'spotify', {
+    page: 1,
+    size: 20,
+  })
+  return Promise.all(
+    history.items
+      .filter(({ source }) => source === DIRECT_PROVIDER_RESPONSE_SOURCE)
+      .map(async ({ id, jobId }) => {
+        expect(jobId).toBeNull()
+        const snapshot = await getMediaSourceSnapshot(
+          mediaItemId,
+          'spotify',
+          id,
+        )
+        return { id, ...ProviderResponseCaptureSchema.parse(snapshot.data) }
+      }),
+  )
+}
+
+function spotifyApiPaths() {
+  return request.mock.calls
+    .map(([input]) => new URL(String(input)))
+    .filter(({ hostname }) => hostname === 'api.spotify.com')
+    .map(({ pathname }) => pathname)
 }
 
 let created = false
@@ -314,13 +352,36 @@ it('resolves the artist, retains pages and relationships, resumes once and serve
   expect(await fixture.$count(schema.scrapeJob)).toBe(2)
 }, 30_000)
 
-it('opens an exact recorded parent once, reuses its cached details and adds only that album', async () => {
+it('opens an exact recorded parent once, retains a partial track page and adds only that album', async () => {
   await fixture.delete(schema.providerRequestState)
   const trackId = 'track-with-unlisted-parent'
   const parentId = 'unlistedparent'.padEnd(22, '0')
   const childId = 'catalogchildtrack'.padEnd(22, '0')
   const reference = { trackId, spotifyAlbumId: parentId }
   const parentPath = `/v1/albums/${parentId}`
+  const album = {
+    id: parentId,
+    name: 'Recorded parent',
+    artists: credits,
+    album_type: 'album',
+    genres: ['Fixture tag'],
+    total_tracks: 2,
+    tracks: {
+      offset: 0,
+      total: 2,
+      next: `https://api.spotify.com${parentPath}/tracks?offset=1`,
+      items: [
+        {
+          id: childId,
+          name: 'Discovered child',
+          artists: credits,
+          disc_number: 1,
+          track_number: 1,
+          duration_ms: 90000,
+        },
+      ],
+    },
+  }
   await fixture.insert(schema.mediaItem).values({
     id: trackId,
     slug: trackId,
@@ -337,32 +398,10 @@ it('opens an exact recorded parent once, reuses its cached details and adds only
     const url = new URL(String(input))
     if (url.hostname === 'accounts.spotify.com')
       return Response.json(spotifyTokenFixture)
-    if (url.pathname === parentPath)
-      return Response.json({
-        id: parentId,
-        name: 'Recorded parent',
-        artists: credits,
-        album_type: 'album',
-        genres: ['Fixture tag'],
-        total_tracks: 1,
-        tracks: {
-          offset: 0,
-          total: 1,
-          next: null,
-          items: [
-            {
-              id: childId,
-              name: 'Discovered child',
-              artists: credits,
-              disc_number: 1,
-              track_number: 1,
-              duration_ms: 90000,
-            },
-          ],
-        },
-      })
+    if (url.pathname === parentPath) return Response.json(album)
     throw new Error('Unexpected offline provider request')
   })
+  const jobsBefore = await fixture.$count(schema.scrapeJob)
   await expect(
     openSpotifyAlbumReference(
       { ...reference, spotifyAlbumId: existingAlbumId },
@@ -373,45 +412,56 @@ it('opens an exact recorded parent once, reuses its cached details and adds only
     openSpotifyAlbumReference(reference, ownerId),
     openSpotifyAlbumReference(reference, ownerId),
   ])
+  expect(first).toEqual({ mediaItemId: expect.any(String) })
   expect(second).toEqual(first)
-  expect(first.jobId).toBeTruthy()
-  expect(request).not.toHaveBeenCalled()
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(['/api/token', parentPath])
   const readParent = () =>
     fixture.query.mediaItem.findFirst({
       where: eq(schema.mediaItem.id, first.mediaItemId),
     })
   expect(await readParent()).toMatchObject({ inLibrary: false })
-
-  const added = await openSpotifyAlbumReference(
-    { ...reference, add: true },
-    ownerId,
-  )
-  expect(added).toEqual({ mediaItemId: first.mediaItemId })
-  expect(request).not.toHaveBeenCalled()
-  expect(await readParent()).toMatchObject({ inLibrary: true })
-  await processQueuedJobs()
-  expect(
-    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
-  ).toEqual(['/api/token', parentPath])
   expect((await getMediaSources(first.mediaItemId)).providers).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         id: 'spotify',
-        latestSnapshot: expect.objectContaining({ jobId: first.jobId }),
-        latestAttempt: expect.objectContaining({ status: 'succeeded' }),
+        latestSnapshot: expect.objectContaining({ jobId: null }),
         returnedTags: ['Fixture tag'],
-        returnedTrackList: true,
       }),
     ]),
   )
+  const child = await fixture.query.mediaItem.findFirst({
+    where: eq(schema.mediaItem.title, 'Discovered child'),
+  })
+  expect(child).toMatchObject({ inLibrary: false })
+  if (!child) throw new Error('Expected a retained child track')
+  const responses = await directSpotifyResponses(first.mediaItemId)
+  expect(responses).toHaveLength(1)
+  const [response] = responses
+  expect(response).toMatchObject({
+    response: {
+      status: 200,
+      body: { state: 'captured', text: JSON.stringify(album) },
+    },
+  })
   expect(
-    await fixture.query.mediaItem.findFirst({
-      where: eq(schema.mediaItem.title, 'Discovered child'),
+    await fixture.query.catalogObservation.findFirst({
+      where: and(
+        eq(schema.catalogObservation.mediaItemId, child.id),
+        eq(schema.catalogObservation.subjectId, first.mediaItemId),
+      ),
     }),
-  ).toMatchObject({ inLibrary: false })
+  ).toMatchObject({ jobId: null, snapshotId: response?.id, position: 1 })
   request.mockClear()
-  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual(added)
+  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual(first)
+  expect(await readParent()).toMatchObject({ inLibrary: false })
+  expect(
+    await openSpotifyAlbumReference({ ...reference, add: true }, ownerId),
+  ).toEqual(first)
+  expect(await readParent()).toMatchObject({ inLibrary: true })
   expect(request).not.toHaveBeenCalled()
+  expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
   expect(
     await fixture.$count(
       schema.catalogAddition,
@@ -551,67 +601,124 @@ it('preserves ambiguous album identities and duplicate response positions', asyn
   }
 })
 
-it('keeps a failed exact parent accessible and retries that release by ID', async () => {
+it('retains exact-parent failures in Sources and retries that release by ID', async () => {
   await fixture.delete(schema.providerRequestState)
   const trackId = 'track-with-withdrawn-parent'
   const spotifyAlbumId = 'withdrawnparent'.padEnd(22, '0')
   const reference = { trackId, spotifyAlbumId }
-  await fixture.insert(schema.mediaItem).values({
-    id: trackId,
-    slug: trackId,
-    title: 'Recorded track with withdrawn parent',
-    mediaType: 'track',
-  })
-  await fixture.insert(schema.libraryTrack).values({
-    mediaItemId: trackId,
+  const parentPath = `/v1/albums/${spotifyAlbumId}`
+  const parentId = await seedParentAlbum(
+    'withdrawn-outside-release',
+    spotifyAlbumId,
+    false,
+  )
+  await seedParentTrack(trackId, {
     spotifyAlbumId,
     albumName: 'Withdrawn album',
   })
+  const jobsBefore = await fixture.$count(schema.scrapeJob)
+  const notFound = { error: { status: 404, message: 'Not found' } }
   request.mockClear()
   request.mockImplementation(async (input) => {
     const url = new URL(String(input))
     if (url.hostname === 'accounts.spotify.com')
       return Response.json(spotifyTokenFixture)
-    if (url.pathname === `/v1/albums/${spotifyAlbumId}`)
-      return Response.json({ error: 'Not found' }, { status: 404 })
+    if (url.pathname === parentPath)
+      return Response.json(notFound, { status: 404 })
     throw new Error('Unexpected offline provider request')
   })
-  const opened = await openSpotifyAlbumReference(reference, ownerId)
-  if (!opened.jobId) throw new Error('Expected an exact-parent job')
-  await processQueuedJobs()
-  const sources = await getMediaSources(opened.mediaItemId)
+  await expect(
+    openSpotifyAlbumReference(reference, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  expect(spotifyApiPaths()).toEqual([parentPath])
+  const sources = await getMediaSources(parentId)
   expect(sources.providers).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         id: 'spotify',
         latestSnapshot: null,
-        latestAttempt: {
-          jobId: opened.jobId,
-          status: 'failed',
-          createdAt: expect.any(String),
-          finishedAt: expect.any(String),
-        },
+      }),
+    ]),
+  )
+  expect(await directSpotifyResponses(parentId)).toMatchObject([
+    {
+      request: { url: `https://api.spotify.com${parentPath}` },
+      response: {
+        status: 404,
+        body: { state: 'captured', text: JSON.stringify(notFound) },
+      },
+    },
+  ])
+
+  await fixture.delete(schema.providerRequestState)
+  request.mockClear()
+  const otherId = 'wrongalbumresponse'.padEnd(22, '0')
+  request.mockImplementation(
+    albumRequest(spotifyAlbumId, 'Wrong release', otherId),
+  )
+  await expect(
+    openSpotifyAlbumReference(reference, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 502 } })
+  expect(spotifyApiPaths()).toEqual([parentPath])
+  expect(await getMediaSources(parentId)).toMatchObject({
+    providers: [{ id: 'spotify', latestSnapshot: null }],
+  })
+  expect(await directSpotifyResponses(parentId)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        response: expect.objectContaining({
+          status: 200,
+          body: expect.objectContaining({
+            text: expect.stringContaining(otherId),
+          }),
+        }),
       }),
     ]),
   )
   expect(
-    (await listJobProviderResponses(opened.jobId, { page: 1, size: 1 }))
-      .totalCount,
-  ).toBe(1)
+    await fixture.query.mediaItem.findFirst({
+      where: eq(schema.mediaItem.title, 'Wrong release'),
+    }),
+  ).toBeUndefined()
+
+  await fixture.delete(schema.providerRequestState)
+  request.mockClear()
+  request.mockImplementation(async (input) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'accounts.spotify.com')
+      return Response.json(spotifyTokenFixture)
+    if (url.pathname === parentPath)
+      return Response.json(
+        { error: { status: 429, message: 'Rate limited' } },
+        {
+          status: 429,
+          headers: { 'Retry-After': '60' },
+        },
+      )
+    throw new Error('Unexpected offline provider request')
+  })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await expect(
+      openSpotifyAlbumReference(reference, ownerId),
+    ).rejects.toMatchObject({ response: { statusCode: 429 } })
+  }
+  expect(spotifyApiPaths()).toEqual([parentPath])
+
   await fixture.delete(schema.providerRequestState)
   request.mockClear()
   request.mockImplementation(albumRequest(spotifyAlbumId, 'Returned release'))
   const retry = await openSpotifyAlbumReference(reference, ownerId)
-  expect(retry.mediaItemId).toBe(opened.mediaItemId)
-  expect(retry.jobId).toBeTruthy()
-  expect(retry.jobId).not.toBe(opened.jobId)
-  await processQueuedJobs()
+  expect(retry).toEqual({ mediaItemId: parentId })
+  expect(spotifyApiPaths()).toEqual([parentPath])
   expect(
-    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
-  ).toEqual(['/api/token', `/v1/albums/${spotifyAlbumId}`])
-  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual({
-    mediaItemId: opened.mediaItemId,
-  })
+    (await directSpotifyResponses(parentId))
+      .map(({ response }) => response.status)
+      .sort(),
+  ).toEqual([200, 200, 404, 429])
+  request.mockClear()
+  expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual(retry)
+  expect(request).not.toHaveBeenCalled()
+  expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
 }, 20_000)
 
 async function seedParentTrack(
@@ -642,14 +749,18 @@ async function seedParentAlbum(
   return id
 }
 
-function albumRequest(spotifyAlbumId: string, name: string): typeof fetch {
+function albumRequest(
+  spotifyAlbumId: string,
+  name: string,
+  responseId = spotifyAlbumId,
+): typeof fetch {
   return async (input) => {
     const url = new URL(String(input))
     if (url.hostname === 'accounts.spotify.com')
       return Response.json(spotifyTokenFixture)
     if (url.pathname === `/v1/albums/${spotifyAlbumId}`)
       return Response.json({
-        id: spotifyAlbumId,
+        id: responseId,
         name,
         artists: credits,
         total_tracks: 0,
@@ -706,10 +817,9 @@ it('hydrates a linked outside release using its stored identity without rereadin
   request.mockImplementation(
     albumRequest(spotifyAlbumId, 'Hydrated outside release'),
   )
+  const jobsBefore = await fixture.$count(schema.scrapeJob)
   const opened = await openSpotifyAlbumReference({ trackId }, ownerId)
-  expect(opened.mediaItemId).toBe(linked)
-  if (!opened.jobId) throw new Error('Expected an exact-album job')
-  await processQueuedJobs()
+  expect(opened).toEqual({ mediaItemId: linked })
   expect(
     request.mock.calls.map(([input]) => new URL(String(input)).pathname),
   ).toEqual(['/api/token', `/v1/albums/${spotifyAlbumId}`])
@@ -723,6 +833,7 @@ it('hydrates a linked outside release using its stored identity without rereadin
     mediaItemId: linked,
   })
   expect(request).not.toHaveBeenCalled()
+  expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
 }, 20_000)
 
 async function seedParentEvidence(
@@ -761,7 +872,7 @@ async function seedParentEvidence(
     status: 200,
     phase: 'task',
     method: 'GET',
-    requestUrl: 'https://api.spotify.com/v1/search?type=track',
+    requestUrl: 'https://api.spotify.com/v1/search',
     bodyState: 'captured',
     retainedBytes: Buffer.byteLength(text),
     body: { state: 'captured', text, relayed: false },
@@ -792,6 +903,67 @@ it('uses retained raw evidence for the selected track without reading it from Sp
   expect(request).not.toHaveBeenCalled()
 })
 
+it('opens the album page retained before an older enrichment failed without fetching again', async () => {
+  const releaseId = 'retainedalbumpage'.padEnd(22, '0')
+  const albumId = await seedParentAlbum('retained-album-page', releaseId, false)
+  const trackId = await seedParentTrack('retained-album-track', {
+    spotifyAlbumId: releaseId,
+  })
+  const jobId = 'retained-partial-job'
+  const jobItemId = 'retained-partial-item'
+  await fixture.insert(schema.scrapeJob).values({
+    id: jobId,
+    provider: 'spotify',
+    status: 'failed',
+    requestedByUserId: ownerId,
+    scope: { mediaType: 'album', mediaItemIds: [albumId], limit: 1 },
+    options: {},
+  })
+  await fixture.insert(schema.scrapeJobItem).values({
+    id: jobItemId,
+    jobId,
+    provider: 'spotify',
+    mediaItemId: albumId,
+    status: 'failed',
+    attemptCount: 1,
+  })
+  await saveProviderResponseCapture({
+    jobId,
+    jobItemId,
+    attempt: 1,
+    provider: 'spotify',
+    capture: {
+      phase: 'media',
+      ordinal: 1,
+      request: {
+        method: 'GET',
+        url: `https://api.spotify.com/v1/albums/${releaseId}`,
+      },
+      response: {
+        status: 200,
+        receivedAt: null,
+        contentType: 'application/json',
+        body: {
+          state: 'captured',
+          text: JSON.stringify({
+            id: releaseId,
+            name: 'Retained release',
+            artists: credits,
+            total_tracks: 60,
+          }),
+        },
+      },
+    },
+  })
+  const jobsBefore = await fixture.$count(schema.scrapeJob)
+  request.mockClear()
+  expect(await openSpotifyAlbumReference({ trackId }, ownerId)).toEqual({
+    mediaItemId: albumId,
+  })
+  expect(request).not.toHaveBeenCalled()
+  expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
+})
+
 it('reports a legacy track failure, then reads and caches one exact track and album without promoting either', async () => {
   await fixture.delete(schema.providerRequestState)
   const spotifyTrackId = 'lookuptrackbyid'.padEnd(22, '0')
@@ -804,6 +976,7 @@ it('reports a legacy track failure, then reads and caches one exact track and al
   const trackPath = `/v1/tracks/${spotifyTrackId}`
   const albumPath = `/v1/albums/${spotifyAlbumId}`
   const releaseTitle = 'Exact release title'
+  const jobsBefore = await fixture.$count(schema.scrapeJob)
   let available = false
   const readAlbum = albumRequest(spotifyAlbumId, releaseTitle)
   request.mockClear()
@@ -819,26 +992,16 @@ it('reports a legacy track failure, then reads and caches one exact track and al
   })
   await expect(
     openSpotifyAlbumReference(reference, ownerId),
-  ).rejects.toMatchObject({ response: { statusCode: 502 } })
+  ).rejects.toMatchObject({ response: { statusCode: 404 } })
   expect(await loadTracks([trackId])).toMatchObject([{ spotifyAlbumId: null }])
+  expect(await directSpotifyResponses(trackId)).toMatchObject([
+    { response: { status: 404, body: { state: 'captured' } } },
+  ])
   await fixture.delete(schema.providerRequestState)
   available = true
   const opened = await openSpotifyAlbumReference(reference, ownerId)
-  if (!opened.jobId) throw new Error('Expected an exact-album job')
-  await processQueuedJobById(opened.jobId, 'spotify', {
-    canContinue: async () => true,
-    recordOutcome: async () => {},
-  })
-  expect(
-    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
-  ).toEqual([
-    '/api/token',
-    trackPath,
-    '/api/token',
-    trackPath,
-    '/api/token',
-    albumPath,
-  ])
+  expect(opened).toEqual({ mediaItemId: expect.any(String) })
+  expect(spotifyApiPaths()).toEqual([trackPath, trackPath, albumPath])
   expect(await loadTracks([trackId])).toMatchObject([{ spotifyAlbumId }])
   expect(
     await fixture.query.mediaItem.findFirst({
@@ -854,27 +1017,19 @@ it('reports a legacy track failure, then reads and caches one exact track and al
       eq(schema.catalogAddition.mediaItemId, opened.mediaItemId),
     ),
   ).toBe(0)
-  const jobs = await fixture.query.scrapeJob.findMany({
-    where: sql`${schema.scrapeJob.options}->>'task' = ${SPOTIFY_TRACK_ALBUM_LOOKUP_TASK} and ${schema.scrapeJob.options}->>'trackId' = ${trackId}`,
-  })
-  expect(jobs.map(({ status }) => status).sort()).toEqual([
-    'failed',
-    'succeeded',
+  const responses = await directSpotifyResponses(trackId)
+  expect(responses.map(({ response }) => response.status).sort()).toEqual([
+    200, 404,
   ])
-  for (const { id } of jobs) {
-    expect(
-      await listJobProviderResponses(id, { page: 1, size: 1 }),
-    ).toMatchObject({ totalCount: 1 })
-  }
-  const success = jobs.find(({ status }) => status === 'succeeded')
-  if (!success) throw new Error('Expected a successful legacy lookup')
+  const success = responses.find(({ response }) => response.status === 200)
+  if (!success) throw new Error('Expected a successful legacy lookup response')
   expect(
     await fixture.query.catalogObservation.findFirst({
-      where: eq(schema.catalogObservation.jobId, success.id),
+      where: eq(schema.catalogObservation.snapshotId, success.id),
     }),
   ).toMatchObject({
     mediaItemId: opened.mediaItemId,
-    responseId: expect.any(String),
+    jobId: null,
     subjectId: trackId,
   })
   request.mockClear()
@@ -888,6 +1043,7 @@ it('reports a legacy track failure, then reads and caches one exact track and al
     await openSpotifyAlbumReference({ trackId: anotherTrack }, ownerId),
   ).toEqual({ mediaItemId: opened.mediaItemId })
   expect(request).not.toHaveBeenCalled()
+  expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
 }, 25_000)
 
 it('verifies the expected player release against the legacy Spotify track before opening', async () => {
@@ -904,6 +1060,7 @@ it('verifies the expected player release against the legacy Spotify track before
   )
   await seedParentAlbum('legacy-player-stale-album', staleRelease)
   const trackPath = `/v1/tracks/${spotifyTrackId}`
+  const jobsBefore = await fixture.$count(schema.scrapeJob)
   request.mockClear()
   request.mockImplementation(async (input) => {
     const url = new URL(String(input))
@@ -924,6 +1081,17 @@ it('verifies the expected player release against the legacy Spotify track before
   expect(
     request.mock.calls.map(([input]) => new URL(String(input)).pathname),
   ).toEqual(['/api/token', trackPath])
+  expect(await loadTracks([trackId])).toMatchObject([
+    { spotifyAlbumId: returnedRelease },
+  ])
+  expect(await directSpotifyResponses(trackId)).toMatchObject([
+    {
+      response: {
+        status: 200,
+        body: { text: expect.stringContaining(returnedRelease) },
+      },
+    },
+  ])
   expect(
     await fixture.$count(
       schema.catalogObservation,
@@ -942,6 +1110,7 @@ it('verifies the expected player release against the legacy Spotify track before
     ),
   ).toEqual({ mediaItemId: actualAlbum })
   expect(request).not.toHaveBeenCalled()
+  expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
 }, 20_000)
 
 it('refuses missing identifiers, conflicting retained evidence and duplicate album mappings', async () => {

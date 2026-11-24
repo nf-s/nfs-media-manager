@@ -307,7 +307,9 @@ export async function applyProviderResultInTransaction(
   // An album match can be rejected after its evidence was collected.
   const isRejectedMatch =
     input.mediaType === 'album' &&
-    (input.source === 'scrape-job' || input.source === 'archived-replay')
+    (input.source === 'scrape-job' ||
+      input.source === 'archived-replay' ||
+      input.source === 'album-open')
       ? createAlbumMatchRejectionPredicate(
           input.provider,
           await readAlbumMatchRejections(database, input.mediaItemId),

@@ -31,7 +31,7 @@ spotifyAlbumReference.openapi(
     },
     responses: {
       200: {
-        description: 'The saved parent album and any lookup job',
+        description: 'The resolved parent album',
         content: {
           'application/json': {
             schema: createResponseSchema(SpotifyAlbumReferenceResultSchema),

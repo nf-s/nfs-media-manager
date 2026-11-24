@@ -17,6 +17,7 @@ import {
   type MediaSourceAttempt,
   type SourceSnapshotSummary,
 } from '@repo/schemas/media'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import {
   ProviderSummarySchema,
   type ProviderSummary,
@@ -57,6 +58,7 @@ import { providerLocalWorkerQuery } from './provider-local-worker'
 import { useConfig } from './providers'
 
 type SourceScope = { kind: 'album' | 'film' | 'artist'; id: string }
+type SnapshotScope = SourceScope | { kind: 'track'; id: string }
 export type ProviderSourceRow = {
   id: string
   label: string
@@ -92,7 +94,7 @@ function nextPage(last: { page: number; pageCount: number }) {
   return last.page < last.pageCount ? last.page + 1 : undefined
 }
 
-function scopeParams(scope: SourceScope): Record<string, string> {
+function scopeParams(scope: SnapshotScope): Record<string, string> {
   return scope.kind === 'artist'
     ? { artistId: scope.id }
     : { mediaItemId: scope.id }
@@ -156,7 +158,7 @@ export function providerHref(id: string) {
   return `/providers/${encodeURIComponent(id)}`
 }
 
-function sourcePath(scope: SourceScope, provider: string) {
+function sourcePath(scope: SnapshotScope, provider: string) {
   const resource = scope.kind === 'artist' ? 'artists' : 'media'
   return `/api/v1/${resource}/${encodeURIComponent(scope.id)}/sources/${encodeURIComponent(provider)}`
 }
@@ -187,7 +189,7 @@ function SnapshotDetails({
   provider,
   id,
 }: {
-  scope: SourceScope
+  scope: SnapshotScope
   provider: string
   id: string
 }) {
@@ -231,12 +233,12 @@ type HistoryEntry =
   | { kind: 'job'; at: string; job: Job }
 
 /** Snapshots and jobs for one provider in one newest-first list. */
-function SourceHistory({
+export function SourceHistory({
   scope,
   row,
 }: {
-  scope: SourceScope
-  row: ProviderSourceRow
+  scope: SnapshotScope
+  row: Pick<ProviderSourceRow, 'id' | 'label'>
 }) {
   const { apiBaseUrl } = useConfig()
   const view = useDetailView()
@@ -264,6 +266,7 @@ function SourceHistory({
   const jobs = useInfiniteQuery({
     queryKey: ['jobs', 'source-history', scope.kind, scope.id, row.id],
     initialPageParam: 1,
+    enabled: scope.kind !== 'track',
     getNextPageParam: nextPage,
     queryFn: ({ pageParam, signal }): Promise<JobPage> =>
       fetchApiData(
@@ -330,7 +333,10 @@ function SourceHistory({
       key: `snapshot:${snapshot.id}`,
       when: formatDateTime(snapshot.createdAt),
       status: <Status state="done">Saved</Status>,
-      text: `Snapshot${snapshot.source ? ` · ${snapshot.source}` : ''}`,
+      text:
+        snapshot.source === DIRECT_PROVIDER_RESPONSE_SOURCE
+          ? 'Direct provider response'
+          : `Snapshot${snapshot.source ? ` · ${snapshot.source}` : ''}`,
       link: (
         <span className="ds-actions">
           <Button
@@ -356,7 +362,9 @@ function SourceHistory({
       ),
     }
   })
-  const loading = (snapshots.isPending || jobs.isPending) && !items.length
+  const loading =
+    (snapshots.isPending || (scope.kind !== 'track' && jobs.isPending)) &&
+    !items.length
   const failed =
     (snapshots.isError && !snapshots.data) || (jobs.isError && !jobs.data)
   const more = snapshots.hasNextPage || jobs.hasNextPage

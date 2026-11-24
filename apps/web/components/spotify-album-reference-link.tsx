@@ -1,31 +1,89 @@
 'use client'
 
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { MouseEvent, ReactNode } from 'react'
 import { SpotifyAlbumReferenceResultSchema } from '@repo/schemas/spotify-album-reference'
+import { State } from '@repo/ui/components/ds/feedback'
+import { Button } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
+import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { CreatorDetailState } from './creator-detail-state'
 import { useDetailInspector } from './detail-inspector-context'
-import { DetailLink } from './detail-link'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 
-export function resolveSpotifyAlbum(
-  apiBaseUrl: string,
-  trackId: string,
-  spotifyAlbumId?: string | null,
+export function useSpotifyAlbumReference(
+  trackId: string | null,
+  spotifyAlbumId: string | null = null,
 ) {
-  return fetchApiData(
-    apiBaseUrl,
-    '/api/v1/catalog/spotify-album-reference',
-    SpotifyAlbumReferenceResultSchema,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        trackId,
-        spotifyAlbumId: spotifyAlbumId ?? undefined,
-      }),
+  const { apiBaseUrl } = useConfig()
+  const client = useQueryClient()
+  return useQuery({
+    queryKey: ['spotify-album-reference', trackId, spotifyAlbumId],
+    queryFn: async () => {
+      const result = await fetchApiData(
+        apiBaseUrl,
+        '/api/v1/catalog/spotify-album-reference',
+        SpotifyAlbumReferenceResultSchema,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            trackId,
+            spotifyAlbumId: spotifyAlbumId ?? undefined,
+          }),
+        },
+      ).finally(() => {
+        void client.invalidateQueries({ queryKey: ['history', trackId] })
+      })
+      if (!spotifyAlbumId)
+        void client.invalidateQueries({
+          queryKey: ['track', trackId],
+          exact: true,
+        })
+      void client.invalidateQueries({
+        queryKey: ['album', result.mediaItemId],
+        exact: true,
+      })
+      void client.invalidateQueries({
+        queryKey: ['history', result.mediaItemId],
+      })
+      void client.invalidateQueries({
+        queryKey: ['catalog-discoveries', 'media', result.mediaItemId],
+      })
+      return result
     },
+    enabled: Boolean(trackId),
+    retry: false,
+    gcTime: 0,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  })
+}
+
+export function SpotifyAlbumReferenceState({
+  album,
+}: {
+  album: ReturnType<typeof useSpotifyAlbumReference>
+}) {
+  function retry() {
+    void album.refetch()
+  }
+  if (album.isError && !album.isFetching)
+    return (
+      <State
+        error
+        title={errorMessage(album.error, 'Could not open the Spotify release')}
+        action={<Button onClick={retry}>Retry</Button>}
+      />
+    )
+  return (
+    <CreatorDetailState
+      pending
+      pendingLabel="Opening Spotify album"
+      subject="album from Spotify"
+      retry={retry}
+    />
   )
 }
 
@@ -47,20 +105,21 @@ export function SpotifyAlbumReferenceLink({
   workspaceLabel?: string
   onNavigate?: () => void
 }) {
-  const { apiBaseUrl } = useConfig()
-  const client = useQueryClient()
   const inspector = useDetailInspector()
-  const params = new URLSearchParams({ trackId })
-  if (spotifyAlbumId) params.set('spotifyAlbumId', spotifyAlbumId)
-  const href = `/albums/from-track?${params}`
-  const resolve = useMutation({
-    retry: false,
-    mutationFn: () => resolveSpotifyAlbum(apiBaseUrl, trackId, spotifyAlbumId),
-  })
+  const target: DetailTarget = {
+    kind: 'spotify-album-reference',
+    id: trackId,
+    spotifyAlbumId: spotifyAlbumId ?? undefined,
+  }
+  const savedAlbum: DetailTarget | undefined = catalogId
+    ? { kind: 'album', id: catalogId }
+    : undefined
+  const pageHref = detailPageHref(savedAlbum ?? target)
 
   function open(event: MouseEvent<HTMLElement>) {
     if (
       !inspector ||
+      event.defaultPrevented ||
       event.button !== 0 ||
       event.metaKey ||
       event.altKey ||
@@ -70,54 +129,18 @@ export function SpotifyAlbumReferenceLink({
       return
     event.preventDefault()
     event.stopPropagation()
-    if (resolve.isPending) return
-    const trigger = event.currentTarget
-    resolve.mutate(undefined, {
-      onSuccess: ({ mediaItemId, jobId }) => {
-        if (!spotifyAlbumId)
-          void client.invalidateQueries({
-            queryKey: ['track', trackId],
-            exact: true,
-          })
-        if (jobId) {
-          void client.invalidateQueries({ queryKey: ['job-activity'] })
-          void client.invalidateQueries({ queryKey: ['history', mediaItemId] })
-        }
-        onNavigate?.()
-        inspector.open({ kind: 'album', id: mediaItemId }, trigger)
-      },
-    })
+    onNavigate?.()
+    inspector.open(target, event.currentTarget)
   }
 
   return (
-    <>
-      {catalogId ? (
-        <DetailLink
-          kind="album"
-          id={catalogId}
-          className={className}
-          workspaceLabel={workspaceLabel}
-          aria-busy={resolve.isPending}
-          onClick={open}
-        >
-          {children}
-        </DetailLink>
-      ) : (
-        <a
-          {...workspaceTabLinkProps(href, workspaceLabel)}
-          href={href}
-          className={className}
-          aria-busy={resolve.isPending}
-          onClick={open}
-        >
-          {children}
-        </a>
-      )}
-      {resolve.isError && (
-        <span role="alert" className="ds-muted">
-          {errorMessage(resolve.error, 'Could not open the Spotify release.')}
-        </span>
-      )}
-    </>
+    <a
+      {...workspaceTabLinkProps(pageHref, workspaceLabel)}
+      href={(savedAlbum && inspector?.href(savedAlbum)) || pageHref}
+      className={className}
+      onClick={open}
+    >
+      {children}
+    </a>
   )
 }

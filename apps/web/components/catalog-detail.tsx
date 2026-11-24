@@ -197,22 +197,36 @@ export function CatalogDiscoveries({
                 { label: 'Position', value: item.position },
                 {
                   label: 'Evidence',
-                  value: item.jobId ? (
-                    <DetailLink
-                      kind="job"
-                      id={item.jobId}
-                      tab="data"
-                      view={
-                        item.responseId
-                          ? { jobResponse: item.responseId }
-                          : undefined
-                      }
-                    >
-                      {item.responseId ? 'Open response' : 'Open job data'}
-                    </DetailLink>
-                  ) : (
-                    'Catalogue summary'
-                  ),
+                  value:
+                    item.directResponse && item.snapshotId ? (
+                      <DetailLink
+                        kind={item.directResponse.mediaType}
+                        id={item.directResponse.mediaItemId}
+                        tab="sources"
+                        view={{
+                          sourceProvider: item.provider,
+                          sourceMode: 'history',
+                          sourceSnapshot: item.snapshotId,
+                        }}
+                      >
+                        Open response
+                      </DetailLink>
+                    ) : item.jobId ? (
+                      <DetailLink
+                        kind="job"
+                        id={item.jobId}
+                        tab="data"
+                        view={
+                          item.responseId
+                            ? { jobResponse: item.responseId }
+                            : undefined
+                        }
+                      >
+                        {item.responseId ? 'Open response' : 'Open job data'}
+                      </DetailLink>
+                    ) : (
+                      'Catalogue summary'
+                    ),
                 },
               ]}
             />

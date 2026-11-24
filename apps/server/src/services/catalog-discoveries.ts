@@ -5,6 +5,7 @@ import type {
   CatalogNativeKind,
   CatalogObservationQuerySchema,
 } from '@repo/schemas/catalog'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { catalogNativeAddition } from '@/schemas/db'
@@ -25,6 +26,7 @@ import {
   mediaItem,
   playlist,
   providerReference,
+  providerSnapshot,
   subscriptionItem,
   subscriptionSource,
 } from '@/schemas/db'
@@ -706,8 +708,21 @@ export async function listCatalogObservations(
   }
   const [items, totalCount] = await Promise.all([
     db
-      .select()
+      .select({
+        observation: catalogObservation,
+        snapshotMediaId: providerSnapshot.mediaItemId,
+        snapshotMediaType: mediaItem.mediaType,
+      })
       .from(catalogObservation)
+      .leftJoin(
+        providerSnapshot,
+        and(
+          eq(providerSnapshot.id, catalogObservation.snapshotId),
+          eq(providerSnapshot.provider, catalogObservation.provider),
+          eq(providerSnapshot.source, DIRECT_PROVIDER_RESPONSE_SOURCE),
+        ),
+      )
+      .leftJoin(mediaItem, eq(mediaItem.id, providerSnapshot.mediaItemId))
       .where(where)
       .orderBy(desc(catalogObservation.observedAt), desc(catalogObservation.id))
       .limit(size)
@@ -715,17 +730,31 @@ export async function listCatalogObservations(
     db.$count(catalogObservation, where),
   ])
   return {
-    items: items.map(({ observedAt, details, ...item }) => ({
-      ...item,
-      observedAt: observedAt.toISOString(),
-      details: Object.entries(details ?? {}).flatMap(([label, value]) =>
-        typeof value === 'string' ||
-        typeof value === 'number' ||
-        typeof value === 'boolean'
-          ? [{ label, value: String(value) }]
-          : [],
-      ),
-    })),
+    items: items.map(
+      ({
+        observation: { observedAt, details, ...item },
+        snapshotMediaId,
+        snapshotMediaType,
+      }) => ({
+        ...item,
+        ...(snapshotMediaId && snapshotMediaType
+          ? {
+              directResponse: {
+                mediaItemId: snapshotMediaId,
+                mediaType: snapshotMediaType,
+              },
+            }
+          : {}),
+        observedAt: observedAt.toISOString(),
+        details: Object.entries(details ?? {}).flatMap(([label, value]) =>
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'boolean'
+            ? [{ label, value: String(value) }]
+            : [],
+        ),
+      }),
+    ),
     page,
     size,
     totalCount,

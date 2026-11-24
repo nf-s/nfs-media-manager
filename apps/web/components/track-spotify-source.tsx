@@ -16,6 +16,7 @@ import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { invalidateScrobbleLinks } from './lastfm-sync'
+import { SourceHistory } from './provider-sources'
 import {
   SpotifyTrackSearchCandidates,
   SpotifyTrackSearchJobStatus,
@@ -199,6 +200,14 @@ export function TrackSpotifySource({
         ) : (
           <SourceBlock title="Spotify match">
             {matchNote(item, job)}
+          </SourceBlock>
+        )}
+        {open && (
+          <SourceBlock title="Response history">
+            <SourceHistory
+              scope={{ kind: 'track', id: item.id }}
+              row={{ id: 'spotify', label: 'Spotify' }}
+            />
           </SourceBlock>
         )}
       </SourceRow>

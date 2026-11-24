@@ -7,6 +7,8 @@ import {
 } from './provider-response-body'
 export * from './provider-response-body'
 
+export const DIRECT_PROVIDER_RESPONSE_SOURCE = 'direct-response'
+
 const identifier = z.string().min(1).max(200)
 const ordinal = z.number().int().positive().max(2147483647)
 const method = z.string().regex(/^[A-Z]{1,16}$/)

@@ -39,6 +39,12 @@ export const CatalogObservationSchema = z.object({
   responseId: z.string().nullable(),
   details: z.array(z.object({ label: z.string(), value: z.string() })),
   snapshotId: z.string().nullable(),
+  directResponse: z
+    .object({
+      mediaItemId: z.string(),
+      mediaType: z.enum(['album', 'film', 'track']),
+    })
+    .optional(),
   importId: z.string().nullable(),
   observedAt: z.string(),
 })

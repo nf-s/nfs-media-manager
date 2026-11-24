@@ -25,6 +25,10 @@ import TrackDetail from './track-detail'
 import PlaylistDetail from './playlist-detail'
 import { CollectionEntries } from './collection-detail'
 import { SubscriptionItemDetails } from './subscription-item-details'
+import {
+  SpotifyAlbumReferenceState,
+  useSpotifyAlbumReference,
+} from './spotify-album-reference-link'
 import { ArtistDetail } from './artist-detail'
 import { PersonDetail } from './person-detail'
 import { ChannelDetail } from './channel-detail'
@@ -60,6 +64,7 @@ function followsLink(event: MouseEvent<HTMLAnchorElement>) {
 
 const labels = {
   album: 'Album details',
+  'spotify-album-reference': 'Album details',
   film: 'Film details',
   track: 'Track details',
   playlist: 'Playlist details',
@@ -367,6 +372,8 @@ function InspectorContent({
         <ChannelDetail id={target.id} library="mixes" />
       ) : target.kind === 'track' ? (
         <TrackDetail id={target.id} {...options.track} onMerged={onMerged} />
+      ) : target.kind === 'spotify-album-reference' ? (
+        <SpotifyAlbumReferenceDetail target={target} />
       ) : target.kind === 'subscription' ? (
         <SubscriptionItemDetails id={target.id} {...options.subscription} />
       ) : target.kind === 'mix' ? (
@@ -384,6 +391,16 @@ function InspectorContent({
       )}
     </div>
   )
+}
+
+function SpotifyAlbumReferenceDetail({ target }: { target: DetailEntry }) {
+  const nav = useDetailInspector()
+  const album = useSpotifyAlbumReference(target.id, target.spotifyAlbumId)
+  const id = album.data?.mediaItemId
+  useEffect(() => {
+    if (id) nav?.replace({ kind: 'album', id }, target)
+  }, [id, nav, target])
+  return <SpotifyAlbumReferenceState album={album} />
 }
 
 export function PlaylistInspectorContent({

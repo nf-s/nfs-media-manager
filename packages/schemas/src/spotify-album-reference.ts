@@ -16,5 +16,4 @@ export type SpotifyAlbumReferenceInput = z.infer<
 
 export const SpotifyAlbumReferenceResultSchema = z.object({
   mediaItemId: z.string(),
-  jobId: z.string().optional(),
 })

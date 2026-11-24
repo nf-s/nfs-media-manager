@@ -32,6 +32,10 @@ export const db = new Proxy(target, {
   },
 })
 
+// Each invocation already has a private pool; competing clicks cannot take
+// the connections its provider gate and evidence writes need.
+export const providerLookupDb = db
+
 export async function withCloudDatabase<T>(
   execute: () => Promise<T>,
 ): Promise<T> {

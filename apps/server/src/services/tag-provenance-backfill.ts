@@ -1,4 +1,5 @@
-import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
+import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import { checksumJson } from '@/lib/media-utils'
 import {
   BackfillMembershipSchema,
@@ -104,6 +105,7 @@ export async function auditTagProvenance(
           and(
             inArray(providerSnapshot.mediaItemId, memberIds),
             eq(mediaItem.mediaType, scope.mediaType),
+            ne(providerSnapshot.source, DIRECT_PROVIDER_RESPONSE_SOURCE),
           ),
         )
         .orderBy(asc(providerSnapshot.id)),
