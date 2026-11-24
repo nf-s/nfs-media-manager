@@ -39,6 +39,15 @@ const DiscogsArtist = ArtistName.extend({
 })
 const MbArtist = ArtistName.extend({ id: AlbumMbidSchema })
 const SpotifyArtist = ArtistName.extend({ id: SpotifyIdSchema })
+const SpotifyVerificationTrack = z.object({
+  id: SpotifyIdSchema,
+  name: Name,
+  artists: z.array(SpotifyArtist).max(50),
+  album: SpotifyAlbumSchema.optional().catch(undefined),
+  duration_ms: z.number().int().nonnegative().optional().catch(undefined),
+  disc_number: z.number().int().positive().optional().catch(undefined),
+  track_number: z.number().int().positive().optional().catch(undefined),
+})
 const LastFmArtist = ArtistName.extend({
   mbid: AlbumMbidSchema.optional().catch(undefined),
   url: z.string().optional().catch(undefined),
@@ -74,6 +83,7 @@ export type MusicResponseSource = {
   requestUrl: string | null
   status: number | null
   phase: 'artist' | 'media' | 'task'
+  artistVerification?: boolean
 }
 
 function relatedAlbum(
@@ -91,6 +101,12 @@ function relatedAlbum(
     title,
     relationship,
     ordinal: 1,
+    url:
+      provider === 'musicbrainz'
+        ? `https://musicbrainz.org/${referenceType}/${externalId}`
+        : provider === 'discogs'
+          ? `https://www.discogs.com/${referenceType}/${externalId}`
+          : undefined,
   }
 }
 
@@ -344,6 +360,7 @@ function mbRelease(
     ordinal,
     relationship,
     date: item.date ?? item['first-release-date'],
+    url: `https://musicbrainz.org/${referenceType}/${item.id}`,
     credits: mbCredits(item['artist-credit']),
     trackCount: tracks.length || undefined,
     details: { disambiguation: item.disambiguation ?? null },
@@ -466,6 +483,7 @@ function discogsEdition(
     ordinal,
     relationship: 'edition_detail',
     date: item.released ?? item.year,
+    url: `https://www.discogs.com/${type}/${item.id}`,
     credits: [
       ...discogsCredits(item.artists),
       ...discogsCredits(item.extraartists),
@@ -592,6 +610,11 @@ export function spotifyReleaseObservation(
     date: item.release_date,
     artworkUrl: item.images[0]?.url,
     trackCount: item.total_tracks,
+    details: item.external_ids?.upc
+      ? { upc: item.external_ids.upc }
+      : item.external_ids?.ean
+        ? { ean: item.external_ids.ean }
+        : undefined,
     credits: item.artists.map(({ id, name }) => ({
       name,
       externalId: SpotifyIdSchema.safeParse(id).data,
@@ -612,6 +635,46 @@ export function spotifyReleaseObservation(
       details: { disc: track.disc_number, nativePosition: track.track_number },
     })),
   }
+}
+
+function spotifyVerificationTrack(
+  item: z.infer<typeof SpotifyVerificationTrack>,
+  ordinal: number,
+  relationship: string,
+): MusicDiscovery[] {
+  const track: MusicDiscovery = {
+    kind: 'track',
+    provider: 'spotify',
+    referenceType: 'track',
+    externalId: item.id,
+    title: item.name,
+    ordinal,
+    relationship,
+    url: `https://open.spotify.com/track/${item.id}`,
+    durationSec:
+      item.duration_ms === undefined
+        ? undefined
+        : Math.round(item.duration_ms / 1000),
+    credits: item.artists.map(({ id, name }) => ({ name, externalId: id })),
+  }
+  if (!item.album) return [track]
+  return [
+    track,
+    {
+      ...spotifyReleaseObservation(item.album, ordinal, 'verification_release'),
+      children: [
+        {
+          ...track,
+          relationship: 'recording_on_release',
+          ordinal: item.track_number ?? ordinal,
+          details: {
+            disc: item.disc_number ?? null,
+            nativePosition: item.track_number ?? null,
+          },
+        },
+      ],
+    },
+  ]
 }
 
 function artistNode(
@@ -686,6 +749,7 @@ function readDiscogs(url: URL, row: Record<string, unknown>): MusicDiscovery[] {
         date: item.year,
         relationship: 'candidate',
         ordinal,
+        url: `https://www.discogs.com/${item.type}/${item.id}`,
         artworkUrl: webUrl(item.thumb, /(?:^|\.)discogs\.com$/)?.href,
         credits: rest.length && prefix ? [{ name: prefix }] : [],
         children: discogsLinks(item),
@@ -735,7 +799,23 @@ function lastfmArtistNode(
   )
 }
 function readLastfm(url: URL, row: Record<string, unknown>): MusicDiscovery[] {
-  switch (url.searchParams.get('method')?.toLowerCase()) {
+  const results = object(row.results)
+  const method =
+    url.searchParams.get('method')?.toLowerCase() ??
+    (row.album
+      ? 'album.getinfo'
+      : row.artist
+        ? 'artist.getinfo'
+        : row.toptracks
+          ? 'artist.gettoptracks'
+          : row.track
+            ? 'track.getinfo'
+            : results?.albummatches
+              ? 'album.search'
+              : results?.artistmatches
+                ? 'artist.search'
+                : undefined)
+  switch (method) {
     case 'album.getinfo':
       return objects(row.album, LastFmAlbum).map(({ item, ordinal }) =>
         lastfmAlbum(item, ordinal, 'release_detail'),
@@ -777,11 +857,18 @@ function readSpotify(
   url: URL,
   row: Record<string, unknown>,
   phase: MusicResponseSource['phase'],
+  artistVerification: boolean | undefined,
 ): MusicDiscovery[] {
-  if (
-    url.pathname === '/v1/search' &&
-    url.searchParams.get('type') === 'artist'
-  )
+  const searchType =
+    url.searchParams.get('type') ??
+    (row.artists
+      ? 'artist'
+      : row.albums
+        ? 'album'
+        : row.tracks
+          ? 'track'
+          : undefined)
+  if (url.pathname === '/v1/search' && searchType === 'artist')
     return objects(object(row.artists)?.items, SpotifyArtist).map(
       ({ item, ordinal }) =>
         artistNode('spotify', item.name, item.id, ordinal, 'candidate'),
@@ -790,11 +877,23 @@ function readSpotify(
     return objects(row, SpotifyArtist).map(({ item, ordinal }) =>
       artistNode('spotify', item.name, item.id, ordinal, 'artist_profile'),
     )
+  if (phase === 'artist' || (phase === 'task' && artistVerification)) {
+    if (url.pathname === '/v1/search' && searchType === 'track') {
+      const page = object(row.tracks)
+      const offset = z.number().int().nonnegative().safeParse(page?.offset).data
+      return objects(page?.items, SpotifyVerificationTrack).flatMap(
+        ({ item, ordinal }) =>
+          spotifyVerificationTrack(item, (offset ?? 0) + ordinal, 'candidate'),
+      )
+    }
+    if (/^\/v1\/tracks\/[a-zA-Z0-9]{22}$/.test(url.pathname))
+      return objects(row, SpotifyVerificationTrack).flatMap(
+        ({ item, ordinal }) =>
+          spotifyVerificationTrack(item, ordinal, 'verification_recording'),
+      )
+  }
   if (phase === 'media') {
-    if (
-      url.pathname === '/v1/search' &&
-      url.searchParams.get('type') === 'album'
-    )
+    if (url.pathname === '/v1/search' && searchType === 'album')
       return objects(object(row.albums)?.items, SpotifyAlbumSchema).map(
         ({ item, ordinal }) =>
           spotifyReleaseObservation(item, ordinal, 'candidate'),
@@ -830,17 +929,27 @@ export function musicResponseEndpoint(source: MusicResponseSource) {
     }
     if (url.origin !== origins[provider.data] || url.username || url.password)
       return
-    if (
-      provider.data === 'lastfm' &&
-      !/^(?:album|artist|track)\./i.test(url.searchParams.get('method') ?? '')
-    )
-      return
+    if (provider.data === 'lastfm') {
+      const method = url.searchParams.get('method')
+      if (
+        !/^\/2\.0\/?$/.test(url.pathname) ||
+        (method
+          ? !/^(?:album|artist|track)\./i.test(method)
+          : source.phase === 'task')
+      )
+        return
+    }
     if (
       provider.data === 'spotify' &&
-      !/^\/v1\/(?:search$|artists\/|albums\/)/.test(url.pathname)
+      !/^\/v1\/(?:search$|artists\/|albums\/|tracks\/)/.test(url.pathname)
     )
       return
-    return { url, provider: provider.data, phase: source.phase }
+    return {
+      url,
+      provider: provider.data,
+      phase: source.phase,
+      artistVerification: source.artistVerification,
+    }
   } catch {
     return
   }
@@ -852,7 +961,7 @@ export function readMusicDiscoveries(
 ): MusicDiscovery[] {
   const row = object(payload)
   if (!row) return []
-  const { url, provider, phase } = endpoint
+  const { url, provider, phase, artistVerification } = endpoint
   switch (provider) {
     case 'musicbrainz':
       return readMusicBrainz(url, row)
@@ -861,7 +970,7 @@ export function readMusicDiscoveries(
     case 'lastfm':
       return readLastfm(url, row)
     case 'spotify':
-      return readSpotify(url, row, phase)
+      return readSpotify(url, row, phase, artistVerification)
     case 'serply':
       if (!/^\/v1\/search\/?$/.test(url.pathname)) return []
       try {

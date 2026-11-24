@@ -39,6 +39,7 @@ import {
 import ImportPreviewTable from './import-preview-table'
 import { SecondaryCell } from './secondary-table'
 import { ConfirmAction } from './confirm-action'
+import { DetailLink } from './detail-link'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import { spotifyCallbackSetup } from '@/utils/spotify-setup'
@@ -564,6 +565,22 @@ export default function AlbumImportWorkflow({
                 label: 'Album',
                 width: 280,
                 value: (item) => item.title,
+                render: (item) =>
+                  item.catalogMediaItemId ? (
+                    <SecondaryCell text={item.title}>
+                      <DetailLink
+                        kind="album"
+                        id={item.catalogMediaItemId}
+                        className="ds-cell-title"
+                      >
+                        {item.title}
+                      </DetailLink>
+                    </SecondaryCell>
+                  ) : (
+                    <SecondaryCell text={item.title}>
+                      {item.title}
+                    </SecondaryCell>
+                  ),
               },
               {
                 key: 'artists',

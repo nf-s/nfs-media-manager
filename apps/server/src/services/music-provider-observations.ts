@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { createStableId, parseOptionalDate } from '@/lib/media-utils'
 import {
@@ -7,6 +8,7 @@ import {
   type MusicDiscovery,
 } from '@/lib/music-provider-discoveries'
 import { artist, mediaItem, providerResponse } from '@/schemas/db'
+import { observeNamedArtistIdentities } from './catalog-artist-identities'
 import {
   observeCatalogMedia,
   observeCatalogOccurrence,
@@ -48,16 +50,23 @@ async function observeArtist(
   node: MusicDiscovery,
   origin: CatalogOrigin,
 ) {
-  const key = node.externalId
-    ? [node.provider, node.externalId]
-    : [
-        node.provider,
-        origin.subjectKind,
-        origin.subjectId,
-        origin.occurrenceKey,
-        origin.position,
-        node.title,
-      ]
+  if (node.externalId) {
+    const native = await observeNamedArtistIdentities(
+      tx,
+      node.provider,
+      new Map([[node.externalId, node.title]]),
+    )
+    const id = native.get(node.externalId)
+    if (id) return id
+  }
+  const key = [
+    node.provider,
+    origin.subjectKind,
+    origin.subjectId,
+    origin.occurrenceKey,
+    origin.position,
+    node.title,
+  ]
   const id = createStableId('catalog-artist', JSON.stringify(key))
   await tx
     .insert(artist)
@@ -69,17 +78,7 @@ async function observeArtist(
       catalogExternalId: node.externalId,
     })
     .onConflictDoNothing()
-  if (!node.externalId) return id
-  const [stored] = await tx
-    .select({ id: artist.id, merged: artist.mergedIntoId })
-    .from(artist)
-    .where(
-      and(
-        eq(artist.catalogProvider, node.provider),
-        eq(artist.catalogExternalId, node.externalId),
-      ),
-    )
-  return stored?.merged ?? stored?.id ?? id
+  return id
 }
 
 /** Observations are addressable through the same album, track and artist pages as members. */
@@ -182,8 +181,14 @@ export async function observeMusicDiscovery(
   return id
 }
 
-export function readRetainedMusicResponse(row: MusicResponse) {
-  const endpoint = musicResponseEndpoint(row)
+export function readRetainedMusicResponse(
+  row: MusicResponse,
+  artistId?: string | null,
+) {
+  const endpoint = musicResponseEndpoint({
+    ...row,
+    artistVerification: Boolean(artistId),
+  })
   if (!endpoint || row.body.state !== 'captured') return []
   try {
     const value: unknown = JSON.parse(row.body.text)
@@ -197,7 +202,7 @@ export async function observeMusicProviderResponse(
   tx: Transaction,
   row: MusicResponse,
   subjects: MusicResponseSubjects,
-  discoveries = readRetainedMusicResponse(row),
+  discoveries = readRetainedMusicResponse(row, subjects.artistId),
 ) {
   const { artistId, albumId } = subjects
   for (const node of discoveries)
@@ -212,4 +217,43 @@ export async function observeMusicProviderResponse(
       responseId: row.id,
       observedAt: row.receivedAt ?? undefined,
     })
+}
+
+const TrackPositions = z.array(
+  z.object({
+    trackMediaItemId: z.string(),
+    position: z.number().int().positive(),
+  }),
+)
+
+/** Select one exact edition list when there is no canonical tracklist. */
+export async function listObservedEditionTracks(
+  database: typeof db,
+  albumId: string,
+) {
+  const { rows } = await database.execute(sql`
+    with evidence as (
+      select c.id, c.provider, c.media_item_id,
+        coalesce(c.job_id, c.import_id, c.snapshot_id, c.response_id, '') as source_id,
+        coalesce(c.details->>'disc', '1') as disc, c.position, c.observed_at
+      from catalog_observation c
+      join library_track t on t.media_item_id = c.media_item_id
+      where c.subject_kind = 'album' and c.subject_id = ${albumId}
+        and c.target_kind = 'track' and c.relationship_role = 'track_on_edition'
+        and c.position > 0
+    ), positions as (
+      select distinct on (provider, source_id, disc, position) *
+      from evidence order by provider, source_id, disc, position, observed_at desc, id desc
+    ), chosen as (
+      select provider, source_id from positions
+      group by provider, source_id
+      order by count(*) desc, max(observed_at) desc, provider, source_id
+      limit 1
+    )
+    select p.media_item_id as "trackMediaItemId",
+      (row_number() over (order by length(p.disc), p.disc, p.position))::integer as position
+    from positions p join chosen using (provider, source_id)
+    order by position
+  `)
+  return TrackPositions.parse(rows)
 }

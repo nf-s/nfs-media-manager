@@ -119,6 +119,9 @@ function AlbumTrackRow({
               <DetailLink className="ds-cell-title" kind="track" id={track.id}>
                 {track.title}
               </DetailLink>
+              {track.inLibrary === false && (
+                <span className="ds-muted">Outside library</span>
+              )}
               <TrackRowPlay track={track} source={source} />
             </span>
           ) : column.key === 'artists' ? (

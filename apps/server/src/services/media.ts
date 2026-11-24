@@ -18,6 +18,7 @@ import { readAlbumRecord, readEditionCounts } from './album-editions'
 import { albumTrackPlaylistNames } from './album-playlists'
 import { loadTracks } from './tracks'
 import { loadArtistTags } from './music-tags'
+import { listObservedEditionTracks } from './music-provider-observations'
 import { observeCatalogOccurrence } from './catalog-discoveries'
 import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
 import type { JsonValue } from '@repo/media-plugin-sdk'
@@ -486,9 +487,10 @@ async function loadAlbums(
       ...(listeningScrobbles
         ? { listeningScrobbles: listeningScrobbles.get(record.id) ?? 0 }
         : {}),
-      dateAdded:
-        record.inLibrary ? addedDates.get(record.id)?.dateAdded ??
-        toIsoString(record.album.dateAdded) : null,
+      dateAdded: record.inLibrary
+        ? (addedDates.get(record.id)?.dateAdded ??
+          toIsoString(record.album.dateAdded))
+        : null,
       dateAddedSource: addedDates.get(record.id)?.dateAddedSource,
       durationSec: record.album.durationSec ?? null,
       spotifyUrl: record.album.spotifyUrl ?? null,
@@ -554,7 +556,9 @@ async function loadFilms(ids: string[]) {
         genreTags.get(record.id),
       ),
       mediaType: 'film',
-      dateAdded: record.inLibrary ? (record.film.dateAdded ?? record.createdAt).toISOString() : undefined,
+      dateAdded: record.inLibrary
+        ? (record.film.dateAdded ?? record.createdAt).toISOString()
+        : undefined,
       dateAddedSource:
         record.film.dateAddedSource ?? 'Library import (original date unknown)',
       runtimeMinutes: record.film.runtimeMinutes ?? null,
@@ -594,13 +598,17 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
   const metadata = { ...record.album.metadata, ...record.metadata }
   // Keep the independent reads in small batches. Relationship resolution
   // also starts its own reads, so run it separately from these batches.
-  const [addedDates, preferredTags, rejections] = await Promise.all([
-    albumAddedDates([id]),
-    rymTagIds([id]),
-    readAlbumMatchRejections(db, id),
-  ])
+  const [addedDates, preferredTags, rejections, trackPositions] =
+    await Promise.all([
+      albumAddedDates([id]),
+      rymTagIds([id]),
+      readAlbumMatchRejections(db, id),
+      record.album.tracks.length
+        ? record.album.tracks
+        : listObservedEditionTracks(db, id),
+    ])
   const [trackRows, artistTags, providerDetails] = await Promise.all([
-    loadTracks(record.album.tracks.map((entry) => entry.trackMediaItemId)),
+    loadTracks(trackPositions.map((entry) => entry.trackMediaItemId)),
     loadArtistTags([id]),
     getAlbumProviderDetails(id),
   ])
@@ -631,7 +639,9 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     ...common,
     playlists: withTrackPlaylists(common.playlists, trackPlaylists.get(id)),
     mediaType: 'album',
-    dateAdded: record.inLibrary ? addedDate?.dateAdded ?? toIsoString(record.album.dateAdded) : null,
+    dateAdded: record.inLibrary
+      ? (addedDate?.dateAdded ?? toIsoString(record.album.dateAdded))
+      : null,
     dateAddedSource: addedDate?.dateAddedSource,
     storedDateAdded: toIsoString(record.album.dateAdded),
     durationSec: record.album.durationSec ?? null,
@@ -641,7 +651,7 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     editionCount: albumRecord.editions.length,
     editions: albumRecord.editions,
     editionOf: albumRecord.editionOf,
-    tracks: record.album.tracks
+    tracks: trackPositions
       .flatMap((entry) => {
         const track = tracks.get(entry.trackMediaItemId)
         return track ? [{ position: entry.position, track }] : []
@@ -684,7 +694,9 @@ export async function getFilmDetail(id: string): Promise<FilmDetail | null> {
       (await filmGenreTagIds([record])).get(id),
     ),
     mediaType: 'film',
-    dateAdded: record.inLibrary ? (record.film.dateAdded ?? record.createdAt).toISOString() : undefined,
+    dateAdded: record.inLibrary
+      ? (record.film.dateAdded ?? record.createdAt).toISOString()
+      : undefined,
     dateAddedSource:
       record.film.dateAddedSource ?? 'Library import (original date unknown)',
     runtimeMinutes: record.film.runtimeMinutes ?? null,

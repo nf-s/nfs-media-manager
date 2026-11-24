@@ -204,13 +204,13 @@ export async function saveProviderResponseCapture(
   )
     await database.transaction((tx) => projectSubscriptionResponse(tx, stored))
   if (stored) {
-    const discoveries = readRetainedMusicResponse(stored)
+    const artistId =
+      input.artistId ??
+      (typeof scope.options.artistId === 'string'
+        ? scope.options.artistId
+        : undefined)
+    const discoveries = readRetainedMusicResponse(stored, artistId)
     if (discoveries.length) {
-      const artistId =
-        input.artistId ??
-        (typeof scope.options.artistId === 'string'
-          ? scope.options.artistId
-          : undefined)
       const albumId =
         'mediaItemId' in scope && typeof scope.mediaItemId === 'string'
           ? scope.mediaItemId

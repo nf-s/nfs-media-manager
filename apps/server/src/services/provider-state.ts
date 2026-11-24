@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
+import { observeCatalogOccurrence } from './catalog-discoveries'
 import {
   JsonValueSchema,
   ProviderItemAmbiguousError,
@@ -399,6 +400,22 @@ export async function applyProviderResultInTransaction(
 
     latestSnapshotId = snapshotId
   }
+  if (
+    input.mediaType === 'album' &&
+    latestSnapshotId &&
+    (input.source === 'file-import' || input.source === 'manual-add')
+  )
+    await observeCatalogOccurrence(
+      database,
+      { kind: 'album', id: input.mediaItemId },
+      {
+        provider: input.provider,
+        operation: 'import',
+        occurrenceKey: latestSnapshotId,
+        snapshotId: latestSnapshotId,
+        jobId: input.scrapeJobId ?? undefined,
+      },
+    )
 
   let mediaPatch = input.normalized.mediaPatch
   let filmPatch = input.normalized.filmPatch
@@ -588,7 +605,11 @@ export async function applyProviderResultInTransaction(
         database,
         input.mediaItemId,
         input.normalized.tracks,
-        { provider: input.provider, jobId: input.scrapeJobId ?? undefined, snapshotId: latestSnapshotId ?? undefined },
+        {
+          provider: input.provider,
+          jobId: input.scrapeJobId ?? undefined,
+          snapshotId: latestSnapshotId ?? undefined,
+        },
       )
     if (
       input.normalized.tracks.some(

@@ -4,10 +4,7 @@ import {
   albumCandidateNameKey,
 } from '@/lib/album-import-candidates'
 import type { db } from '@/lib/db'
-import {
-  SpotifyAlbumSchema,
-  type SpotifySavedPageSchema,
-} from '@/lib/spotify-api'
+import type { SpotifySavedPageSchema } from '@/lib/spotify-api'
 import { parseOptionalDate } from '@/lib/media-utils'
 import { sql } from 'drizzle-orm'
 import { spotifyReleaseObservation } from '@/lib/music-provider-discoveries'
@@ -25,32 +22,8 @@ export async function observeAlbumImportCandidate(
   origin: CatalogOrigin,
   ordinal: number,
   previewScope: string,
-  catalogMediaItemId?: string,
 ) {
   const { provider, result } = candidate
-  const spotify =
-    provider === 'spotify'
-      ? SpotifyAlbumSchema.safeParse(result.payload).data
-      : undefined
-  if (spotify) {
-    const release = spotifyReleaseObservation(spotify, ordinal, 'preview_album')
-    if (catalogMediaItemId) {
-      for (const child of release.children ?? [])
-        await observeMusicDiscovery(
-          tx,
-          child,
-          { ...origin, position: ordinal },
-          {
-            kind: 'album',
-            id: catalogMediaItemId,
-            title: release.title,
-          },
-        )
-      return catalogMediaItemId
-    }
-    return observeMusicDiscovery(tx, release, origin)
-  }
-
   const { normalized } = result
   const keys = albumCandidateKeys(candidate)
   const spotifyId = keys
@@ -94,35 +67,57 @@ export function observeSpotifySavedAlbumPage(
 ) {
   return database.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-    return observeSpotifyArtistAlbumPage(
+    const releases = page.items.map(({ album }, index) => ({
+      externalId: album.id,
+      release: spotifyReleaseObservation(
+        album,
+        page.offset + index + 1,
+        'preview_album',
+      ),
+    }))
+    const pageNumber = Math.floor(page.offset / 50) + 1
+    const ids = await observeSpotifyArtistAlbumPage(
       tx,
-      page.items.map(({ album }, index) => {
-        const release = spotifyReleaseObservation(
-          album,
-          page.offset + index + 1,
-          'preview_album',
-        )
-        return {
-          externalId: album.id,
-          title: release.title,
-          spotifyUrl: `https://open.spotify.com/album/${album.id}`,
-          artworkUrl: release.artworkUrl,
-          releaseDate: parseOptionalDate(release.date) ?? undefined,
-          trackCount: release.trackCount,
-          credits: (release.credits ?? []).flatMap(({ name, externalId }) =>
-            externalId ? [{ name, externalId }] : [],
-          ),
-          primary: false,
-          relationshipRole: release.relationship,
-          position: release.ordinal,
-        }
-      }),
+      releases.map(({ externalId, release }) => ({
+        externalId,
+        title: release.title,
+        spotifyUrl: `https://open.spotify.com/album/${externalId}`,
+        artworkUrl: release.artworkUrl,
+        releaseDate: parseOptionalDate(release.date) ?? undefined,
+        trackCount: release.trackCount,
+        details: release.details,
+        credits: (release.credits ?? []).flatMap(({ name, externalId }) =>
+          externalId ? [{ name, externalId }] : [],
+        ),
+        primary: false,
+        relationshipRole: release.relationship,
+        position: release.ordinal,
+      })),
       {
         operation: 'album-import-preview',
         occurrencePrefix: previewId,
         importId: previewId,
-        page: Math.floor(page.offset / 50) + 1,
+        page: pageNumber,
       },
     )
+    for (const { externalId, release } of releases) {
+      const id = ids.get(externalId)
+      if (!id) continue
+      for (const child of release.children ?? [])
+        await observeMusicDiscovery(
+          tx,
+          child,
+          {
+            provider: 'spotify',
+            operation: 'album-import-preview',
+            occurrenceKey: previewId,
+            importId: previewId,
+            page: pageNumber,
+            position: release.ordinal,
+          },
+          { kind: 'album', id, title: release.title },
+        )
+    }
+    return ids
   })
 }

@@ -433,7 +433,12 @@ export async function executeQueuedImport(importId: string) {
           const outcome = await tx.transaction((recordTx) =>
             task.mediaType === 'film'
               ? films.commitQueuedFilmImportRow(records, row, recordTx)
-              : albums.commitQueuedAlbumImportRow(records, row, recordTx),
+              : albums.commitQueuedAlbumImportRow(
+                  records,
+                  row,
+                  recordTx,
+                  run.requestedByUserId ?? undefined,
+                ),
           )
           if (outcome.action === 'new') {
             state.newIds.push(outcome.id)

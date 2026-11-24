@@ -1,14 +1,10 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { db } from '@/lib/db'
 import { createStableId, slugifyParts } from '@/lib/media-utils'
+import type { JsonValue } from '@repo/media-plugin-sdk'
 import type { parseSpotifyArtistAlbumPage } from '@/lib/spotify-artist-albums'
-import {
-  album,
-  artist,
-  mediaCredit,
-  mediaItem,
-  providerReference,
-} from '@/schemas/db'
+import { album, mediaCredit, mediaItem, providerReference } from '@/schemas/db'
+import { observeNamedArtistIdentities } from './catalog-artist-identities'
 import {
   observeCatalogOccurrences,
   type CatalogOrigin,
@@ -17,7 +13,7 @@ import {
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Release = ReturnType<
   typeof parseSpotifyArtistAlbumPage
->['releases'][number]
+>['releases'][number] & { details?: Record<string, JsonValue> }
 type PageOrigin = {
   artistId?: string
   operation?: string
@@ -57,45 +53,65 @@ export async function observeSpotifyArtistAlbumPage(
 ) {
   if (!releases.length) return new Map<string, string>()
   const externalIds = [...new Set(releases.map(({ externalId }) => externalId))]
-  const byReference = uniqueAlbumMatches(
-    await tx
-      .select({ externalId: providerReference.externalId, id: mediaItem.id })
-      .from(providerReference)
-      .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
-      .where(
-        and(
-          inArray(providerReference.externalId, externalIds),
-          eq(providerReference.provider, provider),
-          inArray(providerReference.referenceType, albumReferenceTypes),
-          eq(mediaItem.mediaType, 'album'),
-          sql`${providerReference.metadata}->>'verified' is distinct from 'false'`,
-          sql`${providerReference.metadata}->>'rejected' is distinct from 'true'`,
-        ),
+  const referenceRows = await tx
+    .select({
+      externalId: providerReference.externalId,
+      id: mediaItem.id,
+      metadata: providerReference.metadata,
+    })
+    .from(providerReference)
+    .innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
+    .where(
+      and(
+        inArray(providerReference.externalId, externalIds),
+        eq(providerReference.provider, provider),
+        inArray(providerReference.referenceType, albumReferenceTypes),
+        eq(mediaItem.mediaType, 'album'),
       ),
+    )
+  const blocked = new Map<string, Set<string>>()
+  for (const { id, externalId, metadata } of referenceRows) {
+    if (
+      String(metadata?.verified) !== 'false' &&
+      String(metadata?.rejected) !== 'true'
+    )
+      continue
+    const ids = blocked.get(externalId) ?? new Set<string>()
+    ids.add(id)
+    blocked.set(externalId, ids)
+  }
+  const byReference = uniqueAlbumMatches(
+    referenceRows.filter(
+      ({ id, externalId }) => !blocked.get(externalId)?.has(id),
+    ),
   )
   const withoutReference = externalIds.filter((id) => !byReference.has(id))
   const urlId = sql<
     string | null
   >`substring(${album.spotifyUrl} from '/album/([A-Za-z0-9]{22})')`
+  const urlRows = withoutReference.length
+    ? await tx
+        .select({ externalId: urlId, id: album.mediaItemId })
+        .from(album)
+        .where(inArray(urlId, withoutReference))
+    : []
   const byUrl = uniqueAlbumMatches(
-    withoutReference.length
-      ? await tx
-          .select({ externalId: urlId, id: album.mediaItemId })
-          .from(album)
-          .where(inArray(urlId, withoutReference))
-      : [],
+    urlRows.filter(
+      ({ id, externalId }) => !externalId || !blocked.get(externalId)?.has(id),
+    ),
   )
   const targets = releases.map((release) => {
     const matches =
       byReference.get(release.externalId) ?? byUrl.get(release.externalId)
     const existingId =
       matches?.size === 1 ? matches.values().next().value : undefined
+    const key = [provider, referenceType, release.externalId]
+    const provisional = createStableId('catalog-album', JSON.stringify(key))
     const id =
       existingId ??
-      createStableId(
-        'catalog-album',
-        JSON.stringify([provider, referenceType, release.externalId]),
-      )
+      (blocked.get(release.externalId)?.has(provisional)
+        ? createStableId('catalog-album', JSON.stringify([...key, 'separate']))
+        : provisional)
     const origin: CatalogOrigin = {
       ...page,
       provider,
@@ -105,6 +121,7 @@ export async function observeSpotifyArtistAlbumPage(
       occurrenceKey: `${occurrencePrefix}:${release.position}`,
       relationshipRole: release.relationshipRole,
       position: release.position,
+      details: release.details,
     }
     return { id, release, origin }
   })
@@ -193,7 +210,7 @@ export async function observeSpotifyArtistAlbumPage(
     )
     .onConflictDoNothing()
 
-  const credits = outside.flatMap(({ id, release, origin }) =>
+  const credits = targets.flatMap(({ id, release, origin }) =>
     release.credits.map((credit, index) => ({
       ...credit,
       mediaItemId: id,
@@ -210,51 +227,26 @@ export async function observeSpotifyArtistAlbumPage(
   const identities = [...names]
   for (let index = 0; index < identities.length; index += CREDIT_BATCH_SIZE) {
     const batch = identities.slice(index, index + CREDIT_BATCH_SIZE)
-    await tx
-      .insert(artist)
-      .values(
-        batch.map(([externalId, name]) => ({
-          id: createStableId(
-            'catalog-artist',
-            JSON.stringify([provider, externalId]),
-          ),
-          name,
-          sortName: name,
-          catalogProvider: provider,
-          catalogExternalId: externalId,
-        })),
-      )
-      .onConflictDoNothing()
-    const rows = await tx
-      .select({
-        externalId: artist.catalogExternalId,
-        id: artist.id,
-        merged: artist.mergedIntoId,
-      })
-      .from(artist)
-      .where(
-        and(
-          eq(artist.catalogProvider, provider),
-          inArray(
-            artist.catalogExternalId,
-            batch.map(([externalId]) => externalId),
-          ),
-        ),
-      )
-    for (const row of rows) {
-      if (row.externalId) native.set(row.externalId, row.merged ?? row.id)
-    }
+    for (const [externalId, id] of await observeNamedArtistIdentities(
+      tx,
+      provider,
+      new Map(batch),
+    ))
+      native.set(externalId, id)
   }
   const albumCredits = credits.map((credit) => {
     const id = credit.primary ? artistId : native.get(credit.externalId)
     if (!id) throw new Error('Spotify album credit identity was not resolved.')
     return { ...credit, artistId: id, role: 'artist' }
   })
-  for (let index = 0; index < albumCredits.length; index += CREDIT_BATCH_SIZE)
+  const outsideCredits = albumCredits.filter(
+    ({ mediaItemId }) => !members.has(mediaItemId),
+  )
+  for (let index = 0; index < outsideCredits.length; index += CREDIT_BATCH_SIZE)
     await tx
       .insert(mediaCredit)
       .values(
-        albumCredits
+        outsideCredits
           .slice(index, index + CREDIT_BATCH_SIZE)
           .map(({ mediaItemId, artistId, role, billingOrder }) => ({
             mediaItemId,

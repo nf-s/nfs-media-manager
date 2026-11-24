@@ -16,6 +16,7 @@ import {
   observeCatalogOccurrences,
   type CatalogOrigin,
 } from './catalog-discoveries'
+import { observeNamedArtistIdentities } from './catalog-artist-identities'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Scrobble = Pick<
@@ -240,44 +241,31 @@ export async function observeLastfmScrobbles(
     await tx.insert(providerReference).values(references).onConflictDoNothing()
 
   const artists = new Map(
-    events.map(({ artistKey, artistName, performerId }) => [
-      artistKey,
-      {
-        id: createStableId('catalog-artist', artistKey),
-        name: artistName,
-        sortName: artistName,
-        catalogProvider: 'lastfm',
-        catalogExternalId: performerId,
-      },
-    ]),
+    events
+      .filter(({ performerId }) => !performerId)
+      .map(({ artistKey, artistName }) => [
+        artistKey,
+        {
+          id: createStableId('catalog-artist', artistKey),
+          name: artistName,
+          sortName: artistName,
+          catalogProvider: 'lastfm',
+        },
+      ]),
   )
-  await tx
-    .insert(artist)
-    .values([...artists.values()])
-    .onConflictDoNothing()
-  const performerIds = [
-    ...new Set(
-      events.flatMap(({ performerId }) => (performerId ? [performerId] : [])),
+  if (artists.size)
+    await tx
+      .insert(artist)
+      .values([...artists.values()])
+      .onConflictDoNothing()
+  const storedArtists = await observeNamedArtistIdentities(
+    tx,
+    'lastfm',
+    new Map(
+      events.flatMap(({ performerId, artistName }) =>
+        performerId ? [[performerId, artistName]] : [],
+      ),
     ),
-  ]
-  const storedArtists = new Map(
-    performerIds.length
-      ? (
-          await tx
-            .select({
-              externalId: artist.catalogExternalId,
-              id: artist.id,
-              merged: artist.mergedIntoId,
-            })
-            .from(artist)
-            .where(
-              and(
-                eq(artist.catalogProvider, 'lastfm'),
-                inArray(artist.catalogExternalId, performerIds),
-              ),
-            )
-        ).map(({ externalId, id, merged }) => [externalId, merged ?? id])
-      : [],
   )
 
   const members = new Set(
@@ -296,9 +284,9 @@ export async function observeLastfmScrobbles(
   const credits: (typeof mediaCredit.$inferInsert)[] = []
   const occurrences: Parameters<typeof observeCatalogOccurrences>[1] = []
   for (const event of events) {
-    const observedArtist =
-      storedArtists.get(event.performerId ?? null) ??
-      artists.get(event.artistKey)?.id
+    const observedArtist = event.performerId
+      ? storedArtists.get(event.performerId)
+      : artists.get(event.artistKey)?.id
     const origin: CatalogOrigin = {
       ...evidence,
       provider: 'lastfm',

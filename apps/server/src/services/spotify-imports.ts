@@ -58,6 +58,12 @@ export async function previewSpotifyAlbums(
           (page.next !== null && !page.items.length)
         )
           throw discoveryError('Invalid Spotify saved album pagination')
+        for (const [externalId, id] of await observeSpotifySavedAlbumPage(
+          db,
+          page,
+          previewId,
+        ))
+          catalogIds.set(externalId, id)
         if (savedAlbums.length && total !== page.total)
           throw discoveryError(
             'Spotify library changed during discovery; preview again',
@@ -75,12 +81,6 @@ export async function previewSpotifyAlbums(
           seen.add(saved.album.id)
           savedAlbums.push(saved)
         }
-        for (const [externalId, id] of await observeSpotifySavedAlbumPage(
-          db,
-          page,
-          previewId,
-        ))
-          catalogIds.set(externalId, id)
         offset += page.items.length
         nextOffset =
           page.next !== null && offset < total && offset <= 10000

@@ -315,7 +315,7 @@ describe('Last.fm scrobble sync jobs with offline HTTP and a temporary database'
     const [item] = await databaseClient
       .select()
       .from(schema.mediaItem)
-      .where(eq(schema.mediaItem.mediaType, 'album'))
+      .where(eq(schema.mediaItem.id, 'album-fixture'))
     expect(item?.metadata?.['browse']).toEqual({
       country: ['Synthetic'],
       scrobbles: 2,

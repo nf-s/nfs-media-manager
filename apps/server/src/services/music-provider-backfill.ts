@@ -55,9 +55,10 @@ export async function backfillPublicMusicResponses({
         gte(providerResponse.status, 200),
         lt(providerResponse.status, 300),
         sql`(${providerResponse.provider} <> 'lastfm' or
-        ${providerResponse.requestUrl} ~* '[?&]method=(album|artist|track)[.]')`,
+        ${providerResponse.requestUrl} ~* '[?&]method=(album|artist|track)[.]' or
+        (${providerResponse.phase} <> 'task' and ${providerResponse.requestUrl} ~ '^https://ws[.]audioscrobbler[.]com/2[.]0/?$'))`,
         sql`(${providerResponse.provider} <> 'spotify' or
-        ${providerResponse.requestUrl} ~ '^https://api[.]spotify[.]com/v1/(search|artists/|albums/)')`,
+        ${providerResponse.requestUrl} ~ '^https://api[.]spotify[.]com/v1/(search|artists/|albums/|tracks/)')`,
       ),
     )
     .orderBy(asc(providerResponse.id))
@@ -65,18 +66,18 @@ export async function backfillPublicMusicResponses({
   let candidates = 0
   let skipped = 0
   for (const { response, albumId, jobOptions } of rows) {
-    const observations = readRetainedMusicResponse(response)
+    const artistId =
+      response.artistId ??
+      (typeof jobOptions.artistId === 'string'
+        ? jobOptions.artistId
+        : undefined)
+    const observations = readRetainedMusicResponse(response, artistId)
     if (!observations.length) {
       skipped++
       continue
     }
     candidates += count(observations)
     if (apply) {
-      const artistId =
-        response.artistId ??
-        (typeof jobOptions.artistId === 'string'
-          ? jobOptions.artistId
-          : undefined)
       await db.transaction((tx) =>
         observeMusicProviderResponse(
           tx,

@@ -329,6 +329,7 @@ export async function listSpotifyArtistRecordings(
     join library_track track on track.media_item_id = m.id
     where c.artist_id = ${artistId} and c.role = 'artist'
       and m.media_type = 'track'
+      and m.in_library
       and m.metadata->>'legacyHidden' is distinct from 'true'
       and m.title ~ '[^[:space:]]'
       and track.spotify_track_id collate "C" ~ ${spotifyIdPattern.source}

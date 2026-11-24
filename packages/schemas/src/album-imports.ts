@@ -27,6 +27,7 @@ export const AlbumImportPreviewSchema = z.object({
     z.object({
       row: z.number().int().nonnegative(),
       title: z.string(),
+      catalogMediaItemId: z.string().optional(),
       dateAdded: z.string().datetime({ offset: true }).nullable().optional(),
       artists: z.array(z.string()),
       identifiers: z.array(z.string()),

@@ -39,6 +39,7 @@ import {
 } from '@/schemas/db'
 import { applyProviderResultInTransaction } from './provider-state'
 import { observeAlbumImportCandidate } from './album-import-observations'
+import { lockLibraryTrackWrites } from './album-library-tracks'
 import { promoteCatalogMediaInTransaction } from './catalog-discoveries'
 import {
   queueMediaEnrichment,
@@ -274,6 +275,29 @@ export async function prepareAlbumCandidates(
     ]),
   )
   const records: z.infer<typeof StoredCandidateSchema>[] = []
+  const catalogIds = new Map<number, string>()
+  if (options.kind === 'csv')
+    for (let start = 0; start < collected.records.length; start += 100) {
+      await db.transaction(async (tx) => {
+        for (const [index, record] of collected.records
+          .slice(start, start + 100)
+          .entries()) {
+          const catalogId = await observeAlbumImportCandidate(
+            tx,
+            record,
+            {
+              provider: record.provider,
+              operation: 'album-import-preview',
+              occurrenceKey: id,
+              importId: id,
+            },
+            record.sourcePosition ?? start + index + 1,
+            previewScope,
+          )
+          catalogIds.set(start + index, catalogId)
+        }
+      })
+    }
   const seen = new Set<string>()
   const warnings = [...collected.warnings]
   let skipped = collected.skipped
@@ -296,31 +320,15 @@ export async function prepareAlbumCandidates(
     keys.forEach((key) => seen.add(key))
     const member = Boolean(match?.id)
     if (member) existing++
-    records.push({ ...record, action: member ? 'unchanged' : 'new' })
-  }
-  for (let start = 0; start < records.length; start += 100) {
-    await db.transaction(async (tx) => {
-      for (const [index, record] of records
-        .slice(start, start + 100)
-        .entries()) {
-        const position = start + index + 1
-        const native = albumCandidateKeys(record)
-          .find((key) => key.startsWith('spotify:'))
-          ?.slice('spotify:'.length)
-        record.catalogMediaItemId = await observeAlbumImportCandidate(
-          tx,
-          record,
-          {
-            provider: record.provider,
-            operation: 'album-import-preview',
-            occurrenceKey: id,
-            importId: id,
-          },
-          position,
-          previewScope,
-          native ? options.catalogIds?.get(native) : undefined,
-        )
-      }
+    const spotifyId = albumCandidateKeys(record)
+      .find((key) => key.startsWith('spotify:'))
+      ?.slice('spotify:'.length)
+    records.push({
+      ...record,
+      action: member ? 'unchanged' : 'new',
+      catalogMediaItemId:
+        catalogIds.get(index) ??
+        (spotifyId ? options.catalogIds?.get(spotifyId) : undefined),
     })
   }
   const expiresAt = new Date(Date.now() + 3600000)
@@ -346,6 +354,7 @@ export async function prepareAlbumCandidates(
     items: records.map((record, row) => ({
       row,
       title: record.result.normalized.mediaPatch?.title ?? 'Untitled',
+      catalogMediaItemId: record.catalogMediaItemId,
       dateAdded: record.result.normalized.albumPatch?.dateAdded ?? null,
       artists: albumCandidateArtists(record),
       identifiers: record.result.normalized.references.map(
@@ -386,6 +395,7 @@ export async function commitAlbumImportRecord(
 ) {
   const commit = async (tx: ImportTransaction) => {
     await lockAlbumImportWrites(tx)
+    await lockLibraryTrackWrites(tx)
     const match = options.exactRelease
       ? await matchAlbumRelease(candidate, tx)
       : {
@@ -401,6 +411,11 @@ export async function commitAlbumImportRecord(
       })
       if (previous?.inLibrary) return { id: existingId, created: false }
       if (previous && candidate.action === 'new') {
+        const added = await promoteCatalogMediaInTransaction(
+          tx,
+          existingId,
+          options.ownerId,
+        )
         await applyProviderResultInTransaction(
           {
             mediaItemId: existingId,
@@ -414,11 +429,6 @@ export async function commitAlbumImportRecord(
             normalized: candidate.result.normalized,
           },
           tx,
-        )
-        const added = await promoteCatalogMediaInTransaction(
-          tx,
-          existingId,
-          options.ownerId,
         )
         return { id: existingId, created: added.created }
       }
@@ -602,11 +612,12 @@ export async function commitQueuedAlbumImportRow(
   storedRecords: unknown,
   row: number,
   tx: ImportTransaction,
+  ownerId?: string,
 ) {
   const stored = z
     .object({ mediaType: z.literal('album'), records: z.array(z.unknown()) })
     .parse(storedRecords)
   const record = StoredCandidateSchema.parse(stored.records[row])
-  const outcome = await commitAlbumImportRecord(record, tx)
+  const outcome = await commitAlbumImportRecord(record, tx, { ownerId })
   return { id: outcome.id, action: outcome.created ? 'new' : 'unchanged' }
 }

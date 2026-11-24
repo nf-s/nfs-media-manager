@@ -9,6 +9,7 @@ import { spotifyAlbumId, UpcSchema } from './spotify-api'
 export const AlbumImportCandidateSchema = z.object({
   provider: z.enum(['spotify', 'album-csv', 'upc-csv']),
   source: z.string(),
+  sourcePosition: z.number().int().positive().optional(),
   result: PluginResultSchema,
 })
 export type AlbumImportCandidate = z.infer<typeof AlbumImportCandidateSchema>
@@ -131,8 +132,14 @@ export function collectAlbumCsv(
   for (const [index, raw] of parsed.data.entries()) {
     try {
       const row = z.record(z.string(), z.string()).parse(raw)
-      const title = z.string().trim().min(1).max(1000).parse(row['title'])
-      const artist = z.string().trim().min(1).max(1000).parse(row['artist'])
+      const name = z
+        .string()
+        .trim()
+        .min(1)
+        .max(1000)
+        .refine((value) => !value.includes('\0'))
+      const title = name.parse(row['title'])
+      const artist = name.parse(row['artist'])
       const upc = row['upc']?.trim() || undefined
       if (upc) UpcSchema.parse(upc)
       if (options.format === 'upc-csv' && !upc) throw new Error('Missing UPC')
@@ -153,6 +160,7 @@ export function collectAlbumCsv(
         AlbumImportCandidateSchema.parse({
           provider: options.format,
           source: options.fileName,
+          sourcePosition: index + 1,
           result: {
             payload: {
               title,

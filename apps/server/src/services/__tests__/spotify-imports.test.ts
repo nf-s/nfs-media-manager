@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   request: vi.fn(),
   token: vi.fn(),
   prepare: vi.fn(),
+  observe: vi.fn(),
 }))
 vi.mock('@/services/spotify-oauth', () => ({
   spotifyAccountToken: mocks.token,
@@ -13,6 +14,9 @@ vi.mock('@/services/spotify-oauth', () => ({
 }))
 vi.mock('@/services/album-imports', () => ({
   prepareAlbumCandidates: mocks.prepare,
+}))
+vi.mock('@/services/album-import-observations', () => ({
+  observeSpotifySavedAlbumPage: mocks.observe,
 }))
 import { previewSpotifyAlbums } from '../spotify-imports'
 import { spotifyAlbumFixture } from '@/plugins/builtin/__tests__/fixtures/spotify'
@@ -39,6 +43,7 @@ describe('explicit bounded Spotify discovery', () => {
       }),
     )
     mocks.token.mockResolvedValue('fake-token')
+    mocks.observe.mockResolvedValue(new Map())
   })
   afterEach(() => vi.unstubAllGlobals())
 

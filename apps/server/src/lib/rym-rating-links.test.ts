@@ -37,6 +37,9 @@ vi.mock('@/services/album-provider-details', () => ({
 vi.mock('@/services/album-playlists', () => ({
   albumTrackPlaylistNames: vi.fn(async () => new Map()),
 }))
+vi.mock('@/services/music-provider-observations', () => ({
+  listObservedEditionTracks: vi.fn(async () => []),
+}))
 vi.mock('@/services/music-tags', () => ({
   loadArtistTags: mocks.artistTags,
 }))

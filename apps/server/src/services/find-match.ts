@@ -24,17 +24,18 @@ import {
   effectiveReferenceOverrides,
 } from '@/lib/album-match-identities'
 import { ServerError } from '@/lib/error'
-import { createStableId, parseOptionalDate } from '@/lib/media-utils'
+import { parseOptionalDate } from '@/lib/media-utils'
 import {
   normalizeArtistProviderId,
   searchArtistCandidates,
 } from '@/plugins/builtin/artist-providers'
 import { getScrapePlugin } from '@/plugins/registry'
-import { artist, scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
+import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { getAlbumReleaseHints } from './album-release-hints'
 import { readAlbumMatchRejections } from './album-match-rejections'
 import { identifierUrl } from './artist-provider-evidence'
 import { loadArtistProviderTarget } from './artist-profiles'
+import { observeNamedArtistIdentities } from './catalog-artist-identities'
 import {
   observeCatalogMedia,
   observeCatalogOccurrence,
@@ -204,9 +205,10 @@ async function searchMedia(
       .map(
         (candidate): MatchCandidate => ({
           referenceType: candidate.referenceType,
-          catalogMediaItemId: albumCatalogIds.get(
-            `${candidate.referenceType}:${candidate.externalId}`,
-          ) ?? filmCatalogIds.get(candidate.externalId),
+          catalogMediaItemId:
+            albumCatalogIds.get(
+              `${candidate.referenceType}:${candidate.externalId}`,
+            ) ?? filmCatalogIds.get(candidate.externalId),
           externalId: candidate.externalId,
           title: candidate.title,
           subtitle: candidate.subtitle ?? null,
@@ -307,36 +309,21 @@ async function searchArtist(
   )
   const occurrenceKey = nanoid()
   const items = await db.transaction(async (tx) => {
+    const identities = await observeNamedArtistIdentities(
+      tx,
+      provider.data,
+      new Map(
+        candidates
+          .filter((candidate) => candidate.id !== target.current)
+          .map(({ id, name }) => [id, name]),
+      ),
+    )
     const result: MatchCandidate[] = []
     for (const [index, candidate] of candidates.entries()) {
-      const current = candidate.id === target.current
-      const provisionalId = createStableId(
-        'catalog-artist',
-        JSON.stringify([provider.data, candidate.id]),
-      )
-      if (!current)
-        await tx
-          .insert(artist)
-          .values({
-            id: provisionalId,
-            name: candidate.name,
-            sortName: candidate.name,
-            catalogProvider: provider.data,
-            catalogExternalId: candidate.id,
-          })
-          .onConflictDoNothing()
-      const [native] = current
-        ? []
-        : await tx
-            .select({ id: artist.id, merged: artist.mergedIntoId })
-            .from(artist)
-            .where(
-              and(
-                eq(artist.catalogProvider, provider.data),
-                eq(artist.catalogExternalId, candidate.id),
-              ),
-            )
-      const id = current ? input.id : (native?.merged ?? native?.id)
+      const id =
+        candidate.id === target.current
+          ? input.id
+          : identities.get(candidate.id)
       if (id)
         await observeCatalogOccurrence(
           tx,

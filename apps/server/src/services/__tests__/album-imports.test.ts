@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
     insert: vi.fn(),
     update: vi.fn(),
     execute: vi.fn(),
+    query: { mediaItem: { findFirst: vi.fn() } },
   }
   return {
     database,
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => {
     values: vi.fn(),
     where: vi.fn(),
     apply: vi.fn(),
+    observe: vi.fn(),
     start: vi.fn(),
     queued: vi.fn(),
     environment: { RUNTIME_KIND: 'node' },
@@ -30,6 +32,9 @@ vi.mock('@/lib/db', () => ({
 }))
 vi.mock('@/services/provider-state', () => ({
   applyProviderResultInTransaction: mocks.apply,
+}))
+vi.mock('@/services/album-import-observations', () => ({
+  observeAlbumImportCandidate: mocks.observe,
 }))
 vi.mock('@/env', () => ({ env: mocks.environment }))
 vi.mock('@/services/imports', () => ({
@@ -134,6 +139,9 @@ describe('album preview and commit policies (mock persistence only)', () => {
     mocks.database.select.mockReturnValue(empty)
     mocks.database.insert.mockReturnValue(empty)
     mocks.database.update.mockReturnValue(query([{ id: 'preview' }]))
+    mocks.database.query.mediaItem.findFirst.mockResolvedValue({
+      inLibrary: true,
+    })
     mocks.values.mockReturnValue(empty)
     mocks.enrichment.mockResolvedValue({ queued: 1, skipped: 0, warnings: [] })
   })
@@ -212,6 +220,7 @@ describe('album preview and commit policies (mock persistence only)', () => {
     expect(result.items).toHaveLength(1)
     expect(result.skipped).toBe(1)
     expect(result.items[0]?.action).toBe('new')
+    expect(mocks.observe).toHaveBeenCalledTimes(2)
     expect(mocks.values).toHaveBeenCalledWith(
       expect.objectContaining({
         requestedByUserId: 'user-1',
