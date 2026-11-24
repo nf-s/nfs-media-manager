@@ -466,14 +466,20 @@ describe('tracks API', () => {
 
   it('returns the selected target and forwards service conflicts', async () => {
     mocks.merge.mockResolvedValue({ targetId: 'target' })
-    const response = await send({ targetId: 'target' })
+    const response = await send(
+      { targetId: 'target' },
+      undefined,
+      '/source/merge?interactive=true',
+    )
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({
       data: { targetId: 'target' },
     })
-    expect(mocks.merge).toHaveBeenCalledExactlyOnceWith('source', {
-      targetId: 'target',
-    })
+    expect(mocks.merge).toHaveBeenCalledExactlyOnceWith(
+      'source',
+      { targetId: 'target' },
+      { interactive: true },
+    )
     mocks.merge.mockRejectedValue(
       new ServerError({ statusCode: 409, message: 'Tracks cannot be merged' }),
     )

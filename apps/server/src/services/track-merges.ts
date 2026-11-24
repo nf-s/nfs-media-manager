@@ -52,6 +52,33 @@ import { joinTrackVersions } from './track-versions'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
+const LockTimeoutSchema = z.object({ code: z.literal('55P03') })
+
+async function lockTrackMerge(tx: Transaction, interactive: boolean) {
+  if (!interactive) return lockLibraryTrackWrites(tx)
+
+  // Wait in the same queue as other library writes. Only this wait is bounded.
+  await tx.execute(sql`set local lock_timeout = '5s'`)
+  try {
+    await lockLibraryTrackWrites(tx)
+  } catch (error) {
+    if (
+      !LockTimeoutSchema.safeParse(error).success &&
+      !(
+        error instanceof Error &&
+        LockTimeoutSchema.safeParse(error.cause).success
+      )
+    )
+      throw error
+    throw new ServerError({
+      statusCode: 503,
+      message: 'The library is busy. Try the merge again.',
+      data: { reason: 'library-busy' },
+    })
+  }
+  await tx.execute(sql`set local lock_timeout = default`)
+}
+
 const MergeTracksSchema = z.array(
   z.object({
     id: z.string(),
@@ -409,6 +436,7 @@ function mergeDetails(
 export async function mergeLastfmTrack(
   sourceId: string,
   input: TrackMergeInput,
+  { interactive = false } = {},
 ): Promise<TrackMergeResult> {
   const { targetId, namesOnly } = TrackMergeInputSchema.parse(input)
   if (sourceId === targetId)
@@ -417,7 +445,7 @@ export async function mergeLastfmTrack(
       message: 'Choose a different track to merge into.',
     })
   return db.transaction(async (tx) => {
-    await lockLibraryTrackWrites(tx)
+    await lockTrackMerge(tx, interactive)
     const records = MergeTracksSchema.parse(
       (
         await tx.execute(sql`
@@ -550,13 +578,15 @@ function followDetails(
  * the other titles under them that match its tracks, in the same change. A
  * plan with cautions must have been reviewed.
  */
-export async function mergeTracks({
-  reviewed,
-  ...selection
-}: TrackMergeSelection &
-  Pick<TrackMergeRequest, 'reviewed'>): Promise<LibraryChange> {
+export async function mergeTracks(
+  {
+    reviewed,
+    ...selection
+  }: TrackMergeSelection & Pick<TrackMergeRequest, 'reviewed'>,
+  { interactive = false } = {},
+): Promise<LibraryChange> {
   return db.transaction(async (tx) => {
-    await lockLibraryTrackWrites(tx)
+    await lockTrackMerge(tx, interactive)
     const { plan, follows } = await readTrackMerge(tx, selection, true)
     if (plan.cautions.length && !reviewed)
       throw new ServerError({

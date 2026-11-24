@@ -1,8 +1,10 @@
 'use client'
 
-import type {
-  TrackMergeOutcome,
-  TrackMergePlan,
+import { z } from 'zod'
+import {
+  TrackMergeBusySchema,
+  type TrackMergeOutcome,
+  type TrackMergePlan,
 } from '@repo/schemas/library-changes'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
@@ -29,7 +31,7 @@ import {
   planTrackMerge,
 } from '@/utils/library-changes'
 import { invalidateScrobbleLinks } from './lastfm-sync'
-import type { MergeAdapter, MergeReviewProps } from './merge-bar'
+import type { MergeAdapter, MergeRequest, MergeReviewProps } from './merge-bar'
 import {
   SecondaryCell,
   SecondaryTableScroll,
@@ -243,17 +245,33 @@ function TrackMergePlanReview({
   )
 }
 
-/** Merging tracks: the track merge plan, its review and its wording. */
-export const trackMergeAdapter: MergeAdapter<TrackMergePlan> = {
-  plan: (apiBaseUrl, { ids, keepId }) =>
-    planTrackMerge(apiBaseUrl, { trackIds: ids, targetId: keepId }),
-  merge: (apiBaseUrl, { ids, keepId, reviewed, follow }) =>
-    mergeTracks(apiBaseUrl, {
+const InteractiveTrackMergeBusySchema = z.object({
+  statusCode: z.literal(503),
+  data: TrackMergeBusySchema,
+})
+
+function submitTrackMerge(
+  apiBaseUrl: string,
+  { ids, keepId, reviewed, follow }: MergeRequest & { reviewed: boolean },
+  interactive = false,
+) {
+  return mergeTracks(
+    apiBaseUrl,
+    {
       trackIds: ids,
       targetId: keepId,
       reviewed,
       follow,
-    }),
+    },
+    interactive,
+  )
+}
+
+/** Merging tracks: the track merge plan, its review and its wording. */
+export const trackMergeAdapter: MergeAdapter<TrackMergePlan> = {
+  plan: (apiBaseUrl, { ids, keepId }) =>
+    planTrackMerge(apiBaseUrl, { trackIds: ids, targetId: keepId }),
+  merge: submitTrackMerge,
   request: (plan) => ({
     ids: plan.tracks.map((track) => track.id),
     keepId: plan.targetId,
@@ -280,4 +298,11 @@ export const trackMergeAdapter: MergeAdapter<TrackMergePlan> = {
         .filter((source) => !source.exists)
         .map((source) => source.id),
     ),
+}
+
+export const inspectorTrackMergeAdapter: MergeAdapter<TrackMergePlan> = {
+  ...trackMergeAdapter,
+  merge: (apiBaseUrl, request) => submitTrackMerge(apiBaseUrl, request, true),
+  canRetry: (failure) =>
+    InteractiveTrackMergeBusySchema.safeParse(failure).success,
 }

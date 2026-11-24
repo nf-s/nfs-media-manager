@@ -140,7 +140,7 @@ export async function mergeLibraryTrack(
     throw new Error('Choose an imported Spotify track to keep.')
   return fetchApiData(
     apiBaseUrl,
-    `/api/v1/tracks/${encodeURIComponent(source.id)}/merge`,
+    `/api/v1/tracks/${encodeURIComponent(source.id)}/merge?interactive=true`,
     TrackMergeResultSchema,
     {
       method: 'POST',

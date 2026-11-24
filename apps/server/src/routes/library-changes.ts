@@ -4,6 +4,8 @@ import {
   LibraryChangePageSchema,
   LibraryChangeParamsSchema,
   LibraryChangeSchema,
+  TrackMergeApplyQuerySchema,
+  TrackMergeBusySchema,
   TrackMergePlanRequestSchema,
   TrackMergePlanSchema,
   TrackMergeRequestSchema,
@@ -96,6 +98,7 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
       path: '/track-merges',
       middleware: [authMiddleware(), mutationOriginMiddleware()],
       request: {
+        query: TrackMergeApplyQuerySchema,
         body: {
           required: true,
           content: { 'application/json': { schema: TrackMergeRequestSchema } },
@@ -110,10 +113,20 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
         404: jsonErrorResponse('Track not found'),
         409: jsonErrorResponse('Tracks cannot be merged'),
         422: validationErrorResponse,
+        503: jsonErrorResponse(
+          'Library is busy',
+          createResponseSchema(TrackMergeBusySchema),
+        ),
       },
     }),
     async (c) =>
-      generateJsonResponse(c, await mergeTracks(c.req.valid('json')), 200),
+      generateJsonResponse(
+        c,
+        await mergeTracks(c.req.valid('json'), {
+          interactive: c.req.valid('query').interactive === 'true',
+        }),
+        200,
+      ),
   )
   .openapi(
     createRoute({

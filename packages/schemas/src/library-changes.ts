@@ -181,6 +181,14 @@ export const TrackMergeRequestSchema = TrackMergeSelectionSchema.extend({
   .refine(targetSelected, TARGET_SELECTED)
 export type TrackMergeRequest = z.infer<typeof TrackMergeRequestSchema>
 
+export const TrackMergeApplyQuerySchema = z.object({
+  interactive: z.literal('true').optional(),
+})
+
+export const TrackMergeBusySchema = z.object({
+  reason: z.literal('library-busy'),
+})
+
 /** What a selected track has besides scrobbled names. */
 export const TrackMergeBlockSchema = z.enum(['spotify', 'album', 'playlist'])
 export type TrackMergeBlock = z.infer<typeof TrackMergeBlockSchema>

@@ -357,7 +357,7 @@ test('confirming submits the reviewed source and target without replacing Spotif
     async (input: RequestInfo | URL, init?: RequestInit) => {
       assert.equal(
         input,
-        'http://localhost:4001/api/v1/tracks/lastfm%2Ffixture/merge',
+        'http://localhost:4001/api/v1/tracks/lastfm%2Ffixture/merge?interactive=true',
       )
       assert.equal(init?.method, 'POST')
       assert.equal(init?.body, JSON.stringify({ targetId: target.id }))

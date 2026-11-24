@@ -49,7 +49,7 @@ import {
 } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
 import { loadTrackMergeCandidates } from './track-merge'
-import { trackMergeAdapter } from './track-merge-review'
+import { inspectorTrackMergeAdapter } from './track-merge-review'
 
 const partColumns: TableColumn[] = [
   { key: 'part', label: 'Part', width: 200, fill: true },
@@ -444,7 +444,7 @@ export function TrackRecordParts({
       await invalidateScrobbleLinks(client)
     },
   })
-  const merge = useMerge(trackMergeAdapter, {
+  const merge = useMerge(inspectorTrackMergeAdapter, {
     onMerge: (next) => {
       setUndoError(null)
       setChange(next)
@@ -527,11 +527,24 @@ export function TrackRecordParts({
             }
           >
             {change.undoneAt ? 'Undone: ' : ''}
-            {trackMergeAdapter.describe(change)}
+            {inspectorTrackMergeAdapter.describe(change)}
             {undoError ? ` · ${undoError}` : ''}
           </Notice>
         )}
-        {error && <Notice tone="danger">{error}</Notice>}
+        {error && (
+          <Notice
+            tone="danger"
+            action={
+              !version.isError && merge.retry ? (
+                <Button size="xs" onClick={merge.retry}>
+                  Retry
+                </Button>
+              ) : undefined
+            }
+          >
+            {error}
+          </Notice>
+        )}
         <PartsTable
           current={item.id}
           versions={ordered}

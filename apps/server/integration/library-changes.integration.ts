@@ -313,6 +313,46 @@ it('merges at once, then undoes and makes the change again', async () => {
   })
 })
 
+it('lets an interactive merge retry after the library writer releases its lock', async () => {
+  const request = { trackIds: [misspelt.id, spotifyTrack], reviewed: false }
+  const blocker = await pool.connect()
+  try {
+    await blocker.query('begin')
+    await blocker.query('select pg_advisory_xact_lock(614106)')
+    const busy = {
+      response: {
+        statusCode: 503,
+        message: 'The library is busy. Try the merge again.',
+        data: { reason: 'library-busy' },
+      },
+    }
+    await Promise.all([
+      expect(mergeTracks(request, { interactive: true })).rejects.toMatchObject(
+        busy,
+      ),
+      expect(
+        mergeLastfmTrack(
+          misspelt.id,
+          { targetId: spotifyTrack },
+          { interactive: true },
+        ),
+      ).rejects.toMatchObject(busy),
+    ])
+    expect((await changes()).totalCount).toBe(0)
+    expect(await sourceOf(misspelt)).toEqual([
+      { trackId: misspelt.id, manual: false },
+    ])
+  } finally {
+    await blocker.query('rollback')
+    blocker.release()
+  }
+  const merged = await mergeTracks(request, { interactive: true })
+  expect(merged.target?.id).toBe(spotifyTrack)
+  expect(await sourceOf(misspelt)).toEqual([
+    { trackId: spotifyTrack, manual: true },
+  ])
+})
+
 it('returns a removed track with its provider data, links and edits', async () => {
   const mediaItemId = misspelt.id
   const provider = 'fixture-provider'

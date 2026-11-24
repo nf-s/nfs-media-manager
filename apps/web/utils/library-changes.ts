@@ -3,6 +3,7 @@ import {
   LibraryChangePageSchema,
   LibraryChangePartSchema,
   LibraryChangeSchema,
+  TrackMergeBusySchema,
   TrackMergePlanSchema,
   type LibraryChange,
   type LibraryChangeActor,
@@ -47,12 +48,16 @@ export function planTrackMerge(
 export function mergeTracks(
   apiBaseUrl: string,
   request: TrackMergeSelection & { reviewed: boolean; follow?: boolean },
+  interactive = false,
 ) {
   return fetchApiData(
     apiBaseUrl,
-    `${base}/track-merges`,
+    `${base}/track-merges${interactive ? '?interactive=true' : ''}`,
     LibraryChangeSchema,
-    post(request),
+    {
+      ...post(request),
+      errorData: { status: 503, schema: TrackMergeBusySchema },
+    },
   )
 }
 

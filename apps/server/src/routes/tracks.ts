@@ -13,6 +13,10 @@ import {
   trackMatchDiagnosticFields,
 } from '@repo/schemas/match-diagnostics'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
+import {
+  TrackMergeApplyQuerySchema,
+  TrackMergeBusySchema,
+} from '@repo/schemas/library-changes'
 import { ListeningHistogramSchema } from '@repo/schemas/listening'
 import {
   TrackDetailSchema,
@@ -580,6 +584,7 @@ app
       middleware: [authMiddleware(), mutationOriginMiddleware()],
       request: {
         params: z.object({ id: TrackMatchIdSchema }),
+        query: TrackMergeApplyQuerySchema,
         body: {
           content: { 'application/json': { schema: TrackMergeInputSchema } },
           required: true,
@@ -600,12 +605,18 @@ app
         404: jsonErrorResponse('Track not found'),
         409: jsonErrorResponse('Tracks cannot be merged'),
         422: validationErrorResponse,
+        503: jsonErrorResponse(
+          'Library is busy',
+          createResponseSchema(TrackMergeBusySchema),
+        ),
       },
     }),
     async (c) =>
       generateJsonResponse(
         c,
-        await mergeLastfmTrack(c.req.valid('param').id, c.req.valid('json')),
+        await mergeLastfmTrack(c.req.valid('param').id, c.req.valid('json'), {
+          interactive: c.req.valid('query').interactive === 'true',
+        }),
         200,
       ),
   )

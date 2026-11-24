@@ -215,6 +215,8 @@ export type MergeAdapter<Plan> = {
     apiBaseUrl: string,
     request: MergeRequest & { reviewed: boolean },
   ) => Promise<LibraryChange>
+  /** The server confirmed that this request did not apply a change. */
+  canRetry?: (failure: unknown) => boolean
   /** The records a plan merges and the one it keeps. */
   request: (plan: Plan) => MergeRequest
   /** Something speaks against the merge, or part of it cannot be made. */
@@ -424,6 +426,7 @@ export function useMerge<Plan>(
       setError(errorMessage(failure, adapter.wording.failed)),
   })
   const pending = plan.isPending || make.isPending
+  const failedRequest = make.variables
   const dismiss = () => {
     setChange(null)
     setError(null)
@@ -443,6 +446,10 @@ export function useMerge<Plan>(
     /** The last finished change. */
     change,
     error,
+    retry:
+      error && make.isError && failedRequest && adapter.canRetry?.(make.error)
+        ? () => make.mutate(failedRequest)
+        : undefined,
     clearError: () => setError(null),
     /** Hides the finished change. */
     dismiss,

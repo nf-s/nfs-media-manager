@@ -170,12 +170,30 @@ describe('library changes API', () => {
       post({ trackIds: ['merged', 'kept'], targetId: 'kept' }),
     )
     expect(response.status).toBe(200)
-    expect(mergeTracks).toHaveBeenCalledWith({
-      trackIds: ['merged', 'kept'],
-      targetId: 'kept',
-      follow: true,
-      reviewed: false,
-    })
+    expect(mergeTracks).toHaveBeenCalledWith(
+      {
+        trackIds: ['merged', 'kept'],
+        targetId: 'kept',
+        follow: true,
+        reviewed: false,
+      },
+      { interactive: false },
+    )
+  })
+
+  it('uses the short lock wait for an interactive merge', async () => {
+    mockAppSession(true)
+    mergeTracks.mockResolvedValue(change)
+    const app = await loadApp()
+    const response = await app.request(
+      '/api/v1/library-changes/track-merges?interactive=true',
+      post({ trackIds: ['merged', 'kept'], reviewed: true }),
+    )
+    expect(response.status).toBe(200)
+    expect(mergeTracks).toHaveBeenCalledWith(
+      { trackIds: ['merged', 'kept'], follow: true, reviewed: true },
+      { interactive: true },
+    )
   })
 
   it('rejects a merge from another origin', async () => {
