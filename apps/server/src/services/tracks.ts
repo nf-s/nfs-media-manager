@@ -91,6 +91,7 @@ function trackTagGroupsExpression(id: SQL) {
 const TrackRowsSchema = z.array(
   z.object({
     id: z.string(),
+    in_library: z.boolean(),
     title: z.string(),
     artwork_url: z.string().nullable(),
     release_date: z.string().nullable(),
@@ -124,7 +125,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
   const rows = TrackRowsSchema.parse(
     (
       await db.execute(sql`
-        select mi.id, mi.title, coalesce(mi.artwork_url, am.artwork_url) as artwork_url,
+        select mi.id, mi.in_library, mi.title, coalesce(mi.artwork_url, am.artwork_url) as artwork_url,
           ${isoTimestamp(sql`coalesce(mi.release_date, am.release_date)`)} as release_date,
           coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name) order by c.billing_order, a.name)
             from media_credit c join artist a on a.id = c.artist_id
@@ -169,6 +170,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
     return [
       TrackListItemSchema.parse({
         id: row.id,
+        inLibrary: row.in_library,
         mediaType: 'track',
         title: row.title,
         artworkUrl: row.artwork_url,
@@ -189,7 +191,7 @@ export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
         durationSec: row.duration_sec,
         bpm: row.bpm,
         musicalKey: row.musical_key,
-        dateAdded: row.date_added,
+        dateAdded: row.in_library ? row.date_added : null,
         spotifyTrackId,
         spotifyMatch: row.spotify_match,
         providers: row.providers,

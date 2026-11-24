@@ -254,6 +254,8 @@ export function normalizeSimilarGenres(values: readonly string[]): string[] {
 /** One similar album or track as TIDAL returned it, in TIDAL's order. */
 export const TidalSuggestionSchema = z.object({
   tidalId: TidalIdSchema,
+  catalogMediaItemId: id.optional(),
+  catalogPosition: z.number().int().positive().optional(),
   title: name,
   /** A track's version label, such as a remix name. */
   version: name.nullable(),

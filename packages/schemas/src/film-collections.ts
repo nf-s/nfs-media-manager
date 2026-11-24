@@ -72,7 +72,6 @@ export type FilmCollectionQuery = z.infer<typeof FilmCollectionQuerySchema>
 export const FilmCollectionItemSchema = CollectionItemSchema.extend({
   runtimeMinutes: z.number().int().nonnegative().nullable(),
   watched: z.boolean(),
-  dateAdded: z.string().datetime(),
 })
 export type FilmCollectionItem = z.infer<typeof FilmCollectionItemSchema>
 

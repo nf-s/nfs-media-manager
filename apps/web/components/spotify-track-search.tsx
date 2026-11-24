@@ -615,7 +615,17 @@ export function SpotifyTrackSearchCandidates({
             <MediaThumb kind="track" src={candidate.artworkUrl} size={40} />
           }
           title={
-            onSelect ? (
+            candidate.catalogMediaItemId ? (
+              <RowTitle>
+                <DetailLink
+                  kind="track"
+                  id={candidate.catalogMediaItemId}
+                  title={candidate.title}
+                >
+                  {candidate.title}
+                </DetailLink>
+              </RowTitle>
+            ) : onSelect ? (
               <RowTitle>
                 <button
                   type="button"
@@ -639,19 +649,36 @@ export function SpotifyTrackSearchCandidates({
             candidate.durationSec !== null
               ? formatTrackDuration(candidate.durationSec)
               : null,
+            candidate.inLibrary === undefined
+              ? null
+              : candidate.inLibrary
+                ? 'In library'
+                : 'Outside library',
           ]
             .filter(Boolean)
             .join(' · ')}
           action={
-            <ServiceIconLinks
-              links={[
-                {
-                  provider: 'spotify',
-                  label: 'Spotify',
-                  url: candidate.spotifyUrl,
-                },
-              ]}
-            />
+            <span className="ds-actions">
+              <ServiceIconLinks
+                links={[
+                  {
+                    provider: 'spotify',
+                    label: 'Spotify',
+                    url: candidate.spotifyUrl,
+                  },
+                ]}
+              />
+              {candidate.catalogMediaItemId && onSelect && (
+                <Button
+                  size="xs"
+                  disabled={disabled}
+                  aria-label={`Review ${candidate.title}${candidate.albumName ? ` from ${candidate.albumName}` : ''}`}
+                  onClick={() => onSelect(candidate)}
+                >
+                  Review
+                </Button>
+              )}
+            </span>
           }
         />
       ))}

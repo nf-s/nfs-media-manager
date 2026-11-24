@@ -56,7 +56,7 @@ export function describeSearchItem(
       : tracks,
     item.subtitle,
     item.releaseDate?.slice(0, 4),
-    inLibrary ? 'In library' : null,
+    inLibrary ? 'In library' : item.catalogMediaItemId ? 'Outside library' : null,
   ]
     .filter(Boolean)
     .join(' · ')

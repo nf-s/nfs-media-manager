@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { JsonValue } from '@repo/schemas/common'
 import { isProviderItemNotFoundError } from '@repo/media-plugin-sdk'
@@ -54,6 +54,10 @@ import {
   type TaskJobResult,
 } from './jobs'
 import { providerOperation } from './manual-add'
+import {
+  latestCatalogResponseId,
+  observeTidalSuggestion,
+} from './music-catalog-observations'
 import { artistGenresByBilledName } from './music-tags'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
@@ -622,9 +626,16 @@ export async function runTidalSimilar(
           .from(mediaItem)
           .where(eq(mediaItem.id, options.itemId))
         if (!item) return
+        const observed = await observeStoredTidalSuggestions(tx, {
+          kind: options.kind,
+          itemId: options.itemId,
+          jobId: context.jobId,
+          observedAt: readAt,
+          suggestions,
+        })
         const values = {
           kind: options.kind,
-          items: StoredItemsSchema.parse(suggestions),
+          items: StoredItemsSchema.parse(observed),
           scrapeJobId: context.jobId,
           readAt,
         }
@@ -641,6 +652,89 @@ export async function runTidalSimilar(
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return { outcome: 'failed', error }
   }
+}
+
+async function observeStoredTidalSuggestions(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  input: {
+    kind: TidalSimilarKind
+    itemId: string
+    jobId: string | null
+    observedAt?: Date
+    suggestions: TidalSuggestion[]
+  },
+) {
+  if (!input.suggestions.length) return []
+  const responseId = input.jobId
+    ? await latestCatalogResponseId(tx, input.jobId, PROVIDER)
+    : undefined
+  const items: TidalSuggestion[] = []
+  for (const [index, item] of input.suggestions.entries()) {
+    const catalogMediaItemId = await observeTidalSuggestion(
+      tx,
+      input.kind,
+      item,
+      {
+        operation: 'similar',
+        key: input.jobId ?? input.itemId,
+        subjectKind: input.kind,
+        subjectId: input.itemId,
+        jobId: input.jobId ?? undefined,
+        responseId,
+        page: 1,
+        position: item.catalogPosition ?? index + 1,
+        observedAt: input.observedAt,
+      },
+    )
+    items.push({ ...item, catalogMediaItemId })
+  }
+  return items
+}
+
+/** Projects a bounded batch of the Similar pages still cached by the app. */
+export async function backfillTidalSimilarDiscoveries(input: {
+  after?: string
+  limit: number
+  apply: boolean
+}) {
+  const rows = await db
+    .select()
+    .from(tidalSimilar)
+    .where(input.after ? gt(tidalSimilar.mediaItemId, input.after) : undefined)
+    .orderBy(asc(tidalSimilar.mediaItemId))
+    .limit(input.limit)
+  let candidates = 0
+  let skipped = 0
+  for (const row of rows) {
+    const suggestions = StoredItemsSchema.safeParse(row.items)
+    const kind = TidalSimilarKindSchema.safeParse(row.kind)
+    if (!suggestions.success || !kind.success) {
+      skipped += 1
+      continue
+    }
+    candidates += suggestions.data.length
+    if (input.apply) {
+      await db.transaction(async (tx) => {
+        const items = await observeStoredTidalSuggestions(tx, {
+          kind: kind.data,
+          itemId: row.mediaItemId,
+          jobId: row.scrapeJobId,
+          observedAt: row.readAt,
+          suggestions: suggestions.data,
+        })
+        await tx
+          .update(tidalSimilar)
+          .set({ items })
+          .where(
+            and(
+              eq(tidalSimilar.mediaItemId, row.mediaItemId),
+              eq(tidalSimilar.readAt, row.readAt),
+            ),
+          )
+      })
+    }
+  }
+  return { next: rows.at(-1)?.mediaItemId ?? null, candidates, skipped }
 }
 
 const jobColumns = {

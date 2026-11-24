@@ -24,6 +24,11 @@ export const TidalIsrcLookupSchema = z
   .strict()
 export type TidalIsrcLookup = z.infer<typeof TidalIsrcLookupSchema>
 
+export type TidalTrackLookupPage = {
+  page: number
+  candidates: TidalTrackCandidate[]
+}
+
 /**
  * The TIDAL tracks with this ISRC and the albums each is on. Tracks TIDAL
  * returns with another ISRC are left out.
@@ -32,6 +37,7 @@ export async function lookupTidalTracksByIsrc(
   request: TidalRequest,
   token: string,
   input: TidalIsrcLookup,
+  observe?: (result: TidalTrackLookupPage) => Promise<void>,
 ): Promise<TidalTrackCandidate[]> {
   const { countryCode, isrc } = TidalIsrcLookupSchema.parse(input)
   const wanted = validIsrc(isrc)
@@ -53,10 +59,16 @@ export async function lookupTidalTracksByIsrc(
       ),
     )
     const albums = includedAlbums(document.included)
-    for (const track of document.data) {
-      const candidate = tidalTrackCandidate(track, albums)
-      if (validIsrc(candidate.isrc) === wanted && !candidates.has(track.id))
-        candidates.set(track.id, candidate)
+    const seen = document.data.map((track) =>
+      tidalTrackCandidate(track, albums),
+    )
+    await observe?.({ page: page + 1, candidates: seen })
+    for (const candidate of seen) {
+      if (
+        validIsrc(candidate.isrc) === wanted &&
+        !candidates.has(candidate.tidalTrackId)
+      )
+        candidates.set(candidate.tidalTrackId, candidate)
     }
     cursor = nextPageCursor(document.links)
     if (!cursor) break

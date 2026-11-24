@@ -40,6 +40,7 @@ export function TrackBrowseSearch({
   disabled = false,
   matches = false,
   tagLevels,
+  catalogParams,
 }: {
   fields: BrowseField[]
   filters: BrowseFilter[]
@@ -55,6 +56,7 @@ export function TrackBrowseSearch({
   matches?: boolean
   /** Where the Tags suggestions are counted; left out for Auto. */
   tagLevels?: TagLevels
+  catalogParams?: Readonly<Record<string, string>>
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState('')
@@ -65,6 +67,8 @@ export function TrackBrowseSearch({
     ready && !disabled,
     matches,
     tagLevels,
+    false,
+    catalogParams,
   )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
@@ -73,6 +77,7 @@ export function TrackBrowseSearch({
       matches ? 'match-title-suggestions' : 'title-suggestions',
       titleFilters,
       ...(creator ? [creator] : []),
+      ...(catalogParams ? [catalogParams] : []),
     ],
     enabled: ready && !disabled && titleFilters.length > 0,
     queryFn: async ({ signal }) => {
@@ -98,7 +103,13 @@ export function TrackBrowseSearch({
           })),
         }
       }
-      return loadTrackTitleMatches(apiBaseUrl, titleFilters, creator, signal)
+      return loadTrackTitleMatches(
+        apiBaseUrl,
+        titleFilters,
+        creator,
+        signal,
+        catalogParams,
+      )
     },
   })
   const titlesLoading =

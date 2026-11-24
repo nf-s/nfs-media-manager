@@ -115,7 +115,16 @@ import {
   TrackBrowseFilterChips,
   TrackBrowseSearch,
 } from './track-browse-controls'
+import {
+  clearLibraryScope,
+  libraryScopeFilterCount,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { LibraryScopePills } from './library-scope-controls'
 import {
   RecordingVersionsPager,
   RecordingVersionsStatus,
@@ -257,6 +266,8 @@ function TrackBrowse({
   const { apiBaseUrl } = useConfig()
   const { embedded } = host
   const searchParams = host.params
+  const libraryScope = readLibraryScope(searchParams)
+  const catalogParams = libraryScopeQuery(libraryScope)
   const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [adding, setAdding] = useState(false)
   const [ready, setReady] = useState(embedded)
@@ -336,6 +347,7 @@ function TrackBrowse({
       ? (listeningSort ?? defaultListeningPeriod)
       : undefined
   const queryKey = JSON.stringify({
+    ...catalogParams,
     q,
     filters,
     ranges,
@@ -394,12 +406,16 @@ function TrackBrowse({
   }
   function clearFilters() {
     setParams({
+      ...clearLibraryScope,
       q: null,
       filters: null,
       ranges: null,
       listening: null,
       ...(scope ? {} : clearCreatorScope),
     })
+  }
+  function changeLibraryScope(next: LibraryScopeState) {
+    setParams(libraryScopeUpdates(next))
   }
   function changeListening(next: ListeningFilter | undefined) {
     setParams({ listening: next ? JSON.stringify(next) : null })
@@ -483,6 +499,7 @@ function TrackBrowse({
   }, [selectedId])
 
   const params = new URLSearchParams({
+    ...catalogParams,
     q,
     filters: JSON.stringify(filters),
     ranges: JSON.stringify(ranges),
@@ -877,9 +894,11 @@ function TrackBrowse({
     filters.length +
     ranges.length +
     (listening?.rules.length ?? 0)
+  const filterCount = activeFilterCount + libraryScopeFilterCount(libraryScope)
   const filterPills =
-    activeFilterCount > 0 ? (
+    filterCount > 0 ? (
       <>
+        <LibraryScopePills value={libraryScope} onChange={changeLibraryScope} />
         <TrackBrowseFilterChips
           q={q}
           creator={creatorFilter}
@@ -904,6 +923,7 @@ function TrackBrowse({
     >
       <div className={embedded ? undefined : 'browse-main'}>
         <BrowseToolbar
+          libraryScope={{ value: libraryScope, onChange: changeLibraryScope }}
           addActions={
             !embedded && (
               <Button type="button" onClick={() => setAdding(true)}>
@@ -913,6 +933,7 @@ function TrackBrowse({
           }
           search={
             <TrackBrowseSearch
+              catalogParams={catalogParams}
               fields={fields}
               filters={filters}
               creator={creator}
@@ -1056,7 +1077,7 @@ function TrackBrowse({
           query={query}
           total={total}
           noun="tracks"
-          filtered={activeFilterCount > 0}
+          filtered={filterCount > 0}
           onClear={clearFilters}
         />
         <DetailListFrame framed={embedded} frame={detailList}>

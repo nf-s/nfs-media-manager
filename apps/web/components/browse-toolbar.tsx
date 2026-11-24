@@ -11,9 +11,15 @@ import {
   ToolbarEnd,
 } from '@repo/ui/components/ds/toolbar'
 import type { BrowseView, GridDensity } from '@/utils/media-grid'
+import { libraryScopeFilterCount } from '@/utils/library-scope'
 import { BrowseDensitySwitch, BrowseViewSwitch } from './browse-controls'
 import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
 import { ColumnFilterOptions, type ColumnFilterProps } from './secondary-table'
+import {
+  LibraryScopeSections,
+  LibraryScopeToggle,
+  type LibraryScopeControl,
+} from './library-scope-controls'
 
 export type BrowseSort<Key extends string> = {
   key: Key
@@ -111,6 +117,7 @@ export default function BrowseToolbar<Key extends string>({
   end,
   compact = false,
   activeFilters,
+  libraryScope,
 }: {
   actions?: ReactNode
   /** Library additions share the search row on phones. */
@@ -134,6 +141,7 @@ export default function BrowseToolbar<Key extends string>({
   compact?: boolean
   /** With `compact`: the active filter pills and Clear all. */
   activeFilters?: ReactNode
+  libraryScope?: LibraryScopeControl
 }) {
   const nextDirection = sort.direction === 'asc' ? 'desc' : 'asc'
   const directionLabel =
@@ -177,11 +185,19 @@ export default function BrowseToolbar<Key extends string>({
         {onViewChange && (
           <BrowseViewSwitch view={view} onChange={onViewChange} />
         )}
-        {(hasView || Boolean(filters)) && (
-          <BrowseFilterPanel count={filterCount} short={compact}>
+        {libraryScope && <LibraryScopeToggle {...libraryScope} />}
+        {(hasView || Boolean(filters) || libraryScope) && (
+          <BrowseFilterPanel
+            count={
+              filterCount +
+              (libraryScope ? libraryScopeFilterCount(libraryScope.value) : 0)
+            }
+            short={compact}
+          >
             <BrowseViewSection view={view} density={density}>
               {viewOptions}
             </BrowseViewSection>
+            {libraryScope && <LibraryScopeSections {...libraryScope} />}
             {filters}
           </BrowseFilterPanel>
         )}

@@ -10,13 +10,15 @@ import {
 } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
-import { createStableId } from '@/lib/media-utils'
+import { createStableId, parseOptionalDate } from '@/lib/media-utils'
 import { mediaItem, spotifyCodeLookup } from '@/schemas/db'
 import type { TaskJobContext, TaskJobResult } from './jobs'
+import { observeCatalogMedia } from './catalog-discoveries'
 import {
   prepareSpotifyCatalogTrackSearch,
   runSpotifyCatalogSearches,
 } from './manual-add'
+import { latestCatalogResponseId } from './music-catalog-observations'
 import { libraryItemsBySpotifyId } from './similar-library-matches'
 import {
   chooseSpotifyTrack,
@@ -145,6 +147,53 @@ export async function runSpotifySimilarLookup(
             await request({ operation: 'code-search', args }),
             token,
             args,
+            async (candidates) => {
+              if (!candidates.length) return
+              await context.assertActive()
+              await db.transaction(async (tx) => {
+                const responseId = await latestCatalogResponseId(
+                  tx,
+                  context.jobId,
+                  'spotify',
+                )
+                for (const [index, candidate] of candidates.entries()) {
+                  await observeCatalogMedia(
+                    tx,
+                    {
+                      kind: options.kind,
+                      title: candidate.title,
+                      provider: 'spotify',
+                      referenceType:
+                        options.kind === 'album' ? 'spotify' : 'track',
+                      externalId: candidate.spotifyId,
+                      artworkUrl: candidate.artworkUrl,
+                      spotifyUrl: candidate.url,
+                      releaseDate: parseOptionalDate(candidate.releaseDate),
+                      albumName: candidate.albumName,
+                      spotifyAlbumId: candidate.spotifyAlbumId,
+                      durationSec: candidate.durationSec,
+                      trackCount: candidate.trackCount ?? undefined,
+                      credits: candidate.artists.map((name) => ({ name })),
+                    },
+                    {
+                      provider: 'spotify',
+                      operation: 'spotify-code-search',
+                      occurrenceKey: JSON.stringify([
+                        context.jobId,
+                        key,
+                        index + 1,
+                      ]),
+                      subjectKind: options.kind,
+                      subjectId: options.itemId,
+                      jobId: context.jobId,
+                      responseId,
+                      page: 1,
+                      position: index + 1,
+                    },
+                  )
+                }
+              })
+            },
           )
           let match: SpotifyCodeMatch | null
           if (result.kind === 'album') match = result.album

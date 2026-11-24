@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { SourceNavigationLinkSchema } from './tags'
 import { AlbumProviderDetailsSchema } from './album-provider-details'
 import { EntityRelationshipSourceSchema } from './entity-relationships'
@@ -79,6 +80,7 @@ export const FilmFilterOptionSchema = FilmBrowseFilterSchema.extend({
 })
 
 export const AlbumQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   creatorId: CreatorIdSchema.optional(),
   includeArchived: z.enum(['true', 'false']).optional(),
   /** List editions as rows of their own, not only the first album of a record. */
@@ -105,6 +107,7 @@ export type AlbumListeningHistogramQuery = z.infer<
 >
 
 export const FilmQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   creatorId: CreatorIdSchema.optional(),
   creatorRole: PersonRoleSchema.optional(),
   includeArchived: z.enum(['true', 'false']).optional(),
@@ -127,6 +130,7 @@ export const FilmQuerySchema = PaginationQuerySchema.extend({
 })
 
 const MediaBaseSchema = z.object({
+  inLibrary: z.boolean().optional(),
   id: z.string(),
   mediaType: MediaTypeSchema,
   slug: z.string(),

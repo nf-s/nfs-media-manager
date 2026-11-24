@@ -162,6 +162,20 @@ beforeAll(async () => {
       releaseDate: null,
       sourceLabel: null,
     },
+    {
+      id: 'outside-film',
+      slug: 'outside-film',
+      title: 'Outside film',
+      mediaType: 'film',
+      inLibrary: false,
+    },
+    {
+      id: 'other-outside-film',
+      slug: 'other-outside-film',
+      title: 'Other outside film',
+      mediaType: 'film',
+      inLibrary: false,
+    },
     { id: 'album', slug: 'album', title: 'Album', mediaType: 'album' },
     {
       id: 'album-beta',
@@ -214,6 +228,8 @@ beforeAll(async () => {
       dateAdded: new Date('2022-01-01'),
     },
     { mediaItemId: 'hidden' },
+    { mediaItemId: 'outside-film' },
+    { mediaItemId: 'other-outside-film' },
   ])
   await databaseClient.insert(schema.providerCurrentState).values({
     id: 'stored-collection-source',
@@ -270,6 +286,12 @@ beforeAll(async () => {
     { playlistId: 'collection', mediaItemId: 'alpha', position: 8 },
     { playlistId: 'collection', mediaItemId: 'beta', position: 2 },
     { playlistId: 'collection', mediaItemId: 'gamma', position: 8 },
+    { playlistId: 'collection', mediaItemId: 'outside-film', position: 3 },
+    {
+      playlistId: 'collection',
+      mediaItemId: 'other-outside-film',
+      position: 5,
+    },
     { playlistId: 'collection', mediaItemId: 'album', position: 0 },
     { playlistId: 'music-only', mediaItemId: 'album', position: 0 },
     { playlistId: 'music-only', mediaItemId: 'album-beta', position: 8 },
@@ -278,6 +300,26 @@ beforeAll(async () => {
     { playlistId: 'playlist', mediaItemId: 'alpha', position: 1 },
     { playlistId: 'collection', mediaItemId: 'hidden', position: 1 },
     { playlistId: 'hidden-only', mediaItemId: 'hidden', position: 1 },
+  ])
+  await databaseClient.insert(schema.catalogObservation).values([
+    {
+      id: 'outside-source',
+      mediaItemId: 'outside-film',
+      provider: 'fixture',
+      operation: 'provider-result',
+    },
+    {
+      id: 'outside-search',
+      mediaItemId: 'outside-film',
+      provider: 'fixture',
+      operation: 'catalog-search',
+    },
+    {
+      id: 'other-outside-source',
+      mediaItemId: 'other-outside-film',
+      provider: 'fixture',
+      operation: 'catalog-search',
+    },
   ])
 })
 afterAll(async () => {
@@ -289,6 +331,46 @@ afterAll(async () => {
 })
 
 describe('film collections', () => {
+  it('uses the selected catalogue scope for rows, positions and counts', async () => {
+    const combined = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({
+        libraryScope: 'all',
+        discoverySources: 'provider-result,catalog-search',
+        discoverySourceMode: 'all',
+        includeSources: 'false',
+      }),
+    )
+    expect(combined.filmCount).toBe(4)
+    expect(combined.items.totalCount).toBe(4)
+    expect(combined.items.items.map(({ id }) => id)).toEqual([
+      'beta',
+      'outside-film',
+      'alpha',
+      'gamma',
+    ])
+    expect(combined.items.items[1]).toMatchObject({
+      position: 3,
+      dateAdded: null,
+    })
+
+    const outside = await getFilmCollection(
+      'collection',
+      FilmCollectionQuerySchema.parse({
+        libraryScope: 'outside',
+        discoverySources: 'provider-result,catalog-search',
+        includeSources: 'false',
+        page: 2,
+        size: 1,
+      }),
+    )
+    expect(outside.filmCount).toBe(2)
+    expect(outside.items).toMatchObject({
+      totalCount: 2,
+      items: [{ id: 'other-outside-film', position: 5 }],
+    })
+  })
+
   it('uses only validated matching stored source links in lists and details', async () => {
     const expected = [
       'https://example.test/collections/17',

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { BrowseFilter } from '@repo/schemas/browse'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   PlaylistDetailQuerySchema,
   PlaylistPresentationSchema,
@@ -151,7 +152,7 @@ export function collectionBrowseHref(
     sortBy: string
     direction: 'asc' | 'desc'
     view: BrowseView
-  },
+  } & CatalogScopeQuery,
 ) {
   const filters: BrowseFilter[] = [
     { field: 'collection', value: name, mode: 'required' },
@@ -165,6 +166,11 @@ export function collectionBrowseHref(
       mode: 'required',
     })
   const params = new URLSearchParams({ filters: JSON.stringify(filters) })
+  if (list.libraryScope) params.set('libraryScope', list.libraryScope)
+  if (list.discoverySources)
+    params.set('discoverySources', list.discoverySources)
+  if (list.discoverySourceMode)
+    params.set('discoverySourceMode', list.discoverySourceMode)
   const q = list.q?.trim()
   if (q) params.set('q', q)
   const sortBy = collectionBrowseSorts[list.sortBy]

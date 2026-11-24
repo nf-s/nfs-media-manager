@@ -29,7 +29,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { validIsrc } from '@/lib/isrc'
 import { plainKey } from '@/lib/lastfm-album-matching'
-import { createStableId } from '@/lib/media-utils'
+import { createStableId, parseOptionalDate } from '@/lib/media-utils'
 import {
   createProviderResponseRecorder,
   providerResponseSecretValues,
@@ -44,12 +44,17 @@ import {
   scrapeJobLog,
 } from '@/schemas/db'
 import { lockLibraryTrackWrites } from './album-library-tracks'
+import { observeCatalogMedia } from './catalog-discoveries'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { providerOperation } from './manual-add'
+import { latestCatalogResponseId } from './music-catalog-observations'
 import { createProviderRequest } from './provider-requests'
 import { saveProviderResponseCapture } from './provider-response-history'
 import { appendProviderTaskReplayStep } from './provider-task-replay'
-import { lookupTidalTracksByIsrc } from './tidal-track-lookup'
+import {
+  lookupTidalTracksByIsrc,
+  type TidalTrackLookupPage,
+} from './tidal-track-lookup'
 import { recordTrackIsrcs } from './track-isrcs'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -328,6 +333,80 @@ async function libraryTrackExists(tx: Transaction, trackId: string) {
   return row !== undefined
 }
 
+async function observeTidalLookup(
+  tx: Transaction,
+  jobId: string,
+  subjectId: string,
+  pages: Array<TidalTrackLookupPage & { responseId?: string }>,
+) {
+  for (const { page, candidates, responseId } of pages) {
+    for (const [index, candidate] of candidates.entries()) {
+      const position = index + 1
+      const occurrence = {
+        provider: PROVIDER,
+        operation: 'tidal-track-match',
+        jobId,
+        responseId,
+        page,
+        position,
+      }
+      const trackId = await observeCatalogMedia(
+        tx,
+        {
+          kind: 'track',
+          title: candidate.title,
+          provider: PROVIDER,
+          referenceType: 'track',
+          externalId: candidate.tidalTrackId,
+          durationSec: candidate.durationSec,
+          referenceMetadata: {
+            url: candidate.url,
+            version: candidate.version,
+            durationSec: candidate.durationSec,
+            popularity: candidate.popularity,
+            isrc: candidate.isrc,
+          },
+        },
+        {
+          ...occurrence,
+          occurrenceKey: JSON.stringify([jobId, page, position]),
+          subjectKind: 'track',
+          subjectId,
+        },
+      )
+      for (const [albumIndex, item] of candidate.albums.entries()) {
+        await observeCatalogMedia(
+          tx,
+          {
+            kind: 'album',
+            title: item.title,
+            provider: PROVIDER,
+            referenceType: 'album',
+            externalId: item.tidalAlbumId,
+            releaseDate: parseOptionalDate(item.releaseDate),
+            referenceMetadata: {
+              barcodeId: item.barcodeId,
+              albumType: item.albumType,
+            },
+          },
+          {
+            ...occurrence,
+            occurrenceKey: JSON.stringify([
+              jobId,
+              page,
+              position,
+              albumIndex + 1,
+            ]),
+            subjectKind: 'track',
+            subjectId: trackId,
+            relationshipRole: 'release',
+          },
+        )
+      }
+    }
+  }
+}
+
 export async function runTidalTrackMatch(
   context: TaskJobContext,
   input: Record<string, unknown>,
@@ -342,6 +421,7 @@ export async function runTidalTrackMatch(
         message: 'Match skipped: the track or its ISRC has changed.',
         noProviderRequests: true,
       }
+    const pages: Array<TidalTrackLookupPage & { responseId?: string }> = []
     const candidates = await providerOperation(
       PROVIDER,
       async ({ secrets, request }, plugin) => {
@@ -375,6 +455,14 @@ export async function runTidalTrackMatch(
           }),
           token,
           lookup,
+          async (page) => {
+            const responseId = await latestCatalogResponseId(
+              db,
+              context.jobId,
+              PROVIDER,
+            )
+            pages.push({ ...page, responseId })
+          },
         )
         recorder.assertStored()
         return found
@@ -394,7 +482,10 @@ export async function runTidalTrackMatch(
         candidates: kept,
       },
     ]
-    if (reason === 'none')
+    if (reason === 'none') {
+      await db.transaction((tx) =>
+        observeTidalLookup(tx, context.jobId, options.trackId, pages),
+      )
       return {
         outcome: 'failed',
         failureClassification: 'not-found',
@@ -403,6 +494,7 @@ export async function runTidalTrackMatch(
         ),
         metadata: { diagnostics },
       }
+    }
     return {
       outcome: 'complete',
       message: chosen
@@ -415,16 +507,17 @@ export async function runTidalTrackMatch(
       },
       metadata: { diagnostics },
       persist: async (tx) => {
-        if (!chosen) return
         await lockLibraryTrackWrites(tx)
-        if (!(await libraryTrackExists(tx, options.trackId))) return
-        await writeTidalTrackMatch(tx, {
-          trackId: options.trackId,
-          isrc: options.isrc,
-          candidate: chosen,
-          jobId: context.jobId,
-          matchReason: reason,
-        })
+        if (chosen && (await libraryTrackExists(tx, options.trackId))) {
+          await writeTidalTrackMatch(tx, {
+            trackId: options.trackId,
+            isrc: options.isrc,
+            candidate: chosen,
+            jobId: context.jobId,
+            matchReason: reason,
+          })
+        }
+        await observeTidalLookup(tx, context.jobId, options.trackId, pages)
       },
     }
   } catch (error) {

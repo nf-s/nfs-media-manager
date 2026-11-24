@@ -58,6 +58,7 @@ export function loadTrackTitleMatches(
   filters: BrowseFilter[],
   creator: CreatorBrowseScope | undefined,
   signal: AbortSignal,
+  catalogParams?: Readonly<Record<string, string>>,
 ) {
   const params = new URLSearchParams({
     page: '1',
@@ -66,6 +67,7 @@ export function loadTrackTitleMatches(
     sortBy: 'title',
     direction: 'asc',
     ...creator,
+    ...catalogParams,
   })
   return fetchApiData(
     apiBaseUrl,

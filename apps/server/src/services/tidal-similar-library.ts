@@ -22,6 +22,7 @@ import { album, libraryTrack, mediaItem, providerReference } from '@/schemas/db'
 import { lockAlbumImportWrites } from './album-imports'
 import { lockLibraryTrackWrites } from './album-library-tracks'
 import { writeArtistCredits } from './artist-names'
+import { promoteCatalogMediaInTransaction } from './catalog-discoveries'
 import { applyProviderResultInTransaction } from './provider-state'
 import { storeManualTrackInTransaction } from './spotify-track-recordings'
 import { findStoredTidalSuggestion } from './tidal-similar'
@@ -237,6 +238,13 @@ export async function addTidalSimilarToLibrary(
         statusCode: 404,
         message: 'Similar item not found.',
       })
+    if (item.catalogMediaItemId) {
+      const { mediaItemId } = await promoteCatalogMediaInTransaction(
+        tx,
+        item.catalogMediaItemId,
+      )
+      return { id: mediaItemId }
+    }
     if (item.library) return { id: item.library.id }
     // A Sonovault link stays in the removable lookup cache. Only a match
     // returned by Spotify becomes the library item's Spotify identity.

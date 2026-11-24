@@ -52,6 +52,7 @@ import {
   ArtistProfileLinks,
   ArtistProfileSources,
 } from './artist-profile-sources'
+import { ArtistAlbums } from './artist-albums'
 import { CreatorDetailState } from './creator-detail-state'
 import {
   InspectorEntryContext,
@@ -77,7 +78,6 @@ import { ScrobbleStats } from './listening-stats'
 import { EmbeddedTrackBrowser } from './track-browser'
 import { ListeningTrend } from './listening-trend'
 import { LibraryRecordChanges } from './library-changes'
-import { EmbeddedMediaBrowser } from './media-browser'
 import { MetadataCoverage } from './metadata-coverage'
 import MetadataSourceControl from './metadata-source-control'
 import { useConfig } from './providers'
@@ -687,11 +687,10 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
           />
         </TabsContent>
         <TabsContent value="albums">
-          <EmbeddedMediaBrowser
-            mediaType="album"
-            creator={{ creatorId: artist.id }}
-            storage="artist-albums"
-            sort={{ key: 'title', direction: 'asc' }}
+          <ArtistAlbums
+            key={artist.id}
+            artistId={artist.id}
+            showSources={() => setTab('sources')}
           />
         </TabsContent>
         <TabsContent value="tracks">

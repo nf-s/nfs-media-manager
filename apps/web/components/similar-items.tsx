@@ -247,12 +247,17 @@ export function SimilarRow({
     onSuccess: () => invalidateManualMediaAddition(client, kind),
   })
   const title = item.library?.title ?? tidalSuggestionTitle(item)
-  const libraryId = item.library?.id ?? add.data?.id
+  const libraryId = add.data?.id ?? item.library?.id
+  const detailId = item.catalogMediaItemId ?? libraryId
+  const inLibrary = Boolean(detailId && libraryId === detailId)
+  const place = inLibrary
+    ? 'library'
+    : item.state === 'library' ? (item.spotify ? 'spotify' : 'unsearched') : item.state
   const match = item.libraryMatch
   return (
     <>
       <SuggestionRow
-        place={libraryId ? 'library' : item.state}
+        place={place}
         thumb={
           <MediaThumb
             kind={kind}
@@ -261,9 +266,9 @@ export function SimilarRow({
           />
         }
         title={
-          libraryId ? (
+          detailId ? (
             <RowTitle>
-              <DetailLink kind={kind} id={libraryId} title={title}>
+              <DetailLink kind={kind} id={detailId} title={title}>
                 {title}
               </DetailLink>
             </RowTitle>
@@ -274,6 +279,7 @@ export function SimilarRow({
           )
         }
         details={[
+          detailId && !inLibrary ? 'Outside library' : null,
           item.artists.join(', '),
           kind === 'album'
             ? item.releaseDate?.slice(0, 4)
@@ -282,14 +288,14 @@ export function SimilarRow({
               : null,
         ]}
         placeEvidence={
-          libraryId && match ? (
+          item.library && match ? (
             <DetailLink
               kind={kind}
-              id={libraryId}
+              id={item.library.id}
               tab="sources"
               title={`Matched by ${libraryMatchLabels[match.basis]} ${match.value}`}
             >
-              In library
+              {inLibrary ? 'In library' : 'Library match'}
             </DetailLink>
           ) : undefined
         }
@@ -297,8 +303,8 @@ export function SimilarRow({
         play={suggestionPlay(kind, item, title)}
         actions={
           <span className="ds-actions">
-            {!libraryId &&
-              (item.state === 'spotify' && item.spotify ? (
+            {!inLibrary &&
+              (place === 'spotify' && item.spotify ? (
                 <SuggestionLink
                   href={item.spotify.url}
                   service="Spotify"
@@ -314,7 +320,7 @@ export function SimilarRow({
             <LibraryAction
               kind={kind}
               name={title}
-              saved={Boolean(libraryId)}
+              saved={inLibrary}
               pending={add.isPending}
               onAdd={() => add.mutate()}
             />

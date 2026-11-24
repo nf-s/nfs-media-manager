@@ -82,11 +82,11 @@ export async function searchSpotifyCatalogTrackPage(
       }),
     )
   const seen = new Set<string>()
-  const items = tracks.items.flatMap((item) => {
+  const items = tracks.items.flatMap((item, index) => {
     const track = normalizeSpotifyCatalogTrack(item)
     if (!track || seen.has(track.spotifyTrackId)) return []
     seen.add(track.spotifyTrackId)
-    return [track]
+    return [{ ...track, catalogPosition: offset + index + 1 }]
   })
   return {
     items,

@@ -26,6 +26,7 @@ export const visibleArtist = sql`${artist.mergedIntoId} is null and exists (
     and ((m.media_type = 'album' and a.media_item_id is not null)
       or (m.media_type = 'track' and t.media_item_id is not null))
     and m.metadata->>'legacyHidden' is distinct from 'true'
+    and m.in_library
 )`
 
 function candidateIds(candidates: EntityRelationshipCandidate[]) {

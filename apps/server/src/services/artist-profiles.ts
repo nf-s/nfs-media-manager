@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
   ArtistProfileSchema,
@@ -43,11 +43,14 @@ export async function loadArtistProviderTarget(
   artistId: string,
   provider: ArtistProviderId,
   transaction?: ArtistProfileTransaction,
+  options?: { includeCatalog?: boolean },
 ) {
   if (transaction) await lockArtist(transaction, artistId)
   const [target] = await (transaction ?? db)
     .select({
       name: artist.name,
+      catalogProvider: artist.catalogProvider,
+      catalogExternalId: artist.catalogExternalId,
       snapshotId: artistProviderSnapshot.id,
       profile: artistProviderSnapshot.normalizedData,
     })
@@ -70,10 +73,12 @@ export async function loadArtistProviderTarget(
         eq(artistProviderSnapshot.provider, provider),
       ),
     )
-    .where(and(eq(artist.id, artistId), visibleArtist))
+    .where(and(eq(artist.id, artistId), options?.includeCatalog ? isNull(artist.mergedIntoId) : visibleArtist))
   return target
     ? {
         name: target.name,
+        catalogProvider: target.catalogProvider,
+        catalogExternalId: target.catalogExternalId,
         providerArtistId: target.profile?.externalId ?? null,
         snapshotId: target.snapshotId,
         profile: target.profile,

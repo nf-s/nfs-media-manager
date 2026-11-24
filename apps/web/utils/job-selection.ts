@@ -40,6 +40,7 @@ import {
 import { formatItemCount } from '@repo/ui/lib/format'
 import { playlistJobProgress } from './playlist-sync'
 import { ARTIST_ENRICHMENT_TASK } from '@repo/schemas/artist-profiles'
+import { SPOTIFY_ARTIST_ALBUMS_TASK } from '@repo/schemas/spotify-artist-albums'
 
 export function isArtistEnrichmentJob(job: Pick<Job, 'options'>): boolean {
   return getJobTask(job.options) === ARTIST_ENRICHMENT_TASK
@@ -219,6 +220,11 @@ export function jobTaskTitle(
     return filledText(job.options.artistName)
       ? `Artist enrichment · ${job.options.artistName}`
       : 'Artist enrichment'
+  if (task === SPOTIFY_ARTIST_ALBUMS_TASK)
+    return named(
+      'Spotify artist albums',
+      subjectName(job, job.options.artistName),
+    )
   if (isScrobbleSyncJob(job)) return 'Scrobble sync'
   if (isYoutubeSyncJob(job)) return 'YouTube subscription sync'
   if (isSpotifyPodcastSyncJob(job)) return 'Spotify podcast sync'

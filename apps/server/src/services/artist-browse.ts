@@ -45,6 +45,8 @@ import { listeningHistoryStart } from './listening-series'
 import { matchingTagNames } from './music-tags'
 import { tagAncestorKeys, visibleSubtagCounts } from './tag-hierarchy'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
+import { catalogScopeCondition, memberScope } from './catalog-scope'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 
 type Query = ArtistQuery | ArtistMetadataQuery
 const id = sql`a.id`
@@ -56,7 +58,15 @@ const visibleMusic = sql`credit.role = 'artist' and item.metadata->>'legacyHidde
   and (release.media_item_id is not null or recording.media_item_id is not null)`
 // A merged artist is a name another artist keeps, not an artist of its own.
 const visibleArtist = sql`a.merged_into_id is null and exists (select 1 from ${musicCredits}
-  where credit.artist_id = a.id and ${visibleMusic})`
+  where credit.artist_id = a.id and ${visibleMusic} and item.in_library)`
+function scopedArtists(query: CatalogScopeQuery) {
+  if (memberScope(query)) return visibleArtist
+  const outsideCredits = sql`exists (select 1 from ${musicCredits} where credit.artist_id = a.id
+    and ${visibleMusic} and ${catalogScopeCondition(sql`item.id`, sql`item.in_library`, { ...query, libraryScope: 'outside' })})`
+  return query.libraryScope === 'outside'
+    ? sql`a.merged_into_id is null and not (${visibleArtist}) and ${outsideCredits}`
+    : sql`a.merged_into_id is null and (${visibleArtist} or ${outsideCredits})`
+}
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
   maxValueBytes: 64,
@@ -214,7 +224,7 @@ function candidates(
 }
 
 function membership(query: Query, listening?: ArtistBrowseListening): SQL {
-  const conditions: SQL[] = [visibleArtist]
+  const conditions: SQL[] = [scopedArtists(query)]
   if (query.playlistIds.length)
     conditions.push(sql`${id} in (
     select artist_id from (${artistPlaylistCredits(
@@ -345,7 +355,7 @@ async function loadArtists(
       select credit.artist_id, count(*) filter (where item.media_type = 'album')::int as albums,
         count(*) filter (where item.media_type = 'track')::int as tracks
       from ${musicCredits}
-      where credit.artist_id = ${requested} and ${visibleMusic} group by credit.artist_id
+      where credit.artist_id = ${requested} and ${visibleMusic} and item.in_library group by credit.artist_id
     ), playlists as (
       select memberships.artist_id, count(distinct playlist.id)::int as count,
         array_agg(distinct playlist.name order by playlist.name) as names
@@ -354,6 +364,7 @@ async function loadArtists(
     ) select a.id, a.name, a.sort_name as "sortName", a.created_at at time zone 'UTC' as "createdAt",
       a.scrobble_count as "scrobbleCount",
       coalesce(counts.albums,0) as "albumCount", coalesce(counts.tracks,0) as "trackCount",
+      counts.artist_id is not null as "inLibrary",
       coalesce(playlists.count,0) as "playlistCount", ${artistArtwork(id)} as "artworkUrl",
       jsonb_build_object('playlist',coalesce(playlists.names,'{}'::text[])) as browse
       from artist a left join counts on counts.artist_id = a.id left join playlists on playlists.artist_id = a.id
@@ -653,7 +664,7 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
       })
       // Normalize a stored label once across the artists and providers using it.
       const result = await db.execute(sql`with visible_artists as materialized (
-      select a.id from artist a where ${visibleArtist}
+      select a.id from artist a where ${scopedArtists(query)}
     ), raw_artist_tags as materialized (
       select distinct id, value from (${textRows('genre')}) artist_tags
     ), normalized_tag_labels as materialized (

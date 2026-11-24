@@ -54,6 +54,13 @@ import type { MediaScope } from '@/utils/media-scope'
 import { defaultBrowseView, parseBrowseView } from '@/utils/media-grid'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { fetchApiData } from '@/utils/api'
+import {
+  libraryScopeFilterCount,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
 import { useConfig } from './providers'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailMore } from './detail-more'
@@ -64,6 +71,7 @@ import BrowseToolbar, {
   BrowseColumnsSection,
 } from './browse-toolbar'
 import { useDetailView } from './detail-inspector-context'
+import { LibraryScopePills } from './library-scope-controls'
 import {
   NestedMediaCard,
   NestedMediaCards,
@@ -151,6 +159,9 @@ export function CollectionEntries({
 }) {
   const { apiBaseUrl } = useConfig()
   const detail = useDetailView()
+  const libraryScope = readLibraryScope(detail.params)
+  const scopeFilterCount = libraryScopeFilterCount(libraryScope)
+  const catalogParams = libraryScopeQuery(libraryScope)
   const album = mediaType === 'album'
   const members = `${mediaType}s`
   const label = album ? 'Albums' : 'Films'
@@ -202,6 +213,14 @@ export function CollectionEntries({
       params.set(key, value)
     detail.replace(params)
   }
+  function changeLibraryScope(scope: LibraryScopeState) {
+    const params = new URLSearchParams(detail.params)
+    for (const [key, value] of Object.entries(libraryScopeUpdates(scope))) {
+      if (value === null) params.delete(key)
+      else params.set(key, value)
+    }
+    detail.replace(params)
+  }
   const table = useTableColumns(`${mediaType}-collection-items`, columns)
   const shownColumns = dataColumns.filter((column) => table.visible(column.key))
   const layout = table.layout([
@@ -223,7 +242,7 @@ export function CollectionEntries({
     retry: false,
   })
   const query = useVirtualTable({
-    queryKey: [...queryKey, sortBy, direction, q, watchedStates],
+    queryKey: [...queryKey, sortBy, direction, q, watchedStates, catalogParams],
     rowHeight: 36,
     presentation: { view: presentation, mediaType, density },
     fitDetail: presentation === 'table',
@@ -231,7 +250,7 @@ export function CollectionEntries({
     loadPage: async (page, size, signal) => {
       const result = await fetchApiData(
         apiBaseUrl,
-        `${path}?${new URLSearchParams({ page: String(page), size: String(size), sortBy, direction, includeSources: 'false', ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
+        `${path}?${new URLSearchParams({ ...catalogParams, page: String(page), size: String(size), sortBy, direction, includeSources: 'false', ...(q ? { q } : {}), ...(watchedStates.length ? { watchedStates: JSON.stringify(watchedStates) } : {}) })}`,
         schema,
         { signal },
       )
@@ -275,7 +294,7 @@ export function CollectionEntries({
   }
   const empty =
     query.hasTotal && query.total === 0
-      ? q || watchedStates.length
+      ? q || watchedStates.length || scopeFilterCount
         ? `No matching ${members}.`
         : `No ${members} in this collection.`
       : undefined
@@ -288,6 +307,15 @@ export function CollectionEntries({
         </p>
       )}
       <BrowseToolbar
+        libraryScope={{ value: libraryScope, onChange: changeLibraryScope }}
+        activeFilters={
+          scopeFilterCount ? (
+            <LibraryScopePills
+              value={libraryScope}
+              onChange={changeLibraryScope}
+            />
+          ) : undefined
+        }
         search={
           <Input
             type="search"
@@ -348,6 +376,7 @@ export function CollectionEntries({
             <Button variant="link" asChild>
               <Link
                 href={collectionBrowseHref(mediaType, summary.name, {
+                  ...catalogParams,
                   q,
                   watchedStates,
                   sortBy,

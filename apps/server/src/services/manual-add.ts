@@ -1,4 +1,5 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
+import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import {
   PluginResultSchema,
@@ -31,15 +32,17 @@ import {
   providerResponseSecretValues,
 } from '@/lib/provider-response-history'
 import { ServerError } from '@/lib/error'
+import { parseOptionalDate } from '@/lib/media-utils'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
 import { normalizeSpotifyAlbum, spotifyJson } from '@/lib/spotify-api'
 import { AlbumImportCandidateSchema } from '@/lib/album-import-candidates'
 import { spotifyClientToken } from '@/plugins/builtin/spotify'
 import { searchTmdbMovies, tmdbPosterUrl } from '@/plugins/builtin/tmdb'
 import { getScrapePlugin } from '@/plugins/registry'
-import { providerSecret } from '@/schemas/db'
+import { mediaItem, providerSecret } from '@/schemas/db'
 import { spotifyAlbumReleaseIds } from './album-library-tracks'
 import { commitAlbumImportRecord, matchAlbumCandidates } from './album-imports'
+import { observeCatalogMedia } from './catalog-discoveries'
 import {
   commitFilmImportRecord,
   matchFilmCandidates,
@@ -56,6 +59,10 @@ import {
   storeManualTrack,
 } from './spotify-track-recordings'
 import { saveProviderResponseCapture } from './provider-response-history'
+import {
+  latestCatalogResponseId,
+  observeSpotifySearchTrack,
+} from './music-catalog-observations'
 import {
   lookupSpotifyCatalogTrack,
   normalizeSpotifyCatalogTrack,
@@ -423,8 +430,22 @@ async function searchManualSpotifyTracks(
   const matches = await findManualTrackMatches(
     result.items.map((track) => track.spotifyTrackId),
   )
+  const key = nanoid()
+  const observed = await db.transaction(async (tx) => {
+    const ids: string[] = []
+    for (const [index, track] of result.items.entries())
+      ids.push(
+        await observeSpotifySearchTrack(tx, track, {
+          operation: 'catalog-search',
+          key,
+          page,
+          position: track.catalogPosition ?? index + 1,
+        }),
+      )
+    return ids
+  })
   return ManualMediaSearchResultSchema.parse({
-    items: result.items.map((track) => {
+    items: result.items.map((track, index) => {
       const match = matches.get(track.spotifyTrackId)
       return {
         externalId: track.spotifyTrackId,
@@ -436,6 +457,7 @@ async function searchManualSpotifyTracks(
         artworkUrl: track.artworkUrl,
         url: track.spotifyUrl,
         mediaItemId: match?.hidden ? null : (match?.id ?? null),
+        catalogMediaItemId: observed[index],
       }
     }),
     page,
@@ -462,6 +484,28 @@ async function addManualSpotifyTrack(spotifyId: string, userId: string | null) {
   return storeManualTrack(track)
 }
 
+async function libraryMatches(
+  matches: readonly { id: string | null; error: string | null }[],
+) {
+  const ids = [
+    ...new Set(
+      matches.flatMap((match) => (match.id && !match.error ? [match.id] : [])),
+    ),
+  ]
+  if (!ids.length) return new Set<string>()
+  const rows = await db
+    .select({ id: mediaItem.id })
+    .from(mediaItem)
+    .where(
+      and(
+        eq(mediaItem.inLibrary, true),
+        inArray(mediaItem.id, ids),
+        sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+      ),
+    )
+  return new Set(rows.map(({ id }) => id))
+}
+
 function filmCandidate(
   externalId: string,
   title?: string,
@@ -484,10 +528,12 @@ export async function searchManualMedia(
   {
     assertActive,
     jobId,
+    subjectId,
     userId = null,
   }: {
     assertActive?: () => Promise<void>
     jobId?: string
+    subjectId?: string
     userId?: string | null
   } = {},
 ) {
@@ -519,17 +565,61 @@ export async function searchManualMedia(
       assertActive,
     )
     const result = projectSpotifyCatalogAlbums(page, options.page)
+    const key = jobId ?? nanoid()
+    // Resolve membership before writing catalog summaries for the same IDs.
+    const observed = () =>
+      db.transaction(async (tx) => {
+        const responseId = jobId
+          ? await latestCatalogResponseId(tx, jobId, 'spotify')
+          : undefined
+        const ids: string[] = []
+        for (const [index, item] of page.items.entries())
+          ids.push(
+            await observeCatalogMedia(
+              tx,
+              {
+                kind: 'album',
+                title: item.name,
+                provider: 'spotify',
+                referenceType: 'spotify',
+                externalId: item.id,
+                artworkUrl: item.images[0]?.url,
+                releaseDate: parseOptionalDate(item.release_date) ?? undefined,
+                trackCount: item.total_tracks,
+                spotifyUrl: `https://open.spotify.com/album/${item.id}`,
+                credits: item.artists.map(({ id, name }) => ({
+                  externalId: id,
+                  name,
+                })),
+              },
+              {
+                provider: 'spotify',
+                operation: 'catalog-search',
+                occurrenceKey: JSON.stringify([key, options.page, index + 1]),
+                jobId,
+                subjectKind: subjectId ? 'lastfm-album' : undefined,
+                subjectId,
+                responseId,
+                page: options.page,
+                position: index + 1,
+              },
+            ),
+          )
+        return ids
+      })
     if (options.exactMembership) {
       const matches = await findCatalogAlbumMembership(
         result.items.map((item) => item.externalId),
       )
+      const ids = await observed()
       return {
         ...result,
-        items: result.items.map((item) => {
+        items: result.items.map((item, index) => {
           const match = matches.get(item.externalId)
           return {
             ...item,
             mediaItemId: match?.hidden ? null : (match?.id ?? null),
+            catalogMediaItemId: ids[index],
           }
         }),
       }
@@ -542,13 +632,16 @@ export async function searchManualMedia(
       }),
     )
     const matches = await matchAlbumCandidates(candidates)
+    const library = await libraryMatches(matches)
+    const ids = await observed()
     return {
       ...result,
       items: result.items.map((item, index) => ({
         ...item,
-        mediaItemId: matches[index]?.error
-          ? null
-          : (matches[index]?.id ?? null),
+        mediaItemId: library.has(matches[index]?.id ?? '')
+          ? (matches[index]?.id ?? null)
+          : null,
+        catalogMediaItemId: ids[index],
       })),
     }
   }
@@ -564,6 +657,34 @@ export async function searchManualMedia(
   const matches = await matchFilmCandidates(
     page.results.map((item) => filmCandidate(String(item.id), item.title)),
   )
+  const library = await libraryMatches(matches)
+  const key = nanoid()
+  const observed = await db.transaction(async (tx) => {
+    const ids: string[] = []
+    for (const [index, item] of page.results.entries())
+      ids.push(
+        await observeCatalogMedia(
+          tx,
+          {
+            kind: 'film',
+            title: item.title,
+            provider: 'tmdb',
+            referenceType: 'tmdb',
+            externalId: String(item.id),
+            releaseDate: parseOptionalDate(item.release_date) ?? undefined,
+            artworkUrl: tmdbPosterUrl(item.poster_path),
+          },
+          {
+            provider: 'tmdb',
+            operation: 'catalog-search',
+            occurrenceKey: JSON.stringify([key, options.page, index + 1]),
+            page: options.page,
+            position: index + 1,
+          },
+        ),
+      )
+    return ids
+  })
   return ManualMediaSearchResultSchema.parse({
     items: page.results.map((item, index) => ({
       externalId: String(item.id),
@@ -575,7 +696,10 @@ export async function searchManualMedia(
       releaseDate: item.release_date || null,
       artworkUrl: tmdbPosterUrl(item.poster_path) ?? null,
       url: `https://www.themoviedb.org/movie/${item.id}`,
-      mediaItemId: matches[index]?.error ? null : (matches[index]?.id ?? null),
+      mediaItemId: library.has(matches[index]?.id ?? '')
+        ? (matches[index]?.id ?? null)
+        : null,
+      catalogMediaItemId: observed[index],
     })),
     page: options.page,
     ...(page.total_results === undefined
@@ -629,6 +753,7 @@ async function findCatalogAlbumMembership(albumIds: string[]) {
     from (${spotifyAlbumReleaseIds()}) release
     join media_item mi on mi.id = release.album_id
     where release.spotify_id = any(${sql.param(albumIds)}::text[])
+      and mi.in_library
     group by release.spotify_id
   `)
   const rows = z

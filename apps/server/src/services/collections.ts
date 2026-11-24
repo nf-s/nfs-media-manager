@@ -20,6 +20,7 @@ import {
   type AlbumCollectionQuery,
 } from '@repo/schemas/album-collections'
 import type { CollectionQuery } from '@repo/schemas/collections'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   FilmCollectionBrowsePageSchema,
   FilmCollectionDetailSchema,
@@ -28,6 +29,7 @@ import {
 } from '@repo/schemas/film-collections'
 import type { SourceNavigationLink } from '@repo/schemas/tags'
 import { albumAddedDateExpression } from './album-added-dates'
+import { catalogScopeCondition } from './catalog-scope'
 import {
   getCollectionSourceLinksForItems,
   matchingCollectionNames,
@@ -90,10 +92,18 @@ function collectionMemberCount(
     .where(where)
 }
 
-function visibleMember(mediaType: CollectionMediaType) {
+function visibleMember(
+  mediaType: CollectionMediaType,
+  scope: CatalogScopeQuery,
+) {
   return and(
     eq(mediaItem.mediaType, mediaType),
     sql`${mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+    catalogScopeCondition(
+      sql`${mediaItem.id}`,
+      sql`${mediaItem.inLibrary}`,
+      scope,
+    ),
   )
 }
 
@@ -102,6 +112,7 @@ const COLLECTION_LINK_BATCH = 100
 async function collectionLinks(
   mediaType: CollectionMediaType,
   collections: readonly { id: string; name: string }[],
+  scope: CatalogScopeQuery,
 ) {
   const links = new Map<string, SourceNavigationLink[]>()
   if (!collections.length) return links
@@ -122,7 +133,7 @@ async function collectionLinks(
       .where(
         and(
           inArray(playlistItem.playlistId, collectionIds),
-          visibleMember(mediaType),
+          visibleMember(mediaType, scope),
           after ? gt(mediaItem.id, after) : undefined,
         ),
       )
@@ -183,13 +194,19 @@ async function collectionLinks(
   return links
 }
 
-function matchingCollections(mediaType: CollectionMediaType, q?: string) {
+function matchingCollections(
+  mediaType: CollectionMediaType,
+  query: CollectionQuery,
+) {
   const matchingMember = collectionMembers(mediaType, {}).where(
-    and(eq(playlistItem.playlistId, playlist.id), visibleMember(mediaType)),
+    and(
+      eq(playlistItem.playlistId, playlist.id),
+      visibleMember(mediaType, query),
+    ),
   )
   return and(
     eq(playlist.kind, 'collection'),
-    q ? ilike(playlist.name, containsPattern(q)) : undefined,
+    query.q ? ilike(playlist.name, containsPattern(query.q)) : undefined,
     exists(matchingMember),
   )
 }
@@ -201,7 +218,7 @@ async function countCollections(
   const [result] = await db
     .select({ totalCount: count() })
     .from(playlist)
-    .where(matchingCollections(mediaType, query.q))
+    .where(matchingCollections(mediaType, query))
   return { totalCount: result?.totalCount ?? 0 }
 }
 
@@ -216,7 +233,10 @@ async function listCollectionBrowsePage(
 ) {
   const memberCountQuery = collectionMemberCount(
     mediaType,
-    and(eq(playlistItem.playlistId, playlist.id), visibleMember(mediaType)),
+    and(
+      eq(playlistItem.playlistId, playlist.id),
+      visibleMember(mediaType, query),
+    ),
   )
   const memberCount = sql<number>`(${memberCountQuery})`.mapWith(Number)
   const name = sql`lower(${playlist.name})`
@@ -230,7 +250,7 @@ async function listCollectionBrowsePage(
   const rows = await db
     .select({ ...collectionColumns, memberCount })
     .from(playlist)
-    .where(matchingCollections(mediaType, query.q))
+    .where(matchingCollections(mediaType, query))
     .orderBy(
       sql`${sortColumns[query.sortBy]} ${direction}`,
       ...(query.sortBy === 'name' ? [] : [name]),
@@ -241,7 +261,7 @@ async function listCollectionBrowsePage(
   const page = rows.slice(0, query.size)
   const links =
     query.includeSources === 'true'
-      ? await collectionLinks(mediaType, page)
+      ? await collectionLinks(mediaType, page, query)
       : undefined
   return {
     page: query.page,
@@ -285,7 +305,13 @@ async function getCollectionPage<T extends SelectedFields>(
 ) {
   const membership = and(
     eq(playlistItem.playlistId, id),
-    visibleMember(mediaType),
+    visibleMember(mediaType, query),
+  )
+  const knownMembers = collectionMembers(mediaType, {}).where(
+    and(
+      eq(playlistItem.playlistId, id),
+      visibleMember(mediaType, { libraryScope: 'all' }),
+    ),
   )
   const memberCountQuery = collectionMemberCount(mediaType, membership)
   const [summary] = await db
@@ -294,8 +320,14 @@ async function getCollectionPage<T extends SelectedFields>(
       memberCount: sql<number>`(${memberCountQuery})`.mapWith(Number),
     })
     .from(playlist)
-    .where(and(eq(playlist.id, id), eq(playlist.kind, 'collection')))
-  if (!summary?.memberCount)
+    .where(
+      and(
+        eq(playlist.id, id),
+        eq(playlist.kind, 'collection'),
+        exists(knownMembers),
+      ),
+    )
+  if (!summary)
     throw new ServerError({ statusCode: 404, message: 'Collection not found' })
 
   const members = and(membership, filter)
@@ -316,7 +348,7 @@ async function getCollectionPage<T extends SelectedFields>(
   const links =
     query.includeSources === 'false'
       ? undefined
-      : await collectionLinks(mediaType, [summary])
+      : await collectionLinks(mediaType, [summary], { libraryScope: 'all' })
   return {
     ...summary,
     sourceLinks: links?.get(summary.id) ?? [],
@@ -338,7 +370,7 @@ export async function getFilmCollection(
   const watchedStates =
     query.watchedStates ?? (query.watched ? [query.watched] : [])
   const dateAdded =
-    sql<Date>`coalesce(${film.dateAdded}, ${mediaItem.createdAt})`.mapWith(
+    sql<Date | null>`case when ${mediaItem.inLibrary} then coalesce(${film.dateAdded}, ${mediaItem.createdAt}) end`.mapWith(
       mediaItem.createdAt,
     )
   const sortColumns = {
@@ -377,7 +409,7 @@ export async function getFilmCollection(
       items: collection.items.items.map((row) => ({
         ...row,
         releaseDate: toIsoString(row.releaseDate),
-        dateAdded: row.dateAdded.toISOString(),
+        dateAdded: toIsoString(row.dateAdded),
       })),
     },
   })
@@ -392,9 +424,10 @@ export async function getAlbumCollection(
   const artists = sql<
     string[]
   >`coalesce((select array_agg(a.name order by c.billing_order, a.name) ${artistCredits}), '{}')`
-  const dateAdded = sql<Date | null>`${albumAddedDateExpression}`.mapWith(
-    album.dateAdded,
-  )
+  const dateAdded =
+    sql<Date | null>`case when ${mediaItem.inLibrary} then ${albumAddedDateExpression} end`.mapWith(
+      album.dateAdded,
+    )
   const sortColumns = {
     ...memberSortColumns,
     artists: sql`(select lower(a.name) ${artistCredits} order by c.billing_order, a.name limit 1)`,

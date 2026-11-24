@@ -128,10 +128,10 @@ test('Tracks start in the Table view; grid size is not on the toolbar', async ()
   assert.match(html, /data-view="table"/)
   assert.match(html, /aria-pressed="true" aria-label="Table view"/)
   const grid = await render('view=grid')
-  // The view switch is followed by the Filters button, then the count.
+  // The view switch is followed by the scope toggle, Filters, and the count.
   assert.match(
     grid,
-    /aria-label="Browse views">.*?<\/div><button class="ds-btn" type="button" data-filters="full"[^>]*>.*?<\/button><span class="ds-toolbar-count"/,
+    /aria-label="Browse views">.*?<\/div><button[^>]*aria-label="Include outside library"[^>]*>.*?<\/button><button class="ds-btn" type="button" data-filters="full"[^>]*>.*?<\/button><span class="ds-toolbar-count"/,
   )
   assert.doesNotMatch(grid, /aria-label="Grid size"/)
   // The 1000px first measure: five standard columns, eight compact, four roomy.

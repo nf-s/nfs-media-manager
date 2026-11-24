@@ -18,6 +18,7 @@ export const ManualMediaSearchItemSchema = z.object({
   artworkUrl: z.string().url().nullable(),
   url: z.string().url(),
   mediaItemId: z.string().nullable(),
+  catalogMediaItemId: z.string().min(1).optional(),
   /** How many tracks an album result has, when the provider says. */
   trackCount: z.number().int().nonnegative().optional(),
 })

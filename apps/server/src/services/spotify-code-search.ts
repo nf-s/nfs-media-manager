@@ -121,7 +121,7 @@ async function searchAlbum(
   token: string,
   upc: string,
   market: string | undefined,
-): Promise<SpotifyCodeMatch | null> {
+): Promise<Array<SpotifyCodeMatch & { releaseDate?: string }>> {
   const { albums } = z
     .object({
       albums: z.object({ items: z.array(SpotifyAlbumSchema).max(5) }),
@@ -134,20 +134,21 @@ async function searchAlbum(
         limit: '5',
       }),
     )
-  const [album] = albums.items
-  if (!album) return null
-  const genres = normalizeSimilarGenres(album.genres ?? [])
-  return SpotifyCodeMatchSchema.parse({
-    spotifyId: album.id,
-    url: `https://open.spotify.com/album/${album.id}`,
-    title: album.name,
-    artists: [...new Set(album.artists.map((artist) => artist.name))],
-    albumName: null,
-    spotifyAlbumId: album.id,
-    artworkUrl: spotifyArtworkUrl(album.images),
-    durationSec: null,
-    trackCount: album.total_tracks ?? null,
-    ...(genres.length ? { genres } : {}),
+  return albums.items.map((album) => {
+    const genres = normalizeSimilarGenres(album.genres ?? [])
+    const match = SpotifyCodeMatchSchema.parse({
+      spotifyId: album.id,
+      url: `https://open.spotify.com/album/${album.id}`,
+      title: album.name,
+      artists: [...new Set(album.artists.map((artist) => artist.name))],
+      albumName: null,
+      spotifyAlbumId: album.id,
+      artworkUrl: spotifyArtworkUrl(album.images),
+      durationSec: null,
+      trackCount: album.total_tracks ?? null,
+      ...(genres.length ? { genres } : {}),
+    })
+    return { ...match, releaseDate: album.release_date }
   })
 }
 
@@ -179,6 +180,11 @@ export async function searchSpotifyCode(
   request: Request,
   token: string,
   input: SpotifyCodeSearch,
+  observe?: (
+    candidates: ReadonlyArray<
+      SpotifyCodeMatch & { releaseDate?: string | null }
+    >,
+  ) => Promise<void>,
 ): Promise<
   | { kind: 'album'; album: SpotifyCodeMatch | null }
   | { kind: 'track'; tracks: SpotifyCodeTrackCandidate[] }
@@ -188,11 +194,16 @@ export async function searchSpotifyCode(
     // Searched as TIDAL wrote it: Spotify matches the digits exactly.
     const upc = UpcSchema.safeParse(code.trim())
     if (!upc.success) throw new Error('Invalid UPC')
-    return { kind, album: await searchAlbum(request, token, upc.data, market) }
+    const candidates = await searchAlbum(request, token, upc.data, market)
+    await observe?.(candidates)
+    const [first] = candidates
+    return { kind, album: first ? SpotifyCodeMatchSchema.parse(first) : null }
   }
   const isrc = validIsrc(code)
   if (!isrc) throw new Error('Invalid ISRC')
-  return { kind, tracks: await searchTracks(request, token, isrc, market) }
+  const tracks = await searchTracks(request, token, isrc, market)
+  await observe?.(tracks)
+  return { kind, tracks }
 }
 
 /** Reads a Spotify similar lookup again from its recorded responses. */

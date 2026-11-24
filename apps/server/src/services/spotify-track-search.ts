@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { EnrichmentResultSchema, JobScopeSchema } from '@repo/schemas/job'
@@ -23,6 +23,7 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
 import {
+  catalogObservation,
   lastfmTrackSource,
   libraryTrack,
   mediaItem,
@@ -41,6 +42,10 @@ import {
   sonovaultSpotifyStepIsCurrent,
 } from './sonovault-track-candidates'
 import { closeChangeBatch, openChangeBatch } from './library-changes'
+import {
+  latestCatalogResponseId,
+  observeSpotifySearchTrack,
+} from './music-catalog-observations'
 import { reconcileSpotifyTrackSearchInTransaction } from './spotify-track-search-acceptance'
 import {
   sameSpotifySearchArtists,
@@ -339,26 +344,54 @@ export async function runSpotifyTrackSearch(
             userId: context.requestedByUserId,
             ...sonovault,
           })
-          return
+        } else if (!options.reviewOnly && context.requestedByUserId) {
+          const batchId = await openChangeBatch(tx, 'spotify-search')
+          await reconcileSpotifyTrackSearchInTransaction(
+            tx,
+            {
+              trackId: options.trackId,
+              userId: context.requestedByUserId,
+              jobId: context.jobId,
+            },
+            false,
+            batchId,
+          )
+          await closeChangeBatch(tx, batchId)
         }
-        if (options.reviewOnly || !context.requestedByUserId) return
-        const batchId = await openChangeBatch(tx, 'spotify-search')
-        await reconcileSpotifyTrackSearchInTransaction(
+        await observeSpotifyMatchCandidates(
           tx,
-          {
-            trackId: options.trackId,
-            userId: context.requestedByUserId,
-            jobId: context.jobId,
-          },
-          false,
-          batchId,
+          context.jobId,
+          options.trackId,
+          candidates,
         )
-        await closeChangeBatch(tx, batchId)
       },
     }
   } catch (error) {
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return { outcome: 'failed', error }
+  }
+}
+
+async function observeSpotifyMatchCandidates(
+  tx: Transaction,
+  jobId: string,
+  trackId: string,
+  candidates: z.infer<typeof SpotifyTrackSearchCandidateSchema>[],
+  observedAt?: Date,
+) {
+  if (candidates.length === 0) return
+  const responseId = await latestCatalogResponseId(tx, jobId, 'spotify')
+  for (const [index, candidate] of candidates.entries()) {
+    await observeSpotifySearchTrack(tx, candidate, {
+      operation: 'spotify-match',
+      key: jobId,
+      subjectKind: 'track',
+      subjectId: trackId,
+      jobId,
+      responseId,
+      position: candidate.catalogPosition ?? index + 1,
+      observedAt,
+    })
   }
 }
 
@@ -530,6 +563,56 @@ async function storedSearch(
   return null
 }
 
+/** Projects a bounded batch of saved candidate lists without calling Spotify. */
+export async function backfillSpotifyTrackDiscoveries(input: {
+  after?: string
+  limit: number
+  apply: boolean
+}) {
+  const jobs = await db
+    .select({
+      id: scrapeJob.id,
+      options: scrapeJob.options,
+      scope: scrapeJob.scope,
+      finishedAt: scrapeJob.finishedAt,
+    })
+    .from(scrapeJob)
+    .where(
+      and(
+        isTrackSearch,
+        eq(scrapeJob.provider, 'spotify'),
+        eq(scrapeJob.status, 'succeeded'),
+        input.after ? gt(scrapeJob.id, input.after) : undefined,
+      ),
+    )
+    .orderBy(asc(scrapeJob.id))
+    .limit(input.limit)
+  let candidates = 0
+  let skipped = 0
+  for (const job of jobs) {
+    const trackId = SpotifyTrackSearchParamsSchema.shape.trackId.safeParse(
+      job.options.trackId,
+    )
+    const result = await storedSearch(db, job.id)
+    if (!trackId.success || !result || !savedSearchScopeMatches(job)) {
+      skipped += 1
+      continue
+    }
+    candidates += result.candidates.length
+    if (input.apply)
+      await db.transaction((tx) =>
+        observeSpotifyMatchCandidates(
+          tx,
+          job.id,
+          trackId.data,
+          result.candidates,
+          job.finishedAt ?? undefined,
+        ),
+      )
+  }
+  return { next: jobs.at(-1)?.id ?? null, candidates, skipped }
+}
+
 function trackSearchHistoryScope(trackId: string, userId?: string) {
   return and(
     eq(scrapeJob.provider, 'spotify'),
@@ -539,7 +622,7 @@ function trackSearchHistoryScope(trackId: string, userId?: string) {
   )
 }
 
-function savedSearchScopeMatches(job: SearchJob) {
+function savedSearchScopeMatches(job: Pick<SearchJob, 'scope' | 'options'>) {
   const scope = JobScopeSchema.safeParse(job.scope)
   return (
     scope.success &&
@@ -624,10 +707,47 @@ export async function readSpotifySearchHistory(
 
 export async function getSpotifyTrackSearch(trackId: string, userId: string) {
   const { job, searches } = await readSpotifySearchHistory(db, trackId, userId)
+  const observations = searches.length
+    ? await db
+        .select({
+          jobId: catalogObservation.jobId,
+          position: catalogObservation.position,
+          id: mediaItem.id,
+          inLibrary: mediaItem.inLibrary,
+        })
+        .from(catalogObservation)
+        .innerJoin(mediaItem, eq(mediaItem.id, catalogObservation.mediaItemId))
+        .where(
+          and(
+            eq(catalogObservation.operation, 'spotify-match'),
+            inArray(
+              catalogObservation.jobId,
+              searches.map(({ job }) => job.id),
+            ),
+          ),
+        )
+    : []
+  const byPosition = new Map(
+    observations.map((item) => [
+      JSON.stringify([item.jobId, item.position]),
+      item,
+    ]),
+  )
   const [saved, ...earlier] = searches.map((search) => ({
     job: { ...summarizeSearch(search.job), resultCount: search.resultCount },
     query: search.query,
-    candidates: search.candidates,
+    candidates: search.candidates.map((candidate) => {
+      const position =
+        candidate.catalogPosition ?? search.peers.indexOf(candidate) + 1
+      const observed = byPosition.get(JSON.stringify([search.job.id, position]))
+      return observed
+        ? {
+            ...candidate,
+            catalogMediaItemId: observed.id,
+            inLibrary: observed.inLibrary,
+          }
+        : candidate
+    }),
   }))
   let query = saved?.query ?? job?.options.query
   if (query === undefined || query === null) {

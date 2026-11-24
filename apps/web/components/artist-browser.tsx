@@ -98,7 +98,16 @@ import {
   BrowseTagBadges,
   RangeEditor,
 } from './browse-controls'
+import {
+  clearLibraryScope,
+  libraryScopeFilterCount,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { LibraryScopePills } from './library-scope-controls'
 import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import {
   gridCardMin,
@@ -142,6 +151,8 @@ const noun = { one: 'artist', other: 'artists' }
 export default function ArtistBrowser() {
   const { apiBaseUrl } = useConfig()
   const searchParams = useSearchParams()
+  const libraryScope = readLibraryScope(searchParams)
+  const catalogParams = libraryScopeQuery(libraryScope)
   const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [ready, setReady] = useState(false)
   const [draft, setDraft] = useState('')
@@ -215,6 +226,7 @@ export default function ArtistBrowser() {
       ? (listeningSort ?? defaultListeningPeriod)
       : undefined
   const queryKey = JSON.stringify({
+    ...catalogParams,
     q,
     filters,
     ranges,
@@ -278,6 +290,7 @@ export default function ArtistBrowser() {
   }
   function clearFilters() {
     setParams({
+      ...clearLibraryScope,
       q: null,
       filters: null,
       ranges: null,
@@ -285,6 +298,9 @@ export default function ArtistBrowser() {
       limitResults: null,
       listening: null,
     })
+  }
+  function changeLibraryScope(next: LibraryScopeState) {
+    setParams(libraryScopeUpdates(next))
   }
   function changeListening(next: ListeningFilter | undefined) {
     setParams({ listening: next ? JSON.stringify(next) : null })
@@ -359,6 +375,7 @@ export default function ArtistBrowser() {
   }, [selectedId])
 
   const params = new URLSearchParams({
+    ...catalogParams,
     q,
     filters: JSON.stringify(filters),
     ranges: JSON.stringify(ranges),
@@ -399,17 +416,27 @@ export default function ArtistBrowser() {
     rowSelectionWidth,
     ...columns.map((field) => widths.widthFor(field)),
   ]
-  const facets = useBrowseFacets(apiBaseUrl, collection, draft, ready)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    collection,
+    draft,
+    ready,
+    false,
+    undefined,
+    false,
+    catalogParams,
+  )
   const titleFilters = matchingTitleFilters(
     facets.data ?? [],
     facets.search,
     'name',
   )
   const titleMatches = useQuery({
-    queryKey: [collection, 'title-suggestions', titleFilters],
+    queryKey: [collection, 'title-suggestions', titleFilters, catalogParams],
     enabled: ready && titleFilters.length > 0,
     queryFn: ({ signal }) => {
       const params = new URLSearchParams({
+        ...catalogParams,
         page: '1',
         size: '100',
         filters: JSON.stringify(titleFilters),
@@ -580,9 +607,11 @@ export default function ArtistBrowser() {
     ranges.length +
     (listening?.rules.length ?? 0)
   const singlePlaylistId = playlistIds.length === 1 ? playlistIds[0] : undefined
+  const filterCount = activeFilterCount + libraryScopeFilterCount(libraryScope)
   const filterPills =
-    activeFilterCount > 0 ? (
+    filterCount > 0 ? (
       <>
+        <LibraryScopePills value={libraryScope} onChange={changeLibraryScope} />
         {playlistIds.length > 0 && (
           <BrowseFilterPill
             mode="required"
@@ -662,6 +691,7 @@ export default function ArtistBrowser() {
     <section className="media-browser" aria-label={collection}>
       <div className="browse-main">
         <BrowseToolbar
+          libraryScope={{ value: libraryScope, onChange: changeLibraryScope }}
           search={
             <AiSearch
               target={mediaAiSearchTarget('artist', fields)}
@@ -790,7 +820,7 @@ export default function ArtistBrowser() {
           query={query}
           total={total}
           noun="artists"
-          filtered={activeFilterCount > 0}
+          filtered={filterCount > 0}
           onClear={clearFilters}
         />
         <TableScroll

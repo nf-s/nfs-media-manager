@@ -61,12 +61,16 @@ export const mediaItem = pgTable(
       withTimezone: false,
     }),
     sourceLabel: text('source_label'),
+    inLibrary: boolean('in_library').default(true).notNull(),
     metadata: jsonb('metadata').$type<Record<string, JsonValue>>(),
     ...timestampColumns,
   },
   (table) => [
     uniqueIndex('media_item_slug_uidx').on(table.slug),
     index('media_item_type_idx').on(table.mediaType),
+    index('media_item_outside_library_idx')
+      .on(table.mediaType, table.id)
+      .where(sql`not ${table.inLibrary}`),
     index('media_item_title_idx').on(table.title),
     index('media_item_recording_title_idx').on(
       table.mediaType,
@@ -399,6 +403,8 @@ export const artist = pgTable(
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     sortName: text('sort_name'),
+    catalogProvider: text('catalog_provider'),
+    catalogExternalId: text('catalog_external_id'),
     // Scrobbles linked to the artist's library albums and tracks, counted
     // once. Recomputed whenever scrobble links are.
     scrobbleCount: integer('scrobble_count').default(0).notNull(),
@@ -411,7 +417,8 @@ export const artist = pgTable(
     ...timestampColumns,
   },
   (table) => [
-    uniqueIndex('artist_name_uidx').on(table.name),
+    uniqueIndex('artist_name_uidx').on(table.name).where(sql`${table.catalogProvider} is null`),
+    uniqueIndex('artist_catalog_native_uidx').on(table.catalogProvider, table.catalogExternalId),
     index('artist_merged_into_idx').on(table.mergedIntoId),
     index('artist_name_search_idx').using('gin', table.name.op('gin_trgm_ops')),
     index('artist_browse_name_idx').on(
@@ -450,6 +457,24 @@ export const mediaCredit = pgTable(
       table.mediaItemId,
     ),
   ],
+)
+
+export const spotifyArtistAlbumListing = pgTable(
+  'spotify_artist_album_listing',
+  {
+    artistId: text('artist_id')
+      .notNull()
+      .references(() => artist.id, { onDelete: 'cascade' }),
+    spotifyArtistId: text('spotify_artist_id').notNull(),
+    market: text('market').notNull(),
+    pagesSaved: integer('pages_saved').default(0).notNull(),
+    nextOffset: integer('next_offset').default(0).notNull(),
+    releasesSeen: integer('releases_seen').default(0).notNull(),
+    expectedTotal: integer('expected_total'),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.artistId, table.spotifyArtistId, table.market] })],
 )
 
 export const tag = pgTable(
@@ -867,6 +892,34 @@ export const providerReference = pgTable(
     ),
   ],
 )
+
+export const catalogObservation = pgTable(
+  'catalog_observation',
+  {
+    id: text('id').primaryKey(),
+    mediaItemId: text('media_item_id').notNull().references(() => mediaItem.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    operation: text('operation').notNull(),
+    subjectKind: text('subject_kind'),
+    subjectId: text('subject_id'),
+    relationshipRole: text('relationship_role'),
+    page: integer('page'),
+    position: integer('position'),
+    jobId: text('job_id').references(() => scrapeJob.id, { onDelete: 'set null' }),
+    responseId: text('response_id').references(() => providerResponse.id, { onDelete: 'set null' }),
+    observedAt: timestamp('observed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('catalog_observation_target_operation_idx').on(table.mediaItemId, table.operation),
+    index('catalog_observation_subject_idx').on(table.subjectKind, table.subjectId, table.operation, table.mediaItemId),
+  ],
+)
+
+export const catalogAddition = pgTable('catalog_addition', {
+  mediaItemId: text('media_item_id').primaryKey().references(() => mediaItem.id, { onDelete: 'cascade' }),
+  ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
+  addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(),
+})
 
 export const scrapeJob = pgTable(
   'scrape_job',

@@ -112,6 +112,36 @@ test('one filter on reads as one filter, and none shows no count', () => {
   assert.doesNotMatch(none, /ds-count/)
 })
 
+test('library scope toggle sits between View and Filters in the action row', () => {
+  const onChange = () => {}
+  const combined = toolbar({
+    compact: true,
+    libraryScope: {
+      value: { scope: 'all', sources: ['similar'], mode: 'any' },
+      onChange,
+    },
+  })
+  const view = combined.indexOf('aria-label="Browse views"')
+  const toggle = combined.indexOf('aria-label="Include outside library"')
+  const filters = combined.indexOf('data-filters="short"')
+  assert.ok(view >= 0 && view < toggle && toggle < filters)
+  assert.match(
+    combined,
+    /<button[^>]*data-icon=""[^>]*aria-pressed="true"[^>]*aria-label="Include outside library" aria-description="All known"/,
+  )
+  assert.match(combined, /Filters, columns and grid size, 1 filter on/)
+  const outside = toolbar({
+    libraryScope: {
+      value: { scope: 'outside', sources: [], mode: 'any' },
+      onChange,
+    },
+  })
+  assert.match(
+    outside,
+    /aria-pressed="false"[^>]*aria-label="Include outside library" aria-description="Outside library"/,
+  )
+})
+
 test('the Filters button is there for grid size alone, and absent with nothing to open', () => {
   assert.match(toolbar({}), /data-filters="full"/)
   assert.doesNotMatch(toolbar({ view: 'table' }), /data-filters/)

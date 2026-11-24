@@ -39,6 +39,7 @@ export function ToolbarToggle({
   pressed,
   onPressedChange,
   icon,
+  iconButton,
   count,
   children,
   ...props
@@ -46,12 +47,14 @@ export function ToolbarToggle({
   pressed: boolean
   onPressedChange: (pressed: boolean) => void
   icon: ReactNode
+  iconButton?: boolean
   count?: number
 }) {
   return (
     <Button
       type="button"
       aria-pressed={pressed}
+      icon={iconButton}
       onClick={() => onPressedChange(!pressed)}
       {...props}
     >

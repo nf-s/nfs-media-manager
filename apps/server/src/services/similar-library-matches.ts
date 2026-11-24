@@ -31,7 +31,9 @@ export type SimilarLibraryItem = {
 }
 
 const visible = (alias: string) =>
-  sql.raw(`${alias}.metadata->>'legacyHidden' is distinct from 'true'`)
+  sql.raw(
+    `${alias}.in_library and ${alias}.metadata->>'legacyHidden' is distinct from 'true'`,
+  )
 
 const spotifyAlbumIdFromUrl = sql`substring(a.spotify_url from '/album/([A-Za-z0-9]{22})')`
 

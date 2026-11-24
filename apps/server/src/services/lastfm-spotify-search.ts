@@ -138,7 +138,11 @@ export async function runLastfmSpotifySearch(
     }
     const result = await searchManualMedia(
       { mediaType: 'album', q: options.query, page: 1 },
-      { assertActive: context.assertActive, jobId: context.jobId },
+      {
+        assertActive: context.assertActive,
+        jobId: context.jobId,
+        subjectId: options.groupKey,
+      },
     )
     if (!(await context.isActive())) return { outcome: 'stopped' }
     return {

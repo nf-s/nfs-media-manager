@@ -60,7 +60,7 @@ export async function resolveArtistIds(
         from jsonb_to_recordset(${JSON.stringify(input)}::jsonb)
           as r(name text, id text)
         join lateral (select id, merged_into_id from artist
-          where id = r.id or name = r.name
+          where catalog_provider is null and (id = r.id or name = r.name)
           order by case when name = r.name then 0 else 1 end limit 1) a on true`)
     ).rows,
   )

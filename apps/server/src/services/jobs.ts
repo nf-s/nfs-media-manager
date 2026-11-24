@@ -41,6 +41,7 @@ import {
   SPOTIFY_PLAYLIST_LISTING_TASK,
 } from '@repo/schemas/tracks'
 import { SPOTIFY_PLAYLIST_ADD_TRACK_TASK } from '@repo/schemas/track-playlist-additions'
+import { SPOTIFY_ARTIST_ALBUMS_TASK } from '@repo/schemas/spotify-artist-albums'
 import {
   SPOTIFY_TRACK_SEARCH_TASK,
   SpotifyTrackSearchFreshnessSchema,
@@ -161,6 +162,10 @@ import {
   prepareSpotifyPlaylistListing,
   runSpotifyPlaylistListing,
 } from '@/services/spotify-playlist-listing'
+import {
+  prepareSpotifyArtistAlbums,
+  runSpotifyArtistAlbums,
+} from '@/services/spotify-artist-albums'
 import {
   prepareSpotifyPlaylistAddition,
   runSpotifyPlaylistAddition,
@@ -1201,6 +1206,8 @@ export type TaskJobResult = LastfmSyncJobResult & {
   failureClassification?: 'not-found' | 'ambiguous'
   metadata?: Record<string, JsonValue>
   options?: Record<string, JsonValue>
+  /** The scope a continuation job needs to resume its own checkpoint. */
+  nextOptions?: Record<string, JsonValue>
   /** A completed check with no upstream calls must preserve provider failure tracking. */
   noProviderRequests?: boolean
   persist?(tx: JobTransaction): Promise<void>
@@ -1348,6 +1355,14 @@ const taskJobs = new Map<string, TaskJobDefinition>([
     },
   ],
   [
+    SPOTIFY_ARTIST_ALBUMS_TASK,
+    {
+      provider: 'spotify',
+      prepare: prepareSpotifyArtistAlbums,
+      run: runSpotifyArtistAlbums,
+    },
+  ],
+  [
     SPOTIFY_PLAYLIST_ADD_TRACK_TASK,
     {
       provider: 'spotify',
@@ -1446,6 +1461,7 @@ async function insertTaskJob(
   // Artist, subscription and mix tasks have no album or film media item scope.
   const nonMediaTask =
     options.task === ARTIST_ENRICHMENT_TASK ||
+    options.task === SPOTIFY_ARTIST_ALBUMS_TASK ||
     SUBSCRIPTION_SYNC_TASKS.some((task) => task === options.task) ||
     MIX_SYNC_TASKS.some((task) => task === options.task)
   const trackSearch =
@@ -1989,7 +2005,7 @@ async function processTaskJob(
       const nextJobId = await insertTaskJob(
         tx,
         nextJob.provider,
-        { task, continues: nextJob.id },
+        { ...result.nextOptions, task, continues: nextJob.id },
         nextJob.requestedByUserId,
         `Continues job ${nextJob.id}`,
       )
@@ -2026,10 +2042,13 @@ export async function createJob(
   } = {},
 ): Promise<Job> {
   const parsedInput = CreateJobSchema.parse(input)
-  if (parsedInput.options.task === ARTIST_ENRICHMENT_TASK)
+  if (
+    parsedInput.options.task === ARTIST_ENRICHMENT_TASK ||
+    parsedInput.options.task === SPOTIFY_ARTIST_ALBUMS_TASK
+  )
     throw new ServerError({
       statusCode: 422,
-      message: 'Queue artist enrichment from the artist endpoint.',
+      message: 'Queue the artist task from its artist endpoint.',
     })
   const plugin = await getScrapePlugin(parsedInput.provider)
 
@@ -2388,6 +2407,7 @@ export async function jobSortField(query: JobListQuery) {
       : []
   const title = sql`case ${table.options}->>'task'
     when ${ARTIST_ENRICHMENT_TASK} then concat('Artist enrichment · ', ${table.options}->>'artistName')
+    when ${SPOTIFY_ARTIST_ALBUMS_TASK} then concat_ws(' · ', 'Spotify artist albums', ${table.options}->>'artistName')
     when ${LASTFM_SCROBBLE_SYNC_TASK} then 'Scrobble sync'
     when ${YOUTUBE_SYNC_TASK} then 'YouTube subscription sync'
     when ${SPOTIFY_PODCAST_SYNC_TASK} then 'Spotify podcast sync'

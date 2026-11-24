@@ -99,6 +99,7 @@ type CommonRecord<TMediaType extends 'album' | 'film'> = {
   artworkUrl: string | null
   releaseDate: Date | null
   sourceLabel: string | null
+  inLibrary?: boolean
   metadata: Record<string, JsonValue> | null
   createdAt: Date
   updatedAt: Date
@@ -137,6 +138,7 @@ const commonMediaRelations = {
 >['with']
 
 type CommonPayload<TMediaType extends 'album' | 'film'> = {
+  inLibrary?: boolean
   id: string
   mediaType: TMediaType
   slug: string
@@ -321,6 +323,7 @@ function buildCommonPayload<TMediaType extends 'album' | 'film'>(
     artworkUrl: record.artworkUrl,
     releaseDate: toIsoString(record.releaseDate),
     sourceLabel: record.sourceLabel,
+    inLibrary: record.inLibrary,
     metadata: record.metadata ?? null,
     tags: mapTags(record.tags, preferredTagIds),
     credits: mapCredits(record.credits),
@@ -483,8 +486,8 @@ async function loadAlbums(
         ? { listeningScrobbles: listeningScrobbles.get(record.id) ?? 0 }
         : {}),
       dateAdded:
-        addedDates.get(record.id)?.dateAdded ??
-        toIsoString(record.album.dateAdded),
+        record.inLibrary ? addedDates.get(record.id)?.dateAdded ??
+        toIsoString(record.album.dateAdded) : null,
       dateAddedSource: addedDates.get(record.id)?.dateAddedSource,
       durationSec: record.album.durationSec ?? null,
       spotifyUrl: record.album.spotifyUrl ?? null,
@@ -550,7 +553,7 @@ async function loadFilms(ids: string[]) {
         genreTags.get(record.id),
       ),
       mediaType: 'film',
-      dateAdded: (record.film.dateAdded ?? record.createdAt).toISOString(),
+      dateAdded: record.inLibrary ? (record.film.dateAdded ?? record.createdAt).toISOString() : undefined,
       dateAddedSource:
         record.film.dateAddedSource ?? 'Library import (original date unknown)',
       runtimeMinutes: record.film.runtimeMinutes ?? null,
@@ -627,7 +630,7 @@ export async function getAlbumDetail(id: string): Promise<AlbumDetail | null> {
     ...common,
     playlists: withTrackPlaylists(common.playlists, trackPlaylists.get(id)),
     mediaType: 'album',
-    dateAdded: addedDate?.dateAdded ?? toIsoString(record.album.dateAdded),
+    dateAdded: record.inLibrary ? addedDate?.dateAdded ?? toIsoString(record.album.dateAdded) : null,
     dateAddedSource: addedDate?.dateAddedSource,
     storedDateAdded: toIsoString(record.album.dateAdded),
     durationSec: record.album.durationSec ?? null,
@@ -680,7 +683,7 @@ export async function getFilmDetail(id: string): Promise<FilmDetail | null> {
       (await filmGenreTagIds([record])).get(id),
     ),
     mediaType: 'film',
-    dateAdded: (record.film.dateAdded ?? record.createdAt).toISOString(),
+    dateAdded: record.inLibrary ? (record.film.dateAdded ?? record.createdAt).toISOString() : undefined,
     dateAddedSource:
       record.film.dateAddedSource ?? 'Library import (original date unknown)',
     runtimeMinutes: record.film.runtimeMinutes ?? null,

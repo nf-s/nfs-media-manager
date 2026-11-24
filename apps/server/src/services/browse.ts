@@ -10,6 +10,8 @@ import {
 } from 'drizzle-orm'
 import { alias, PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
+import { catalogScopeCondition, memberScope } from './catalog-scope'
+import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   albumBrowseFields,
   albumEditionLabels,
@@ -1502,7 +1504,10 @@ async function browseQueries(
     mediaType === 'track' && 'groupRecordings' in query && query.groupRecordings
       ? query
       : undefined
-  const conditions: SQL[] = [eq(mediaItem.mediaType, mediaType)]
+  const conditions: SQL[] = [
+    eq(mediaItem.mediaType, mediaType),
+    catalogScopeCondition(sql`${mediaItem.id}`, sql`${mediaItem.inLibrary}`, query),
+  ]
   // A playlist member already has a library identity.
   const hideRedundant =
     mediaType === 'track' &&
@@ -1524,11 +1529,16 @@ async function browseQueries(
           ? [role]
           : PersonRoleSchema.options
         : ['artist']
-    creatorCredit = sql`exists (select 1 from ${mediaCredit} where ${and(
+    const credit = sql`exists (select 1 from ${mediaCredit} where ${and(
       eq(mediaCredit.mediaItemId, mediaItem.id),
       eq(mediaCredit.artistId, query.creatorId),
       inArray(mediaCredit.role, roles),
     )})`
+    creatorCredit = mediaType === 'album' && !memberScope(query)
+      ? sql`(${credit} or exists (select 1 from catalog_observation o
+          where o.subject_kind = 'artist' and o.subject_id = ${query.creatorId}
+          and o.operation = 'artist-albums' and o.media_item_id = ${mediaItem.id}))`
+      : credit
     conditions.push(creatorCredit)
   }
   conditions.push(...(options.conditions ?? []))
@@ -1633,7 +1643,7 @@ async function browseQueries(
       countedListening,
       !options.conditions?.length &&
         !options.includeLastfmSourceRows &&
-        !options.sort,
+        !options.sort && memberScope(query),
       versionId,
     )
   const order = fieldOrder(sort, sortField.key, query.direction, options.sort)
@@ -2684,6 +2694,7 @@ const trackTagFacetRows = sql`select tt.media_item_id as id, labels.value from t
 function trackMusicFacetSources(
   includeLastfmSourceRows?: boolean,
   ownTags = false,
+  scope: CatalogScopeQuery = {},
 ) {
   const visibility = includeLastfmSourceRows
     ? sql``
@@ -2701,6 +2712,7 @@ function trackMusicFacetSources(
         from media_item m join library_track lt on lt.media_item_id = m.id
         left join media_credit c on c.media_item_id = m.id and c.role = 'artist'
         where m.media_type = 'track' and m.metadata->>'legacyHidden' is distinct from 'true' ${visibility}
+          and ${catalogScopeCondition(sql`m.id`, sql`m.in_library`, scope)}
           and (exists (select 1 from browse_artist_facet_keys)
             or exists (select 1 from browse_release_facet_keys))
         group by m.id, lt.album_media_item_id, lt.has_own_tags
@@ -3004,6 +3016,7 @@ function browseFacetQuery(
           options.includeLastfmSourceRows,
           !singleTagLevel(query.tagLevels) &&
             musicFields.some((field) => field.key === 'genre'),
+          query,
         ),
       )
     } else sources.push(releaseFacetKeysSource(matches))
@@ -3054,9 +3067,10 @@ function browseFacetQuery(
       source,
       query,
       limit,
-      options.includeLastfmSourceRows && mediaType === 'track'
+      sql`${options.includeLastfmSourceRows && mediaType === 'track'
         ? sql`and id in (select media_item_id from library_track)`
-        : visibility,
+        : visibility} and id in (select m.id from media_item m where
+          ${catalogScopeCondition(sql`m.id`, sql`m.in_library`, query)})`,
       musicTagFacet ||
         trackTagFacet ||
         (mediaType === 'album' && field.key === 'playlist')
@@ -3357,7 +3371,7 @@ async function queryBrowseFacets(
 ): Promise<FacetRow[]> {
   if (!fields.length) return []
   const vocabulary =
-    !options.includeArchived && !options.fields
+    !options.includeArchived && !options.fields && memberScope(query)
       ? mediaType === 'track' && !options.includeLastfmSourceRows
         ? trackFacetVocabulary
         : mediaType === 'album'

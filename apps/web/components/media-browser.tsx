@@ -103,6 +103,14 @@ import {
   type EmbeddedBrowse,
 } from '@/utils/embedded-browse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
+import {
+  clearLibraryScope,
+  libraryScopeFilterCount,
+  libraryScopeQuery,
+  libraryScopeUpdates,
+  readLibraryScope,
+  type LibraryScopeState,
+} from '@/utils/library-scope'
 import { useProviderDisplayName } from '@/hooks/useProviderDisplayName'
 import {
   listRowHeight,
@@ -123,6 +131,7 @@ import {
 } from './browse-controls'
 import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
+import { LibraryScopePills } from './library-scope-controls'
 import { FilterPanelSection } from './browse-filter-panel'
 import { TagLocationSection } from './tag-location-section'
 import {
@@ -379,6 +388,8 @@ export function EmbeddedMediaBrowser({
   storage,
   sort,
   filterPanel,
+  countActions,
+  beforeResults,
 }: {
   mediaType: 'album' | 'film'
   creator: CreatorBrowseScope
@@ -387,6 +398,8 @@ export function EmbeddedMediaBrowser({
   sort: EmbeddedBrowse['sort']
   /** Controls of the detail that choose the scope, such as a person's role. */
   filterPanel?: { controls: ReactNode; count: number }
+  countActions?: ReactNode
+  beforeResults?: ReactNode
 }) {
   const host = useEmbeddedBrowse(
     mediaType === 'album' ? 'albums' : 'films',
@@ -399,6 +412,8 @@ export function EmbeddedMediaBrowser({
       host={host}
       scope={creator}
       filterPanel={filterPanel}
+      countActions={countActions}
+      beforeResults={beforeResults}
     />
   )
 }
@@ -408,12 +423,16 @@ function MediaBrowse({
   host,
   scope,
   filterPanel,
+  countActions,
+  beforeResults,
 }: {
   mediaType: 'album' | 'film'
   host: BrowseHost
   /** The creator a list inside a detail is held to. */
   scope?: CreatorBrowseScope
   filterPanel?: { controls: ReactNode; count: number }
+  countActions?: ReactNode
+  beforeResults?: ReactNode
 }) {
   const collection = mediaType === 'album' ? 'albums' : 'films'
   const noun =
@@ -424,6 +443,8 @@ function MediaBrowse({
   const playback = usePlayback()
   const { embedded } = host
   const searchParams = host.params
+  const libraryScope = readLibraryScope(searchParams)
+  const catalogParams = libraryScopeQuery(libraryScope)
   const restoreBrowsePreferences = useRestoreBrowsePreferences()
   const [ready, setReady] = useState(embedded)
   const [draft, setDraft] = useState('')
@@ -536,6 +557,7 @@ function MediaBrowse({
       ? listeningPeriod
       : undefined
   const queryKey = JSON.stringify({
+    ...catalogParams,
     q,
     filters,
     ranges,
@@ -615,6 +637,7 @@ function MediaBrowse({
   }
   function clearFilters() {
     setParams({
+      ...clearLibraryScope,
       q: null,
       filters: null,
       ranges: null,
@@ -622,6 +645,9 @@ function MediaBrowse({
       listening: null,
       ...(scope ? {} : clearCreatorScope),
     })
+  }
+  function changeLibraryScope(next: LibraryScopeState) {
+    setParams(libraryScopeUpdates(next))
   }
   function openDetail(id: string, trigger?: HTMLElement) {
     inspector?.open({ kind: mediaType, id }, trigger)
@@ -731,6 +757,7 @@ function MediaBrowse({
         ? listRowHeight
         : grid.rowHeight
   const params = new URLSearchParams({
+    ...catalogParams,
     q,
     filters: JSON.stringify(filters),
     ranges: JSON.stringify(ranges),
@@ -792,6 +819,7 @@ function MediaBrowse({
     false,
     tagLevels,
     includeArchived,
+    catalogParams,
   )
   const titleFilters = matchingTitleFilters(facets.data ?? [], facets.search)
   const titleMatches = useQuery({
@@ -800,11 +828,13 @@ function MediaBrowse({
       'title-suggestions',
       titleFilters,
       includeArchived,
+      catalogParams,
       ...(creator ? [creator] : []),
     ],
     enabled: ready && titleFilters.length > 0,
     queryFn: ({ signal }) => {
       const params = new URLSearchParams({
+        ...catalogParams,
         page: '1',
         size: '100',
         filters: JSON.stringify(titleFilters),
@@ -1209,9 +1239,11 @@ function MediaBrowse({
     ranges.length +
     (listening?.rules.length ?? 0) +
     Number(Boolean(limitResults))
-  const hasActiveFilters = activeFilterCount > 0
+  const scopeFilterCount = libraryScopeFilterCount(libraryScope)
+  const hasActiveFilters = activeFilterCount + scopeFilterCount > 0
   const activeFilters: ReactNode = hasActiveFilters ? (
     <>
+      <LibraryScopePills value={libraryScope} onChange={changeLibraryScope} />
       {creatorFilter && (
         <CreatorScopeChip
           scope={creatorFilter}
@@ -1314,6 +1346,7 @@ function MediaBrowse({
     >
       <div className={embedded ? undefined : 'browse-column'}>
         <BrowseToolbar
+          libraryScope={{ value: libraryScope, onChange: changeLibraryScope }}
           addActions={
             !embedded && (
               <>
@@ -1601,12 +1634,17 @@ function MediaBrowse({
             )
           }
           end={
-            host.browseHref && (
-              <Button variant="link" asChild>
-                <Link href={host.browseHref}>
-                  {`Show in ${mediaType === 'album' ? 'Albums' : 'Films'}`}
-                </Link>
-              </Button>
+            (countActions || host.browseHref) && (
+              <>
+                {countActions}
+                {host.browseHref && (
+                  <Button variant="link" asChild>
+                    <Link href={host.browseHref}>
+                      {`Show in ${mediaType === 'album' ? 'Albums' : 'Films'}`}
+                    </Link>
+                  </Button>
+                )}
+              </>
             )
           }
           compact={embedded}
@@ -1630,6 +1668,7 @@ function MediaBrowse({
                 {activeFilters}
               </div>
             )}
+        {beforeResults}
         <DetailListFrame framed={embedded && selectable} frame={frame}>
           <div
             className={`browse-scroller${embedded ? ` ${embeddedScrollClass}` : ''}`}

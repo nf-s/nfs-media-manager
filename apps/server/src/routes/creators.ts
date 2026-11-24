@@ -69,6 +69,7 @@ import {
   listArtistMetadataBrowsePage,
 } from '@/services/artist-browse'
 import { JobSchema } from '@repo/schemas/job'
+import { SpotifyArtistAlbumListingSchema } from '@repo/schemas/spotify-artist-albums'
 import {
   createOpenAPIApp,
   createResponseSchema,
@@ -105,6 +106,10 @@ import {
 import { getArtistListeningSeries } from '@/services/listening-series'
 import { getArtistCoverage } from '@/services/metadata-coverage'
 import { listArtistMatchDiagnostics } from '@/services/artist-match-diagnostics'
+import {
+  getSpotifyArtistAlbumListing,
+  queueSpotifyArtistAlbums,
+} from '@/services/spotify-artist-albums'
 
 const json = <T extends z.ZodTypeAny>(description: string, schema: T) => ({
   description,
@@ -428,6 +433,53 @@ export const artists: OpenAPIHono<AppEnv> = createOpenAPIApp()
       generateJsonResponse(
         c,
         await listArtistAlbums(c.req.valid('param').id, c.req.valid('query')),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/:id/albums/spotify',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema },
+      responses: {
+        ...artistResponses,
+        200: json(
+          'Saved Spotify artist album listing and progress',
+          SpotifyArtistAlbumListingSchema,
+        ),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await getSpotifyArtistAlbumListing(c.req.valid('param').id),
+        200,
+      ),
+  )
+  .openapi(
+    createRoute({
+      method: 'post',
+      path: '/:id/albums/spotify',
+      middleware: [authMiddleware()],
+      request: { params: CreatorParamsSchema },
+      responses: {
+        ...artistResponses,
+        200: json(
+          'Fetch or resume Spotify artist albums',
+          SpotifyArtistAlbumListingSchema,
+        ),
+        409: jsonErrorResponse('The job changed'),
+        429: jsonErrorResponse('Provider is cooling down or halted'),
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await queueSpotifyArtistAlbums(
+          c.req.valid('param').id,
+          requireOwnerUser(c).id,
+        ),
         200,
       ),
   )

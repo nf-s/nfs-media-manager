@@ -7,6 +7,7 @@ import {
   withEmbeddedLayout,
   type EmbeddedBrowse,
 } from './embedded-browse'
+import { libraryScopeQuery, readLibraryScope } from './library-scope'
 
 const sort = {
   key: 'title',
@@ -20,6 +21,9 @@ test('The Show in link carries the scope and the list settings, nothing else', (
     q: 'night',
     filters: '[{"field":"genre","value":"Ambient","mode":"required"}]',
     listening: '{"rules":[]}',
+    libraryScope: 'all',
+    discoverySources: 'similar,spotify-match',
+    discoverySourceMode: 'all',
     sortBy: 'scrobbles',
     direction: 'desc',
     view: 'grid',
@@ -35,11 +39,25 @@ test('The Show in link carries the scope and the list settings, nothing else', (
   const params = new URLSearchParams(query)
   assert.deepEqual(
     [...params.keys()],
-    ['creatorId', 'q', 'filters', 'listening', 'sortBy', 'direction', 'view'],
+    [
+      'creatorId',
+      'q',
+      'filters',
+      'listening',
+      'libraryScope',
+      'discoverySources',
+      'discoverySourceMode',
+      'sortBy',
+      'direction',
+      'view',
+    ],
   )
   assert.equal(params.get('creatorId'), 'artist-example')
   assert.equal(params.get('q'), 'night')
   assert.equal(params.get('view'), 'grid')
+  assert.equal(params.get('libraryScope'), 'all')
+  assert.equal(params.get('discoverySources'), 'similar,spotify-match')
+  assert.equal(params.get('discoverySourceMode'), 'all')
 })
 
 test('a list setting cannot replace the scope it is held to', () => {
@@ -55,6 +73,24 @@ test('a list setting cannot replace the scope it is held to', () => {
     new URLSearchParams({ creatorId: 'artist-other', sortBy: 'title' }),
   )
   assert.equal(href, '/albums?creatorId=artist-example&sortBy=title')
+})
+
+test('scope requests ignore saved discovery rules in the library view', () => {
+  const params = new URLSearchParams({
+    discoverySources: 'spotify-match,similar,similar',
+    discoverySourceMode: 'all',
+  })
+  assert.deepEqual(libraryScopeQuery(readLibraryScope(params)), {})
+  params.set('libraryScope', 'all')
+  assert.deepEqual(libraryScopeQuery(readLibraryScope(params)), {
+    libraryScope: 'all',
+    discoverySources: 'similar,spotify-match',
+    discoverySourceMode: 'all',
+  })
+  params.set('discoverySources', 'malformed source')
+  assert.deepEqual(libraryScopeQuery(readLibraryScope(params)), {
+    libraryScope: 'all',
+  })
 })
 
 test('the remembered layout is the sort and the columns, not search or filters', () => {

@@ -239,6 +239,7 @@ export function ManualMediaSearch({
             renderItem={(item) => {
               const libraryId =
                 item.mediaItemId ?? addedIds.current.get(item.externalId)
+              const detailId = item.catalogMediaItemId ?? libraryId
               const inLibrary = Boolean(libraryId)
               const pending =
                 add.isPending && add.variables?.externalId === item.externalId
@@ -246,14 +247,15 @@ export function ManualMediaSearch({
                 <ListRow
                   title={
                     <RowTitle>
-                      {libraryId ? (
+                      {detailId ? (
                         <DetailLink
                           kind={mediaType}
-                          id={libraryId}
+                          id={detailId}
                           title={item.title}
                           onClick={(event) => {
                             if (
                               isLinking ||
+                              item.catalogMediaItemId ||
                               event.defaultPrevented ||
                               event.button !== 0 ||
                               event.metaKey ||

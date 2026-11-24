@@ -131,10 +131,11 @@ function artistDirectory(id?: string) {
   return db
     .select({
       ...identityColumns,
-      albumCount: sql<number>`count(*) filter (where ${isAlbum})::int`.as(
+      inLibrary: sql<boolean>`bool_or(${mediaItem.inLibrary})`.as('in_library'),
+      albumCount: sql<number>`count(*) filter (where ${isAlbum} and ${mediaItem.inLibrary})::int`.as(
         'album_count',
       ),
-      trackCount: sql<number>`count(*) filter (where ${isTrack})::int`.as(
+      trackCount: sql<number>`count(*) filter (where ${isTrack} and ${mediaItem.inLibrary})::int`.as(
         'track_count',
       ),
     })
@@ -148,6 +149,7 @@ function artistDirectory(id?: string) {
         creatorFilter(undefined, id),
         eq(mediaCredit.role, 'artist'),
         visible,
+        id === undefined ? eq(mediaItem.inLibrary, true) : undefined,
         sql`(${isAlbum} or ${isTrack})`,
       ),
     )
@@ -221,6 +223,7 @@ export async function getArtist(
       name: directory.name,
       sortName: directory.sortName,
       createdAt: directory.createdAt,
+      inLibrary: directory.inLibrary,
       albumCount: directory.albumCount,
       trackCount: directory.trackCount,
       playlistCount: artistPlaylistCount(artistId),
@@ -275,6 +278,7 @@ function personDirectory(q?: string, role?: PersonRole, id?: string) {
         eq(mediaItem.mediaType, 'film'),
         inArray(mediaCredit.role, personRoles),
         visible,
+        id === undefined ? eq(mediaItem.inLibrary, true) : undefined,
       ),
     )
     .groupBy(artist.id)
@@ -336,7 +340,11 @@ async function requireLibraryArtist(requestedId: string) {
     .select({ id: artist.id, name: artist.name })
     .from(artist)
     .where(
-      and(eq(artist.id, await currentArtistId(db, requestedId)), visibleArtist),
+      and(eq(artist.id, await currentArtistId(db, requestedId)), sql`(${visibleArtist} or exists (
+        select 1 from media_credit credit join media_item item on item.id = credit.media_item_id
+        where credit.artist_id = ${artist.id} and credit.role = 'artist'
+          and item.media_type in ('album', 'track') and item.metadata->>'legacyHidden' is distinct from 'true'
+      ))`),
     )
   if (!row)
     throw new ServerError({ statusCode: 404, message: 'Artist not found' })

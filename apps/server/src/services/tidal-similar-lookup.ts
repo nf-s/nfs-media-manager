@@ -149,13 +149,18 @@ export async function lookupTidalSimilar(
   }
   const seen = new Set<string>([tidalId])
   const suggestions: TidalSuggestion[] = []
-  for (const { id } of document.data) {
+  for (const [index, { id }] of document.data.entries()) {
     if (seen.has(id)) continue
     seen.add(id)
     const album = kind === 'album' ? albums.get(id) : undefined
     const track = kind === 'track' ? tracks.get(id) : undefined
-    if (album) suggestions.push(albumSuggestion(album, artists, genres))
-    else if (track) suggestions.push(trackSuggestion(track, artists, genres))
+    const suggestion = album
+      ? albumSuggestion(album, artists, genres)
+      : track
+        ? trackSuggestion(track, artists, genres)
+        : null
+    if (suggestion)
+      suggestions.push({ ...suggestion, catalogPosition: index + 1 })
     if (suggestions.length >= TIDAL_SIMILAR_LIMIT) break
   }
   return suggestions

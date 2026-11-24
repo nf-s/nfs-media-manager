@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import {
   ArtistProviderIdSchema,
   ArtistIdentifierSchema,
@@ -32,6 +33,7 @@ import { ArtistKeptNameSchema } from './artist-merges'
 
 const CountSchema = z.number().int().nonnegative()
 const CreatorIdentitySchema = z.object({
+  inLibrary: z.boolean().optional(),
   id: z.string(),
   name: z.string(),
   sortName: z.string().nullable(),
@@ -102,6 +104,7 @@ export const PersonPageSchema = PaginatedDataSchema(PersonSummarySchema)
 export type PersonPage = z.infer<typeof PersonPageSchema>
 
 const CreatorQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   q: z.string().trim().max(200).optional(),
   direction: DirectionSchema.default('asc'),
 })

@@ -661,6 +661,8 @@ export async function removeOrphanTracks(
   const removed = await database.execute(sql`
     delete from media_item mi where mi.media_type = 'track' ${candidates}
       and not coalesce(mi.metadata ? 'spotifyTrackSearch', false)
+      and not exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
+      and not exists (select 1 from catalog_addition a where a.media_item_id = mi.id)
       and not exists (select 1 from track t where t.track_media_item_id = mi.id)
       and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)
       and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`)

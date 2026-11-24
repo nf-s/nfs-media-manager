@@ -34,6 +34,7 @@ const validIsrc = (value: SQL) =>
   sql`substring(${value} from '^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$')`
 const knownDuration = sql`case when lt.duration_sec > 0 then lt.duration_sec end`
 const visibleTrack = sql`mi.media_type = 'track'
+  and mi.in_library
   and mi.metadata->>'legacyHidden' is distinct from 'true'`
 // A track with a stored version group is grouped by it alone, so a group of
 // one keeps it apart from the versions worked out for it.

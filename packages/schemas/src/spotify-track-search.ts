@@ -81,6 +81,9 @@ export const SpotifyTrackSearchInputSchema =
 
 export const SpotifyTrackSearchCandidateSchema = z.object({
   spotifyTrackId: spotifyId,
+  catalogMediaItemId: trackId.optional(),
+  inLibrary: z.boolean().optional(),
+  catalogPosition: z.number().int().positive().optional(),
   title: name,
   artists: z.array(name).min(1).max(50),
   artistCredits: z
@@ -89,6 +92,7 @@ export const SpotifyTrackSearchCandidateSchema = z.object({
     .default([]),
   albumName: name.nullable(),
   spotifyAlbumId: spotifyId.nullable(),
+  releaseDate: z.string().max(40).nullable().optional(),
   durationSec: z.number().int().nonnegative(),
   popularity: z.number().int().min(0).max(100).optional(),
   isrc: z

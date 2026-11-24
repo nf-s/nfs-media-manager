@@ -16,6 +16,7 @@ export function useBrowseFacets(
   matches = false,
   tagLevels?: TagLevels,
   includeArchived = false,
+  catalogParams?: Readonly<Record<string, string>>,
 ) {
   const [search, setSearch] = useState('')
   const [activated, setActivated] = useState(false)
@@ -35,6 +36,7 @@ export function useBrowseFacets(
       matches,
       tagLevels,
       includeArchived,
+      catalogParams,
     ),
     enabled: current,
   })

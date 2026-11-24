@@ -50,6 +50,7 @@ export function browseFacetOptions(
   tagLevels?: TagLevels,
   /** Albums and Films: count archived items, as the list does. */
   includeArchived = false,
+  catalogParams?: Readonly<Record<string, string>>,
 ) {
   // Bound suggestion requests, not the user's full-text filter draft.
   const query = BrowseFacetQuerySchema.parse({ q: search.trim().slice(0, 200) })
@@ -61,6 +62,7 @@ export function browseFacetOptions(
     ...endpoint.params,
     ...(levels ? { tagLevels: levels } : {}),
     ...(includeArchived ? { includeArchived: 'true' } : {}),
+    ...catalogParams,
   })
   return queryOptions({
     queryKey: [
@@ -69,6 +71,9 @@ export function browseFacetOptions(
       query.q ?? '',
       ...(levels ? [levels] : []),
       ...(includeArchived ? ['archived'] : []),
+      ...(catalogParams && Object.keys(catalogParams).length
+        ? [catalogParams]
+        : []),
     ],
     queryFn: ({ signal }) =>
       fetchApiData(

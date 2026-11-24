@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { DirectionSchema, PaginationQuerySchema } from './common'
 import { SourceNavigationLinkSchema } from './tags'
+import { CatalogScopeQuerySchema } from './catalog'
 
 export const CollectionSummarySchema = z.object({
   id: z.string(),
@@ -10,6 +11,7 @@ export const CollectionSummarySchema = z.object({
 })
 
 export const CollectionQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   q: z.string().trim().max(200).optional(),
   size: PaginationQuerySchema.shape.size.default(100),
   direction: DirectionSchema.default('asc'),

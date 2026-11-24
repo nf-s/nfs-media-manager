@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CatalogScopeQuerySchema } from './catalog'
 import { musicDisplayTags } from './music-tags'
 import { CamelotKeySchema } from './musical-keys'
 import {
@@ -153,6 +154,7 @@ export function isImportedSpotifyMatch(match: TrackSpotifyMatch) {
 }
 
 export const TrackListItemSchema = z.object({
+  inLibrary: z.boolean().optional(),
   id: z.string(),
   mediaType: z.literal('track'),
   title: z.string(),
@@ -422,6 +424,7 @@ const TrackFiltersParamSchema = z.preprocess(
 )
 
 export const TrackQuerySchema = PaginationQuerySchema.extend({
+  ...CatalogScopeQuerySchema.shape,
   creatorId: CreatorIdSchema.optional(),
   groupRecordings: z
     .union([

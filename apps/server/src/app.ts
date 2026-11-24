@@ -19,6 +19,7 @@ import { generateJsonResponse } from '@/lib/response'
 import { logger } from '@/middlewares/logger'
 import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
 import albums from '@/routes/albums'
+import catalog from '@/routes/catalog'
 import films from '@/routes/films'
 import tracks from '@/routes/tracks'
 import playlists from '@/routes/playlists'
@@ -129,6 +130,7 @@ v1ApiBase.route('/album-collections', albumCollections)
 v1ApiBase.route('/artists', artists)
 v1ApiBase.route('/people', people)
 v1ApiBase.route('/media', media)
+v1ApiBase.route('/catalog', catalog)
 v1ApiBase.route('/providers', providers)
 v1ApiBase.route('/scrape/jobs', jobs)
 v1ApiBase.route('/imports', imports)
