@@ -25,7 +25,7 @@ export const CatalogObservationSchema = z.object({
   position: z.number().int().nullable(),
   jobId: z.string().nullable(),
   responseId: z.string().nullable(),
-  details: z.record(z.string(), z.unknown()).nullable(),
+  details: z.array(z.object({ label: z.string(), value: z.string() })),
   snapshotId: z.string().nullable(),
   importId: z.string().nullable(),
   observedAt: z.string(),

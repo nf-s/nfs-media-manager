@@ -2,6 +2,7 @@ import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { PluginNormalizedResult } from '@repo/media-plugin-sdk'
 import { z } from 'zod'
 import { albumNameKey } from '@/lib/album-import-candidates'
+import { observeCatalogOccurrences } from './catalog-discoveries'
 import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
@@ -101,6 +102,7 @@ export async function replaceAlbumTracks(
   database: Transaction,
   albumId: string,
   tracks: PluginNormalizedResult['tracks'],
+  evidence?: { provider: string; jobId?: string; snapshotId?: string },
 ) {
   if (!tracks.length) return
   await lockLibraryTrackWrites(database)
@@ -114,6 +116,7 @@ export async function replaceAlbumTracks(
     title: item.title,
     position: item.position,
     external_id: item.externalId ?? null,
+    observe_only: Boolean(evidence),
     durationSec: item.durationSec ?? null,
     artists: item.artists ?? [],
   }))
@@ -127,6 +130,12 @@ export async function replaceAlbumTracks(
   const recordings = new Map(
     resolved.map(({ entry_id, recording_id }) => [entry_id, recording_id]),
   )
+  if (evidence) {
+    await observeCatalogOccurrences(database, entries.flatMap((entry) => {
+      const id = recordings.get(entry.id)
+      return id ? [{ target: {kind: 'track', id}, origin: { ...evidence, operation: 'album-tracks', occurrenceKey: entry.id, subjectKind: 'album', subjectId: albumId, position: entry.position, relationshipRole: 'track-on-album' } }] : []
+    }))
+  }
   const previous = await database
     .delete(track)
     .where(eq(track.albumMediaItemId, albumId))
@@ -658,13 +667,15 @@ export async function removeOrphanTracks(
         sql`, `,
       )})`
     : sql``
-  const removed = await database.execute(sql`
-    delete from media_item mi where mi.media_type = 'track' ${candidates}
+  const orphan = sql`mi.media_type = 'track' ${candidates}
       and not coalesce(mi.metadata ? 'spotifyTrackSearch', false)
-      and not exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
       and not exists (select 1 from catalog_addition a where a.media_item_id = mi.id)
       and not exists (select 1 from track t where t.track_media_item_id = mi.id)
       and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)
-      and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`)
+      and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`
+  const observed = sql`exists (select 1 from catalog_observation o where o.media_item_id = mi.id)`
+  await database.execute(sql`update media_item mi set in_library = false where mi.in_library and ${orphan} and ${observed}`)
+  const removed = await database.execute(sql`delete from media_item mi where ${orphan} and not ${observed}`)
+
   return removed.rowCount ?? 0
 }

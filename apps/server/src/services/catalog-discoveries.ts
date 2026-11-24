@@ -68,6 +68,8 @@ async function existingMedia(tx: Transaction, media: CatalogMedia, aliases: stri
     .from(providerReference).innerJoin(mediaItem, eq(mediaItem.id, providerReference.mediaItemId))
     .where(and(eq(providerReference.externalId, media.externalId),
       media.kind === 'film' && ['imdb', 'tmdb'].includes(media.referenceType) ? undefined : eq(providerReference.provider, media.provider), inArray(providerReference.referenceType, aliases),
+      sql`${providerReference.metadata}->>'verified' is distinct from 'false'`,
+      sql`${providerReference.metadata}->>'rejected' is distinct from 'true'`,
       eq(mediaItem.mediaType, media.kind))).limit(2)
   if (references.length === 1) return references[0]?.id
   if (references.length === 0 && media.provider === 'spotify' && media.kind === 'album') {
@@ -150,7 +152,8 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
     ? createStableId('library-track', `spotify:${media.externalId}`)
     : createStableId(`catalog-${media.kind}`, JSON.stringify(key)))
 
-  if (!existingId) {
+  const outside = !existingId || Boolean(await tx.$count(mediaItem, and(eq(mediaItem.id, id), eq(mediaItem.inLibrary, false))))
+  if (outside) {
     await tx.insert(mediaItem).values({
       id, mediaType: media.kind, title: media.title, slug: slugifyParts(media.title, id),
       artworkUrl: media.artworkUrl, releaseDate: media.releaseDate,
@@ -162,7 +165,12 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
       (${mediaItem.artworkUrl} is null and excluded.artwork_url is not null) or
       (${mediaItem.releaseDate} is null and excluded.release_date is not null))` })
     if (media.kind === 'album')
-      await tx.insert(album).values({ mediaItemId: id, spotifyUrl: media.spotifyUrl, trackCount: media.trackCount }).onConflictDoNothing()
+      await tx.insert(album).values({ mediaItemId: id, spotifyUrl: media.spotifyUrl, trackCount: media.trackCount }).onConflictDoUpdate({
+        target: album.mediaItemId, set: {
+          spotifyUrl: sql`coalesce(${album.spotifyUrl}, excluded.spotify_url)`,
+          trackCount: sql`coalesce(${album.trackCount}, excluded.track_count)`,
+        }, setWhere: sql`(${album.spotifyUrl} is null and excluded.spotify_url is not null) or (${album.trackCount} is null and excluded.track_count is not null)`,
+      })
     if (media.kind === 'film')
       await tx.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
     if (media.kind === 'track')
@@ -171,7 +179,15 @@ export async function observeCatalogMedia(tx: Transaction, media: CatalogMedia, 
         spotifyUrl: media.spotifyUrl, durationSec: media.durationSec, albumMediaItemId: media.albumId,
         albumName: media.albumName, spotifyAlbumId: media.spotifyAlbumId,
         albumLinkStrategy: media.albumId && media.spotifyAlbumId ? 'spotify-album' : undefined,
-      }).onConflictDoNothing()
+      }).onConflictDoUpdate({target: libraryTrack.mediaItemId, set: {
+        durationSec: sql`coalesce(${libraryTrack.durationSec}, excluded.duration_sec)`,
+        albumMediaItemId: sql`coalesce(${libraryTrack.albumMediaItemId}, excluded.album_media_item_id)`,
+        albumName: sql`coalesce(${libraryTrack.albumName}, excluded.album_name)`,
+        spotifyAlbumId: sql`coalesce(${libraryTrack.spotifyAlbumId}, excluded.spotify_album_id)`,
+      }, setWhere: sql`(${libraryTrack.durationSec} is null and excluded.duration_sec is not null)
+        or (${libraryTrack.albumMediaItemId} is null and excluded.album_media_item_id is not null)
+        or (${libraryTrack.albumName} is null and excluded.album_name is not null)
+        or (${libraryTrack.spotifyAlbumId} is null and excluded.spotify_album_id is not null)` })
     await observeCredits(tx, id, media, origin)
   }
 
@@ -225,5 +241,9 @@ export async function listCatalogObservations(id: string, { page, size }: z.infe
       .orderBy(desc(catalogObservation.observedAt), desc(catalogObservation.id)).limit(size).offset((page - 1) * size),
     db.$count(catalogObservation, where),
   ])
-  return { items: items.map(({ observedAt, ...item }) => ({ ...item, observedAt: observedAt.toISOString() })), page, size, totalCount, pageCount: Math.ceil(totalCount / size) }
+  return { items: items.map(({ observedAt, details, ...item }) => ({
+    ...item, observedAt: observedAt.toISOString(),
+    details: Object.entries(details ?? {}).flatMap(([label, value]) =>
+      typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? [{label,value:String(value)}] : []),
+  })), page, size, totalCount, pageCount: Math.ceil(totalCount / size) }
 }

@@ -109,6 +109,8 @@ async function removeUnusedTracks(
       await tx.execute(sql`
         select mi.id from media_item mi
         where mi.id in (${idList(ids)})
+          and not exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
+          and not exists (select 1 from catalog_addition a where a.media_item_id = mi.id)
           and not exists (select 1 from track t where t.track_media_item_id = mi.id)
           and not exists (select 1 from playlist_item p where p.media_item_id = mi.id)
           and not exists (select 1 from lastfm_track_source s

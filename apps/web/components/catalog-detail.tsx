@@ -78,6 +78,7 @@ export function CatalogDiscoveries({ id,kind = 'media' }: { id: string; kind?: C
         <KeyValues items={[
           { label: 'Found from', value: discoverySubject(item.subjectKind, item.subjectId) },
           { label: 'Relationship', value: item.relationshipRole === 'appears_on' ? 'Appears on' : item.relationshipRole },
+          ...item.details,
           { label: 'Page', value: item.page },
           { label: 'Position', value: item.position },
           { label: 'Evidence', value: item.jobId ? <DetailLink kind="job" id={item.jobId}>Open job responses</DetailLink> : 'Catalogue summary' },

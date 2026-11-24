@@ -587,6 +587,7 @@ export async function applyProviderResultInTransaction(
         database,
         input.mediaItemId,
         input.normalized.tracks,
+        { provider: input.provider, jobId: input.scrapeJobId ?? undefined, snapshotId: latestSnapshotId ?? undefined },
       )
     if (
       input.normalized.tracks.some(
