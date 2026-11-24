@@ -31,7 +31,7 @@ An import of a playlist first reads the playlist's details: one request that giv
 - A track's **Added** date is the earliest known manual addition, playlist addition or first scrobble from its imported Last.fm membership.
 - A playlist whose Spotify snapshot has not changed since the last import is not read again; the import still counts as a completed check. Liked Songs has no snapshot and is always read.
 
-Importing the same playlist again updates it. While an import or listing runs, its job records the pages read and the pages expected (`options.progress`), updated after every page; the total for a playlist comes from its item count, and for Liked Songs from the first page.
+Importing the same playlist again updates it. The job records how many Spotify pages it has read and how many it expects. After the last page, Jobs shows when the import is waiting for the library, matching recordings, writing track details and membership, or recording source evidence. Track and page counts advance as batches finish. A separate log entry confirms that the transaction committed. Album linking and listening-history updates then appear as their own stages. If a save fails, the transaction rolls back and the job retains its last stage.
 
 ### Schedule
 

@@ -130,7 +130,7 @@
       "enabled": true,
       "head_sampling_rate": 1,
       "persist": true,
-      "invocation_logs": false,
+      "invocation_logs": true,
     },
   },
 }

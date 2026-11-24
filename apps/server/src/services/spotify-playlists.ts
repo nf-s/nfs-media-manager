@@ -38,14 +38,8 @@ import {
   playlistItem,
 } from '@/schemas/db'
 import { writeArtistCredits } from './artist-names'
-import {
-  observeCatalogMedia,
-  observeCatalogOccurrence,
-} from './catalog-discoveries'
-import {
-  latestCatalogResponseId,
-  observeSpotifyTrackAndAlbum,
-} from './music-catalog-observations'
+import { observeCatalogOccurrence } from './catalog-discoveries'
+import { latestCatalogResponseId } from './music-catalog-observations'
 import { createTaskJob, type TaskJobContext, type TaskJobResult } from './jobs'
 import { getLastfmAccount } from './lastfm-scrobbles'
 import { loadPlaylistSummaries } from './playlist-directory'
@@ -69,6 +63,7 @@ import {
 } from './spotify-playlist-state'
 import { recordTrackIsrcs } from './track-isrcs'
 import { refreshTrackLinks } from './track-links'
+import { observeSpotifyPlaylistPageBatch } from './spotify-playlist-observations'
 
 const WRITE_BATCH = 500
 const LOG_EVERY_PAGES = 40
@@ -260,7 +255,7 @@ type PlaylistOccurrence = { position: number } & (
       mention: NonNullable<ReturnType<typeof spotifyTrackMention>>
     }
 )
-type PlaylistPage = {
+export type PlaylistPage = {
   page: number
   total: number
   responseId?: string
@@ -285,69 +280,7 @@ export function spotifyPlaylistOccurrences(
   })
 }
 
-export async function observeSpotifyPlaylistPage(
-  tx: Transaction,
-  playlistId: string,
-  page: PlaylistPage,
-  evidence: {
-    jobId?: string
-    snapshot?: string | null
-    observedAt?: Date
-    complete?: boolean
-  },
-) {
-  for (const occurrence of page.entries) {
-    const { position, track, mention } = occurrence
-    const key = JSON.stringify([
-      evidence.snapshot ?? evidence.jobId ?? 'stored',
-      position,
-    ])
-    const origin = {
-      operation: 'playlist-contents',
-      key,
-      subjectKind: 'playlist',
-      subjectId: playlistId,
-      jobId: evidence.jobId,
-      observedAt: evidence.observedAt,
-      responseId: page.responseId,
-      page: page.page,
-      position,
-      details: {
-        snapshot: evidence.snapshot ?? null,
-        version: evidence.jobId ?? evidence.snapshot ?? null,
-        total: page.total,
-        complete: evidence.complete ?? false,
-        addedAt: track?.addedAt ?? null,
-      },
-      relationshipRole: 'playlist_entry',
-    }
-    if (track) {
-      await observeSpotifyTrackAndAlbum(
-        tx,
-        {
-          ...track,
-          spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
-        },
-        origin,
-      )
-    } else if (mention) {
-      await observeCatalogMedia(
-        tx,
-        {
-          kind: 'track',
-          title: mention.name,
-          provider: 'spotify',
-          referenceType: 'track',
-          credits: mention.artists.map(({ id, name }) => ({
-            name,
-            externalId: SpotifyIdSchema.safeParse(id).data,
-          })),
-        },
-        { ...origin, provider: 'spotify', occurrenceKey: key },
-      )
-    }
-  }
-}
+export { observeSpotifyPlaylistPage } from './spotify-playlist-observations'
 
 const overLimit = (action: string) =>
   refused(
@@ -371,6 +304,7 @@ export async function readSpotifyTrackEntries(
   let invalid = 0
   let offset = 0
   let total: number | null = null
+  await context.activity('Reading playlist tracks')
   await context.progress({
     pagesRead: 0,
     totalPages: expectedTotal === null ? null : pagesFor(expectedTotal),
@@ -431,6 +365,11 @@ export async function readSpotifyTrackEntries(
     await context.progress({
       pagesRead: pages,
       totalPages: done ? pages : Math.max(pages, pagesFor(page.total)),
+    })
+    await context.activity('Reading playlist tracks', {
+      done: offset,
+      total: page.total,
+      unit: 'tracks',
     })
     if (done) break
     if (pages % LOG_EVERY_PAGES === 0)
@@ -811,11 +750,14 @@ async function storeImport(
   target: PlaylistTarget,
   tracks: SpotifyLibraryTrack[],
   pages: PlaylistPage[],
-  jobId: string,
+  context: TaskJobContext,
 ) {
+  const { jobId } = context
+  await context.activity('Waiting for library writes')
   return db.transaction(async (tx) => {
     // One import writes at a time, so two cannot both judge a track orphaned.
     await lockLibraryTrackWrites(tx)
+    await context.activity('Matching playlist tracks to the library')
     const playlistId = await resolvePlaylist(tx, target)
     const artistCreditsSource = {
       source: target.source,
@@ -828,7 +770,13 @@ async function storeImport(
     const knownIds = await resolveSpotifyTrackIds(tx, tracks)
     const idForTrack = (id: string) =>
       knownIds.get(id) ?? spotifyTrackItemId(id)
+    await context.activity('Saving track details', {
+      done: 0,
+      total: tracks.length,
+      unit: 'tracks',
+    })
     for (let start = 0; start < tracks.length; start += WRITE_BATCH) {
+      await context.assertActive()
       const batch = tracks.slice(start, start + WRITE_BATCH)
       const confirmed = await tx
         .select({ id: mediaItem.id })
@@ -893,40 +841,47 @@ async function storeImport(
       const imports = batch.filter(
         (track) => !confirmedIds.has(idForTrack(track.spotifyTrackId)),
       )
-      if (!imports.length) continue
-      await tx
-        .insert(libraryTrack)
-        .values(
+      if (imports.length) {
+        await tx
+          .insert(libraryTrack)
+          .values(
+            imports.map((track) => ({
+              mediaItemId: idForTrack(track.spotifyTrackId),
+              spotifyTrackId: track.spotifyTrackId,
+              isrc: track.isrc,
+              durationSec: track.durationSec,
+              spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
+              albumName: track.albumName,
+              spotifyAlbumId: track.spotifyAlbumId,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: libraryTrack.mediaItemId,
+            set: {
+              spotifyTrackId: sql`excluded.spotify_track_id`,
+              spotifyUrl: sql`excluded.spotify_url`,
+              isrc: sql`coalesce(excluded.isrc, ${libraryTrack.isrc})`,
+              durationSec: sql`excluded.duration_sec`,
+              albumName: sql`excluded.album_name`,
+              spotifyAlbumId: sql`excluded.spotify_album_id`,
+              updatedAt: new Date(),
+            },
+          })
+        await replaceSpotifyTrackCredits(
+          tx,
           imports.map((track) => ({
-            mediaItemId: idForTrack(track.spotifyTrackId),
-            spotifyTrackId: track.spotifyTrackId,
-            isrc: track.isrc,
-            durationSec: track.durationSec,
-            spotifyUrl: `https://open.spotify.com/track/${track.spotifyTrackId}`,
-            albumName: track.albumName,
-            spotifyAlbumId: track.spotifyAlbumId,
+            id: idForTrack(track.spotifyTrackId),
+            artists: track.artists,
           })),
         )
-        .onConflictDoUpdate({
-          target: libraryTrack.mediaItemId,
-          set: {
-            spotifyTrackId: sql`excluded.spotify_track_id`,
-            spotifyUrl: sql`excluded.spotify_url`,
-            isrc: sql`coalesce(excluded.isrc, ${libraryTrack.isrc})`,
-            durationSec: sql`excluded.duration_sec`,
-            albumName: sql`excluded.album_name`,
-            spotifyAlbumId: sql`excluded.spotify_album_id`,
-            updatedAt: new Date(),
-          },
-        })
-      await replaceSpotifyTrackCredits(
-        tx,
-        imports.map((track) => ({
-          id: idForTrack(track.spotifyTrackId),
-          artists: track.artists,
-        })),
-      )
+      }
+      await context.activity('Saving track details', {
+        done: start + batch.length,
+        total: tracks.length,
+        unit: 'tracks',
+      })
     }
+    await context.activity('Saving playlist membership')
     const admittingTrackIds = observeOnly
       ? new Set(
           (
@@ -974,14 +929,29 @@ async function storeImport(
         },
       },
     )
-    for (const page of pages)
-      await observeSpotifyPlaylistPage(tx, playlistId, page, {
+    await context.activity('Recording playlist source evidence', {
+      done: 0,
+      total: pages.length,
+      unit: 'pages',
+    })
+    for (const [index, page] of pages.entries()) {
+      await context.assertActive()
+      await observeSpotifyPlaylistPageBatch(tx, playlistId, page, {
         jobId,
         snapshot,
         complete: true,
       })
+      await context.activity('Recording playlist source evidence', {
+        done: index + 1,
+        total: pages.length,
+        unit: 'pages',
+      })
+    }
+    await context.activity('Checking tracks removed from playlists')
     const removed = await removeOrphanTracks(tx)
+    await context.activity('Updating track added dates')
     await refreshTrackAddedDates(tx)
+    await context.assertActive()
     return { playlistId, removed }
   })
 }
@@ -999,9 +969,11 @@ export async function runSpotifyPlaylistImport(
   try {
     const options = OptionsSchema.parse(input)
     await context.assertActive()
+    await context.activity('Checking the Spotify playlist')
     const fetched = await fetchTracks(context, options)
     if (!fetched || !(await context.isActive())) return { outcome: 'stopped' }
     if (fetched.unchanged) {
+      await context.activity('Checking stored playlist membership')
       const added = await db.transaction(async (tx) => {
         await lockLibraryTrackWrites(tx)
         const [stored] = await tx
@@ -1034,9 +1006,14 @@ export async function runSpotifyPlaylistImport(
       fetched.target,
       fetched.entries,
       fetched.pages,
-      context.jobId,
+      context,
     )
-    await refreshTrackLinks(await getLastfmAccount(), 'playlist-import')
+    await context.log('info', 'Playlist membership and source evidence saved.')
+    await refreshTrackLinks(
+      await getLastfmAccount(),
+      'playlist-import',
+      context.activity,
+    )
     const name =
       fetched.target.source === 'spotify'
         ? fetched.target.name

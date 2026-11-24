@@ -1,4 +1,5 @@
 import { inspect } from 'node:util'
+import { DrizzleQueryError } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   JobErrorDetailsSchema,
@@ -88,6 +89,28 @@ export function jobErrorDetails(
     return redactJobText(text, secrets) === text ? parsed.data : undefined
   }
   function entry(value: unknown) {
+    if (value instanceof DrizzleQueryError) {
+      // Drizzle puts the complete SQL and every bound value in both message and stack.
+      // PostgreSQL messages can also quote the rejected row. Keep the safe reason.
+      const result = z
+        .object({ code: z.string().regex(/^[0-9A-Z]{5}$/) })
+        .safeParse(value.cause)
+      const reasons: Record<string, string> = {
+        '22P02': 'Invalid input value',
+        '23502': 'A required value was missing',
+        '23503': 'A referenced record was missing',
+        '23505': 'A unique value already exists',
+        '23514': 'A check constraint failed',
+        '40001': 'Concurrent transaction conflict',
+        '40P01': 'Database deadlock',
+        '55P03': 'Database lock unavailable',
+        '57014': 'Database statement cancelled',
+      }
+      const message = result.success
+        ? `${reasons[result.data.code] ?? 'Database statement failed'} (SQLSTATE ${result.data.code})`
+        : 'Database statement failed'
+      return { name: 'DatabaseError', message, stack: null }
+    }
     const parsed = ErrorLikeSchema.safeParse(value)
     const code = diagnosticField(
       JobErrorDetailsSchema.shape.code,
@@ -123,6 +146,7 @@ export function jobErrorDetails(
   const seen = new Set<unknown>([error])
   let current = error
   for (let depth = 0; depth < 5; depth++) {
+    if (current instanceof DrizzleQueryError) break
     const parsed = ErrorLikeSchema.safeParse(current)
     const cause = parsed.success ? parsed.data.cause : undefined
     if (cause === undefined || seen.has(cause)) break

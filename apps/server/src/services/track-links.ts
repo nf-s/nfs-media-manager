@@ -439,13 +439,18 @@ export async function refreshTrackListeningTotals(
 export async function refreshTrackLinks(
   account: string | null,
   trigger = 'relink',
+  activity?: (stage: string) => Promise<void>,
 ) {
+  await activity?.('Linking tracks to albums')
   const batchId = await db.transaction((tx) => openChangeBatch(tx, trigger))
   await linkTracksToAlbums(batchId)
   if (account) {
+    await activity?.('Matching tracks from listening history')
     await importLastfmLibraryTracks(account, batchId)
+    await activity?.('Linking listening history to tracks')
     await linkScrobblesToTracks(account)
   }
+  await activity?.('Updating artist listening totals')
   await refreshArtistListeningTotals(db)
   await closeChangeBatch(db, batchId)
 }

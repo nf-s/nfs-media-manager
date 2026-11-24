@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DrizzleQueryError } from 'drizzle-orm'
 import { JobErrorDetailsSchema } from '@repo/schemas/job'
 import {
   ProviderItemNotFoundError,
@@ -8,6 +9,27 @@ import {
 import { jobErrorDetails, jobErrorReview, redactJobText } from './job-errors'
 
 describe('job error diagnostics', () => {
+  it('reports the database failure without copying SQL parameters or row contents into job history', () => {
+    const driverError = Object.assign(
+      new Error('invalid input "fixture-row-value"'),
+      { code: '22P02' },
+    )
+    const error = new DrizzleQueryError(
+      'insert into fixture values ($1)',
+      ['fixture-row-value'],
+      driverError,
+    )
+    const details = jobErrorDetails(
+      new Error('Could not save', { cause: error }),
+      [],
+    )
+    expect(JSON.stringify(details)).not.toContain('fixture-row-value')
+    expect(JSON.stringify(details)).not.toContain('insert into fixture')
+    expect(details.causes.map(({ message }) => message).join(' ')).toContain(
+      '22P02',
+    )
+  })
+
   it('retains validated provider response evidence on an error and its causes', () => {
     const diagnostics = {
       source: 'provider-response',

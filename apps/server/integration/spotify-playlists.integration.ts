@@ -1933,6 +1933,44 @@ describe('Spotify playlist imports', () => {
     })
   })
 
+  it('keeps the failing save stage visible when playlist changes roll back', async () => {
+    await pool.query(`
+      create function reject_fixture_evidence() returns trigger language plpgsql as $$
+      begin
+        if new.operation = 'playlist-contents' and new.relationship_role = 'playlist_entry' then
+          raise exception 'Fixture evidence write failed';
+        end if;
+        return new;
+      end $$;
+      create trigger reject_fixture_evidence before insert on catalog_observation
+        for each row execute function reject_fixture_evidence()
+    `)
+    try {
+      await importAll({
+        playlists: [chosen(OWNED, 'Morning')],
+        likedSongs: false,
+      })
+      const [job] = await tasks(SPOTIFY_PLAYLIST_IMPORT_TASK)
+      expect(job).toMatchObject({
+        status: 'failed',
+        options: {
+          progress: { pagesRead: 1, totalPages: 1 },
+          activity: {
+            stage: 'Recording playlist source evidence',
+            done: 0,
+            total: 1,
+          },
+        },
+      })
+      expect(await listPlaylists()).toHaveLength(0)
+    } finally {
+      await pool.query(
+        'drop trigger reject_fixture_evidence on catalog_observation',
+      )
+      await pool.query('drop function reject_fixture_evidence()')
+    }
+  })
+
   it('stores nothing when a playlist is larger than one import reads', async () => {
     reportedTotal = SPOTIFY_PLAYLIST_ITEM_LIMIT + 1
     await importAll({
@@ -1978,6 +2016,19 @@ describe('Spotify playlist imports', () => {
       { pagesRead: 2, totalPages: 3 },
     ])
     const done = { pagesRead: 3, totalPages: 3 }
+    const [storedJob] = await tasks(SPOTIFY_PLAYLIST_IMPORT_TASK)
+    const detail = await getJob(storedJob?.id ?? '')
+    const timeline = detail?.logs.map(({ message }) => message).join('\n')
+    for (const stage of [
+      'Reading playlist tracks',
+      'Matching playlist tracks to the library',
+      'Saving track details',
+      'Saving playlist membership',
+      'Recording playlist source evidence',
+      'Playlist membership and source evidence saved.',
+      'Linking tracks to albums',
+    ])
+      expect(timeline).toContain(stage)
     expect(
       (await getSpotifyPlaylists(USER_ID)).playlists[0]?.job,
     ).toMatchObject({ status: 'succeeded', progress: done })
