@@ -131,7 +131,10 @@ import { hasBlockedFilmReference } from '@/services/film-reference-state'
 import { readAlbumMatchRejections } from '@/services/album-match-rejections'
 import { getProviderReferenceHints } from '@/services/provider-reference-hints'
 import { getAlbumReleaseHints } from '@/services/album-release-hints'
-import { MAX_CONSECUTIVE_PROVIDER_FAILURES } from '@/lib/request-policy'
+import {
+  IN_REQUEST_SLOT_WAIT_MS,
+  MAX_CONSECUTIVE_PROVIDER_FAILURES,
+} from '@/lib/request-policy'
 import {
   resumeJobProvider,
   wakeJobProvider,
@@ -496,9 +499,6 @@ type ProviderExecution = {
   /** When a job run in the request stopped at a cooldown or a busy slot. */
   rateLimitedUntil?: number
 }
-
-/** A request run in the request waits at most this long for a slot. */
-export const IN_REQUEST_SLOT_WAIT_MS = 10000
 
 /** Notes a cooldown or busy slot that stopped a job run in the request. */
 function noteRateLimit(execution: ProviderExecution, error: unknown) {

@@ -11,6 +11,7 @@ import {
 } from '@repo/schemas/playback'
 import { DIRECT_PROVIDER_RESPONSE_SOURCE } from '@repo/schemas/provider-response'
 import {
+  SpotifyInteractiveTrackSearchResultSchema,
   SpotifyTrackSearchAcceptInputSchema,
   SpotifyTrackSearchSchema,
 } from '@repo/schemas/spotify-track-search'
@@ -177,6 +178,89 @@ async function mockDirectResponseEvidence(page: Page, albumId: string) {
     )
   }
 }
+
+test('an interactive Spotify search shows candidates in the same request and confirms the selected recording', async ({
+  page,
+  isMobile,
+}) => {
+  const queued = await blockTextSearch(page)
+  const searchId = 'fixture-interactive-search'
+  const direct = SpotifyInteractiveTrackSearchResultSchema.parse({
+    searchId,
+    query: 'Faraway Light',
+    searchedAt: '2026-01-03T00:00:00.000Z',
+    candidates: [
+      {
+        spotifyTrackId,
+        title: trackTitle,
+        artists: ['Rook Abernathy'],
+        albumName: albumTitle,
+        spotifyAlbumId,
+        durationSec: 180,
+        artworkUrl: null,
+        isrc: null,
+        spotifyUrl: `https://open.spotify.com/track/${spotifyTrackId}`,
+      },
+    ],
+  })
+  const path = `${searchPath}/${unmatchedTrackId}`
+  let searches = 0
+  await page.route(path, async (route) => {
+    if (route.request().method() === 'POST') {
+      expect(route.request().postDataJSON()).toMatchObject({
+        query: direct.query,
+      })
+      searches++
+      await route.fulfill({
+        json: { statusCode: 200, message: 'OK', data: direct },
+      })
+    } else {
+      await route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: SpotifyTrackSearchSchema.parse({
+            job: null,
+            query: '',
+            candidates: [],
+          }),
+        },
+      })
+    }
+  })
+  let accepted = false
+  await page.route(`${path}/accept`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ searchId, spotifyTrackId })
+    accepted = true
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: { targetId: matchedTrackId },
+      },
+    })
+  })
+  await page.goto(
+    `/tracks?view=${isMobile ? 'list' : 'table'}&q=Faraway%20Light`,
+  )
+  await page
+    .getByRole('button', { name: `Match ${trackTitle} to Spotify` })
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Spotify track search' })
+  await dialog
+    .getByRole('searchbox', { name: 'Search Spotify' })
+    .fill(direct.query)
+  await dialog.getByRole('button', { name: 'Search', exact: true }).click()
+  await dialog
+    .getByRole('button', { name: `Review ${trackTitle} from ${albumTitle}` })
+    .click()
+  expect(accepted).toBe(false)
+  await dialog.getByRole('button', { name: 'Confirm Spotify match' }).click()
+  await expect(dialog).toBeHidden()
+  expect(accepted).toBe(true)
+  expect(searches).toBe(1)
+  expect(queued).toEqual([])
+})
 
 test('a saved track offers manual Spotify matching in its title and opens the exact release after matching', async ({
   page,

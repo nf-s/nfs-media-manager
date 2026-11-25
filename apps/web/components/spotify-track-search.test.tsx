@@ -15,6 +15,7 @@ import {
   SpotifyTrackSearchJobCell,
   SpotifyTrackSearchReview,
   SpotifyTrackSearchSelectionBar,
+  spotifyTrackSearchSavedResults,
   useSpotifyTrackSearchStatusForPages,
 } from './spotify-track-search'
 
@@ -233,6 +234,38 @@ test('saved Spotify results show enough recording details for review before conf
   assert.doesNotMatch(html, /type="search"/)
 })
 
+test('direct search status lets the owner review results without a job link', () => {
+  const onReview = () => assert.fail('Rendering must not invoke review')
+  const succeeded = render(
+    <SpotifyTrackSearchJobCell
+      job={null}
+      interactive={{ status: 'succeeded', resultCount: 1 }}
+      onReview={onReview}
+    />,
+  )
+  assert.match(succeeded, />Done/)
+  assert.match(succeeded, /Review matches/)
+  assert.doesNotMatch(succeeded, /Never|href="\/jobs/)
+  const failed = render(
+    <SpotifyTrackSearchJobCell
+      job={null}
+      interactive={{ status: 'failed', resultCount: null }}
+      onReview={onReview}
+    />,
+  )
+  assert.match(failed, />Failed/)
+  assert.doesNotMatch(failed, /Never|Review matches/)
+  const queued = render(
+    <SpotifyTrackSearchJobCell
+      job={{ ...job, status: 'queued' }}
+      interactive={{ status: 'succeeded', resultCount: 1 }}
+      onReview={onReview}
+    />,
+  )
+  assert.match(queued, /href="\/jobs\/example-job"/)
+  assert.match(queued, />Queued/)
+})
+
 test('the Spotify search panel prefills plain text and keeps searching opt-in', () => {
   const track = {
     id: 'stored-track',
@@ -320,6 +353,48 @@ test('selecting an older saved candidate opens confirmation without starting a s
     ),
     /Confirm Spotify match/,
   )
+})
+
+test('a recording found by several searches appears once under its latest receipt', () => {
+  const earlierCandidate = {
+    ...candidate,
+    title: 'Earlier recording',
+    spotifyTrackId: 'ABCDEFGHIJKLMNOPQRSTUV',
+    spotifyUrl: 'https://open.spotify.com/track/ABCDEFGHIJKLMNOPQRSTUV',
+  }
+  const newer = '2026-01-02T00:00:00.000Z'
+  const latest = '2026-01-03T00:00:00.000Z'
+  const data = SpotifyTrackSearchSchema.parse({
+    job,
+    query: 'Earlier search',
+    candidates: [candidate, earlierCandidate],
+    interactiveResults: [
+      {
+        searchId: 'empty',
+        searchedAt: latest,
+        query: 'Empty result',
+        candidates: [],
+      },
+      {
+        searchId: 'newer',
+        searchedAt: newer,
+        query: 'Newer search',
+        candidates: [candidate],
+      },
+    ],
+  })
+  assert.deepEqual(spotifyTrackSearchSavedResults(data), [
+    {
+      receipt: { searchId: 'newer' },
+      searchedAt: newer,
+      candidates: [candidate],
+    },
+    {
+      receipt: { jobId: job.jobId },
+      searchedAt: createdAt,
+      candidates: [earlierCandidate],
+    },
+  ])
 })
 
 function renderConfirmation(failure: unknown) {

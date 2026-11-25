@@ -23,6 +23,7 @@ import {
   SpotifyTrackSearchResult,
   SpotifyTrackSearchReview,
   isActiveSpotifyTrackSearch,
+  searchReceiptId,
   spotifyTrackSearchSavedResults,
   type SpotifyTrackSearchSelection,
   useSavedSpotifyTrackSearch,
@@ -32,6 +33,7 @@ import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 function matchNote(
   item: TrackDetail,
   job: SpotifyTrackSearchJob | null | undefined,
+  acceptedInteractive: boolean,
 ) {
   if (job?.acceptedTrackId === item.id && job.matchMethod === 'automatic')
     return 'The track title and artist credits matched automatically.'
@@ -40,7 +42,7 @@ function matchNote(
       ? 'Another library version of this recording has a Spotify track ID.'
       : 'Search Spotify by track title or artist.'
   if (item.spotifyMatch === 'spotify-search')
-    return job?.acceptedTrackId === item.id
+    return acceptedInteractive || job?.acceptedTrackId === item.id
       ? 'You confirmed this recording from a Spotify track search.'
       : 'The Spotify track ID came from a catalog search.'
   if (item.spotifyMatch === 'spotify-import')
@@ -75,6 +77,11 @@ export function TrackSpotifySource({
   >(null)
   const search = useSavedSpotifyTrackSearch(item.id)
   const job = search.data?.job
+  const latestInteractive = search.data?.interactiveResults?.[0]
+  const acceptedInteractive =
+    search.data?.interactiveResults?.some(
+      ({ acceptedTrackId }) => acceptedTrackId === item.id,
+    ) ?? false
   const observedJob = useRef<SpotifyTrackSearchJob | null | undefined>(
     undefined,
   )
@@ -103,7 +110,11 @@ export function TrackSpotifySource({
     if (replaced) onResolved?.(job.acceptedTrackId)
     void invalidateScrobbleLinks(client, replaced ? item.id : undefined)
   }, [job, client, item.id, onResolved])
-  const time = job?.finishedAt ?? job?.startedAt ?? job?.createdAt
+  const jobTime = job?.finishedAt ?? job?.startedAt ?? job?.createdAt
+  const time =
+    latestInteractive && (!jobTime || latestInteractive.searchedAt > jobTime)
+      ? latestInteractive.searchedAt
+      : jobTime
   const label = direct
     ? trackSpotifyMatchLabels[item.spotifyMatch]
     : alternate
@@ -171,14 +182,12 @@ export function TrackSpotifySource({
       >
         {open && !direct && hasCandidates ? (
           <SourceBlock title="Saved Spotify matches">
-            {savedResults.map(({ job: resultJob, candidates }) => (
-              <div className="data-stack" key={resultJob.jobId}>
-                {resultJob.jobId !== job?.jobId && (
+            {savedResults.map(({ receipt, searchedAt, candidates }, index) => (
+              <div className="data-stack" key={searchReceiptId(receipt)}>
+                {(index > 0 ||
+                  ('jobId' in receipt && receipt.jobId !== job?.jobId)) && (
                   <p className="ds-help">
-                    Search from{' '}
-                    {formatDateTime(
-                      resultJob.finishedAt ?? resultJob.createdAt,
-                    )}
+                    Search from {formatDateTime(searchedAt)}
                   </p>
                 )}
                 <SpotifyTrackSearchCandidates
@@ -189,7 +198,7 @@ export function TrackSpotifySource({
                       ? (candidate) =>
                           setMatching({
                             mode: 'review-results',
-                            selection: { jobId: resultJob.jobId, candidate },
+                            selection: { ...receipt, candidate },
                           })
                       : undefined
                   }
@@ -199,7 +208,7 @@ export function TrackSpotifySource({
           </SourceBlock>
         ) : (
           <SourceBlock title="Spotify match">
-            {matchNote(item, job)}
+            {matchNote(item, job, acceptedInteractive)}
           </SourceBlock>
         )}
         {open && (

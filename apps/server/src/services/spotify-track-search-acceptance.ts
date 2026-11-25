@@ -2,6 +2,7 @@ import { eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   SpotifyTrackSearchTargetConflictSchema,
+  type SpotifyTrackSearchAcceptInputSchema,
   type SpotifyTrackSearchCandidate,
 } from '@repo/schemas/spotify-track-search'
 import { db } from '@/lib/db'
@@ -18,12 +19,14 @@ import {
 } from './album-library-tracks'
 import {
   createdTracksEntry,
+  interactiveSearchEvidenceEntry,
   spotifyCatalogBindingEntry,
   membershipDetails,
   readJobOptions,
   readTrackRowImage,
   removedTracksEntry,
   searchAcceptanceEntry,
+  writeInteractiveSearchEvidence,
   trackRowStateEntry,
 } from './automatic-match-effects'
 import { readKeptSeparateTest } from './keep-separate-effects'
@@ -36,8 +39,10 @@ import {
 } from './library-changes'
 import { readRejectionTest } from './library-match-rejections'
 import {
+  readInteractiveSpotifyTrackSearch,
   readSpotifyTrackSearchCandidate,
   readSpotifyTrackSearchForAutomaticMatch,
+  readSpotifyTrackSearchSnapshotIds,
 } from './spotify-track-search'
 import {
   type RecordingEvidence,
@@ -68,6 +73,7 @@ import {
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type MatchMethod = 'automatic' | 'manual'
 type SearchScope = { trackId: string; jobId: string; userId: string | null }
+type SearchReceipt = { jobId: string } | { searchId: string }
 type ReconciliationResult =
   | {
       status: 'matched'
@@ -211,7 +217,7 @@ const ACCEPTANCE_KEYS = [
  */
 async function linkSpotifyRecording(
   tx: Transaction,
-  { trackId, jobId }: SearchScope,
+  input: { trackId: string } & SearchReceipt,
   targetId: string,
   candidate: SpotifyTrackSearchCandidate,
   matchMethod: MatchMethod,
@@ -225,8 +231,16 @@ async function linkSpotifyRecording(
     batchId?: string | null
   } = {},
 ) {
+  const { trackId } = input
+  const receipt =
+    'jobId' in input ? { jobId: input.jobId } : { searchId: input.searchId }
   const automatic = matchMethod === 'automatic'
   const merged = targetId !== trackId
+  const snapshotIds = merged
+    ? await readSpotifyTrackSearchSnapshotIds(tx, trackId)
+    : 'searchId' in input
+      ? [input.searchId]
+      : []
   const draft = await beginTrackChange(tx, { trackIds: [trackId] })
   const sources = merged ? await readChangeRecords(tx, 'track', [trackId]) : []
   // A source without names is put back by its own effect, not with names.
@@ -237,9 +251,10 @@ async function linkSpotifyRecording(
     ? await outsideSpotifyIdentity(tx, targetId, candidate)
     : null
   const source = merged ? await libraryRecording(tx, trackId) : null
-  const jobBefore = automatic
-    ? {}
-    : await readJobOptions(tx, jobId, ACCEPTANCE_KEYS)
+  const jobBefore =
+    'jobId' in input && !automatic
+      ? await readJobOptions(tx, input.jobId, ACCEPTANCE_KEYS)
+      : {}
   if (aliasId) {
     await tx.execute(sql`
       update library_track set spotify_track_id = null
@@ -247,7 +262,7 @@ async function linkSpotifyRecording(
     await setCatalogMediaAlias(tx, aliasId, targetId)
   }
   await storeConfirmedRecording(tx, targetId, candidate, {
-    jobId,
+    ...receipt,
     matchMethod,
     albumFallbackArtistCreditCorrection,
   })
@@ -298,38 +313,56 @@ async function linkSpotifyRecording(
   )
   if (merged) await removeOrphanTracks(tx, [trackId])
   if (unnamed.length) effects.push(removedTracksEntry([trackId]))
-  await tx
-    .update(scrapeJob)
-    .set({
-      options: sql`${scrapeJob.options} || ${JSON.stringify({
-        acceptedTrackId: targetId,
-        acceptedSpotifyTrackId: candidate.spotifyTrackId,
-        matchMethod,
-        ...(albumFallbackArtistCreditCorrection
-          ? { albumFallbackArtistCreditCorrection }
-          : {}),
-        ...(matchMethod === 'automatic' && reusedSpotifyTrackId
+  if ('jobId' in input) {
+    const { jobId } = input
+    await tx
+      .update(scrapeJob)
+      .set({
+        options: sql`${scrapeJob.options} || ${JSON.stringify({
+          acceptedTrackId: targetId,
+          acceptedSpotifyTrackId: candidate.spotifyTrackId,
+          matchMethod,
+          ...(albumFallbackArtistCreditCorrection
+            ? { albumFallbackArtistCreditCorrection }
+            : {}),
+          ...(matchMethod === 'automatic' && reusedSpotifyTrackId
+            ? {
+                matchedExistingSpotifyTrackId: SpotifyIdSchema.parse(
+                  candidate.spotifyTrackId,
+                ),
+              }
+            : {}),
+        })}::jsonb`,
+      })
+      .where(eq(scrapeJob.id, jobId))
+    // An undone automatic match leaves its search marked as used.
+    if (!automatic)
+      effects.push(
+        searchAcceptanceEntry(
+          jobId,
+          ACCEPTANCE_KEYS,
+          jobBefore,
+          await readJobOptions(tx, jobId, ACCEPTANCE_KEYS),
+          [trackId, targetId],
+        ),
+      )
+  }
+  if (snapshotIds.length) {
+    const evidence = {
+      snapshotIds,
+      acceptance:
+        'searchId' in input
           ? {
-              matchedExistingSpotifyTrackId: SpotifyIdSchema.parse(
-                candidate.spotifyTrackId,
-              ),
+              searchId: input.searchId,
+              spotifyTrackId: candidate.spotifyTrackId,
             }
-          : {}),
-      })}::jsonb`,
-    })
-    .where(eq(scrapeJob.id, jobId))
-  // An undone automatic match leaves its search marked as used, so the same
-  // search is not applied again.
-  if (!automatic)
-    effects.push(
-      searchAcceptanceEntry(
-        jobId,
-        ACCEPTANCE_KEYS,
-        jobBefore,
-        await readJobOptions(tx, jobId, ACCEPTANCE_KEYS),
-        [trackId, targetId],
-      ),
-    )
+          : undefined,
+      sourceId: trackId,
+      targetId,
+    }
+    await writeInteractiveSearchEvidence(tx, evidence)
+    effects.push(interactiveSearchEvidenceEntry(evidence))
+  }
   const [target] = await readChangeRecords(tx, 'track', [targetId])
   await recordTrackChange(
     tx,
@@ -537,11 +570,19 @@ export async function acceptSpotifyTrackSearch(input: AcceptanceInput) {
   )
 }
 
-type AcceptanceInput = {
+type AcceptanceInput = z.infer<typeof SpotifyTrackSearchAcceptInputSchema> & {
   trackId: string
-  jobId: string
-  spotifyTrackId: string
   userId: string
+}
+
+async function readSearchAcceptance(tx: Transaction, input: AcceptanceInput) {
+  if ('searchId' in input) return readInteractiveSpotifyTrackSearch(tx, input)
+  const candidate = await readSpotifyTrackSearchCandidate(tx, input)
+  const [job] = await tx
+    .select({ options: scrapeJob.options })
+    .from(scrapeJob)
+    .where(eq(scrapeJob.id, input.jobId))
+  return { candidate, options: job?.options }
 }
 
 /**
@@ -554,13 +595,9 @@ export async function acceptSpotifyTrackSearchInTransaction(
   input: AcceptanceInput,
 ) {
   await lockLibraryTrackWrites(tx)
-  const { trackId, jobId, spotifyTrackId } = input
-  const candidate = await readSpotifyTrackSearchCandidate(tx, input)
-  const [job] = await tx
-    .select({ options: scrapeJob.options })
-    .from(scrapeJob)
-    .where(eq(scrapeJob.id, jobId))
-  const previous = AcceptedSchema.safeParse(job?.options)
+  const { trackId, spotifyTrackId } = input
+  const { candidate, options } = await readSearchAcceptance(tx, input)
+  const previous = AcceptedSchema.safeParse(options)
   if (previous.success) {
     const kept = await libraryRecording(tx, previous.data.acceptedTrackId)
     if (

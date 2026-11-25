@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import type {
+  JsonValue,
   MediaPluginTestContext,
   MediaProviderPlugin,
 } from '@repo/media-plugin-sdk'
@@ -28,11 +29,18 @@ type InteractiveMediaRead = {
   plugin: MediaProviderPlugin
   secrets: Record<string, string>
   maxSlotWaitMs: number
+  normalizedData?: Record<string, JsonValue>
 }
 
 /** Retain allowed responses on the item as they arrive, including failed reads. */
 export async function readMediaProviderWithEvidence<T>(
-  { mediaItemId, plugin, secrets, maxSlotWaitMs }: InteractiveMediaRead,
+  {
+    mediaItemId,
+    plugin,
+    secrets,
+    maxSlotWaitMs,
+    normalizedData,
+  }: InteractiveMediaRead,
   execute: (request: MediaPluginTestContext['request']) => Promise<T>,
 ) {
   const responses: Evidence[] = []
@@ -52,6 +60,7 @@ export async function readMediaProviderWithEvidence<T>(
         source: DIRECT_PROVIDER_RESPONSE_SOURCE,
         checksum: checksumJson(capture),
         payload: { ...capture, readId },
+        normalizedData,
         createdAt: observedAt,
       })
       responses.push({

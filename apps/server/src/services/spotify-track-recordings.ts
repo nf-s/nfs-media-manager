@@ -45,11 +45,10 @@ export async function storeConfirmedRecording(
   targetId: string,
   candidate: SpotifyRecording,
   provenance:
-    | {
-        jobId: string
+    | ({
         matchMethod: 'automatic' | 'manual'
         albumFallbackArtistCreditCorrection?: AlbumFallbackArtistCreditCorrection
-      }
+      } & ({ jobId: string } | { searchId: string }))
     | { addedAt: Date; releaseDate: string | null },
 ) {
   const existing = await libraryRecording(tx, targetId)
@@ -82,6 +81,9 @@ export async function storeConfirmedRecording(
           spotifyArtistCreditsSource: {
             source: 'spotify-search',
             ...('jobId' in provenance ? { jobId: provenance.jobId } : {}),
+            ...('searchId' in provenance
+              ? { snapshotId: provenance.searchId }
+              : {}),
           },
         }
       : {}),
@@ -163,7 +165,9 @@ export async function storeConfirmedRecording(
       source:
         'jobId' in provenance
           ? { kind: 'spotify-track-search', jobId: provenance.jobId }
-          : { kind: 'spotify-manual-add' },
+          : 'searchId' in provenance
+            ? { kind: 'spotify-track-search', snapshotId: provenance.searchId }
+            : { kind: 'spotify-manual-add' },
     },
   ])
   if (!existing?.hasArtists || albumFallbackArtistCreditCorrection)

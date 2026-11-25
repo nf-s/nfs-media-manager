@@ -6,8 +6,8 @@ import {
 import {
   SpotifyAlbumSchema,
   SpotifyIdSchema,
-  SpotifyTracksPageSchema,
   UpcSchema,
+  completeSpotifyAlbumTracks,
   normalizeSpotifyAlbum,
   spotifyAlbumId,
   spotifyJson,
@@ -233,52 +233,14 @@ export const spotifyPlugin: MediaProviderPlugin = {
       throw new Error(
         'Spotify album identity changed after search; set its ID explicitly',
       )
-    const initial = data.tracks
-    if (
-      !initial ||
-      initial.offset !== 0 ||
-      initial.total > 500 ||
-      (data.total_tracks !== undefined && data.total_tracks !== initial.total)
+    const complete = await completeSpotifyAlbumTracks(data, (offset) =>
+      spotifyJson(context.request, token, `albums/${id}/tracks`, {
+        ...params,
+        limit: '50',
+        offset: String(offset),
+      }),
     )
-      throw new Error(
-        'Spotify album tracks missing, inconsistent or exceed the 500-track safety limit',
-      )
-    const tracks = [...initial.items]
-    let next = initial.next
-    while (next !== null) {
-      if (tracks.length >= initial.total || tracks.length >= 500)
-        throw new Error('Invalid Spotify track pagination')
-      const page = SpotifyTracksPageSchema.parse(
-        await spotifyJson(context.request, token, `albums/${id}/tracks`, {
-          ...params,
-          limit: '50',
-          offset: String(tracks.length),
-        }),
-      )
-      if (
-        page.offset !== tracks.length ||
-        page.total !== initial.total ||
-        !page.items.length ||
-        tracks.length + page.items.length > initial.total
-      )
-        throw new Error(
-          'Spotify album changed during pagination; retry explicitly',
-        )
-      tracks.push(...page.items)
-      next = page.next
-    }
-    if (tracks.length !== initial.total)
-      throw new Error('Incomplete Spotify track listing')
-    if (
-      new Set(
-        tracks.map((track) => `${track.disc_number}:${track.track_number}`),
-      ).size !== tracks.length
-    )
-      throw new Error('Duplicate Spotify track positions')
-    const result = normalizeSpotifyAlbum({
-      ...data,
-      tracks: { ...initial, items: tracks, next: null },
-    })
+    const result = normalizeSpotifyAlbum(complete)
     if (!data.external_ids?.upc && upc) {
       result.normalized.references.push({
         referenceType: 'upc',

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   recordCodes: vi.fn(),
   filmMatches: vi.fn(),
   addAlbum: vi.fn(),
+  addStoredAlbum: vi.fn(),
   addFilm: vi.fn(),
   plugin: vi.fn(),
 }))
@@ -46,6 +47,13 @@ vi.mock('@/services/album-imports', () => ({
   matchAlbumCandidates: mocks.albumMatches,
   commitAlbumImportRecord: mocks.addAlbum,
 }))
+vi.mock(
+  import('@/services/spotify-album-reference'),
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    addStoredSpotifyAlbum: mocks.addStoredAlbum,
+  }),
+)
 vi.mock('@/services/file-imports', () => ({
   matchFilmCandidates: mocks.filmMatches,
   commitFilmImportRecord: mocks.addFilm,
@@ -282,6 +290,10 @@ describe('manual provider search and library additions', () => {
           in_library: true,
         },
       ],
+    })
+    mocks.addStoredAlbum.mockResolvedValue({
+      mediaItemId: 'existing-album',
+      created: false,
     })
     mocks.filmMatches.mockResolvedValue([
       { id: 'existing-film', error: null, inLibrary: true },

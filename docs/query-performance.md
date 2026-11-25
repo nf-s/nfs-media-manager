@@ -20,6 +20,8 @@ corepack pnpm --filter @repo/server test:performance
 
 CI runs the suite on PostgreSQL 17 and 18 for pushes, pull requests and the nightly schedule. The suite builds a synthetic library, refreshes planner statistics, runs the service, and replays its captured reads with `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON)`. It sums hit and read blocks from each root plan. Child nodes are already included. It checks response semantics, bounds logical work and detects a spill to temporary storage. Elapsed execution time in the log helps diagnose changes. Cloud networking, authentication and browser rendering are measured separately. Add new workloads to `integration/*.performance.ts`. [PostgreSQL EXPLAIN guide](https://www.postgresql.org/docs/17/using-explain.html)
 
+The Spotify search fixture stores ten catalog results with their albums, credits and provider evidence. Batching reduced the first save from 228 database statements to 20. Replaying the same results took 19. The regression test also covers an unavailable recording that appears again with a release identifier. [Spotify search persistence test](../apps/server/integration/spotify-search-persistence.performance.ts)
+
 ### Continuous production monitoring
 
 CI also runs the packaged API Worker locally with production settings and synthetic bindings. The build must start and serve its healthcheck before the checks pass. This catches module initialization failures that TypeScript and a bundle-only build can miss.

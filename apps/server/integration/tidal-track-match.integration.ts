@@ -47,7 +47,8 @@ vi.mock('@/lib/provider-secrets', () => ({
   }),
 }))
 
-import { getJob, IN_REQUEST_SLOT_WAIT_MS } from '@/services/jobs'
+import { getJob } from '@/services/jobs'
+import { IN_REQUEST_SLOT_WAIT_MS } from '@/lib/request-policy'
 import { readProviderResponseAttempt } from '@/services/provider-response-history'
 import {
   ProviderTaskReplayStepsSchema,

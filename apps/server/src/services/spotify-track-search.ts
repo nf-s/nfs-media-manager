@@ -4,8 +4,11 @@ import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { EnrichmentResultSchema, JobScopeSchema } from '@repo/schemas/job'
 import {
+  SPOTIFY_INTERACTIVE_TRACK_SEARCH,
   SPOTIFY_TRACK_SEARCH_LIMIT,
   SPOTIFY_TRACK_SEARCH_TASK,
+  SpotifyInteractiveTrackSearchInputSchema,
+  SpotifyInteractiveTrackSearchResultSchema,
   SpotifyTrackSearchCandidateSchema,
   SpotifyTrackSearchInputSchema,
   SpotifyTrackSearchJobSchema,
@@ -24,10 +27,15 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { createStableId } from '@/lib/media-utils'
 import {
+  isInteractiveSpotifyTrackSearchResponse,
+  spotifyInteractiveSearchMetadata,
+} from '@/lib/spotify-interactive-search'
+import {
   catalogObservation,
   lastfmTrackSource,
   libraryTrack,
   mediaItem,
+  providerSnapshot,
   scrapeJob,
   scrapeJobLog,
 } from '@/schemas/db'
@@ -37,6 +45,7 @@ import {
   lookupSpotifyTrackCandidates,
   prepareSpotifyCatalogTrackSearch,
   searchSpotifyTrackCandidates,
+  searchSpotifyTrackCandidatesInRequest,
 } from './manual-add'
 import {
   completeSonovaultSpotifyStep,
@@ -57,6 +66,7 @@ import {
 import {
   listTracksNeedingSpotifyMatch,
   spotifySearchRecordingId,
+  spotifyTrackSearchHistory,
   trackMatchesSpotifySearchFreshness,
 } from './track-match-diagnostics'
 
@@ -84,6 +94,35 @@ const SonovaultStepSchema = SearchOptionsSchema.pick({
   spotifyTrackId: true,
   sonovaultTrackId: true,
 }).required()
+
+const InteractiveSearchSchema = SpotifyInteractiveTrackSearchResultSchema.omit({
+  searchId: true,
+  searchedAt: true,
+}).extend({
+  trackId: SearchOptionsSchema.shape.trackId,
+  trackTitle: z.string().min(1),
+  trackArtists: z.array(z.string()),
+  kind: z.literal(SPOTIFY_INTERACTIVE_TRACK_SEARCH),
+  ownerKey: z.string(),
+  acceptedSpotifyTrackId:
+    SpotifyTrackSearchCandidateSchema.shape.spotifyTrackId.optional(),
+})
+
+export async function readSpotifyTrackSearchSnapshotIds(
+  tx: Transaction,
+  trackId: string,
+) {
+  const rows = await tx
+    .select({ id: providerSnapshot.id })
+    .from(providerSnapshot)
+    .where(
+      and(
+        isInteractiveSpotifyTrackSearchResponse,
+        eq(providerSnapshot.mediaItemId, trackId),
+      ),
+    )
+  return rows.map(({ id }) => id)
+}
 const StoredResultSchema = z.object({
   diagnostics: z.array(
     z.object({
@@ -164,6 +203,223 @@ async function needsMatch(
   trackId: string,
 ) {
   return (await listTracksNeedingSpotifyMatch(database, [trackId])).length > 0
+}
+
+function sameSearchTarget(
+  target: Awaited<ReturnType<typeof trackSearchTarget>>,
+  saved: { trackTitle: string; trackArtists: string[] },
+) {
+  return (
+    target !== undefined &&
+    albumNameKey(target.trackTitle) === albumNameKey(saved.trackTitle) &&
+    sameSpotifySearchArtists(target.trackArtists, saved.trackArtists)
+  )
+}
+
+export async function searchSpotifyTrackInRequest(
+  trackId: string,
+  input: z.infer<typeof SpotifyInteractiveTrackSearchInputSchema>,
+  userId: string,
+) {
+  const target = await trackSearchTarget(db, trackId)
+  if (!target)
+    throw new ServerError({
+      statusCode: 404,
+      message: 'Library track not found.',
+    })
+  const unavailable = () =>
+    new ServerError({
+      statusCode: 409,
+      message:
+        'The recording changed or already has a Spotify match. Review the current track.',
+    })
+  if (!(await needsMatch(db, trackId))) throw unavailable()
+
+  const { items, observations, evidence } =
+    await searchSpotifyTrackCandidatesInRequest(
+      trackId,
+      input.query,
+      userId,
+      input.market,
+    )
+  const searchId = evidence.snapshotId
+  return db.transaction(async (tx) => {
+    await lockLibraryTrackWrites(tx)
+    if (
+      !sameSearchTarget(await trackSearchTarget(tx, trackId), target) ||
+      !(await needsMatch(tx, trackId))
+    )
+      throw unavailable()
+    const ids = await observeSpotifySearchResults(tx, observations, {
+      operation: 'spotify-match',
+      key: searchId,
+      subjectKind: 'track',
+      subjectId: trackId,
+      snapshotId: searchId,
+      observedAt: evidence.observedAt,
+    })
+    const library = ids.size
+      ? await tx
+          .select({ id: mediaItem.id, inLibrary: mediaItem.inLibrary })
+          .from(mediaItem)
+          .where(inArray(mediaItem.id, [...ids.values()]))
+      : []
+    const membership = new Map(
+      library.map(({ id, inLibrary }) => [id, inLibrary]),
+    )
+    const saved = InteractiveSearchSchema.parse({
+      ...spotifyInteractiveSearchMetadata(userId),
+      trackId,
+      trackTitle: target.trackTitle,
+      trackArtists: target.trackArtists,
+      query: input.query,
+      candidates: items,
+    })
+    await tx
+      .update(providerSnapshot)
+      .set({ normalizedData: saved })
+      .where(eq(providerSnapshot.id, searchId))
+    return SpotifyInteractiveTrackSearchResultSchema.parse({
+      ...saved,
+      searchId,
+      searchedAt: evidence.observedAt.toISOString(),
+      candidates: saved.candidates.map((candidate) => {
+        const id = ids.get(candidate.spotifyTrackId)
+        return id
+          ? {
+              ...candidate,
+              catalogMediaItemId: id,
+              inLibrary: membership.get(id),
+            }
+          : candidate
+      }),
+    })
+  })
+}
+
+async function interactiveSearchHistory(trackId: string, userId: string) {
+  const rows = await db
+    .select({
+      searchId: providerSnapshot.id,
+      searchedAt: providerSnapshot.createdAt,
+      data: providerSnapshot.normalizedData,
+    })
+    .from(providerSnapshot)
+    .where(
+      and(
+        isInteractiveSpotifyTrackSearchResponse,
+        eq(providerSnapshot.mediaItemId, trackId),
+        sql`${providerSnapshot.normalizedData} ? 'candidates'`,
+        sql`${providerSnapshot.normalizedData}->>'ownerKey' = ${spotifyInteractiveSearchMetadata(userId).ownerKey}`,
+      ),
+    )
+    .orderBy(desc(providerSnapshot.createdAt), desc(providerSnapshot.id))
+  const searches = rows.flatMap(({ searchId, searchedAt, data }) => {
+    const saved = InteractiveSearchSchema.safeParse(data)
+    if (!saved.success) return []
+    return [{ saved: saved.data, searchId, searchedAt }]
+  })
+  if (!searches.length) return []
+  const observations = await db
+    .select({
+      searchId: catalogObservation.snapshotId,
+      position: catalogObservation.position,
+      catalogMediaItemId: mediaItem.id,
+      inLibrary: mediaItem.inLibrary,
+    })
+    .from(catalogObservation)
+    .innerJoin(mediaItem, eq(mediaItem.id, catalogObservation.mediaItemId))
+    .where(
+      and(
+        eq(catalogObservation.operation, 'spotify-match'),
+        eq(catalogObservation.subjectKind, 'track'),
+        eq(catalogObservation.targetKind, 'track'),
+        inArray(catalogObservation.subjectId, [
+          ...new Set(searches.map(({ saved }) => saved.trackId)),
+        ]),
+        inArray(
+          catalogObservation.snapshotId,
+          searches.map(({ searchId }) => searchId),
+        ),
+      ),
+    )
+  const byPosition = new Map(
+    observations.map((row) => [
+      JSON.stringify([row.searchId, row.position]),
+      row,
+    ]),
+  )
+  return searches.map(({ saved, searchId, searchedAt }) =>
+    SpotifyInteractiveTrackSearchResultSchema.parse({
+      ...saved,
+      searchId,
+      searchedAt: searchedAt.toISOString(),
+      candidates: saved.candidates.map((candidate, index) => {
+        const hit = byPosition.get(
+          JSON.stringify([searchId, candidate.catalogPosition ?? index + 1]),
+        )
+        return hit
+          ? {
+              ...candidate,
+              catalogMediaItemId: hit.catalogMediaItemId,
+              inLibrary: hit.inLibrary,
+            }
+          : candidate
+      }),
+    }),
+  )
+}
+
+export async function readInteractiveSpotifyTrackSearch(
+  tx: Transaction,
+  {
+    trackId,
+    searchId,
+    spotifyTrackId,
+    userId,
+  }: {
+    trackId: string
+    searchId: string
+    spotifyTrackId: string
+    userId: string
+  },
+) {
+  const [row] = await tx
+    .select({ data: providerSnapshot.normalizedData })
+    .from(providerSnapshot)
+    .where(
+      and(
+        isInteractiveSpotifyTrackSearchResponse,
+        eq(providerSnapshot.id, searchId),
+      ),
+    )
+  const saved = InteractiveSearchSchema.safeParse(row?.data)
+  if (
+    !saved.success ||
+    saved.data.trackId !== trackId ||
+    saved.data.ownerKey !== spotifyInteractiveSearchMetadata(userId).ownerKey
+  )
+    throw new ServerError({
+      statusCode: 404,
+      message: 'Saved Spotify search not found.',
+    })
+  const candidate = saved.data.candidates.find(
+    (item) => item.spotifyTrackId === spotifyTrackId,
+  )
+  if (!candidate)
+    throw new ServerError({
+      statusCode: 404,
+      message: 'Spotify candidate was not found in the stored search.',
+    })
+  if (
+    saved.data.acceptedTrackId === undefined &&
+    !sameSearchTarget(await trackSearchTarget(tx, trackId), saved.data)
+  )
+    throw new ServerError({
+      statusCode: 409,
+      message: 'The library recording has changed. Review the current track.',
+    })
+  return { candidate, options: saved.data }
 }
 
 export async function prepareSpotifyTrackSearch(
@@ -492,28 +748,10 @@ function latestTrackSearchJobs(
   scope: 'requested' | 'retained' = 'requested',
 ) {
   const visibleId = scope === 'retained' ? retainedTrackId : searchTrackId
-  const pastId =
-    scope === 'retained'
-      ? spotifySearchRecordingId(sql`previous.options`)
-      : sql`previous.options->>'trackId'`
-  const history = sql`from scrape_job previous
-    where previous.options->>'task' = ${sql.raw(`'${SPOTIFY_TRACK_SEARCH_TASK}'`)}
-      and previous.provider = 'spotify' and ${pastId} = ${visibleId}
-      ${userId === undefined ? sql`` : sql`and previous.requested_by_user_id is not distinct from ${userId}`}`
   return database
     .selectDistinctOn([visibleId], {
       trackId: visibleId,
       ...searchJobColumns,
-      lastAttemptAt:
-        sql<Date | null>`(select max(previous.started_at) ${history}
-      and (previous.status <> 'succeeded' or previous.options ? 'resultCount'))`.mapWith(
-          scrapeJob.startedAt,
-        ),
-      lastSuccessfulAt:
-        sql<Date | null>`(select max(previous.finished_at) ${history}
-      and previous.status = 'succeeded' and previous.options ? 'resultCount')`.mapWith(
-          scrapeJob.finishedAt,
-        ),
     })
     .from(scrapeJob)
     .where(
@@ -551,20 +789,44 @@ export async function listSpotifyTrackSearchStatuses(
 ) {
   const { trackIds } = SpotifyTrackSearchStatusInputSchema.parse(input)
   const ids = [...new Set(trackIds)]
-  const jobs = new Map(
-    (await latestTrackSearchJobs(db, ids, userId, 'retained')).map((job) => [
-      job.trackId,
-      job,
-    ]),
-  )
+  const [jobRows, historyRows] = await Promise.all([
+    latestTrackSearchJobs(db, ids, userId, 'retained'),
+    db
+      .select({
+        trackId: sql<string>`search_history.id`,
+        lastAttemptAt: sql<Date | null>`search_history.last_attempt`.mapWith(
+          scrapeJob.startedAt,
+        ),
+        lastSuccessfulAt: sql<Date | null>`search_history.last_success`.mapWith(
+          scrapeJob.finishedAt,
+        ),
+        latestStatus: sql<string>`search_history.latest_attempt_status`,
+        latestResultCount: sql<
+          number | null
+        >`search_history.latest_result_count`,
+        latestInteractive: sql<boolean>`search_history.latest_attempt_interactive`,
+      })
+      .from(sql`(${spotifyTrackSearchHistory(userId, ids)}) search_history`),
+  ])
+  const jobs = new Map(jobRows.map((job) => [job.trackId, job]))
+  const history = new Map(historyRows.map((row) => [row.trackId, row]))
   return SpotifyTrackSearchStatusSchema.parse({
     items: ids.map((trackId) => {
       const job = jobs.get(trackId)
+      const dates = history.get(trackId)
       return {
         trackId,
         job: job ? summarizeSearch(job) : null,
-        lastAttemptAt: job?.lastAttemptAt?.toISOString() ?? null,
-        lastSuccessfulAt: job?.lastSuccessfulAt?.toISOString() ?? null,
+        lastAttemptAt: dates?.lastAttemptAt?.toISOString() ?? null,
+        lastSuccessfulAt: dates?.lastSuccessfulAt?.toISOString() ?? null,
+        ...(dates?.latestInteractive
+          ? {
+              interactive: {
+                status: dates.latestStatus,
+                resultCount: dates.latestResultCount,
+              },
+            }
+          : {}),
       }
     }),
   })
@@ -739,7 +1001,10 @@ export async function readSpotifySearchHistory(
 }
 
 export async function getSpotifyTrackSearch(trackId: string, userId: string) {
-  const { job, searches } = await readSpotifySearchHistory(db, trackId, userId)
+  const [{ job, searches }, interactiveResults] = await Promise.all([
+    readSpotifySearchHistory(db, trackId, userId),
+    interactiveSearchHistory(trackId, userId),
+  ])
   const observations = searches.length
     ? await db
         .select({
@@ -783,7 +1048,7 @@ export async function getSpotifyTrackSearch(trackId: string, userId: string) {
         : candidate
     }),
   }))
-  let query = saved?.query ?? job?.options.query
+  let query = saved?.query ?? job?.options.query ?? interactiveResults[0]?.query
   if (query === undefined || query === null) {
     const target = await trackSearchTarget(db, trackId)
     if (!target)
@@ -799,6 +1064,7 @@ export async function getSpotifyTrackSearch(trackId: string, userId: string) {
     query,
     candidates: saved?.candidates ?? [],
     earlierResults: earlier,
+    interactiveResults,
   })
 }
 

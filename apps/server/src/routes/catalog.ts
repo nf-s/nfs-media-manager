@@ -17,9 +17,9 @@ import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware, requireOwnerUser } from '@/middlewares/auth'
 import {
   listCatalogObservations,
-  promoteCatalogMedia,
   promoteNativeResource,
 } from '@/services/catalog-discoveries'
+import { addCatalogItem } from '@/services/spotify-album-reference'
 import { listTrackAppearances } from '@/services/track-appearances'
 
 const idParams = z.object({
@@ -70,6 +70,9 @@ catalog.openapi(
     responses: {
       ...errors,
       404: jsonErrorResponse('Media not found'),
+      409: jsonErrorResponse('Ambiguous Spotify release'),
+      429: jsonErrorResponse('Spotify is busy'),
+      502: jsonErrorResponse('Spotify could not confirm the release'),
       200: {
         description: 'Library membership',
         content: {
@@ -86,7 +89,7 @@ catalog.openapi(
     return generateJsonResponse(
       c,
       kind === 'media'
-        ? await promoteCatalogMedia(id, owner.id)
+        ? await addCatalogItem(id, owner.id)
         : await promoteNativeResource(kind, id, owner.id),
       200,
     )

@@ -87,8 +87,12 @@ import {
   getMediaSources,
   listMediaSourceSnapshots,
 } from '@/services/history'
-import { openSpotifyAlbumReference } from '@/services/spotify-album-reference'
-import { loadTracks } from '@/services/tracks'
+import {
+  addCatalogItem,
+  openSpotifyAlbumReference,
+} from '@/services/spotify-album-reference'
+import { refreshTrackAddedDates } from '@/services/spotify-playlists'
+import { getTrackDetail, loadTracks } from '@/services/tracks'
 import { observeSpotifyArtistAlbumPage } from '@/services/spotify-artist-album-discoveries'
 import {
   getJobProviderResponse,
@@ -368,23 +372,28 @@ it('resolves the artist, retains pages and relationships, resumes once and serve
   expect(await fixture.$count(schema.scrapeJob)).toBe(2)
 }, 30_000)
 
-it('opens an exact recorded parent once, retains a partial track page and adds only that album', async () => {
+it('opens an exact recorded parent once, then adds its complete track list', async () => {
   await fixture.delete(schema.providerRequestState)
   const trackId = 'track-with-unlisted-parent'
   const parentId = 'unlistedparent'.padEnd(22, '0')
   const childId = 'catalogchildtrack'.padEnd(22, '0')
   const reference = { trackId, spotifyAlbumId: parentId }
   const parentPath = `/v1/albums/${parentId}`
+  const secondChildId = 'secondcatalogchild'.padEnd(22, '0')
+  const thirdChildId = 'thirdcatalogchild'.padEnd(22, '0')
+  const earlierDate = new Date('2024-06-01')
+  const playlistId = 'album-add-preserved-playlist'
+  let throttleLastPage = true
   const album = {
     id: parentId,
     name: 'Recorded parent',
     artists: credits,
     album_type: 'album',
     genres: ['Fixture tag'],
-    total_tracks: 2,
+    total_tracks: 3,
     tracks: {
       offset: 0,
-      total: 2,
+      total: 3,
       next: `https://api.spotify.com${parentPath}/tracks?offset=1`,
       items: [
         {
@@ -406,8 +415,27 @@ it('opens an exact recorded parent once, retains a partial track page and adds o
   })
   await fixture.insert(schema.libraryTrack).values({
     mediaItemId: trackId,
+    spotifyTrackId: secondChildId,
     spotifyAlbumId: parentId,
     albumName: 'Recorded parent',
+    dateAdded: earlierDate,
+  })
+  await fixture.insert(schema.playlist).values({
+    id: playlistId,
+    kind: 'playlist',
+    name: 'Fixture playlist',
+    source: 'spotify',
+  })
+  await fixture.insert(schema.playlistItem).values({
+    playlistId,
+    mediaItemId: trackId,
+    position: 1,
+    addedAt: earlierDate,
+  })
+  await fixture.insert(schema.catalogAddition).values({
+    mediaItemId: trackId,
+    ownerId,
+    addedAt: earlierDate,
   })
   request.mockClear()
   request.mockImplementation(async (input) => {
@@ -415,6 +443,35 @@ it('opens an exact recorded parent once, retains a partial track page and adds o
     if (url.hostname === 'accounts.spotify.com')
       return Response.json(spotifyTokenFixture)
     if (url.pathname === parentPath) return Response.json(album)
+    if (url.pathname === `${parentPath}/tracks`) {
+      const offset = Number(url.searchParams.get('offset'))
+      expect([1, 2]).toContain(offset)
+      if (offset === 2 && throttleLastPage) {
+        throttleLastPage = false
+        return Response.json(
+          { error: { status: 429, message: 'Rate limited' } },
+          { status: 429, headers: { 'Retry-After': '60' } },
+        )
+      }
+      return Response.json({
+        offset,
+        total: 3,
+        next:
+          offset === 1
+            ? `https://api.spotify.com${parentPath}/tracks?offset=2`
+            : null,
+        items: [
+          {
+            id: offset === 1 ? secondChildId : thirdChildId,
+            name: offset === 1 ? 'Recorded track' : 'Third discovered child',
+            artists: credits,
+            disc_number: 1,
+            track_number: offset + 1,
+            duration_ms: 91000,
+          },
+        ],
+      })
+    }
     throw new Error('Unexpected offline provider request')
   })
   const jobsBefore = await fixture.$count(schema.scrapeJob)
@@ -452,6 +509,14 @@ it('opens an exact recorded parent once, retains a partial track page and adds o
   })
   expect(child).toMatchObject({ inLibrary: false })
   if (!child) throw new Error('Expected a retained child track')
+  expect(await getTrackDetail(child.id)).toMatchObject({
+    sources: [],
+    dateAdded: null,
+  })
+  expect(await getTrackDetail(trackId)).toMatchObject({
+    sources: ['spotify'],
+    dateAdded: earlierDate.toISOString(),
+  })
   const responses = await directSpotifyResponses(first.mediaItemId)
   expect(responses).toHaveLength(1)
   const [response] = responses
@@ -472,11 +537,95 @@ it('opens an exact recorded parent once, retains a partial track page and adds o
   request.mockClear()
   expect(await openSpotifyAlbumReference(reference, ownerId)).toEqual(first)
   expect(await readParent()).toMatchObject({ inLibrary: false })
+  await expect(
+    openSpotifyAlbumReference({ ...reference, add: true }, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 429 } })
+  expect(await readParent()).toMatchObject({ inLibrary: false })
+  expect(await getTrackDetail(child.id)).toMatchObject({ inLibrary: false })
+  const albumPageRequests = () =>
+    request.mock.calls.flatMap(([input]) => {
+      const url = new URL(String(input))
+      return url.pathname === '/api/token'
+        ? []
+        : [`${url.pathname}?offset=${url.searchParams.get('offset')}`]
+    })
+  expect(albumPageRequests()).toEqual([
+    `${parentPath}/tracks?offset=1`,
+    `${parentPath}/tracks?offset=2`,
+  ])
+  request.mockClear()
+  await expect(
+    openSpotifyAlbumReference({ ...reference, add: true }, ownerId),
+  ).rejects.toMatchObject({ response: { statusCode: 429 } })
+  expect(request).not.toHaveBeenCalled()
+  await fixture.delete(schema.providerRequestState)
   expect(
     await openSpotifyAlbumReference({ ...reference, add: true }, ownerId),
   ).toEqual(first)
   expect(await readParent()).toMatchObject({ inLibrary: true })
-  expect(request).not.toHaveBeenCalled()
+  expect(albumPageRequests()).toEqual([`${parentPath}/tracks?offset=2`])
+  const savedChildren = await fixture
+    .select({
+      id: schema.mediaItem.id,
+      spotifyTrackId: schema.libraryTrack.spotifyTrackId,
+      position: schema.track.position,
+      inLibrary: schema.mediaItem.inLibrary,
+    })
+    .from(schema.track)
+    .innerJoin(
+      schema.libraryTrack,
+      eq(schema.libraryTrack.mediaItemId, schema.track.trackMediaItemId),
+    )
+    .innerJoin(
+      schema.mediaItem,
+      eq(schema.mediaItem.id, schema.libraryTrack.mediaItemId),
+    )
+    .where(eq(schema.track.albumMediaItemId, first.mediaItemId))
+    .orderBy(schema.track.position)
+  expect(savedChildren).toEqual([
+    { id: child.id, spotifyTrackId: childId, position: 1, inLibrary: true },
+    {
+      id: trackId,
+      spotifyTrackId: secondChildId,
+      position: 2,
+      inLibrary: true,
+    },
+    {
+      id: expect.any(String),
+      spotifyTrackId: thirdChildId,
+      position: 3,
+      inLibrary: true,
+    },
+  ])
+  const savedAlbum = await fixture.query.album.findFirst({
+    where: eq(schema.album.mediaItemId, first.mediaItemId),
+  })
+  expect(savedAlbum?.dateAdded).toBeInstanceOf(Date)
+  await fixture.transaction((tx) =>
+    refreshTrackAddedDates(tx, [child.id, trackId]),
+  )
+  expect(await getTrackDetail(child.id)).toMatchObject({
+    inLibrary: true,
+    sources: ['album'],
+    dateAdded: savedAlbum?.dateAdded?.toISOString(),
+  })
+  expect(await getTrackDetail(trackId)).toMatchObject({
+    inLibrary: true,
+    sources: ['album', 'spotify'],
+    dateAdded: earlierDate.toISOString(),
+  })
+  expect(
+    await fixture.$count(
+      schema.catalogAddition,
+      eq(schema.catalogAddition.mediaItemId, child.id),
+    ),
+  ).toBe(0)
+  expect(
+    await fixture.$count(
+      schema.catalogAddition,
+      eq(schema.catalogAddition.mediaItemId, trackId),
+    ),
+  ).toBe(1)
   expect(await fixture.$count(schema.scrapeJob)).toBe(jobsBefore)
   expect(
     await fixture.$count(
@@ -484,6 +633,159 @@ it('opens an exact recorded parent once, retains a partial track page and adds o
       eq(schema.catalogAddition.mediaItemId, first.mediaItemId),
     ),
   ).toBe(1)
+}, 30_000)
+
+it('saves an album with a verified full track list without reloading Spotify', async () => {
+  await fixture.delete(schema.providerRequestState)
+  const releaseId = 'fullcachedrelease'.padEnd(22, '0')
+  const trackId = 'full-cached-album-track'
+  await seedParentTrack(trackId, { spotifyAlbumId: releaseId })
+  const childId = 'fullcachedtrack'.padEnd(22, '0')
+  request.mockClear()
+  request.mockImplementation(async (input) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'accounts.spotify.com')
+      return Response.json(spotifyTokenFixture)
+    expect(url.pathname).toBe(`/v1/albums/${releaseId}`)
+    return Response.json({
+      id: releaseId,
+      name: 'Cached album',
+      artists: credits,
+      total_tracks: 1,
+      tracks: {
+        offset: 0,
+        total: 1,
+        next: null,
+        items: [
+          {
+            id: childId,
+            name: 'Cached track',
+            artists: credits,
+            disc_number: 1,
+            track_number: 1,
+            duration_ms: 90000,
+          },
+        ],
+      },
+    })
+  })
+  const { mediaItemId } = await openSpotifyAlbumReference({ trackId }, ownerId)
+  const snapshotCount = await fixture.$count(
+    schema.providerSnapshot,
+    eq(schema.providerSnapshot.mediaItemId, mediaItemId),
+  )
+  const [recording] = await fixture
+    .select()
+    .from(schema.track)
+    .where(eq(schema.track.albumMediaItemId, mediaItemId))
+  if (!recording) throw new Error('Expected a cached track')
+  expect(await getTrackDetail(recording.trackMediaItemId)).toMatchObject({
+    inLibrary: false,
+    sources: [],
+  })
+  request.mockClear()
+  await expect(addCatalogItem(mediaItemId, ownerId)).resolves.toEqual({
+    mediaItemId,
+    created: true,
+  })
+  expect(request).not.toHaveBeenCalled()
+  expect(await getTrackDetail(recording.trackMediaItemId)).toMatchObject({
+    inLibrary: true,
+    sources: ['album'],
+  })
+  expect(
+    await fixture.$count(
+      schema.providerSnapshot,
+      eq(schema.providerSnapshot.mediaItemId, mediaItemId),
+    ),
+  ).toBe(snapshotCount)
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: false })
+    .where(eq(schema.mediaItem.id, recording.trackMediaItemId))
+  await expect(addCatalogItem(mediaItemId, ownerId)).resolves.toEqual({
+    mediaItemId,
+    created: false,
+  })
+  expect(request).not.toHaveBeenCalled()
+  expect(await getTrackDetail(recording.trackMediaItemId)).toMatchObject({
+    inLibrary: true,
+    sources: ['album'],
+  })
+})
+
+it('reads a fresh first page after a continuation proves the saved one is stale', async () => {
+  await fixture.delete(schema.providerRequestState)
+  const releaseId = 'changedtracklist'.padEnd(22, '0')
+  const path = `/v1/albums/${releaseId}`
+  const trackId = 'changed-album-track'
+  await seedParentTrack(trackId, { spotifyAlbumId: releaseId })
+  const tracks = Array.from({ length: 3 }, (_, index) => ({
+    id: `changedTrack${index}`.padEnd(22, '0'),
+    name: `Track ${index + 1}`,
+    artists: credits,
+    disc_number: 1,
+    track_number: index + 1,
+    duration_ms: 90000,
+  }))
+  let headReads = 0
+  request.mockClear()
+  request.mockImplementation(async (input) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'accounts.spotify.com')
+      return Response.json(spotifyTokenFixture)
+    if (url.pathname === path) {
+      const changed = headReads++ > 0
+      return Response.json({
+        id: releaseId,
+        name: 'Changing release',
+        artists: credits,
+        total_tracks: changed ? 3 : 2,
+        tracks: {
+          offset: 0,
+          total: changed ? 3 : 2,
+          next: changed
+            ? null
+            : `https://api.spotify.com${path}/tracks?offset=1`,
+          items: changed ? tracks : tracks.slice(0, 1),
+        },
+      })
+    }
+    expect(url.pathname).toBe(`${path}/tracks`)
+    expect(url.searchParams.get('offset')).toBe('1')
+    return Response.json({
+      offset: 1,
+      total: 3,
+      next: null,
+      items: tracks.slice(1),
+    })
+  })
+  const { mediaItemId } = await openSpotifyAlbumReference({ trackId }, ownerId)
+  await expect(addCatalogItem(mediaItemId, ownerId)).rejects.toMatchObject({
+    response: { statusCode: 502 },
+  })
+  expect(headReads).toBe(1)
+  expect(
+    await fixture.query.mediaItem.findFirst({
+      where: eq(schema.mediaItem.id, mediaItemId),
+    }),
+  ).toMatchObject({ inLibrary: false })
+  expect(await directSpotifyResponses(mediaItemId)).toHaveLength(2)
+  request.mockClear()
+  await expect(addCatalogItem(mediaItemId, ownerId)).resolves.toMatchObject({
+    mediaItemId,
+    created: true,
+  })
+  expect(headReads).toBe(2)
+  expect(
+    request.mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(['/api/token', path])
+  expect(
+    await fixture.$count(
+      schema.track,
+      eq(schema.track.albumMediaItemId, mediaItemId),
+    ),
+  ).toBe(3)
 }, 20_000)
 
 it('identifies catalog requests cancelled while waiting for the write lock and allows a clean retry', async () => {

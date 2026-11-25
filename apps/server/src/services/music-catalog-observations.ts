@@ -22,6 +22,10 @@ import {
   type SimilarOrigin,
 } from './tidal-similar-references'
 import { spotifyTrackBilling } from './spotify-artist-credits'
+import {
+  observeSpotifyCatalogEntries,
+  type SpotifyCatalogEntry,
+} from './spotify-catalog-observation-batch'
 import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -185,40 +189,37 @@ export async function observeSpotifySearchResults(
   observations: SpotifySearchObservation[],
   origin: Omit<MusicObservationOrigin, 'position'>,
 ) {
-  const ids = new Map<string, string>()
-  for (const observation of observations) {
-    const { position, playable, track, mention } = observation
-    const source = {
-      ...origin,
-      position,
-      details: { ...origin.details, playable },
-    }
-    if (track) {
-      const id = await observeSpotifySearchTrack(
-        tx,
-        { ...track, playable },
-        source,
-      )
-      ids.set(track.spotifyTrackId, id)
-    } else if (mention) {
-      await observeCatalogMedia(
-        tx,
-        {
-          kind: 'track',
-          title: mention.name,
-          provider: 'spotify',
-          referenceType: 'track',
-          playable: false,
-          credits: mention.artists.map(({ id, name }) => ({
-            name,
-            externalId: SpotifyIdSchema.safeParse(id).data,
-          })),
+  const entries = observations.map(
+    ({ position, playable, track, mention }): SpotifyCatalogEntry => {
+      const source = {
+        ...origin,
+        position,
+        details: { ...origin.details, playable },
+      }
+      if (track)
+        return {
+          ...spotifyTrackAndAlbumObservations({ ...track, playable }, source),
+          isrc: track.isrc,
+        }
+      return {
+        recording: {
+          media: {
+            kind: 'track',
+            title: mention.name,
+            provider: 'spotify',
+            referenceType: 'track',
+            playable: false,
+            credits: mention.artists.map(({ id, name }) => ({
+              name,
+              externalId: SpotifyIdSchema.safeParse(id).data,
+            })),
+          },
+          origin: occurrence('spotify', source),
         },
-        occurrence('spotify', source),
-      )
-    }
-  }
-  return ids
+      }
+    },
+  )
+  return observeSpotifyCatalogEntries(tx, entries, 'search')
 }
 
 export async function observeTidalSuggestion(

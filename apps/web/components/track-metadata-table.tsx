@@ -790,6 +790,7 @@ export default function TrackMetadataTable({
                           ) : (
                             <SpotifyTrackSearchJobCell
                               job={search.job}
+                              interactive={search.interactive}
                               disabled={pending}
                               onReview={() => setReview(track)}
                             />

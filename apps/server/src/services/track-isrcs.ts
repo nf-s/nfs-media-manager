@@ -10,7 +10,10 @@ type Database = Pick<typeof db, 'insert'>
 export type TrackIsrcSource =
   | { kind: 'spotify-playlist-import'; jobId: string }
   | { kind: 'spotify-playlist-response'; responseId: string; jobId?: string }
-  | { kind: 'spotify-track-search'; jobId: string }
+  | ({ kind: 'spotify-track-search' } & (
+      | { jobId: string }
+      | { snapshotId: string }
+    ))
   | { kind: 'spotify-track-lookup'; responseId: string }
   | { kind: 'spotify-track-lookup-snapshot'; snapshotId: string }
   | { kind: 'spotify-search-response'; responseId: string }

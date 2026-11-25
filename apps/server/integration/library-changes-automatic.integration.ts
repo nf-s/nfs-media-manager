@@ -1428,6 +1428,12 @@ it('restores an outside recording and its exact native artist when undoing a Spo
   const [position] = await positions(release.albumId)
   if (!position) throw new Error('Expected an album recording')
   const source = position.trackId
+  // Preserve the legacy fixture: before album positions granted membership,
+  // a saved album could still list a recording outside the library.
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: false })
+    .where(eq(schema.mediaItem.id, source))
   const target = 'spotify-catalog-signal'
   await spotifyTrack(target, 'Signal', {
     spotifyAlbumId: spotifyId(release.albumId),

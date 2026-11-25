@@ -22,6 +22,11 @@ import { TIDAL_TRACK_MATCH_TASK } from '@repo/schemas/tidal'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
+  isInteractiveSpotifyTrackSearchResponse,
+  spotifyInteractiveSearchMetadata,
+} from '@/lib/spotify-interactive-search'
+import { providerSnapshot } from '@/schemas/db'
+import {
   browseFacetRows,
   listBrowseFacets,
   trackBrowseFieldConditions,
@@ -291,7 +296,7 @@ const spotifyCoverageOrder = sql`case
 type DiagnosticsQuery = Omit<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'> &
   Partial<Pick<TrackMatchDiagnosticsQuery, 'filters' | 'ranges'>>
 
-/** Each provider's job history, as joined to the Matches rows. */
+/** Each provider's lookup history, as joined to the Matches rows. */
 const freshnessHistories = {
   spotify: sql.raw('search_history'),
   tidal: sql.raw('tidal_history'),
@@ -375,17 +380,46 @@ function sonovaultLookupHistory() {
     ) attempts on attempts.id = lookups.media_item_id`
 }
 
-function spotifyTrackSearchHistory(userId: string | null, trackId?: string) {
+export function spotifyTrackSearchHistory(
+  userId: string | null,
+  trackIds?: string[],
+) {
   const recordingId = spotifySearchRecordingId(sql`options`)
+  const searchCandidates = sql`${providerSnapshot.normalizedData}->'candidates'`
+  const successfulRead = sql`jsonb_typeof(${searchCandidates}) = 'array'`
+  const interactive =
+    userId === null
+      ? sql``
+      : sql`
+    union all
+    select ${providerSnapshot.mediaItemId}, ${providerSnapshot.createdAt},
+      case when ${successfulRead} then ${providerSnapshot.createdAt} end,
+      case when ${successfulRead} then 'succeeded' else 'failed' end,
+      ${providerSnapshot.createdAt}, ${providerSnapshot.id},
+      case when ${successfulRead} then jsonb_array_length(${searchCandidates}) end,
+      true
+    from ${providerSnapshot}
+    where ${isInteractiveSpotifyTrackSearchResponse}
+      and ${providerSnapshot.mediaItemId} is not null
+      and ${providerSnapshot.normalizedData}->>'ownerKey' = ${spotifyInteractiveSearchMetadata(userId).ownerKey}
+      ${trackIds ? sql`and ${inArray(providerSnapshot.mediaItemId, trackIds)}` : sql``}
+  `
   return sql`
-    select ${recordingId} as id,
-      max(finished_at) filter (where status = 'succeeded' and options ? 'resultCount') as last_success,
-      (array_agg(status order by started_at desc, created_at desc, id desc))[1] as latest_attempt_status
-    from scrape_job where options->>'task' = ${sql.raw(`'${SPOTIFY_TRACK_SEARCH_TASK}'`)}
-      and requested_by_user_id = ${userId}
-      and started_at is not null and (status <> 'succeeded' or options ? 'resultCount')
-      ${trackId ? sql`and ${recordingId} = ${trackId}` : sql``}
-    group by ${recordingId}`
+    select track_id as id, max(attempt_at) as last_attempt, max(success_at) as last_success,
+      (array_agg(status order by attempt_at desc, created_at desc, receipt_id desc))[1] as latest_attempt_status,
+      (array_agg(result_count order by attempt_at desc, created_at desc, receipt_id desc))[1] as latest_result_count,
+      (array_agg(interactive order by attempt_at desc, created_at desc, receipt_id desc))[1] as latest_attempt_interactive
+    from (
+      select ${recordingId} as track_id, started_at as attempt_at,
+        case when status = 'succeeded' then finished_at end as success_at,
+        status::text as status, created_at, id as receipt_id, null::integer as result_count, false as interactive
+      from scrape_job where options->>'task' = ${sql.raw(`'${SPOTIFY_TRACK_SEARCH_TASK}'`)}
+        and provider = 'spotify' and requested_by_user_id = ${userId}
+        and started_at is not null and (status <> 'succeeded' or options ? 'resultCount')
+        ${trackIds ? sql`and ${inArray(recordingId, trackIds)}` : sql``}
+      ${interactive}
+    ) attempts
+    group by track_id`
 }
 
 export async function trackMatchesSpotifySearchFreshness(
@@ -399,7 +433,7 @@ export async function trackMatchesSpotifySearchFreshness(
   )
   if (!freshness) return true
   const { rows } = await database.execute(sql`
-    with search_history as (${spotifyTrackSearchHistory(userId, trackId)})
+    with search_history as (${spotifyTrackSearchHistory(userId, [trackId])})
     select exists (
       select 1 from (values (${trackId}::text)) target(id)
       left join search_history on search_history.id = target.id

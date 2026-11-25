@@ -452,6 +452,7 @@ export async function commitAlbumImportRecord(
         artworkUrl: patch?.artworkUrl,
         releaseDate: parseOptionalDate(patch?.releaseDate),
         sourceLabel: patch?.sourceLabel,
+        inLibrary: !options.exactRelease,
       })
       .onConflictDoNothing()
       .returning({ id: mediaItem.id })
@@ -462,6 +463,8 @@ export async function commitAlbumImportRecord(
         parseOptionalDate(candidate.result.normalized.albumPatch?.dateAdded) ??
         new Date(),
     })
+    if (options.exactRelease)
+      await promoteCatalogMediaInTransaction(tx, id, options.ownerId)
     await applyProviderResultInTransaction(
       {
         mediaItemId: id,

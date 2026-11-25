@@ -7,7 +7,9 @@ import type { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
 import { measureCatalogWriteLock } from '@/lib/request-log'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
+import { isInteractiveSpotifyTrackSearchResponse } from '@/lib/spotify-interactive-search'
 import { album, libraryTrack, mediaItem, track } from '@/schemas/db'
+import { admitAlbumTrackMembers } from './album-track-membership'
 import {
   spotifyTrackBilling,
   replaceSpotifyArtistCredits,
@@ -180,6 +182,7 @@ export async function replaceAlbumTracks(
       }
     }),
   )
+  await admitAlbumTrackMembers(database, albumId)
 
   const creditedRecordings = entries.flatMap((entry) => {
     const id = recordings.get(entry.id)
@@ -486,6 +489,7 @@ export function independentTrackData(
               union all select 1 from external_link where media_item_id = ${id}
               union all select 1 from provider_reference r where r.media_item_id = ${id} ${otherReference}
               union all select 1 from provider_snapshot where media_item_id = ${id}
+                and (${isInteractiveSpotifyTrackSearchResponse}) is not true
               union all select 1 from provider_current_state where media_item_id = ${id}
               union all select 1 from scrape_job_item where media_item_id = ${id}
               union all select 1 from media_override where media_item_id = ${id}

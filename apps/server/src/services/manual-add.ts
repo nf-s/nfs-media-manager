@@ -33,8 +33,13 @@ import {
 } from '@/lib/provider-response-history'
 import { ServerError } from '@/lib/error'
 import { parseOptionalDate } from '@/lib/media-utils'
+import { spotifyInteractiveSearchMetadata } from '@/lib/spotify-interactive-search'
 import { resolveProviderSecrets } from '@/lib/provider-secrets'
-import { normalizeSpotifyAlbum, spotifyJson } from '@/lib/spotify-api'
+import {
+  normalizeSpotifyAlbum,
+  spotifyAlbumReadError,
+  spotifyJson,
+} from '@/lib/spotify-api'
 import { AlbumImportCandidateSchema } from '@/lib/album-import-candidates'
 import { spotifyClientToken } from '@/plugins/builtin/spotify'
 import { searchTmdbMovies, tmdbPosterUrl } from '@/plugins/builtin/tmdb'
@@ -85,6 +90,8 @@ import { getProviderTransport } from './provider-transport'
 import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 import { getSpotifyAccountStatus, spotifyAccountToken } from './spotify-oauth'
 import { resolveSpotifyTrackIds } from './spotify-playlists'
+import { readMediaProviderWithEvidence } from './interactive-media-provider-response'
+import { IN_REQUEST_SLOT_WAIT_MS } from '@/lib/request-policy'
 
 /**
  * A provider and its stored credentials for a request made outside a job.
@@ -368,6 +375,58 @@ export async function searchSpotifyTrackCandidates(
     },
     assertActive,
   )
+}
+
+export async function searchSpotifyTrackCandidatesInRequest(
+  trackId: string,
+  query: string,
+  userId: string,
+  market?: string,
+) {
+  const { provider, params, account } = await spotifyTrackSearchAccess(
+    userId,
+    market,
+  )
+  try {
+    return await runProviderOperation(
+      provider,
+      async ({ secrets, request }, plugin) => {
+        const token = account
+          ? await spotifyAccountToken(account, request)
+          : await spotifyClientToken(secrets, request)
+        const { result, responses } = await readMediaProviderWithEvidence(
+          {
+            mediaItemId: trackId,
+            plugin,
+            secrets,
+            maxSlotWaitMs: IN_REQUEST_SLOT_WAIT_MS,
+            normalizedData: spotifyInteractiveSearchMetadata(userId),
+          },
+          (lookup) =>
+            searchSpotifyCatalogTrackPage(lookup, token, { ...params, query }),
+        )
+        const evidence = responses.find(
+          ({ requestUrl, status }) =>
+            requestUrl === 'https://api.spotify.com/v1/search' &&
+            status !== null &&
+            status >= 200 &&
+            status < 300,
+        )
+        if (!evidence) throw new ProviderResponseStorageError()
+        return { ...result, evidence }
+      },
+      undefined,
+      IN_REQUEST_SLOT_WAIT_MS,
+    )
+  } catch (error) {
+    if (
+      error instanceof ServerError &&
+      error.cause instanceof ProviderRequestError &&
+      ['cooldown', 'rate-limit', 'access-denied'].includes(error.cause.code)
+    )
+      throw new ServerError({ statusCode: 429, message: error.message })
+    throw error
+  }
 }
 
 /**
@@ -894,10 +953,12 @@ export async function addManualMedia(
           'Ambiguous album identity. Resolve existing matches before importing.',
       })
     if (match?.id) {
-      const { id, inLibrary } = match
-      if (inLibrary) return { mediaItemId: id, created: false }
-      return db.transaction((tx) =>
-        promoteCatalogMediaInTransaction(tx, id, userId ?? undefined),
+      const { addStoredSpotifyAlbum } =
+        await import('./spotify-album-reference')
+      return addStoredSpotifyAlbum(
+        match.id,
+        options.externalId,
+        userId ?? undefined,
       )
     }
   }
@@ -918,44 +979,52 @@ export async function addManualMedia(
   if (match?.id && match.inLibrary)
     return { mediaItemId: match.id, created: false }
 
-  const result = await providerOperation(provider, async (context, plugin) => {
-    if (!plugin.scrapeMediaItem)
-      throw new Error('Provider does not support metadata lookup')
-    const result = PluginResultSchema.parse(
-      await plugin
-        .scrapeMediaItem({
-          ...context,
-          request:
-            options.mediaType === 'album'
-              ? withdrawnReleaseRequest(context.request, options.externalId)
-              : context.request,
-          mediaItemId: 'manual-add',
-          mediaType: options.mediaType,
-          existingReferences: [reference],
-          log: async () => {},
-        })
-        .catch((error: unknown) => {
-          if (
-            options.mediaType !== 'album' ||
-            !isProviderItemNotFoundError(error)
-          )
-            throw error
-          throw new ServerError({
-            statusCode: 422,
-            message: SPOTIFY_RELEASE_WITHDRAWN,
+  const result = await providerOperation(
+    provider,
+    async (context, plugin) => {
+      if (!plugin.scrapeMediaItem)
+        throw new Error('Provider does not support metadata lookup')
+      const result = PluginResultSchema.parse(
+        await plugin
+          .scrapeMediaItem({
+            ...context,
+            request:
+              options.mediaType === 'album'
+                ? withdrawnReleaseRequest(context.request, options.externalId)
+                : context.request,
+            mediaItemId: 'manual-add',
+            mediaType: options.mediaType,
+            existingReferences: [reference],
+            log: async () => {},
           })
-        }),
-    )
-    if (
-      !result.normalized.mediaPatch?.title?.trim() ||
-      !result.normalized.references.some(
-        (item) =>
-          item.referenceType === referenceType &&
-          item.externalId === options.externalId,
+          .catch((error: unknown) => {
+            if (
+              options.mediaType !== 'album' ||
+              !isProviderItemNotFoundError(error)
+            )
+              throw error
+            throw new ServerError({
+              statusCode: 422,
+              message: SPOTIFY_RELEASE_WITHDRAWN,
+            })
+          }),
       )
-    )
-      throw new Error('Provider metadata does not match the selected item')
-    return result
+      if (
+        !result.normalized.mediaPatch?.title?.trim() ||
+        !result.normalized.references.some(
+          (item) =>
+            item.referenceType === referenceType &&
+            item.externalId === options.externalId,
+        )
+      )
+        throw new Error('Provider metadata does not match the selected item')
+      return result
+    },
+    undefined,
+    'searching or adding items',
+    options.mediaType === 'album' ? IN_REQUEST_SLOT_WAIT_MS : undefined,
+  ).catch((error: unknown) => {
+    throw options.mediaType === 'album' ? spotifyAlbumReadError(error) : error
   })
   const addedAt = new Date().toISOString()
   if (options.mediaType === 'album') {
@@ -973,7 +1042,11 @@ export async function addManualMedia(
     const outcome = await commitAlbumImportRecord(
       { ...candidate, action: 'new' },
       undefined,
-      { snapshotSource: 'manual-add', exactRelease: true },
+      {
+        snapshotSource: 'manual-add',
+        exactRelease: true,
+        ownerId: userId ?? undefined,
+      },
     )
     return { mediaItemId: outcome.id, created: outcome.created }
   }

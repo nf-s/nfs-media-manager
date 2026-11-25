@@ -23,6 +23,7 @@ import {
   spotifyTokenFixture,
 } from '@/plugins/builtin/__tests__/fixtures/spotify'
 import { createCatalogEntryFromPlugin } from '@/lib/provider-catalog'
+import type { BeginProviderResponseCapture } from '@/lib/provider-response-history'
 
 const database = `manual_add_${randomUUID().replaceAll('-', '')}`
 const connection = {
@@ -138,6 +139,9 @@ vi.mock('@/lib/db', () => ({
   get db() {
     return databaseClient
   },
+  get providerLookupDb() {
+    return databaseClient
+  },
 }))
 vi.mock('@/plugins/registry', () => ({
   listLoadedScrapePlugins: async () => plugins,
@@ -155,7 +159,28 @@ vi.mock('@/lib/provider-secrets', () => ({
   }),
 }))
 vi.mock('@/services/provider-requests', () => ({
-  createProviderRequest: () => request,
+  createProviderRequest:
+    (
+      _plugin: unknown,
+      _assertActive: unknown,
+      options?: { beginResponseCapture?: BeginProviderResponseCapture },
+    ) =>
+    async (input: string | URL) => {
+      const response = await request(input)
+      const capture = options?.beginResponseCapture?.(input)
+      if (capture)
+        await capture({
+          status: response.status,
+          receivedAt: new Date().toISOString(),
+          contentType: response.headers.get('content-type'),
+          body: {
+            state: 'captured',
+            text: await response.clone().text(),
+            redacted: false,
+          },
+        })
+      return response
+    },
   recordProviderFailure: async () => {},
   recordProviderSuccess: async () => {},
 }))
@@ -502,12 +527,12 @@ describe('manual Spotify tracks', () => {
     expect(albumTrack?.spotifyTrackId).toBe(spotifyTrackId)
     expect(albumTrack?.mediaItemId).toBe(discovery.items[0]?.catalogMediaItemId)
     expect((await searchManualMedia({ ...search, page: 2 })).items).toEqual([
-      expectedItem,
+      { ...expectedItem, mediaItemId: albumTrack?.mediaItemId },
     ])
     request.mockClear()
     expect(
       await addManualMedia({ mediaType: 'track', externalId: spotifyTrackId }),
-    ).toEqual({ mediaItemId: albumTrack?.mediaItemId, created: true })
+    ).toEqual({ mediaItemId: albumTrack?.mediaItemId, created: false })
     expect(request).not.toHaveBeenCalled()
     expect((await searchManualMedia({ ...search, page: 2 })).items).toEqual([
       { ...expectedItem, mediaItemId: albumTrack?.mediaItemId },
@@ -725,6 +750,12 @@ describe('manual Spotify tracks', () => {
       mediaType: 'album',
       externalId: extendedAlbumId,
     })
+    expect(
+      (await databaseClient.select().from(schema.track))
+        .filter((row) => row.externalId === spotifyTrackId)
+        .map((row) => row.albumMediaItemId)
+        .sort(),
+    ).toEqual([single.mediaItemId, extended.mediaItemId].sort())
     expect(extended.created).toBe(true)
     expect(extended.mediaItemId).not.toBe(single.mediaItemId)
     expect(

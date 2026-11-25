@@ -396,7 +396,7 @@ export function LastfmTrackMatchList() {
                       : trackSpotifyMatchLabels[
                           spotifyUri ? track.spotifyMatch : 'unmatched'
                         ]
-                    const job = searchStatuses.byId.get(track.id)?.job
+                    const search = searchStatuses.byId.get(track.id)
                     return (
                       <TableRow
                         key={track.id}
@@ -509,9 +509,10 @@ export function LastfmTrackMatchList() {
                                 Merge names
                               </Button>
                             )}
-                            {job && (
+                            {(search?.job || search?.interactive) && (
                               <SpotifyTrackSearchJobCell
-                                job={job}
+                                job={search.job}
+                                interactive={search.interactive}
                                 disabled={selectionDisabled}
                                 onReview={() => {
                                   setMatched(null)

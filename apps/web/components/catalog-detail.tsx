@@ -20,6 +20,7 @@ import { providerLogoUrl } from '@/utils/provider-logos'
 import { discoverySourceLabels } from '@/utils/library-scope'
 import { useAnnounceLibraryAddition, useConfig } from './providers'
 import { DetailLink } from './detail-link'
+import { errorMessage } from './lastfm-sync'
 
 function nativeQueryKeys(kind: CatalogNativeKind, id: string) {
   switch (kind) {
@@ -103,7 +104,9 @@ export function CatalogLibraryAction({
         onAdd={() => action.mutate()}
       />
       {!inline && action.isError && (
-        <Notice tone="danger">Could not add to library.</Notice>
+        <Notice tone="danger">
+          {errorMessage(action.error, 'Could not add to library.')}
+        </Notice>
       )}
     </>
   )

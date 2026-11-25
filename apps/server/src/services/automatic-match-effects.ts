@@ -630,6 +630,67 @@ export const searchAcceptanceEntry = (
   recordIds: string[],
 ) => searchAcceptance.entry({ jobId, keys, before, after }, recordIds)
 
+const InteractiveSearchEvidenceSchema = z.object({
+  snapshotIds: z.array(z.string()).min(1),
+  acceptance: z
+    .object({ searchId: z.string(), spotifyTrackId: z.string() })
+    .optional(),
+  sourceId: z.string(),
+  targetId: z.string(),
+})
+type InteractiveSearchEvidence = z.infer<typeof InteractiveSearchEvidenceSchema>
+
+const interactiveSearchEvidence = defineChangeEffect({
+  type: 'spotify-interactive-search-evidence',
+  payload: InteractiveSearchEvidenceSchema,
+  async blocker(reader, { snapshotIds, sourceId, targetId }, direction) {
+    const expected = direction === 'undo' ? targetId : sourceId
+    const moved = await reader.execute(sql`
+      select 1 from provider_snapshot
+      where id in (${idList(snapshotIds)})
+        and media_item_id is not null and media_item_id <> ${expected}
+      limit 1`)
+    return moved.rows.length
+      ? 'The Spotify search evidence now belongs to another track.'
+      : null
+  },
+  async apply(tx, evidence, direction) {
+    // Either recording may have to be restored by another effect first.
+    return () =>
+      writeInteractiveSearchEvidence(tx, evidence, direction === 'redo')
+  },
+})
+
+export async function writeInteractiveSearchEvidence(
+  tx: ChangeTransaction,
+  { snapshotIds, acceptance, sourceId, targetId }: InteractiveSearchEvidence,
+  accepted = true,
+) {
+  const options =
+    accepted && acceptance
+      ? {
+          acceptedTrackId: targetId,
+          acceptedSpotifyTrackId: acceptance.spotifyTrackId,
+        }
+      : {}
+  await tx.execute(sql`
+    update provider_snapshot
+    set media_item_id = ${accepted ? targetId : sourceId},
+        normalized_data = case when id = ${acceptance?.searchId ?? null}
+          then (normalized_data - array['acceptedTrackId', 'acceptedSpotifyTrackId']) || ${JSON.stringify(options)}::jsonb
+          else normalized_data end
+    where id in (${idList(snapshotIds)})`)
+}
+
+export function interactiveSearchEvidenceEntry(
+  evidence: InteractiveSearchEvidence,
+) {
+  return interactiveSearchEvidence.entry(evidence, [
+    evidence.sourceId,
+    evidence.targetId,
+  ])
+}
+
 const EffectSizeSchema = z.object({
   positionIds: z.array(z.unknown()).optional(),
   entries: z.array(z.unknown()).optional(),
@@ -662,5 +723,6 @@ export const automaticMatchEffects: ChangeEffectHandler[] = [
   trackRowState.handler,
   spotifyCatalogBinding.handler,
   searchAcceptance.handler,
+  interactiveSearchEvidence.handler,
   ...matchRejectionEffects,
 ]

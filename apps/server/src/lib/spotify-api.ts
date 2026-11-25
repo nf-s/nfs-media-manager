@@ -2,8 +2,20 @@ import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import {
   PluginResultSchema,
+  ProviderRequestError,
   type MediaPluginTestContext,
 } from '@repo/media-plugin-sdk'
+import { ServerError } from './error'
+
+export function spotifyAlbumReadError(error: unknown) {
+  if (
+    error instanceof ServerError &&
+    error.cause instanceof ProviderRequestError &&
+    ['cooldown', 'rate-limit'].includes(error.cause.code)
+  )
+    return new ServerError({ statusCode: 429, message: error.message })
+  return error
+}
 
 export const SPOTIFY_SCOPE = 'user-library-read'
 // Web Playback SDK scopes, plus the player Web API state and control scopes.
@@ -99,6 +111,70 @@ export const SpotifyAlbumSchema = z.object({
   label: z.string().optional(),
   tracks: SpotifyTracksPageSchema.optional(),
 })
+
+export const SpotifyAlbumTrackListStartSchema = SpotifyAlbumSchema.extend({
+  tracks: SpotifyTracksPageSchema,
+}).refine(
+  ({ tracks, total_tracks }) =>
+    tracks.offset === 0 &&
+    tracks.total <= 500 &&
+    (total_tracks === undefined || total_tracks === tracks.total) &&
+    spotifyAlbumTrackPositionsUnique(tracks.items) &&
+    (tracks.total === 0
+      ? tracks.items.length === 0 && tracks.next === null
+      : spotifyAlbumTrackPageFits(tracks, 0, tracks.total)),
+  'Spotify album tracks missing, inconsistent or exceed the 500-track safety limit',
+)
+
+export async function completeSpotifyAlbumTracks(
+  album: z.infer<typeof SpotifyAlbumSchema>,
+  readPage: (offset: number, total: number) => Promise<unknown>,
+) {
+  const { tracks: initial } = SpotifyAlbumTrackListStartSchema.parse(album)
+  const tracks = [...initial.items]
+  let next = initial.next
+  while (next !== null) {
+    if (tracks.length >= initial.total || tracks.length >= 500)
+      throw new Error('Invalid Spotify track pagination')
+    const page = SpotifyTracksPageSchema.parse(
+      await readPage(tracks.length, initial.total),
+    )
+    if (!spotifyAlbumTrackPageFits(page, tracks.length, initial.total))
+      throw new Error(
+        'Spotify album changed during pagination; retry explicitly',
+      )
+    tracks.push(...page.items)
+    next = page.next
+  }
+  if (tracks.length !== initial.total)
+    throw new Error('Incomplete Spotify track listing')
+  if (!spotifyAlbumTrackPositionsUnique(tracks))
+    throw new Error('Duplicate Spotify track positions')
+  return { ...album, tracks: { ...initial, items: tracks, next: null } }
+}
+
+export function spotifyAlbumTrackPositionsUnique(
+  tracks: readonly z.infer<typeof SpotifyTrackSchema>[],
+) {
+  return (
+    new Set(tracks.map((track) => `${track.disc_number}:${track.track_number}`))
+      .size === tracks.length
+  )
+}
+
+export function spotifyAlbumTrackPageFits(
+  page: z.infer<typeof SpotifyTracksPageSchema>,
+  offset: number,
+  total: number,
+) {
+  return (
+    page.offset === offset &&
+    page.total === total &&
+    page.items.length > 0 &&
+    offset + page.items.length <= total &&
+    (offset + page.items.length === total) === (page.next === null)
+  )
+}
 export const SpotifySavedPageSchema = z.object({
   items: z
     .array(

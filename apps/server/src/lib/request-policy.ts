@@ -4,6 +4,8 @@ export const HOUR_MS = 60 * 60 * 1000
 export const DAY_MS = 24 * HOUR_MS
 export const FAILURE_COOLDOWN_MS = 15 * 60 * 1000
 export const MAX_CONSECUTIVE_PROVIDER_FAILURES = 5
+/** Maximum time an interactive request waits for a provider slot. */
+export const IN_REQUEST_SLOT_WAIT_MS = 10000
 
 export function fixedRequestWindow(durationMs: number, now: number) {
   const from = Math.floor(now / durationMs) * durationMs

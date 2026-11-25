@@ -16,6 +16,8 @@ import { EnrichmentResultSchema } from '@repo/schemas/job'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import {
   SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED,
+  SpotifyInteractiveTrackSearchInputSchema,
+  SpotifyInteractiveTrackSearchResultSchema,
   SpotifyTrackSearchAcceptInputSchema,
   SpotifyTrackSearchAcceptResultSchema,
   SpotifyTrackSearchInputSchema,
@@ -30,6 +32,7 @@ import {
   type SpotifyTrackSearchFreshness,
   type SpotifyTrackSearchInput,
   type SpotifyTrackSearchJob,
+  type SpotifyTrackSearchStatus,
 } from '@repo/schemas/spotify-track-search'
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { Section } from '@repo/ui/components/ds/facts'
@@ -82,21 +85,20 @@ function rememberedMarket() {
 }
 
 /** Offer a market in place when the installation only has Spotify app credentials. */
-export function useQueueSpotifyTrackSearch() {
-  const { apiBaseUrl } = useConfig()
+function useSpotifyTrackSearchMarket() {
   const [market, setMarket] = useState<string | null>(null)
   const [failureMessage, setFailureMessage] = useState('')
   const marketNeeded = market !== null
-  async function queue(input: SpotifyTrackSearchInput) {
+  async function withMarket<T>(
+    search: (market: string | undefined) => Promise<T>,
+    fallback: string,
+  ) {
     setFailureMessage('')
     const selected = SpotifyTrackSearchMarketSchema.safeParse(
       market ?? rememberedMarket(),
     )
     try {
-      const result = await queueSpotifyTrackSearch(apiBaseUrl, {
-        ...input,
-        ...(selected.success ? { market: selected.data } : {}),
-      })
+      const result = await search(selected.data)
       if (marketNeeded && selected.success) {
         try {
           window.sessionStorage.setItem(tabMarketKey, selected.data)
@@ -107,10 +109,7 @@ export function useQueueSpotifyTrackSearch() {
       }
       return result
     } catch (failure) {
-      const message = errorMessage(
-        failure,
-        'Could not queue the Spotify search.',
-      )
+      const message = errorMessage(failure, fallback)
       if (message === SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED)
         setMarket((value) => value ?? '')
       else setFailureMessage(message)
@@ -118,7 +117,7 @@ export function useQueueSpotifyTrackSearch() {
     }
   }
   return {
-    queue,
+    withMarket,
     failureMessage,
     marketNeeded,
     invalidMarket:
@@ -145,6 +144,23 @@ export function useQueueSpotifyTrackSearch() {
   }
 }
 
+export function useQueueSpotifyTrackSearch() {
+  const { apiBaseUrl } = useConfig()
+  const market = useSpotifyTrackSearchMarket()
+  return {
+    ...market,
+    queue: (input: SpotifyTrackSearchInput) =>
+      market.withMarket(
+        (selected) =>
+          queueSpotifyTrackSearch(apiBaseUrl, {
+            ...input,
+            ...(selected ? { market: selected } : {}),
+          }),
+        'Could not queue the Spotify search.',
+      ),
+  }
+}
+
 export function invalidateSpotifySearchJobs(client: QueryClient) {
   return Promise.all([
     client.invalidateQueries({ queryKey: ['tracks'] }),
@@ -153,7 +169,7 @@ export function invalidateSpotifySearchJobs(client: QueryClient) {
   ])
 }
 
-/** The stored search remains readable by its original ID after an exact match reuses a library recording. */
+/** Read saved direct results and the legacy job history for the recording. */
 export function useSavedSpotifyTrackSearch(trackId: string) {
   const { apiBaseUrl } = useConfig()
   return useQuery({
@@ -424,10 +440,28 @@ export function SpotifyTrackSearchResult({
       </DetailLink>
     )
   }
-  if (!job.resultCount)
+  return (
+    <SpotifyTrackSearchResultAction
+      resultCount={job.resultCount}
+      disabled={disabled}
+      onReview={onReview}
+    />
+  )
+}
+
+function SpotifyTrackSearchResultAction({
+  resultCount,
+  onReview,
+  disabled,
+}: {
+  resultCount: number | null
+  onReview?: () => void
+  disabled?: boolean
+}) {
+  if (!resultCount)
     return (
       <span className="ds-muted">
-        {job.resultCount === null ? 'Search skipped' : 'No matches'}
+        {resultCount === null ? 'Search skipped' : 'No matches'}
       </span>
     )
   return (
@@ -446,9 +480,26 @@ export function SpotifyTrackSearchResult({
 
 export function SpotifyTrackSearchJobCell(props: {
   job: SpotifyTrackSearchJob | null | undefined
+  interactive?: SpotifyTrackSearchStatus['items'][number]['interactive']
   onReview?: () => void
   disabled?: boolean
 }) {
+  const { interactive } = props
+  if (interactive && !isActiveSpotifyTrackSearch(props.job)) {
+    const succeeded = interactive.status === 'succeeded'
+    return (
+      <div className="secondary-cell-actions">
+        <Status state={succeeded ? 'done' : 'failed'} />
+        {succeeded && (
+          <SpotifyTrackSearchResultAction
+            resultCount={interactive.resultCount}
+            onReview={props.onReview}
+            disabled={props.disabled}
+          />
+        )}
+      </div>
+    )
+  }
   if (!props.job) return <Status state="never" />
   return (
     <div className="secondary-cell-actions">
@@ -573,9 +624,13 @@ export function SpotifyTrackSearchConfirmation({
   )
 }
 
-export type SpotifyTrackSearchSelection = {
-  jobId: string
+type SearchReceipt = { jobId: string } | { searchId: string }
+export type SpotifyTrackSearchSelection = SearchReceipt & {
   candidate: SpotifyTrackSearchCandidate
+}
+
+export function searchReceiptId(receipt: SearchReceipt) {
+  return 'searchId' in receipt ? receipt.searchId : receipt.jobId
 }
 
 export function spotifyTrackSearchSavedResults(
@@ -584,21 +639,45 @@ export function spotifyTrackSearchSavedResults(
   if (
     !search ||
     search.job?.acceptedTrackId ||
-    search.resultJob?.acceptedTrackId
+    search.resultJob?.acceptedTrackId ||
+    search.interactiveResults?.some((result) => result.acceptedTrackId)
   )
     return []
   const primary = search.resultJob === undefined ? search.job : search.resultJob
-  return [
+  const legacy = [
     ...(primary
       ? [{ job: primary, query: search.query, candidates: search.candidates }]
       : []),
     ...(search.earlierResults ?? []),
-  ].filter(
-    ({ job, candidates }) =>
-      job.status === 'succeeded' &&
-      !job.acceptedTrackId &&
-      candidates.length > 0,
+  ].flatMap(({ job, candidates }) =>
+    job.status === 'succeeded' && !job.acceptedTrackId
+      ? [
+          {
+            receipt: { jobId: job.jobId },
+            searchedAt: job.finishedAt ?? job.createdAt,
+            candidates,
+          },
+        ]
+      : [],
   )
+  const interactive = (search.interactiveResults ?? []).map(
+    ({ searchId, searchedAt, candidates }) => ({
+      receipt: { searchId },
+      searchedAt,
+      candidates,
+    }),
+  )
+  const seen = new Set<string>()
+  return [...interactive, ...legacy]
+    .sort((first, second) => second.searchedAt.localeCompare(first.searchedAt))
+    .flatMap((result) => {
+      const candidates = result.candidates.filter(({ spotifyTrackId }) => {
+        if (seen.has(spotifyTrackId)) return false
+        seen.add(spotifyTrackId)
+        return true
+      })
+      return candidates.length ? [{ ...result, candidates }] : []
+    })
 }
 
 export function SpotifyTrackSearchCandidates({
@@ -706,10 +785,11 @@ export function SpotifyTrackSearchReview({
   initialSelection?: SpotifyTrackSearchSelection
 }) {
   const { apiBaseUrl } = useConfig()
-  const catalog = useQueueSpotifyTrackSearch()
+  const catalog = useSpotifyTrackSearchMarket()
   const client = useQueryClient()
   const path = `${spotifySearchPath}/${encodeURIComponent(track.id)}`
-  const acceptanceKey = [...spotifySearchKey, track.id, 'accept']
+  const savedKey = [...spotifySearchKey, track.id]
+  const acceptanceKey = [...savedKey, 'accept']
   const dialog = useRef<HTMLDialogElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
@@ -721,12 +801,55 @@ export function SpotifyTrackSearchReview({
     initialSelection ?? null,
   )
   const search = useSavedSpotifyTrackSearch(track.id)
-  const queue = useMutation({
+  const lookup = useMutation({
     retry: false,
     mutationFn: (query: string) =>
-      catalog.queue({ trackIds: [track.id], query }),
-    onSuccess: () => setChosen(null),
-    onSettled: () => invalidateSpotifySearchJobs(client),
+      catalog.withMarket(
+        (market) =>
+          fetchApiData(
+            apiBaseUrl,
+            path,
+            SpotifyInteractiveTrackSearchResultSchema,
+            {
+              method: 'POST',
+              body: JSON.stringify(
+                SpotifyInteractiveTrackSearchInputSchema.parse({
+                  query,
+                  market,
+                }),
+              ),
+            },
+          ),
+        'Could not search Spotify.',
+      ),
+    onMutate: () => client.cancelQueries({ queryKey: savedKey, exact: true }),
+    onSuccess: (result) => {
+      setChosen(null)
+      client.setQueryData<SpotifyTrackSearch>(savedKey, (previous) => ({
+        ...previous,
+        job: previous?.job ?? null,
+        query: previous?.query ?? result.query,
+        candidates: previous?.candidates ?? [],
+        interactiveResults: [
+          result,
+          ...(previous?.interactiveResults ?? []).filter(
+            ({ searchId }) => searchId !== result.searchId,
+          ),
+        ],
+      }))
+    },
+    onSettled: () => {
+      void client.invalidateQueries({
+        queryKey: [...spotifySearchKey, 'status'],
+        predicate: ({ queryKey }) => {
+          const trackIds = queryKey[3]
+          return Array.isArray(trackIds) && trackIds.includes(track.id)
+        },
+      })
+      void client.invalidateQueries({
+        queryKey: ['tracks', 'metadata-selection'],
+      })
+    },
   })
   const accept = useMutation({
     mutationKey: acceptanceKey,
@@ -744,7 +867,9 @@ export function SpotifyTrackSearchReview({
           },
           body: JSON.stringify(
             SpotifyTrackSearchAcceptInputSchema.parse({
-              jobId: input.jobId,
+              ...('jobId' in input
+                ? { jobId: input.jobId }
+                : { searchId: input.searchId }),
               spotifyTrackId: input.candidate.spotifyTrackId,
             }),
           ),
@@ -772,6 +897,10 @@ export function SpotifyTrackSearchReview({
     }
   }, [searchMode])
   const job = search.data?.job
+  const latestInteractive = search.data?.interactiveResults?.[0]
+  const jobTime = job?.finishedAt ?? job?.startedAt ?? job?.createdAt
+  const directWasLatest =
+    latestInteractive && (!jobTime || latestInteractive.searchedAt >= jobTime)
   const savedResults = spotifyTrackSearchSavedResults(search.data)
   const searchActive = isActiveSpotifyTrackSearch(job)
   const confirmation =
@@ -779,7 +908,7 @@ export function SpotifyTrackSearchReview({
     chosen &&
     savedResults.some(
       (result) =>
-        result.job.jobId === chosen.jobId &&
+        searchReceiptId(result.receipt) === searchReceiptId(chosen) &&
         result.candidates.some(
           (candidate) =>
             candidate.spotifyTrackId === chosen.candidate.spotifyTrackId,
@@ -792,7 +921,7 @@ export function SpotifyTrackSearchReview({
     query.success &&
     !catalog.invalidMarket &&
     !search.isPending &&
-    !queue.isPending &&
+    !lookup.isPending &&
     !accept.isPending &&
     !searchActive
   return (
@@ -837,7 +966,7 @@ export function SpotifyTrackSearchReview({
                 className="data-stack"
                 onSubmit={(event) => {
                   event.preventDefault()
-                  if (canSubmit && query.success) queue.mutate(query.data)
+                  if (canSubmit && query.success) lookup.mutate(query.data)
                 }}
               >
                 <label className="ds-field">
@@ -853,7 +982,7 @@ export function SpotifyTrackSearchReview({
                 {catalog.marketField}
                 <div className="ds-actions">
                   <Button type="submit" disabled={!canSubmit}>
-                    {queue.isPending ? 'Queueing…' : 'Search'}
+                    {lookup.isPending ? 'Searching…' : 'Search'}
                   </Button>
                   {onSearchLibrary && (
                     <Button
@@ -869,11 +998,13 @@ export function SpotifyTrackSearchReview({
               {catalog.failureMessage && (
                 <Notice tone="danger">{catalog.failureMessage}</Notice>
               )}
-              {queue.data?.skipped ? (
-                <p role="status" className="ds-help">
-                  {queue.data.warnings.join(' ')}
-                </p>
-              ) : null}
+              {!lookup.isPending &&
+                directWasLatest &&
+                latestInteractive.candidates.length === 0 && (
+                  <p role="status" className="ds-help">
+                    No matches
+                  </p>
+                )}
             </Section>
           )}
           {search.isPending && <Skeleton height={48} />}
@@ -889,7 +1020,7 @@ export function SpotifyTrackSearchReview({
               Could not load the saved Spotify search.
             </Notice>
           )}
-          {queue.isPending ? (
+          {lookup.isPending ? (
             <Skeleton height={48} />
           ) : job?.acceptedTrackId ? (
             <SpotifyTrackSearchResult job={job} />
@@ -911,15 +1042,14 @@ export function SpotifyTrackSearchReview({
               onClose={onClose}
             />
           ) : savedResults.length > 0 ? (
-            savedResults.map(({ job: resultJob, candidates }) => (
+            savedResults.map(({ receipt, searchedAt, candidates }, index) => (
               <Section
-                key={resultJob.jobId}
+                key={searchReceiptId(receipt)}
                 title={formatItemCount(candidates.length, MATCHES)}
                 note={
-                  resultJob.jobId !== job?.jobId
-                    ? formatDateTime(
-                        resultJob.finishedAt ?? resultJob.createdAt,
-                      )
+                  index > 0 ||
+                  ('jobId' in receipt && receipt.jobId !== job?.jobId)
+                    ? formatDateTime(searchedAt)
                     : undefined
                 }
               >
@@ -928,13 +1058,14 @@ export function SpotifyTrackSearchReview({
                   disabled={searchActive}
                   onSelect={(candidate) => {
                     accept.reset()
-                    setChosen({ jobId: resultJob.jobId, candidate })
+                    setChosen({ ...receipt, candidate })
                   }}
                 />
               </Section>
             ))
           ) : (
-            search.isSuccess && (
+            search.isSuccess &&
+            (!directWasLatest || searchActive) && (
               <Section>
                 {job ? (
                   <SpotifyTrackSearchJobCell job={job} />

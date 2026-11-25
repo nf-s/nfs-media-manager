@@ -693,7 +693,7 @@ export async function resolveSpotifyTrackIds(
   return ids
 }
 
-/** The earliest manual addition, playlist-added date or first imported scrobble. */
+/** The earliest library addition across tracks, albums, playlists and scrobbles. */
 export async function refreshTrackAddedDates(
   tx: Transaction,
   trackIds?: string[],
@@ -711,6 +711,11 @@ export async function refreshTrackAddedDates(
         from lastfm_track_source l join lastfm_scrobble s
           on s.username = l.username and s.artist_key = l.artist_key and s.track_key = l.track_key
         ${trackIds ? sql`where ${inArray(sql`l.track_media_item_id`, trackIds)}` : sql``}
+        union all
+        select t.track_media_item_id, a.date_added
+        from track t join album a on a.media_item_id = t.album_media_item_id
+        join media_item saved on saved.id = a.media_item_id and saved.in_library
+        ${trackIds ? sql`where ${inArray(sql`t.track_media_item_id`, trackIds)}` : sql``}
       ) dates group by media_item_id
     ) m on m.media_item_id = base.media_item_id
     join media_item mi on mi.id = base.media_item_id

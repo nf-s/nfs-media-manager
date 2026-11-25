@@ -46,7 +46,7 @@ import {
   type CatalogOrigin,
 } from './catalog-discoveries'
 import { readMediaProviderWithEvidence } from './interactive-media-provider-response'
-import { IN_REQUEST_SLOT_WAIT_MS } from './jobs'
+import { IN_REQUEST_SLOT_WAIT_MS } from '@/lib/request-policy'
 import { providerOperation } from './manual-add'
 import { recordSpotifyCatalogCodes } from './spotify-catalog-codes'
 import { sonovaultAlbumMatchCandidates } from './sonovault-album-lookup'

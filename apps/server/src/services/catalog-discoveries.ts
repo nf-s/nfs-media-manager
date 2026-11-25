@@ -15,6 +15,7 @@ import { createStableId, slugifyParts } from '@/lib/media-utils'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { createAlbumMatchRejectionPredicate } from '@/lib/album-match-identities'
 import { readAlbumMatchRejectionsForItems } from './album-match-rejections'
+import { admitAlbumTrackMembers } from './album-track-membership'
 import { currentArtistId } from './artist-names'
 import { observeNamedArtistIdentities } from './catalog-artist-identities'
 import { reconcileArtistPair } from './catalog-artist-reconciliation'
@@ -910,11 +911,13 @@ export async function promoteCatalogMediaInTransaction(
       .update(libraryTrack)
       .set({ dateAdded: addedAt })
       .where(eq(libraryTrack.mediaItemId, id))
-  if (row.kind === 'album')
+  if (row.kind === 'album') {
     await tx
       .update(album)
       .set({ dateAdded: addedAt })
       .where(eq(album.mediaItemId, id))
+    await admitAlbumTrackMembers(tx, id)
+  }
   if (row.kind === 'film')
     await tx
       .update(film)

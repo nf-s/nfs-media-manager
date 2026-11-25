@@ -5,6 +5,8 @@ import { JobStatusSchema } from './job'
 import { spotifyIdPattern } from './playback'
 
 export const SPOTIFY_TRACK_SEARCH_TASK = 'spotify-track-search'
+export const SPOTIFY_INTERACTIVE_TRACK_SEARCH =
+  'spotify-interactive-track-search'
 export const SPOTIFY_TRACK_SEARCH_LIMIT = 10
 export const SPOTIFY_TRACK_SEARCH_MARKET_REQUIRED =
   'Set Spotify Market in Providers or connect a Spotify account before searching tracks.'
@@ -25,9 +27,10 @@ const name = z
 const dateTime = z.string().datetime()
 
 export const SpotifyTrackSearchParamsSchema = z.object({ trackId })
-export const SpotifyTrackSearchAcceptInputSchema = z
-  .object({ jobId: id, spotifyTrackId: spotifyId })
-  .strict()
+export const SpotifyTrackSearchAcceptInputSchema = z.union([
+  z.strictObject({ jobId: id, spotifyTrackId: spotifyId }),
+  z.strictObject({ searchId: id, spotifyTrackId: spotifyId }),
+])
 export const SpotifyTrackSearchAcceptResultSchema = z.object({
   targetId: trackId,
 })
@@ -59,6 +62,11 @@ export const SpotifyTrackSearchMarketSchema = z
   )
 
 export const SpotifyTrackSearchQuerySchema = z.string().trim().pipe(id)
+
+export const SpotifyInteractiveTrackSearchInputSchema = z.strictObject({
+  query: SpotifyTrackSearchQuerySchema,
+  market: SpotifyTrackSearchMarketSchema.optional(),
+})
 
 export const SpotifyTrackSearchInputSchema =
   SpotifyTrackSearchStatusInputSchema.extend({
@@ -139,6 +147,13 @@ const SpotifyTrackSearchResultsSchema = z.object({
     .max(SPOTIFY_TRACK_SEARCH_LIMIT),
 })
 
+export const SpotifyInteractiveTrackSearchResultSchema =
+  SpotifyTrackSearchResultsSchema.extend({
+    searchId: id,
+    searchedAt: dateTime,
+    acceptedTrackId: trackId.optional(),
+  })
+
 export const SpotifyTrackSearchSchema = SpotifyTrackSearchResultsSchema.extend({
   job: SpotifyTrackSearchJobSchema.nullable(),
   resultJob: SpotifyTrackSearchJobSchema.nullable().optional(),
@@ -148,6 +163,9 @@ export const SpotifyTrackSearchSchema = SpotifyTrackSearchResultsSchema.extend({
         job: SpotifyTrackSearchJobSchema,
       }),
     )
+    .optional(),
+  interactiveResults: z
+    .array(SpotifyInteractiveTrackSearchResultSchema)
     .optional(),
 })
 
@@ -159,6 +177,9 @@ export const SpotifyTrackSearchStatusSchema = z.object({
         job: SpotifyTrackSearchJobSchema.nullable(),
         lastAttemptAt: dateTime.nullable(),
         lastSuccessfulAt: dateTime.nullable(),
+        interactive: SpotifyTrackSearchJobSchema.pick({ resultCount: true })
+          .extend({ status: z.enum(['succeeded', 'failed']) })
+          .optional(),
       }),
     )
     .max(100),

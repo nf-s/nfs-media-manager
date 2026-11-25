@@ -172,6 +172,13 @@ export function redundantLastfmTrackIds(id?: SQL, { denseSets = false } = {}) {
     end)`
 }
 
+/** A catalog album can list a recording before the album is added to the library. */
+export function belongsToLibraryAlbum(id: SQLWrapper) {
+  return sql`exists (select 1 from track t
+    join media_item release on release.id = t.album_media_item_id and release.in_library
+    where t.track_media_item_id = ${id})`
+}
+
 /** Current library membership, independent of a recording's listening matches. */
 export function trackSourcesExpression(id: SQL, metadata: SQL, labels = false) {
   return sql`coalesce((select jsonb_agg(s.value order by s.value) from (
@@ -183,7 +190,7 @@ export function trackSourcesExpression(id: SQL, metadata: SQL, labels = false) {
     where pi.media_item_id = ${id} and p.source in ('spotify', 'spotify-liked')
     union
     select ${labels ? trackSourceLabels.album : 'album'}::text
-    where exists (select 1 from track t where t.track_media_item_id = ${id})
+    where ${belongsToLibraryAlbum(id)}
     union
     select ${labels ? trackSourceLabels.lastfm : 'lastfm'}::text
     where exists (select 1 from lastfm_track_source s where s.track_media_item_id = ${id})

@@ -123,6 +123,8 @@ app.openapi(
       401: jsonErrorResponse('Unauthorized'),
       409: jsonErrorResponse('Ambiguous existing identity'),
       422: validationErrorResponse,
+      429: jsonErrorResponse('Spotify is busy'),
+      502: jsonErrorResponse('Spotify could not confirm the release'),
     },
   }),
   async (c) =>

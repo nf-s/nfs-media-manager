@@ -89,6 +89,7 @@ import {
 } from './music-tags'
 import {
   albumTrackDurationExpression,
+  belongsToLibraryAlbum,
   manyLastfmTrackSources,
   redundantLastfmTrackIds,
   trackIdsWithProvider,
@@ -503,7 +504,7 @@ function matchesValue(
     )
     switch (source) {
       case 'album':
-        return sql`exists (select 1 from track t where t.track_media_item_id = ${mediaItem.id})`
+        return belongsToLibraryAlbum(mediaItem.id)
       case 'lastfm':
         return sql`exists (select 1 from lastfm_track_source s where s.track_media_item_id = ${mediaItem.id})`
       case 'spotify':
@@ -2626,7 +2627,7 @@ function textRows(
       union all
       select media_item.id, ${trackSourceLabels['spotify-liked']}::text as value from media_item join playlist_item pi on pi.media_item_id = media_item.id join playlist p on p.id = pi.playlist_id where ${visible} and p.source = 'spotify-liked'
       union all
-      select media_item.id, ${trackSourceLabels.album}::text as value from media_item join track t on t.track_media_item_id = media_item.id where ${visible}
+      select media_item.id, ${trackSourceLabels.album}::text as value from media_item where ${visible} and ${belongsToLibraryAlbum(mediaItem.id)}
       union all
       select media_item.id, ${trackSourceLabels.lastfm}::text as value from media_item join lastfm_track_source s on s.track_media_item_id = media_item.id where ${visible}
       union all

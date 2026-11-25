@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import {
   SPOTIFY_TRACK_SEARCH_TASK,
+  SpotifyInteractiveTrackSearchResultSchema,
   SpotifyTrackSearchTargetConflictSchema,
   type SpotifyTrackSearchFreshness,
 } from '@repo/schemas/spotify-track-search'
@@ -118,7 +119,14 @@ import { refreshTrackLinks } from '@/services/track-links'
 import { removeScrobbleTrackMatch } from '@/services/track-merges'
 import { listTrackMatchDiagnostics } from '@/services/track-match-diagnostics'
 import { getTrackDetail } from '@/services/tracks'
-import { resolveCatalogMediaId } from '@/services/catalog-discoveries'
+import {
+  promoteCatalogMedia,
+  resolveCatalogMediaId,
+} from '@/services/catalog-discoveries'
+import {
+  getMediaSourceSnapshot,
+  listMediaSourceSnapshots,
+} from '@/services/history'
 import {
   redoLibraryChange,
   undoLibraryChange,
@@ -132,6 +140,7 @@ import {
   listSpotifyTrackSearchStatuses,
   queueSpotifyTrackSearches,
   readSpotifyTrackSearchCandidate,
+  searchSpotifyTrackInRequest,
 } from '@/services/spotify-track-search'
 
 let created = false
@@ -2069,7 +2078,7 @@ it.each([
   },
 )
 
-it('searches the text entered for one track and leaves the results for that listener to choose', async () => {
+it('keeps older queued custom searches review-only and retryable', async () => {
   const { default: app } = await import('@/app')
   const post = (trackIds: string[], query: string) =>
     app.request('/api/v1/spotify/tracks/search', {
@@ -2136,6 +2145,282 @@ it('searches the text entered for one track and leaves the results for that list
   await redoLibraryChange(change.id)
   expect(await resolveCatalogMediaId(fixture, outsideId)).toBe(recordingId)
   expect(request).toHaveBeenCalledTimes(2)
+})
+
+it('returns manual matches in one request and keeps direct and legacy results readable', async () => {
+  const { default: app } = await import('@/app')
+  const path = `/api/v1/spotify/tracks/search/${recordingId}`
+  const post = (body: object, suffix = '', authenticated = true) =>
+    app.request(path + suffix, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost:3000',
+        ...(authenticated ? { cookie: 'session=fixture' } : {}),
+      },
+      body: JSON.stringify(body),
+    })
+  market = undefined
+  expect((await post({ query: 'Search terms' }, '', false)).status).toBe(401)
+  expect((await post({ query: ' ' })).status).toBe(422)
+  expect((await post({ query: 'Search terms' })).status).toBe(422)
+  expect(request).not.toHaveBeenCalled()
+
+  mockCandidates(catalogTrack)
+  const response = await post({ query: '  Search terms  ', market: 'AU' })
+  expect(response.status).toBe(200)
+  const direct = z
+    .object({ data: SpotifyInteractiveTrackSearchResultSchema })
+    .parse(await response.json()).data
+  expect(direct).toMatchObject({
+    query: 'Search terms',
+    candidates: [{ spotifyTrackId: candidateId, inLibrary: false }],
+  })
+  expect(await memberTracks()).toMatchObject([{ spotifyTrackId: null }])
+  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
+  expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+    job: null,
+    interactiveResults: [direct],
+  })
+  expect(
+    (await getSpotifyTrackSearch(recordingId, otherUserId)).interactiveResults,
+  ).toEqual([])
+  const requested = { trackIds: [recordingId] }
+  expect(await listSpotifyTrackSearchStatuses(requested, userId)).toEqual({
+    items: [
+      {
+        trackId: recordingId,
+        job: null,
+        lastAttemptAt: direct.searchedAt,
+        lastSuccessfulAt: direct.searchedAt,
+        interactive: { status: 'succeeded', resultCount: 1 },
+      },
+    ],
+  })
+  expect(await listSpotifyTrackSearchStatuses(requested, otherUserId)).toEqual({
+    items: [
+      {
+        trackId: recordingId,
+        job: null,
+        lastAttemptAt: null,
+        lastSuccessfulAt: null,
+      },
+    ],
+  })
+  const freshness: SpotifyTrackSearchFreshness = [
+    { provider: 'spotify', mode: 'never' },
+  ]
+  const never = TrackMatchDiagnosticsQuerySchema.parse({
+    view: 'spotify-search-metadata',
+    playability: 'unavailable',
+    freshness,
+  })
+  expect((await listTrackMatchDiagnostics(never, userId)).items).toEqual([])
+  expect(
+    (await listTrackMatchDiagnostics(never, otherUserId)).items.map(
+      ({ id }) => id,
+    ),
+  ).toEqual([recordingId])
+  expect(
+    await queueSpotifyTrackSearches(
+      { ...requested, freshness, market: 'AU' },
+      userId,
+    ),
+  ).toMatchObject({
+    queued: 0,
+    skipped: 1,
+  })
+  const anotherTrackId = 'unsearched-recording'
+  await addTrack(anotherTrackId, 'A recording')
+  const sorted = await listTrackMatchDiagnostics(
+    TrackMatchDiagnosticsQuerySchema.parse({
+      view: 'spotify-search-metadata',
+      sortBy: 'spotifyLastSearch',
+      direction: 'desc',
+      playability: 'unavailable',
+    }),
+    userId,
+  )
+  expect(sorted.items.map(({ id }) => id)).toEqual([
+    recordingId,
+    anotherTrackId,
+  ])
+
+  const catalogId = direct.candidates[0]?.catalogMediaItemId
+  if (!catalogId) throw new Error('Expected a navigable catalog result')
+  await promoteCatalogMedia(catalogId, userId)
+  expect(
+    (await getSpotifyTrackSearch(recordingId, userId)).interactiveResults,
+  ).toMatchObject([
+    { candidates: [{ catalogMediaItemId: catalogId, inLibrary: true }] },
+  ])
+  await queueSpotifyTrackSearches(
+    { trackIds: [recordingId], query: 'Older API search', market: 'AU' },
+    userId,
+  )
+  await fixture
+    .update(schema.providerRequestState)
+    .set({ nextAllowedAt: new Date(0) })
+  mockCandidates(otherEdition)
+  await processQueuedJobs()
+  expect(await getSpotifyTrackSearch(recordingId, userId)).toMatchObject({
+    query: 'Older API search',
+    candidates: [{ spotifyTrackId: otherCandidateId }],
+    interactiveResults: [{ query: 'Search terms' }],
+  })
+
+  const outbound = request.mock.calls.length
+  expect(
+    (
+      await post(
+        { searchId: direct.searchId, spotifyTrackId: otherCandidateId },
+        '/accept',
+      )
+    ).status,
+  ).toBe(404)
+  expect(
+    (
+      await post(
+        { searchId: direct.searchId, spotifyTrackId: candidateId },
+        '/accept',
+      )
+    ).status,
+  ).toBe(200)
+  expect(request).toHaveBeenCalledTimes(outbound)
+})
+
+it('shares Spotify cooldown between direct searches and keeps the last result', async () => {
+  const { default: app } = await import('@/app')
+  const post = (query: string) =>
+    app.request(`/api/v1/spotify/tracks/search/${recordingId}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: 'session=fixture',
+        origin: 'http://localhost:3000',
+      },
+      body: JSON.stringify({ query }),
+    })
+  mockCandidates()
+  const direct = await searchSpotifyTrackInRequest(
+    recordingId,
+    { query: 'Earlier search' },
+    userId,
+  )
+  expect(direct.candidates).toEqual([])
+  request.mockImplementationOnce(async () => Response.json(spotifyTokenFixture))
+  request.mockImplementationOnce(async () =>
+    Response.json({}, { status: 429, headers: { 'retry-after': '60' } }),
+  )
+  expect((await post('Limited search')).status).toBe(429)
+  expect(request).toHaveBeenCalledTimes(4)
+  expect((await post('Search during cooldown')).status).toBe(429)
+  expect(request).toHaveBeenCalledTimes(4)
+  expect(
+    (await getSpotifyTrackSearch(recordingId, userId)).interactiveResults,
+  ).toEqual([direct])
+  const history = await listMediaSourceSnapshots(recordingId, 'spotify', {
+    page: 1,
+    size: 20,
+  })
+  const failureId = history.items[0]?.id
+  if (!failureId) throw new Error('Expected a retained Spotify response')
+  const failed = await getMediaSourceSnapshot(recordingId, 'spotify', failureId)
+  expect(failed).toMatchObject({
+    data: { response: { status: 429 } },
+  })
+  expect(failed.normalizedData).not.toHaveProperty('candidates')
+  expect(
+    await listSpotifyTrackSearchStatuses({ trackIds: [recordingId] }, userId),
+  ).toEqual({
+    items: [
+      {
+        trackId: recordingId,
+        job: null,
+        lastAttemptAt: failed.createdAt,
+        lastSuccessfulAt: direct.searchedAt,
+        interactive: { status: 'failed', resultCount: null },
+      },
+    ],
+  })
+  const byFailure = TrackMatchDiagnosticsQuerySchema.parse({
+    view: 'spotify-search-metadata',
+    freshness: [{ provider: 'spotify', mode: 'failed' }],
+  })
+  expect(
+    (await listTrackMatchDiagnostics(byFailure, userId)).items.map(
+      ({ id }) => id,
+    ),
+  ).toEqual([recordingId])
+  expect(
+    (await listTrackMatchDiagnostics(byFailure, otherUserId)).items,
+  ).toEqual([])
+  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
+})
+
+it('keeps interactive responses with the retained recording and restores them on undo', async () => {
+  const { source } = await addScrobbledRecording()
+  const trackId = source.trackMediaItemId
+  mockCandidates(otherEdition)
+  const earlier = await searchSpotifyTrackInRequest(
+    trackId,
+    { query: 'Earlier search' },
+    userId,
+  )
+  mockCandidates(catalogTrack)
+  const direct = await searchSpotifyTrackInRequest(
+    trackId,
+    { query: 'Current search' },
+    userId,
+  )
+  const accept = {
+    trackId,
+    searchId: direct.searchId,
+    spotifyTrackId: candidateId,
+    userId,
+  }
+  await expect(
+    acceptSpotifyTrackSearch({ ...accept, userId: otherUserId }),
+  ).rejects.toMatchObject({ response: { statusCode: 404 } })
+  const { targetId } = await acceptSpotifyTrackSearch(accept)
+  expect(targetId).not.toBe(trackId)
+  expect(await acceptSpotifyTrackSearch(accept)).toEqual({ targetId })
+  expect(
+    await getMediaSourceSnapshot(targetId, 'spotify', direct.searchId),
+  ).toMatchObject({
+    data: { response: { status: 200 } },
+    normalizedData: { acceptedTrackId: targetId },
+  })
+  expect(
+    await getMediaSourceSnapshot(targetId, 'spotify', earlier.searchId),
+  ).toMatchObject({
+    normalizedData: { query: 'Earlier search' },
+  })
+  const [change] = await fixture
+    .select()
+    .from(schema.libraryChange)
+    .orderBy(sql`${schema.libraryChange.createdAt} desc`)
+    .limit(1)
+  if (!change) throw new Error('Expected an undoable match')
+  await undoLibraryChange(change.id)
+  expect(
+    (await getSpotifyTrackSearch(trackId, userId)).interactiveResults,
+  ).toMatchObject([
+    { searchId: direct.searchId },
+    { searchId: earlier.searchId },
+  ])
+  expect(
+    (await getMediaSourceSnapshot(trackId, 'spotify', direct.searchId))
+      .normalizedData,
+  ).not.toHaveProperty('acceptedTrackId')
+  await redoLibraryChange(change.id)
+  expect(
+    await getMediaSourceSnapshot(targetId, 'spotify', direct.searchId),
+  ).toMatchObject({
+    normalizedData: { acceptedTrackId: targetId },
+  })
+  expect(await fixture.select().from(schema.scrapeJob)).toHaveLength(0)
+  expect(request).toHaveBeenCalledTimes(4)
 })
 
 it('accepts an explicit market over the API when only app credentials are configured', async () => {
