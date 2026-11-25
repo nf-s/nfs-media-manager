@@ -175,7 +175,7 @@ it('bounds grouped lifetime pages and independent numeric counts with Playlist a
           blocks,
           8,
           operation,
-          undefined,
+          2_000_000,
           (plan) => {
             scannedEvents += scrobbleRows(plan)
           },

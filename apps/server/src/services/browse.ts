@@ -993,6 +993,7 @@ function groupedTrackBrowse(
     ranks: number[] | { first: number; last: number },
     scope = grouped,
     listeningJoin = groupListening,
+    predicate = lifetimePredicate,
   ) {
     const last = Array.isArray(ranks) ? Math.max(...ranks) : ranks.last
     const primary = primaryOrdering(sql`g.scrobbles`)
@@ -1012,7 +1013,7 @@ function groupedTrackBrowse(
         rank() over (order by ${primary}) as first_rank,
         row_number() over (order by ${primary}) as ordinal
       from recording_stats g
-      ${deferPeriodCounts ? sql`` : listeningJoin} ${lifetimePredicate}
+      ${deferPeriodCounts ? sql`` : listeningJoin} ${predicate}
       order by ${primary} fetch first (${last}) rows with ties
     ), ranked_recordings as (
       select g.*, first_rank + row_number() over (
@@ -1083,6 +1084,10 @@ function groupedTrackBrowse(
     recording_members as materialized (
       select id, coalesce(recording_id, id) as group_key from recording_matches
     )${numericChipScope && probeScopedListening ? sql`, ${recordingTitleTargets}` : sql``}`
+  }
+  function filteredGroupEligibility(listeningJoin: SQL, condition: SQL) {
+    return sql`from (select distinct group_key from recording_members) g
+      ${listeningJoin} where ${condition}`
   }
   const filteredRepresentatives = recordingRepresentatives(undefined, {
     singletons: sql`select id as group_key, 1 as version_count, date_added,
@@ -1319,9 +1324,10 @@ function groupedTrackBrowse(
       const cached = await readRecordingBrowseOrder(
         undefined,
         sql`${filteredMembers()}
-          select count(*)::int from (select distinct group_key from recording_members) g
-          ${numericChipScope ? liveCountedListening : countedGroupListening}
-          where ${countedGroupCondition}`,
+          select count(*)::int ${filteredGroupEligibility(
+            numericChipScope ? liveCountedListening : countedGroupListening,
+            countedGroupCondition,
+          )}`,
       )
       if (cached?.filtered_count != null)
         return Math.min(
@@ -1367,11 +1373,21 @@ function groupedTrackBrowse(
       if (stored) rows = RecordingGroupRowsSchema.parse(stored)
     }
     if (useFilteredMembership && dynamicLifetimeOrder && limit > 0) {
-      const selected = lifetimeRows(
-        { first: offset + 1, last: offset + limit },
-        sql`${filteredMembers(true)}, ${filteredRepresentatives}, ${recordingListening}`,
-        numericChipScope ? liveLifetimeListening : groupListening,
-      )
+      const ranks = { first: offset + 1, last: offset + limit }
+      const published = sql`${filteredMembers(true)}, ${filteredRepresentatives}, ${recordingListening}`
+      // Form the same eligibility set as the exact count. Joining the
+      // estimated numeric range to stats can cause a repeated full scan.
+      const selected =
+        numericChipScope && lifetimeCondition
+          ? lifetimeRows(
+              ranks,
+              sql`${published}, eligible_recordings as materialized (
+              select g.group_key ${filteredGroupEligibility(liveLifetimeListening, lifetimeCondition)}
+            )`,
+              sql``,
+              sql`where coalesce(g.group_key in (select group_key from eligible_recordings), false)`,
+            )
+          : lifetimeRows(ranks, published)
       const cached = await readRecordingBrowseOrder(selected)
       if (cached?.total_count != null) rows = cached.rows
     }
