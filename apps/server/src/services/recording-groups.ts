@@ -99,7 +99,7 @@ const recordingGroupableTracks = sql`
 // for narrow searches. A broad request still benefits from finding shared
 // identities before normalizing titles and checking credits.
 const recordingTitleLookupLimit = 4096
-const recordingTitleTargets = sql`
+export const recordingTitleTargets = sql`
     recording_title_targets as materialized (
       select id from recording_matches limit ${recordingTitleLookupLimit + 1}
     ),

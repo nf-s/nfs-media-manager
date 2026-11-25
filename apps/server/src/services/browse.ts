@@ -117,6 +117,7 @@ import {
   recordingListening,
   recordingMemberships,
   recordingRepresentatives,
+  recordingTitleTargets,
   recordingVersionMembers,
   refreshRecordingBrowseOrder,
   RecordingGroupPositionRowsSchema,
@@ -762,13 +763,23 @@ function trackReleaseLookups(trackId: SQL) {
 
 function playlistOnlyTrackQuery(query: TrackQuery) {
   return (
-    !query.listening &&
+    (!query.listening || hasSingleLifetimeCountRule(query)) &&
     !query.listeningSort &&
     !query.creatorId &&
     !query.q &&
     !query.ranges.length &&
     query.filters.length > 0 &&
     query.filters.every(({ field }) => field === 'playlist')
+  )
+}
+
+function hasSingleLifetimeCountRule(query: TrackQuery) {
+  const profile = listeningRuleProfile(query.listening)
+  return (
+    query.sortBy !== 'listeningScrobbles' &&
+    profile?.count === 'one' &&
+    profile.period === 'all' &&
+    profile.threshold === 'count'
   )
 }
 
@@ -785,8 +796,8 @@ function groupedTrackBrowse(
   defaultScope: boolean,
   versionId?: string,
 ) {
-  const carryTrackStats =
-    versionId === undefined && playlistOnlyTrackQuery(query)
+  const playlistScope = playlistOnlyTrackQuery(query)
+  const carryTrackStats = versionId === undefined && playlistScope
   const matches = db
     .select({
       id: mediaItem.id,
@@ -873,13 +884,24 @@ function groupedTrackBrowse(
       sql`recording_members`,
       sql`(select bounded from recording_title_scope)`,
     )
-  const probeGenreListening =
+  const genreScope = query.filters.every(({ field }) => field === 'genre')
+  const numericChipScope =
+    !query.listeningSort &&
+    hasSingleLifetimeCountRule(query) &&
+    (playlistScope ||
+      query.filters.every(
+        ({ field }) => field === 'genre' || field === 'albumTag',
+      ))
+  const probeScopedListening =
     canProbeMatchingNames &&
     query.filters.length > 0 &&
-    query.filters.every(({ field }) => field === 'genre')
-  const liveLifetimeListening = probeGenreListening
+    (genreScope || numericChipScope)
+  const liveLifetimeListening = probeScopedListening
     ? probeMatchingNames(listening)
     : groupListening
+  const liveCountedListening = probeScopedListening
+    ? probeMatchingNames(countedListening)
+    : countedGroupListening
   const listeningValue = sql`${listening?.sort ?? sql`null::int`} as listening_scrobbles`
   // Period counts are added up over every matching track of a group.
   const members = sql`${memberships}, ${recordingVersionMembers}`
@@ -1022,17 +1044,17 @@ function groupedTrackBrowse(
   const useStoredOrder =
     useStoredScope && query.sortBy === 'scrobbles' && !listening
   const useStoredMembership = useStoredScope && dynamicLifetimeOrder
-  // Search and Genre chips only remove editions from the default visibility
-  // scope. Compute representatives, statistics and ranks from those editions.
+  // These chips only narrow default membership. A required playlist can skip
+  // the visibility test because a Last.fm placeholder in a playlist is visible.
   const useFilteredMembership =
     defaultScope &&
-    visibility !== undefined &&
+    (visibility !== undefined || playlistScope) &&
     !query.ranges.length &&
     !query.creatorId &&
     !('includeArchived' in query && query.includeArchived === 'true') &&
     versionId === undefined &&
     Boolean(query.q || query.filters.length) &&
-    query.filters.every((chip) => chip.field === 'genre')
+    (genreScope || numericChipScope)
   function filteredMembers(withStats = false) {
     // The page already joins library_track to match editions. Carry the
     // singleton statistics through that join rather than looking each up again.
@@ -1060,7 +1082,7 @@ function groupedTrackBrowse(
     ),
     recording_members as materialized (
       select id, coalesce(recording_id, id) as group_key from recording_matches
-    )`
+    )${numericChipScope && probeScopedListening ? sql`, ${recordingTitleTargets}` : sql``}`
   }
   const filteredRepresentatives = recordingRepresentatives(undefined, {
     singletons: sql`select id as group_key, 1 as version_count, date_added,
@@ -1298,7 +1320,8 @@ function groupedTrackBrowse(
         undefined,
         sql`${filteredMembers()}
           select count(*)::int from (select distinct group_key from recording_members) g
-          ${countedGroupListening} where ${countedGroupCondition}`,
+          ${numericChipScope ? liveCountedListening : countedGroupListening}
+          where ${countedGroupCondition}`,
       )
       if (cached?.filtered_count != null)
         return Math.min(
@@ -1308,7 +1331,7 @@ function groupedTrackBrowse(
     }
     const counted = countedGroupCondition
       ? sql`${rangeMemberships} select count(*)::int as value from ${rangeGroups} g
-        ${probeGenreListening ? probeMatchingNames(countedListening) : countedGroupListening}
+        ${liveCountedListening}
         where ${countedGroupCondition}`
       : sql`${memberships} ${recordingCount}`
     const total = await readBrowseTotal(
@@ -1347,6 +1370,7 @@ function groupedTrackBrowse(
       const selected = lifetimeRows(
         { first: offset + 1, last: offset + limit },
         sql`${filteredMembers(true)}, ${filteredRepresentatives}, ${recordingListening}`,
+        numericChipScope ? liveLifetimeListening : groupListening,
       )
       const cached = await readRecordingBrowseOrder(selected)
       if (cached?.total_count != null) rows = cached.rows
@@ -2778,7 +2802,14 @@ function trackMusicFacetSources(
   const visibility = includeLastfmSourceRows
     ? sql``
     : sql`and m.id not in (select id from redundant_lastfm_tracks)`
+  const inheritedValue = ownTags
+    ? sql`label.id not in (select label_id from browse_track_sonovault_values)`
+    : sql`true`
   const sources = [
+    sql`browse_track_facet_labels as materialized (
+      select value, row_number() over ()::int as label_id
+      from (select value from browse_artist_facet_keys union select value from browse_release_facet_keys) labels
+    )`,
     sql`browse_track_facet_members as materialized (
         select m.id, lt.album_media_item_id as album_id,
           ${ownTags ? sql`lt.has_own_tags` : sql`false`} as has_own,
@@ -2791,112 +2822,143 @@ function trackMusicFacetSources(
             or exists (select 1 from browse_release_facet_keys))
         group by m.id, lt.album_media_item_id, lt.has_own_tags
     )`,
-    // Different credits can contribute the same labels to an album. Rank
-    // those label sets before expanding album/artist intersections.
+    sql`browse_track_facet_tags_by_artist as (
+      select jsonb_object_agg(artist_id, tag_values) as labels
+      from (
+        select artist_id, array_agg(distinct label_id) as tag_values
+        from browse_artist_facet_keys join browse_track_facet_labels using (value)
+        group by artist_id
+      ) artist_tags
+    )`,
+    // Resolve labels for each credit set separately so a diverse catalog does
+    // not sort one large relation of every credit and each of its artist tags.
     sql`browse_track_facet_artist_sets as materialized (
       select artist_ids, dense_rank() over (order by tag_values) as artist_group, tag_values
       from (
-        select credits.artist_ids, array_agg(distinct labels.value order by labels.value) as tag_values
+        select credits.artist_ids, array(
+          select distinct label.value::int
+          from unnest(credits.artist_ids) credit(artist_id)
+          cross join lateral jsonb_array_elements_text(tags.labels -> credit.artist_id) label(value)
+          order by label.value::int
+        ) as tag_values
         from (select distinct artist_ids from browse_track_facet_members) credits
-        cross join lateral unnest(credits.artist_ids) credit(artist_id)
-        join browse_artist_facet_keys labels on labels.artist_id = credit.artist_id
-        group by credits.artist_ids
+        cross join browse_track_facet_tags_by_artist tags
       ) credited_tags
     )`,
     sql`browse_track_facet_artist_values as (
-      select artist_group, unnest(min(tag_values)) as value
+      select artist_group, min(tag_values) as tag_values
       from browse_track_facet_artist_sets group by artist_group
     )`,
+    sql`browse_track_facet_album_values as materialized (
+      select mt.media_item_id as album_id, array_agg(distinct label_id) as tag_values
+      from media_item_tag mt join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
+      join browse_track_facet_labels using (value)
+      group by mt.media_item_id
+    )`,
     sql`browse_track_facet_tracks as materialized (
-      select m.id, m.album_id, a.artist_group, m.has_own,
-        dense_rank() over (order by m.album_id, a.artist_group, m.has_own) as group_id
+      select m.id, m.album_id, a.artist_group, m.has_own
       from browse_track_facet_members m
       left join browse_track_facet_artist_sets a using (artist_ids)
     )`,
-    sql`browse_track_facet_groups as materialized (
-      select group_id as id, min(album_id) as album_id, min(artist_group) as artist_group,
-        bool_or(has_own) as has_own, count(*) as weight
-      from browse_track_facet_tracks group by group_id
-    )`,
-    sql`browse_track_facet_hits as materialized (
-      select id, value, bool_or(is_release) as release_tag, bool_or(not is_release) as artist_tag
-      from (
-        select g.id, labels.value, true as is_release from browse_track_facet_groups g
-        join media_item_tag mt on mt.media_item_id = g.album_id
-        join browse_release_facet_keys labels on labels.tag_id = mt.tag_id
-        union all
-        select g.id, labels.value, false as is_release from browse_track_facet_groups g
-        join browse_track_facet_artist_values labels using (artist_group)
-      ) tag_hits group by id, value
-    )`,
     sql`browse_track_dense_albums as materialized (${albumsWithEnoughTags()})`,
+    sql`browse_track_facet_groups as materialized (
+      select t.album_id, t.artist_group, t.has_own, dense.media_item_id is null as sparse,
+        count(*) as weight
+      from browse_track_facet_tracks t
+      left join browse_track_dense_albums dense on dense.media_item_id = t.album_id
+      group by t.album_id, t.artist_group, t.has_own, (dense.media_item_id is null)
+    )`,
+    ...(ownTags
+      ? [
+          sql`browse_track_sonovault_values as materialized (
+        select distinct label_id from track_tag tt
+        join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+        join browse_track_facet_labels using (value)
+        where tt.in_browse and tt.sonovault
+      )`,
+        ]
+      : []),
+    // Roll up artist weights before expanding labels. Check the overlap only
+    // for the album's labels, which keeps the union of both levels exact.
+    sql`browse_track_facet_artist_weights as (
+      select artist_group, sum(weight) as weight,
+        sum(weight) filter (where sparse) as sparse_weight,
+        sum(weight) filter (where sparse and not has_own) as sparse_without_own
+      from browse_track_facet_groups where artist_group is not null group by artist_group
+    )`,
+    sql`browse_track_facet_artist_counts as (
+      select label.id as label_id, sum(g.weight) as artist_tag,
+        sum(case when ${inheritedValue} then g.sparse_weight else g.sparse_without_own end) as inherited
+      from browse_track_facet_artist_weights g join browse_track_facet_artist_values a using (artist_group)
+      cross join lateral unnest(a.tag_values) label(id)
+      group by label.id
+    )`,
+    sql`browse_track_facet_album_counts as (
+      select label.id as label_id, sum(g.weight) as album_tag,
+        sum(g.weight) filter (where label.id = any(a.tag_values)) as overlap,
+        sum(g.weight) filter (where not g.has_own or ${inheritedValue}) as inherited,
+        sum(g.weight) filter (where g.sparse and (not g.has_own or ${inheritedValue})
+          and label.id = any(a.tag_values)) as inherited_overlap
+      from browse_track_facet_groups g join browse_track_facet_album_values album using (album_id)
+      left join browse_track_facet_artist_values a using (artist_group)
+      cross join lateral unnest(album.tag_values) label(id)
+      group by label.id
+    )`,
+    sql`browse_track_group_counts as (
+      select label_id, album.album_tag, artist.artist_tag,
+        coalesce(album.album_tag, 0) + coalesce(artist.artist_tag, 0) - coalesce(album.overlap, 0) as either,
+        coalesce(album.inherited, 0) + coalesce(artist.inherited, 0) - coalesce(album.inherited_overlap, 0) as inherited
+      from browse_track_facet_album_counts album full join browse_track_facet_artist_counts artist using (label_id)
+    )`,
   ]
-  // The labels a track inherits: its album's, or its artists' on a sparse album.
-  const inherited = sql`(labels.release_tag or dense.media_item_id is null)`
   if (!ownTags)
     return [
       ...sources,
       sql`browse_track_facet_counts as materialized (
-        select labels.value,
-          sum(g.weight) filter (where labels.release_tag) as album_tag,
-          sum(g.weight) filter (where labels.artist_tag) as artist_tag,
-          sum(g.weight) filter (where ${inherited}) as genre
-        from browse_track_facet_hits labels join browse_track_facet_groups g on g.id = labels.id
-        left join browse_track_dense_albums dense on dense.media_item_id = g.album_id
-        group by labels.value
+        select value, album_tag, artist_tag, nullif(inherited, 0) as genre
+        from browse_track_group_counts join browse_track_facet_labels using (label_id)
       )`,
     ]
   return [
     ...sources,
     sql`browse_track_own_facet_rows as materialized (
-      select tt.media_item_id as id, labels.value from track_tag tt
+      select tt.media_item_id as id, label_id from track_tag tt
       join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
+      join browse_track_facet_labels using (value)
       join browse_track_facet_tracks t on t.id = tt.media_item_id
-      where tt.in_browse group by tt.media_item_id, labels.value
-    )`,
-    sql`browse_track_sonovault_values as materialized (
-      select distinct labels.value from track_tag tt
-      join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
-      where tt.in_browse and tt.sonovault
+      where tt.in_browse group by tt.media_item_id, label_id
     )`,
     // Each own tag value with how many of those tracks lack it at the album
     // or artist level of their group. Also count overlap with inherited
     // tags at Auto using the same join.
     sql`browse_track_own_counts as materialized (
-      select own.value, count(*) as own,
-        count(*) filter (where not coalesce(labels.release_tag, false)) as without_album,
-        count(*) filter (where not coalesce(labels.artist_tag, false)) as without_artist,
-        count(*) filter (where labels.id is null) as without_either,
-        count(*) filter (where labels.id is not null and ${inherited}
-          and own.value not in (select value from browse_track_sonovault_values)) as inherited_overlap
+      select own.label_id, count(*) as own,
+        count(*) filter (where not matched.album_tag) as without_album,
+        count(*) filter (where not matched.artist_tag) as without_artist,
+        count(*) filter (where not (matched.album_tag or matched.artist_tag)) as without_either,
+        count(*) filter (where (matched.album_tag or (matched.artist_tag and dense.media_item_id is null))
+          and own.label_id not in (select label_id from browse_track_sonovault_values)) as inherited_overlap
       from browse_track_own_facet_rows own
       join browse_track_facet_tracks t on t.id = own.id
-      left join browse_track_facet_hits labels on labels.id = t.group_id and labels.value = own.value
+      left join browse_track_facet_album_values album using (album_id)
+      left join browse_track_facet_artist_values artist using (artist_group)
       left join browse_track_dense_albums dense on dense.media_item_id = t.album_id
-      group by own.value
-    )`,
-    sql`browse_track_group_counts as materialized (
-      select labels.value,
-        sum(g.weight) filter (where labels.release_tag) as album_tag,
-        sum(g.weight) filter (where labels.artist_tag) as artist_tag,
-        sum(g.weight) as either,
-        coalesce(sum(g.weight) filter (where ${inherited} and (not g.has_own
-          or labels.value not in (select value from browse_track_sonovault_values))), 0) as inherited
-      from browse_track_facet_hits labels join browse_track_facet_groups g on g.id = labels.id
-      left join browse_track_dense_albums dense on dense.media_item_id = g.album_id
-      group by labels.value
+      cross join lateral (select coalesce(own.label_id = any(album.tag_values), false) as album_tag,
+        coalesce(own.label_id = any(artist.tag_values), false) as artist_tag) matched
+      group by own.label_id
     )`,
     // A group with the value at a ticked album or artist level counts all its
     // tracks; otherwise only its tracks that carry the value themselves.
     sql`browse_track_facet_counts as materialized (
-      select coalesce(g.value, o.value) as value, g.album_tag, g.artist_tag,
+      select labels.value, g.album_tag, g.artist_tag,
         nullif(coalesce(g.inherited, 0) + coalesce(o.own, 0) - coalesce(o.inherited_overlap, 0), 0) as genre,
         nullif(coalesce(g.album_tag, 0) + coalesce(o.without_album, 0), 0) as track_album,
         nullif(coalesce(g.artist_tag, 0) + coalesce(o.without_artist, 0), 0) as track_artist,
         g.either as album_artist,
         nullif(coalesce(g.either, 0) + coalesce(o.without_either, 0), 0) as all_levels
       from browse_track_group_counts g
-      full join browse_track_own_counts o on o.value = g.value
+      full join browse_track_own_counts o using (label_id)
+      join browse_track_facet_labels labels using (label_id)
     )`,
   ]
 }
