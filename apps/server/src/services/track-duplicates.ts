@@ -6,7 +6,12 @@ import {
   type LibraryChange,
 } from '@repo/schemas/library-changes'
 import {
+  DuplicateReviewGroupSummarySchema,
+  DuplicateReviewPageSchema,
+  DuplicateReviewPairSchema,
   TrackDuplicateRuleSchema,
+  type DuplicateReviewPage,
+  type DuplicateReviewQuery,
   type TrackDuplicateCount,
   type TrackDuplicateCountQuery,
   type TrackDuplicateGroup,
@@ -43,6 +48,8 @@ const GroupRowsSchema = z.array(
     member_count: z.number().int().min(2),
     scrobbles: z.number().int().nonnegative(),
     member_ids: z.array(z.string()),
+    review_summary: DuplicateReviewGroupSummarySchema.nullish(),
+    review_pairs: z.array(DuplicateReviewPairSchema).nullish(),
   }),
 )
 const MemberRowsSchema = z.array(
@@ -55,15 +62,130 @@ const CountRowSchema = z.object({
 const ClaimRowSchema = z.object({ lease: z.string() })
 const ReadyRowSchema = z.object({ ready: z.boolean() })
 
+const latestDuplicateReview = sql`
+  select id, reviewed_at from duplicate_review_run
+  order by reviewed_at desc, id desc limit 1`
+
+const duplicateReviewPairColumns = sql`
+  p.kind, p.left_id as "leftId", p.right_id as "rightId",
+  p.left_title as "leftTitle", p.right_title as "rightTitle",
+  p.confidence, p.decision, p.evidence, p.details, p.reason,
+  p.target_id as "targetId",
+  coalesce(
+    case when c.target->>'id' = p.target_id then c.target->>'title' end,
+    case p.target_id when p.left_id then p.left_title when p.right_id then p.right_title end
+  ) as "targetTitle",
+  p.change_id as "changeId", c.undone_at is not null as undone`
+
+const DuplicateReviewReadSchema = DuplicateReviewPageSchema.pick({
+  review: true,
+  items: true,
+  totalCount: true,
+})
+
+/** The latest saved review, including decisions for records that no longer exist. */
+export async function readDuplicateReview({
+  q,
+  kind,
+  decision,
+  confidence,
+  page,
+  size,
+}: DuplicateReviewQuery): Promise<DuplicateReviewPage> {
+  const pattern = q ? `%${q.replace(/[\\%_]/g, '\\$&')}%` : undefined
+  const matches = sql.join(
+    [
+      kind ? sql`p.kind = ${kind}` : sql`true`,
+      decision ? sql`p.decision = ${decision}` : sql`true`,
+      confidence ? sql`p.confidence = ${confidence}` : sql`true`,
+      pattern
+        ? sql`(
+            p.left_title ilike ${pattern} or p.right_title ilike ${pattern}
+            or (p.details->>'leftCredits') ilike ${pattern}
+            or (p.details->>'rightCredits') ilike ${pattern}
+          )`
+        : sql`true`,
+    ],
+    sql` and `,
+  )
+  const result = await db.execute(sql`
+    with latest_review as (${latestDuplicateReview}),
+    review_pairs as not materialized (
+      select * from duplicate_review_pair where run_id = (select id from latest_review)
+    ), totals as (
+      select count(*)::int as "pairCount",
+        count(distinct p.change_id) filter (where c.action = 'merge')::int as "mergeCount",
+        count(*) filter (where ${matches})::int as "totalCount"
+      from review_pairs p left join library_change c on c.id = p.change_id
+    ), page_pairs as (
+      select * from review_pairs p where ${matches}
+      order by p.kind, p.left_id, p.right_id
+      limit ${size} offset ${(page - 1) * size}
+    ), page_rows as (
+      select ${duplicateReviewPairColumns}
+      from page_pairs p left join library_change c on c.id = p.change_id
+    )
+    select case when r.id is not null then jsonb_build_object(
+      'id', r.id,
+      'reviewedAt', to_char(r.reviewed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'pairCount', totals."pairCount",
+      'mergeCount', totals."mergeCount"
+    ) end as review,
+    totals."totalCount",
+    coalesce((select jsonb_agg(page_rows order by kind, "leftId", "rightId")
+      from page_rows), '[]'::jsonb) as items
+    from totals left join latest_review r on true
+  `)
+  const stored = DuplicateReviewReadSchema.parse(result.rows[0])
+  return {
+    ...stored,
+    page,
+    size,
+    pageCount: Math.ceil(stored.totalCount / size),
+  }
+}
+
+const duplicateGroupReviewSummary = sql`
+  select group_id, jsonb_build_object(
+    'pairCount', count(*)::int,
+    'confidence', case when min(confidence) = max(confidence) then min(confidence) end,
+    'decision', case when min(decision) = max(decision) then min(decision) end
+  ) as review_summary
+  from historical_pairs group by group_id`
+
+const duplicateGroupReviewDetails = sql`
+  select group_id, jsonb_agg(to_jsonb(pair_rows) - 'group_id'
+    order by "leftId", "rightId") as review_pairs
+  from (
+    select p.group_id, ${duplicateReviewPairColumns}
+    from historical_pairs p left join library_change c on c.id = p.change_id
+  ) pair_rows group by group_id`
+
 /** The groups, with what Merge would do to each, read for all of them together. */
-async function readGroups(where: SQL): Promise<TrackDuplicateGroup[]> {
+async function readGroups(
+  where: SQL,
+  review: 'summary' | 'pairs',
+): Promise<TrackDuplicateGroup[]> {
   const rows = GroupRowsSchema.parse(
     (
       await db.execute(sql`
-        select g.id, g.rule, g.evidence, g.cautions, g.member_count, g.scrobbles,
-          array(select m.track_id from track_duplicate_member m
-            where m.group_id = g.id order by m.position) as member_ids
-        from track_duplicate_group g where ${where}
+        with groups as (
+          select g.id, g.rule, g.evidence, g.cautions, g.member_count, g.scrobbles, g.rank,
+            array(select m.track_id from track_duplicate_member m
+              where m.group_id = g.id order by m.position) as member_ids
+          from track_duplicate_group g where ${where}
+        ), historical_pairs as (
+          select l.group_id, p.*
+          from duplicate_review_pair p
+          join track_duplicate_member l on l.track_id = p.left_id
+          join groups g on g.id = l.group_id
+          join track_duplicate_member r on r.group_id = l.group_id and r.track_id = p.right_id
+          where p.kind = 'track' and p.run_id = (select id from (${latestDuplicateReview}) review)
+        ), review_groups as (
+          ${review === 'summary' ? duplicateGroupReviewSummary : duplicateGroupReviewDetails}
+        )
+        select g.*, review_groups.*
+        from groups g left join review_groups on review_groups.group_id = g.id
         order by g.rank`)
     ).rows,
   )
@@ -80,6 +202,8 @@ async function readGroups(where: SQL): Promise<TrackDuplicateGroup[]> {
     scrobbles: row.scrobbles,
     memberIds: row.member_ids,
     merge: merges[index] ?? null,
+    ...(row.review_summary ? { reviewSummary: row.review_summary } : {}),
+    ...(row.review_pairs ? { reviewPairs: row.review_pairs } : {}),
   }))
 }
 
@@ -150,6 +274,7 @@ export async function readTrackDuplicateLayout(
     (
       await readGroups(
         sql`g.id = any(${sql.param([...new Set(runs.map((run) => run.groupId))])}::text[])`,
+        'summary',
       )
     ).map((group) => [group.id, group]),
   )
@@ -169,6 +294,7 @@ export async function listTrackDuplicates(
   const groups = await readGroups(
     sql`g.id in (select group_id from track_duplicate_member
       where track_id = ${trackId})`,
+    'pairs',
   )
   const records = new Map(
     (

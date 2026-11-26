@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { LibraryChangeSchema } from '@repo/schemas/library-changes'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
 import {
+  DuplicateReviewPageSchema,
+  DuplicateReviewQuerySchema,
   TrackDuplicateCountQuerySchema,
   TrackDuplicateCountSchema,
   TrackDuplicateLayoutSchema,
@@ -26,6 +28,7 @@ import {
   countTrackDuplicateGroups,
   keepTracksSeparate,
   listTrackDuplicates,
+  readDuplicateReview,
   readTrackDuplicateLayout,
 } from '@/services/track-duplicates'
 
@@ -66,6 +69,33 @@ export const trackSeparations: OpenAPIHono<AppEnv> = createOpenAPIApp().openapi(
 
 /** Mounted at `/tracks`, before the tracks routes. */
 export const trackDuplicates: OpenAPIHono<AppEnv> = createOpenAPIApp()
+  .openapi(
+    createRoute({
+      method: 'get',
+      path: '/duplicates/review',
+      middleware: [authMiddleware()],
+      request: { query: DuplicateReviewQuerySchema },
+      responses: {
+        200: {
+          description:
+            'Decisions and evidence from the latest duplicate review',
+          content: {
+            'application/json': {
+              schema: createResponseSchema(DuplicateReviewPageSchema),
+            },
+          },
+        },
+        401: jsonErrorResponse('Unauthorized'),
+        422: validationErrorResponse,
+      },
+    }),
+    async (c) =>
+      generateJsonResponse(
+        c,
+        await readDuplicateReview(c.req.valid('query')),
+        200,
+      ),
+  )
   .openapi(
     createRoute({
       method: 'get',

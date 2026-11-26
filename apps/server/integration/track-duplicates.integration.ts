@@ -10,6 +10,7 @@ import {
   type TrackMergeCaution,
 } from '@repo/schemas/library-changes'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
+import { DuplicateReviewQuerySchema } from '@repo/schemas/track-duplicates'
 import { env } from '@/env'
 import { albumNameKey } from '@/lib/album-import-candidates'
 import { standaloneLastfmTrackId } from '@/lib/track-matching'
@@ -47,6 +48,7 @@ import {
   countTrackDuplicateGroups,
   keepTracksSeparate,
   listTrackDuplicates,
+  readDuplicateReview,
   readTrackDuplicateLayout,
   refreshTrackDuplicatesForMaintenance,
 } from '@/services/track-duplicates'
@@ -182,6 +184,7 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
+  await fixture.delete(schema.duplicateReviewRun)
   await fixture.delete(schema.libraryKeepSeparate)
   await fixture.delete(schema.libraryChange)
   await fixture.delete(schema.trackDuplicateGroup)
@@ -356,6 +359,229 @@ it('lists only grouped tracks in Matches, in group order, with a matching layout
   const limited = await listed({ limitResults: 3 })
   expect(limited.ids).toEqual(ids.slice(0, 3))
   expect(limited.layout.totalRows).toBe(3)
+})
+
+it('pages the latest review, retains historical evidence and reflects the journal', async () => {
+  const query = DuplicateReviewQuerySchema.parse
+  expect(await readDuplicateReview(query({}))).toEqual({
+    review: null,
+    items: [],
+    page: 1,
+    size: 25,
+    totalCount: 0,
+    pageCount: 0,
+  })
+  const merged = await mergeTracks({
+    targetId: nightDrive.id,
+    trackIds: [nightDrive.id, remaster.id],
+    reviewed: true,
+  })
+  const reviewedAt = '2025-01-02T03:04:05.000Z'
+  await fixture.insert(schema.duplicateReviewRun).values([
+    { id: 'earlier-review', reviewedAt: new Date('2024-01-01') },
+    { id: 'latest-review', reviewedAt: new Date(reviewedAt) },
+  ])
+  const pair = {
+    runId: 'latest-review',
+    leftTitle: 'First saved title',
+    rightTitle: 'Second saved title',
+    confidence: 'high',
+    decision: 'applied',
+    evidence: ['Shared recording identifier'],
+    details: {
+      leftDurationSec: 200,
+      rightDurationSec: 201,
+      leftCredits: 'Fixture Chorus',
+      rightCredits: 'Right Ensemble',
+    },
+  } satisfies Omit<
+    typeof schema.duplicateReviewPair.$inferInsert,
+    'kind' | 'leftId' | 'rightId'
+  >
+  await fixture.insert(schema.duplicateReviewPair).values([
+    {
+      ...pair,
+      kind: 'track',
+      leftId: 'removed-fixture-one',
+      rightId: 'removed-fixture-two',
+      targetId: nightDrive.id,
+      changeId: merged.id,
+    },
+    {
+      ...pair,
+      kind: 'track',
+      leftId: nightDrive.id,
+      rightId: remaster.id,
+      rightTitle: 'Mix 100%_ live',
+      targetId: nightDrive.id,
+      changeId: merged.id,
+    },
+    {
+      ...pair,
+      kind: 'album',
+      leftId: 'album-one',
+      rightId: 'album-two',
+      rightTitle: 'Mix 100xy live',
+      confidence: 'medium',
+      decision: 'held',
+      reason: 'Different track lists',
+    },
+    {
+      ...pair,
+      kind: 'artist',
+      leftId: 'artist-one',
+      rightId: 'artist-two',
+      rightTitle: 'Other historical name',
+      confidence: 'low',
+      decision: 'grouped',
+      targetId: 'artist-one',
+    },
+    {
+      ...pair,
+      runId: 'earlier-review',
+      kind: 'track',
+      leftId: 'old-a',
+      rightId: 'old-b',
+    },
+  ])
+
+  const review = {
+    id: 'latest-review',
+    reviewedAt,
+    pairCount: 4,
+    mergeCount: 1,
+  }
+  const first = await readDuplicateReview(query({ size: 2 }))
+  expect(first).toMatchObject({ review, totalCount: 4, pageCount: 2 })
+  expect(first.items.map((item) => item.kind)).toEqual(['album', 'artist'])
+  expect(first.items[0]?.reason).toBe('Different track lists')
+  expect(first.items[1]?.targetTitle).toBe('First saved title')
+
+  for (const q of ['fIXtUrE cHoRuS', 'RIGHT Ensemble']) {
+    const filtered = await readDuplicateReview(
+      query({ q, decision: 'applied' }),
+    )
+    expect(filtered).toMatchObject({ review, totalCount: 2, pageCount: 1 })
+    expect(filtered.items.map((item) => item.leftId)).toEqual([
+      nightDrive.id,
+      'removed-fixture-one',
+    ])
+  }
+  const literal = await readDuplicateReview(query({ q: '100%_' }))
+  expect(literal).toMatchObject({ review, totalCount: 1, pageCount: 1 })
+  expect(literal.items[0]?.rightTitle).toBe('Mix 100%_ live')
+  for (const q of ['first saved title', 'historical name']) {
+    const artist = await readDuplicateReview(query({ kind: 'artist', q }))
+    expect(artist).toMatchObject({ review, totalCount: 1, pageCount: 1 })
+    expect(artist.items[0]?.rightId).toBe('artist-two')
+  }
+
+  const applied = query({
+    kind: 'track',
+    decision: 'applied',
+    confidence: 'high',
+    page: 2,
+    size: 1,
+  })
+  const second = await readDuplicateReview(applied)
+  expect(second).toMatchObject({ review, totalCount: 2, pageCount: 2 })
+  expect(second.items).toMatchObject([
+    {
+      leftId: 'removed-fixture-one',
+      leftTitle: pair.leftTitle,
+      evidence: pair.evidence,
+      details: pair.details,
+      targetId: nightDrive.id,
+      targetTitle: nightDrive.title,
+      changeId: merged.id,
+      undone: false,
+    },
+  ])
+  expect(
+    await readDuplicateReview(query({ ...applied, confidence: 'excluded' })),
+  ).toMatchObject({
+    review,
+    items: [],
+    totalCount: 0,
+    pageCount: 0,
+  })
+  expect(
+    await readDuplicateReview(query({ ...applied, page: 3 })),
+  ).toMatchObject({
+    review,
+    items: [],
+    totalCount: 2,
+    pageCount: 2,
+  })
+
+  await undoLibraryChange(merged.id)
+  expect((await readDuplicateReview(applied)).items[0]?.undone).toBe(true)
+  await redoLibraryChange(merged.id)
+  expect((await readDuplicateReview(applied)).items[0]?.undone).toBe(false)
+  await fixture
+    .delete(schema.libraryChange)
+    .where(eq(schema.libraryChange.id, merged.id))
+  expect(await readDuplicateReview(applied)).toMatchObject({
+    review: { ...review, mergeCount: 0 },
+    items: [{ decision: 'applied', changeId: null, targetId: nightDrive.id }],
+  })
+})
+
+it('summarizes exact live pairs in layout and returns their evidence on demand', async () => {
+  const anchor = interludes[0]?.id
+  if (!anchor) throw new Error('Missing duplicate fixture')
+  const group = await groupOf(anchor)
+  const [leftId, rightId, thirdId] = group?.memberIds ?? []
+  if (!leftId || !rightId || !thirdId)
+    throw new Error('Missing members in duplicate fixture')
+
+  const count = await countTrackDuplicateGroups({})
+  const initial = await readTrackDuplicateLayout(matches())
+  const runId = 'fixture-group-review'
+  await fixture.insert(schema.duplicateReviewRun).values({
+    id: runId,
+    reviewedAt: new Date('2025-01-02'),
+  })
+  const pair = {
+    runId,
+    kind: 'track',
+    leftId,
+    rightId,
+    leftTitle: 'First title at review',
+    rightTitle: 'Second title at review',
+    confidence: 'medium',
+    decision: 'held',
+    evidence: ['Different listed credits'],
+  } satisfies typeof schema.duplicateReviewPair.$inferInsert
+  await fixture
+    .insert(schema.duplicateReviewPair)
+    .values([
+      pair,
+      { ...pair, rightId: thirdId, confidence: 'excluded' },
+      { ...pair, rightId: liveDash.id },
+      { ...pair, rightId: 'historical-track' },
+      { ...pair, kind: 'album' },
+    ])
+
+  const layout = await readTrackDuplicateLayout(matches())
+  expect(layout.totalRows).toBe(initial.totalRows)
+  expect(layout.groups).toHaveLength(initial.groups.length)
+  expect(await countTrackDuplicateGroups({})).toEqual(count)
+  const summary = layout.groups.find(({ id }) => id === group?.id)
+  expect(summary?.reviewSummary).toEqual({
+    pairCount: 2,
+    confidence: null,
+    decision: 'held',
+  })
+  expect(summary?.reviewPairs).toBeUndefined()
+  const reopened = await groupOf(anchor)
+  expect(reopened?.reviewPairs?.map((item) => item.rightId).sort()).toEqual(
+    [rightId, thirdId].sort(),
+  )
+  expect(reopened?.reviewPairs).toContainEqual(
+    expect.objectContaining({ leftId, rightId, evidence: pair.evidence }),
+  )
+  expect((await groupOf(liveDash.id))?.reviewPairs).toBeUndefined()
 })
 
 it('says what Merge does to each group, as the merge plan does', async () => {

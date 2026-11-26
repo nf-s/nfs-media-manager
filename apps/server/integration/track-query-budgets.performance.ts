@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
 import { TrackMatchDiagnosticsQuerySchema } from '@repo/schemas/match-diagnostics'
+import { DuplicateReviewQuerySchema } from '@repo/schemas/track-duplicates'
 import { TrackQuerySchema, type TrackQuery } from '@repo/schemas/tracks'
 import { sonovaultReleaseFixture } from '@/plugins/builtin/__tests__/fixtures/sonovault/releases'
 import * as schema from '@/schemas/db'
@@ -1881,8 +1882,12 @@ it('plans the duplicate group trigger for the rows of each track write', async (
 })
 
 it('bounds the Possible duplicates view of Matches and its layout', async () => {
-  const { refreshTrackDuplicatesForMaintenance, readTrackDuplicateLayout } =
-    await import('@/services/track-duplicates')
+  const {
+    listTrackDuplicates,
+    readDuplicateReview,
+    readTrackDuplicateLayout,
+    refreshTrackDuplicatesForMaintenance,
+  } = await import('@/services/track-duplicates')
   const { listTrackMatchDiagnostics } =
     await import('@/services/track-match-diagnostics')
   // Each artist's tracks titled Fixture Intro by the detail test above are one
@@ -1918,12 +1923,114 @@ it('bounds the Possible duplicates view of Matches and its layout', async () => 
   )
   // The IDs, their groups, the groups, then what Merge does to each group:
   // one statement for each 2,000 tracks.
-  await checkBudget('Possible duplicates layout', 160_000, 10, async () => {
-    const layout = await readTrackDuplicateLayout(query)
-    expect(layout.totalRows).toBe(counts.members)
-    expect(layout.groups).toHaveLength(counts.groups)
-    expect(layout.groups.every((group) => group.merge)).toBe(true)
-  })
+  const baseLayout = await checkBudget(
+    'Possible duplicates layout',
+    160_000,
+    10,
+    async () => {
+      const layout = await readTrackDuplicateLayout(query)
+      expect(layout.totalRows).toBe(counts.members)
+      expect(layout.groups).toHaveLength(counts.groups)
+      expect(layout.groups.every((group) => group.merge)).toBe(true)
+      return layout
+    },
+  )
+
+  await pool.query(`
+    insert into duplicate_review_run (id, reviewed_at)
+      values ('fixture-history', '2025-01-01T00:00:00Z');
+    insert into library_change (id, kind, actor, action)
+      values ('fixture-history-merge', 'track', 'owner', 'merge');
+    insert into duplicate_review_pair
+      (run_id, kind, left_id, right_id, left_title, right_title, confidence, decision, evidence)
+    select 'fixture-history', 'track', l.track_id, r.track_id, 'First fixture', 'Second fixture',
+      'medium', 'held', '["Different durations"]'::jsonb
+    from track_duplicate_member l join track_duplicate_member r using (group_id)
+    where l.position = 0 and r.position = 1;
+    insert into duplicate_review_pair
+      (run_id, kind, left_id, right_id, left_title, right_title, confidence, decision, evidence, change_id)
+    select 'fixture-history',
+      case n % 3 when 0 then 'track' when 1 then 'album' else 'artist' end,
+      'fixture-left-' || n, 'fixture-right-' || n, 'First fixture', 'Second fixture',
+      case n % 4 when 0 then 'high' when 1 then 'medium' when 2 then 'low' else 'excluded' end,
+      case when n % 12 = 0 then 'applied' when n % 5 = 0 then 'grouped' else 'held' end,
+      '["Saved review evidence"]'::jsonb,
+      case when n % 12 = 0 then 'fixture-history-merge' end
+    from generate_series(1, 12000) n;
+  `)
+  await pool.query('vacuum analyze duplicate_review_run')
+  await pool.query('vacuum analyze duplicate_review_pair')
+  const trackId = baseLayout.groups[0]?.memberIds[0]
+  if (!trackId) throw new Error('Missing fixture group member')
+  await checkBudget(
+    'Possible duplicates layout with review history',
+    160_000,
+    10,
+    async () => {
+      const layout = await readTrackDuplicateLayout(query)
+      expect(layout.totalRows).toBe(counts.members)
+      expect(layout.groups).toHaveLength(counts.groups)
+      expect(
+        layout.groups.every((group) => group.reviewSummary?.pairCount === 1),
+      ).toBe(true)
+      expect(layout.groups.every((group) => !group.reviewPairs)).toBe(true)
+    },
+  )
+  await checkBudget(
+    'Possible duplicate details with history',
+    2_000,
+    4,
+    async () => {
+      const [group] = (await listTrackDuplicates(trackId)).items
+      expect(group?.reviewPairs).toHaveLength(1)
+    },
+  )
+  for (const { label, filters, totalCount, size } of [
+    {
+      label: 'broad',
+      filters: {},
+      totalCount: 12_000 + counts.groups,
+      size: 25,
+    },
+    {
+      label: 'deep',
+      filters: { page: 201 },
+      totalCount: 12_000 + counts.groups,
+      size: 25,
+    },
+    {
+      label: 'filtered',
+      filters: { kind: 'album', confidence: 'medium', decision: 'grouped' },
+      totalCount: 200,
+      size: 25,
+    },
+    {
+      label: 'name search',
+      filters: { q: 'FIRST fixture', decision: 'applied' },
+      totalCount: 1000,
+      size: 25,
+    },
+    {
+      label: 'miss',
+      filters: { kind: 'artist', decision: 'applied' },
+      totalCount: 0,
+      size: 0,
+    },
+  ]) {
+    await checkBudget(
+      `Duplicate review history ${label}`,
+      4_000,
+      1,
+      async () => {
+        const history = await readDuplicateReview(
+          DuplicateReviewQuerySchema.parse(filters),
+        )
+        expect(history.totalCount).toBe(totalCount)
+        expect(history.items).toHaveLength(size)
+        expect(history.review?.mergeCount).toBe(1)
+      },
+    )
+  }
 })
 
 /** Shared blocks the select statements of one read touch. */

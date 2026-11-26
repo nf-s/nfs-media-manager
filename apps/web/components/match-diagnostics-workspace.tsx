@@ -111,6 +111,10 @@ import TrackMatchesToolbar, {
 } from './track-matches-toolbar'
 import { TrackBrowseValue } from './track-browse-cells'
 import {
+  TrackDuplicateReview,
+  TrackDuplicateReviewSummary,
+} from './track-duplicate-review'
+import {
   TrackDuplicateGroupRow,
   TrackDuplicateResultBar,
   useTrackDuplicateActions,
@@ -630,12 +634,14 @@ export default function MatchDiagnosticsWorkspace({
   )
   // Possible duplicates lists only grouped tracks, under a row for each group.
   const duplicates = tracks && trackQuery.duplicates === true
+  const showDuplicateReview =
+    duplicates && params.get('duplicateReview') === 'true'
   // The group rows, read with the same request as the rows they stand above.
   const duplicateLayout = useQuery({
     queryKey: trackDuplicateLayoutKey(trackQuery),
     queryFn: ({ signal }) =>
       loadTrackDuplicateLayout(apiBaseUrl, trackQuery, signal),
-    enabled: duplicates,
+    enabled: duplicates && !showDuplicateReview,
     ...clientQueryDefaults,
     retry: false,
   })
@@ -648,6 +654,7 @@ export default function MatchDiagnosticsWorkspace({
       ? [...matchDiagnosticsKey(library), trackQuery]
       : [...matchDiagnosticsKey(library), q, sortBy, direction],
     pageSize: matchDiagnosticsPageSize,
+    enabled: !showDuplicateReview,
     headerHeight: tableHeaderHeight + groupRows.leadingHeight,
     extraRowHeights: groupRows.heights,
     loadPage: (page, size, signal) =>
@@ -815,6 +822,7 @@ export default function MatchDiagnosticsWorkspace({
       if (value === null || value === '') next.delete(key)
       else next.set(key, value)
     }
+    if (!next.has('duplicates')) next.delete('duplicateReview')
     next.delete('page')
     if (next.toString() === current.toString()) return
     const url = `${path}${next.size ? `?${next}` : ''}${window.location.hash}`
@@ -1009,9 +1017,31 @@ export default function MatchDiagnosticsWorkspace({
     )
   }
 
+  const duplicateReviewSummary = duplicates && (
+    <TrackDuplicateReviewSummary
+      open={showDuplicateReview}
+      onToggle={() =>
+        setTrackParams(
+          { duplicateReview: showDuplicateReview ? null : 'true' },
+          true,
+        )
+      }
+    />
+  )
+
+  if (showDuplicateReview)
+    return (
+      <section className="browse-workspace" aria-label={title}>
+        <PageHead title={title} />
+        {duplicateReviewSummary}
+        <TrackDuplicateReview />
+      </section>
+    )
+
   return (
     <section className="browse-workspace" aria-label={title}>
       <PageHead title={title} />
+      {duplicateReviewSummary}
       {tracks ? (
         <TrackMatchesToolbar
           query={trackQuery}

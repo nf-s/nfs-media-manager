@@ -1873,6 +1873,78 @@ export const libraryChange = pgTable(
   ],
 )
 
+export const duplicateReviewRun = pgTable(
+  'duplicate_review_run',
+  {
+    id: text('id').primaryKey(),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('duplicate_review_run_recent_idx').on(table.reviewedAt, table.id),
+  ],
+)
+
+/** Historical labels and IDs outlive the records changed by a review. */
+export const duplicateReviewPair = pgTable(
+  'duplicate_review_pair',
+  {
+    runId: text('run_id')
+      .notNull()
+      .references(() => duplicateReviewRun.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['track', 'album', 'artist'] }).notNull(),
+    leftId: text('left_id').notNull(),
+    rightId: text('right_id').notNull(),
+    leftTitle: text('left_title').notNull(),
+    rightTitle: text('right_title').notNull(),
+    confidence: text('confidence', {
+      enum: ['high', 'medium', 'low', 'excluded'],
+    }).notNull(),
+    decision: text('decision', {
+      enum: ['applied', 'held', 'grouped'],
+    }).notNull(),
+    evidence: jsonb('evidence').$type<string[]>().notNull(),
+    details: jsonb('details')
+      .$type<Record<string, JsonValue>>()
+      .default({})
+      .notNull(),
+    reason: text('reason'),
+    targetId: text('target_id'),
+    changeId: text('change_id').references(() => libraryChange.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.runId, table.kind, table.leftId, table.rightId],
+    }),
+    index('duplicate_review_pair_change_idx').on(table.changeId),
+    check(
+      'duplicate_review_pair_distinct_ids',
+      sql`${table.leftId} <> ${table.rightId}`,
+    ),
+    check(
+      'duplicate_review_pair_kind',
+      sql`${table.kind} in ('track', 'album', 'artist')`,
+    ),
+    check(
+      'duplicate_review_pair_confidence',
+      sql`${table.confidence} in ('high', 'medium', 'low', 'excluded')`,
+    ),
+    check(
+      'duplicate_review_pair_decision',
+      sql`${table.decision} in ('applied', 'held', 'grouped')`,
+    ),
+    check(
+      'duplicate_review_pair_evidence',
+      sql`jsonb_typeof(${table.evidence}) = 'array'`,
+    ),
+    check(
+      'duplicate_review_pair_details',
+      sql`jsonb_typeof(${table.details}) = 'object'`,
+    ),
+  ],
+)
+
 // Something a change did besides moving scrobbled track names: joining
 // versions, moving an album position, a playlist entry, an album name or a
 // credit, or storing a decision. `type` names the handler that can undo and

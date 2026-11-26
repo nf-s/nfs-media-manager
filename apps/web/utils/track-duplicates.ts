@@ -1,8 +1,10 @@
 import { LibraryChangeSchema } from '@repo/schemas/library-changes'
 import {
+  DuplicateReviewPageSchema,
   TrackDuplicateCountSchema,
   TrackDuplicateLayoutSchema,
   TrackDuplicatesSchema,
+  type DuplicateReviewQuery,
   type TrackDuplicateGroup,
   type TrackDuplicateLayoutGroup,
   type TrackDuplicates,
@@ -35,6 +37,37 @@ export const trackDuplicateLayoutKey = (query: TrackMatchDiagnosticsState) => [
   'layout',
   query,
 ]
+
+export type DuplicateReviewFilters = Omit<DuplicateReviewQuery, 'page' | 'size'>
+export const defaultDuplicateReviewFilters: DuplicateReviewFilters = {
+  decision: 'applied',
+}
+export const duplicateReviewPageSize = 25
+
+export const duplicateReviewKey = (filters: DuplicateReviewFilters) => [
+  'tracks',
+  'duplicates',
+  'review',
+  filters,
+]
+
+export function loadDuplicateReview(
+  apiBaseUrl: string,
+  { kind, decision, confidence, q, page, size }: DuplicateReviewQuery,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  if (kind) params.set('kind', kind)
+  if (decision) params.set('decision', decision)
+  if (confidence) params.set('confidence', confidence)
+  if (q) params.set('q', q)
+  return fetchApiData(
+    apiBaseUrl,
+    `/api/v1/tracks/duplicates/review?${params}`,
+    DuplicateReviewPageSchema,
+    { signal },
+  )
+}
 
 /** The group an open track is in. */
 export const trackDuplicatesKey = (trackId: string) => [

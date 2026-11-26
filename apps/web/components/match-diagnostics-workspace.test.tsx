@@ -21,11 +21,15 @@ import {
 } from '@/utils/match-diagnostics'
 import { browseFacetOptions } from '@/utils/browse-facets'
 import {
+  defaultDuplicateReviewFilters,
+  duplicateReviewKey,
+  loadDuplicateReview,
   loadTrackDuplicateLayout,
   trackDuplicateCountKey,
   trackDuplicateLayoutKey,
 } from '@/utils/track-duplicates'
 import { TrackListItemSchema } from '@repo/schemas/tracks'
+import { DuplicateReviewPageSchema } from '@repo/schemas/track-duplicates'
 import type { LibraryView } from '@/utils/media-scope'
 import type { RowSelection } from './merge-bar'
 import { ConfigContext } from './providers'
@@ -815,6 +819,109 @@ test('the Possible duplicates toggle leads the Tracks Matches toolbar with the g
   assert.match(building, /<\/svg>Possible duplicates<\/button>/)
 })
 
+const savedReview = DuplicateReviewPageSchema.parse({
+  review: {
+    id: 'fixture-review',
+    reviewedAt: '2026-11-26T12:00:00.000Z',
+    pairCount: 15,
+    mergeCount: 2,
+  },
+  items: [
+    {
+      kind: 'album',
+      leftId: 'album-a',
+      leftTitle: 'Glass Tides (Remastered)',
+      rightId: 'album-b',
+      rightTitle: 'Glass Tides (Deluxe)',
+      targetId: 'album-c',
+      targetTitle: 'Glass Tides',
+      changeId: 'change-a',
+      decision: 'applied',
+      confidence: 'high',
+      reason: 'Same release family',
+      evidence: ['The track lists matched.'],
+      details: {
+        leftCredits: 'Fixture Quartet',
+        leftTrackCount: 12,
+        rightTrackCount: 12,
+      },
+      undone: true,
+    },
+  ],
+  page: 1,
+  size: 25,
+  totalCount: 4,
+  pageCount: 1,
+})
+
+test('Possible duplicates shows the saved review date and distinct merge count even with no live suggestions', async () => {
+  const seed = (client: QueryClient) =>
+    client.setQueryData(
+      [...duplicateReviewKey(defaultDuplicateReviewFilters), 1],
+      savedReview,
+    )
+  const params = new URLSearchParams({ duplicates: 'true' })
+  const suggestions = await render('track', emptyPage, params, seed)
+  assert.match(
+    suggestions,
+    /Reviewed <time[^>]*>2026-11-26<\/time> · 2 merges applied/,
+  )
+  assert.match(suggestions, /View review/)
+  assert.match(suggestions, /No possible duplicates/)
+  assert.doesNotMatch(suggestions, /Glass Tides/)
+  params.set('duplicateReview', 'true')
+  const review = await render('track', emptyPage, params, seed)
+  assert.match(review, /Back to suggestions/)
+  assert.match(
+    review,
+    /aria-label="Search reviewed pairs" placeholder="Search names or artists"/,
+  )
+  assert.match(review, /<option value="applied" selected="">Applied<\/option>/)
+  assert.match(review, /Already grouped/)
+  assert.match(review, /All record types/)
+  assert.match(review, /All confidence levels/)
+  assert.match(review, /4 reviewed pairs/)
+  assert.match(review, /Applied · Undone/)
+  assert.match(review, /Glass Tides \(Remastered\)/)
+  assert.match(review, /Glass Tides \(Deluxe\)/)
+  assert.match(review, /title="Glass Tides \(Remastered\) by Fixture Quartet"/)
+  assert.match(review, /High confidence/)
+  assert.match(review, /Same release family/)
+  assert.match(review, /The track lists matched/)
+  assert.match(review, /Left track count<\/dt><dd>12/)
+  assert.match(review, /href="\/albums\/album-c\?tab=sources"/)
+  assert.match(review, /href="\/albums\/changes"/)
+  assert.doesNotMatch(
+    await render('track', emptyPage, new URLSearchParams(), seed),
+    /View review|Glass Tides/,
+  )
+})
+
+test('saved review search, filters and pagination are sent to the review API', async (t) => {
+  const requests: URL[] = []
+  t.mock.method(globalThis, 'fetch', async (input: string) => {
+    requests.push(new URL(input))
+    return Response.json({ statusCode: 200, message: 'OK', data: savedReview })
+  })
+  await loadDuplicateReview('http://example.test', {
+    kind: 'artist',
+    decision: 'held',
+    confidence: 'medium',
+    q: 'Glass & Tides',
+    page: 3,
+    size: 25,
+  })
+  assert.equal(requests[0]?.pathname, '/api/v1/tracks/duplicates/review')
+  assert.deepEqual(Object.fromEntries(requests[0]?.searchParams ?? []), {
+    kind: 'artist',
+    decision: 'held',
+    confidence: 'medium',
+    q: 'Glass & Tides',
+    page: '3',
+    size: '25',
+  })
+})
+
 test('Possible duplicates draws a group row above the first row of each group: the details behind an icon, and what speaks against merging', async () => {
   const params = new URLSearchParams({ duplicates: 'true' })
   const page = MatchDiagnosticsPageSchema.parse({
@@ -855,6 +962,11 @@ test('Possible duplicates draws a group row above the first row of each group: t
               null,
             ),
             cautions: [{ code: 'version', words: ['Demo'] }],
+            reviewSummary: {
+              pairCount: 1,
+              decision: 'held',
+              confidence: 'low',
+            },
           },
         ],
       },
@@ -899,6 +1011,7 @@ test('Possible duplicates draws a group row above the first row of each group: t
     /<span class="ds-group-evidence" title="Against merging: “Demo” is in some titles only">Against merging: “Demo” is in some titles only<\/span><\/span><\/td><\/tr>$/,
   )
   assert.match(unsure, /<div>Same title and artist<\/div>/)
+  assert.match(unsure, /1 reviewed pair · Held · Low confidence/)
   assert.doesNotMatch(unsure, /Merge keeps/)
   // The bar for the result of Merge or Keep separate waits under the table.
   assert.match(

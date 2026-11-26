@@ -43,6 +43,7 @@ import {
   interactiveTrackMergeAdapter,
   trackMergeAdapter,
 } from './track-merge-review'
+import { TrackDuplicateReviewedPairs } from './track-duplicate-review'
 
 type DuplicateMembers = Pick<TrackDuplicateGroup, 'memberIds'>
 
@@ -208,7 +209,7 @@ export function TrackDuplicateGroupRow({
 }: {
   group: Pick<
     TrackDuplicateGroup,
-    'memberIds' | 'evidence' | 'merge' | 'cautions'
+    'id' | 'memberIds' | 'evidence' | 'merge' | 'cautions' | 'reviewSummary'
   >
   colSpan: number
   rowIndex?: number
@@ -264,6 +265,7 @@ export function TrackDuplicateGroupRow({
               <div>Select rows of the group to merge only those.</div>
             )}
           </SecondaryCellDetails>
+          <TrackDuplicateReviewedPairs group={group} />
         </TableGroupActions>
       </TableCell>
     </TableRow>

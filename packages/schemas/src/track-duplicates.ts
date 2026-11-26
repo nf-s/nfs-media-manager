@@ -1,7 +1,76 @@
 import { z } from 'zod'
-import { CreatorIdSchema } from './common'
-import { TrackMergeCautionSchema } from './library-changes'
+import {
+  CreatorIdSchema,
+  JsonValueSchema,
+  PaginationQuerySchema,
+} from './common'
+import {
+  LibraryChangeKindSchema,
+  TrackMergeCautionSchema,
+} from './library-changes'
 import { TrackMatchIdSchema } from './tracks'
+
+export const DuplicateReviewConfidenceSchema = z.enum([
+  'high',
+  'medium',
+  'low',
+  'excluded',
+])
+export const DuplicateReviewDecisionSchema = z.enum([
+  'applied',
+  'held',
+  'grouped',
+])
+
+export const DuplicateReviewQuerySchema = PaginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+  kind: LibraryChangeKindSchema.optional(),
+  decision: DuplicateReviewDecisionSchema.optional(),
+  confidence: DuplicateReviewConfidenceSchema.optional(),
+  size: PaginationQuerySchema.shape.size.default(25),
+})
+export type DuplicateReviewQuery = z.infer<typeof DuplicateReviewQuerySchema>
+
+export const DuplicateReviewPairSchema = z.object({
+  kind: LibraryChangeKindSchema,
+  leftId: z.string(),
+  rightId: z.string(),
+  leftTitle: z.string(),
+  rightTitle: z.string(),
+  confidence: DuplicateReviewConfidenceSchema,
+  decision: DuplicateReviewDecisionSchema,
+  evidence: z.array(z.string()),
+  details: z.record(z.string(), JsonValueSchema),
+  reason: z.string().nullable(),
+  targetId: z.string().nullable(),
+  targetTitle: z.string().nullable(),
+  changeId: z.string().nullable(),
+  undone: z.boolean(),
+})
+export type DuplicateReviewPair = z.infer<typeof DuplicateReviewPairSchema>
+
+export const DuplicateReviewGroupSummarySchema = z.object({
+  pairCount: z.number().int().positive(),
+  confidence: DuplicateReviewConfidenceSchema.nullable(),
+  decision: DuplicateReviewDecisionSchema.nullable(),
+})
+
+export const DuplicateReviewPageSchema = z.object({
+  review: z
+    .object({
+      id: z.string(),
+      reviewedAt: z.iso.datetime({ offset: true }),
+      pairCount: z.number().int().nonnegative(),
+      mergeCount: z.number().int().nonnegative(),
+    })
+    .nullable(),
+  items: z.array(DuplicateReviewPairSchema),
+  page: z.number().int().positive(),
+  size: z.number().int().positive(),
+  totalCount: z.number().int().nonnegative(),
+  pageCount: z.number().int().nonnegative(),
+})
+export type DuplicateReviewPage = z.infer<typeof DuplicateReviewPageSchema>
 
 /**
  * Why tracks were found as possible duplicates. `link`: a scrobbled name one
@@ -45,6 +114,10 @@ export const TrackDuplicateGroupSchema = z.object({
   memberIds: z.array(z.string()),
   /** Null when a member can no longer be read. */
   merge: TrackDuplicateMergeSchema.nullable(),
+  /** A count of reviewed pairs and any shared confidence and decision. */
+  reviewSummary: DuplicateReviewGroupSummarySchema.optional(),
+  /** Historical decisions for pairs in this group, returned on track details. */
+  reviewPairs: z.array(DuplicateReviewPairSchema).optional(),
 })
 export type TrackDuplicateGroup = z.infer<typeof TrackDuplicateGroupSchema>
 

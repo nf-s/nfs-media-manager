@@ -254,6 +254,10 @@ An album's track list has the same selection column and bar. Under it, **Scrobbl
 
 ### Possible duplicates and Keep separate
 
+When a duplicate review has been saved, **Possible duplicates** shows its date and the number of merges recorded in History. Open the review to see the tracks, albums and artists involved, the record kept, the confidence of the match and the evidence for the decision. One merge can cover several pairs. A merge that was later undone keeps its original entry in the review.
+
+The saved review also identifies pairs that were held or were already grouped in Browse. If a current suggestion contains a reviewed pair, its group row opens the evidence for those two records. Other tracks in the same suggestion may have a different outcome or may have arrived since the review.
+
 **Possible duplicates** in the **Tracks → Matches** toolbar shows only the tracks that look like the same track, in groups, the most played group first. Its count is the number of groups; while Matches is held to one artist, those with that artist's tracks. A group is usually a library track beside a Last.fm record of the same song under another spelling, or the same song on two releases.
 
 Each group starts with a row holding **Merge**, **Keep separate** and an info icon. The icon opens what Merge does and what put the tracks together: for example Merge keeps “Night Drive”: 1 Last.fm record is removed and its plays and names move to it, then Same title and artist. When something speaks against merging, the row says so after the icon, such as Against merging: lengths differ by 0:42; a group with nothing against it has no text. The menu beside the toggle lists **All groups**, only those with **Nothing against merging**, or only those with **Something against merging**.

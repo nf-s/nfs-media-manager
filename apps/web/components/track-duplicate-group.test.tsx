@@ -230,6 +230,36 @@ test('only the pressed group’s actions are off, and its row says what is happe
   assert.match(failed, line('The tracks could not be merged\\.'))
 })
 
+test('a review in a larger suggestion labels only the saved pair', async () => {
+  const { TrackDuplicateGroupRow } = await import('./track-duplicate-group')
+  const html = render(
+    new QueryClient(),
+    <table>
+      <tbody>
+        <TrackDuplicateGroupRow
+          group={{
+            ...group,
+            memberIds: ['track-a', 'track-b', 'track-c'],
+            reviewSummary: {
+              pairCount: 1,
+              confidence: 'medium',
+              decision: 'held',
+            },
+          }}
+          colSpan={4}
+          actions={{
+            merge: async () => undefined,
+            keepSeparate: async () => undefined,
+            status: () => undefined,
+          }}
+        />
+      </tbody>
+    </table>,
+  )
+  assert.match(html, /1 reviewed pair · Held · Medium confidence/)
+  assert.doesNotMatch(html, /Left record|Right record/)
+})
+
 test('with rows of the group selected, Merge says how many it joins; one alone cannot be merged', async () => {
   const { TrackDuplicateGroupRow, selectedGroupTracks } =
     await import('./track-duplicate-group')
