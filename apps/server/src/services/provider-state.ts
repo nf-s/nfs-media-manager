@@ -491,11 +491,11 @@ async function readActiveSpotifyAlbumIdentity(
   }
 }
 
-function legacySpotifyReceiptId(payload: JsonValue) {
+function legacySpotifyRelease(payload: JsonValue) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return
   const release = payload.spotify ?? payload
   if (release && typeof release === 'object' && !Array.isArray(release))
-    return SpotifyIdSchema.safeParse(release.id).data
+    return release
 }
 
 async function legacyAlbumProjection(
@@ -507,7 +507,7 @@ async function legacyAlbumProjection(
   const spotifyLegacy = input.provider === 'spotify'
   if (!spotifyLegacy && !input.legacySpotifyAlbumId) return 'apply'
   const releaseId = spotifyLegacy
-    ? legacySpotifyReceiptId(input.payload)
+    ? SpotifyIdSchema.safeParse(legacySpotifyRelease(input.payload)?.id).data
     : input.legacySpotifyAlbumId
   if (!releaseId) return 'history'
   // The raw receipt and the saved edition must agree before projecting either.
@@ -535,6 +535,24 @@ async function legacyAlbumProjection(
       ),
   })
   if (!modern) return 'apply'
+  if (spotifyLegacy && input.normalized.tracks.length) {
+    const receipt = legacySpotifyAlbumTracklist(
+      legacySpotifyRelease(input.payload),
+    )
+    if (receipt) {
+      // A modern metadata-only read leaves the same edition's tracklist open.
+      const nativeList = await database.execute(sql`
+        select 1 where exists (
+          select 1 from provider_snapshot where media_item_id = ${input.mediaItemId}
+            and provider = 'spotify' and source not like 'legacy%'
+            and jsonb_typeof(normalized_data->'tracks'->0) = 'object'
+        ) or exists (
+          select 1 from track t join library_track l on l.media_item_id = t.track_media_item_id
+          where t.album_media_item_id = ${input.mediaItemId} and l.spotify_track_id is not null
+        )`)
+      if (!nativeList.rows.length) return { tracks: receipt.tracks }
+    }
+  }
   return spotifyLegacy ? 'playlists' : 'enrich'
 }
 
@@ -667,13 +685,20 @@ export async function applyProviderResultInTransaction(
 
     latestSnapshotId = snapshotId
   }
-  if (projection === 'playlists')
+  if (projection === 'playlists' || typeof projection === 'object') {
     await upsertPlaylistMemberships(
       database,
       input.mediaItemId,
       input.normalized.playlists,
     )
-  if (projection === 'history' || projection === 'playlists') return
+    if (typeof projection === 'object')
+      await replaceAlbumTracks(database, input.mediaItemId, projection.tracks, {
+        provider: input.provider,
+        snapshotId: previousImport?.id ?? latestSnapshotId ?? undefined,
+      })
+    return
+  }
+  if (projection === 'history') return
 
   const preserveSpotify = projection === 'enrich'
   if (

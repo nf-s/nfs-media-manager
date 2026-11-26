@@ -782,6 +782,32 @@ describe('album tracklist provider priority', () => {
     expect(retained?.payload).toEqual(partial.payload)
   })
 
+  it('fills a missing modern tracklist from the same saved edition and retains newer album metadata', async () => {
+    const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
+    await album(albumId)
+    const partial = normalizeSpotifyAlbum({
+      ...rawSpotifyAlbum,
+      name: 'Current title',
+      total_tracks: 2,
+      tracks: { ...rawSpotifyAlbum.tracks, total: 2, next: 'next-page' },
+    })
+    await applyAlbumProvider('spotify', 'album-open', partial)
+    await applyAlbumProvider('discogs', 'scrape-job', discogsResult)
+    await applyAlbumProvider(
+      'spotify',
+      'legacy-import',
+      normalizeSpotifyAlbum(rawSpotifyAlbum),
+    )
+    expect(await albumTracks()).toEqual([
+      { externalId: savedTrack, title: 'Fixture Song (Concert)' },
+    ])
+    const current = await databaseClient.query.providerCurrentState.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.mediaItemId, albumId), eq(table.provider, 'spotify')),
+    })
+    expect(current?.payload).toMatchObject({ name: 'Current title' })
+  })
+
   it('keeps the modern Spotify album through the raw and cleaned legacy import stages', async () => {
     const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
     const { runLegacyImport } = await import('../scripts/import-legacy')

@@ -105,7 +105,7 @@ Once Spotify supplies a complete album track list, subsequent provider results p
 
 Legacy Spotify imports use the full saved page ordered by disc and track number, with the native recording IDs, durations and artist credits. An older raw Spotify receipt can protect the library track list when its normalized list is empty or partial. The receipt must have a complete page, unique positions and valid recording IDs, and its release ID must match the album's unambiguous, current Spotify identity.
 
-Reimporting a legacy library keeps conflicting editions in provider history. On the current edition, a newer Spotify result supplies the album metadata, credits and track list. Legacy imports can still add independent provider evidence and playlist memberships for that edition.
+Reimporting a legacy library keeps conflicting editions in provider history. On the current edition, a newer Spotify result retains priority for album metadata and the track list it supplied. If that result contained only album metadata and there are no native recordings on the album list, a complete legacy receipt for the same edition can supply its tracks. Legacy imports can still add independent provider evidence and playlist memberships for that edition.
 
 A raw legacy album requires its Spotify map key or explicit saved Spotify ID to identify the embedded release. An opaque map key is accepted when the explicit saved ID matches. Rows with conflicting Spotify IDs are skipped.
 
