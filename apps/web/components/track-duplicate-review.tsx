@@ -210,7 +210,10 @@ function ReviewPairEvidence({ pair }: { pair: DuplicateReviewPair }) {
       />
       {changeId && (
         <Button size="xs" variant="link" asChild>
-          <Link href={libraryChangesPaths[kind]} prefetch={false}>
+          <Link
+            href={{ pathname: libraryChangesPaths[kind], query: { changeId } }}
+            prefetch={false}
+          >
             {kindFilterLabels[kind]} History
           </Link>
         </Button>

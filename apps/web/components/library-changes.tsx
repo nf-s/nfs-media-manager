@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import {
   LibraryChangeActorSchema,
+  LibraryChangeParamsSchema,
   type LibraryChange,
   type LibraryChangeActor,
   type LibraryChangeKind,
@@ -221,15 +223,22 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
   const { apiBaseUrl } = useConfig()
   const inspector = useDetailInspector()
   const params = useSearchParams()
+  const changeId = LibraryChangeParamsSchema.shape.id.safeParse(
+    params.get('changeId'),
+  ).data
   const parsedActor = LibraryChangeActorSchema.safeParse(params.get('actor'))
-  const actor = parsedActor.success ? parsedActor.data : undefined
+  const actor = changeId ? undefined : parsedActor.data
   const path = libraryChangesPaths[kind]
   const query = useVirtualTable({
-    queryKey: libraryChangesKey({ kind, actor, size: pageSize }),
+    queryKey: libraryChangesKey({ kind, actor, changeId, size: pageSize }),
     pageSize,
     rowHeight: twoLineRowHeight,
     loadPage: (page, size, signal) =>
-      loadLibraryChanges(apiBaseUrl, { page, size, kind, actor }, signal),
+      loadLibraryChanges(
+        apiBaseUrl,
+        { page, size, kind, actor, changeId },
+        signal,
+      ),
   })
   const table = useTableColumns('library-changes', libraryChangeColumns)
   const shown = libraryChangeColumns
@@ -253,12 +262,20 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
       <PageHead title={title} />
       <SecondaryTableToolbar
         filters={
-          <Segmented
-            label="Changed by"
-            value={actor ?? 'all'}
-            options={actorOptions}
-            onChange={changeActor}
-          />
+          changeId ? (
+            <Button asChild>
+              <Link href={path} prefetch={false}>
+                All changes
+              </Link>
+            </Button>
+          ) : (
+            <Segmented
+              label="Changed by"
+              value={actor ?? 'all'}
+              options={actorOptions}
+              onChange={changeActor}
+            />
+          )
         }
         count={
           query.hasTotal
@@ -314,7 +331,9 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
           </TableHeader>
           <TableBody>
             {query.hasTotal && !query.total && (
-              <TableState colSpan={colSpan}>No changes</TableState>
+              <TableState colSpan={colSpan}>
+                {changeId ? 'Change not found.' : 'No changes'}
+              </TableState>
             )}
             <SecondaryVirtualRows
               window={query}

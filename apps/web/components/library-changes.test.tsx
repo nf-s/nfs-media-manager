@@ -330,6 +330,38 @@ test('History reads the actor filter from the URL', () => {
   assert.match(html, />2 changes</)
 })
 
+test('a saved change opens its exact History row with Undo and a link to all changes', () => {
+  const html = renderWith(
+    <LibraryChanges kind="album" />,
+    (client) => {
+      page('album', [{ ...albumMerge, id: 'other-change' }])(client)
+      client.setQueryData(
+        [
+          ...libraryChangesKey({
+            kind: 'album',
+            changeId: albumMerge.id,
+            size: 50,
+          }),
+          1,
+        ],
+        {
+          page: 1,
+          size: 50,
+          totalCount: 1,
+          pageCount: 1,
+          items: [albumMerge],
+        },
+      )
+    },
+    `changeId=${albumMerge.id}&actor=owner`,
+  )
+  assert.match(html, /href="\/albums\/changes">All changes<\/a>/)
+  assert.doesNotMatch(html, /Changed by/)
+  assert.match(html, />1 change</)
+  assert.match(html, /Merged “Night Cities \(Deluxe\)” into “Night Cities”/)
+  assert.match(html, /<button[^>]*>Undo<\/button>/)
+})
+
 test('History with no changes says so', () => {
   const html = renderWith(<LibraryChanges kind="artist" />, page('artist', []))
   assert.match(html, /No changes/)

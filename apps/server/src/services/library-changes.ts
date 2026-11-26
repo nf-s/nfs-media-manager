@@ -826,12 +826,14 @@ export async function listLibraryChanges({
   size,
   kind,
   actor,
+  changeId,
   recordId,
   batchId,
 }: LibraryChangeListQuery): Promise<LibraryChangePage> {
   const where = and(
     eq(libraryChange.kind, kind),
     actor ? eq(libraryChange.actor, actor) : undefined,
+    changeId ? eq(libraryChange.id, changeId) : undefined,
     batchId ? eq(libraryChange.batchId, batchId) : undefined,
     recordId
       ? sql`(exists (select 1 from library_change_move m

@@ -77,6 +77,8 @@ export type LibraryChangeQuery = {
   /** The library the changes belong to. The server lists tracks when omitted. */
   kind?: LibraryChangeKind
   actor?: LibraryChangeActor
+  /** The exact journal entry. */
+  changeId?: string
   /** Only changes that moved something into or out of this record. */
   recordId?: string
   /** Only the changes of one automatic run. */
@@ -90,7 +92,7 @@ export const libraryChangesKey = (query: LibraryChangeQuery = {}) => [
 
 export function loadLibraryChanges(
   apiBaseUrl: string,
-  { page, size, kind, actor, recordId, batchId }: LibraryChangeQuery,
+  { page, size, kind, actor, changeId, recordId, batchId }: LibraryChangeQuery,
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams()
@@ -98,6 +100,7 @@ export function loadLibraryChanges(
   if (size !== undefined) params.set('size', String(size))
   if (kind) params.set('kind', kind)
   if (actor) params.set('actor', actor)
+  if (changeId) params.set('changeId', changeId)
   if (recordId) params.set('recordId', recordId)
   if (batchId) params.set('batchId', batchId)
   return fetchApiData(

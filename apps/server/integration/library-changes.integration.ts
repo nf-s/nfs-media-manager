@@ -693,3 +693,27 @@ it('lists the changes that moved a name into or out of a track', async () => {
   ])
   expect((await changes()).totalCount).toBe(2)
 })
+
+it('finds one exact merge in History even after a newer change', async () => {
+  const merged = await mergeTracks({
+    trackIds: [misspelt.id, spotifyTrack],
+    reviewed: false,
+  })
+  await mergeTracks({ trackIds: [demo.id, liveTrack], reviewed: true })
+  const query = (kind: 'track' | 'album', changeId: string) =>
+    listLibraryChanges(LibraryChangeListQuerySchema.parse({ kind, changeId }))
+
+  expect(await query('track', merged.id)).toMatchObject({
+    totalCount: 1,
+    pageCount: 1,
+    items: [{ id: merged.id, canUndo: true }],
+  })
+  await undoLibraryChange(merged.id)
+  expect(await query('track', merged.id)).toMatchObject({
+    items: [{ id: merged.id, canRedo: true }],
+  })
+  expect(await query('album', merged.id)).toMatchObject({
+    totalCount: 0,
+    items: [],
+  })
+})

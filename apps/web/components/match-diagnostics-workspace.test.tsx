@@ -890,7 +890,7 @@ test('Possible duplicates shows the saved review date and distinct merge count e
   assert.match(review, /The track lists matched/)
   assert.match(review, /Left track count<\/dt><dd>12/)
   assert.match(review, /href="\/albums\/album-c\?tab=sources"/)
-  assert.match(review, /href="\/albums\/changes"/)
+  assert.match(review, /href="\/albums\/changes\?changeId=change-a"/)
   assert.doesNotMatch(
     await render('track', emptyPage, new URLSearchParams(), seed),
     /View review|Glass Tides/,

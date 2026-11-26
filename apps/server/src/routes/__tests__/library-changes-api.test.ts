@@ -135,6 +135,36 @@ describe('library changes API', () => {
     })
   })
 
+  it('accepts an exact journal entry ID and rejects an oversized ID', async () => {
+    mockAppSession(true)
+    listLibraryChanges.mockResolvedValue({
+      page: 1,
+      size: 24,
+      totalCount: 1,
+      pageCount: 1,
+      items: [{ ...change, kind: 'album' }],
+    })
+    const app = await loadApp()
+    const response = await app.request(
+      '/api/v1/library-changes?kind=album&changeId=change-1',
+    )
+    expect(response.status).toBe(200)
+    expect(listLibraryChanges).toHaveBeenCalledExactlyOnceWith({
+      page: 1,
+      size: 24,
+      kind: 'album',
+      changeId: 'change-1',
+    })
+    expect(await response.json()).toMatchObject({
+      data: { items: [{ id: 'change-1', canUndo: true }] },
+    })
+    expect(
+      (await app.request(`/api/v1/library-changes?changeId=${'x'.repeat(101)}`))
+        .status,
+    ).toBe(422)
+    expect(listLibraryChanges).toHaveBeenCalledTimes(1)
+  })
+
   it('validates a merge selection before planning or merging', async () => {
     mockAppSession(true)
     const app = await loadApp()

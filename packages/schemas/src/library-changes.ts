@@ -109,6 +109,8 @@ export const LibraryChangeParamsSchema = z.object({
 export const LibraryChangeListQuerySchema = PaginationQuerySchema.extend({
   kind: LibraryChangeKindSchema.default('track'),
   actor: LibraryChangeActorSchema.optional(),
+  /** The exact journal entry linked from a saved review. */
+  changeId: LibraryChangeParamsSchema.shape.id.optional(),
   /** Only changes that moved something into or out of this record. */
   recordId: TrackMatchIdSchema.optional(),
   /** Only the changes of one automatic run. */
