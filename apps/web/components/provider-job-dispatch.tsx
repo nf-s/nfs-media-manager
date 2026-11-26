@@ -167,10 +167,10 @@ export function ProviderDispatchActions({
   const held = data.paused || data.stopped
   return (
     <>
-      {(!compact || held) && (
+      {(!compact || held || update.variables === 'resume') && (
         <Button
           size={size}
-          disabled={disabled || waitingToResume}
+          disabled={disabled || waitingToResume || (compact && !held)}
           feedback={
             update.variables === 'resume'
               ? mutationFeedback(update, {
@@ -299,12 +299,8 @@ export function ProviderDispatchReview({
         </div>
       )}
       {update.isError && <p role="alert">{update.error.message}</p>}
-      {update.isSuccess && (
-        <p role="status">
-          {update.data.paused
-            ? 'Queue paused.'
-            : 'Queue restart requested. Provider limits remain enforced.'}
-        </p>
+      {update.isSuccess && !update.data.paused && (
+        <p>Provider limits remain enforced.</p>
       )}
     </>
   )
@@ -531,11 +527,16 @@ export function ProviderWorkerPairing({
             }
             confirmLabel={worker.paired ? 'Replace pairing' : 'Pair worker'}
             disabled={disabled}
-            feedback={mutationFeedback(request, {
-              pending: 'Pairing…',
-              success: 'Token ready',
-              error: 'Pairing unconfirmed',
-            })}
+            feedback={
+              mutationFeedback(request, {
+                pending: 'Pairing…',
+                success: 'Token ready',
+                error: 'Pairing unconfirmed',
+              }) ??
+              (downloadStarted
+                ? { phase: 'done', label: 'Token download started' }
+                : undefined)
+            }
             onConfirm={() => {
               if (!disabled) request.mutate()
             }}
@@ -547,7 +548,6 @@ export function ProviderWorkerPairing({
           )}
         </span>
       )}
-      {downloadStarted && <span role="status">Token download started</span>}
       {request.isError && <p role="alert">{request.error.message}</p>}
     </>
   )

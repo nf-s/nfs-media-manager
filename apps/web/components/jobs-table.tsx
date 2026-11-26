@@ -859,9 +859,10 @@ export function JobsTable({ provider }: { provider?: string }) {
                   View retry jobs
                 </Link>
               )}
-              {retryResult.skipped > 0 && (
-                <span>{formatCount(retryResult.skipped)} skipped</span>
-              )}
+              {retryResult.skipped > 0 &&
+                (retryProgress || !retryResult.queued) && (
+                  <span>{formatCount(retryResult.skipped)} skipped</span>
+                )}
               {retryResult.warnings.map((warning) => (
                 <span className="block" key={warning}>
                   {warning}
@@ -975,7 +976,7 @@ export function JobsTable({ provider }: { provider?: string }) {
         <ToolbarCount>{countLabel}</ToolbarCount>
         {columns.controls && <ToolbarEnd>{columns.controls}</ToolbarEnd>}
       </Toolbar>
-      {jobs.isError && jobs.hasTotal && (
+      {jobs.isError && jobs.total > 0 && (
         <div className="ops-notice">
           <Notice
             tone="danger"

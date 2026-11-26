@@ -281,12 +281,16 @@ export function BrowseFilterPill({
           }
           aria-live={removeFeedback ? 'polite' : undefined}
           aria-busy={removeFeedback?.phase === 'pending' || undefined}
+          data-feedback={removeFeedback?.phase}
+          data-icon=""
           disabled={removeDisabled}
-          title={removeLabel}
+          title={removeFeedback?.label ?? removeLabel}
           onClick={onRemove}
         >
           {removeFeedback ? (
-            <ButtonFeedbackLabel feedback={removeFeedback} />
+            <ButtonFeedbackLabel feedback={removeFeedback}>
+              <X className="ds-i" aria-hidden />
+            </ButtonFeedbackLabel>
           ) : (
             <X className="ds-i" aria-hidden />
           )}

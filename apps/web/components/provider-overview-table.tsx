@@ -206,7 +206,7 @@ function ProviderOverviewRow({
     cooldown.clear.isSuccess ||
     dispatch.reviewing !== null ||
     dispatch.update.isError ||
-    dispatch.update.isSuccess ||
+    (dispatch.update.isSuccess && !dispatch.update.data.paused) ||
     dispatch.status.isError
   return (
     <>

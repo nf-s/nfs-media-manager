@@ -73,7 +73,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
       ),
     onSuccess: (id, externalId) => {
       rememberManualMediaAddition(client, 'album', externalId, id)
-      if (name) announceAddition('album', name)
+      if (name) announceAddition('album', name, id)
       void invalidateManualMediaAddition(client, 'album')
     },
   })
@@ -104,6 +104,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
         kind="album"
         saved={saved}
         feedback={feedback}
+        receiptId={receipt?.committedId}
         onAdd={() => {
           if (canAdd && exactId && !libraryAdditionUnavailable(client, target))
             add.mutate(exactId)

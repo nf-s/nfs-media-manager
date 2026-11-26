@@ -16,7 +16,6 @@ import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue, ProviderMark } from '@repo/ui/components/ds/pill'
 import {
   Button,
-  ButtonFeedbackLabel,
   mutationFeedback,
   type ButtonFeedback,
 } from '@repo/ui/components/ui/button'
@@ -348,19 +347,22 @@ function VersionRow({
       <TableCell>
         <input
           type="radio"
-          className="ds-check"
+          className={
+            shownFeedback?.phase === 'pending'
+              ? 'ds-check motion-safe:animate-pulse'
+              : 'ds-check'
+          }
           name={radioName}
           aria-label={`Show as ${label}`}
+          title={shownFeedback?.label}
           checked={version.shown}
           disabled={pending || !canChange}
           aria-busy={shownFeedback?.phase === 'pending' || undefined}
           onChange={() => onChange('shown', version.id)}
         />
-        {shownFeedback && (
-          <span className="ds-cell-id" role="status">
-            <ButtonFeedbackLabel feedback={shownFeedback} />
-          </span>
-        )}
+        <span className="sr-only" role="status">
+          {shownFeedback?.label}
+        </span>
       </TableCell>
       <TableCell align="end">
         {canChange && (
@@ -525,6 +527,34 @@ export function TrackRecordParts({
       }
     >
       <div className="data-stack">
+        <PartsTable
+          current={item.id}
+          versions={ordered}
+          names={names}
+          radioName={radioName}
+          canChange={canChange}
+          pending={pending}
+          feedback={(action, trackId) =>
+            version.variables?.action === action &&
+            version.variables.trackId === trackId
+              ? mutationFeedback(
+                  version,
+                  action === 'shown'
+                    ? {
+                        pending: 'Setting shown version…',
+                        success: 'Shown version saved',
+                        error: 'Could not set shown version',
+                      }
+                    : {
+                        pending: 'Separating…',
+                        success: 'Separated',
+                        error: 'Could not separate',
+                      },
+                )
+              : undefined
+          }
+          onChange={(action, trackId) => version.mutate({ action, trackId })}
+        />
         {change && (
           <Notice
             icon={
@@ -559,7 +589,6 @@ export function TrackRecordParts({
                 <Button
                   size="xs"
                   disabled={merge.pending}
-                  feedback={merge.feedback}
                   onClick={merge.retry}
                 >
                   Retry
@@ -570,34 +599,6 @@ export function TrackRecordParts({
             {error}
           </Notice>
         )}
-        <PartsTable
-          current={item.id}
-          versions={ordered}
-          names={names}
-          radioName={radioName}
-          canChange={canChange}
-          pending={pending}
-          feedback={(action, trackId) =>
-            version.variables?.action === action &&
-            version.variables.trackId === trackId
-              ? mutationFeedback(
-                  version,
-                  action === 'shown'
-                    ? {
-                        pending: 'Setting shown version…',
-                        success: 'Shown version saved',
-                        error: 'Could not set shown version',
-                      }
-                    : {
-                        pending: 'Separating…',
-                        success: 'Separated',
-                        error: 'Could not separate',
-                      },
-                )
-              : undefined
-          }
-          onChange={(action, trackId) => version.mutate({ action, trackId })}
-        />
       </div>
       {picking && (
         <TrackMergeWithDialog

@@ -239,6 +239,10 @@ function TrackTags({
 }) {
   const [editing, setEditing] = useState(false)
   const edits = useTrackTagEdits(item.id)
+  const editedTag =
+    edits.variables && 'name' in edits.variables
+      ? formatTagName(edits.variables.name)
+      : undefined
   const { own, unverified, removed } = item.tags
   const sources = (name: string) => (
     <MetadataSourceControl
@@ -287,6 +291,7 @@ function TrackTags({
                     })
                   }
                   feedback={
+                    !edits.isSuccess &&
                     edits.variables?.kind === 'restore' &&
                     edits.variables.tagId === tag.id
                       ? edits.feedback
@@ -305,7 +310,21 @@ function TrackTags({
     <Section
       title="Track tags"
       aside={
-        <Button variant="link" size="xs" onClick={() => setEditing(!editing)}>
+        <Button
+          variant="link"
+          size="xs"
+          aria-label={editing ? 'Done editing tags' : 'Edit tags'}
+          feedback={edits.isSuccess ? edits.feedback : undefined}
+          title={
+            edits.isSuccess && editedTag && edits.feedback
+              ? `${edits.feedback.label} · ${editedTag}`
+              : undefined
+          }
+          onClick={() => {
+            if (edits.isSuccess) edits.reset()
+            setEditing(!editing)
+          }}
+        >
           {editing ? 'Done' : 'Edit tags'}
         </Button>
       }
@@ -319,6 +338,7 @@ function TrackTags({
                 removeLabel={`Remove ${formatTagName(tag.name)}`}
                 removeDisabled={edits.isPending}
                 removeFeedback={
+                  !edits.isSuccess &&
                   edits.variables?.kind === 'remove' &&
                   edits.variables.tagId === tag.id
                     ? edits.feedback

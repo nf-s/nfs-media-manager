@@ -1,6 +1,6 @@
 'use client'
 
-import { ReadButton } from '@/components/read-button'
+import { Skeleton } from '@repo/ui/components/ds/feedback'
 import { useCallback, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
@@ -63,7 +63,7 @@ export function useTrackRecordingVersions(
     items,
     needsPager,
     loading: query.isPending,
-    error: query.isError,
+    error: query.error,
     nextPage: query.data?.hasMore === true,
     page,
     rowCount: Math.max(1, items.length) + Number(needsPager),
@@ -128,19 +128,19 @@ export function RecordingVersionsStatus({
 }: {
   versions: ReturnType<typeof useTrackRecordingVersions>
 }) {
-  if (versions.loading) return <span role="status">Loading versions…</span>
+  if (versions.loading) return <Skeleton />
   if (versions.error)
     return (
       <span role="alert">
-        Could not load versions.{' '}
-        <ReadButton
+        {versions.error.message}{' '}
+        <Button
           type="button"
           variant="link"
           size="xs"
-          read={versions.retry}
+          onClick={() => void versions.retry()}
         >
           Retry
-        </ReadButton>
+        </Button>
       </span>
     )
   return <span role="status">No matching versions.</span>

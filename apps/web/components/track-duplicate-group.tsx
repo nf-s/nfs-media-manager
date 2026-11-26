@@ -65,22 +65,6 @@ export function describeTrackDuplicateProgress(
   return null
 }
 
-/** What is happening to one group, in its row. */
-export function describeTrackDuplicateStatus(item: MergeQueueItem) {
-  const merge = item.action === 'merge'
-  switch (item.status) {
-    case 'queued':
-    case 'running':
-      return merge ? 'Merging…' : 'Keeping separate…'
-    case 'review':
-      return 'Needs review'
-    case 'done':
-      return merge ? 'Merged' : 'Kept separate'
-    case 'failed':
-      return item.message
-  }
-}
-
 /**
  * Merge and Keep separate for groups of possible duplicates, and the last
  * change either made. Merge is the normal track merge of the whole group,
@@ -228,8 +212,8 @@ export function TrackDuplicateGroupRow({
       <TableCell colSpan={colSpan}>
         <TableGroupActions
           evidence={
-            item
-              ? describeTrackDuplicateStatus(item)
+            item?.status === 'failed'
+              ? item.message
               : describeTrackDuplicateCautions(group)
           }
         >

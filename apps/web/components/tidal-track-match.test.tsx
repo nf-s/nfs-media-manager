@@ -15,6 +15,7 @@ import {
   TidalTrackCandidates,
   TidalTrackMatchBody,
   TidalTrackMatchCell,
+  TidalTrackMatchJobStatus,
 } from './tidal-track-match'
 
 const createdAt = '2026-01-01T00:00:00.000Z'
@@ -140,6 +141,29 @@ test('a current match from an album job shows its TIDAL track', () => {
     />,
   )
   assert.match(html, /TIDAL track 800009 · 3:12 · Album track list/)
+})
+
+test('a match job link and its error detail can appear without repeating its status', () => {
+  const errorMessage = 'The provider did not return this recording.'
+  const failed = TidalTrackMatchJobSchema.parse({
+    ...job,
+    status: 'failed',
+    errorMessage,
+  })
+  const html = render(
+    <>
+      <TidalTrackMatchJobStatus job={failed} showStatus={false} />
+      <TidalTrackMatchBody
+        track={track}
+        review={status({ job: failed })}
+        upcs={new Set()}
+        showJob={false}
+      />
+    </>,
+  )
+  assert.match(html, /href="\/jobs\/example-job"[^>]*>View match job<\/a>/)
+  assert.equal(html.split(errorMessage).length - 1, 1)
+  assert.doesNotMatch(html, />Failed</)
 })
 
 test('candidates show version, album, type, date, duration and the library UPC', () => {

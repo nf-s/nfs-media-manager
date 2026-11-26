@@ -30,7 +30,6 @@ function listingSummary(listing: SpotifyArtistAlbumListing) {
     market,
     pagesSaved,
     releasesSeen,
-    retryAt,
     unavailableReason,
   } = listing
   const coverage =
@@ -39,19 +38,9 @@ function listingSummary(listing: SpotifyArtistAlbumListing) {
     one: 'release entry',
     other: 'release entries',
   })
-  if (completedAt) return `Complete for ${market} · ${coverage} · ${releases}`
-  if (retryAt)
-    return `Spotify is cooling down until ${formatDateTime(retryAt)} · ${coverage} · ${releases}`
   if (unavailableReason) return unavailableReason
-  if (job?.status === 'queued') return `Queued · ${coverage}`
-  if (job?.status === 'running')
-    return listing.artistUrl
-      ? `Fetching page ${pagesSaved + 1} · ${coverage} · ${releases}`
-      : 'Finding the Spotify artist match'
-  if (job?.status === 'failed')
-    return `Fetch stopped · ${coverage} · ${releases}`
-  if (job?.status === 'cancelled')
-    return `Fetch cancelled · ${coverage} · ${releases}`
+  if (completedAt) return market ? `${coverage} · Market ${market}` : coverage
+  if (job) return `${coverage} · ${releases}`
   return pagesSaved ? coverage : null
 }
 
@@ -282,9 +271,7 @@ export function ArtistAlbums({
                   }
                 >
                   {summary}
-                  {needsMatchReview
-                    ? ' · Review the Spotify artist match.'
-                    : ''}
+                  {needsMatchReview ? ' · Several Spotify artists match.' : ''}
                 </Notice>
               </div>
             )}

@@ -492,7 +492,6 @@ export default function FilmImportWorkflow({
           {currentRun && (
             <div className="sec-notices">
               <Notice>
-                {importRunFeedback(currentRun).label}.{' '}
                 <Link
                   href={scopedHref(
                     `/imports?runId=${encodeURIComponent(currentRun.id)}`,
@@ -501,18 +500,20 @@ export default function FilmImportWorkflow({
                 >
                   View import progress
                 </Link>
-                .{' '}
                 {jobs > 0 && (
-                  <Link
-                    href={scopedHref(
-                      `/jobs?batchId=${preview.data.id}`,
-                      'film',
-                    )}
-                  >
-                    View metadata jobs
-                  </Link>
-                )}{' '}
-                ·{' '}
+                  <>
+                    {' · '}
+                    <Link
+                      href={scopedHref(
+                        `/jobs?batchId=${preview.data.id}`,
+                        'film',
+                      )}
+                    >
+                      View metadata jobs
+                    </Link>
+                  </>
+                )}
+                {' · '}
                 <Link
                   href={`/films?filters=${encodeURIComponent(JSON.stringify([{ field: 'identification', value: 'Needs ID' }]))}`}
                 >

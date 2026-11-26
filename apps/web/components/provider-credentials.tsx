@@ -76,6 +76,8 @@ export default function ProviderCredentials({
     },
   })
   const fields = secrets.data?.fields ?? []
+  const lastVerifiedAt =
+    test.data?.lastVerifiedAt ?? secrets.data?.lastVerifiedAt
   const checkBlocked =
     provider.safety?.halted || !!provider.safety?.cooldownUntil
   return (
@@ -185,7 +187,6 @@ export default function ProviderCredentials({
             )}
           </span>
         )}
-        {save.isSuccess && <p role="status">Saved.</p>}
         {(save.isError || test.isError || secrets.isError) && (
           <p role="alert">
             Request failed. Check the notification for details.
@@ -193,12 +194,12 @@ export default function ProviderCredentials({
         )}
         {provider.supportsTestConnection ? (
           <p className="ds-help" role="status">
-            {test.data?.lastVerifiedStatus ??
-              secrets.data?.lastVerifiedStatus ??
-              'Not checked'}
-            {secrets.data?.lastVerifiedAt
-              ? ` · ${formatDateTime(secrets.data.lastVerifiedAt)}`
-              : ''}
+            {test.data?.lastVerifiedStatus === 'ok'
+              ? 'Last checked'
+              : (test.data?.lastVerifiedStatus ??
+                secrets.data?.lastVerifiedStatus ??
+                'Not checked')}
+            {lastVerifiedAt ? ` · ${formatDateTime(lastVerifiedAt)}` : ''}
           </p>
         ) : (
           fields.length > 0 && (

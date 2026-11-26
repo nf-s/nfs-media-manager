@@ -160,9 +160,14 @@ test('an unconnected or unconfigured account says so and offers Connect', () => 
 })
 
 test('the Spotify OAuth return is confirmed or reported', () => {
+  const connected = render(sync, account(true, true), 'spotify=connected')
   assert.match(
-    render(sync, account(true, true), 'spotify=connected'),
-    /role="status">.*<span>Spotify connected\.<\/span>/,
+    connected,
+    /data-feedback="done"[^>]*>.*?<span>Spotify connected<\/span><\/span><\/button>/,
+  )
+  assert.equal(
+    connected.replace(/<[^>]*>/g, '').split('Spotify connected').length - 1,
+    1,
   )
   assert.match(
     render(sync, account(true, false), 'spotify=error'),

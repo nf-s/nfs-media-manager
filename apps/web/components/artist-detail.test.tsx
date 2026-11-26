@@ -7,6 +7,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { ArtistDetailSchema } from '@repo/schemas/creators'
+import { SpotifyArtistAlbumListingSchema } from '@repo/schemas/spotify-artist-albums'
 import { LibraryChangeSchema } from '@repo/schemas/library-changes'
 import { libraryChangesKey } from '@/utils/library-changes'
 import type {
@@ -128,6 +129,39 @@ test('a merged name’s page shows the artist it was merged into', () => {
     [['artist', 'artist-lowlands-2'], kept],
   ])
   assert.match(html, /<h2 class="ds-detail-title">The Lowlands<\/h2>/)
+})
+
+test('the artist album control shows the page while the notice gives counts and evidence', () => {
+  const listing = SpotifyArtistAlbumListingSchema.parse({
+    market: 'AU',
+    artistUrl: 'https://open.spotify.com/artist/1234567890ABCDEFGHIJKL',
+    unavailableReason: null,
+    retryAt: null,
+    pagesSaved: 1,
+    releasesSeen: 5,
+    expectedTotal: null,
+    completedAt: null,
+    job: {
+      jobId: 'synthetic-listing',
+      status: 'running',
+      errorMessage: null,
+      finishedAt: null,
+    },
+  })
+  const html = render(kept.id, 'tab=albums', [
+    [['artist', kept.id], kept],
+    [['artist', kept.id, 'spotify-albums'], listing],
+  ])
+  assert.match(
+    html,
+    /data-feedback="running"[^>]*aria-label="Fetching page 2 · Fetch albums"/,
+  )
+  assert.equal(
+    (html.replace(/<[^>]*>/g, '').match(/Fetching page 2/g) ?? []).length,
+    1,
+  )
+  assert.match(html, /1 page saved · 5 release entries/)
+  assert.match(html, /View listing job/)
 })
 
 test('the kept artist’s URL replaces the merged name’s and keeps the view', () => {

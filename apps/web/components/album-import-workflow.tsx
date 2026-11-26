@@ -214,6 +214,10 @@ export default function AlbumImportWorkflow({
         `${formatCount(preview.data.skipped)} skipped`,
       ].join(' · ')
     : ''
+  const connectedOnButton =
+    params.get('spotify') === 'connected' &&
+    account.data?.connected &&
+    connect.isIdle
   return (
     <div className="sec-fill">
       <div className="ds-panelpad sec-form">
@@ -239,18 +243,20 @@ export default function AlbumImportWorkflow({
             {account.isPending && <Skeleton width="50%" height={16} />}
             {account.data && (
               <>
-                <KeyValues
-                  items={[
-                    {
-                      label: 'Spotify',
-                      value: account.data.connected ? (
-                        <Status state="done">Connected</Status>
-                      ) : (
-                        <Status state="attention">Needs sign-in</Status>
-                      ),
-                    },
-                  ]}
-                />
+                {!connectedOnButton && (
+                  <KeyValues
+                    items={[
+                      {
+                        label: 'Spotify',
+                        value: account.data.connected ? (
+                          <Status state="done">Connected</Status>
+                        ) : (
+                          <Status state="attention">Needs sign-in</Status>
+                        ),
+                      },
+                    ]}
+                  />
+                )}
                 <p className="ds-help">
                   Saved albums are read only after Preview. Nothing is played or
                   added to playlists.
@@ -303,8 +309,7 @@ export default function AlbumImportWorkflow({
                             success: 'Waiting for authorization',
                             error: 'Connection failed',
                           }) ??
-                          (params.get('spotify') === 'connected' &&
-                          account.data.connected
+                          (connectedOnButton
                             ? { phase: 'done', label: 'Spotify connected' }
                             : undefined))
                     }
@@ -690,7 +695,6 @@ export default function AlbumImportWorkflow({
           {currentRun && (
             <div className="sec-notices">
               <Notice>
-                {importRunFeedback(currentRun).label}.{' '}
                 <Link
                   href={scopedHref(
                     `/imports?runId=${encodeURIComponent(currentRun.id)}`,
@@ -699,16 +703,18 @@ export default function AlbumImportWorkflow({
                 >
                   View import progress
                 </Link>
-                .{' '}
                 {jobs > 0 && (
-                  <Link
-                    href={scopedHref(
-                      `/jobs?batchId=${preview.data.id}`,
-                      'album',
-                    )}
-                  >
-                    View metadata jobs
-                  </Link>
+                  <>
+                    {' · '}
+                    <Link
+                      href={scopedHref(
+                        `/jobs?batchId=${preview.data.id}`,
+                        'album',
+                      )}
+                    >
+                      View metadata jobs
+                    </Link>
+                  </>
                 )}
               </Notice>
             </div>

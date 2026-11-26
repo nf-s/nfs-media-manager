@@ -699,9 +699,11 @@ export function LastfmLinkWorkflow({
                 </span>
               }
             >
-              <span className="ds-cell-id" role="status">
-                <ButtonFeedbackLabel feedback={additionFeedback(operation)} />
-              </span>{' '}
+              {(!operation.error || !operation.albumId) && (
+                <span className="ds-cell-id" role="status">
+                  <ButtonFeedbackLabel feedback={additionFeedback(operation)} />
+                </span>
+              )}{' '}
               {operation.albumId ? (
                 <DetailLink kind="album" id={operation.albumId}>
                   {operation.item.title}

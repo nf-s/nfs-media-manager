@@ -34,7 +34,6 @@ import {
   DetailHeader,
   DetailActionsSpacer,
 } from '@repo/ui/components/ds/detail-header'
-import { Notice } from '@repo/ui/components/ds/feedback'
 import {
   Facts,
   KeyValues,
@@ -473,7 +472,7 @@ function EditMedia({
           <span role="alert">
             {unconfirmedWrite(mutation.error)
               ? 'Check edit history before trying again.'
-              : 'Could not save. Check the values and retry.'}
+              : 'Check the values and retry.'}
           </span>
         )}
       </div>
@@ -1242,7 +1241,6 @@ export default function MediaDetail({
             onSaved={onSaved}
             saved={saved}
           />
-          {saved && <Notice>Changes saved.</Notice>}
           <MediaEditHistory id={item.id} />
         </TabsContent>
       </DetailTabs>

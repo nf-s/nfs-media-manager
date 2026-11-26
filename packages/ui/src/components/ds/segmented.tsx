@@ -45,15 +45,22 @@ export function Segmented<Value extends string>({
                   ? option.label
                   : undefined
             }
+            aria-busy={
+              feedback?.phase === 'pending' ||
+              feedback?.phase === 'running' ||
+              undefined
+            }
             aria-live={feedback ? 'polite' : undefined}
             data-feedback={feedback?.phase}
-            title={option.icon ? option.label : undefined}
-            data-icon={option.icon && !feedback ? '' : undefined}
+            title={feedback?.label ?? (option.icon ? option.label : undefined)}
+            data-icon={option.icon ? '' : undefined}
             disabled={option.disabled}
             onClick={() => onChange(option.value)}
           >
             {feedback ? (
-              <ButtonFeedbackLabel feedback={feedback} />
+              <ButtonFeedbackLabel feedback={feedback}>
+                {option.icon ?? option.label}
+              </ButtonFeedbackLabel>
             ) : (
               (option.icon ?? option.label)
             )}

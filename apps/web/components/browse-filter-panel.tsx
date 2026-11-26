@@ -53,13 +53,24 @@ export function FilterPanelSection({
         onToggle?.(event.currentTarget.open)
       }}
     >
-      <summary>
+      <summary
+        data-feedback={feedback?.phase}
+        aria-label={
+          feedback
+            ? `${feedback.label} · ${title}${count ? ` · ${count}` : ''}`
+            : undefined
+        }
+        aria-busy={feedback?.phase === 'pending' || undefined}
+        aria-live={feedback ? 'polite' : undefined}
+        title={feedback?.label}
+      >
         {icon}
-        <span>{title}</span>
-        {feedback && (
-          <span className="ds-cell-id" aria-live="polite">
-            <ButtonFeedbackLabel feedback={feedback} />
-          </span>
+        {feedback ? (
+          <ButtonFeedbackLabel feedback={feedback}>
+            <span>{title}</span>
+          </ButtonFeedbackLabel>
+        ) : (
+          <span>{title}</span>
         )}
         {Boolean(count) && <Count>{count}</Count>}
         <ChevronDown

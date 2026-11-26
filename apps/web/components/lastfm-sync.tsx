@@ -211,6 +211,15 @@ export default function LastfmSync({
   const stopJob =
     running && data.job && canCancelJob(data.job) ? data.job : null
   const actionError = sync.error ?? stop.error ?? schedule.error
+  const currentFeedback = running || sync.isSuccess ? syncProgress : undefined
+  const requestFeedback =
+    sync.isPending || sync.isError
+      ? mutationFeedback(sync, {
+          pending: 'Requesting sync…',
+          success: 'Sync queued',
+          error: 'Sync request unconfirmed',
+        })
+      : undefined
   return (
     <div className="ds-panelpad">
       <Section title="Sync" flush>
@@ -227,10 +236,14 @@ export default function LastfmSync({
         )}
         <Facts
           items={[
-            {
-              label: 'State',
-              value: <Status state={syncStatusStates[data.state]} />,
-            },
+            ...(!currentFeedback || requestFeedback
+              ? [
+                  {
+                    label: 'State',
+                    value: <Status state={syncStatusStates[data.state]} />,
+                  },
+                ]
+              : []),
             {
               label: 'Pages fetched',
               value: `${formatCount(data.pagesFetched)}${
@@ -277,17 +290,7 @@ export default function LastfmSync({
             size="md"
             variant="primary"
             disabled={!data.configured || running || sync.isPending}
-            feedback={
-              sync.isPending || sync.isError
-                ? mutationFeedback(sync, {
-                    pending: 'Requesting sync…',
-                    success: 'Sync queued',
-                    error: 'Sync request unconfirmed',
-                  })
-                : running || sync.isSuccess
-                  ? syncProgress
-                  : undefined
-            }
+            feedback={requestFeedback ?? currentFeedback}
             onClick={() => sync.mutate()}
           >
             {resumable ? 'Resume sync' : 'Sync now'}

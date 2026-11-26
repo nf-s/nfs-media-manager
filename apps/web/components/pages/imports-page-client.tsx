@@ -93,7 +93,9 @@ export default function ImportsPageClient() {
     <section className="sec-page">
       <PageHead title={`Recent ${mediaType} imports`} />
       <div className="sec-notices">
-        <ImportStatusNotice />
+        {(!currentRun ||
+          (currentRun.status !== 'queued' &&
+            currentRun.status !== 'running')) && <ImportStatusNotice />}
         {currentRun && (
           <Notice tone={currentRun.status === 'failed' ? 'danger' : undefined}>
             {importRunFeedback(currentRun).label}.{' '}

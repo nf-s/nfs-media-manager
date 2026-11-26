@@ -184,7 +184,7 @@ export function ArtistMergePicker({
                     loadedLabel="Loaded more"
                     read={() => candidates.fetchNextPage()}
                   >
-                    {candidates.isFetchingNextPage ? 'Loading...' : 'Show more'}
+                    Show more
                   </ReadButton>
                 </div>
               )}

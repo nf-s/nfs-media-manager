@@ -165,7 +165,6 @@ function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
           does not reset usage.
         </p>
         {update.isError && <p role="alert">{update.error.message}</p>}
-        {update.isSuccess && <p role="status">Request budget updated.</p>}
       </form>
     </Section>
   )

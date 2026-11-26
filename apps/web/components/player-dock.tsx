@@ -457,6 +457,7 @@ function Scrubber({
   const [drag, setDrag] = useState<number | null>(null)
   const duration = snapshot?.durationMs ?? 0
   const shown = Math.min(drag ?? position, duration)
+  const end = formatClock(duration)
   function commit() {
     if (drag === null) return
     const position = drag
@@ -485,7 +486,10 @@ function Scrubber({
   }
   return (
     <div className="player-scrub">
-      <span className="player-time">{formatClock(shown)}</span>
+      <span className="player-time player-time-elapsed">
+        <span aria-hidden="true">{end}</span>
+        <span>{formatClock(shown)}</span>
+      </span>
       <div className="player-range">
         <span
           className="player-range-fill"
@@ -494,7 +498,7 @@ function Scrubber({
         <input
           type="range"
           aria-label="Seek"
-          aria-valuetext={`${formatClock(shown)} of ${formatClock(duration)}`}
+          aria-valuetext={`${formatClock(shown)} of ${end}`}
           min={0}
           max={Math.max(duration, 1)}
           step={1000}
@@ -506,22 +510,27 @@ function Scrubber({
           onBlur={commit}
         />
       </div>
-      <span className="player-time">{formatClock(duration)}</span>
+      <span className="player-time">{end}</span>
       <PlayerControlReceipt feedback={action.feedback} />
     </div>
   )
 }
 
 function PlayerControlReceipt({ feedback }: { feedback?: ButtonFeedback }) {
-  if (!feedback) return null
   return (
-    <span className="player-control-feedback" role="status">
-      <ButtonFeedbackLabel feedback={feedback} />
+    <span className="sr-only" role="status">
+      {feedback?.label}
     </span>
   )
 }
 
-function Transport({ view }: { view: PlaybackView }) {
+function Transport({
+  view,
+  showFeedback = true,
+}: {
+  view: PlaybackView
+  showFeedback?: boolean
+}) {
   const controls = usePlaybackControls()
   const shuffle = usePlaybackCommand('transport:shuffle')
   const previous = usePlaybackCommand('transport:previous')
@@ -594,6 +603,7 @@ function Transport({ view }: { view: PlaybackView }) {
     <div className="player-buttons">
       <Button
         type="button"
+        icon
         variant="ghost"
         className="player-skip"
         aria-label="Shuffle"
@@ -614,6 +624,7 @@ function Transport({ view }: { view: PlaybackView }) {
       </Button>
       <Button
         type="button"
+        icon
         variant="ghost"
         className="player-skip"
         aria-label="Previous"
@@ -629,6 +640,7 @@ function Transport({ view }: { view: PlaybackView }) {
       </Button>
       <Button
         type="button"
+        icon
         className="player-toggle"
         aria-label={starting ? 'Starting' : playing ? 'Pause' : 'Play'}
         disabled={
@@ -637,10 +649,8 @@ function Transport({ view }: { view: PlaybackView }) {
           readOnly ||
           (sonos !== null && !(playing ? sonos.pause : sonos.play))
         }
-        feedback={
-          toggle.feedback ??
-          (starting ? { phase: 'pending', label: 'Starting…' } : undefined)
-        }
+        aria-busy={starting || undefined}
+        feedback={showFeedback ? toggle.feedback : undefined}
         onClick={togglePlayback}
       >
         {starting ? (
@@ -657,6 +667,7 @@ function Transport({ view }: { view: PlaybackView }) {
       </Button>
       <Button
         type="button"
+        icon
         variant="ghost"
         className="player-skip"
         aria-label="Next"
@@ -707,6 +718,7 @@ function VolumeControl({ volume }: { volume: number | null }) {
     <div className="player-volume">
       <Button
         type="button"
+        icon
         variant="ghost"
         className="player-tool"
         aria-label={muted ? 'Unmute' : 'Mute'}
@@ -850,6 +862,66 @@ function QueueLibrarySlot({
 
 /** The two lists of the queue panel that hold tracks still to play. */
 type QueueSection = 'queue' | 'upcoming'
+type QueueActionOrigin = {
+  section: QueueSection
+  key: string
+  button: 'play' | 'remove' | 'enqueue'
+}
+
+function useQueueAction(actionKey: 'queue:play' | 'queue:edit') {
+  const command = usePlaybackCommand(actionKey)
+  const [origin, setOrigin] = useState<QueueActionOrigin>()
+  return {
+    origin,
+    feedback: command.feedback,
+    pending: command.pending,
+    forButton: (
+      section: QueueSection,
+      key: string,
+      button: QueueActionOrigin['button'],
+    ) =>
+      origin?.section === section &&
+      origin.key === key &&
+      origin.button === button
+        ? command.feedback
+        : undefined,
+    run(
+      nextOrigin: QueueActionOrigin | undefined,
+      ...[request, send]: Parameters<typeof command.run>
+    ) {
+      if (command.pending && !request.repeated) return
+      setOrigin(nextOrigin)
+      command.run(
+        {
+          ...request,
+          unconfirmedLabel:
+            actionKey === 'queue:play'
+              ? 'Playback unconfirmed'
+              : 'Queue update unconfirmed',
+        },
+        send,
+      )
+    },
+  }
+}
+
+type QueueActions = {
+  play: ReturnType<typeof useQueueAction>
+  edit: ReturnType<typeof useQueueAction>
+}
+
+function queueReceipt(
+  action: ReturnType<typeof useQueueAction>,
+  queue: readonly QueueEntry[],
+  upcoming: readonly QueueEntry[],
+) {
+  const { feedback, origin } = action
+  if (!feedback) return undefined
+  if (!origin) return feedback
+  const rows = origin.section === 'queue' ? queue : upcoming
+  return rows.some(({ key }) => key === origin.key) ? undefined : feedback
+}
+
 type Dragging = { section: QueueSection; key: string }
 /** Where a dragged row would land: before `entries[index]`, or at the end. */
 type DropPlace = { section: QueueSection; index: number }
@@ -898,15 +970,17 @@ function QueueRows({
   section,
   entries,
   drag,
+  actions,
   onNavigate,
 }: {
   section: QueueSection
   entries: QueueEntry[]
   drag: QueueDrag
+  actions: QueueActions
   onNavigate: () => void
 }) {
   const controls = usePlaybackControls()
-  const edit = usePlaybackCommand('queue:edit')
+  const { edit } = actions
   const rows = entries.map((entry) => ({
     ...entry,
     identity: queuedLibraryItem(entry.item),
@@ -932,6 +1006,7 @@ function QueueRows({
     if (!dragged || !accepts(dragged, section)) return
     if (dragged.section !== section) {
       edit.run(
+        undefined,
         queueButtonRequest(
           (next) => !next.upcoming.some(({ key }) => key === dragged.key),
           'Moved to queue',
@@ -941,6 +1016,7 @@ function QueueRows({
     } else if (from >= 0 && placeAt(index) !== null) {
       const to = index > from ? index - 1 : index
       edit.run(
+        undefined,
         queueButtonRequest(
           (next) => next[section][to]?.key === dragged.key,
           `Moved to position ${to + 1}`,
@@ -1011,6 +1087,7 @@ function QueueRows({
               entry={entry}
               index={index}
               count={entries.length}
+              actions={actions}
             />
           </li>
         )
@@ -1024,19 +1101,22 @@ function QueueRowActions({
   entry,
   index,
   count,
+  actions,
 }: {
   section: QueueSection
   entry: QueueEntry
   index: number
   count: number
+  actions: QueueActions
 }) {
   const controls = usePlaybackControls()
-  const play = usePlaybackCommand('queue:play')
-  const edit = usePlaybackCommand('queue:edit')
+  const { play, edit } = actions
   const up = usePlaybackCommand(`queue:up:${entry.key}`)
   const down = usePlaybackCommand(`queue:down:${entry.key}`)
   const queued = section === 'queue'
+  const { key } = entry
   const { title } = entry.item
+  const playFeedback = play.forButton(section, key, 'play')
   const playLabel = queued ? `Play ${title} now` : `Skip to ${title}`
   const removeLabel = queued
     ? `Remove ${title} from queue`
@@ -1062,11 +1142,14 @@ function QueueRowActions({
         variant="ghost"
         aria-label={playLabel}
         title={playLabel}
+        feedback={playFeedback}
+        disabled={play.pending && Boolean(playFeedback)}
         onClick={() =>
-          play.run(playButtonRequest(entry.item), () =>
-            queued
-              ? controls.playFromQueue(entry.key)
-              : controls.playUpcoming(entry.key),
+          play.run(
+            { section, key, button: 'play' },
+            playButtonRequest(entry.item),
+            () =>
+              queued ? controls.playFromQueue(key) : controls.playUpcoming(key),
           )
         }
       >
@@ -1079,9 +1162,12 @@ function QueueRowActions({
           variant="ghost"
           aria-label={`Move ${title} to queue`}
           title={`Move ${title} to queue`}
+          feedback={edit.forButton(section, key, 'enqueue')}
           onClick={() =>
-            edit.run(queueButtonRequest(removed, 'Moved to queue'), () =>
-              controls.queueUpcoming(entry.key),
+            edit.run(
+              { section, key, button: 'enqueue' },
+              queueButtonRequest(removed, 'Moved to queue', 'Moving to queue…'),
+              () => controls.queueUpcoming(key),
             )
           }
         >
@@ -1118,13 +1204,19 @@ function QueueRowActions({
         variant="ghost"
         aria-label={removeLabel}
         title={removeLabel}
+        feedback={edit.forButton(section, key, 'remove')}
         onClick={() =>
           edit.run(
-            queueButtonRequest(removed, `Removed ${title}`, 'Removing…'),
+            { section, key, button: 'remove' },
+            queueButtonRequest(
+              removed,
+              queued ? 'Removed from queue' : 'Removed from upcoming',
+              'Removing…',
+            ),
             () =>
               queued
-                ? controls.removeFromQueue(entry.key)
-                : controls.removeUpcoming(entry.key),
+                ? controls.removeFromQueue(key)
+                : controls.removeUpcoming(key),
           )
         }
       >
@@ -1149,8 +1241,10 @@ function QueueContents({
   /** A source track dragged over the empty queue becomes its first entry. */
   const intoEmptyQueue = drag.dragging?.section === 'upcoming'
   const controls = usePlaybackControls()
-  const edit = usePlaybackCommand('queue:edit')
-  const play = usePlaybackCommand('queue:play')
+  const edit = useQueueAction('queue:edit')
+  const play = useQueueAction('queue:play')
+  const playReceipt = queueReceipt(play, view.queue, upcoming)
+  const editReceipt = queueReceipt(edit, view.queue, upcoming)
   return (
     <div
       className="queue-contents"
@@ -1167,8 +1261,6 @@ function QueueContents({
           change made here moves it to this browser.
         </p>
       )}
-      <PlayerControlReceipt feedback={edit.feedback} />
-      <PlayerControlReceipt feedback={play.feedback} />
       {(target.kind === 'restricted' ||
         (target.kind === 'sonos' && !target.group.playable)) && (
         <p className="quiet">
@@ -1213,7 +1305,23 @@ function QueueContents({
         </section>
       )}
       <section>
-        <h3>Queued</h3>
+        <div className="queue-heading">
+          <h3>Queued</h3>
+          <div className="queue-feedback-slot">
+            <span className="queue-feedback" role="status">
+              {editReceipt && (
+                <span title={editReceipt.label}>
+                  <ButtonFeedbackLabel feedback={editReceipt} />
+                </span>
+              )}
+              {playReceipt && (
+                <span title={playReceipt.label}>
+                  <ButtonFeedbackLabel feedback={playReceipt} />
+                </span>
+              )}
+            </span>
+          </div>
+        </div>
         {view.queue.length > 0 &&
           !view.current &&
           view.snapshot &&
@@ -1227,6 +1335,7 @@ function QueueContents({
             section="queue"
             entries={view.queue}
             drag={drag}
+            actions={{ play, edit }}
             onNavigate={onNavigate}
           />
         ) : (
@@ -1245,6 +1354,7 @@ function QueueContents({
               drag.end()
               if (dragged?.section === 'upcoming') {
                 edit.run(
+                  undefined,
                   queueButtonRequest(
                     (next) =>
                       !next.upcoming.some(({ key }) => key === dragged.key),
@@ -1270,6 +1380,7 @@ function QueueContents({
               section="upcoming"
               entries={upcoming}
               drag={drag}
+              actions={{ play, edit }}
               onNavigate={onNavigate}
             />
           )}
@@ -1298,7 +1409,7 @@ function DeviceList({
 }) {
   const controls = usePlaybackControls()
   const transfer = usePlaybackCommand('device-transfer')
-  const discovery = useDeviceDiscovery()
+  const discovery = useDeviceDiscovery('device-discovery-retry')
   const [retrying, setRetrying] = useState(false)
   const { target } = view
   const listed =
@@ -1408,14 +1519,8 @@ function DeviceList({
           )
         })}
       </ul>
-      {view.devicesStatus === 'loading' &&
-        !view.devices.length &&
-        !retrying && <p role="status">Looking for devices...</p>}
       {(view.devicesStatus === 'error' || retrying) && (
         <div className="ds-actions">
-          {view.devicesStatus === 'error' && (
-            <span role="alert">Devices could not be loaded.</span>
-          )}
           <Button
             size="xs"
             type="button"
@@ -1463,6 +1568,7 @@ function DockPopover({
   action,
   highlighted = false,
   onOpen,
+  onOpenChange,
   feedback,
   children,
 }: {
@@ -1472,6 +1578,7 @@ function DockPopover({
   action?: ReactNode
   highlighted?: boolean
   onOpen?: () => void
+  onOpenChange?: (open: boolean) => void
   feedback?: ButtonFeedback
   children: (close: () => void, open: boolean) => ReactNode
 }) {
@@ -1530,6 +1637,7 @@ function DockPopover({
         onToggle={(event) => {
           const opened = event.newState === 'open'
           setOpen(opened)
+          onOpenChange?.(opened)
           if (opened) onOpen?.()
         }}
         onKeyDown={(event) => {
@@ -1563,9 +1671,9 @@ function TargetIcon({ view }: { view: PlaybackView }) {
   return <MonitorSpeaker size={16} aria-hidden="true" />
 }
 
-function useDeviceDiscovery() {
+function useDeviceDiscovery(action = 'device-discovery') {
   const controls = usePlaybackControls()
-  const lookup = usePlaybackCommand('device-discovery')
+  const lookup = usePlaybackCommand(action)
   return {
     ...lookup,
     refresh: () =>
@@ -1594,11 +1702,14 @@ function useDeviceDiscovery() {
   }
 }
 
-function useDevicePickerFeedback(view: PlaybackView) {
+function useDevicePickerFeedback(view: PlaybackView, retryVisible: boolean) {
   const transfer = usePlaybackCommand('device-transfer')
   const discovery = useDeviceDiscovery()
-  if (transfer.feedback || discovery.feedback)
-    return { ...discovery, feedback: transfer.feedback ?? discovery.feedback }
+  const retry = usePlaybackCommand('device-discovery-retry')
+  if (transfer.feedback) return { ...discovery, feedback: transfer.feedback }
+  if (retry.feedback)
+    return { ...discovery, feedback: retryVisible ? undefined : retry.feedback }
+  if (discovery.feedback) return discovery
   if (view.devicesStatus === 'loading')
     return {
       ...discovery,
@@ -1627,9 +1738,9 @@ function NowPlayingSheet({
   playing: PlayingIdentity
   onClose: () => void
 }) {
-  const devices = useDevicePickerFeedback(view)
   const panel = useRef<HTMLElement>(null)
   const [devicesOpen, setDevicesOpen] = useState(false)
+  const devices = useDevicePickerFeedback(view, devicesOpen)
   const shown = describe(view)
   useEffect(() => {
     const previous = document.activeElement
@@ -1771,7 +1882,8 @@ function RejoinNotice({ rejoin }: { rejoin: PlaybackRejoin }) {
 
 function Dock({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
-  const devices = useDevicePickerFeedback(view)
+  const [devicesOpen, setDevicesOpen] = useState(false)
+  const devices = useDevicePickerFeedback(view, devicesOpen)
   const clearQueue = usePlaybackCommand('queue:clear')
   const { apiBaseUrl } = useConfig()
   const phone = usePhoneLayout()
@@ -1870,6 +1982,7 @@ function Dock({ view }: { view: PlaybackView }) {
                 <PlayerLibraryAction
                   item={miniTitle}
                   membership={membership}
+                  showFeedback={!sheet}
                   touch
                 />
               )}
@@ -1886,7 +1999,7 @@ function Dock({ view }: { view: PlaybackView }) {
           )}
         </div>
         <div className="player-transport">
-          <Transport view={view} />
+          <Transport view={view} showFeedback={!phone || !sheet} />
           <Scrubber
             snapshot={view.snapshot}
             readOnly={!seekable(view.target)}
@@ -1939,6 +2052,7 @@ function Dock({ view }: { view: PlaybackView }) {
             feedback={devices.feedback}
             highlighted={view.target.kind !== 'local'}
             onOpen={devices.refresh}
+            onOpenChange={setDevicesOpen}
             trigger={
               <>
                 <TargetIcon view={view} />
@@ -1969,9 +2083,6 @@ function Dock({ view }: { view: PlaybackView }) {
           )}
         </div>
       </div>
-      <p className="sr-only" role="status">
-        {view.announcement}
-      </p>
       {sheet && phone && (
         <NowPlayingSheet
           view={view}

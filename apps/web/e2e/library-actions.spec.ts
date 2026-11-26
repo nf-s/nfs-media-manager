@@ -176,21 +176,28 @@ test('an outside track can be added from its detail page and stays saved on relo
   )
   await expect(heading).toBeVisible()
   await expect(add).toBeEnabled()
+  await page.evaluate(async () => {
+    await document.fonts.ready
+  })
+  const idle = await add.boundingBox()
+  expect(idle).not.toBeNull()
   await add.press('Enter')
   const receipt = page.locator('.ds-library-action')
   try {
-    await expect(receipt).toHaveText('Adding…')
+    await expect(receipt).toHaveText('Adding…', { useInnerText: true })
+    expect(await receipt.boundingBox()).toEqual(idle)
     await expect(receipt).toHaveAttribute('aria-busy', 'true')
     await receipt.dispatchEvent('click')
     expect(writes).toBe(1)
   } finally {
     release()
   }
-  await expect(receipt).toHaveText('Added')
+  await expect(receipt).toHaveText('Added', { useInnerText: true })
+  expect(await receipt.boundingBox()).toEqual(idle)
   await expect(receipt).toHaveAttribute('data-feedback', 'done')
   await expect(
     page.getByText(`Added track to library · ${title}`, { exact: true }),
-  ).toBeVisible()
+  ).toHaveCount(0)
   await expect(receipt).toHaveCount(0)
   expect(writes).toBe(1)
   staleDetail = false
@@ -277,15 +284,33 @@ test('independent manual rows send and receive their own addition receipts', asy
       .and(dialog.getByRole('button', { name: new RegExp(title) }))
   try {
     await action(first.title).click()
-    await expect(action(first.title)).toHaveText('Adding…')
+    await expect(action(first.title)).toHaveText('Adding…', {
+      useInnerText: true,
+    })
     await expect(action(second.title)).toBeEnabled()
     await action(second.title).click()
-    await expect(action(second.title)).toHaveText('Adding…')
+    await expect(action(second.title)).toHaveText('Adding…', {
+      useInnerText: true,
+    })
     releases.get(first.externalId)?.()
-    await expect(action(first.title)).toHaveText('Added')
-    await expect(action(second.title)).toHaveText('Adding…')
+    await expect(action(first.title)).toHaveText('Added', {
+      useInnerText: true,
+    })
+    await expect(action(second.title)).toHaveText('Adding…', {
+      useInnerText: true,
+    })
     releases.get(second.externalId)?.()
     await expect(dialog).not.toBeVisible()
+    await expect(
+      page.getByText(`Added track to library · ${second.title}`, {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      page.getByText(`Added track to library · ${first.title}`, {
+        exact: true,
+      }),
+    ).toHaveCount(0)
     await expect(page).toHaveURL(
       (url) =>
         url.searchParams.get('inspect')?.includes(second.externalId) === true,
@@ -341,10 +366,10 @@ test('a rejected library addition leaves the same control available for retry', 
   await page.goto(`/tracks/${track.item.id}`)
   const receipt = page.locator('.ds-library-action')
   await receipt.click()
-  await expect(receipt).toHaveText('Add failed · retry')
+  await expect(receipt).toHaveText('Add failed · retry', { useInnerText: true })
   await expect(receipt).toBeEnabled()
   await receipt.click()
-  await expect(receipt).toHaveText('Added')
+  await expect(receipt).toHaveText('Added', { useInnerText: true })
   expect(writes).toBe(2)
 })
 
@@ -389,9 +414,11 @@ test('an interrupted library response stays unconfirmed until an idempotent retr
   const receipt = page.locator('.ds-library-action')
   await receipt.click()
   await expect(receipt).toHaveAttribute('data-feedback', 'unconfirmed')
-  await expect(receipt).toHaveText('Add unconfirmed · retry')
+  await expect(receipt).toHaveText('Add unconfirmed · retry', {
+    useInnerText: true,
+  })
   await receipt.click()
-  await expect(receipt).toHaveText('Added')
+  await expect(receipt).toHaveText('Added', { useInnerText: true })
   expect(writes).toBe(2)
   await page.reload()
   await expect(page.getByRole('heading', { name: title })).toBeVisible()
@@ -462,14 +489,14 @@ test('Similar keeps a saved album title and its match evidence without an Add co
     .getByRole('button', { name: `Add album to library · ${title}` })
     .click()
   await expect(
-    page.getByText(`Added album to library · ${title}`, { exact: true }),
-  ).toBeVisible()
-  await expect(
     list.getByRole('link', { name: title, exact: true }),
   ).toHaveAttribute('data-workspace-href', `/albums/${savedId}`)
   await expect(
     list.getByRole('button', { name: new RegExp(`Added.*${title}`) }),
-  ).toHaveText('Added')
+  ).toHaveText('Added', { useInnerText: true })
+  await expect(
+    page.getByText(`Added album to library · ${title}`, { exact: true }),
+  ).toHaveCount(0)
   await page.reload()
   await similar.click()
   await expect(list.getByRole('link', { name: 'In library' })).toHaveAttribute(

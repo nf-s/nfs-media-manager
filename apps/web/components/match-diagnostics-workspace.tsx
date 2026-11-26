@@ -441,7 +441,11 @@ function ProviderMatchCell({
                   {correction && correctionButton(correction)}
                   {rejectedAt && (
                     <div>
-                      <Status state="attention">Incorrect</Status>{' '}
+                      {(!rejectionTarget ||
+                        rejectionFeedback(rejectionTarget)?.phase !==
+                          'done') && (
+                        <Status state="attention">Incorrect</Status>
+                      )}{' '}
                       <time dateTime={rejectedAt}>
                         {formatDateTime(rejectedAt)}
                       </time>

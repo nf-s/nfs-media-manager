@@ -245,10 +245,10 @@ export default function TagHierarchyPageClient() {
         <Button
           aria-expanded={creating}
           feedback={
-            created
-              ? { phase: 'done', label: 'Tag created · New tag' }
-              : undefined
+            created ? { phase: 'done', label: 'Tag created' } : undefined
           }
+          aria-label="New tag"
+          title={created ? `Tag created · ${created}` : undefined}
           onClick={() => {
             setCreating(!creating)
             setCreated(null)
@@ -291,11 +291,6 @@ export default function TagHierarchyPageClient() {
             setCreated(name)
           }}
         />
-      )}
-      {created && (
-        <p role="status" className="ds-help sec-pad">
-          Created tag {created}.
-        </p>
       )}
       {tree?.capped && (
         <p className="ds-help sec-pad">

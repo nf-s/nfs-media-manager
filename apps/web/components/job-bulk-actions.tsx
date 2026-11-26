@@ -289,6 +289,25 @@ export default function JobBulkActions({
     : action.isError
       ? { phase: 'unconfirmed', label: 'Action unconfirmed' }
       : undefined
+  const alreadyShown =
+    resultFeedback &&
+    resultFeedback.phase !== 'partial' &&
+    resultFeedback.phase !== 'unconfirmed'
+      ? action.variables?.kind === 'retry'
+        ? 'queued'
+        : action.variables?.kind === 'cancel'
+          ? 'cancelled'
+          : 'dismissed'
+      : undefined
+  const resultSummary = action.data
+    ? jobActionSummary(action.data, alreadyShown)
+    : ''
+  const actionDetails =
+    action.data &&
+    (action.data.failedBatches.length > 0 ||
+      action.data.results.some(
+        ({ status }) => status === 'failed' || status === 'skipped',
+      ))
   async function cancelSelection(): Promise<JobActionOutcome> {
     const batchResult = await dispatchBatchCancellation(
       selectedBatches,
@@ -522,19 +541,15 @@ export default function JobBulkActions({
           {action.error.message}
         </p>
       )}
-      {action.data && (
+      {action.data && (resultSummary || retryBatchId || actionDetails) && (
         <div className="ops-wide" role="status">
-          {jobActionSummary(action.data)}
+          {resultSummary}
           {retryBatchId && (
             <Link href={`/jobs?batchId=${encodeURIComponent(retryBatchId)}`}>
               View retry jobs
             </Link>
           )}
-          {(action.data.failedBatches.length > 0 ||
-            action.data.results.some(
-              (entry) =>
-                entry.status === 'failed' || entry.status === 'skipped',
-            )) && (
+          {actionDetails && (
             <details>
               <summary>Action details</summary>
               <ul>

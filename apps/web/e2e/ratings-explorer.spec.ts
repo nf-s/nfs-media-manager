@@ -208,16 +208,20 @@ test('sort shows the outstanding read and its result on the direction button', a
     page.getByRole('button', { name: 'Fixture 1', exact: true }),
   ).toBeVisible()
   const direction = page.getByRole('button', { name: /Sort direction:/ })
+  const idle = await direction.boundingBox()
+  expect(idle).not.toBeNull()
   hold = true
   try {
     await direction.click()
     await expect(direction).toHaveAttribute('data-feedback', 'pending')
-    await expect(direction).toHaveText('Updating…')
+    await expect(direction).toHaveAccessibleName(/Updating…/)
+    expect(await direction.boundingBox()).toEqual(idle)
   } finally {
     releaseRead()
   }
   await expect(direction).toHaveAttribute('data-feedback', 'done')
-  await expect(direction).toHaveText('Results updated')
+  await expect(direction).toHaveAccessibleName(/Results updated/)
+  expect(await direction.boundingBox()).toEqual(idle)
 })
 
 test('ranking reads one page per committed query and reuses calculation evidence and visited pages', async ({
@@ -261,6 +265,8 @@ test('ranking reads one page per committed query and reuses calculation evidence
 
   const slider = page.getByRole('slider', { name: 'Fixture rating' })
   await slider.focus()
+  const sliderBounds = await slider.boundingBox()
+  expect(sliderBounds).not.toBeNull()
   await page.keyboard.down('ArrowRight')
   await page.keyboard.down('ArrowRight')
   await expect(slider).toHaveValue('2')
@@ -270,6 +276,10 @@ test('ranking reads one page per committed query and reuses calculation evidence
   expect(requests[1]?.settings.sources).toEqual([
     { key: source.key, weight: 2, minVotes: 0 },
   ])
+  await expect(
+    page.locator('.ratings-scoring summary[data-feedback]').first(),
+  ).toBeVisible()
+  expect(await slider.boundingBox()).toEqual(sliderBounds)
   await expect(first).toBeVisible()
   const search = page.getByRole('searchbox', {
     name: 'Search titles or directors',

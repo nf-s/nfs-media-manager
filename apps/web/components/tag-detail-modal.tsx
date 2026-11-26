@@ -20,7 +20,6 @@ import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
 import {
   Button,
-  ButtonFeedbackLabel,
   mutationFeedback,
   type ButtonFeedback,
 } from '@repo/ui/components/ui/button'
@@ -99,9 +98,10 @@ function TagManagement({ tag }: { tag: Tag }) {
         (outcome.feedback.phase !== 'done' ? (
           <Notice tone="attention">{outcome.message}</Notice>
         ) : (
-          <p role="status" className="ds-help">
-            {outcome.message}
-          </p>
+          <span role="status" className="sr-only">
+            {outcome.feedback.label}
+            {outcome.message && `. ${outcome.message}`}
+          </span>
         ))}
     </Section>
   )
@@ -268,11 +268,11 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
             change({ tagIds: [item.id], parentIds: [tag.id], mode: 'add' })
           }
         />
-        {receipt?.phase === 'done' && (
-          <p role="status" className="ds-cell-id">
-            <ButtonFeedbackLabel feedback={receipt} />
-          </p>
-        )}
+        <span role="status" className="sr-only">
+          {action?.mode === 'remove' && receipt?.phase === 'done'
+            ? receipt.label
+            : ''}
+        </span>
         {failure && <Notice tone="danger">{failure}</Notice>}
       </Section>
     </>

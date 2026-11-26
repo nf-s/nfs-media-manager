@@ -509,6 +509,30 @@ test('an artist review names artists and the artist queue rules', () => {
   assert.doesNotMatch(html, /album/i)
 })
 
+test('the queue confirmation carries the confirmed count while submitting', () => {
+  const provider = artistCoverage.providers[0]
+  assert.ok(provider)
+  const html = renderToStaticMarkup(
+    <CoverageReview
+      review={coverageRequest(provider, 'missing')}
+      olderThanDays={180}
+      subject="artists"
+      pending
+      pendingFeedback={{ phase: 'pending', label: '1 confirmed · submitting…' }}
+      onConfirm={() => {}}
+      onCancel={() => {}}
+    />,
+  )
+  assert.match(
+    html,
+    /<button[^>]*data-feedback="pending"[^>]*disabled=""[^>]*>/,
+  )
+  assert.equal(
+    html.replace(/<[^>]*>/g, '').match(/1 confirmed · submitting…/g)?.length,
+    1,
+  )
+})
+
 test('artist queue requests go through the artist queue with its freshness filter', () => {
   const missing = artistCoverageQueueRequest({
     provider: 'fixture-provider',

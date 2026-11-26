@@ -60,6 +60,7 @@ function MatchedTrack({
               key={addition.job.jobId}
               addition={addition}
               name={names.get(addition.playlistId) ?? 'Playlist'}
+              receipt={adding.receipt}
             />
           ))}
         </AdditionList>

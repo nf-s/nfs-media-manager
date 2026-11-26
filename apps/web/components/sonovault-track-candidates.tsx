@@ -27,11 +27,7 @@ import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
-import {
-  Button,
-  ButtonFeedbackLabel,
-  mutationFeedback,
-} from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
@@ -310,7 +306,15 @@ function SonovaultCandidates({
                 </span>
               )
             }
-            by={candidateDetails(candidate)}
+            by={
+              decide.data &&
+              decide.variables?.candidate.sonovaultTrackId ===
+                candidate.sonovaultTrackId ? (
+                <span role="status">{candidateDetails(candidate)}</span>
+              ) : (
+                candidateDetails(candidate)
+              )
+            }
             action={
               candidate.spotifyUrl ? (
                 <ServiceIconLinks
@@ -401,22 +405,7 @@ function SonovaultCandidates({
         </p>
       )}
       {decide.data?.spotifyWarning && (
-        <Notice tone="attention">
-          Candidate accepted. {decide.data.spotifyWarning}
-        </Notice>
-      )}
-      {decide.data && !decide.data.spotifyWarning && (
-        <span role="status" className="ds-cell-id">
-          <ButtonFeedbackLabel
-            feedback={{
-              phase: 'done',
-              label:
-                decide.variables?.decision === 'reject'
-                  ? 'Marked incorrect'
-                  : 'Candidate accepted',
-            }}
-          />
-        </span>
+        <Notice tone="attention">{decide.data.spotifyWarning}</Notice>
       )}
       {decide.isError && (
         <Notice tone="danger">

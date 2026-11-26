@@ -318,15 +318,28 @@ function JobStatus({
 }
 
 /** Status, stage and failure message of a playlist job. */
-function JobState({ job }: { job: SpotifyPlaylistJob }) {
+function JobState({
+  job,
+  linkLabel,
+}: {
+  job: SpotifyPlaylistJob
+  linkLabel?: string
+}) {
   const progress = playlistJobActivityLabel(job)
   return (
     <>
-      <JobStatus job={job} />
-      {progress && <span className="ds-muted"> {progress}</span>}
-      {job.status === 'failed' && job.errorMessage && (
-        <span className="block whitespace-normal">{job.errorMessage}</span>
+      {linkLabel ? (
+        <DetailLink kind="job" id={job.jobId}>
+          {linkLabel}
+        </DetailLink>
+      ) : (
+        <JobStatus job={job} />
       )}
+      {progress && <span className="ds-muted"> {progress}</span>}
+      {(job.status === 'failed' || job.status === 'cancelled') &&
+        job.errorMessage && (
+          <span className="block whitespace-normal">{job.errorMessage}</span>
+        )}
     </>
   )
 }
@@ -644,10 +657,27 @@ export default function SpotifyPlaylistImport() {
             `${formatCount(listing.data?.playlists.length ?? 0)} playlists listed`,
           )
         : undefined
+  const likedFeedback =
+    likedResult && importFeedback
+      ? {
+          ...importFeedback,
+          label:
+            importFeedback.phase === 'done' && queue.data?.queued
+              ? 'Liked Songs imported'
+              : importFeedback.label,
+        }
+      : playlistJobActive(liked?.job) && liked?.job
+        ? jobButtonFeedback(liked.job)
+        : undefined
+  const listingPhaseOnButton = Boolean(
+    listingJob &&
+    listingFeedback?.phase === jobButtonFeedback(listingJob).phase,
+  )
   const result = queue.data && (
     <Notice>
-      {formatCount(queue.data.queued)} queued ·{' '}
-      {formatCount(queue.data.skipped)} skipped.{' '}
+      {queue.data.skipped > 0 &&
+        (importJobs || !queue.data.queued) &&
+        `${formatCount(queue.data.skipped)} skipped. `}
       <Link
         href={scopedHref(
           `/jobs?batchId=${encodeURIComponent(queue.data.batchId)}`,
@@ -779,14 +809,11 @@ export default function SpotifyPlaylistImport() {
               feedback={
                 authorize.isSuccess
                   ? { phase: 'waiting', label: 'Waiting for authorization' }
-                  : (mutationFeedback(authorize, {
+                  : mutationFeedback(authorize, {
                       pending: 'Opening Spotify…',
                       success: 'Connected',
                       error: 'Could not open sign-in',
-                    }) ??
-                    (outcome === 'connected' && status.connected
-                      ? { phase: 'done', label: 'Spotify connected' }
-                      : undefined))
+                    })
               }
               onClick={() => authorize.mutate()}
             >
@@ -809,20 +836,7 @@ export default function SpotifyPlaylistImport() {
               liked !== undefined && (
                 <Button
                   disabled={queue.isPending || playlistJobActive(liked.job)}
-                  feedback={
-                    likedResult && importFeedback
-                      ? {
-                          ...importFeedback,
-                          label:
-                            importFeedback.phase === 'done' &&
-                            queue.data?.queued
-                              ? 'Liked Songs imported'
-                              : importFeedback.label,
-                        }
-                      : playlistJobActive(liked.job) && liked.job
-                        ? jobButtonFeedback(liked.job)
-                        : undefined
-                  }
+                  feedback={likedFeedback}
                   onClick={() =>
                     queue.mutate({
                       playlists: [],
@@ -854,7 +868,15 @@ export default function SpotifyPlaylistImport() {
               <span className="sec-line">
                 {liked.job && liked.job.status !== 'succeeded' && (
                   <span>
-                    <JobState job={liked.job} />
+                    <JobState
+                      job={liked.job}
+                      linkLabel={
+                        likedFeedback?.phase ===
+                        jobButtonFeedback(liked.job).phase
+                          ? 'View Liked Songs import job'
+                          : undefined
+                      }
+                    />
                   </span>
                 )}
                 {!playlistJobActive(liked.job) && (
@@ -892,6 +914,7 @@ export default function SpotifyPlaylistImport() {
               </Notice>
             )}
             {listingJob &&
+              !listingPhaseOnButton &&
               (listingJob.status === 'failed' ||
                 listingJob.status === 'cancelled') && (
                 <Notice
@@ -921,9 +944,18 @@ export default function SpotifyPlaylistImport() {
             >
               {listedAt ? 'List again' : 'List playlists'}
             </Button>
-            {listingJob && listingActive ? (
+            {listingJob &&
+            (listingActive ||
+              (listingPhaseOnButton &&
+                (listingJob.status === 'failed' ||
+                  listingJob.status === 'cancelled'))) ? (
               <span>
-                <JobState job={listingJob} />
+                <JobState
+                  job={listingJob}
+                  linkLabel={
+                    listingPhaseOnButton ? 'View listing job' : undefined
+                  }
+                />
               </span>
             ) : (
               listing.data && (
@@ -1037,7 +1069,7 @@ export default function SpotifyPlaylistImport() {
                       ) : playlists.length ? (
                         'No playlists match this filter.'
                       ) : listingActive ? (
-                        'Listing playlists...'
+                        <Skeleton width="40%" height={12} />
                       ) : listedAt ? (
                         'No playlists in this Spotify account.'
                       ) : (

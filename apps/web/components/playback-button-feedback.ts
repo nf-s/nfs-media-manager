@@ -12,6 +12,7 @@ import { playbackReportsTrack, type PlayableItem } from '@/utils/playback'
 
 type PlaybackCommand = {
   pending: string
+  unconfirmedLabel?: string
   lane?: string
   repeated?: boolean
   observe: (
@@ -105,7 +106,10 @@ export function createPlaybackButtonFeedback() {
       timers.set(
         key,
         setTimeout(() => {
-          finish(key, { phase: 'unconfirmed', label: 'Result unconfirmed' })
+          finish(key, {
+            phase: 'unconfirmed',
+            label: request.unconfirmedLabel ?? 'Result unconfirmed',
+          })
         }, waitForReport),
       )
       function error() {

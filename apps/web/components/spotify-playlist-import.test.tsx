@@ -282,6 +282,8 @@ test('an unlisted account offers List playlists and an empty table state', () =>
 test('a listing in progress shows its page, polls and disables the button', () => {
   const running = {
     ...listing,
+    playlists: [],
+    total: 0,
     job: {
       jobId: 'listing-1',
       status: 'running',
@@ -300,9 +302,12 @@ test('a listing in progress shows its page, polls and disables the button', () =
     /<button[^>]*data-feedback="running"[^>]*disabled=""[^>]*>/,
   )
   assert.match(html, /<span>Running…<\/span>/)
-  assert.match(
+  assert.doesNotMatch(html, /Listing playlists\.\.\./)
+  assert.match(html, /href="\/jobs\/listing-1">View listing job<\/a>/)
+  assert.match(html, /<span class="ds-muted"> 1 page/)
+  assert.doesNotMatch(
     html,
-    /data-status="running">Running<\/span><\/a><span class="ds-muted"> 1 page</,
+    /href="\/jobs\/listing-1"><span[^>]*data-status="running"/,
   )
   assert.match(
     render([
@@ -320,6 +325,42 @@ test('a listing in progress shows its page, polls and disables the button', () =
       ],
     ]),
     /2 of 4 pages/,
+  )
+})
+
+test('Liked Songs keeps the job link and page count without repeating the running button', () => {
+  const html = render([
+    [['spotify-account'], account],
+    [
+      ['playlists', 'spotify-imports'],
+      {
+        ...imports,
+        likedSongs: {
+          ...imports.likedSongs,
+          job: {
+            jobId: 'liked-import',
+            status: 'running',
+            errorMessage: null,
+            finishedAt: null,
+            progress: { pagesRead: 1, totalPages: 3 },
+          },
+        },
+      },
+    ],
+    [['playlists', 'spotify-listing'], listing],
+  ])
+  assert.match(
+    html,
+    /<button[^>]*data-feedback="running"[^>]*disabled=""[^>]*>/,
+  )
+  assert.match(
+    html,
+    /href="\/jobs\/liked-import">View Liked Songs import job<\/a>/,
+  )
+  assert.match(html, /1 of 3 pages/)
+  assert.doesNotMatch(
+    html,
+    /href="\/jobs\/liked-import"><span[^>]*data-status="running"/,
   )
 })
 

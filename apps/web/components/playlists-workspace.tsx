@@ -194,7 +194,10 @@ export default function PlaylistsWorkspace() {
     '/imports/spotify-playlists',
     view === 'album' ? 'album' : 'track',
   )
-  const [outcome, setOutcome] = useState('')
+  const [outcome, setOutcome] = useState<{
+    id: string
+    message: string
+  } | null>(null)
   const inspector = useDetailInspector()
   const selectedId =
     inspector?.root?.kind === 'playlist' ? inspector.root.id : null
@@ -244,15 +247,16 @@ export default function PlaylistsWorkspace() {
         PlaylistRemovalSchema,
         { method: 'DELETE' },
       ),
-    onMutate: () => setOutcome(''),
+    onMutate: () => setOutcome(null),
     onSuccess: async (result, playlist) => {
       forgetLibraryAddition(client, {
         kind: 'playlist',
         catalogId: playlist.id,
       })
-      setOutcome(
-        `Removed ${playlist.name} and ${formatItemCount(result.removedTracks, TRACKS)}.`,
-      )
+      setOutcome({
+        id: playlist.id,
+        message: `Removed ${playlist.name} and ${formatItemCount(result.removedTracks, TRACKS)}.`,
+      })
       await invalidatePlaylists(client)
     },
   })
@@ -300,7 +304,7 @@ export default function PlaylistsWorkspace() {
             {errorMessage(remove.error, 'Could not remove the playlist.')}
           </Notice>
         )}
-        {outcome && <Notice>{outcome}</Notice>}
+        {outcome && <Notice>{outcome.message}</Notice>}
       </div>
       <Toolbar>
         <SecondaryTableSearch
@@ -519,7 +523,7 @@ export default function PlaylistsWorkspace() {
                   )}
                   {columns.visible('actions') && (
                     <TableCell align="end">
-                      {playlist.source && (
+                      {playlist.source && outcome?.id !== playlist.id && (
                         <ConfirmAction
                           variant="ghost"
                           size="xs"

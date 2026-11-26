@@ -500,6 +500,93 @@ test('track appearances link back to the album and the originating Similar list'
   ).toBeVisible()
 })
 
+test('Match on TIDAL shows one status through request, job and result', async ({
+  page,
+}) => {
+  let queued = false
+  let complete = false
+  let release = () => {}
+  const submitting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/tidal/similar/tracks/*', async (route) => {
+    if (route.request().method() === 'POST') {
+      await submitting
+      queued = true
+    }
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: TidalSimilarSchema.parse({
+          kind: 'track',
+          itemId: similarSeedPath.split('/').at(-1),
+          matched: false,
+          readAt: null,
+          items: [],
+          source: null,
+          job: null,
+          lookupJob: null,
+          unmatched: complete
+            ? { reason: 'not-found', isrc: 'QZFX22800001' }
+            : null,
+          matchJob: queued
+            ? {
+                jobId: 'fixture-match',
+                status: complete ? 'succeeded' : 'queued',
+                createdAt: '2026-01-01T00:00:00Z',
+                finishedAt: complete ? '2026-01-01T00:01:00Z' : null,
+                errorMessage: null,
+              }
+            : null,
+        }),
+      },
+    })
+  })
+  try {
+    await openTrackSimilar(page)
+    const match = page.getByRole('button', {
+      name: 'Match on TIDAL',
+      exact: true,
+    })
+    await match.scrollIntoViewIfNeeded()
+    const idle = await match.boundingBox()
+    await match.click()
+    const pending = page.getByRole('button', { name: 'Matching on TIDAL…' })
+    await expect(pending).toBeVisible()
+    expect(await pending.boundingBox()).toEqual(idle)
+    await expect(page.getByText(/^Matching on TIDAL/)).toHaveCount(1)
+  } finally {
+    release()
+  }
+  await expect(
+    page.getByRole('button', { name: 'TIDAL match queued' }),
+  ).toBeVisible()
+  await expect(
+    page.getByText('TIDAL match queued', { exact: true }),
+  ).toHaveCount(1)
+  complete = true
+  await expect(page.getByRole('button', { name: 'No match' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Match job' })).toBeVisible()
+})
+
+test('a failed Similar request displays the server explanation once', async ({
+  page,
+}) => {
+  const message = 'Fixture provider is unavailable.'
+  await page.route('**/api/v1/tidal/similar/tracks/*', async (route) => {
+    if (route.request().method() === 'GET') return route.continue()
+    await route.fulfill({ status: 503, json: { statusCode: 503, message } })
+  })
+  await openTrackSimilar(page)
+  await page.getByRole('button', { name: 'Read again from TIDAL' }).click()
+  await expect(page.getByRole('button', { name: /Read failed/ })).toBeVisible()
+  await expect(
+    page.getByRole('alert').filter({ hasText: message }),
+  ).toBeVisible()
+  await expect(page.getByText(message, { exact: true })).toHaveCount(1)
+})
+
 test('a first read shows recommendations while the catalog save is pending', async ({
   page,
 }) => {

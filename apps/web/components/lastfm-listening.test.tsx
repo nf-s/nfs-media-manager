@@ -242,6 +242,10 @@ test('running sync shows progress, the current job and Stop', () => {
     /<button[^>]*data-feedback="running"[^>]*disabled=""[^>]*>/,
   )
   assert.match(html, /<span>Syncing…<\/span>/)
+  assert.doesNotMatch(
+    html,
+    /<dt>State<\/dt><dd><span[^>]*data-status="running"/,
+  )
   assert.match(html, /href="\/jobs\/job-1">View current job/)
   assert.match(html, /disabled=""[^>]*>Relink/)
 })

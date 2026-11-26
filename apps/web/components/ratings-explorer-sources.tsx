@@ -20,12 +20,36 @@ import {
   ratingSourcesKey,
 } from '@/utils/ratings-explorer-api'
 import { ReadButton } from './read-button'
-import { ResultButton, useResultAction } from './result-feedback'
+import { useResultAction } from './result-feedback'
 import { useConfig } from './providers'
 import { SecondaryTableToolbar } from './secondary-table'
 
 type Distribution = RatingsSourcesPage['histograms'][number]
 type Bin = Distribution['bins'][number]
+
+/** Keep the space for the last count while the next request is outstanding. */
+export function RatingsCount({
+  library,
+  total,
+  failed,
+}: {
+  library: RatingsSourcesRequest['library']
+  total?: number
+  failed: boolean
+}) {
+  const [previous, setPrevious] = useState(total)
+  useEffect(() => {
+    if (total !== undefined) setPrevious(total)
+  }, [total])
+  const count = total ?? previous
+  if (count === undefined) return failed ? null : 'Loading ratings…'
+  return (
+    <span className={total === undefined ? 'invisible' : undefined}>
+      {formatItemCount(count, { one: library, other: library + 's' })}
+    </span>
+  )
+}
+
 export type RatingSelection = {
   range: RatingsRange
   label: string
@@ -101,14 +125,13 @@ function RangeEditor({
         </label>
       </div>
       <div className="ds-actions">
-        <ResultButton
-          control="Ratings view-ranking"
+        <Button
           size="xs"
           variant="primary"
           onClick={() => onApply(first, last)}
         >
           Show in Ranking
-        </ResultButton>
+        </Button>
         <Button size="xs" onClick={onCancel}>
           Cancel
         </Button>
@@ -246,14 +269,11 @@ export function RatingsSources({
         search={search}
         filters={filters}
         count={
-          page
-            ? formatItemCount(page.total, {
-                one: library,
-                other: library + 's',
-              })
-            : query.isError
-              ? undefined
-              : 'Loading ratings…'
+          <RatingsCount
+            library={library}
+            total={page?.total}
+            failed={query.isError}
+          />
         }
       />
       {rangeControls}

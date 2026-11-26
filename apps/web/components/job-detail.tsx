@@ -372,12 +372,9 @@ export function JobDetail({
               <Notice tone="danger">{retry.error.message}</Notice>
             )}
             {retryId && (
-              <Notice>
-                {retryFeedback?.label}.{' '}
-                <DetailLink kind="job" id={retryId}>
-                  View retry
-                </DetailLink>
-              </Notice>
+              <DetailLink kind="job" id={retryId}>
+                View retry
+              </DetailLink>
             )}
           </Section>
           <Section>

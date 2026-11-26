@@ -314,18 +314,21 @@ export function useSonovaultLookupSelection({
       }
     },
   })
+  const jobs = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? batchId : undefined,
+  )
   const status = queue.isPending ? (
-    <span role="status">
-      Queueing Sonovault lookups · {formatCount(progress)} confirmed
-    </span>
+    <></>
   ) : queue.isError ? (
     <span role="alert">
       {errorMessage(queue.error, 'Could not queue Sonovault lookups.')}
     </span>
   ) : queue.data ? (
-    <span role="status">
-      Sonovault: {formatCount(queue.data.queued)} queued ·{' '}
-      {formatCount(queue.data.skipped)} skipped.{' '}
+    <span>
+      {jobs &&
+        queue.data.skipped > 0 &&
+        `${formatCount(queue.data.skipped)} skipped · `}
       {batchId && (queue.data.queued > 0 || queue.data.interrupted) && (
         <Link
           href={scopedHref(
@@ -343,10 +346,6 @@ export function useSonovaultLookupSelection({
       ))}
     </span>
   ) : null
-  const jobs = useJobBatchFeedback(
-    apiBaseUrl,
-    queue.data?.queued ? batchId : undefined,
-  )
   const feedback: ButtonFeedback | undefined = queue.isPending
     ? {
         phase: 'pending',
@@ -386,16 +385,36 @@ export function useSonovaultLookupSelection({
 
 export function SonovaultLookupJobStatus({
   job,
+  showStatus = true,
 }: {
   job: SonovaultTrackLookupJob
+  showStatus?: boolean
 }) {
   return (
     <DetailLink kind="job" id={job.jobId}>
-      <Status
-        state={job.status === 'succeeded' ? 'done' : job.status}
-        title={job.errorMessage ?? undefined}
-      />
+      {showStatus ? (
+        <Status
+          state={job.status === 'succeeded' ? 'done' : job.status}
+          title={job.errorMessage ?? undefined}
+        />
+      ) : (
+        'View lookup job'
+      )}
     </DetailLink>
+  )
+}
+
+/** Keep the job link when the lookup action already shows its state. */
+export function sonovaultLookupStatusOnButton(
+  job: SonovaultTrackLookupJob,
+  feedback: ButtonFeedback | undefined,
+  queued: number | undefined,
+) {
+  if (!queued || !feedback) return false
+  const phase = job.status === 'succeeded' ? 'done' : job.status
+  return (
+    feedback.phase === phase ||
+    (phase === 'queued' && feedback.phase === 'waiting')
   )
 }
 
@@ -511,10 +530,8 @@ export function SonovaultLookupBody({
   return (
     <>
       <div>
-        {job && job.status === 'failed' && (
-          <p className="ds-muted">
-            <SonovaultLookupJobStatus job={job} /> {job.errorMessage}
-          </p>
+        {job?.status === 'failed' && job.errorMessage && (
+          <p className="ds-muted">{job.errorMessage}</p>
         )}
         {!lookup ? (
           <p className="ds-help">
@@ -616,7 +633,20 @@ export function TrackSonovaultSource({ item }: { item: TrackDetail }) {
         }
         identifier={state?.lookup?.sonovaultTrackId ?? undefined}
         when={time && <LookupTime time={time} />}
-        state={job && <SonovaultLookupJobStatus job={job} />}
+        state={
+          job && (
+            <SonovaultLookupJobStatus
+              job={job}
+              showStatus={
+                !sonovaultLookupStatusOnButton(
+                  job,
+                  feedback,
+                  queue.data?.queued,
+                )
+              }
+            />
+          )
+        }
         actions={
           (due || feedback) && (
             <Button

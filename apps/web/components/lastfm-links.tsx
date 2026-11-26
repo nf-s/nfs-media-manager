@@ -485,10 +485,6 @@ export default function LastfmLinks() {
           )}
         </Section>
       </div>
-      <LastfmLinkWorkflow
-        selection={selected}
-        onSelectionChange={setSelected}
-      />
       <Toolbar>
         <SecondaryTableSearch
           label="Search scrobbled names"
@@ -651,6 +647,10 @@ export default function LastfmLinks() {
           />
         </SecondaryTableSelectionBar>
       </SecondaryTableFrame>
+      <LastfmLinkWorkflow
+        selection={selected}
+        onSelectionChange={setSelected}
+      />
     </>
   )
 }

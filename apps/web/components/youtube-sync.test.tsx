@@ -75,7 +75,7 @@ function button(html: string, label: string) {
     ?.find(
       (markup) =>
         markup.endsWith(`>${label}</button>`) ||
-        markup.endsWith(`<span>${label}</span></button>`),
+        markup.endsWith(`<span>${label}</span></span></button>`),
     )
   assert.ok(match, `Missing ${label} button`)
   return match
@@ -125,7 +125,7 @@ test('a running sync shows channel progress, stop and the current job', () => {
       sourcesTotal: 6,
     }),
   )
-  assert.match(
+  assert.doesNotMatch(
     html,
     /<dd><span class="ds-status" data-status="running">Running<\/span><\/dd>/,
   )
@@ -166,11 +166,11 @@ test('a paused sync explains the quota and can be resumed', () => {
       resumeAfter: '2026-11-14T08:00:00.000Z',
     }),
   )
-  assert.match(
+  assert.doesNotMatch(
     html,
     /<dd><span class="ds-status" data-status="paused">Paused<\/span><\/dd>/,
   )
-  assert.match(html, /Paused: the daily YouTube API quota is used up\./)
+  assert.match(html, /The daily YouTube API quota is used up\./)
   assert.match(html, /The schedule resumes it after /)
   const resume = button(html, 'Resume sync · waiting')
   assert.match(resume, /data-feedback="waiting"/)
@@ -200,9 +200,11 @@ test('a failed sync shows its error and offers to resume', () => {
 })
 
 test('the OAuth return is confirmed or reported', () => {
-  assert.match(
-    render(status(), 'youtube=connected'),
-    /role="status">.*<span>YouTube connected\.<\/span>/,
+  const connected = render(status(), 'youtube=connected')
+  assert.match(button(connected, 'YouTube connected'), /data-feedback="done"/)
+  assert.doesNotMatch(
+    connected,
+    /data-status="done">Connected<|<span>YouTube connected\.<\/span>/,
   )
   assert.match(
     render(status({ account: { connected: false } }), 'youtube=error'),

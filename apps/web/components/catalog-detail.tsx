@@ -89,8 +89,8 @@ export function CatalogLibraryAction({
             )
           ).mediaItemId,
       ),
-    onSuccess: () => {
-      announce(labelKind, title)
+    onSuccess: (committedId) => {
+      announce(labelKind, title, committedId)
       if (kind === 'album' || kind === 'film' || kind === 'track') {
         void Promise.all([
           invalidateManualMediaAddition(client, kind),
@@ -116,6 +116,7 @@ export function CatalogLibraryAction({
         short={inline}
         saved={inLibrary || Boolean(receipt?.committedId)}
         feedback={receipt?.feedback}
+        receiptId={receipt?.committedId}
         onAdd={() => {
           if (!libraryAdditionUnavailable(client, target)) action.mutate()
         }}

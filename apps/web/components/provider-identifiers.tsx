@@ -268,7 +268,6 @@ export function IdentifierRow({
       )}
       {refresh.isError && (
         <Notice tone="danger" className="data-identifier-wide">
-          The ID was saved.{' '}
           {errorMessage(refresh.error, 'Could not request a refresh.')}
         </Notice>
       )}

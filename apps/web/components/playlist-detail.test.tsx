@@ -399,8 +399,8 @@ test('the sync tab shows the schedule, progress and the latest job', async () =>
   ])
     assert.match(html, new RegExp(`>${label}</option>`))
   assert.match(html, /aria-valuenow="2" aria-valuetext="2 of 5"/)
-  assert.match(html, /Import in progress/)
-  assert.match(html, /data-status="running">Running</)
+  assert.doesNotMatch(html, /Import in progress|data-status="running">Running</)
+  assert.match(html, />Open import job<\/a>/)
   const job = html.match(/title="View job" href="([^"]+)"/)?.[1]
   assert.ok(job)
   const jobUrl = new URL(job.replaceAll('&amp;', '&'), 'http://localhost')

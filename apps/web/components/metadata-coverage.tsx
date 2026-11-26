@@ -30,7 +30,7 @@ import {
 } from '@repo/ui/components/ui/button'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
-import { useJobBatchFeedback } from './job-button-feedback'
+import { queueReceipt, useJobBatchFeedback } from './job-button-feedback'
 import { dispatchArtistSelection } from '@/utils/artist-selection'
 import {
   ARTIST_JOBS_HREF,
@@ -106,6 +106,7 @@ export function CoverageReview({
   review,
   olderThanDays,
   pending,
+  pendingFeedback,
   onConfirm,
   onCancel,
   subject = 'albums',
@@ -114,6 +115,7 @@ export function CoverageReview({
   review: CoverageRequest
   olderThanDays: number
   pending: boolean
+  pendingFeedback?: ButtonFeedback
   onConfirm: () => void
   onCancel: () => void
   storedData?: boolean
@@ -136,11 +138,16 @@ export function CoverageReview({
               variant="primary"
               disabled={pending}
               feedback={
-                pending ? { phase: 'pending', label: 'Submitting…' } : undefined
+                pending
+                  ? (pendingFeedback ?? {
+                      phase: 'pending',
+                      label: 'Submitting…',
+                    })
+                  : undefined
               }
               onClick={onConfirm}
             >
-              {pending ? 'Queuing...' : `Confirm ${jobs}`}
+              Confirm {jobs}
             </Button>
             <Button size="xs" disabled={pending} onClick={onCancel}>
               Cancel
@@ -324,17 +331,19 @@ export function useCoverageQueue(
             label: `${formatCount(queue.data.queued)} queued · remainder unconfirmed`,
           }
         : queue.data
-          ? (batch ?? {
-              phase: queue.data.queued ? 'queued' : 'done',
-              label: `${formatCount(queue.data.queued)} queued · ${formatCount(queue.data.skipped)} skipped`,
-            })
+          ? (batch ?? queueReceipt(queue.data.queued, queue.data.skipped))
           : undefined
   return {
     queue,
     review,
     feedback,
+    receiptSkips:
+      queue.data && (batch || queue.data.interrupted || !queue.data.queued)
+        ? queue.data.skipped
+        : 0,
     feedbackFor(provider: string, gap: CoverageGap) {
-      return queue.variables?.provider.provider === provider &&
+      return !review &&
+        queue.variables?.provider.provider === provider &&
         queue.variables.gap === gap
         ? feedback
         : undefined
@@ -363,10 +372,13 @@ export function useCoverageQueue(
 /** The review step, then the queue's error or result, under the control that opened it. */
 export function CoverageQueueStatus({
   state,
+  feedbackOnControl,
 }: {
   state: ReturnType<typeof useCoverageQueue>
+  feedbackOnControl: boolean
 }) {
   const { queue, review, progressHref } = state
+  const fallbackFeedback = feedbackOnControl ? undefined : state.feedback
   return (
     <>
       {review && (
@@ -376,38 +388,44 @@ export function CoverageQueueStatus({
           subject={state.subject}
           storedData={state.storedData}
           pending={queue.isPending}
+          pendingFeedback={state.feedback}
           onConfirm={() => queue.mutate(review)}
           onCancel={state.cancel}
         />
       )}
       {queue.isError && (
         <Notice tone="danger">
-          Could not queue the jobs. Check progress before retrying.
+          {!feedbackOnControl && 'Could not queue the jobs. '}
+          Check progress before retrying.
         </Notice>
       )}
-      {queue.data && (
-        <Notice
-          tone={queue.data.interrupted ? 'danger' : undefined}
-          action={
-            progressHref ? (
-              <Button size="xs" asChild>
-                <Link href={progressHref}>View progress</Link>
-              </Button>
-            ) : undefined
-          }
-        >
-          {state.feedback && (
-            <span className="ds-actions" role="status">
-              <ButtonFeedbackLabel feedback={state.feedback} />
-            </span>
-          )}
-          {formatCount(queue.data.queued)} queued ·{' '}
-          {formatCount(queue.data.skipped)} skipped
-          {queue.data.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
-          ))}
-        </Notice>
-      )}
+      {queue.data &&
+        (fallbackFeedback ||
+          progressHref ||
+          state.receiptSkips > 0 ||
+          queue.data.warnings.length > 0) && (
+          <Notice
+            tone={queue.data.interrupted ? 'danger' : undefined}
+            action={
+              progressHref ? (
+                <Button size="xs" asChild>
+                  <Link href={progressHref}>View progress</Link>
+                </Button>
+              ) : undefined
+            }
+          >
+            {fallbackFeedback && (
+              <span className="ds-actions" role="status">
+                <ButtonFeedbackLabel feedback={fallbackFeedback} />
+              </span>
+            )}
+            {state.receiptSkips > 0 &&
+              `${formatCount(state.receiptSkips)} skipped.`}
+            {queue.data.warnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </Notice>
+        )}
     </>
   )
 }
@@ -438,6 +456,16 @@ function CoverageSection({
   const data = coverage.data
   const noun = playlistAlbums ? libraryAlbumNoun : nouns[subject]
   const { queue } = state
+  const feedbackOnControl = Boolean(
+    data?.providers.some(
+      (provider) =>
+        !provider.unavailableReason &&
+        ((provider.missing > 0 &&
+          state.feedbackFor(provider.provider, 'missing')) ||
+          (provider.stale > 0 &&
+            state.feedbackFor(provider.provider, 'stale'))),
+    ),
+  )
   return (
     <Section
       title="Coverage"
@@ -596,7 +624,10 @@ function CoverageSection({
               )
             })}
           </div>
-          <CoverageQueueStatus state={state} />
+          <CoverageQueueStatus
+            state={state}
+            feedbackOnControl={feedbackOnControl}
+          />
         </>
       )}
     </Section>

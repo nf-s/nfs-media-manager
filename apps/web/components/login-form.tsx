@@ -6,7 +6,7 @@ import { Label } from '@repo/ui/components/ui/label'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { useMutation } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from '@repo/ui/components/ui/sonner'
 import { useAuthClient } from '@/hooks/useAuthClient'
 
@@ -15,6 +15,13 @@ export default function LoginForm() {
   const authClient = useAuthClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const signedIn = useRef(false)
+  useEffect(
+    () => () => {
+      if (signedIn.current) toast.success('Signed in')
+    },
+    [],
+  )
   useEffect(() => {
     try {
       if (window.sessionStorage.getItem('sign-out-confirmed') !== 'yes') return
@@ -37,7 +44,7 @@ export default function LoginForm() {
       }
     },
     onSuccess: async () => {
-      toast.success('Signed in')
+      signedIn.current = true
       router.replace('/albums')
       router.refresh()
     },
@@ -78,9 +85,7 @@ export default function LoginForm() {
       </div>
 
       {loginMutation.isError && (
-        <Notice tone="danger">
-          Could not sign in. Check the email and password.
-        </Notice>
+        <Notice tone="danger">Check the email and password.</Notice>
       )}
 
       <Button

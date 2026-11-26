@@ -55,6 +55,7 @@ export function LibraryAction({
   saved = false,
   pending = false,
   feedback,
+  receiptId,
   disabled = false,
   touch = false,
   short = false,
@@ -67,6 +68,7 @@ export function LibraryAction({
   saved?: boolean
   pending?: boolean
   feedback?: ButtonFeedback
+  receiptId?: string
   disabled?: boolean
   /** Use the larger phone target when there is room beside the title. */
   touch?: boolean
@@ -102,10 +104,11 @@ export function LibraryAction({
       variant="ghost"
       size={size}
       data-touch={touch ? '' : undefined}
+      data-library-receipt={added ? receiptId : undefined}
       aria-label={label}
       aria-disabled={unavailable || undefined}
       aria-busy={adding || undefined}
-      aria-live={added ? 'off' : undefined}
+      aria-live="polite"
       title={label}
       feedback={
         feedback ??

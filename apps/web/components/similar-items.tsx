@@ -36,7 +36,6 @@ import {
   playbackItemFeedbackKey,
   usePlaybackPair,
 } from './playback-button-feedback'
-import { Status } from '@repo/ui/components/ds/status'
 import {
   SuggestionLink,
   SuggestionRow,
@@ -590,8 +589,8 @@ export function SimilarRow({
             )
           ).id,
       ),
-    onSuccess: () => {
-      announceAddition(kind, title)
+    onSuccess: (id) => {
+      announceAddition(kind, title, id)
       return invalidateManualMediaAddition(client, kind)
     },
   })
@@ -626,6 +625,7 @@ export function SimilarRow({
         short
         saved={inLibrary || item.hiddenLibraryMatch}
         feedback={receipt?.feedback}
+        receiptId={receipt?.committedId}
         disabled={awaitingSave}
         onAdd={() => {
           if (!libraryAdditionUnavailable(client, target)) add.mutate()
@@ -717,20 +717,13 @@ export function SimilarRow({
   )
 }
 
-function SimilarLoading({ label }: { label?: string }) {
+function SimilarLoading() {
   return (
-    <div>
-      {label && (
-        <FilterLine>
-          <Status state="running">{label}</Status>
-        </FilterLine>
-      )}
-      <List compact>
-        <SuggestionRowSkeleton />
-        <SuggestionRowSkeleton />
-        <SuggestionRowSkeleton />
-      </List>
-    </div>
+    <List compact>
+      <SuggestionRowSkeleton />
+      <SuggestionRowSkeleton />
+      <SuggestionRowSkeleton />
+    </List>
   )
 }
 
@@ -786,7 +779,7 @@ function UnmatchedState({
       Match on TIDAL
     </Button>
   )
-  if (unmatched?.reason === 'review')
+  if (!requesting && unmatched?.reason === 'review')
     return (
       <State
         size="sm"
@@ -805,7 +798,7 @@ function UnmatchedState({
         Choose one to read similar tracks.
       </State>
     )
-  if (unmatched?.reason === 'no-isrc')
+  if (!requesting && unmatched?.reason === 'no-isrc')
     return (
       <State size="sm" title="No ISRC">
         TIDAL matches tracks by ISRC.
@@ -813,7 +806,11 @@ function UnmatchedState({
     )
   if (unmatched?.reason === 'not-found')
     return (
-      <State size="sm" title="Not on TIDAL" action={match}>
+      <State
+        size="sm"
+        title={feedback ? `Similar ${plural[kind]}` : 'Not on TIDAL'}
+        action={match}
+      >
         TIDAL has no track with ISRC {unmatched.isrc}
         {matchJob && (
           <>
@@ -826,7 +823,11 @@ function UnmatchedState({
       </State>
     )
   return (
-    <State size="sm" title="Not matched on TIDAL" action={match}>
+    <State
+      size="sm"
+      title={feedback ? `Similar ${plural[kind]}` : 'Not matched on TIDAL'}
+      action={match}
+    >
       {matchJob?.status === 'failed' && matchJob.errorMessage
         ? matchJob.errorMessage
         : `Similar ${plural[kind]} come from TIDAL.`}
@@ -866,62 +867,73 @@ export function SimilarBody({
     kind === 'track' ? 'Reading from TIDAL and Sonovault' : 'Reading from TIDAL'
   const readingList = requesting || isActiveSimilarJob(job)
   const matching = isActiveSimilarJob(matchJob) || (requesting && !matched)
-  const feedback: ButtonFeedback | undefined = matching
-    ? { phase: 'running', label: 'Matching on TIDAL…' }
-    : readingList
-      ? {
-          phase: 'running',
-          label:
-            items.length && !readAt
-              ? 'Updating library matches…'
-              : 'Reading from TIDAL…',
-        }
-      : isActiveSimilarJob(lookupJob)
-        ? {
-            phase: lookupJob?.status === 'queued' ? 'queued' : 'running',
-            label: 'Finding on Spotify…',
-          }
-        : requestFailed || job?.status === 'failed'
-          ? { phase: 'failed', label: 'Read failed · retry' }
-          : job?.status === 'cancelled'
-            ? { phase: 'cancelled', label: 'Read cancelled' }
-            : lookupJob?.status === 'failed'
-              ? { phase: 'partial', label: 'Read · Spotify lookup failed' }
-              : requestCompleted && (readAt || !matched)
-                ? {
-                    phase: 'done',
-                    label: !matched
-                      ? 'No match'
-                      : items.length
-                        ? `${items.length} loaded`
-                        : 'None found',
-                  }
-                : undefined
-  if (matching)
+  function currentFeedback(): ButtonFeedback | undefined {
+    if (matching)
+      return matchJob?.status === 'queued'
+        ? { phase: 'queued', label: 'TIDAL match queued' }
+        : { phase: 'running', label: 'Matching on TIDAL…' }
+    if (!matched) {
+      if (
+        requestFailed ||
+        (matchJob?.status === 'failed' &&
+          similar.unmatched?.reason !== 'not-found')
+      )
+        return { phase: 'failed', label: 'Match failed · retry' }
+      if (matchJob?.status === 'cancelled')
+        return { phase: 'cancelled', label: 'Match cancelled' }
+      return requestCompleted ? { phase: 'done', label: 'No match' } : undefined
+    }
+    if (readingList) {
+      if (job?.status === 'queued')
+        return { phase: 'queued', label: 'TIDAL read queued' }
+      return {
+        phase: 'running',
+        label:
+          items.length && !readAt
+            ? 'Received from TIDAL · updating library matches'
+            : reading + '…',
+      }
+    }
+    if (isActiveSimilarJob(lookupJob))
+      return lookupJob?.status === 'queued'
+        ? { phase: 'queued', label: 'Spotify lookup queued' }
+        : { phase: 'running', label: 'Finding on Spotify…' }
+    if (requestFailed || job?.status === 'failed')
+      return { phase: 'failed', label: 'Read failed · retry' }
+    if (job?.status === 'cancelled')
+      return { phase: 'cancelled', label: 'Read cancelled' }
+    if (lookupJob?.status === 'failed')
+      return { phase: 'partial', label: 'Read · Spotify lookup failed' }
+    if (lookupJob?.status === 'cancelled')
+      return { phase: 'partial', label: 'Read · Spotify lookup cancelled' }
+    if (requestCompleted && readAt)
+      return {
+        phase: 'done',
+        label: items.length ? `${items.length} loaded` : 'None found',
+      }
+  }
+  const feedback = currentFeedback()
+  if (!matched || matching)
     return (
-      <>
-        <Button size="xs" disabled feedback={feedback}>
-          Match on TIDAL
-        </Button>
-        <SimilarLoading label="Matching on TIDAL" />
-      </>
+      <UnmatchedState
+        similar={similar}
+        requesting={requesting || matching}
+        feedback={feedback}
+        onRequest={onRequest}
+        {...(onReview ? { onReview } : {})}
+      />
     )
-  if (
-    !items.length &&
-    (readingList || (matched && !job && !readAt && !requestFailed))
-  )
+  if (!items.length && !readAt && (readingList || (!job && !requestFailed)))
     return (
       <>
         <Button
           size="xs"
           disabled
-          feedback={
-            feedback ?? { phase: 'pending', label: 'Reading from TIDAL…' }
-          }
+          feedback={feedback ?? { phase: 'pending', label: reading + '…' }}
         >
           Read again
         </Button>
-        <SimilarLoading label={reading} />
+        <SimilarLoading />
       </>
     )
   const readAgain = (
@@ -935,21 +947,11 @@ export function SimilarBody({
       Read again
     </Button>
   )
-  if (!matched)
-    return (
-      <UnmatchedState
-        similar={similar}
-        requesting={requesting}
-        feedback={feedback}
-        onRequest={onRequest}
-        {...(onReview ? { onReview } : {})}
-      />
-    )
   if (!readAt && !items.length)
     return (
       <State
         size="sm"
-        title="Could not read from TIDAL"
+        title={feedback ? `Similar ${noun}` : 'Could not read from TIDAL'}
         action={readAgain}
         error
       >
@@ -960,7 +962,7 @@ export function SimilarBody({
     return (
       <State
         size="sm"
-        title={`TIDAL has no similar ${noun}`}
+        title={feedback ? `Similar ${noun}` : `TIDAL has no similar ${noun}`}
         action={readAgain}
       >
         Read {formatDate(readAt)}
@@ -997,31 +999,21 @@ export function SimilarBody({
   ))
   return (
     <div>
-      {job?.status === 'failed' && (
+      {job?.status === 'failed' && (!readAt || job.errorMessage) && (
         <Notice tone="danger">
           {readAt
-            ? `The last read from TIDAL failed${job.errorMessage ? `: ${job.errorMessage}` : '.'}`
+            ? job.errorMessage
             : 'TIDAL returned these tracks, but the library update failed. Read again to retry.'}
         </Notice>
       )}
       <FilterLine>
         <BrowseViewSwitch view={view} onChange={changeView} detail />
-        {readingList ? (
-          <Status state="running">
-            {readAt
-              ? reading
-              : 'Received from TIDAL · updating library matches'}
-          </Status>
-        ) : isActiveSimilarJob(lookupJob) ? (
-          <Status state="running">Finding on Spotify</Status>
-        ) : (
-          <ToolbarCount>
-            {kind === 'track'
-              ? `${formatCount(items.length)} from TIDAL`
-              : similarCounts(items)}
-            {source && <SimilarSource source={source} />}
-          </ToolbarCount>
-        )}
+        <ToolbarCount>
+          {kind === 'track'
+            ? `${formatCount(items.length)} from TIDAL`
+            : similarCounts(items)}
+          {source && <SimilarSource source={source} />}
+        </ToolbarCount>
         <Button
           size="xs"
           variant="ghost"

@@ -28,7 +28,7 @@ import { ConfirmAction } from './confirm-action'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import { invalidateSpotifySearchJobs } from './spotify-track-search'
-import { useJobBatchFeedback } from './job-button-feedback'
+import { queueReceipt, useJobBatchFeedback } from './job-button-feedback'
 
 const RECORDS = { one: 'record', other: 'records' }
 const summaryKey = ['providers', 'sonovault', 'summary']
@@ -178,12 +178,7 @@ export default function SonovaultProviderSettings() {
           feedback={
             refreshJobs ??
             (refresh.data
-              ? {
-                  phase: refresh.data.queued ? 'queued' : 'done',
-                  label: refresh.data.queued
-                    ? `${formatCount(refresh.data.queued)} queued`
-                    : 'No jobs queued',
-                }
+              ? queueReceipt(refresh.data.queued, refresh.data.skipped)
               : mutationFeedback(refresh, {
                   pending: 'Requesting refresh…',
                   success: 'Refresh requested',
@@ -215,22 +210,24 @@ export default function SonovaultProviderSettings() {
           {errorMessage(refresh.error, 'Could not queue the refresh.')}
         </Notice>
       )}
-      {refresh.data && (
-        <p className="ds-muted" role="status">
-          {formatCount(refresh.data.queued)} queued ·{' '}
-          {formatCount(refresh.data.skipped)} skipped.{' '}
-          {batchId && refresh.data.queued > 0 && (
-            <Link
-              href={scopedHref(
-                `/jobs?batchId=${encodeURIComponent(batchId)}`,
-                'track',
-              )}
-            >
-              View refresh jobs
-            </Link>
-          )}
-        </p>
-      )}
+      {refresh.data &&
+        (refresh.data.queued > 0 || refresh.data.skipped > 0) && (
+          <p className="ds-muted" role="status">
+            {refresh.data.skipped > 0 &&
+              (refreshJobs || !refresh.data.queued) &&
+              `${formatCount(refresh.data.skipped)} skipped. `}
+            {batchId && refresh.data.queued > 0 && (
+              <Link
+                href={scopedHref(
+                  `/jobs?batchId=${encodeURIComponent(batchId)}`,
+                  'track',
+                )}
+              >
+                View refresh jobs
+              </Link>
+            )}
+          </p>
+        )}
       {remove.isError && (
         <Notice tone="danger">
           {errorMessage(remove.error, 'Could not remove Sonovault data.')}

@@ -81,8 +81,10 @@ function CreatedKeyDetails({
     <Section
       title={created.instructions ? 'Agent instructions' : 'New API key'}
     >
-      <p className="ds-help">
-        Copy this now. The key cannot be shown again after you close it.
+      <p className="ds-help" role="status">
+        {copyStatus?.phase === 'failed'
+          ? 'Copy the selected text before closing.'
+          : 'Copy this now. The key cannot be shown again after you close it.'}
       </p>
       <p role="status">
         {expiresAt ? `Expires ${dateLabel(expiresAt)}` : 'No expiry'}
@@ -117,9 +119,6 @@ function CreatedKeyDetails({
         <Button type="button" onClick={onDone}>
           Done
         </Button>
-        {copyStatus?.phase === 'failed' && (
-          <span role="status">Copy the selected text manually.</span>
-        )}
       </span>
     </Section>
   )
@@ -230,7 +229,6 @@ export default function UserPageClient() {
         previous?.map((key) => (key.id === updated.id ? updated : key)),
       )
       setEditing(null)
-      setNotice(`Rate limit saved for ${updated.name}.`)
       await client.invalidateQueries({ queryKey: ['user-api-keys'] })
     },
   })
@@ -245,13 +243,26 @@ export default function UserPageClient() {
     onSuccess: async ({ id }) => {
       if (editing?.id === id) setEditing(null)
       if (created?.apiKey.id === id) setCreated(null)
-      setNotice('API key revoked.')
+      setNotice('')
+      client.setQueryData<ApiKey[]>(['user-api-keys'], (previous) =>
+        previous?.map((key) =>
+          key.id === id ? { ...key, enabled: false } : key,
+        ),
+      )
       await client.invalidateQueries({ queryKey: ['user-api-keys'] })
     },
   })
+  const keyReceipt =
+    updateLimit.submittedAt > revoke.submittedAt
+      ? updateLimit.isSuccess
+        ? { kind: 'limit', id: updateLimit.data.id, label: 'Rate limit saved.' }
+        : null
+      : revoke.isSuccess
+        ? { kind: 'revoke', id: revoke.data.id, label: 'API key revoked.' }
+        : null
   const creating = create.isPending || created !== null
   return (
-    <section className="sec-user" aria-label="User">
+    <section className="sec-user group" aria-label="User">
       <PageHead
         title="User"
         actions={
@@ -285,9 +296,7 @@ export default function UserPageClient() {
               }
               onClick={() => create.mutate({ kind: 'agent' })}
             >
-              {create.isPending && create.variables?.kind === 'agent'
-                ? 'Granting access...'
-                : 'Grant Agent Access'}
+              Grant Agent Access
             </Button>
             <span className="ds-help">
               Creates a key that expires in 60 minutes, with instructions to
@@ -367,9 +376,7 @@ export default function UserPageClient() {
                   : undefined
               }
             >
-              {create.isPending && create.variables?.kind === 'manual'
-                ? 'Creating...'
-                : 'Create key'}
+              Create key
             </Button>
           </form>
         </Section>
@@ -403,7 +410,7 @@ export default function UserPageClient() {
                   error: 'Save failed',
                 })}
               >
-                {updateLimit.isPending ? 'Saving...' : 'Save limit'}
+                Save limit
               </Button>
               <Button
                 size="md"
@@ -422,8 +429,14 @@ export default function UserPageClient() {
           </Section>
         )}
       </div>
-      <div className="ds-section-head sec-pad">
+      <div className="ds-section-head sec-pad relative">
         <h3>API keys</h3>
+        <span
+          role="status"
+          className="ds-muted absolute end-0 sec-pad group-has-[[data-key-receipt-visible]]:hidden"
+        >
+          {keyReceipt?.label}
+        </span>
       </div>
       {keys.isError && keys.data && (
         <div className="sec-notices">
@@ -497,6 +510,14 @@ export default function UserPageClient() {
               const status = apiKeyStatus(key, now)
               return (
                 <Status
+                  data-key-receipt-visible={
+                    status === 'Revoked' &&
+                    keyReceipt?.kind === 'revoke' &&
+                    keyReceipt.id === key.id
+                      ? ''
+                      : undefined
+                  }
+                  aria-live={revoke.variables === key.id ? 'polite' : undefined}
                   state={status === 'Active' ? 'done' : 'cancelled'}
                   title={status}
                 >
@@ -564,9 +585,13 @@ export default function UserPageClient() {
                   size="xs"
                   type="button"
                   aria-label={`Edit rate limit for ${key.name}`}
+                  data-key-receipt-visible={
+                    keyReceipt?.kind === 'limit' && keyReceipt.id === key.id
+                      ? ''
+                      : undefined
+                  }
                   feedback={
-                    updateLimit.variables?.id === key.id &&
-                    updateLimit.isSuccess
+                    keyReceipt?.kind === 'limit' && keyReceipt.id === key.id
                       ? { phase: 'done', label: 'Limit saved' }
                       : undefined
                   }
@@ -589,7 +614,7 @@ export default function UserPageClient() {
                   details="Requests that use this key stop working at once."
                   confirmLabel="Revoke"
                   feedback={
-                    revoke.variables === key.id
+                    key.enabled && revoke.variables === key.id
                       ? mutationFeedback(revoke, {
                           pending: 'Revoking…',
                           success: 'Revoked',
@@ -600,9 +625,7 @@ export default function UserPageClient() {
                   disabled={!key.enabled || revoke.isPending}
                   onConfirm={() => revoke.mutate(key.id)}
                 >
-                  {revoke.isPending && revoke.variables === key.id
-                    ? 'Revoking...'
-                    : 'Revoke'}
+                  Revoke
                 </ConfirmAction>
               </span>
             ),

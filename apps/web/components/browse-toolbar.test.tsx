@@ -6,6 +6,10 @@ import {
   matchSortOptions,
   SortPicker,
 } from '@repo/ui/components/ds/sort-picker'
+import { Segmented } from '@repo/ui/components/ds/segmented'
+import { TableSortButton } from '@repo/ui/components/ui/table'
+import { BrowseFilterPill } from './browse-controls'
+import { FilterPanelSection } from './browse-filter-panel'
 import BrowseToolbar, { BrowseViewSection } from './browse-toolbar'
 
 const fields = [
@@ -73,6 +77,75 @@ test('typing in the sort picker puts names that start with the text first', () =
   assert.deepEqual(labels('rat'), ['Rating', 'Your rating', 'Duration'])
   assert.deepEqual(labels('  RELEASED '), ['Released (first issue)'])
   assert.deepEqual(labels('nothing'), [])
+})
+
+test('an icon-only view toggle keeps its square sizing and original icon during an update', () => {
+  const html = renderToStaticMarkup(
+    <Segmented
+      label="Browse views"
+      value="grid"
+      options={[
+        {
+          value: 'grid',
+          label: 'Grid',
+          icon: <svg aria-hidden="true" data-fixture="grid" />,
+        },
+      ]}
+      feedbackFor={() => ({ phase: 'pending', label: 'Updating results…' })}
+      onChange={() => {}}
+    />,
+  )
+  assert.match(html, /<button[^>]*data-feedback="pending"[^>]*data-icon=""/)
+  assert.match(html, /data-fixture="grid"/)
+})
+
+test('sort feedback retains the picker label and the column heading and direction arrow', () => {
+  const picker =
+    renderToStaticMarkup(
+      <SortPicker
+        value="released"
+        options={fields}
+        onChange={() => {}}
+        feedback={{ phase: 'done', label: 'Results updated' }}
+      />,
+    ).split('</button>')[0] ?? ''
+  assert.match(picker, />Released \(first issue\)</)
+  const header = renderToStaticMarkup(
+    <TableSortButton
+      direction="asc"
+      feedback={{ phase: 'pending', label: 'Updating results…' }}
+    >
+      Release date
+    </TableSortButton>,
+  )
+  assert.match(header, />Release date</)
+  assert.match(header, /M12 19V5M6 11l6-6 6 6/)
+})
+
+test('disclosure and chip feedback stay within their existing title and remove slots', () => {
+  const disclosure = renderToStaticMarkup(
+    <FilterPanelSection
+      title="Ranges"
+      icon={<svg aria-hidden="true" />}
+      count={2}
+      feedback={{ phase: 'pending', label: 'Updating results…' }}
+    >
+      Fields
+    </FilterPanelSection>,
+  )
+  assert.doesNotMatch(disclosure, /<span class="ds-cell-id" aria-live="polite"/)
+  assert.match(disclosure, />Ranges</)
+  const chip = renderToStaticMarkup(
+    <BrowseFilterPill
+      removeLabel="Remove rating filter"
+      removeFeedback={{ phase: 'pending', label: 'Removing filter…' }}
+      onRemove={() => {}}
+    >
+      Rating above 3
+    </BrowseFilterPill>,
+  )
+  assert.match(chip, /data-icon=""/)
+  assert.match(chip, /lucide-x/)
 })
 
 test('the toolbar order is search, sort, direction, view, Filters, count', () => {

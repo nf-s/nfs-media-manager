@@ -432,7 +432,7 @@ test('a conflicting Spotify ID links to the existing recording and blocks repeat
   )
   assert.match(
     html,
-    /<button[^>]*data-feedback="waiting"[^>]* disabled=""[^>]*>.*?<span>Review conflict<\/span><\/button>/,
+    /<button[^>]*data-feedback="waiting"[^>]* disabled=""[^>]*>.*?<span>Review conflict<\/span><\/span><\/button>/,
   )
   assert.match(
     html,
@@ -454,7 +454,7 @@ test('ordinary or incomplete match errors remain retryable', () => {
     assert.match(html, /Try again later\./)
     assert.match(
       html,
-      /<button(?![^>]* disabled)[^>]*data-feedback="failed"[^>]*>.*?<span>Could not save match<\/span><\/button>/,
+      /<button(?![^>]* disabled)[^>]*data-feedback="failed"[^>]*>.*?<span>Could not save match<\/span><\/span><\/button>/,
     )
     assert.doesNotMatch(html, /Open Sources for/)
   }

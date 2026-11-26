@@ -107,10 +107,10 @@ export function RatingsScoring({
   }
   return (
     <div className="ratings-scoring">
-      {scoring.feedback && <span role="status">{scoring.feedback.label}</span>}
       <FilterPanelSection
         title="Scoring"
         icon={<SlidersHorizontal className="ds-i" aria-hidden />}
+        feedback={scoring.feedback}
         defaultOpen
       >
         <div className="ratings-weights">

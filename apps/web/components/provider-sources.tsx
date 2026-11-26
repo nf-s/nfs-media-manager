@@ -778,22 +778,14 @@ export function ProviderSources({
             <li key={provider} role={error ? 'alert' : undefined}>
               {label} ·{' '}
               {error ??
-                (job &&
-                  (job.status === 'queued' || job.status === 'running' ? (
+                (job && (
+                  <>
+                    {job.errorMessage && `${job.errorMessage} · `}
                     <DetailLink kind="job" id={job.id}>
                       View refresh job
                     </DetailLink>
-                  ) : (
-                    <>
-                      {job.status === 'succeeded'
-                        ? 'Updated'
-                        : (job.errorMessage ?? 'Failed')}{' '}
-                      ·{' '}
-                      <DetailLink kind="job" id={job.id}>
-                        View job
-                      </DetailLink>
-                    </>
-                  )))}
+                  </>
+                ))}
             </li>
           ))}
         </ul>
@@ -930,6 +922,12 @@ export function ProviderSources({
                 )
             }
           }
+          const feedback = row.refresh ? rowFeedback(row.id) : undefined
+          const receipt = confirmed.find(
+            (item) => item.provider === row.id,
+          )?.job
+          const sameJob =
+            receipt && (job?.id ?? row.latestAttempt?.jobId) === receipt.id
           return (
             <div role="listitem" key={row.id}>
               <SourceRow
@@ -973,11 +971,13 @@ export function ProviderSources({
                   )
                 }
                 state={
-                  <SourceState
-                    job={job}
-                    attempt={row.latestAttempt}
-                    unavailable={row.unavailable}
-                  />
+                  !(sameJob && feedback) && (
+                    <SourceState
+                      job={job}
+                      attempt={row.latestAttempt}
+                      unavailable={row.unavailable}
+                    />
+                  )
                 }
                 actions={
                   <>
@@ -1031,7 +1031,7 @@ export function ProviderSources({
                         title={row.unavailable ?? `Refresh ${row.label}`}
                         aria-label={`Refresh ${row.label}`}
                         onClick={() => startRefresh([row])}
-                        feedback={rowFeedback(row.id)}
+                        feedback={feedback}
                       >
                         <RefreshCw
                           className="ds-i"

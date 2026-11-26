@@ -21,7 +21,11 @@ import {
   type SubscriptionSyncStatus,
   type SubscriptionType,
 } from '@repo/schemas/subscriptions'
-import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Label } from '@repo/ui/components/ui/label'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
@@ -55,7 +59,7 @@ function stationWording(name: string): SyncWording {
     sources: 'shows',
     items: 'mixes',
     listing: 'Reading shows',
-    paused: `Paused: the ${name} request limit was reached.`,
+    paused: `The ${name} request limit was reached.`,
   }
 }
 
@@ -66,14 +70,14 @@ export const subscriptionSyncWording: Record<SubscriptionType, SyncWording> = {
     sources: 'channels',
     items: 'videos',
     listing: 'Reading subscriptions',
-    paused: 'Paused: the daily YouTube API quota is used up.',
+    paused: 'The daily YouTube API quota is used up.',
   },
   spotify: {
     name: 'podcast',
     sources: 'podcasts',
     items: 'episodes',
     listing: 'Reading saved podcasts',
-    paused: 'Paused: the Spotify request limit was reached.',
+    paused: 'The Spotify request limit was reached.',
   },
   rinse: stationWording(subscriptionTypeLabels.rinse),
   nts: stationWording(subscriptionTypeLabels.nts),
@@ -219,14 +223,35 @@ export function SubscriptionSync({
   const stopJob =
     running && data.job && canCancelJob(data.job) ? data.job : null
   const actionError = sync.error ?? stop.error ?? schedule.error
+  const currentFeedback =
+    data.state === 'paused'
+      ? ({
+          phase: 'waiting',
+          label: 'Resume sync · waiting',
+        } satisfies ButtonFeedback)
+      : running || sync.isSuccess
+        ? syncProgress
+        : undefined
+  const requestFeedback =
+    sync.isPending || sync.isError
+      ? mutationFeedback(sync, {
+          pending: 'Requesting sync…',
+          success: 'Sync queued',
+          error: 'Sync request unconfirmed',
+        })
+      : undefined
   return (
     <Section title="Sync">
       <Facts
         items={[
-          {
-            label: 'State',
-            value: <Status state={syncStatusStates[data.state]} />,
-          },
+          ...(!currentFeedback || requestFeedback
+            ? [
+                {
+                  label: 'State',
+                  value: <Status state={syncStatusStates[data.state]} />,
+                },
+              ]
+            : []),
           {
             label: isFeedRun(data)
               ? 'Pages read'
@@ -279,19 +304,7 @@ export function SubscriptionSync({
           size="md"
           variant="primary"
           disabled={!data.account.connected || running || sync.isPending}
-          feedback={
-            sync.isPending || sync.isError
-              ? mutationFeedback(sync, {
-                  pending: 'Requesting sync…',
-                  success: 'Sync queued',
-                  error: 'Sync request unconfirmed',
-                })
-              : data.state === 'paused'
-                ? { phase: 'waiting', label: 'Resume sync · waiting' }
-                : running || sync.isSuccess
-                  ? syncProgress
-                  : undefined
-          }
+          feedback={requestFeedback ?? currentFeedback}
           onClick={() => sync.mutate()}
         >
           {resumable ? 'Resume sync' : 'Sync now'}

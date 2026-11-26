@@ -93,7 +93,7 @@ export default function TagParentActions({
             setFailure(result.message)
             onComplete(
               result.completed,
-              `${updated} updated. Stopped: ${result.message ?? 'Could not update parent tags.'}`,
+              result.message ?? 'Could not update the remaining parent tags.',
               {
                 phase: result.completed.length ? 'partial' : 'unconfirmed',
                 label: `${updated} confirmed`,
@@ -105,10 +105,10 @@ export default function TagParentActions({
           onComplete(
             result.completed,
             mode === 'add' && target
-              ? `Added parent ${formatTagName(target.name)} to ${updated}.`
+              ? `${formatTagName(target.name)} · ${updated}`
               : target
-                ? `Moved ${updated} under ${formatTagName(target.name)}.`
-                : `Removed parents from ${updated}.`,
+                ? `${formatTagName(target.name)} · ${updated}`
+                : updated,
             {
               phase: 'done',
               label:

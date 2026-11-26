@@ -194,6 +194,12 @@ test('a queue with nothing playing keeps the dock and its queue', () => {
   assert.doesNotMatch(html, /open\.spotify\.com/)
 })
 
+test('the device picker reports discovery once on its opening control', () => {
+  const html = render({ ...on, active: true, devicesStatus: 'loading' })
+  assert.match(html, /aria-label="Finding devices… · Play on: This browser"/)
+  assert.doesNotMatch(html, /Looking for devices/)
+})
+
 test('shuffle can be set at any time and exposes its selected state', () => {
   const withoutSource = render({ ...on, active: true, current: item })
   assert.match(withoutSource, /aria-label="Shuffle" aria-pressed="false"/)

@@ -93,7 +93,7 @@ export function PlayerLibraryActions({ children }: { children: ReactNode }) {
             },
         )
       }
-      announce(mediaType, title)
+      announce(mediaType, title, mediaItemId)
       void invalidateManualMediaAddition(client, mediaType)
     },
   })
@@ -233,10 +233,12 @@ export function PlayerLibraryAction({
   item,
   membership,
   touch,
+  showFeedback = true,
 }: {
   item: PlaybackLibraryItem
   membership: PlayerLibraryMembership
   touch?: boolean
+  showFeedback?: boolean
 }) {
   const save = useContext(PlayerLibraryContext)
   const client = useQueryClient()
@@ -260,7 +262,9 @@ export function PlayerLibraryAction({
       short
       touch={touch}
       saved={!add || Boolean(receipt?.committedId)}
-      feedback={receipt?.feedback}
+      feedback={showFeedback ? receipt?.feedback : undefined}
+      disabled={!showFeedback && receipt?.feedback?.phase === 'pending'}
+      receiptId={receipt?.committedId}
       onAdd={() => {
         if (add && !libraryAdditionUnavailable(client, target)) save(add)
       }}

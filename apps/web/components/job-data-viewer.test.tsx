@@ -3,7 +3,9 @@ import { mock, test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { JobDataSchema, type Job } from '@repo/schemas/job'
+import { ProviderResponseSummarySchema } from '@repo/schemas/provider-response'
 import { jobDataOptions } from '@/utils/job-data'
 import { StoredJobData } from './job-data-viewer'
 import { JobProviderResponseBody } from './job-provider-responses'
@@ -17,17 +19,38 @@ const empty = {
   diagnostics: [],
   itemPayloads: [],
 }
+const recorded = ProviderResponseSummarySchema.parse({
+  id: 'response-1',
+  jobId: 'job-1',
+  jobItemId: 'item-1',
+  artistId: null,
+  provider: 'fixture',
+  attempt: 1,
+  ordinal: 2,
+  phase: 'media',
+  method: 'GET',
+  requestUrl: null,
+  status: 200,
+  retry: null,
+  receivedAt: null,
+  notFound: false,
+  contentType: 'application/json',
+  bodyState: 'captured',
+  retainedBytes: 11,
+})
 
 function render({
   status = 'failed',
   data,
   error = false,
   responses,
+  retrying = false,
 }: {
   status?: Job['status']
   data?: unknown
   error?: boolean
   responses?: unknown[]
+  retrying?: boolean
 } = {}) {
   const client = new QueryClient()
   const job = { id: 'job-1', status }
@@ -50,10 +73,27 @@ function render({
         status: 'error',
         error: new Error('Fixture failure'),
       })
+  if (retrying)
+    client
+      .getQueryCache()
+      .build(client, {
+        queryKey: ['jobs', 'provider-response', job.id, recorded.id],
+      })
+      .setState({
+        status: 'pending',
+        fetchStatus: 'fetching',
+        errorUpdatedAt: 1,
+      })
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <StoredJobData job={job} />
+        <SearchParamsContext.Provider
+          value={
+            new URLSearchParams(retrying ? { jobResponse: recorded.id } : {})
+          }
+        >
+          <StoredJobData job={job} />
+        </SearchParamsContext.Provider>
       </QueryClientProvider>,
     )
   } finally {
@@ -164,31 +204,21 @@ test('read errors offer an explicit stored-data reload, not a scrape retry', () 
 test('lists a native response independently of snapshots and loads its body only after selection', () => {
   const html = render({
     data: empty,
-    responses: [
-      {
-        id: 'response-1',
-        jobId: 'job-1',
-        jobItemId: 'item-1',
-        artistId: null,
-        provider: 'fixture',
-        attempt: 1,
-        ordinal: 2,
-        phase: 'media',
-        method: 'GET',
-        requestUrl: null,
-        status: 200,
-        retry: null,
-        receivedAt: null,
-        notFound: false,
-        contentType: 'application/json',
-        bodyState: 'captured',
-        retainedBytes: 11,
-      },
-    ],
+    responses: [recorded],
   })
   assert.match(html, /Attempt 1 · Request 2 · Media/)
   assert.match(html, /HTTP 200/)
   assert.doesNotMatch(html, /No original provider response|Copy response|<pre/)
+})
+
+test('a response retry keeps its control and shows pending only there', () => {
+  const html = render({ data: empty, responses: [recorded], retrying: true })
+  assert.match(html, /<button[^>]*aria-label="Attempt 1 · Request 2 · Media"/)
+  assert.match(
+    html,
+    /<button[^>]*data-feedback="pending"[^>]*disabled=""[^>]*title="Loading response…"[^>]*><span[^>]*>Retry response<\/span>/,
+  )
+  assert.doesNotMatch(html, /Loading saved response/)
 })
 
 test('renders saved text literally, diagnoses unavailable bodies, and identifies worker archives', () => {

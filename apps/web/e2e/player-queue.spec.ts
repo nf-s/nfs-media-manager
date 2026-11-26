@@ -1,6 +1,9 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { PlayableItem, SavedPlayback } from '@repo/schemas/playback'
-import { PlaybackCatalogInputSchema } from '@repo/schemas/playback'
+import {
+  PlaybackCatalogInputSchema,
+  PlaybackSyncInputSchema,
+} from '@repo/schemas/playback'
 import { CatalogMembershipInputSchema } from '@repo/schemas/manual-add'
 import { AlbumDetailSchema } from '@repo/schemas/media'
 import { webOrigin } from './preview'
@@ -304,7 +307,7 @@ for (const from of ['Tracks Browse', 'album tracks']) {
       const { pathname } = new URL(request.url())
       if (pathname === '/v1/me/player/play' && request.method() === 'PUT') {
         expect(request.postDataJSON().uris[0]).toBe(originalUri)
-        await route.fulfill({ status: 204 })
+        // The device must expose the new track when the play response is acknowledged.
         await page.evaluate(
           (track) =>
             window.dispatchEvent(
@@ -319,6 +322,7 @@ for (const from of ['Tracks Browse', 'album tracks']) {
             ),
           deviceTrack,
         )
+        await route.fulfill({ status: 204 })
       } else if (pathname === `/v1/tracks/${track.spotifyTrackId}`) {
         verified = true
         await route.fulfill({ json: deviceTrack })
@@ -376,6 +380,9 @@ for (const from of ['Tracks Browse', 'album tracks']) {
     await expect(
       now.getByRole('button', { name: /^Add track to library/ }),
     ).toHaveCount(0)
+    // The Next development badge can sit directly over the bottom-left dock link.
+    const badge = page.getByRole('button', { name: 'Collapse issues badge' })
+    if (await badge.isVisible()) await badge.click()
     await link.click()
     await expect(
       page
@@ -642,6 +649,8 @@ test('queue titles leave room for controls and saving clears the library action'
   })
   await queuedRow.scrollIntoViewIfNeeded()
   const before = await actionPosition(play)
+  const title = queuedRow.locator('.queue-item strong')
+  const titleBefore = await actionPosition(title)
   if (!isMobile) {
     const idleColor = await add.evaluate(
       (button) => getComputedStyle(button).color,
@@ -664,10 +673,13 @@ test('queue titles leave room for controls and saving clears the library action'
     await expect(queuedRow.locator('.queue-actions')).toHaveCSS('opacity', '1')
     await add.tap()
   }
-  await expect(queuedRow.locator('.ds-library-action')).toHaveText('Added')
+  await expect(queuedRow.locator('.ds-library-action')).toHaveText('Added', {
+    useInnerText: true,
+  })
+  expect(await actionPosition(title)).toEqual(titleBefore)
   await expect(
     page.getByText(`Added album to library · ${queued.title}`, { exact: true }),
-  ).toBeVisible()
+  ).toHaveCount(0)
   await expect(queuedRow.locator('.ds-library-action')).toHaveCount(0)
   const savedLink = queuedRow.getByRole('link', { name: queued.title })
   await expect(savedLink).toHaveAttribute(
@@ -676,6 +688,7 @@ test('queue titles leave room for controls and saving clears the library action'
   )
   if (!isMobile) await expect(savedLink).toBeFocused()
   expect(await actionPosition(play)).toEqual(before)
+  expect(await actionPosition(title)).toEqual(titleBefore)
   await expect(rows).toHaveCount(5)
   if (isMobile) {
     await page.getByRole('button', { name: 'Close player' }).click()
@@ -705,6 +718,354 @@ test('queue titles leave room for controls and saving clears the library action'
   )
   expect(promotions).toEqual([externalId(queued)])
   expect(writes).toEqual([])
+})
+
+test('queue feedback follows the action when a row stays or disappears', async ({
+  page,
+  isMobile,
+}) => {
+  const first = item('track', 31, 'First queued track')
+  const second = item('track', 32, 'Second queued track')
+  const saved: SavedPlayback = {
+    ...playback(first),
+    current: null,
+    currentFromSource: false,
+    queue: [
+      { key: 'queue-1', item: first },
+      { key: 'queue-2', item: second },
+    ],
+  }
+  await mockPlayback(
+    page,
+    saved,
+    new Set([externalId(first), externalId(second)]),
+  )
+  let grantDriver = false
+  let releasePlay = () => {}
+  const heldPlay = new Promise<void>((resolve) => {
+    releasePlay = resolve
+  })
+  let releaseRemoval = () => {}
+  const heldRemoval = new Promise<void>((resolve) => {
+    releaseRemoval = resolve
+  })
+  await page.route(`${webOrigin}/api/v1/playback/session`, async (route) => {
+    const input = PlaybackSyncInputSchema.parse(route.request().postDataJSON())
+    if (input.claim && !grantDriver) await heldPlay
+    if (input.state?.queue.length === 1) {
+      await heldRemoval
+      await route.fulfill({
+        status: 503,
+        json: { message: 'Fixture sync failed' },
+      })
+      return
+    }
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: {
+          revision: 1,
+          role: grantDriver ? 'driver' : 'follower',
+          driver: { clientId: 'fixture-driver', name: 'Fixture browser' },
+          changed: input.revision === 0,
+          state: input.revision === 0 ? saved : null,
+        },
+      },
+    })
+  })
+  await page.goto('/tracks')
+  const surface = isMobile
+    ? page.locator('.player-sheet-body')
+    : page.getByRole('region', { name: 'Queue', exact: true })
+  await page
+    .getByRole('button', {
+      name: isMobile ? /^Open player:/ : /^Queue: 2 next$/,
+    })
+    .click()
+  const queue = surface.locator('.queue-contents')
+  const heading = queue.getByRole('heading', { name: 'Queued', exact: true })
+  const fallback = queue.locator('.queue-heading [role=status]')
+  const firstRow = queue.locator('.queue-row').filter({ hasText: first.title })
+  const secondRow = queue
+    .locator('.queue-row')
+    .filter({ hasText: second.title })
+  const play = firstRow.locator('.queue-actions button').first()
+  const neighbor = secondRow.locator('.queue-actions button').first()
+  await expect(play).toHaveAccessibleName(`Play ${first.title} now`)
+  const before = await actionPosition(play)
+  const secondBefore = await actionPosition(neighbor)
+  const headingHeight = (await heading.boundingBox())?.height
+  expect(headingHeight).toBeGreaterThan(0)
+  try {
+    await play.click()
+    await expect(play).toHaveAttribute('data-feedback', 'pending')
+    await expect(play).toHaveAccessibleName(/Starting…/)
+    await expect(fallback).toBeEmpty()
+    expect(await actionPosition(play)).toEqual(before)
+    expect(await actionPosition(neighbor)).toEqual(secondBefore)
+  } finally {
+    releasePlay()
+  }
+  await expect(play).toHaveAttribute('data-feedback', 'unconfirmed')
+  await expect(play).toHaveAccessibleName(/Playback unconfirmed/)
+  await expect(fallback).toBeEmpty()
+  expect(await actionPosition(play)).toEqual(before)
+
+  grantDriver = true
+  try {
+    await firstRow.getByRole('button', { name: /^Remove / }).click()
+    await expect(firstRow).toHaveCount(0)
+    await expect(fallback).toHaveText(/Removed .* · syncing…/)
+    expect(await actionPosition(neighbor)).toEqual(secondBefore)
+    expect((await heading.boundingBox())?.height).toBe(headingHeight)
+  } finally {
+    releaseRemoval()
+  }
+  await expect(fallback).toHaveText(/Removed .* · sync unconfirmed/)
+  expect(await actionPosition(neighbor)).toEqual(secondBefore)
+  expect((await heading.boundingBox())?.height).toBe(headingHeight)
+})
+
+test('transport commands and slider receipts keep the player layout stable', async ({
+  page,
+  isMobile,
+}) => {
+  const playing = item('track', 1, 'Playing track')
+  const nextTrack = item('track', 2, 'Next track')
+  const album = item('album', 3, 'Album')
+  const device = {
+    id: 'fixture-speaker',
+    name: 'Fixture speaker',
+    type: 'Speaker',
+    volume: 0.5,
+  }
+  let saved: SavedPlayback | null = {
+    ...playback(playing),
+    currentFromSource: false,
+    snapshot: snapshot(playing, album),
+    target: { kind: 'spotify', device, browser: null },
+    session: {
+      item: playing,
+      sent: [playing],
+      index: 0,
+      anchorUri: playing.uri,
+    },
+  }
+  await mockPlayback(
+    page,
+    saved,
+    new Set([externalId(playing), externalId(nextTrack), externalId(album)]),
+  )
+  let revision = 1
+  let holdShuffle: Promise<void> | undefined
+  await page.route(`${webOrigin}/api/v1/playback/session`, async (route) => {
+    const input = PlaybackSyncInputSchema.parse(route.request().postDataJSON())
+    const changed = input.revision !== revision
+    if (!changed && input.state !== undefined) {
+      if (input.state?.shuffle) await holdShuffle
+      saved = input.state
+      revision += 1
+    }
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: {
+          revision,
+          role: 'driver',
+          driver: { clientId: input.clientId, name: input.clientName },
+          changed,
+          state: changed ? saved : null,
+        },
+      },
+    })
+  })
+  let position = 50_000
+  let volume = 50
+  let paused = true
+  let current = playing
+  let hold: {
+    command: string
+    requested: () => void
+    response: Promise<void>
+  } | null = null
+  await page.route('https://api.spotify.com/v1/**', async (route) => {
+    const { pathname, searchParams } = new URL(route.request().url())
+    if (route.request().method() === 'GET') {
+      if (pathname.endsWith('/devices')) {
+        await route.fulfill({ json: { devices: [] } })
+        return
+      }
+      if (pathname === '/v1/me/player') {
+        await route.fulfill({
+          json: {
+            device: {
+              id: device.id,
+              name: device.name,
+              type: device.type,
+              is_active: true,
+              volume_percent: volume,
+            },
+            context: { uri: album.uri },
+            progress_ms: position,
+            is_playing: !paused,
+            item: {
+              uri: current.uri,
+              name: current.title,
+              duration_ms: 200_000,
+              artists: [{ name: playing.artist }],
+              album: { uri: album.uri, name: album.title },
+            },
+          },
+        })
+        return
+      }
+      await route.fulfill({ status: 204 })
+      return
+    }
+    const command = pathname.split('/').at(-1)
+    if (hold && command === hold.command) {
+      hold.requested()
+      await hold.response
+    }
+    if (command === 'seek') position = Number(searchParams.get('position_ms'))
+    if (command === 'volume')
+      volume = Number(searchParams.get('volume_percent'))
+    if (command === 'play') paused = false
+    if (command === 'next') {
+      current = nextTrack
+      position = 0
+    }
+    await route.fulfill({ status: 204 })
+  })
+  await page.goto('/tracks')
+  if (isMobile)
+    await page.getByRole('button', { name: /^Open player:/ }).click()
+  const player = page.locator(isMobile ? '.player-sheet-body' : '.player-dock')
+  const seek = player.getByRole('slider', { name: 'Seek' })
+  const volumeSlider = player.getByRole('slider', { name: 'Volume' })
+  const shuffle = player.locator('.player-buttons button').nth(0)
+  const previous = player.locator('.player-buttons button').nth(1)
+  const play = player.locator('.player-buttons button').nth(2)
+  const next = player.locator('.player-buttons button').nth(3)
+  const mute = player.locator('.player-volume button')
+  await expect(play).toHaveAccessibleName('Play')
+  await expect(seek).toHaveValue('50000')
+  await expect(volumeSlider).toHaveValue('0.5')
+  await page.evaluate(async () => {
+    await document.fonts.ready
+  })
+
+  const geometry = () =>
+    player.evaluate((surface) => {
+      const origin = surface.getBoundingClientRect()
+      const neighbors = surface.querySelectorAll(
+        '.player-text, .player-buttons, .player-buttons button, .player-scrub, .player-time, .player-range input, .player-tools, .player-sheet-actions, .player-volume, .player-volume button',
+      )
+      return [...neighbors, surface].map((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return [x - origin.x, y - origin.y, width, height].map((value) =>
+          Math.round(value * 10),
+        )
+      })
+    })
+  const initial = await geometry()
+  async function checkWhileHeld(
+    command: string,
+    start: () => Promise<void>,
+    pending: () => Promise<void>,
+  ) {
+    let requestArrived = () => {}
+    let release = () => {}
+    const requested = new Promise<void>((resolve) => {
+      requestArrived = resolve
+    })
+    hold = {
+      command,
+      requested: requestArrived,
+      response: new Promise<void>((resolve) => {
+        release = resolve
+      }),
+    }
+    try {
+      await start()
+      await requested
+      await pending()
+      expect(await geometry()).toEqual(initial)
+    } finally {
+      release()
+      hold = null
+    }
+  }
+
+  await checkWhileHeld(
+    'seek',
+    () => seek.press('ArrowRight'),
+    async () => {
+      await expect(seek).toHaveValue('51000')
+      await expect(player.locator('.player-scrub [role=status]')).toHaveText(
+        'Seeking…',
+      )
+    },
+  )
+  await expect(player.locator('.player-scrub [role=status]')).toHaveText(
+    'At 0:51',
+  )
+  await expect(player.locator('.player-scrub [role=status]')).toHaveClass(
+    'sr-only',
+  )
+  await expect.poll(geometry).toEqual(initial)
+
+  await checkWhileHeld(
+    'volume',
+    () => volumeSlider.press('ArrowRight'),
+    async () => {
+      await expect(volumeSlider).toHaveValue('0.51')
+      await expect(player.locator('.player-volume [role=status]')).toHaveText(
+        'Setting volume…',
+      )
+    },
+  )
+  await expect(player.locator('.player-volume [role=status]')).toHaveText(
+    'Volume 51%',
+  )
+  await expect(player.locator('.player-volume [role=status]')).toHaveClass(
+    'sr-only',
+  )
+  await expect.poll(geometry).toEqual(initial)
+
+  let releaseShuffle = () => {}
+  holdShuffle = new Promise<void>((resolve) => {
+    releaseShuffle = resolve
+  })
+  try {
+    await shuffle.click()
+    await expect(shuffle).toHaveAttribute('data-feedback', 'running')
+    expect(await geometry()).toEqual(initial)
+  } finally {
+    releaseShuffle()
+  }
+  await expect(shuffle).toHaveAttribute('data-feedback', 'done')
+  await expect.poll(geometry).toEqual(initial)
+
+  for (const [command, control, completion] of [
+    ['volume', mute, /Muted/],
+    ['seek', previous, /Track restarted/],
+    ['play', play, /Playing/],
+    ['next', next, /Skipped/],
+  ] as const) {
+    await checkWhileHeld(
+      command,
+      () => control.click(),
+      async () => {
+        await expect(control).toHaveAttribute('data-feedback', 'pending')
+        await expect(control).toHaveAttribute('data-icon', '')
+      },
+    )
+    await expect(control).toHaveAccessibleName(completion)
+    await expect.poll(geometry).toEqual(initial)
+  }
 })
 
 test('a device discovery retry stays visible and reports the result it read', async ({
@@ -741,16 +1102,37 @@ test('a device discovery retry stays visible and reports the result it read', as
     : page.locator('.player-dock')
   await surface.getByRole('button', { name: /Play on:/ }).click()
   const devices = surface.locator('.device-list')
-  await expect(devices.getByText('Devices could not be loaded.')).toBeVisible()
+  await expect(
+    surface.getByRole('button', {
+      name: /Device list failed · retry · Play on:/,
+    }),
+  ).toBeVisible()
   const retry = devices.getByRole('button', { name: /Retry device list$/ })
+  const picker = surface.getByRole('button', { name: /Play on:/ })
+  const retryBefore = await retry.boundingBox()
+  const pickerBefore = await picker.boundingBox()
+  expect(retryBefore).not.toBeNull()
+  expect(pickerBefore).not.toBeNull()
   try {
     await retry.click()
-    await expect(retry).toHaveText('Finding devices…')
+    await expect(retry).toHaveText('Finding devices…', { useInnerText: true })
     await expect(retry).toBeDisabled()
+    expect(await retry.boundingBox()).toEqual(retryBefore)
+    expect(await picker.boundingBox()).toEqual(pickerBefore)
+    await expect(
+      surface.getByText('Finding devices…', { exact: true }),
+    ).toHaveCount(1)
   } finally {
     release()
   }
-  await expect(retry).toHaveText('No other Spotify devices')
+  await expect(retry).toHaveText('No other Spotify devices', {
+    useInnerText: true,
+  })
+  expect(await retry.boundingBox()).toEqual(retryBefore)
+  expect(await picker.boundingBox()).toEqual(pickerBefore)
+  await expect(
+    surface.getByText('No other Spotify devices', { exact: true }),
+  ).toHaveCount(1)
   expect(reads).toBe(2)
 })
 
@@ -805,12 +1187,17 @@ test('saving the playing recording preserves independent album navigation', asyn
   }
   await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(1)
   await add.press('Enter')
-  await expect(dockNowPlaying.locator('.ds-library-action')).toHaveText('Added')
+  await expect(dockNowPlaying.locator('.ds-library-action')).toHaveText(
+    'Added',
+    {
+      useInnerText: true,
+    },
+  )
   await expect(
     page.getByText(`Added track to library · ${playing.title}`, {
       exact: true,
     }),
-  ).toBeVisible()
+  ).toHaveCount(0)
   await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(0)
   if (isMobile) {
     await expect(miniPlayer).toBeFocused()

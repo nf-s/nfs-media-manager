@@ -12,13 +12,8 @@ import {
 } from '@repo/schemas/provider-response'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
-import {
-  TableCell,
-  TableHead,
-  TableRow,
-  TableState,
-} from '@repo/ui/components/ui/table'
+import { Button, ButtonFeedbackLabel } from '@repo/ui/components/ui/button'
+import { TableCell, TableHead, TableRow } from '@repo/ui/components/ui/table'
 import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { Label } from '@repo/ui/components/ui/label'
 import { Input } from '@repo/ui/components/ui/input'
@@ -75,7 +70,7 @@ export function JobProviderResponseBody({
               : copy === 'copied'
                 ? { phase: 'done', label: 'Copied' }
                 : copy === 'failed'
-                  ? { phase: 'failed', label: 'Copy failed' }
+                  ? { phase: 'failed', label: 'Select and copy the response' }
                   : undefined
           }
           onClick={async () => {
@@ -90,11 +85,6 @@ export function JobProviderResponseBody({
         >
           Copy response
         </Button>
-        {copy === 'failed' && (
-          <span role="status" className="ds-help">
-            Copy failed. Select and copy the response below.
-          </span>
-        )}
         {body.retainedRepresentation === 'station-discovery' ? (
           <span className="ds-help">
             Saved public discovery references from the page or script.
@@ -147,10 +137,24 @@ function LocalResponseArchive({
           { label: 'Saved bytes', value: formatCount(receipt.retainedBytes) },
         ]}
       />
-      <Label htmlFor={inputId}>Open worker archive on this device</Label>
+      <Label htmlFor={inputId}>
+        <span className="relative inline-block" role="status">
+          {reading ? (
+            <ButtonFeedbackLabel
+              feedback={{ phase: 'pending', label: 'Reading archive…' }}
+            >
+              Open worker archive on this device
+            </ButtonFeedbackLabel>
+          ) : (
+            'Open worker archive on this device'
+          )}
+        </span>
+      </Label>
       <Input
         id={inputId}
         type="file"
+        aria-label="Open worker archive on this device"
+        aria-busy={reading || undefined}
         accept=".json,application/json"
         disabled={reading}
         onChange={(event) => {
@@ -158,11 +162,6 @@ function LocalResponseArchive({
           event.target.value = ''
         }}
       />
-      {reading && (
-        <p role="status" className="ds-help">
-          Reading archive…
-        </p>
-      )}
       {error && (
         <Notice tone="danger">
           The selected file could not be verified against this response.
@@ -196,10 +195,26 @@ function useStoredResponse(
 
 function StoredResponse({
   result,
+  feedbackOnRow,
+  retrying,
 }: {
   result: ReturnType<typeof useStoredResponse>
+  feedbackOnRow: boolean
+  retrying: boolean
 }) {
   const row = result.data
+  const retry = (
+    <Button
+      size="xs"
+      disabled={retrying}
+      feedback={
+        retrying ? { phase: 'pending', label: 'Loading response…' } : undefined
+      }
+      onClick={() => void result.refetch()}
+    >
+      Retry response
+    </Button>
+  )
   return (
     <Section title={row ? requestLabel(row) : 'Saved response'}>
       {row && (
@@ -228,23 +243,19 @@ function StoredResponse({
           ]}
         />
       )}
-      {result.isPending && (
+      {result.isPending && !feedbackOnRow && !retrying && (
         <p role="status" className="ds-help">
           Loading saved response…
         </p>
       )}
-      {result.isError && (
-        <Notice
-          tone="danger"
-          action={
-            <ReadButton size="xs" read={() => result.refetch()}>
-              Retry
-            </ReadButton>
-          }
-        >
-          Could not read the saved response.
-        </Notice>
-      )}
+      {(result.isError || retrying) &&
+        (feedbackOnRow ? (
+          retry
+        ) : (
+          <Notice tone="danger" action={retry}>
+            Could not read the saved response.
+          </Notice>
+        ))}
       {row && <JobProviderResponseBody body={row.body} />}
     </Section>
   )
@@ -256,6 +267,8 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
   const selected = view.params.get('jobResponse')
   const base = `/api/v1/scrape/jobs/${encodeURIComponent(job.id)}/data/responses`
   const response = useStoredResponse(apiBaseUrl, base, job.id, selected)
+  const retrying =
+    response.isFetching && !response.data && response.errorUpdatedAt > 0
   const rows = useVirtualTable({
     queryKey: ['jobs', 'provider-responses', job.id, job.status],
     pageSize: 24,
@@ -292,7 +305,7 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
             ? 'No provider response captured yet.'
             : 'No original provider response was archived for this job.'}
         </p>
-      ) : (
+      ) : rows.isError && !rows.hasTotal ? null : (
         <SecondaryTableScroll
           ref={rows.scroller}
           onScroll={rows.onScroll}
@@ -313,9 +326,6 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
               </TableRow>
             </thead>
             <tbody>
-              {rows.isError && !rows.hasTotal && (
-                <TableState colSpan={2}>Response list unavailable.</TableState>
-              )}
               <SecondaryVirtualRows
                 window={rows}
                 colSpan={2}
@@ -326,8 +336,9 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
                         variant="link"
                         size="xs"
                         aria-pressed={selected === row.id}
+                        aria-label={requestLabel(row)}
                         feedback={
-                          selected !== row.id
+                          selected !== row.id || retrying
                             ? undefined
                             : response.isFetching
                               ? { phase: 'pending', label: 'Loading response…' }
@@ -361,7 +372,14 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
           </table>
         </SecondaryTableScroll>
       )}
-      {selected && <StoredResponse key={selected} result={response} />}
+      {selected && (
+        <StoredResponse
+          key={selected}
+          result={response}
+          feedbackOnRow={rows.slots.some(({ item }) => item?.id === selected)}
+          retrying={retrying}
+        />
+      )}
     </Section>
   )
 }

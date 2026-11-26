@@ -51,11 +51,9 @@ export function WatchedToggle({
         )}
         {label}
       </Button>
-      {error && (
+      {unconfirmed && (
         <span role="alert" className="ds-muted">
-          {unconfirmed
-            ? 'Check the current status before trying again.'
-            : 'Could not save.'}
+          Check the current status before trying again.
         </span>
       )}
     </>

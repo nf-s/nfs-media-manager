@@ -254,21 +254,13 @@ export function LastfmTrackMatchList() {
         count={
           <>
             {total.toLocaleString()} {total === 1 ? 'track' : 'tracks'}
-            {changing && <span role="status"> · Loading...</span>}
+            <span role="status" className="sr-only">
+              {changing ? 'Loading tracks…' : ''}
+            </span>
           </>
         }
         columns={columns.controls}
       />
-      {matched && (
-        <p role="status" className="ds-muted">
-          {matched.kind === 'spotify'
-            ? 'Spotify track linked.'
-            : 'Last.fm names merged.'}{' '}
-          <DetailLink kind="track" id={matched.id} tab="sources">
-            Open track
-          </DetailLink>
-        </p>
-      )}
       {tracks.isError && tracks.total > 0 && (
         <Notice
           tone="danger"
@@ -541,6 +533,16 @@ export function LastfmTrackMatchList() {
           disabled={selectionDisabled}
         />
       </SecondaryTableFrame>
+      {matched && (
+        <p role="status" className="ds-muted">
+          {matched.kind === 'spotify'
+            ? 'Spotify track linked.'
+            : 'Last.fm names merged.'}{' '}
+          <DetailLink kind="track" id={matched.id} tab="sources">
+            Open track
+          </DetailLink>
+        </p>
+      )}
     </ResultFeedbackScope>
   )
 }
@@ -651,7 +653,6 @@ export default function LastfmTrackMatches() {
         Use stored history to update matches after library metadata changes.
         This makes no Last.fm or Spotify requests.
       </p>
-      {refresh.isSuccess && <p role="status">Track matches refreshed.</p>}
       {refresh.isError && (
         <Notice tone="danger">
           {errorMessage(refresh.error, 'Could not refresh track matches.')}

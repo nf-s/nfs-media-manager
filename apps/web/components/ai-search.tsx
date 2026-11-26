@@ -272,9 +272,6 @@ export default function AiSearch<Plan>({
   return (
     <BrowseFilterAutocomplete
       {...autocomplete}
-      value={
-        recording || transcription.isPending ? activity : autocomplete.value
-      }
       disabled={autocomplete.disabled || recording || transcription.isPending}
       hideSuggestions={open || recording || working}
       onFocus={() => {
@@ -428,8 +425,8 @@ export default function AiSearch<Plan>({
     >
       <span role="status" className="sr-only">
         {microphone.phase === 'recording'
-          ? `Dictating. Stops after ${AI_AUDIO_MAX_SECONDS} seconds.`
-          : activity ||
+          ? `Recording stops after ${AI_AUDIO_MAX_SECONDS} seconds.`
+          : !activity &&
             (result?.plan
               ? 'AI search applied. Use the eye icon to review its interpretation.'
               : '')}

@@ -1014,9 +1014,7 @@ function SelectionTable({
       {(queue.isError || queue.data) && (
         <div className="ops-notice">
           {queue.isError && (
-            <Notice tone="danger">
-              Could not queue selection. Check progress before retrying.
-            </Notice>
+            <Notice tone="danger">Check progress before retrying.</Notice>
           )}
           {queue.data && (
             <Notice
@@ -1028,8 +1026,9 @@ function SelectionTable({
                 </Button>
               }
             >
-              {formatCount(queue.data.queued)} jobs queued ·{' '}
-              {formatCount(queue.data.skipped)} skipped.
+              {queue.data.skipped > 0 &&
+                (batchFeedback || !queue.data.queued) &&
+                `${formatCount(queue.data.skipped)} skipped.`}
               {queue.data.warnings.map((warning) => (
                 <span className="block" key={warning}>
                   {warning}

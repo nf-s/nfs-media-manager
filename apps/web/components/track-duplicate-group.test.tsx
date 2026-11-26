@@ -204,7 +204,7 @@ test('only the pressed group’s actions are off, and its row says what is happe
   assert.match(idle, on)
   assert.match(idle, line('Against merging: [^"]+'))
   for (const [item, text] of [
-    [{ status: 'queued', action: 'merge' }, 'Merging…'],
+    [{ status: 'queued', action: 'merge' }, 'Waiting to merge'],
     [{ status: 'running', action: 'merge' }, 'Merging…'],
     [{ status: 'running', action: 'keep-separate' }, 'Keeping separate…'],
     [{ status: 'review', action: 'merge' }, 'Needs review'],
@@ -223,7 +223,8 @@ test('only the pressed group’s actions are off, and its row says what is happe
       html,
       /data-feedback="(?:waiting|running|done)"[^>]*disabled=""/,
     )
-    assert.match(html, line(text))
+    assert.equal(html.split(`>${text}<`).length - 1, 1)
+    assert.match(html, line('Against merging: [^"]+'))
   }
   // A failed group can be tried again; its row says why it failed.
   const failed = row({
@@ -233,7 +234,7 @@ test('only the pressed group’s actions are off, and its row says what is happe
   })
   assert.match(
     failed,
-    /<button(?![^>]*disabled)[^>]*data-feedback="failed"[^>]*>.*?<span>Merge failed<\/span><\/button>/,
+    /<button(?![^>]*disabled)[^>]*data-feedback="failed"[^>]*>.*?<span>Merge failed<\/span><\/span><\/button>/,
   )
   assert.match(
     failed,

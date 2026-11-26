@@ -15,27 +15,76 @@ import {
 
 const filteredCount = /^[\d,]+ of [\d,]+ tracks$/
 
-test('Possible duplicates reports the server read on its own toggle', async ({
+test('voice search shows microphone permission on the action and preserves the input', async ({
+  page,
+}) => {
+  await page.route('**/api/v1/ai/status', (route) =>
+    route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: { available: true, reason: null },
+      },
+    }),
+  )
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      value: () => new Promise<MediaStream>(() => {}),
+    })
+  })
+  await page.goto('/tracks')
+  const input = page.getByRole('combobox', {
+    name: 'Search and filter library',
+  })
+  await input.fill('example request')
+  await page.getByRole('button', { name: 'Record search', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: /Allow microphone access/ }),
+  ).toBeVisible()
+  await expect(input).toHaveValue('example request')
+  await expect(
+    page.getByText('Allow microphone access…', { exact: true }),
+  ).toHaveCount(1)
+  await page.getByRole('button', { name: 'Cancel recording' }).click()
+})
+
+test('Possible duplicates shows the server read without resizing its toggle', async ({
   page,
 }) => {
   let release = () => {}
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
+  await page.route('**/api/v1/tracks/duplicates/count', (route) =>
+    route.fulfill({
+      json: { statusCode: 200, message: 'OK', data: { ready: true, count: 2 } },
+    }),
+  )
   await page.route('**/api/v1/tracks/duplicates/layout?*', async (route) => {
     await held
     await route.continue()
   })
   await page.goto('/tracks/matches')
   const toggle = page.getByRole('button', { name: /Possible duplicates/ })
+  await expect(toggle.locator('.ds-count')).toHaveText('2')
+  const idle = await toggle.boundingBox()
+  expect(idle).not.toBeNull()
   try {
     await toggle.click()
-    await expect(toggle).toHaveText('Updating…')
+    await expect(toggle).toHaveText('Updating…', { useInnerText: true })
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(await toggle.boundingBox()).toMatchObject({
+      width: idle?.width,
+      height: idle?.height,
+    })
   } finally {
     release()
   }
-  await expect(toggle).toHaveText('Results updated')
+  await expect(toggle).toHaveText('Results updated', { useInnerText: true })
+  expect(await toggle.boundingBox()).toMatchObject({
+    width: idle?.width,
+    height: idle?.height,
+  })
 })
 
 test('Tracks Browse filters by a field, selects rows and keeps the filter on reload', async ({
@@ -170,11 +219,13 @@ test('Tracks Browse adds an outside track from its title cell', async ({
     created: true,
     mediaItemId: id,
   })
-  await expect(titleCell.locator('.ds-library-action')).toHaveText('Added')
+  await expect(titleCell.locator('.ds-library-action')).toHaveText('Added', {
+    useInnerText: true,
+  })
   await expect(add).toHaveCount(0)
   await expect(
     page.getByText(`Added track to library · ${title}`, { exact: true }),
-  ).toBeVisible()
+  ).toHaveCount(0)
   expect(new URL(page.url()).searchParams.get('inspect')).toBeNull()
   expect(adds).toBe(1)
 

@@ -152,10 +152,15 @@ export function SortPicker<Key extends string>({
         }
         aria-busy={feedback?.phase === 'pending' || undefined}
         aria-live={feedback ? 'polite' : undefined}
-        title={label}
+        data-feedback={feedback?.phase}
+        title={feedback?.label ?? label}
         popoverTarget={id}
       >
-        {feedback ? <ButtonFeedbackLabel feedback={feedback} /> : label}
+        {feedback ? (
+          <ButtonFeedbackLabel feedback={feedback}>{label}</ButtonFeedbackLabel>
+        ) : (
+          label
+        )}
       </button>
       <div
         id={id}

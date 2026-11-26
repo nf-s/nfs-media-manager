@@ -51,6 +51,7 @@ import {
 
 type Addition = { playlistId: string; job: SpotifyPlaylistJob }
 type PlaylistMediaType = 'album' | 'track'
+type AdditionReceipt = { jobId: string; label: string }
 
 /** Playlists with more entries than this get a filter in the picker. */
 const FILTER_THRESHOLD = 8
@@ -254,21 +255,30 @@ export function usePlaylistAdditions(
 export function AdditionState({
   addition,
   name,
+  receipt,
 }: {
   addition: Addition
   name: string
+  receipt?: AdditionReceipt
 }) {
   const { job } = addition
   const progress = playlistJobActivityLabel(job)
+  const onButton = receipt?.jobId === job.jobId
   return (
     <li className="dtl-addition">
       <span>{name}</span>
       <DetailLink kind="job" id={job.jobId} title="Open job">
-        <Status state={additionStates[job.status]}>
-          {additionLabels[job.status]}
-        </Status>
+        {onButton ? (
+          'Open addition job'
+        ) : (
+          <Status state={additionStates[job.status]}>
+            {additionLabels[job.status]}
+          </Status>
+        )}
       </DetailLink>
-      {progress && <span className="ds-muted">{progress}</span>}
+      {progress && (!onButton || progress !== receipt.label) && (
+        <span className="ds-muted">{progress}</span>
+      )}
       {job.status === 'succeeded' && job.finishedAt && (
         <time className="ds-muted" dateTime={job.finishedAt}>
           {formatDateTime(job.finishedAt)}
@@ -302,7 +312,7 @@ export function useAddToPlaylist(
   id: string,
   additions: Addition[],
   playlists: PlaylistSummary[] | undefined,
-): { action: ReactNode; notice: ReactNode } {
+): { action: ReactNode; notice: ReactNode; receipt?: AdditionReceipt } {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const account = useQuery({
@@ -465,6 +475,10 @@ export function useAddToPlaylist(
                       ? { phase: 'done', label: 'Added on Spotify' }
                       : undefined
   return {
+    receipt:
+      addition && feedback && !add.isPending && !add.isError
+        ? { jobId: addition.job.jobId, label: feedback.label }
+        : undefined,
     action: (
       <PlaylistPicker
         mediaType={mediaType}
@@ -597,12 +611,13 @@ function PlaylistPicker({
         }
         title={destination}
         feedback={
+          feedback ??
           openReadFeedback(
             open,
             !failed && !choices.hasTotal,
             failed,
             'Playlists loaded',
-          ) ?? feedback
+          )
         }
       >
         Add to playlist

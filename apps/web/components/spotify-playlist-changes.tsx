@@ -33,7 +33,7 @@ export default function AllowPlaylistChanges({
         })}
         onClick={() => authorize.mutate()}
       >
-        {authorize.isPending ? 'Connecting...' : 'Allow playlist changes'}
+        Allow playlist changes
       </Button>
       {authorize.isError && (
         <span role="alert">

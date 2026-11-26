@@ -106,9 +106,7 @@ export function ProviderCooldownConfirm({
         </>
       )}
       {clear.isError && <p role="alert">{clear.error.message}</p>}
-      {clear.isSuccess && (
-        <p role="status">Cooldown cleared. Request limits remain enforced.</p>
-      )}
+      {clear.isSuccess && <p>Request limits remain enforced.</p>}
     </div>
   )
 }

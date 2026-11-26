@@ -514,8 +514,7 @@ export default function TrackMetadataTable({
       {(tracks.isError ||
         status.isError ||
         tidal.isError ||
-        sonovault.isError ||
-        matched) && (
+        sonovault.isError) && (
         <div className="ops-notice">
           {tracks.isError && (
             <Notice
@@ -564,14 +563,6 @@ export default function TrackMetadataTable({
             >
               Could not load Sonovault lookups.
             </Notice>
-          )}
-          {matched && (
-            <p className="ds-muted" role="status">
-              Spotify match saved.{' '}
-              <DetailLink kind="track" id={matched} tab="sources">
-                Open track
-              </DetailLink>
-            </p>
           )}
         </div>
       )}
@@ -889,6 +880,14 @@ export default function TrackMetadataTable({
           </>
         }
       />
+      {matched && (
+        <p className="ds-muted" role="status">
+          Spotify match saved.{' '}
+          <DetailLink kind="track" id={matched} tab="sources">
+            Open track
+          </DetailLink>
+        </p>
+      )}
       {review && (
         <SpotifyTrackSearchReview
           track={review}

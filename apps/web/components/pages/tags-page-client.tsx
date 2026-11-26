@@ -543,11 +543,15 @@ export default function TagsPageClient({
                 <Button disabled feedback={outcome.feedback}>
                   {outcome.feedback.label}
                 </Button>
-                <span
-                  role={outcome.feedback.phase === 'done' ? undefined : 'alert'}
-                >
-                  {outcome.message}
-                </span>
+                {outcome.message && (
+                  <span
+                    role={
+                      outcome.feedback.phase === 'done' ? undefined : 'alert'
+                    }
+                  >
+                    {outcome.message}
+                  </span>
+                )}
               </>
             )}
           </SecondaryTableSelectionBar>

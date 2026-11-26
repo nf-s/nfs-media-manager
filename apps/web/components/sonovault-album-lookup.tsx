@@ -35,6 +35,7 @@ import ServiceIconLinks from './service-icon-links'
 import {
   isActiveSonovaultLookup,
   LookupTime,
+  sonovaultLookupStatusOnButton,
   SonovaultLookupJobStatus,
 } from './sonovault-track-lookup'
 import { invalidateSpotifySearchJobs } from './spotify-track-search'
@@ -252,10 +253,8 @@ function AlbumLookupBody({ state }: { state: SonovaultAlbumState }) {
   return (
     <>
       <div>
-        {job && job.status === 'failed' && (
-          <p className="ds-muted">
-            <SonovaultLookupJobStatus job={job} /> {job.errorMessage}
-          </p>
+        {job?.status === 'failed' && job.errorMessage && (
+          <p className="ds-muted">{job.errorMessage}</p>
         )}
         {!lookup ? (
           <p className="ds-help">
@@ -368,7 +367,20 @@ export function AlbumSonovaultSource({ item }: { item: AlbumDetail }) {
         }
         identifier={state?.lookup?.releaseId ?? undefined}
         when={time && <LookupTime time={time} />}
-        state={job && <SonovaultLookupJobStatus job={job} />}
+        state={
+          job && (
+            <SonovaultLookupJobStatus
+              job={job}
+              showStatus={
+                !sonovaultLookupStatusOnButton(
+                  job,
+                  feedback,
+                  queue.data?.queued,
+                )
+              }
+            />
+          )
+        }
         actions={
           (due || feedback) && (
             <Button

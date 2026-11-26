@@ -68,7 +68,7 @@ export default function TagActions({
       await invalidateTags(client)
       onComplete(
         tags.map((tag) => tag.id),
-        'Tags merged. Original names and sources retained.',
+        'Original names and sources retained.',
         { phase: 'done', label: 'Tags merged' },
       )
     },
@@ -94,8 +94,8 @@ export default function TagActions({
     onMutate: () => onPendingChange?.(true),
     onSuccess: async (result, hidden) => {
       const message = result.interrupted
-        ? `${result.completed.length} tags updated. Stopped because the next batch could not be confirmed. Check the refreshed list before retrying.`
-        : `${result.completed.length} tags ${hidden ? 'hidden' : 'unhidden'}.`
+        ? 'The next batch could not be confirmed. Check the refreshed list before retrying.'
+        : ''
       await invalidateTags(client)
       onComplete(
         result.completed,
@@ -217,11 +217,6 @@ export default function TagActions({
             </Button>
           </div>
         </div>
-      )}
-      {pending && (
-        <p role="status" className="ds-help">
-          Updating tags...
-        </p>
       )}
       {merge.isError && <Notice tone="danger">{merge.error.message}</Notice>}
       {visibility.isError && (

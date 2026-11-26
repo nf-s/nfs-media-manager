@@ -49,6 +49,8 @@ export function PlayPair({
     <span className="ds-play" data-place={place}>
       <Button
         type="button"
+        size="xs"
+        icon
         aria-label={`${verb} ${title}${suffix}`}
         title={disabled ? disabledReason : `${verb} ${title}`}
         aria-pressed={playing}
@@ -68,6 +70,8 @@ export function PlayPair({
       </Button>
       <Button
         type="button"
+        size="xs"
+        icon
         aria-label={`Add ${title} to queue${suffix}`}
         title={disabled ? disabledReason : `Add ${title} to queue`}
         disabled={disabled || queueDisabled}

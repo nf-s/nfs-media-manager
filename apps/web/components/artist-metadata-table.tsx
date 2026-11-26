@@ -641,6 +641,11 @@ export default function ArtistMetadataTable({
                   ? ` · ${formatCount(processed.length)} processed`
                   : ''}
               </span>
+              <span className="sr-only" role="status">
+                {members.isFetching
+                  ? 'Checking selection for visible rows…'
+                  : ''}
+              </span>
               <Button
                 type="button"
                 variant="ghost"
@@ -751,11 +756,6 @@ export default function ArtistMetadataTable({
             <Notice tone="danger">
               Could not select matching artists. Try Select all matching again.
             </Notice>
-          )}
-          {snapshot && members.isFetching && (
-            <p className="ds-help" role="status">
-              Checking selection for visible rows...
-            </p>
           )}
           {snapshot && members.isError && (
             <Notice
@@ -1116,9 +1116,7 @@ export default function ArtistMetadataTable({
       {(queue.isError || queue.data) && (
         <div className="ops-notice">
           {queue.isError && (
-            <Notice tone="danger">
-              Could not queue selection. Check artist jobs before retrying.
-            </Notice>
+            <Notice tone="danger">Check artist jobs before retrying.</Notice>
           )}
           {queue.data && (
             <Notice
@@ -1136,8 +1134,9 @@ export default function ArtistMetadataTable({
                 </Button>
               }
             >
-              {formatCount(queue.data.queued)} jobs queued ·{' '}
-              {formatCount(queue.data.skipped)} skipped.
+              {queue.data.skipped > 0 &&
+                (batchFeedback || !queue.data.queued) &&
+                `${formatCount(queue.data.skipped)} skipped.`}
               {queue.data.warnings.map((warning) => (
                 <span className="block" key={warning}>
                   {warning}

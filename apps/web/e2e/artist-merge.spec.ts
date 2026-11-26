@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
-import { ArtistDetailSchema } from '@repo/schemas/creators'
+import { z } from 'zod'
+import { BrowsePageSliceSchema } from '@repo/schemas/browse'
+import { ArtistDetailSchema, ArtistSummarySchema } from '@repo/schemas/creators'
 import {
   PlaybackCatalogInputSchema,
   PlaybackCatalogResultSchema,
@@ -77,6 +79,38 @@ test('a shadow artist merges only after review and both inspector links keep the
   expect(add.ok()).toBe(true)
 
   const sourceHref = tracksWithArtist(sourceId, sourceTitle)
+  let releasePage: () => void = () => {}
+  const heldPage = new Promise<void>((resolve) => {
+    releasePage = resolve
+  })
+  const candidatePath = '**/api/v1/artists/browse-page?*'
+  await page.route(candidatePath, async (route) => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.get('size') !== '12' || !params.get('filters')?.includes(name))
+      return route.fallback()
+    if (params.get('page') === '2') {
+      await heldPage
+      return route.fulfill({
+        json: {
+          statusCode: 200,
+          message: 'OK',
+          data: { items: [], page: 2, size: 12, hasMore: false },
+        },
+      })
+    }
+    const response = await route.fetch()
+    const payload = z
+      .object({
+        statusCode: z.number(),
+        message: z.string(),
+        data: BrowsePageSliceSchema(ArtistSummarySchema),
+      })
+      .parse(await response.json())
+    return route.fulfill({
+      response,
+      json: { ...payload, data: { ...payload.data, hasMore: true } },
+    })
+  })
   await page.goto(sourceHref)
   const artistTracks = page.getByRole('region', { name: 'tracks list' })
   const sourceTrack = artistTracks.getByRole('link', {
@@ -109,6 +143,25 @@ test('a shadow artist merges only after review and both inspector links keep the
   }
 
   await openPicker()
+  const showMore = picker.getByRole('button', {
+    name: 'Show more',
+    exact: true,
+  })
+  await showMore.scrollIntoViewIfNeeded()
+  const resting = await showMore.boundingBox()
+  await showMore.click()
+  try {
+    const loading = picker.getByRole('button', {
+      name: 'Loading more…',
+      exact: true,
+    })
+    await expect(loading).toBeVisible()
+    expect(await loading.boundingBox()).toEqual(resting)
+  } finally {
+    releasePage()
+  }
+  await expect(showMore).toBeHidden()
+  await page.unroute(candidatePath)
   await picker
     .getByRole('button', { name: `Choose ${name} · In library`, exact: false })
     .click()

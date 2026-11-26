@@ -124,6 +124,7 @@ export function GapSelection({
     gaps[0]
   const provider = active && providerOf(active.provider)
   const reason = provider?.unavailableReason
+  const feedback = active && state.feedbackFor(active.provider, filter.gap)
   return (
     <>
       {rows.length > 0 && (
@@ -161,7 +162,7 @@ export function GapSelection({
               <Button
                 variant="primary"
                 disabled={!provider || Boolean(reason) || state.queue.isPending}
-                feedback={state.feedbackFor(active.provider, filter.gap)}
+                feedback={feedback}
                 title={reason ? coverageUnavailableLabels[reason] : undefined}
                 onClick={() =>
                   provider &&
@@ -192,7 +193,10 @@ export function GapSelection({
           </span>
         </SecondaryTableSelectionBar>
       )}
-      <CoverageQueueStatus state={state} />
+      <CoverageQueueStatus
+        state={state}
+        feedbackOnControl={rows.length > 0 && Boolean(feedback)}
+      />
     </>
   )
 }

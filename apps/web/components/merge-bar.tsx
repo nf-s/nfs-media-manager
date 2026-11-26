@@ -191,9 +191,7 @@ export function LibraryChangeUndo({
         toggle.variables?.id === change.id
           ? mutationFeedback(toggle, {
               pending: toggle.variables.undoneAt ? 'Redoing…' : 'Undoing…',
-              success: toggle.variables.undoneAt
-                ? 'Redone · Undo'
-                : 'Undone · Redo',
+              success: toggle.variables.undoneAt ? 'Redone · Undo' : 'Redo',
               error: toggle.variables.undoneAt
                 ? 'Could not redo'
                 : 'Could not undo',
@@ -1081,7 +1079,11 @@ export function MergeBar<Plan>({
               </Button>
             )}
             <LibraryChangeReport
-              progress={progress}
+              progress={
+                lastFeedback && merges.snapshot.waiting.length === 1
+                  ? null
+                  : progress
+              }
               change={null}
               describe={adapter.describe}
               error={error}

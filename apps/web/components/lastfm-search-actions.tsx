@@ -123,16 +123,12 @@ export default function LastfmSearchActions({
           {formatCount(selectedIds.length - ids.length)} no longer eligible
         </span>
       )}
-      {queue.isPending && (
-        <span role="status">
-          Queueing searches: {formatCount(progress)} confirmed...
-        </span>
-      )}
       {queue.isError && <span role="alert">{queue.error.message}</span>}
       {queue.data && (
-        <span role="status">
-          {formatCount(queue.data.queued)} queued ·{' '}
-          {formatCount(queue.data.skipped)} skipped.{' '}
+        <span>
+          {jobs &&
+            queue.data.skipped > 0 &&
+            `${formatCount(queue.data.skipped)} skipped · `}
           {batchId && (
             <Link
               href={scopedHref(

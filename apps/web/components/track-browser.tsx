@@ -724,6 +724,9 @@ function TrackBrowse({
     return (
       <TablePartToggle
         open={open}
+        feedback={
+          open && expanded?.control === 'toggle' ? versions.feedback : undefined
+        }
         label={label}
         title={label}
         onOpenChange={() => versions.toggle(item.id, index)}

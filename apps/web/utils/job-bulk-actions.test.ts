@@ -451,3 +451,19 @@ test('the result line counts each status and names batches that were not cancell
     '1 batch not cancelled.',
   )
 })
+
+test('the result line skips counts already present in the action receipt', () => {
+  assert.equal(
+    jobActionSummary(
+      {
+        results: [
+          { jobId: 'fixture-queued', status: 'queued' },
+          { jobId: 'fixture-skipped', status: 'skipped' },
+        ],
+        failedBatches: [],
+      },
+      'queued',
+    ),
+    '1 skipped.',
+  )
+})

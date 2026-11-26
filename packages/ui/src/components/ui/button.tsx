@@ -60,16 +60,35 @@ const feedbackIcons = {
   cancelled: X,
 }
 
+function feedbackDescription(label: string, description?: string) {
+  if (!description) return label
+  const verb = label.replace(/…$/, '')
+  if (description === label || description.startsWith(verb + ' '))
+    return description
+  return `${label} · ${description}`
+}
+
 export function ButtonFeedbackLabel({
   feedback,
+  children,
 }: {
   feedback: ButtonFeedback
+  children?: React.ReactNode
 }) {
   const Icon = feedbackIcons[feedback.phase]
-  return (
+  const label = (
     <>
       <Icon className="ds-i" data-size="sm" aria-hidden="true" />
       <span>{feedback.label}</span>
+    </>
+  )
+  if (children == null) return label
+  return (
+    <>
+      <span className="ds-feedback-footprint" aria-hidden="true">
+        {children}
+      </span>
+      <span className="ds-feedback-content">{label}</span>
     </>
   )
 }
@@ -102,16 +121,19 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         className={cn('ds-btn', className)}
         data-variant={variant === 'default' ? undefined : variant}
         data-size={size === 'sm' ? undefined : size}
-        data-icon={icon && !feedback ? '' : undefined}
+        data-icon={icon ? '' : undefined}
         data-feedback={feedback?.phase}
         ref={ref}
         {...props}
         aria-label={
-          feedback &&
-          props['aria-label'] &&
-          props['aria-label'] !== feedback.label
-            ? `${feedback.label} · ${props['aria-label']}`
+          feedback
+            ? feedbackDescription(feedback.label, props['aria-label'])
             : props['aria-label']
+        }
+        title={
+          feedback
+            ? feedbackDescription(feedback.label, props.title)
+            : props.title
         }
         aria-live={props['aria-live'] ?? (feedback ? 'polite' : undefined)}
         aria-busy={
@@ -122,7 +144,9 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         }
       >
         {feedback && !asChild ? (
-          <ButtonFeedbackLabel feedback={feedback} />
+          <ButtonFeedbackLabel feedback={feedback}>
+            {children}
+          </ButtonFeedbackLabel>
         ) : (
           children
         )}

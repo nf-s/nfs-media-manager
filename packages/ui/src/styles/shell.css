@@ -102,7 +102,6 @@
 }
 .shell-activity-trigger[data-feedback] {
   align-items: center;
-  width: auto;
   background: var(--ds-surface);
 }
 

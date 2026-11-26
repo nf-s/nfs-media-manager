@@ -33,7 +33,7 @@ import {
   TableCell,
   TableRow,
 } from '@repo/ui/components/ui/table'
-import { EMPTY_VALUE, formatItemCount } from '@repo/ui/lib/format'
+import { EMPTY_VALUE } from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import {
   fetchRatingsRanking,
@@ -49,6 +49,7 @@ import {
 import { RatingsFilters } from './ratings-explorer-filters'
 import { RatingsScoring, settingFor } from './ratings-explorer-scoring'
 import {
+  RatingsCount,
   RatingsSources,
   type RatingSelection,
 } from './ratings-explorer-sources'
@@ -294,8 +295,7 @@ function Explorer({ library }: { library: Library }) {
           >
             {label} {interval}
           </ResultButton>
-          <ResultButton
-            control="filters"
+          <Button
             icon
             size="xs"
             variant="ghost"
@@ -310,7 +310,7 @@ function Explorer({ library }: { library: Library }) {
             }}
           >
             <X className="ds-i" aria-hidden />
-          </ResultButton>
+          </Button>
         </span>
       ))}
     </FilterLine>
@@ -496,14 +496,11 @@ function Ranking({
           </>
         }
         count={
-          query.hasTotal
-            ? formatItemCount(query.total, {
-                one: library,
-                other: library + 's',
-              })
-            : query.isError
-              ? undefined
-              : 'Loading ratings…'
+          <RatingsCount
+            library={library}
+            total={query.hasTotal ? query.total : undefined}
+            failed={query.isError}
+          />
         }
         columns={columns.controls}
       />
@@ -561,14 +558,9 @@ function Ranking({
               <TableState colSpan={shown.length}>
                 No matching {library === 'film' ? 'films' : 'albums'}.{' '}
                 {request.scoredOnly && (
-                  <ResultButton
-                    control="filters"
-                    variant="link"
-                    size="xs"
-                    onClick={includeUnscored}
-                  >
+                  <Button variant="link" size="xs" onClick={includeUnscored}>
                     Include unscored items
-                  </ResultButton>
+                  </Button>
                 )}
               </TableState>
             )}

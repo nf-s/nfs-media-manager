@@ -5,7 +5,6 @@ import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { MouseEvent, ReactNode } from 'react'
 import { SpotifyAlbumReferenceResultSchema } from '@repo/schemas/spotify-album-reference'
 import { State } from '@repo/ui/components/ds/feedback'
-import { ButtonFeedbackLabel } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
@@ -148,13 +147,6 @@ export function SpotifyAlbumReferenceLink({
       onClick={open}
     >
       {children}
-      {opening && (
-        <span className="ds-actions" role="status">
-          <ButtonFeedbackLabel
-            feedback={{ phase: 'pending', label: 'Opening album…' }}
-          />
-        </span>
-      )}
     </a>
   )
 }

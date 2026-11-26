@@ -10,6 +10,7 @@ import {
   PlaylistSummarySchema,
 } from '@repo/schemas/tracks'
 import AlbumPlaylists from './album-playlists'
+import { AdditionState } from './playlist-addition-controls'
 import { ConfigContext } from './providers'
 
 const network = mock.method(globalThis, 'fetch', async () => {
@@ -64,6 +65,34 @@ const playlists = [
 const empty = AlbumPlaylistsSchema.parse({ playlists: [], tracks: [] })
 const noAdditions = PlaylistAlbumAdditionsSchema.parse({ additions: [] })
 const pickerKey = ['playlists', 'picker', '', 1]
+
+test('the current addition keeps its job link without repeating the button progress', () => {
+  const [addition] = PlaylistAlbumAdditionsSchema.parse({
+    additions: [
+      {
+        playlistId: 'p1',
+        albumId: 'album-1',
+        job: {
+          jobId: 'synthetic-addition',
+          status: 'running',
+          errorMessage: null,
+          finishedAt: null,
+          progress: { pagesRead: 1, totalPages: 2 },
+        },
+      },
+    ],
+  }).additions
+  assert.ok(addition)
+  const html = renderToStaticMarkup(
+    <AdditionState
+      addition={addition}
+      name="Synthetic playlist"
+      receipt={{ jobId: addition.job.jobId, label: '1 of 2 pages' }}
+    />,
+  )
+  assert.match(html, /synthetic-addition[^>]*>Open addition job<\/a>/)
+  assert.doesNotMatch(html, /1 of 2 pages|>Adding</)
+})
 
 function pickerPage(
   items = playlists.filter((playlist) => playlist.acceptsAdditions),

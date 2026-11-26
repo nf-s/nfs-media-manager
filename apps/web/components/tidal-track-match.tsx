@@ -37,7 +37,6 @@ import { SourceBlock, SourceRow } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
 import {
   Button,
-  ButtonFeedbackLabel,
   mutationFeedback,
   type ButtonFeedback,
 } from '@repo/ui/components/ui/button'
@@ -184,21 +183,27 @@ export function useMatchTidalTracks() {
       for (const item of run.items)
         client.setQueryData([...tidalMatchKey, item.trackId], item)
     },
-    onSettled: () =>
-      Promise.all([
+    onSettled: () => {
+      void Promise.all([
         client.invalidateQueries({ queryKey: tidalMatchKey }),
         invalidateSpotifySearchJobs(client),
-      ]),
+      ])
+    },
   })
 }
 
 function tidalFeedback(
   action: ReturnType<typeof useMatchTidalTracks>,
+  review?: TidalTrackMatchReview,
 ): ButtonFeedback | undefined {
   if (action.isPending) return { phase: 'pending', label: 'Matching on TIDAL…' }
   if (action.isError) return { phase: 'failed', label: 'Could not match' }
   if (!action.data) return undefined
-  const result = action.data.items[0]
+  const returned = action.data.items[0]
+  const result =
+    returned?.job && review?.job?.jobId === returned.job.jobId
+      ? review
+      : returned
   if (result?.match) return { phase: 'done', label: 'Matched on TIDAL' }
   if (needsTidalReview(result?.job))
     return { phase: 'waiting', label: 'Needs review' }
@@ -301,29 +306,19 @@ export function useTidalTrackMatchSelection({
     onSettled: () => onPendingChange(false),
   })
   const status = run.isPending ? (
-    <span role="status">
-      Matching on TIDAL · {formatCount(progress.done)} of{' '}
-      {formatCount(progress.total)}
-    </span>
+    <></>
   ) : run.isError ? (
     <span role="alert">
       {errorMessage(run.error, 'Could not match on TIDAL.')}
     </span>
   ) : run.data ? (
-    <span role="status">
-      TIDAL: {formatCount(run.data.matched)} matched ·{' '}
-      {formatCount(run.data.review)} to review ·{' '}
-      {formatCount(run.data.unmatched)} not matched ·{' '}
-      {formatCount(run.data.skipped)} skipped
-      {run.data.remaining.length > 0 &&
-        ` · ${formatCount(run.data.remaining.length)} not started`}
-      .
+    <>
       {run.data.warnings.map((warning) => (
         <span key={warning} className="block">
           {warning}
         </span>
       ))}
-    </span>
+    </>
   ) : null
   const feedback: ButtonFeedback | undefined = run.isPending
     ? {
@@ -339,7 +334,18 @@ export function useTidalTrackMatchSelection({
               : run.data.review
                 ? 'waiting'
                 : 'done',
-            label: `${formatCount(run.data.matched)} matched · ${formatCount(run.data.review)} to review`,
+            label: [
+              `${formatCount(run.data.matched)} matched`,
+              `${formatCount(run.data.review)} to review`,
+              run.data.unmatched > 0 &&
+                `${formatCount(run.data.unmatched)} not matched`,
+              run.data.skipped > 0 &&
+                `${formatCount(run.data.skipped)} skipped`,
+              run.data.remaining.length > 0 &&
+                `${formatCount(run.data.remaining.length)} not started`,
+            ]
+              .filter(Boolean)
+              .join(' · '),
           }
         : undefined
   return {
@@ -362,13 +368,23 @@ export function useTidalTrackMatchSelection({
   }
 }
 
-export function TidalTrackMatchJobStatus({ job }: { job: TidalTrackMatchJob }) {
+export function TidalTrackMatchJobStatus({
+  job,
+  showStatus = true,
+}: {
+  job: TidalTrackMatchJob
+  showStatus?: boolean
+}) {
   return (
     <DetailLink kind="job" id={job.jobId}>
-      <Status
-        state={job.status === 'succeeded' ? 'done' : job.status}
-        title={job.errorMessage ?? undefined}
-      />
+      {showStatus ? (
+        <Status
+          state={job.status === 'succeeded' ? 'done' : job.status}
+          title={job.errorMessage ?? undefined}
+        />
+      ) : (
+        'View match job'
+      )}
     </DetailLink>
   )
 }
@@ -616,10 +632,12 @@ export function TidalTrackMatchBody({
   track,
   review,
   upcs,
+  showJob = true,
 }: {
   track: TidalReviewTrack
   review: TidalTrackMatchReview
   upcs: ReadonlySet<string>
+  showJob?: boolean
 }) {
   const accept = useAcceptTidalTrackMatch(track.id)
   const [chosen, setChosen] = useState<TidalTrackCandidate | null>(null)
@@ -627,11 +645,9 @@ export function TidalTrackMatchBody({
   if (match)
     return (
       <>
-        {accept.isSuccess && (
-          <span role="status" className="ds-cell-id">
-            <ButtonFeedbackLabel
-              feedback={{ phase: 'done', label: 'Matched on TIDAL' }}
-            />
+        {showJob && (
+          <span role="status" className="sr-only">
+            {accept.isSuccess ? 'Matched on TIDAL' : ''}
           </span>
         )}
         <TidalTrackMatchLine match={match} />
@@ -642,13 +658,14 @@ export function TidalTrackMatchBody({
         )}
       </>
     )
-  if (!job) return <p className="ds-muted">No TIDAL match yet.</p>
+  if (!job)
+    return showJob ? <p className="ds-muted">No TIDAL match yet.</p> : null
   if (isActiveTidalTrackMatch(job))
-    return <TidalTrackMatchJobStatus job={job} />
+    return showJob ? <TidalTrackMatchJobStatus job={job} /> : null
   if (job.status !== 'succeeded')
     return (
       <p className="ds-muted">
-        <TidalTrackMatchJobStatus job={job} /> {job.errorMessage}
+        {showJob && <TidalTrackMatchJobStatus job={job} />} {job.errorMessage}
       </p>
     )
   const reviewing = needsTidalReview(job)
@@ -752,6 +769,13 @@ export function TidalTrackMatchReviewDialog({
     }
   }, [])
   const job = review.data?.job
+  const actionFeedback = tidalFeedback(match, review.data)
+  const canMatch = Boolean(
+    track.isrc &&
+    !isActiveTidalTrackMatch(job) &&
+    !needsTidalReview(job) &&
+    !review.data?.match,
+  )
   return (
     <dialog
       ref={dialog}
@@ -808,18 +832,20 @@ export function TidalTrackMatchReviewDialog({
                   : 'TIDAL'
               }
               aside={
-                track.isrc &&
-                !isActiveTidalTrackMatch(job) &&
-                !needsTidalReview(job) &&
-                !review.data.match && (
-                  <Button
-                    size="xs"
-                    disabled={match.isPending}
-                    feedback={tidalFeedback(match)}
-                    onClick={() => match.mutate({ trackIds: [track.id] })}
-                  >
-                    Match on TIDAL
-                  </Button>
+                (canMatch || actionFeedback) && (
+                  <span className="ds-actions">
+                    {actionFeedback && job && (
+                      <TidalTrackMatchJobStatus job={job} showStatus={false} />
+                    )}
+                    <Button
+                      size="xs"
+                      disabled={!canMatch || match.isPending}
+                      feedback={actionFeedback}
+                      onClick={() => match.mutate({ trackIds: [track.id] })}
+                    >
+                      Match on TIDAL
+                    </Button>
+                  </span>
                 )
               }
             >
@@ -827,6 +853,7 @@ export function TidalTrackMatchReviewDialog({
                 track={track}
                 review={review.data}
                 upcs={upcs}
+                showJob={!actionFeedback}
               />
               {match.isError && (
                 <Notice tone="danger">
@@ -858,7 +885,15 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
   const job = review.data?.job
   const matched = review.data?.match?.tidalTrackId ?? null
   const reviewing = !matched && needsTidalReview(job)
-  const actionFeedback = tidalFeedback(match)
+  const actionFeedback = tidalFeedback(match, review.data)
+  const reportedJob = job?.jobId === match.data?.items[0]?.job?.jobId
+  const coversMatch = Boolean(
+    actionFeedback &&
+    (match.isPending || (reportedJob && (matched || reviewing))),
+  )
+  const canMatch = Boolean(
+    isrc && !matched && !reviewing && !isActiveTidalTrackMatch(job),
+  )
   const time = job?.finishedAt ?? job?.createdAt
   const label = matched
     ? 'Matched'
@@ -880,7 +915,11 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
         mark={
           <ProviderMark name="TIDAL" src={providerLogoUrl('tidal')} hidden />
         }
-        match={<Status state={matched ? 'done' : 'attention'}>{label}</Status>}
+        match={
+          !coversMatch && (
+            <Status state={matched ? 'done' : 'attention'}>{label}</Status>
+          )
+        }
         identifier={matched ?? undefined}
         when={
           time && (
@@ -890,10 +929,11 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
           )
         }
         state={
-          match.isPending ? (
-            <Status state="running">Matching</Status>
-          ) : (
-            job && <TidalTrackMatchJobStatus job={job} />
+          job && (
+            <TidalTrackMatchJobStatus
+              job={job}
+              showStatus={!reportedJob || !actionFeedback}
+            />
           )
         }
         actions={
@@ -907,23 +947,15 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
                 Review
               </Button>
             )}
-            {isrc &&
-              !matched &&
-              !reviewing &&
-              !isActiveTidalTrackMatch(job) && (
-                <Button
-                  size="xs"
-                  disabled={match.isPending || review.isPending}
-                  feedback={actionFeedback}
-                  onClick={() => match.mutate({ trackIds: [item.id] })}
-                >
-                  Match on TIDAL
-                </Button>
-              )}
-            {(matched || reviewing) && actionFeedback && (
-              <span role="status" className="ds-cell-id">
-                <ButtonFeedbackLabel feedback={actionFeedback} />
-              </span>
+            {(canMatch || actionFeedback) && (
+              <Button
+                size="xs"
+                disabled={!canMatch || match.isPending || review.isPending}
+                feedback={actionFeedback}
+                onClick={() => match.mutate({ trackIds: [item.id] })}
+              >
+                Match on TIDAL
+              </Button>
             )}
           </>
         }
@@ -940,6 +972,7 @@ export function TrackTidalSource({ item }: { item: TrackDetail }) {
               track={track}
               review={review.data}
               upcs={upcs}
+              showJob={false}
             />
           )}
         </SourceBlock>

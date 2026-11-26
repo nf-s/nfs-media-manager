@@ -231,9 +231,16 @@ export function ListeningSources({
           }
         />
       )}
-      {update.isSuccess && update.variables && (
-        <p role="status">Unlinked {update.variables.albumName}.</p>
-      )}
+      <span role="status" className="sr-only">
+        {update.isSuccess &&
+          update.variables &&
+          !names.some(
+            (name) =>
+              name.artistName === update.variables?.artistName &&
+              name.albumName === update.variables?.albumName,
+          ) &&
+          `Unlinked ${update.variables.albumName}.`}
+      </span>
       {moved && (
         <AlbumChangeNotice
           change={moved}

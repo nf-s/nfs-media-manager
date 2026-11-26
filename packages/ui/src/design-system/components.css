@@ -176,14 +176,40 @@
 .ds-library-action {
   flex: none;
 }
-.ds-btn[data-feedback] {
-  width: auto;
-  max-width: 100%;
-  min-width: 0;
+:where(button, a, span, summary):where(:has(> .ds-feedback-content)) {
+  position: relative;
 }
-.ds-btn[data-feedback] > span {
+.ds-feedback-footprint {
+  display: contents;
+  visibility: hidden;
+}
+/* The idle content sizes the control. The phase paints inside that same box. */
+.ds-feedback-content {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-1);
+  padding-inline: var(--ds-1);
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ds-feedback-content > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is([data-icon], [data-filters='short'], .shell-activity-trigger)
+  > .ds-feedback-content
+  > span {
+  position: absolute;
+  clip-path: inset(50%);
+}
+[data-icon] > .ds-feedback-content {
+  padding: 0;
 }
 .ds-btn[data-feedback]:is(:disabled, [aria-disabled='true']) {
   color: var(--ds-ink-2);
@@ -300,15 +326,6 @@ tr:focus-within .ds-play[data-place='row'],
 [data-state='playing'] .ds-play[data-place='row'],
 [data-touch] .ds-play[data-place='row'] {
   visibility: visible;
-}
-.ds-play[data-place] button[data-feedback] {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-2);
-  width: auto;
-  padding-inline: var(--ds-3);
-  border-radius: var(--ds-r-sm);
-  color: var(--ds-ink-2);
 }
 @media (hover: none) {
   .ds-play[data-place='row'] {
@@ -874,14 +891,20 @@ a:focus-visible > .ds-logo[data-none] {
 }
 /* The Filters button where the row is short: the icon, then the number of
    filters that are on */
-.ds-toolbar [data-filters='short']:not([data-feedback]) > span:not(.ds-count) {
+.ds-toolbar
+  [data-filters='short']
+  > span:not(.ds-count, .ds-feedback-footprint, .ds-feedback-content),
+.ds-toolbar
+  [data-filters='short']
+  > .ds-feedback-footprint
+  > span:not(.ds-count) {
   display: none;
 }
-.ds-toolbar [data-filters='short']:not([data-feedback]):not(:has(.ds-count)) {
+.ds-toolbar [data-filters='short']:not(:has(.ds-count)) {
   width: var(--ds-h-sm);
   padding: 0;
 }
-.ds-toolbar [data-filters='full'] > .ds-count {
+.ds-toolbar [data-filters='full'] .ds-count {
   display: none;
 }
 /* Under the toolbar of a list inside a detail: the active filters, then the
@@ -911,13 +934,20 @@ a:focus-visible > .ds-logo[data-none] {
     min-width: calc(var(--ds-9) * 2.5);
   }
   /* The Filters button is short on every phone toolbar */
-  .ds-toolbar [data-filters]:not([data-feedback]) > span:not(.ds-count) {
+  .ds-toolbar
+    [data-filters]
+    > span:not(.ds-count, .ds-feedback-footprint, .ds-feedback-content),
+  .ds-toolbar [data-filters] > .ds-feedback-footprint > span:not(.ds-count) {
     display: none;
   }
-  .ds-toolbar [data-filters] > .ds-count {
+  .ds-toolbar [data-filters] > .ds-feedback-content > span {
+    position: absolute;
+    clip-path: inset(50%);
+  }
+  .ds-toolbar [data-filters] .ds-count {
     display: inline-grid;
   }
-  .ds-toolbar [data-filters]:not([data-feedback]):not(:has(.ds-count)) {
+  .ds-toolbar [data-filters]:not(:has(.ds-count)) {
     width: var(--ds-h-sm);
     padding: 0;
   }

@@ -37,6 +37,8 @@ export function SpotifyPodcastAccount() {
     onSuccess: (url) => window.location.assign(url),
   })
   const status = account.data
+  const connectedOnButton =
+    outcome === 'connected' && status?.connected && authorize.isIdle
   return (
     <Section title="Account" flush>
       {account.isPending && <Skeleton width="40%" height={16} />}
@@ -61,7 +63,7 @@ export function SpotifyPodcastAccount() {
           .
         </Notice>
       )}
-      {status?.configured && (
+      {status?.configured && !connectedOnButton && (
         <KeyValues
           items={[
             {
@@ -89,7 +91,7 @@ export function SpotifyPodcastAccount() {
                     success: 'Connected',
                     error: 'Could not open sign-in',
                   }) ??
-                  (outcome === 'connected' && status.connected
+                  (connectedOnButton
                     ? { phase: 'done', label: 'Spotify connected' }
                     : undefined))
             }
@@ -104,7 +106,6 @@ export function SpotifyPodcastAccount() {
           {errorMessage(authorize.error, 'Could not start the connection.')}
         </Notice>
       )}
-      {outcome === 'connected' && <Notice>Spotify connected.</Notice>}
       {outcome === 'error' && (
         <Notice tone="danger">Spotify did not connect. Try again.</Notice>
       )}

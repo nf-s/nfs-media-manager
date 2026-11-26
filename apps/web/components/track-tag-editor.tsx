@@ -11,7 +11,6 @@ import {
 import { Notice } from '@repo/ui/components/ds/feedback'
 import {
   Button,
-  ButtonFeedbackLabel,
   mutationFeedback,
   type ButtonFeedback,
 } from '@repo/ui/components/ui/button'
@@ -142,41 +141,29 @@ export function TrackTagEditReceipt({
 }: {
   edits: ReturnType<typeof useTrackTagEdits>
 }) {
-  const target =
-    edits.variables && 'name' in edits.variables ? edits.variables.name : null
-  return (
-    <>
-      {edits.feedback && !edits.isPending && !edits.isError && (
-        <span className="ds-cell-id" role="status">
-          <ButtonFeedbackLabel feedback={edits.feedback} />
-          {target && <span>{target}</span>}
-        </span>
-      )}
-      {edits.isError && (
-        <Notice
-          tone="danger"
-          action={
-            edits.retryAttachment && (
-              <Button
-                feedback={edits.feedback}
-                onClick={() => {
-                  if (edits.retryAttachment)
-                    edits.mutate({
-                      kind: 'create',
-                      name: edits.retryAttachment.name,
-                    })
-                }}
-              >
-                Retry attachment
-              </Button>
-            )
-          }
-        >
-          {errorMessage(edits.error, 'Could not change the track’s tags.')}
-        </Notice>
-      )}
-    </>
-  )
+  return edits.isError ? (
+    <Notice
+      tone="danger"
+      action={
+        edits.retryAttachment && (
+          <Button
+            feedback={edits.feedback}
+            onClick={() => {
+              if (edits.retryAttachment)
+                edits.mutate({
+                  kind: 'create',
+                  name: edits.retryAttachment.name,
+                })
+            }}
+          >
+            Retry attachment
+          </Button>
+        )
+      }
+    >
+      {errorMessage(edits.error, 'Could not change the track’s tags.')}
+    </Notice>
+  ) : null
 }
 
 /** The Edit tags controls under a track's own tags. */
@@ -205,12 +192,16 @@ export function TrackTagEditor({
         }
         onCreate={(name) => edits.mutate({ kind: 'create', name })}
         pickFeedback={(tag) =>
-          edits.variables?.kind === 'add' && edits.variables.tagId === tag.id
+          !edits.isSuccess &&
+          edits.variables?.kind === 'add' &&
+          edits.variables.tagId === tag.id
             ? edits.feedback
             : undefined
         }
         createFeedback={(name) =>
-          edits.variables?.kind === 'create' && edits.variables.name === name
+          !edits.isSuccess &&
+          edits.variables?.kind === 'create' &&
+          edits.variables.name === name
             ? edits.feedback
             : undefined
         }
@@ -228,7 +219,9 @@ export function TrackTagEditor({
                 size="xs"
                 disabled={edits.isPending}
                 feedback={
-                  edits.variables?.kind === 'reset' ? edits.feedback : undefined
+                  !edits.isSuccess && edits.variables?.kind === 'reset'
+                    ? edits.feedback
+                    : undefined
                 }
                 onClick={() =>
                   edits.mutate(

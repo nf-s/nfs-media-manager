@@ -225,16 +225,31 @@ export function TableSortButton({
   direction?: 'asc' | 'desc'
   feedback?: ButtonFeedback
 }) {
+  const label =
+    props['aria-label'] ??
+    props.title ??
+    (typeof children === 'string' ? children : undefined)
   return (
     <button
       type="button"
       className="ds-th-sort"
+      data-feedback={feedback?.phase}
       aria-busy={feedback?.phase === 'pending' || undefined}
       aria-live={feedback ? 'polite' : undefined}
       {...props}
+      aria-label={
+        feedback && label ? `${feedback.label} · ${label}` : props['aria-label']
+      }
+      title={feedback?.label ?? props.title}
     >
-      {feedback ? <ButtonFeedbackLabel feedback={feedback} /> : children}
-      {!feedback && direction && (
+      {feedback ? (
+        <ButtonFeedbackLabel feedback={feedback}>
+          {children}
+        </ButtonFeedbackLabel>
+      ) : (
+        children
+      )}
+      {direction && (
         <svg className="ds-i" viewBox="0 0 24 24" aria-hidden="true">
           <path
             d={
@@ -266,6 +281,7 @@ export function TablePartToggle({
 > & {
   open: boolean
   label: string
+  feedback?: ButtonFeedback
   onOpenChange: (open: boolean) => void
 }) {
   const Chevron = open ? ChevronDown : ChevronRight

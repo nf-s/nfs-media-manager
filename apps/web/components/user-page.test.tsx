@@ -91,7 +91,7 @@ test('User renders key actions, table metadata and documentation without making 
       assert.match(
         html,
         new RegExp(
-          `class="ds-status" data-status="[a-z]+" title="${status}">${status}</span>`,
+          `class="ds-status" data-status="[a-z]+"[^>]* title="${status}">${status}</span>`,
         ),
       )
     }

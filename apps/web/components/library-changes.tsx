@@ -79,6 +79,7 @@ export const libraryChangeColumns: readonly TableColumn[] = [
 ]
 
 type ActorFilter = 'all' | LibraryChangeActor
+const actorLabel = 'Changed by'
 const actorOptions: readonly { value: ActorFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'owner', label: 'You' },
@@ -373,15 +374,16 @@ function HistoryFilters({
   onRestore: () => void
   onActor: (actor: ActorFilter) => void
 }) {
-  const all = useResultAction('history-all')
+  // The All option takes over the receipt when the single-change link is replaced.
+  const all = useResultAction(`${actorLabel}-all`)
   return (
     <>
-      {(filtered || all.feedback) && (
+      {filtered && (
         <Button asChild feedback={all.feedback}>
           <Link
             href={href}
             prefetch={false}
-            aria-disabled={!filtered || undefined}
+            aria-label="All changes"
             onClick={(event) => {
               if (
                 event.button !== 0 ||
@@ -392,13 +394,14 @@ function HistoryFilters({
               )
                 return
               event.preventDefault()
-              if (!filtered) return
               all.begin()
               onRestore()
             }}
           >
             {all.feedback ? (
-              <ButtonFeedbackLabel feedback={all.feedback} />
+              <ButtonFeedbackLabel feedback={all.feedback}>
+                All changes
+              </ButtonFeedbackLabel>
             ) : (
               'All changes'
             )}
@@ -407,7 +410,7 @@ function HistoryFilters({
       )}
       {!filtered && (
         <ResultSegmented
-          label="Changed by"
+          label={actorLabel}
           value={actor}
           options={actorOptions}
           onChange={onActor}

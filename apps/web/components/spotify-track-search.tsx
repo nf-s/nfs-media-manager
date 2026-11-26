@@ -365,12 +365,7 @@ export function SpotifyTrackSearchSelectionBar({
         {search.failureMessage && (
           <span role="alert">{search.failureMessage}</span>
         )}
-        {queue.isPending && (
-          <span role="status">
-            Queueing searches · {formatCount(progress)} confirmed
-          </span>
-        )}
-        {queue.isError && (
+        {queue.isError && !search.failureMessage && (
           <span role="alert">
             {errorMessage(
               queue.error,
@@ -381,9 +376,10 @@ export function SpotifyTrackSearchSelectionBar({
         {queue.data &&
           ((!search.marketNeeded && !search.failureMessage) ||
             queue.data.completed.length > 0) && (
-            <span role="status">
-              {formatCount(queue.data.queued)} queued ·{' '}
-              {formatCount(queue.data.skipped)} skipped.{' '}
+            <span>
+              {jobs &&
+                queue.data.skipped > 0 &&
+                `${formatCount(queue.data.skipped)} skipped · `}
               {batchId && (queue.data.queued > 0 || queue.data.interrupted) && (
                 <Link
                   href={scopedHref(
@@ -1056,6 +1052,7 @@ export function SpotifyTrackSearchReview({
                 <Notice tone="danger">{catalog.failureMessage}</Notice>
               )}
               {!lookup.isPending &&
+                !lookup.isSuccess &&
                 directWasLatest &&
                 latestInteractive.candidates.length === 0 && (
                   <p role="status" className="ds-help">
@@ -1102,7 +1099,12 @@ export function SpotifyTrackSearchReview({
             savedResults.map(({ receipt, searchedAt, candidates }, index) => (
               <Section
                 key={searchReceiptId(receipt)}
-                title={formatItemCount(candidates.length, MATCHES)}
+                title={
+                  searchMode === 'edit-query' &&
+                  lookup.data?.searchId === searchReceiptId(receipt)
+                    ? 'Spotify results'
+                    : formatItemCount(candidates.length, MATCHES)
+                }
                 note={
                   index > 0 ||
                   ('jobId' in receipt && receipt.jobId !== job?.jobId)

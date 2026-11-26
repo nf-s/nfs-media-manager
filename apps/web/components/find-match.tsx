@@ -12,7 +12,7 @@ import {
   type MatchCandidate,
   type MatchKind,
 } from '@repo/schemas/find-match'
-import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
+import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
@@ -346,9 +346,7 @@ export function FindMatch({
             )
           })}
         </List>
-      ) : (
-        search.isSuccess && <State size="sm" title="No matches" />
-      )}
+      ) : null}
     </div>
   )
 }

@@ -102,6 +102,7 @@ function ManualResultAdd({
       saved={saved || Boolean(receipt?.committedId)}
       disabled={disabled}
       feedback={receipt?.feedback}
+      receiptId={receipt?.committedId}
       onAdd={() => {
         if (!libraryAdditionUnavailable(client, target)) onAdd()
       }}
@@ -203,7 +204,13 @@ export function ManualMediaSearch({
           () => addManualMediaItem(apiBaseUrl, mediaType, item),
         )
         rememberManualMediaAddition(client, mediaType, item.externalId, id)
-        announceAddition(mediaType, item.title)
+        announceAddition(
+          mediaType,
+          item.title,
+          isLinking || openAddedFor.current === item.externalId
+            ? undefined
+            : id,
+        )
         void invalidateManualMediaAddition(client, mediaType)
       }
       if (isLinking || openAddedFor.current === item.externalId)
@@ -257,13 +264,25 @@ export function ManualMediaSearch({
   const [searchControl, setSearchControl] = useState<
     'search' | 'previous' | 'next'
   >('search')
+  const noMatches =
+    search.data?.items.length === 0 &&
+    !search.data.totalCount &&
+    !search.data.hasMore &&
+    search.data.page === 1
   const searchFeedback = mutationFeedback(search, {
-    pending: searchControl === 'search' ? 'Searching…' : 'Loading page…',
-    success: search.data?.items.length
-      ? searchControl === 'search'
+    pending:
+      searchControl === 'search'
+        ? result
+          ? 'Searching… · previous results shown'
+          : 'Searching…'
+        : result
+          ? 'Loading page… · previous results shown'
+          : 'Loading page…',
+    success: noMatches
+      ? 'No matches'
+      : searchControl === 'search'
         ? 'Results loaded'
-        : `Page ${search.data.page} loaded`
-      : 'No matches',
+        : `Page ${search.data?.page ?? 1} loaded`,
     error: 'Search failed · retry',
   })
 
@@ -316,7 +335,7 @@ export function ManualMediaSearch({
           disabled={busy || !query.trim()}
           feedback={searchControl === 'search' ? searchFeedback : undefined}
         >
-          {search.isPending ? 'Searching…' : 'Search'}
+          Search
         </Button>
       </form>
       {search.isError && (
@@ -337,6 +356,9 @@ export function ManualMediaSearch({
             result={result}
             revision={search.submittedAt}
             loading={search.isPending}
+            showEmpty={
+              !search.isSuccess || !noMatches || searchControl !== 'search'
+            }
             liveSearch={liveSearch}
             exactMembership={exactMembership}
             tracksPlayed={tracksPlayed}
@@ -466,6 +488,7 @@ function ManualSearchResults({
   result,
   revision,
   loading,
+  showEmpty,
   liveSearch,
   exactMembership,
   tracksPlayed,
@@ -477,6 +500,7 @@ function ManualSearchResults({
   result: ManualMediaSearchResult | undefined
   revision: number
   loading: boolean
+  showEmpty: boolean
   liveSearch: boolean
   exactMembership?: boolean
   tracksPlayed: number | undefined
@@ -534,23 +558,21 @@ function ManualSearchResults({
         aria-busy={loading || (!storedOnly && results.isFetching)}
         tabIndex={0}
       >
-        {loading && result && (
-          <span className="ds-muted" role="status">
-            Previous results
-          </span>
-        )}
-        {!loading && (storedOnly || results.hasTotal) && window.total === 0 && (
-          <State
-            size="sm"
-            title={
-              mediaType === 'track' &&
-              result &&
-              (result.hasMore || result.page > 1)
-                ? 'No available tracks on this page'
-                : `No ${mediaType}s match`
-            }
-          />
-        )}
+        {showEmpty &&
+          !loading &&
+          (storedOnly || results.hasTotal) &&
+          window.total === 0 && (
+            <State
+              size="sm"
+              title={
+                mediaType === 'track' &&
+                result &&
+                (result.hasMore || result.page > 1)
+                  ? 'No available tracks on this page'
+                  : `No ${mediaType}s match`
+              }
+            />
+          )}
         <List compact>
           {window.padTop > 0 && (
             <div aria-hidden="true" style={{ height: window.padTop }} />

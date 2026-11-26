@@ -54,6 +54,8 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
     },
   })
   const { account } = status
+  const connectedOnButton =
+    outcome === 'connected' && account.connected && authorize.isIdle
   return (
     <Section title="Account" flush>
       {!account.configured && (
@@ -65,7 +67,7 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
           .
         </Notice>
       )}
-      {account.configured && (
+      {account.configured && !connectedOnButton && (
         <KeyValues
           items={[
             {
@@ -102,7 +104,7 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
             disabled={authorize.isPending || disconnect.isPending}
             feedback={
               connectionFeedback ??
-              (outcome === 'connected'
+              (connectedOnButton
                 ? { phase: 'done', label: 'YouTube connected' }
                 : undefined)
             }
@@ -146,7 +148,6 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
           {errorMessage(disconnect.error, 'Could not disconnect YouTube.')}
         </Notice>
       )}
-      {outcome === 'connected' && <Notice>YouTube connected.</Notice>}
       {outcome === 'error' && (
         <Notice tone="danger">YouTube did not connect. Try again.</Notice>
       )}

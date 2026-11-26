@@ -295,7 +295,7 @@ export function PlaylistPlayButton({
       ) : (
         <PlayHeaderButtons {...pair} />
       )}
-      {error && (
+      {error && error !== 'No playable tracks.' && (
         <span role="alert" className="ds-muted">
           {error}
         </span>
@@ -766,12 +766,23 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
     success: 'Schedule saved',
     error: 'Schedule save failed',
   })
+  const receiptJob =
+    job &&
+    (active || (queue.isSuccess && !refused && job.jobId !== priorJob.current))
+      ? job
+      : null
+  const scheduleError = schedule.isError ? errorMessage(schedule.error, '') : ''
+  const queueWarning = queue.isError
+    ? errorMessage(queue.error, '')
+    : refused
+      ? queue.data?.warnings.join(' ')
+      : undefined
   const syncFeedback: ButtonFeedback | undefined = queue.isPending
     ? { phase: 'pending', label: 'Requesting sync…' }
     : queue.isError || refused
       ? { phase: 'failed', label: 'Sync request failed · retry' }
-      : job && (active || (queue.isSuccess && job.jobId !== priorJob.current))
-        ? jobButtonFeedback(job, 'Synced')
+      : receiptJob
+        ? jobButtonFeedback(receiptJob, 'Synced')
         : queue.isSuccess
           ? batch?.phase === 'done'
             ? { phase: 'done', label: 'Synced' }
@@ -784,7 +795,9 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
         <span className="ds-actions">
           <Select
             aria-label="Schedule"
+            title={scheduleFeedback?.label}
             aria-busy={schedule.isPending || undefined}
+            aria-invalid={schedule.isError || undefined}
             value={
               schedule.isPending
                 ? (schedule.variables ?? sync.schedule)
@@ -801,14 +814,12 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
             {PlaylistSyncScheduleSchema.options.map((value) => (
               <option key={value} value={value}>
                 {youtubeScheduleLabels[value]}
-                {scheduleFeedback &&
-                value ===
-                  (schedule.isPending ? schedule.variables : sync.schedule)
-                  ? ` · ${scheduleFeedback.label}`
-                  : ''}
               </option>
             ))}
           </Select>
+          <span className="sr-only" role="status">
+            {scheduleFeedback?.label}
+          </span>
           <Button
             disabled={!request || active || queue.isPending}
             feedback={syncFeedback}
@@ -819,27 +830,14 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
               queue.mutate(request)
             }}
           >
-            {queue.isPending ? 'Queueing...' : 'Sync now'}
+            Sync now
           </Button>
         </span>
       }
     >
       <p className="ds-help">Sync adds playlist tracks to your library.</p>
-      {schedule.isError && (
-        <Notice tone="danger">
-          {errorMessage(schedule.error, 'Could not save the schedule.')}
-        </Notice>
-      )}
-      {queue.isError && (
-        <Notice tone="danger">
-          {errorMessage(queue.error, 'Could not queue the import.')}
-        </Notice>
-      )}
-      {refused && (
-        <Notice tone="danger">
-          {queue.data?.warnings.join(' ') || 'The import was not queued.'}
-        </Notice>
-      )}
+      {scheduleError && <Notice tone="danger">{scheduleError}</Notice>}
+      {queueWarning && <Notice tone="danger">{queueWarning}</Notice>}
       <Facts
         items={[
           { label: 'Last checked', value: formatDateTime(sync.lastCheckedAt) },
@@ -847,14 +845,33 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
             label: 'Contents stored',
             value: formatDateTime(playlist.importedAt),
           },
-          { label: 'Next sync', value: playlistNextSync(sync) },
+          ...(!active
+            ? [
+                {
+                  label: 'Next sync',
+                  value:
+                    sync.schedule !== 'off' &&
+                    (receiptJob?.status === 'failed' ||
+                      receiptJob?.status === 'cancelled')
+                      ? 'Paused until a manual sync completes.'
+                      : playlistNextSync(sync),
+                },
+              ]
+            : []),
           {
             label: 'Latest import',
             value: job ? (
               <DetailLink kind="job" id={job.jobId} title="View job">
-                <Status state={runStatusStates[job.status]}>
-                  {runStatusLabel(job.status)}
-                </Status>
+                {receiptJob &&
+                syncFeedback?.phase !== 'pending' &&
+                !queue.isError &&
+                !refused ? (
+                  'Open import job'
+                ) : (
+                  <Status state={runStatusStates[job.status]}>
+                    {runStatusLabel(job.status)}
+                  </Status>
+                )}
               </DetailLink>
             ) : (
               'No import job.'

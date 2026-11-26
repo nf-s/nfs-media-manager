@@ -199,11 +199,6 @@ export function AlbumReferencePlayButton({
         }}
         onQueue={() => playback.mutate('queue')}
       />
-      {playback.isError && (
-        <span className="sr-only" role="status">
-          Could not load album playback. Try again.
-        </span>
-      )}
     </>
   )
 }

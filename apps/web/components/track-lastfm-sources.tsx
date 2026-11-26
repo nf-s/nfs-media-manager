@@ -446,16 +446,6 @@ export function TrackLastfmSources({
               )}
             </Notice>
           )}
-          {result && (
-            <p role="status" className="ds-help">
-              {result.message}{' '}
-              {result.targetId !== item.id && (
-                <DetailLink kind="track" id={result.targetId} tab="sources">
-                  Open track
-                </DetailLink>
-              )}
-            </p>
-          )}
           {item.lastfmSources.length ? (
             <Table aria-label="Recorded by Last.fm" {...recordedLayout.table}>
               {recordedLayout.colgroup}
@@ -541,6 +531,17 @@ export function TrackLastfmSources({
           ) : (
             <p className="ds-help">No linked scrobbled names.</p>
           )}
+          {result?.targetId && result.targetId !== item.id && (
+            <p role="status" className="ds-help">
+              {result.message}{' '}
+              <DetailLink kind="track" id={result.targetId} tab="sources">
+                Open track
+              </DetailLink>
+            </p>
+          )}
+          <span className="sr-only" role="status">
+            {result?.targetId === item.id ? result.message : ''}
+          </span>
         </div>
       </Section>
       {item.listening.sources.length > 0 && (

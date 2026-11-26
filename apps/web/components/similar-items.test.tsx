@@ -23,7 +23,7 @@ import {
 } from './similar-items'
 
 const createdAt = '2026-01-01T00:00:00.000Z'
-const job = (status: 'queued' | 'running' | 'succeeded' | 'failed') => ({
+const job = (status: NonNullable<TidalSimilar['job']>['status']) => ({
   jobId: `example-${status}`,
   status,
   errorMessage: status === 'failed' ? 'Example failure.' : null,
@@ -126,6 +126,42 @@ const detailRow = (
   kind: TidalSimilar['kind'],
   item: TidalSimilar['items'][number],
 ) => <SimilarRow kind={kind} itemId="example-item" item={item} />
+
+test('a completed match request displays the actual match outcome', () => {
+  function outcome(
+    status: 'failed' | 'cancelled',
+    unmatched: TidalSimilar['unmatched'] = null,
+  ) {
+    return render(
+      <SimilarBody
+        similar={similar({
+          kind: 'track',
+          matched: false,
+          matchJob: job(status),
+          job: null,
+          unmatched,
+          readAt: null,
+          items: [],
+        })}
+        requesting={false}
+        requestCompleted
+        onRequest={() => {}}
+      />,
+    )
+  }
+  assert.match(
+    outcome('failed'),
+    /data-feedback="failed"[^>]*>.*?Match failed · retry/,
+  )
+  assert.match(
+    outcome('cancelled'),
+    /data-feedback="cancelled"[^>]*>.*?Match cancelled/,
+  )
+  assert.match(
+    outcome('failed', { reason: 'not-found', isrc: 'QZFX22800001' }),
+    /data-feedback="done"[^>]*>.*?No match/,
+  )
+})
 
 test('albums default to Detail and tracks default to Table', () => {
   const albums = body()
@@ -293,10 +329,25 @@ test('the counts say which TIDAL ID the list was read with', () => {
   )
 })
 
-test('a running Spotify lookup replaces the counts with its status', () => {
+test('a Similar operation displays its current phase once', () => {
+  const cases: [string, string][] = [
+    [body({ matchJob: job('running') }), 'Matching on TIDAL'],
+    [
+      body({ job: job('running'), readAt: null, items: [] }),
+      'Reading from TIDAL',
+    ],
+    [body({ lookupJob: job('running') }), 'Finding on Spotify'],
+  ]
+  for (const [state, label] of cases) {
+    const visible = state.replace(/<[^>]*>/g, '')
+    assert.equal(visible.split(label).length - 1, 1, label)
+  }
+})
+
+test('a running Spotify lookup keeps the received counts beside its status', () => {
   const html = body({ lookupJob: job('running') })
   assert.match(html, /Finding on Spotify/)
-  assert.doesNotMatch(html, /\d from TIDAL ·/)
+  assert.match(html, /4 from TIDAL ·/)
   assert.match(html, /Spotify album/)
 })
 
@@ -328,13 +379,13 @@ test('the tab says what TIDAL is doing and what is missing', () => {
   assert.match(body({ matchJob: job('running') }), /Matching on TIDAL/)
   assert.match(
     body({ job: job('queued'), readAt: null, items: [] }),
-    /Reading from TIDAL/,
+    /TIDAL read queued/,
   )
   // Matched and never read: Loading while the tab reads it.
   assert.match(body({ job: null, readAt: null, items: [] }), /Reading from/)
   assert.match(
     body({ job: null, readAt: null, items: [] }, true),
-    /Could not read from TIDAL/,
+    /Read failed · retry/,
   )
   const unmatched = body({ matched: false, job: null, readAt: null, items: [] })
   assert.match(unmatched, /Not matched on TIDAL/)
@@ -351,7 +402,6 @@ test('the tab says what TIDAL is doing and what is missing', () => {
     /Example failure\./,
   )
   const failed = body({ job: job('failed'), readAt: null, items: [] })
-  assert.match(failed, /Could not read from TIDAL/)
   assert.match(failed, /Example failure\./)
   assert.match(failed, /Read failed · retry/)
   const empty = body({ items: [] })
@@ -387,6 +437,9 @@ test('an unmatched track says why, and what can be done', () => {
       />,
     )
   const review: TidalSimilarUnmatched = { reason: 'review', candidateCount: 3 }
+  const rematching = unmatched({ unmatched: review, matchJob: job('running') })
+  assert.match(rematching, /data-feedback="running"/)
+  assert.doesNotMatch(rematching, /aria-haspopup="dialog"/)
   const reviewing = unmatched({ unmatched: review }, () => undefined)
   assert.match(reviewing, /3 TIDAL tracks to review/)
   assert.match(reviewing, /Choose one to read similar tracks\./)

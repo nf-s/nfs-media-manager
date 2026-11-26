@@ -236,6 +236,11 @@ test('retry and item links extend a copied inspector stack while retaining paren
     job: { ...fixture, options: { retryJobId: 'retry-1' } },
     nested: true,
   })
+  assert.match(
+    html,
+    /data-feedback="queued"[^>]*>[\s\S]*?<span>Retry requested<\/span>/,
+  )
+  assert.doesNotMatch(html, /Retry requested\.[\s\S]*?>View retry<\/a>/)
   const links = [
     ...html.matchAll(
       /<a[^>]* href="([^"]+)"[^>]*>(View retry|Synthetic film)<\/a>/g,

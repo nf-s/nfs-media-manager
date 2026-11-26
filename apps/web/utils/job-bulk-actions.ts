@@ -107,8 +107,12 @@ const resultStatuses: JobActionResult['status'][] = [
 ]
 
 /** `2 cancelled · 1 need review · 1 batch not cancelled.` */
-export function jobActionSummary(outcome: JobActionOutcome) {
+export function jobActionSummary(
+  outcome: JobActionOutcome,
+  alreadyShown?: JobActionResult['status'],
+) {
   const parts = resultStatuses.flatMap((status) => {
+    if (status === alreadyShown) return []
     const count = outcome.results.filter(
       (entry) => entry.status === status,
     ).length
@@ -120,7 +124,7 @@ export function jobActionSummary(outcome: JobActionOutcome) {
     parts.push(
       `${formatItemCount(outcome.failedBatches.length, { one: 'batch', other: 'batches' })} not cancelled`,
     )
-  return `${parts.join(' · ')}.`
+  return parts.length ? `${parts.join(' · ')}.` : ''
 }
 
 export async function dispatchJobAction(
