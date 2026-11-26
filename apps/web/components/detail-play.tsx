@@ -9,12 +9,22 @@ import {
   type LibraryTrackSource,
   type PlaybackSource,
 } from '@/utils/playback'
-import { usePlayback, usePlaybackControls } from './playback-provider'
-import { playFromView, unavailableReason } from './play-controls'
+import {
+  usePlaybackControls,
+  usePlaybackForPlayButton,
+} from './playback-provider'
+import {
+  isDifferentPlaybackSource,
+  playFromView,
+  unavailableReason,
+} from './play-controls'
 
 /** A library track's playable form and whether the player is on it. */
-export function useTrackPlayback(track: LibraryTrackSource) {
-  const view = usePlayback()
+export function useTrackPlayback(
+  track: LibraryTrackSource,
+  source?: PlaybackSource,
+) {
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const available = libraryTrackPlayable(track)
   const item = view.enabled ? available : null
@@ -26,17 +36,21 @@ export function useTrackPlayback(track: LibraryTrackSource) {
   return {
     item,
     current,
-    playing: current && snapshot !== null && !snapshot.paused,
-    reason: unavailableReason(available !== null, view.enabled),
-    play: (source?: () => PlaybackSource) =>
-      item && playFromView(controls, view, item, current, source),
+    playing:
+      current &&
+      snapshot !== null &&
+      !snapshot.paused &&
+      !isDifferentPlaybackSource(view, source),
+    reason: unavailableReason(available !== null, view),
+    play: (from?: () => PlaybackSource) =>
+      item && playFromView(controls, view, item, current, from ?? source),
     queue: () => item && controls.enqueue(item),
   }
 }
 
 /** An album's playable form and whether the player is on it. */
 function useAlbumPlayback(album: AlbumSource) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const available = albumPlayable(album)
   const item = view.enabled ? available : null
@@ -44,7 +58,7 @@ function useAlbumPlayback(album: AlbumSource) {
   return {
     item,
     playing: current && view.snapshot !== null && !view.snapshot.paused,
-    reason: unavailableReason(available !== null, view.enabled),
+    reason: unavailableReason(available !== null, view),
     play: (source?: () => PlaybackSource) =>
       item && playFromView(controls, view, item, current, source),
     queue: () => item && controls.enqueue(item),
@@ -96,8 +110,14 @@ export function AlbumPlay({
 }
 
 /** Play and Queue in a library track's detail header. */
-export function TrackHeaderPlay({ track }: { track: LibraryTrackSource }) {
-  const playback = useTrackPlayback(track)
+export function TrackHeaderPlay({
+  track,
+  source,
+}: {
+  track: LibraryTrackSource
+  source?: PlaybackSource
+}) {
+  const playback = useTrackPlayback(track, source)
   return (
     <PlayHeaderButtons
       title={track.title}

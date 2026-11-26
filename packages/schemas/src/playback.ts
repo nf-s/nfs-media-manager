@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { SonosGroupControlSchema, SonosRoomsSchema } from './sonos'
+import { TIDAL_SIMILAR_LIMIT } from './tidal-limits'
 
 export const spotifyIdPattern = /^[A-Za-z0-9]{22}$/
 export const PlaybackIsrcSchema = z.string().regex(/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/)
@@ -158,7 +159,7 @@ export const SourceTrackSchema = z.object({
 })
 export type SourceTrack = z.infer<typeof SourceTrackSchema>
 
-/** Enough to read a playback source's entries again from the library. */
+/** Enough to restore the source and its playing order. */
 export const SourceDescriptorSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('browse'),
@@ -175,6 +176,12 @@ export const SourceDescriptorSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('album'),
     tracks: z.array(PlayableItemSchema).max(2000),
+  }),
+  z.object({
+    type: z.literal('similar-tracks'),
+    itemId: z.string().min(1).max(200),
+    /** The recommendations as shown at Play time, in their displayed order. */
+    tracks: z.array(PlayableItemSchema.nullable()).max(TIDAL_SIMILAR_LIMIT),
   }),
 ])
 export type SourceDescriptor = z.infer<typeof SourceDescriptorSchema>

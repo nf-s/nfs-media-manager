@@ -8,6 +8,14 @@ import {
   type PlaybackSyncInput,
 } from '@repo/schemas/playback'
 import {
+  PlaybackDiagnosticsResultSchema,
+  type PlaybackDiagnosticInput,
+} from '@repo/schemas/playback-diagnostics'
+import {
+  PLAYBACK_DIAGNOSTIC_RETENTION_MS,
+  updatePlaybackDiagnostics,
+} from '@/services/playback-diagnostics'
+import {
   canDispatchSonos,
   EMPTY_PLAYBACK_SESSION,
   PlaybackDriverSchema,
@@ -21,6 +29,7 @@ const LEASE_KEY = 'lease'
 const SONOS_KEY = 'sonos'
 const SONOS_ROOMS_KEY = 'sonos-rooms'
 const PARTS_KEY = 'state-parts'
+const DIAGNOSTICS_KEY = 'playback-diagnostics'
 /** Characters per stored value; well under the per-value storage limit. */
 const PART_LENGTH = 500_000
 const MAX_PARTS = 64
@@ -83,6 +92,40 @@ export class PlaybackSessionStore extends DurableObject<CloudflareBindings> {
     return this.update((stored) =>
       releasePlaybackSession(stored, input, Date.now()),
     )
+  }
+
+  async appendDiagnostics(input: PlaybackDiagnosticInput[]) {
+    await this.updateDiagnostics(input)
+  }
+
+  readDiagnostics() {
+    return this.updateDiagnostics()
+  }
+
+  async alarm() {
+    await this.updateDiagnostics()
+  }
+
+  private updateDiagnostics(input: PlaybackDiagnosticInput[] = []) {
+    return this.ctx.storage.transaction(async (tx) => {
+      const stored = await tx.get(DIAGNOSTICS_KEY)
+      const previous =
+        storedJson(stored, PlaybackDiagnosticsResultSchema)?.events ?? []
+      const { events, changed } = updatePlaybackDiagnostics(
+        previous,
+        Date.now(),
+        input,
+      )
+      if (events.length) {
+        if (changed) await tx.put(DIAGNOSTICS_KEY, JSON.stringify({ events }))
+        const oldest = Math.min(...events.map((event) => event.receivedAt))
+        const expiry = oldest + PLAYBACK_DIAGNOSTIC_RETENTION_MS
+        if ((await tx.getAlarm()) !== expiry) await tx.setAlarm(expiry)
+      } else if (stored !== undefined) {
+        await tx.delete(DIAGNOSTICS_KEY)
+      }
+      return { events }
+    })
   }
 
   private update<T>(

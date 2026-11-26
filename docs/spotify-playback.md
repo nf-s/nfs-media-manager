@@ -43,6 +43,16 @@ Requirements:
 
 Albums and tracks without a valid Spotify album URL or track ID show a disabled play button explaining that no recording is available.
 
+Playing a recommendation in a track’s **Similar** tab saves that list as the source. The selected row plays first. The manual queue takes priority, then playback continues with the playable recommendations. **Back to source** reopens the originating Similar tab. Playing from a different source replaces the list.
+
+## Playback diagnostics
+
+The owner or an agent with an active owner API key can read `GET /api/v1/playback/diagnostics` on the application origin. To investigate a report, find the `requested` event around the reported time and follow its `attemptId`. Each tap gets its own ID, including repeated taps on the same track.
+
+The timeline records the client time and server receipt time, platform, requested recording’s Spotify catalog ID when available, source, local or external target, SDK activation and device readiness, command outcome, and observed playback or queue advancement. A Spotify command can succeed before the device confirms playback. For Similar Tracks, the source index is zero-based and the originating track is identified by its library ID.
+
+The hosted app keeps the newest 500 events per account for up to seven days. Browsers send events in small batches and retry temporary network failures while the page is open. Closing a browser while it is offline can leave its final events unreported. See [API access](api-access.md) for authenticated reads.
+
 ## How it works
 
 `POST /api/v1/spotify/playback/token` (authenticated, same-origin) returns the account's access token and its expiry. The server refreshes it through the Spotify request gate when it is within a minute of expiring. The refresh token, client secret and PKCE verifier never leave the server. The browser keeps the access token in memory only and asks again shortly before it expires. The endpoint answers 422 unless the stored account has every playback scope.

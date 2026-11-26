@@ -11,12 +11,14 @@ import {
   TrackPlayButton,
 } from './play-controls'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
+import { TrackHeaderPlay } from './detail-play'
 import {
   albumPlayable,
   libraryTrackPlayable,
   type LibraryTrackSource,
   type PendingPlaybackSource,
   type PlaybackSnapshot,
+  type PlaybackSource,
 } from '@/utils/playback'
 import { idlePlaybackState } from '@/utils/playback-engine'
 
@@ -293,4 +295,96 @@ test('clicking the same Browse track during startup or while paused uses toggle'
     () => source,
   )
   assert.deepEqual(commands, ['toggle', 'toggle'])
+})
+
+test('playing the current track from a different captured source replaces the source', () => {
+  const item = libraryTrackPlayable(libraryTrack)
+  assert.ok(item)
+  const source: PlaybackSource = {
+    label: 'Similar tracks',
+    href: '/tracks/example?tab=similar',
+    kind: 'list',
+    startIndex: 0,
+    length: 1,
+    load: async () => [item],
+  }
+  const commands: string[] = []
+  const controls = {
+    play: () => commands.push('play'),
+    toggle: () => commands.push('toggle'),
+  }
+  const playing = {
+    ...on,
+    current: item,
+    snapshot: { ...snapshot, paused: false },
+  }
+  playFromView(controls, playing, item, true, source)
+  playFromView(controls, { ...playing, source }, item, true, source)
+  assert.deepEqual(commands, ['play', 'toggle'])
+
+  const buttons = (
+    <>
+      <LibraryTrackPlayButton track={libraryTrack} source={source} />
+      <TrackHeaderPlay track={libraryTrack} source={source} />
+    </>
+  )
+  assert.equal(
+    render(buttons, playing).match(/aria-label="Play Playlist track"/g)?.length,
+    2,
+  )
+  assert.equal(
+    render(buttons, { ...playing, source }).match(
+      /aria-label="Pause Playlist track"/g,
+    )?.length,
+    2,
+  )
+})
+
+test('a local player loading its SDK disables Play and leaves remote playback available', () => {
+  const buttons = (
+    <>
+      <LibraryTrackPlayButton track={libraryTrack} />
+      <TrackHeaderPlay track={libraryTrack} />
+    </>
+  )
+  const local = { ...on, localPlayerLoading: true }
+  const html = render(buttons, local)
+  assert.equal(html.match(/disabled=""/g)?.length, 4)
+  assert.match(html, /Play Playlist track: Loading the browser player\./)
+  assert.match(html, /title="Loading the browser player\."/)
+  const room = render(buttons, {
+    ...local,
+    target: {
+      kind: 'room',
+      room: {
+        id: 'fixture-room',
+        name: 'Fixture room',
+        household: 'fixture-home',
+      },
+    },
+  })
+  assert.doesNotMatch(room, /disabled=""|Loading the browser player/)
+})
+
+test('an async playback source unlocks audio immediately inside the play action', async () => {
+  const item = libraryTrackPlayable(libraryTrack)
+  assert.ok(item)
+  const source: PlaybackSource = {
+    label: 'Tracks',
+    href: '/tracks',
+    kind: 'list',
+    startIndex: 0,
+    length: 1,
+    load: async () => [item],
+  }
+  const commands: string[] = []
+  const controls = {
+    activate: () => commands.push('activate'),
+    play: () => commands.push('play'),
+    toggle: () => commands.push('toggle'),
+  }
+  playFromView(controls, on, item, false, async () => source)
+  assert.deepEqual(commands, ['activate'])
+  await Promise.resolve()
+  assert.deepEqual(commands, ['activate', 'play'])
 })

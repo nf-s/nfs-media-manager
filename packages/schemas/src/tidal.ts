@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { TIDAL_SIMILAR_LIMIT } from './tidal-limits'
+export { TIDAL_SIMILAR_LIMIT } from './tidal-limits'
 import { CatalogScopeQuerySchema } from './catalog'
 import { JobStatusSchema } from './job'
 import { normalizeTagName } from './tags'
@@ -244,8 +246,6 @@ export const TIDAL_SIMILAR_TASK = 'tidal-similar'
  * album or track that are not in the library.
  */
 export const SPOTIFY_SIMILAR_LOOKUP_TASK = 'spotify-similar-lookup'
-/** TIDAL's first page of similar items, the only page read. */
-export const TIDAL_SIMILAR_LIMIT = 20
 
 export const TidalSimilarKindSchema = z.enum(['album', 'track'])
 export type TidalSimilarKind = z.infer<typeof TidalSimilarKindSchema>

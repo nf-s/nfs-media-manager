@@ -9,6 +9,10 @@ import {
   PlaybackSyncInputSchema,
   PlaybackSyncResultSchema,
 } from '@repo/schemas/playback'
+import {
+  PlaybackDiagnosticsAppendSchema,
+  PlaybackDiagnosticsResultSchema,
+} from '@repo/schemas/playback-diagnostics'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
 import {
@@ -21,9 +25,15 @@ import {
 } from '@/lib/openapi'
 import { setPlaybackLogRole } from '@/lib/request-log'
 import { generateJsonResponse } from '@/lib/response'
-import { authMiddleware, requireBrowserSession } from '@/middlewares/auth'
+import {
+  authMiddleware,
+  requireBrowserSession,
+  requireOwnerUser,
+} from '@/middlewares/auth'
 import { observePlaybackCatalog } from '@/services/playback-catalog'
 import {
+  appendUserPlaybackDiagnostics,
+  readUserPlaybackDiagnostics,
   releaseUserPlayback,
   syncUserPlayback,
 } from '@/services/playback-session-store'
@@ -51,12 +61,88 @@ const sessionBodyLimit = bodyLimit({
     generateJsonResponse(c, null, 413, 'Playback state exceeds the size limit'),
 })
 
+const diagnosticsBodyLimit = bodyLimit({
+  maxSize: 16 * 1024,
+  onError: (c) =>
+    generateJsonResponse(
+      c,
+      null,
+      413,
+      'Playback diagnostics exceed the size limit',
+    ),
+})
+
 const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
 app.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store')
   c.header('Referrer-Policy', 'no-referrer')
   await next()
 })
+
+app.openapi(
+  createRoute({
+    method: 'post',
+    path: '/diagnostics',
+    security: ownerSessionSecurity,
+    middleware: [browserSession, sameOrigin, diagnosticsBodyLimit],
+    request: {
+      body: {
+        required: true,
+        content: {
+          'application/json': { schema: PlaybackDiagnosticsAppendSchema },
+        },
+      },
+    },
+    responses: {
+      204: { description: 'Playback diagnostics recorded' },
+      401: jsonErrorResponse('Owner browser session required'),
+      403: jsonErrorResponse('Forbidden'),
+      413: jsonErrorResponse('Playback diagnostics exceed the size limit'),
+      422: jsonErrorResponse('Invalid playback diagnostics'),
+      503: jsonErrorResponse('Playback sessions unavailable'),
+    },
+  }),
+  async (c) => {
+    await appendUserPlaybackDiagnostics(
+      requireBrowserSession(c).user.id,
+      c.req.valid('json'),
+    )
+    return c.body(null, 204)
+  },
+  (result, c) => {
+    if (!result.success)
+      return generateJsonResponse(c, null, 422, 'Invalid playback diagnostics')
+  },
+)
+
+app.openapi(
+  createRoute({
+    method: 'get',
+    path: '/diagnostics',
+    security: [...ownerSessionSecurity, { bearerAuth: [] }],
+    middleware: [authMiddleware(), sameOrigin],
+    responses: {
+      200: {
+        description: 'Recent playback diagnostics in receipt order',
+        content: {
+          'application/json': {
+            schema: createResponseSchema(PlaybackDiagnosticsResultSchema),
+          },
+        },
+      },
+      401: jsonErrorResponse('Owner session or API key required'),
+      403: jsonErrorResponse('Forbidden'),
+      429: jsonErrorResponse('API key request limit reached'),
+      503: jsonErrorResponse('Playback sessions unavailable'),
+    },
+  }),
+  async (c) =>
+    generateJsonResponse(
+      c,
+      await readUserPlaybackDiagnostics(requireOwnerUser(c).id),
+      200,
+    ),
+)
 
 app.openapi(
   createRoute({

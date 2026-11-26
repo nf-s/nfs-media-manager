@@ -54,7 +54,12 @@ import { useNestedGridDensity } from '@/hooks/useGridDensity'
 import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
 import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
-import { libraryTrackPlayable, type PlayableItem } from '@/utils/playback'
+import {
+  libraryTrackPlayable,
+  type PlayableItem,
+  type PlaybackSource,
+} from '@/utils/playback'
+import { createSimilarTracksPlaybackSource } from '@/utils/playback-source'
 import { trackAlbumReference } from '@/utils/track-album-notices'
 import { trackServiceLinks } from '@/utils/track-links'
 import { TrackDetailHeader } from './track-detail-header'
@@ -72,7 +77,10 @@ import {
   playFromView,
   unavailableReason,
 } from './play-controls'
-import { usePlayback, usePlaybackControls } from './playback-provider'
+import {
+  usePlaybackControls,
+  usePlaybackForPlayButton,
+} from './playback-provider'
 import { useAnnounceLibraryAddition, useConfig } from './providers'
 import {
   TidalTrackMatchReviewDialog,
@@ -173,7 +181,7 @@ function SpotifyPlayButton({
   item: PlayableItem
   place: 'row' | 'tile'
 }) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   if (!view.enabled)
     return (
@@ -181,7 +189,7 @@ function SpotifyPlayButton({
         place={place}
         title={item.title}
         disabled
-        disabledReason={unavailableReason(true, false)}
+        disabledReason={unavailableReason(true, view)}
         onPlay={() => undefined}
         onQueue={() => undefined}
       />
@@ -353,28 +361,25 @@ function SimilarSummary({
   )
 }
 
-function SimilarTrack({
-  view,
-  item,
-  title,
-  detailId,
-  libraryAction,
-  matchEvidence,
-}: {
-  view: BrowseView
-  item: TidalSimilarItem
-  title: string
-  detailId: string | undefined
-  libraryAction: ReactNode
-  matchEvidence: ReactNode
-}) {
+function similarItemTitle(item: TidalSimilarItem) {
+  return item.track?.title ?? item.library?.title ?? tidalSuggestionTitle(item)
+}
+
+function similarItemId(item: TidalSimilarItem) {
+  return item.track?.id ?? item.library?.id ?? item.catalogMediaItemId
+}
+
+function similarTrackEntry(
+  item: TidalSimilarItem,
+  detailId = similarItemId(item),
+) {
   const { track: stored, library, spotify } = item
   const artistCredits = stored?.artistCredits ?? []
   const spotifyTrackId =
     stored?.spotifyTrackId ?? library?.spotifyId ?? spotify?.spotifyId ?? null
-  const track = {
+  return {
     ...(detailId ? { id: detailId } : {}),
-    title,
+    title: similarItemTitle(item),
     artists: artistCredits.length
       ? artistCredits.map(({ name }) => name)
       : item.artists,
@@ -404,6 +409,26 @@ function SimilarTrack({
       item.linkedAlbums?.[0]?.releaseDate ??
       null,
   }
+}
+
+function SimilarTrack({
+  view,
+  item,
+  detailId,
+  libraryAction,
+  matchEvidence,
+  createPlaybackSource,
+}: {
+  view: BrowseView
+  item: TidalSimilarItem
+  detailId: string | undefined
+  libraryAction: ReactNode
+  matchEvidence: ReactNode
+  createPlaybackSource?: (selected: PlayableItem) => PlaybackSource
+}) {
+  const stored = item.track
+  const track = similarTrackEntry(item, detailId)
+  const { title } = track
   const reference =
     stored?.albumLinkStrategy !== undefined && stored.spotifyMatch !== undefined
       ? trackAlbumReference({
@@ -417,7 +442,9 @@ function SimilarTrack({
     track.albumName ??
     track.album?.title ??
     (reference?.openBySpotify ? 'Album' : null)
-  const unavailable = libraryTrackPlayable(track) === null
+  const playable = libraryTrackPlayable(track)
+  const unavailable = playable === null
+  const playbackSource = playable ? createPlaybackSource?.(playable) : undefined
   const album =
     albumName &&
     (reference?.openBySpotify && detailId ? (
@@ -461,6 +488,7 @@ function SimilarTrack({
           <LibraryTrackPlayButton
             track={track}
             place={view === 'grid' ? 'tile' : 'row'}
+            source={playbackSource}
           />
         }
         actions={
@@ -480,6 +508,7 @@ function SimilarTrack({
           album={album}
           links={links}
           actions={libraryAction}
+          playbackSource={playbackSource}
         />
         {(matchEvidence || unavailable || item.genres.length > 0) && (
           <div className="dtl-filters">
@@ -499,18 +528,19 @@ export function SimilarRow({
   item,
   awaitingSave = false,
   view = 'list',
+  createPlaybackSource,
 }: {
   kind: TidalSimilarKind
   itemId: string
   item: TidalSimilarItem
   awaitingSave?: boolean
   view?: BrowseView
+  createPlaybackSource?: (selected: PlayableItem) => PlaybackSource
 }) {
   const client = useQueryClient()
   const { apiBaseUrl } = useConfig()
   const announceAddition = useAnnounceLibraryAddition()
-  const title =
-    item.track?.title ?? item.library?.title ?? tidalSuggestionTitle(item)
+  const title = similarItemTitle(item)
   const mutationKey = ['add-similar', kind, itemId, item.tidalId]
   // Switching layouts remounts the row while an addition can still be running.
   const latestAdd = useMutationState({
@@ -532,11 +562,7 @@ export function SimilarRow({
       return invalidateManualMediaAddition(client, kind)
     },
   })
-  const detailId =
-    add.data?.id ??
-    item.track?.id ??
-    item.library?.id ??
-    item.catalogMediaItemId
+  const detailId = add.data?.id ?? similarItemId(item)
   const inLibrary = Boolean(add.data || item.track?.inLibrary || item.library)
   const place = inLibrary
     ? 'library'
@@ -582,10 +608,10 @@ export function SimilarRow({
       <SimilarTrack
         view={view}
         item={item}
-        title={title}
         detailId={detailId}
         libraryAction={libraryAction}
         matchEvidence={matchEvidence}
+        createPlaybackSource={createPlaybackSource}
       />
     )
   const artworkUrl =
@@ -837,7 +863,11 @@ export function SimilarBody({
       </State>
     )
   const label = `Similar ${noun}`
-  const rows = items.map((item) => (
+  const sourceTracks =
+    kind === 'track'
+      ? items.map((item) => libraryTrackPlayable(similarTrackEntry(item)))
+      : null
+  const rows = items.map((item, index) => (
     <SimilarRow
       key={item.tidalId}
       kind={kind}
@@ -845,6 +875,19 @@ export function SimilarBody({
       item={item}
       view={view}
       awaitingSave={!readAt}
+      createPlaybackSource={
+        sourceTracks
+          ? (selected) => {
+              const tracks = [...sourceTracks]
+              tracks[index] = selected
+              return createSimilarTracksPlaybackSource(
+                similar.itemId,
+                tracks,
+                index,
+              )
+            }
+          : undefined
+      }
     />
   ))
   return (

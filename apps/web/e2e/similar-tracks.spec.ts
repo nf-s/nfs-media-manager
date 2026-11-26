@@ -1,6 +1,22 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
+import { PlaybackDiagnosticsResultSchema } from '@repo/schemas/playback-diagnostics'
 import { TidalSimilarSchema } from '@repo/schemas/tidal'
+import { TrackDetailSchema } from '@repo/schemas/tracks'
+import { webOrigin } from './preview'
+
+// The preview has several recordings called Hidden Letter; this one has saved recommendations.
+const similarSeedPath = '/tracks/track_3c533604ddc8e1666b42'
+
+async function openSimilarSeed(page: Page) {
+  await page.goto('/tracks?view=list&q=Hidden+Letter', {
+    waitUntil: 'domcontentloaded',
+  })
+  await page
+    .getByRole('link', { name: 'Hidden Letter', exact: true })
+    .and(page.locator(`[data-workspace-href="${similarSeedPath}"]`))
+    .click()
+}
 
 async function headerLayout(header: Locator) {
   return header.evaluate((element) => {
@@ -24,10 +40,383 @@ async function headerLayout(header: Locator) {
 }
 
 async function openTrackSimilar(page: Page) {
-  await page.goto('/tracks?view=list&q=Hidden+Letter')
-  await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
+  await openSimilarSeed(page)
   await page.getByRole('tab', { name: 'Similar', exact: true }).click()
 }
+
+test('playing a Similar track keeps the recommendations as the playback source', async ({
+  page,
+  isMobile,
+}) => {
+  const startedAfter = Date.now()
+  const recommendations = [
+    { id: '0000000000000000000601', title: 'First recommendation' },
+    { id: '0000000000000000000602', title: 'Second recommendation' },
+    { id: '0000000000000000000603', title: 'Third recommendation' },
+  ]
+  const { data } = await (
+    await page.request.get(`${webOrigin}/api/v1${similarSeedPath}`)
+  ).json()
+  const seed = TrackDetailSchema.parse(data)
+  if (!seed.spotifyTrackId) throw new Error('Preview track needs a Spotify ID')
+  const recordings = [
+    ...recommendations,
+    { id: seed.spotifyTrackId, title: seed.title },
+  ]
+  const recommendationUris = recommendations.map(
+    ({ id }) => `spotify:track:${id}`,
+  )
+  const seedUri = `spotify:track:${seed.spotifyTrackId}`
+  await page.route(
+    `${webOrigin}/api/v1/tidal/similar/tracks/${seed.id}`,
+    async (route) => {
+      const response = await route.fetch()
+      const payload = z
+        .object({
+          statusCode: z.number(),
+          message: z.string(),
+          data: TidalSimilarSchema,
+        })
+        .parse(await response.json())
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          data: {
+            ...payload.data,
+            items: recommendations.map(({ id, title }, index) => ({
+              tidalId: String(931000 + index),
+              title,
+              artists: ['Fixture artist'],
+              url: `https://tidal.com/browse/track/${931000 + index}`,
+              code: null,
+              version: null,
+              durationSec: 180,
+              releaseDate: null,
+              state: 'spotify',
+              library: null,
+              spotify: {
+                spotifyId: id,
+                title,
+                artists: ['Fixture artist'],
+                url: `https://open.spotify.com/track/${id}`,
+                albumName: null,
+                spotifyAlbumId: null,
+                artworkUrl: null,
+                durationSec: 180,
+                trackCount: null,
+              },
+            })),
+          },
+        },
+      })
+    },
+  )
+  await page.addInitScript(() => {
+    let connections = 0
+    class FixturePlayer {
+      private state: unknown = null
+      private activated = false
+      private handlers = new AbortController()
+      private listeners = new Map<string, (payload: unknown) => void>()
+      constructor() {
+        const { signal } = this.handlers
+        window.addEventListener(
+          'fixture-spotify-state',
+          (event) => {
+            if (event instanceof CustomEvent) {
+              if (!this.activated) {
+                this.listeners.get('autoplay_failed')?.({})
+                return
+              }
+              this.state = event.detail
+              this.listeners.get('player_state_changed')?.(this.state)
+            }
+          },
+          { signal },
+        )
+        window.addEventListener(
+          'fixture-spotify-not-ready',
+          () => {
+            this.activated = false
+            this.listeners.get('not_ready')?.({ device_id: 'fixture-browser' })
+          },
+          { signal },
+        )
+        document.documentElement.dataset.fixtureSpotifyLoaded = 'true'
+      }
+      addListener(event: string, listener: (payload: unknown) => void) {
+        this.listeners.set(event, listener)
+        return true
+      }
+      async connect() {
+        connections += 1
+        document.documentElement.dataset.fixtureSpotifyConnections =
+          String(connections)
+        this.listeners.get('ready')?.({ device_id: 'fixture-browser' })
+        return true
+      }
+      async getCurrentState() {
+        return this.state
+      }
+      async activateElement() {
+        const event = window.event
+        this.activated = event?.isTrusted === true && event.type === 'click'
+        document.documentElement.dataset.fixtureSpotifyActivation =
+          event?.type ?? 'outside-event'
+      }
+      disconnect() {
+        this.handlers.abort()
+      }
+    }
+    window.addEventListener('fixture-load-spotify', () => {
+      Object.defineProperty(window, 'Spotify', {
+        value: { Player: FixturePlayer },
+      })
+      window.onSpotifyWebPlaybackSDKReady?.()
+    })
+  })
+  let loadSdk = () => {}
+  const sdkLoading = new Promise<void>((resolve) => {
+    loadSdk = resolve
+  })
+  await page.route('https://sdk.scdn.co/spotify-player.js', async (route) => {
+    await sdkLoading
+    await route.fulfill({
+      contentType: 'application/javascript',
+      body: "window.dispatchEvent(new Event('fixture-load-spotify'))",
+    })
+  })
+  await page.route(`${webOrigin}/api/v1/spotify/status`, (route) =>
+    route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: {
+          configured: true,
+          connected: true,
+          expiresAt: null,
+          scope: null,
+          redirectUri: null,
+          playback: true,
+          playbackHistory: false,
+          playlists: false,
+          playlistChanges: false,
+        },
+      },
+    }),
+  )
+  await page.route(`${webOrigin}/api/v1/spotify/playback/token`, (route) =>
+    route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: {
+          accessToken: 'synthetic',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      },
+    }),
+  )
+  const starts: string[][] = []
+  async function reportDeviceTrack(uri: string, next: readonly string[]) {
+    const recording = recordings.find(({ id }) => uri === `spotify:track:${id}`)
+    if (!recording) throw new Error('Unknown playback fixture')
+    await page.evaluate(
+      ({ uri, title, next }) =>
+        window.dispatchEvent(
+          new CustomEvent('fixture-spotify-state', {
+            detail: {
+              paused: false,
+              position: 1_000,
+              duration: 180_000,
+              track_window: {
+                current_track: {
+                  uri,
+                  name: title,
+                  artists: [{ name: 'Fixture artist' }],
+                },
+                next_tracks: next.map((uri) => ({ uri })),
+              },
+            },
+          }),
+        ),
+      { uri, title: recording.title, next },
+    )
+  }
+  await page.route('https://api.spotify.com/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (url.pathname === '/v1/me/player/devices')
+      return route.fulfill({ json: { devices: [] } })
+    if (url.pathname !== '/v1/me/player/play' || request.method() !== 'PUT')
+      return route.fulfill({ status: 204 })
+    expect(url.searchParams.get('device_id')).toBe('fixture-browser')
+    const { uris } = z
+      .object({ uris: z.tuple([z.string()], z.string()) })
+      .parse(request.postDataJSON())
+    starts.push(uris)
+    await route.fulfill({ status: 204 })
+    await reportDeviceTrack(uris[0], uris.slice(1))
+  })
+  const panel = page.getByRole('tabpanel', { name: 'Similar', exact: true })
+  const row = panel.getByRole('row', { name: /First recommendation/ })
+  try {
+    await openTrackSimilar(page)
+    if (!isMobile) await row.hover()
+    await expect(
+      row.getByRole('button', {
+        name: 'Play First recommendation: Loading the browser player.',
+        exact: true,
+      }),
+    ).toBeDisabled()
+    expect(starts).toEqual([])
+  } finally {
+    loadSdk()
+  }
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-fixture-spotify-loaded',
+    'true',
+  )
+  if (!isMobile) await row.hover()
+  const play = row.getByRole('button', {
+    name: 'Play First recommendation',
+    exact: true,
+  })
+  const press = (control: Locator) =>
+    isMobile ? control.tap() : control.click()
+  await press(play)
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-fixture-spotify-activation',
+    'click',
+  )
+  const dock = page.locator('.player-dock')
+  function nowPlaying(title: string) {
+    return isMobile
+      ? dock.getByRole('button', { name: `Open player: ${title}` })
+      : dock.locator('.player-now').getByText(title, { exact: true })
+  }
+  const playing = async (title: string) => {
+    await expect(nowPlaying(title)).toBeVisible()
+    await expect(
+      dock
+        .locator('.player-row')
+        .getByRole('button', { name: 'Pause', exact: true }),
+    ).toBeEnabled()
+  }
+  await playing('First recommendation')
+  await expect.poll(() => starts[0]).toEqual(recommendationUris)
+  const [, second, third] = recommendationUris
+  if (!second || !third) throw new Error('Missing later recommendation')
+
+  await press(page.getByRole('button', { name: 'Close details' }))
+  await reportDeviceTrack(second, [third])
+  await playing('Second recommendation')
+
+  const seedRow = page.locator('.ds-row').filter({
+    has: page.locator(`[data-workspace-href="${similarSeedPath}"]`),
+  })
+  if (!isMobile) await seedRow.hover()
+  await press(
+    seedRow.getByRole('button', { name: /Add Hidden Letter to queue/ }),
+  )
+  await playing('Second recommendation')
+  expect(starts).toHaveLength(1)
+
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event('fixture-spotify-not-ready')),
+  )
+  const player = isMobile ? page.locator('.player-sheet') : dock
+  if (isMobile) await press(nowPlaying('Second recommendation'))
+  await press(player.getByRole('button', { name: 'Next', exact: true }))
+  await expect.poll(() => starts[1]).toEqual([seedUri, third])
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-fixture-spotify-connections',
+    '2',
+  )
+  await playing(seed.title)
+
+  await reportDeviceTrack(third, [])
+  await playing('Third recommendation')
+  expect(starts).toHaveLength(2)
+  if (!isMobile) await press(dock.getByRole('button', { name: /^Queue:/ }))
+  await press(player.getByRole('link', { name: /^Back to source:/ }))
+  await expect(
+    page.getByRole('tab', { name: 'Similar', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(
+    panel.getByRole('row', { name: /Third recommendation/ }),
+  ).toBeVisible()
+
+  await page.goBack()
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === '/tracks' &&
+      url.searchParams.get('q') === 'Hidden Letter' &&
+      !url.searchParams.has('inspect'),
+  )
+  if (!isMobile) await seedRow.hover()
+  await press(
+    seedRow.getByRole('button', { name: `Play ${seed.title}`, exact: true }),
+  )
+  await playing(seed.title)
+  if (isMobile) await press(nowPlaying(seed.title))
+  else await press(dock.getByRole('button', { name: /^Queue:/ }))
+  await expect(
+    player.getByRole('link', { name: /^Back to source: Tracks/ }),
+  ).toBeVisible()
+
+  await expect(async () => {
+    const response = await page.request.get(
+      `${webOrigin}/api/v1/playback/diagnostics`,
+      { headers: { origin: webOrigin } },
+    )
+    expect(response.ok()).toBe(true)
+    const { data } = await response.json()
+    const { events } = PlaybackDiagnosticsResultSchema.parse(data)
+    const recent = events.filter(
+      ({ browser, receivedAt }) =>
+        browser === (isMobile ? 'android' : 'desktop') &&
+        receivedAt >= startedAfter,
+    )
+    const request = recent.find(
+      ({ action, spotifyTrackId, stage, target, source, sourceItemId }) =>
+        action === 'play' &&
+        stage === 'requested' &&
+        target === 'local' &&
+        source === 'similar-tracks' &&
+        sourceItemId === seed.id &&
+        spotifyTrackId === recommendations[0]?.id,
+    )
+    expect(request).toBeDefined()
+    expect(
+      recent
+        .filter(({ attemptId }) => attemptId === request?.attemptId)
+        .map(({ stage }) => stage),
+    ).toEqual(
+      expect.arrayContaining(['activation', 'device', 'command', 'started']),
+    )
+    expect(recent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'advance',
+          source: 'similar-tracks',
+          spotifyTrackId: recommendations[1]?.id,
+        }),
+        expect.objectContaining({
+          stage: 'device',
+          source: 'similar-tracks',
+          reason: 'disconnected',
+        }),
+        expect.objectContaining({
+          stage: 'started',
+          source: 'browse',
+          spotifyTrackId: seed.spotifyTrackId,
+        }),
+      ]),
+    )
+  }).toPass()
+})
 
 test('Sources keeps the selected TIDAL edition and links the recommendation evidence', async ({
   page,
@@ -66,8 +455,7 @@ test('Sources keeps the selected TIDAL edition and links the recommendation evid
       },
     })
   })
-  await page.goto('/tracks?view=list&q=Hidden+Letter')
-  await page.getByRole('link', { name: 'Hidden Letter', exact: true }).click()
+  await openSimilarSeed(page)
   await page.getByRole('tab', { name: 'Sources', exact: true }).click()
   await page.locator('summary').filter({ hasText: 'TIDAL' }).click()
   await expect(

@@ -10,6 +10,7 @@ import {
   PlaybackReleaseResultSchema,
   PlaybackSyncResultSchema,
 } from '@repo/schemas/playback'
+import { PlaybackDiagnosticsResultSchema } from '@repo/schemas/playback-diagnostics'
 import {
   ProviderLocalWorkerControlResultSchema,
   ProviderLocalWorkerControlSchema,
@@ -260,6 +261,16 @@ export default {
                       await bindings.PLAYBACK_SESSIONS.getByName(
                         userId,
                       ).release(input),
+                    ),
+                  appendDiagnostics: async (userId, input) =>
+                    bindings.PLAYBACK_SESSIONS.getByName(
+                      userId,
+                    ).appendDiagnostics(input),
+                  readDiagnostics: async (userId) =>
+                    PlaybackDiagnosticsResultSchema.parse(
+                      await bindings.PLAYBACK_SESSIONS.getByName(
+                        userId,
+                      ).readDiagnostics(),
                     ),
                 },
                 () => run(bindings, async () => app.fetch(request)),

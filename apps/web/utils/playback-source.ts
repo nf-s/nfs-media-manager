@@ -18,6 +18,7 @@ import {
 } from '@repo/schemas/tracks'
 import type { SavedSource } from '@repo/schemas/playback'
 import { fetchApiData } from './api'
+import { detailPageHref } from './detail-inspector'
 import {
   albumPlayable,
   libraryTrackPlayable,
@@ -358,8 +359,32 @@ function albumTracksSource(
   }
 }
 
+/** A captured Similar list keeps its order through refreshes and navigation. */
+export function createSimilarTracksPlaybackSource(
+  itemId: string,
+  tracks: readonly (PlayableItem | null)[],
+  startIndex: number,
+): PlaybackSource {
+  const captured = [...tracks]
+  return {
+    label: 'Similar tracks',
+    href: detailPageHref(
+      { kind: 'track', id: itemId },
+      new URLSearchParams({ tab: 'similar' }),
+    ),
+    length: captured.length,
+    startIndex,
+    kind: 'list',
+    descriptor: { type: 'similar-tracks', itemId, tracks: captured },
+    async load(index) {
+      const track = captured[index]
+      return track ? [track] : []
+    },
+  }
+}
+
 /**
- * Reads a saved source's entries again, for a session restored after a
+ * Recreates a saved source, for a session restored after a
  * reload or taken over from another device.
  */
 export function restorePlaybackSource(
@@ -372,6 +397,12 @@ export function restorePlaybackSource(
   const { descriptor, label, href } = saved
   if (descriptor.type === 'album')
     return albumTracksSource(label, href, descriptor.tracks)
+  if (descriptor.type === 'similar-tracks')
+    return createSimilarTracksPlaybackSource(
+      descriptor.itemId,
+      descriptor.tracks,
+      saved.startIndex,
+    )
   const options = {
     apiBaseUrl,
     params: new URLSearchParams(descriptor.params),

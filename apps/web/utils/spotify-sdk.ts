@@ -56,12 +56,20 @@ export function loadSpotifySdk(): Promise<SpotifySdk> {
   loading ??= new Promise<SpotifySdk>((resolve, reject) => {
     const script = document.createElement('script')
     const fail = () => {
+      clearTimeout(timeout)
+      if (window.onSpotifyWebPlaybackSDKReady === ready)
+        window.onSpotifyWebPlaybackSDKReady = undefined
       loading = null
       script.remove()
       reject(new Error('The Spotify player could not be loaded'))
     }
-    window.onSpotifyWebPlaybackSDKReady = () =>
-      window.Spotify ? resolve(window.Spotify) : fail()
+    const ready = () => {
+      clearTimeout(timeout)
+      if (window.Spotify) resolve(window.Spotify)
+      else fail()
+    }
+    const timeout = setTimeout(fail, 15_000)
+    window.onSpotifyWebPlaybackSDKReady = ready
     script.src = SDK_URL
     script.async = true
     script.onerror = fail

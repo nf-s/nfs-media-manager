@@ -1,3 +1,6 @@
+import { PlaybackDiagnosticInputSchema } from '@repo/schemas/playback-diagnostics'
+import { playbackSpotifyId } from './playback-catalog'
+import type { PlaybackEvent, PlaybackTrace } from './playback-diagnostics'
 import {
   givenIndex,
   moveEntry,
@@ -118,6 +121,7 @@ export type PlaybackRejoin = {
 }
 
 export type PlaybackState = {
+  localPlayerLoading: boolean
   /**
    * The account is playing something, or something was played or queued here,
    * so the player is shown.
@@ -155,6 +159,7 @@ export type PlaybackState = {
 }
 
 export const idlePlaybackState: PlaybackState = {
+  localPlayerLoading: false,
   active: false,
   current: null,
   snapshot: null,
@@ -176,6 +181,7 @@ export const idlePlaybackState: PlaybackState = {
 }
 
 export type PlaybackEngineOptions = {
+  recordDiagnostic?: (event: PlaybackEvent) => void
   api: PlayerApi
   token: (refresh?: boolean) => Promise<string>
   loadSdk: () => Promise<SpotifySdk>
@@ -449,7 +455,6 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   const random = options.random ?? Math.random
   const { api } = options
   const listeners = new Set<() => void>()
-  const waiters = new Set<Waiter>()
   let preferredShuffle = options.initialShuffle ?? false
   let state: PlaybackState = {
     ...idlePlaybackState,
@@ -460,11 +465,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
   let player: SpotifySdkPlayer | null = null
   let loading: Promise<SpotifySdkPlayer> | null = null
-  let connected = false
+  let registration: Promise<string> | null = null
+  let waitingForDevice: Waiter | null = null
+  let activation: Promise<void> | null = null
   let localId: string | null = null
   let localVolume = options.initialVolume
   let session: PlaybackSession | null = null
   let source: SourceSession | null = null
+  let trace: PlaybackTrace | undefined
   let sourceStarting = false
   let currentFromSource = false
   let latest: PlaybackSnapshot | null = null
@@ -563,10 +571,109 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       set({ rejoin: null })
   }
 
+  function diagnosticTarget(
+    target: PlaybackTarget,
+  ): NonNullable<PlaybackEvent['target']> {
+    return target.kind === 'local'
+      ? 'local'
+      : isSonosTarget(target)
+        ? 'sonos'
+        : 'spotify'
+  }
+
+  function diagnosticSource(
+    definition: Pick<PlaybackSource, 'descriptor'> | undefined,
+    sourceIndex?: number,
+  ) {
+    const descriptor = definition?.descriptor
+    return {
+      source: descriptor?.type ?? (definition ? 'other' : 'none'),
+      sourceIndex,
+      sourceItemId:
+        descriptor?.type === 'similar-tracks'
+          ? PlaybackDiagnosticInputSchema.shape.sourceItemId.safeParse(
+              descriptor.itemId,
+            ).data
+          : undefined,
+    } satisfies Pick<PlaybackEvent, 'source' | 'sourceIndex' | 'sourceItemId'>
+  }
+
+  function diagnosticContext() {
+    return {
+      ...diagnosticSource(
+        source?.definition,
+        currentFromSource ? source?.history.at(-1)?.index : undefined,
+      ),
+      target: diagnosticTarget(state.target),
+      spotifyTrackId: playbackSpotifyId(
+        'track',
+        state.current?.startUri ?? state.current?.uri,
+      ),
+    }
+  }
+
+  function traceAttempt(
+    action?: PlaybackEvent['action'],
+    context = diagnosticContext(),
+  ): PlaybackTrace | undefined {
+    const record = options.recordDiagnostic
+    if (!record) return undefined
+    const attemptId = crypto.randomUUID()
+    return (stage, details) => {
+      if (disposed) return
+      record({
+        attemptId,
+        action,
+        stage,
+        ...context,
+        queued: state.queue.length,
+        upcoming: state.upcoming.length,
+        ...details,
+      })
+    }
+  }
+
+  /** Captures the tap before a follower waits for the driver lease. */
+  function request(
+    action: NonNullable<PlaybackEvent['action']>,
+    item?: PlayableItem,
+    definition?: PlaybackSource | PendingPlaybackSource,
+    target?: PlaybackTarget,
+  ) {
+    const report = traceAttempt(action, {
+      ...diagnosticContext(),
+      ...(target && { target: diagnosticTarget(target) }),
+      ...(item && {
+        spotifyTrackId: playbackSpotifyId('track', item.startUri ?? item.uri),
+      }),
+      ...(action === 'play' &&
+        diagnosticSource(definition, definition?.startIndex)),
+    })
+    report?.('requested', { reason: 'manual' })
+    return report
+  }
+
   function set(patch: Partial<PlaybackState>, rememberRoom = true) {
     if (disposed) return
     const before = state.target
+    const previousSnapshot = state.snapshot
     state = { ...state, ...patch }
+    if (patch.target && !sameDevice(before, patch.target))
+      (trace ?? traceAttempt())?.('device', {
+        ...diagnosticContext(),
+        reason: 'observed',
+      })
+    if (
+      patch.snapshot &&
+      !session &&
+      (previousSnapshot?.trackUri !== patch.snapshot.trackUri ||
+        previousSnapshot?.paused !== patch.snapshot.paused)
+    )
+      (trace ?? traceAttempt())?.('device', {
+        ...diagnosticContext(),
+        reason: patch.snapshot.paused ? 'paused' : 'observed',
+        spotifyTrackId: playbackSpotifyId('track', patch.snapshot.trackUri),
+      })
     if (patch.rejoin !== undefined) {
       if (rejoinTimer) clearTimeout(rejoinTimer)
       rejoinTimer =
@@ -613,6 +720,24 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   }
 
   function fail(error: unknown) {
+    const sdkReasons: Record<string, PlaybackEvent['reason']> = {
+      initialization_error: 'initialization-error',
+      authentication_error: 'authentication-error',
+      account_error: 'account-error',
+      playback_error: 'playback-error',
+      load: 'load-failed',
+      connect: 'no-device',
+      offline: 'disconnected',
+      timeout: 'not-ready',
+      activation: 'activation-failed',
+    }
+    trace?.('failed', {
+      reason:
+        error instanceof SdkFailure
+          ? (sdkReasons[error.kind] ?? 'sdk-error')
+          : 'command-failed',
+      ...(error instanceof PlaybackApiError && { status: error.status }),
+    })
     const failure = playbackFailure(error)
     if (failure.status === 'expired') {
       detach()
@@ -625,13 +750,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     action?.catch(fail)
   }
 
-  function rejectWaiters(error: Error) {
-    for (const waiter of [...waiters]) waiter.reject(error)
-  }
-
   function sdkFailed(kind: string) {
     const error = new SdkFailure(kind)
-    if (kind !== 'playback_error') rejectWaiters(error)
+    if (kind !== 'playback_error') {
+      localId = null
+      waitingForDevice?.reject(error)
+    }
     fail(error)
   }
 
@@ -651,24 +775,38 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           const id = sdkDeviceId(payload)
           if (!id) return
           localId = id
-          for (const waiter of [...waiters]) waiter.resolve(id)
+          trace?.('device', { reason: 'ready', target: 'local' })
+          waitingForDevice?.resolve(id)
         })
-        created.addListener('not_ready', () => {
+        created.addListener('not_ready', (payload) => {
+          const offline = sdkDeviceId(payload)
+          if (offline && localId && offline !== localId) return
           localId = null
+          trace?.('device', { reason: 'disconnected', target: 'local' })
+          activation = null
+          waitingForDevice?.reject(new SdkFailure('offline'))
         })
         created.addListener('player_state_changed', (payload) => {
           if (state.target.kind !== 'local' || observeLocal(payload)) return
           // This browser went quiet: the playback may have been moved.
           if (sawLocalState) void lookElsewhere()
         })
-        created.addListener('autoplay_failed', () =>
+        created.addListener('autoplay_failed', () => {
+          activation = null
+          if (state.target.kind !== 'local') return
+          trace?.('failed', { reason: 'autoplay-blocked' })
+          if (session?.phase === 'starting') {
+            run += 1
+            detach()
+          }
           set({
+            starting: false,
             failure: {
               status: 'error',
               message: 'The browser blocked playback. Press play to start.',
             },
-          }),
-        )
+          })
+        })
         for (const kind of sdkErrorEvents)
           created.addListener(kind, () => sdkFailed(kind))
         player = created
@@ -687,67 +825,78 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (localId) return localId
     const created = await loadPlayer()
     if (localId) return localId
-    const ready = new Promise<string>((resolve, reject) => {
-      const waiter: Waiter = {
-        resolve: (id) => {
-          clearTimeout(timeout)
-          waiters.delete(waiter)
-          resolve(id)
-        },
-        reject: (error) => {
-          clearTimeout(timeout)
-          waiters.delete(waiter)
-          reject(error)
-        },
-      }
-      const timeout = setTimeout(
-        () => waiter.reject(new SdkFailure('timeout')),
+    if (registration) return registration
+    // Only a user command registers this browser. A failed or offline
+    // registration leaves the next command free to open a new connection.
+    let timeout: ReturnType<typeof setTimeout>
+    registration = new Promise<string>((resolve, reject) => {
+      waitingForDevice = { resolve, reject }
+      timeout = setTimeout(
+        () => reject(new SdkFailure('timeout')),
         READY_TIMEOUT_MS,
       )
-      waiters.add(waiter)
-    })
-    if (!connected) {
-      connected = true
+      trace?.('device', { reason: 'connecting', target: 'local' })
       created.connect().then(
         (accepted) => {
-          if (accepted) return
-          connected = false
-          rejectWaiters(new SdkFailure('connect'))
+          if (!accepted) reject(new SdkFailure('connect'))
         },
-        () => {
-          connected = false
-          rejectWaiters(new SdkFailure('connect'))
-        },
+        () => reject(new SdkFailure('connect')),
       )
-    }
-    return ready
+    }).finally(() => {
+      clearTimeout(timeout)
+      waitingForDevice = null
+      registration = null
+    })
+    return registration
   }
 
   /**
    * Browsers only allow audio that a user gesture unlocked. `target` is the
    * device about to play, when it is not the current one yet.
    */
-  function activate(target: PlaybackTarget = state.target) {
-    if (target.kind === 'local')
-      player?.activateElement().catch(() => undefined)
+  function activate(target: PlaybackTarget = state.target, report = trace) {
+    if (target.kind !== 'local' || activation) return
+    const unlock = player
+      ? player.activateElement()
+      : loadPlayer().then((created) => created.activateElement())
+    activation = unlock
+    report?.('activation', {
+      reason: player ? 'ready' : 'pending',
+      target: 'local',
+    })
+    void unlock.then(
+      () => report?.('activation', { reason: 'accepted', target: 'local' }),
+      () => {
+        if (activation === unlock) activation = null
+        report?.('activation', { reason: 'activation-failed', target: 'local' })
+      },
+    )
   }
 
   /**
    * Spotify can take a few seconds to list a device that has just registered,
    * as a browser does the first time it is chosen under Play on.
    */
-  async function onDevice(local: boolean, command: () => Promise<void>) {
+  async function onLocalDevice(deviceId: string, command: () => Promise<void>) {
     for (let attempt = 0; ; attempt += 1) {
       try {
         await command()
         return
       } catch (error) {
-        const retry =
-          local &&
-          attempt < DEVICE_RETRIES &&
-          error instanceof PlaybackApiError &&
-          error.status === 404
-        if (!retry) throw error
+        if (!(error instanceof PlaybackApiError) || error.status !== 404)
+          throw error
+        if (attempt >= DEVICE_RETRIES) {
+          if (localId === deviceId) {
+            localId = null
+            activation = null
+            trace?.('device', {
+              target: 'local',
+              reason: 'no-device',
+              status: 404,
+            })
+          }
+          throw error
+        }
         await new Promise((resolve) => setTimeout(resolve, DEVICE_RETRY_MS))
       }
     }
@@ -776,8 +925,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
    */
   function refused(): boolean {
     const target = state.target
-    if (!canControl(target)) return true
+    if (!canControl(target)) {
+      trace?.('failed', { reason: 'lease-denied' })
+      return true
+    }
     if (!isObserved(target) || roomBehind(target)) return false
+    trace?.('failed', { reason: 'restricted' })
     set({
       starting: false,
       failure: {
@@ -1569,6 +1722,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       failure: null,
       rejoin: null,
     })
+    const attempt = trace
+    const commandContext = diagnosticContext()
+    const report: PlaybackTrace = (stage, details) =>
+      attempt?.(stage, { ...commandContext, ...details })
     try {
       if (target.kind === 'room') {
         roomRun += 1
@@ -1580,6 +1737,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
             ? await api.albumTrackIndex(item.uri, item.startUri)
             : 0
         if (started !== run || !holdsSonosLease(lease)) return
+        report?.('command', { reason: 'pending' })
         await roomSend(target.room, {
           mode: 'replace',
           uris: [item.uri],
@@ -1588,6 +1746,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           ...(from > 0 ? { positionMs: Math.round(from) } : {}),
         })
         if (started !== run || !holdsSonosLease(lease)) return
+        report?.('command', { reason: 'accepted' })
         // Sonos has accepted the track; its own report follows a second later.
         if (item.kind === 'track') expectRoomTrack(item, from, false)
         // The tracks that follow may still be resolving; they are added as
@@ -1599,16 +1758,32 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const [deviceId] = await Promise.all([
         target.kind === 'local' ? ensureLocal() : target.device.id,
         ahead,
+        target.kind === 'local'
+          ? activation?.catch(() => {
+              throw new SdkFailure('activation')
+            })
+          : undefined,
       ])
       if (started !== run || disposed) return
       const following = followingFor(item)
       if (session) session = { ...session, sent: [item, ...following] }
       const play = async () => {
-        if (started === run && !disposed)
+        if (started !== run || disposed) return
+        report?.('command', { reason: 'pending' })
+        try {
           await api.play(deviceId, playRequest(item, following, from))
+          report?.('command', { reason: 'accepted' })
+        } catch (error) {
+          if (error instanceof PlaybackApiError)
+            report?.('command', {
+              reason: 'command-failed',
+              status: error.status,
+            })
+          throw error
+        }
       }
       if (target.kind === 'remote') await sendRemote(play)
-      else await onDevice(true, play)
+      else await onLocalDevice(deviceId, play)
       if (started !== run) return
       schedule(FOLLOW_UP_MS)
     } catch (error) {
@@ -1624,7 +1799,20 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   function startNext(): boolean {
     const [next, ...rest] = state.queue
-    if (!next) return startSourceNext()
+    if (!next) {
+      const nextSource = startSourceNext()
+      trace?.(nextSource ? 'advance' : 'ended', {
+        ...diagnosticContext(),
+        reason: nextSource ? 'source' : 'no-next-track',
+      })
+      return nextSource
+    }
+    trace?.('advance', {
+      ...diagnosticContext(),
+      sourceIndex: undefined,
+      reason: 'queue',
+      spotifyTrackId: playbackSpotifyId('track', next.item.uri),
+    })
     sourceStarting = false
     currentFromSource = false
     set({ queue: rest })
@@ -1820,6 +2008,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       // had, from its beginning. That is reported and the music left as it
       // is: a start is only ever sent when it is asked for.
       detach()
+      trace?.('failed', { reason: 'ignored' })
       set({ current: null, failure: NOT_STARTED })
     }
     if (after.trackUri && session?.phase !== 'starting') {
@@ -1855,10 +2044,20 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const starting = active.phase === 'starting'
       const step = stepSession(active, before, after, skippedAt)
       session = step.session
+      if (starting && session.phase === 'playing')
+        trace?.('started', {
+          ...diagnosticContext(),
+          reason: after.paused ? 'paused' : 'observed',
+          spotifyTrackId: playbackSpotifyId('track', after.trackUri),
+        })
       const moved =
         step.event === 'none' || starting ? null : advanced(after, step.event)
       if (moved === 'restarted') return
       if (moved === 'followed') {
+        trace?.('advance', {
+          ...diagnosticContext(),
+          reason: currentFromSource ? 'source' : 'queue',
+        })
         publish(after)
         findSonos()
         return
@@ -1871,6 +2070,13 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         return
       if (step.event !== 'none') {
         // The item ended with nothing queued, or other playback replaced it.
+        trace?.(starting ? 'failed' : 'ended', {
+          reason: starting
+            ? 'ignored'
+            : step.event === 'left'
+              ? 'superseded'
+              : 'no-next-track',
+        })
         detach()
         if (step.event === 'left' && !starting) clearSource()
         set({
@@ -2442,6 +2648,8 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** The device no longer reports playback. */
   function playbackStopped() {
     if (sourceStarting) return
+    if (session?.phase === 'starting')
+      trace?.('failed', { reason: 'no-device' })
     const since = missing > 0 && quietAt !== null ? quietAt : now()
     const playing = session?.phase === 'playing' && latest !== null
     // A page that was not reading the device cannot tell that its track ran
@@ -2714,6 +2922,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         session?.phase === 'starting' &&
         now() - session.startedAt > START_TIMEOUT_MS
       ) {
+        trace?.('failed', { reason: 'start-timeout' })
         detach()
         set({ starting: false, failure: NOT_STARTED })
       }
@@ -2803,7 +3012,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     const from = state.target
     if (!canControl(from) || !canControl(next)) return
     if (sameDevice(from, next)) return
-    if (next.kind === 'local') player?.activateElement().catch(() => undefined)
+    activate(next)
     if (resume && !latest) {
       // Nothing plays yet: the restored item starts on the chosen device.
       roomPolls = 0
@@ -3398,6 +3607,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       findingSonos: false,
       rejoin: announce ? { status: 'checking', device: savedName } : null,
     })
+    trace = traceAttempt()
     if (active) previewSource(active)
     let found: PlaybackSnapshot | null = null
     let idle = false
@@ -3525,6 +3735,11 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
 
   return {
     getState: () => state,
+    request,
+    followAttempt(report: PlaybackTrace | undefined) {
+      if (trace && state.starting) trace('ended', { reason: 'superseded' })
+      trace = report
+    },
     saved,
     restore,
     setSonosPolling,
@@ -3535,6 +3750,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
      * still shown and controlled.
      */
     release() {
+      trace = undefined
       run += 1
       roomRun += 1
       detach()
@@ -3582,7 +3798,19 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     },
     /** Loads the browser player ahead of the first click, so that click can unlock audio. */
     prepare() {
-      loadPlayer().catch(() => undefined)
+      set({ localPlayerLoading: true })
+      const report = traceAttempt()
+      report?.('sdk', { reason: 'pending', target: 'local' })
+      void loadPlayer().then(
+        () => {
+          report?.('sdk', { reason: 'ready', target: 'local' })
+          set({ localPlayerLoading: false })
+        },
+        () => {
+          report?.('failed', { reason: 'load-failed', target: 'local' })
+          set({ localPlayerLoading: false })
+        },
+      )
     },
     /** Starts noticing playback on the account that this app did not start. */
     watch() {
@@ -3742,7 +3970,10 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     },
     toggle() {
       if (!canControl(state.target)) return
-      if (session?.phase === 'starting' || sourceStarting) return
+      if (session?.phase === 'starting' || sourceStarting) {
+        trace?.('command', { reason: 'pending' })
+        return
+      }
       activate()
       acted()
       if (currentFromSource && source?.initializing && state.current) {
@@ -3763,6 +3994,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const target = state.target
       if (target.kind === 'restricted') return
       set({ failure: null })
+      trace?.('command', { reason: latest.paused ? 'manual' : 'paused' })
       if (target.kind === 'local') guard(player?.togglePlay())
       else {
         const paused = latest.paused
@@ -3929,15 +4161,14 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       const playing = latest !== null && !latest.paused
       const moving = latest !== null || session !== null
       const leaving = isObserved(state.target) ? state.target : null
-      if (next.kind === 'local')
-        player?.activateElement().catch(() => undefined)
+      activate(next)
       set({ failure: null, rejoin: null })
       try {
         if (next.kind === 'local') {
           const id = await ensureLocal()
           if (moving)
             await sendRemote(() =>
-              onDevice(true, () => api.transfer(id, playing)),
+              onLocalDevice(id, () => api.transfer(id, playing)),
             )
           set({ target: next, volume: localVolume })
         } else {
@@ -3979,7 +4210,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       stop()
       if (volumeTimer) clearTimeout(volumeTimer)
       if (rejoinTimer) clearTimeout(rejoinTimer)
-      rejectWaiters(new SdkFailure('disposed'))
+      waitingForDevice?.reject(new SdkFailure('disposed'))
       listeners.clear()
       player?.disconnect()
     },

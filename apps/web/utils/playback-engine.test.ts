@@ -20,6 +20,7 @@ import {
   type RestrictedDevice,
 } from './spotify-player-api'
 import type { SpotifySdk, SpotifySdkPlayer } from './spotify-sdk'
+import type { PlaybackEvent } from './playback-diagnostics'
 import type { SonosControlApi } from './sonos-player-api'
 import type {
   SonosGroupControl,
@@ -136,15 +137,19 @@ type SpotifyWorld = {
 function harness(
   random?: () => number,
   sonos?: SonosControlApi,
-  shuffle: Pick<
-    PlaybackEngineOptions,
-    | 'initialShuffle'
-    | 'onShuffle'
-    | 'initialRoom'
-    | 'onRoom'
-    | 'browserId'
-    | 'restoreSource'
-    | 'scrobbles'
+  shuffle: Partial<
+    Pick<
+      PlaybackEngineOptions,
+      | 'initialShuffle'
+      | 'onShuffle'
+      | 'initialRoom'
+      | 'onRoom'
+      | 'browserId'
+      | 'restoreSource'
+      | 'recordDiagnostic'
+      | 'loadSdk'
+      | 'scrobbles'
+    >
   > = {},
   world?: SpotifyWorld,
 ) {
@@ -407,6 +412,226 @@ test('plays an album in this browser once its device is ready', async () => {
   assert.equal(state.failure, null)
   setup.engine.dispose()
   assert.equal(setup.calls.at(-1), 'sdk disconnect')
+})
+
+test('a cold local play activates the SDK before sending the track', async () => {
+  const setup = harness()
+  setup.engine.prepare()
+  setup.engine.play(track)
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await settle()
+  assert.equal(setup.calls[0], 'sdk activate')
+  assert.equal(setup.sent('play browser').length, 1)
+  setup.engine.dispose()
+})
+
+test('a new tap can connect after Spotify took the browser offline', async () => {
+  const setup = harness()
+  await playLocally(setup, track, {
+    track: track.uri,
+    context: '',
+    position: 500,
+  })
+  setup.emit('not_ready', { device_id: 'browser' })
+  await settle()
+  assert.equal(setup.sent('sdk connect').length, 1)
+  setup.engine.play(album)
+  await settle()
+  assert.equal(setup.sent('sdk connect').length, 2)
+  setup.emit('ready', { device_id: 'reconnected-browser' })
+  await settle()
+  assert.equal(setup.sent('play reconnected-browser').length, 1)
+  setup.engine.dispose()
+})
+
+test('a timed out registration can be attempted again on the next tap', async () => {
+  const setup = harness()
+  setup.engine.play(track)
+  await settle()
+  await advance(16_000)
+  assert.ok(setup.engine.getState().failure)
+  assert.equal(setup.sent('play').length, 0)
+  setup.engine.play(track)
+  await settle()
+  assert.equal(setup.sent('sdk connect').length, 2)
+  setup.emit('ready', { device_id: 'browser' })
+  await settle()
+  assert.equal(setup.sent('play browser').length, 1)
+  setup.engine.dispose()
+})
+
+test('the next local tap registers again when Spotify forgot a ready device', async () => {
+  const setup = harness()
+  setup.remote.failures.push(
+    ...Array.from({ length: 7 }, () => new PlaybackApiError(404, null)),
+  )
+  setup.engine.play(track)
+  await settle()
+  setup.emit('ready', { device_id: 'expired-browser' })
+  await advance(5_000)
+  assert.ok(setup.engine.getState().failure)
+  assert.equal(setup.sent('sdk connect').length, 1)
+  setup.engine.play(track)
+  await settle()
+  assert.equal(setup.sent('sdk connect').length, 2)
+  setup.emit('ready', { device_id: 'new-browser' })
+  await settle()
+  assert.equal(setup.sent('play new-browser').length, 1)
+  setup.engine.dispose()
+})
+
+test('a browser autoplay block allows the next Play tap to start immediately', async () => {
+  const setup = harness()
+  setup.engine.prepare()
+  await settle()
+  setup.engine.play(track)
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await settle()
+  setup.emit('autoplay_failed')
+  assert.equal(setup.engine.getState().starting, false)
+  assert.equal(setup.sent('play browser').length, 1)
+  setup.engine.toggle()
+  await settle()
+  assert.equal(setup.sent('play browser').length, 2)
+  setup.engine.dispose()
+})
+
+test('the timeline distinguishes a failed tap from a successful retry for the same track', async () => {
+  const events: PlaybackEvent[] = []
+  const setup = harness(undefined, undefined, {
+    recordDiagnostic: (event) => events.push(event),
+  })
+  const sync = createPlaybackSync({
+    engine: setup.engine,
+    api: fakeSessions().api,
+    clientId: 'test-page',
+    clientName: 'Phone',
+  })
+  const requested = { ...track, uri: 'spotify:track:0000000000000000000001' }
+  setup.engine.prepare()
+  sync.start()
+  await settle()
+  setup.remote.failures.push(new PlaybackApiError(403, null))
+  sync.play(requested)
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await settle()
+  sync.play(requested)
+  await settle()
+  setup.emit(
+    'player_state_changed',
+    sdkState({ track: requested.uri, context: '', position: 100 }),
+  )
+  const taps = events.filter((event) => event.stage === 'requested')
+  assert.equal(taps.length, 2)
+  assert.notEqual(taps[0]?.attemptId, taps[1]?.attemptId)
+  assert.deepEqual(
+    taps.map((tap) => tap.spotifyTrackId),
+    ['0000000000000000000001', '0000000000000000000001'],
+  )
+  assert.ok(
+    events.some(
+      (event) =>
+        event.attemptId === taps[0]?.attemptId &&
+        event.stage === 'failed' &&
+        event.status === 403,
+    ),
+  )
+  assert.ok(
+    events.some(
+      (event) =>
+        event.attemptId === taps[1]?.attemptId &&
+        event.stage === 'started' &&
+        event.reason === 'observed',
+    ),
+  )
+  assert.equal(
+    events.some((event) => JSON.stringify(event).includes(requested.title)),
+    false,
+  )
+  sync.dispose()
+  setup.engine.dispose()
+})
+
+test('SDK preload failure is recorded even before a local control can be used', async () => {
+  const events: PlaybackEvent[] = []
+  const setup = harness(undefined, undefined, {
+    loadSdk: async () => {
+      throw new Error('unavailable')
+    },
+    recordDiagnostic: (event) => events.push(event),
+  })
+  setup.engine.prepare()
+  await settle()
+  assert.equal(setup.engine.getState().localPlayerLoading, false)
+  assert.deepEqual(
+    events.map((event) => [event.stage, event.reason]),
+    [
+      ['sdk', 'pending'],
+      ['failed', 'load-failed'],
+    ],
+  )
+  assert.equal(events[0]?.attemptId, events[1]?.attemptId)
+  setup.engine.dispose()
+})
+
+test('a delayed Spotify reply keeps the recording and source of the tap that sent it', async () => {
+  const events: PlaybackEvent[] = []
+  const setup = harness(undefined, undefined, {
+    recordDiagnostic: (event) => events.push(event),
+  })
+  const sync = createPlaybackSync({
+    engine: setup.engine,
+    api: fakeSessions().api,
+    clientId: 'test-page',
+    clientName: 'Phone',
+  })
+  const first = { ...track, uri: 'spotify:track:0000000000000000000001' }
+  const second = { ...track, uri: 'spotify:track:0000000000000000000002' }
+  let acknowledge: (() => void) | undefined
+  setup.api.play = async (_id, body) => {
+    if (JSON.stringify(body).includes(first.uri))
+      await new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+  }
+  setup.engine.prepare()
+  sync.start()
+  await settle()
+  sync.play(first, {
+    kind: 'list',
+    label: 'Similar tracks',
+    href: '/tracks/seed?tab=similar',
+    startIndex: 0,
+    length: 1,
+    load: async () => [first],
+    descriptor: {
+      type: 'similar-tracks',
+      itemId: 'track_11111111111111111111',
+      tracks: [first],
+    },
+  })
+  await settle()
+  setup.emit('ready', { device_id: 'browser' })
+  await settle()
+  assert.ok(acknowledge)
+  sync.play(second)
+  await settle()
+  acknowledge()
+  await settle()
+  const firstId = events.find((event) => event.stage === 'requested')?.attemptId
+  const attempt = events.filter((event) => event.attemptId === firstId)
+  for (const stage of ['activation', 'command']) {
+    const accepted = attempt.find(
+      (event) => event.stage === stage && event.reason === 'accepted',
+    )
+    assert.equal(accepted?.spotifyTrackId, '0000000000000000000001')
+    assert.equal(accepted?.source, 'similar-tracks')
+  }
+  sync.dispose()
+  setup.engine.dispose()
 })
 
 test('waits for Spotify to list a browser device that has just registered', async () => {

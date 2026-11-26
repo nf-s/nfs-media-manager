@@ -26,6 +26,8 @@ const sdkMessages: Record<string, string> = {
   account_error: 'Spotify Premium is required to play in the browser.',
   playback_error: 'Spotify could not play that track.',
   load: 'The Spotify player could not be loaded.',
+  activation: 'The browser blocked playback. Press play to start.',
+  offline: 'The browser player went offline. Press play to reconnect.',
 }
 
 function failed(message: string): PlaybackFailure {

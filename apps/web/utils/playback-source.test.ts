@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { AlbumDetailSchema } from '@repo/schemas/media'
+import { SavedSourceSchema } from '@repo/schemas/playback'
+import { TIDAL_SIMILAR_LIMIT } from '@repo/schemas/tidal'
 import {
   PlaylistDetailSchema,
   TrackListItemSchema,
@@ -12,8 +14,10 @@ import {
   createBrowsePlaybackSource,
   createPendingTrackBrowseSource,
   createPlaylistPlaybackSource,
+  createSimilarTracksPlaybackSource,
   restorePlaybackSource,
 } from './playback-source'
+import { libraryTrackPlayable } from './playback'
 import { browsePageSize } from './virtual-browse'
 
 const albumId = 'A'.repeat(22)
@@ -427,6 +431,72 @@ test('album track views restore search and order only for that album', () => {
     JSON.stringify({ id: album.id, sortBy: 'invalid' }),
   ])
     assert.equal(albumTrackView(invalid, album.id).sortBy, 'position')
+})
+
+test('a saved Similar tracks source keeps the selected start and captured row order', async (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error(
+      'A captured source should not read the updated recommendations',
+    )
+  })
+  const tracks = [
+    ...album.tracks.map(({ track }) => libraryTrackPlayable(track)),
+    libraryTrackPlayable({ ...track, spotifyTrackId: 'D'.repeat(22) }),
+  ]
+  const source = createSimilarTracksPlaybackSource('seed track', tracks, 2)
+  const { descriptor, href, label, length, startIndex, kind } = source
+  assert.equal(href, '/tracks/seed%20track?tab=similar')
+  assert.equal(label, 'Similar tracks')
+  assert.equal(kind, 'list')
+  assert.equal(startIndex, 2)
+
+  const saved = SavedSourceSchema.parse({
+    descriptor,
+    href,
+    label,
+    length,
+    startIndex,
+    kind,
+    remaining: [[2, length]],
+    played: [],
+    skipped: [],
+    exhausted: [],
+    upcoming: [],
+    history: [],
+  })
+  assert.equal(saved.descriptor.type, 'similar-tracks')
+  assert.equal(
+    SavedSourceSchema.safeParse({
+      ...saved,
+      descriptor: {
+        ...saved.descriptor,
+        tracks: Array.from({ length: TIDAL_SIMILAR_LIMIT + 1 }, () => null),
+      },
+    }).success,
+    false,
+  )
+  tracks.reverse()
+
+  const restored = restorePlaybackSource(options.apiBaseUrl, saved)
+  for (const captured of [source, restored]) {
+    assert.equal(captured.startIndex, 2)
+    assert.equal(captured.href, href)
+    const rows = await Promise.all(
+      Array.from({ length: captured.length }, (_, index) =>
+        captured.load(index),
+      ),
+    )
+    assert.deepEqual(
+      rows.map((row) => row[0]?.uri ?? null),
+      [
+        `spotify:track:${secondTrackId}`,
+        null,
+        `spotify:track:${firstTrackId}`,
+        `spotify:track:${'D'.repeat(22)}`,
+      ],
+    )
+  }
+  assert.equal(network.mock.callCount(), 0)
 })
 
 test('playlist sources keep captured sorting and filters and expand legacy albums', async (t) => {

@@ -6,7 +6,7 @@ import type { AlbumListItem } from '@repo/schemas/media'
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { DetailHeader } from '@repo/ui/components/ds/detail-header'
 import { formatTrackLength } from '@repo/ui/lib/format'
-import type { LibraryTrackSource } from '@/utils/playback'
+import type { LibraryTrackSource, PlaybackSource } from '@/utils/playback'
 import { TrackArtistLinks } from './creator-links'
 import { DetailArt } from './detail-frame'
 import { DetailLink } from './detail-link'
@@ -22,6 +22,7 @@ export function TrackDetailHeader({
   artistHref,
   links,
   actions,
+  playbackSource,
 }: {
   track: LibraryTrackSource &
     Pick<TrackListItem, 'artistCredits' | 'durationSec' | 'releaseDate'>
@@ -31,6 +32,7 @@ export function TrackDetailHeader({
   artistHref?: (name: string) => string
   links: AlbumListItem['links']
   actions: ReactNode
+  playbackSource?: PlaybackSource
 }) {
   const destinations = serviceLinks(links)
   const art = (
@@ -88,7 +90,7 @@ export function TrackDetailHeader({
           : formatTrackLength(track.durationSec * 1000),
         track.releaseDate?.slice(0, 4),
       ]}
-      play={<TrackHeaderPlay track={track} />}
+      play={<TrackHeaderPlay track={track} source={playbackSource} />}
       links={
         destinations.length > 0 && (
           <ServiceIconLinks links={destinations} itemTitle={track.title} />

@@ -6,8 +6,8 @@ import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import {
-  usePlayback,
   usePlaybackControls,
+  usePlaybackForPlayButton,
   type PlaybackControls,
   type PlaybackView,
 } from './playback-provider'
@@ -29,16 +29,18 @@ type PlaybackSourceFactory = () =>
   | PlaybackSource
   | PendingPlaybackSource
   | Promise<PlaybackSource>
-type ViewPlayControls = Pick<PlaybackControls, 'play' | 'toggle'>
+type PlaybackSourceInput = PlaybackSource | PlaybackSourceFactory
+type ViewPlayControls = Pick<PlaybackControls, 'play' | 'toggle'> &
+  Partial<Pick<PlaybackControls, 'activate'>>
 const playRequests = new WeakMap<ViewPlayControls, object>()
 
 /** Why a play pair is disabled, in the words shown on the buttons. */
-export function unavailableReason(available: boolean, enabled: boolean) {
-  return !available
-    ? 'No Spotify recording is available.'
-    : !enabled
-      ? 'Connect Spotify playback in the player.'
-      : 'No playable tracks are available.'
+export function unavailableReason(available: boolean, view: PlaybackView) {
+  if (!available) return 'No Spotify recording is available.'
+  if (view.target.kind === 'local' && view.localPlayerLoading)
+    return 'Loading the browser player.'
+  if (!view.enabled) return 'Connect Spotify playback in the player.'
+  return 'No playable tracks are available.'
 }
 
 /** A row number shown before a row's play pair. */
@@ -65,8 +67,8 @@ function UnavailablePlayButton({
   compact?: boolean
   place?: 'row' | 'tile'
 }) {
-  const playback = usePlayback()
-  const reason = unavailableReason(available, playback.enabled)
+  const playback = usePlaybackForPlayButton()
+  const reason = unavailableReason(available, playback)
   if (!compact)
     return (
       <PlayHeaderButtons
@@ -117,7 +119,7 @@ export function AlbumReferencePlayButton({
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const current = view.current?.albumId === id
   const playing = current && view.snapshot !== null && !view.snapshot.paused
@@ -156,9 +158,13 @@ export function AlbumReferencePlayButton({
         playing={playing}
         disabled={playback.isPending}
         disabledReason="Loading album playback."
-        onPlay={() =>
-          current && !source ? controls.toggle() : playback.mutate('play')
-        }
+        onPlay={() => {
+          if (current && !source) controls.toggle()
+          else {
+            controls.activate?.()
+            playback.mutate('play')
+          }
+        }}
         onQueue={() => playback.mutate('queue')}
       />
       {playback.isError && (
@@ -170,6 +176,14 @@ export function AlbumReferencePlayButton({
   )
 }
 
+/** A captured source has a known destination before Play is pressed. */
+export function isDifferentPlaybackSource(
+  view: PlaybackView,
+  source?: PlaybackSourceInput,
+) {
+  return typeof source === 'object' && view.source?.href !== source.href
+}
+
 /**
  * Pauses what is playing, resumes the same source, or starts this item from
  * `source`. Only the latest request starts once a source resolves.
@@ -179,36 +193,43 @@ export function playFromView(
   view: PlaybackView,
   item: PlayableItem,
   current: boolean,
-  source?: PlaybackSourceFactory,
+  source?: PlaybackSourceInput,
 ) {
   const request = {}
   playRequests.set(controls, request)
-  if (current && view.snapshot && !view.snapshot.paused) {
+  if (
+    current &&
+    view.snapshot &&
+    !view.snapshot.paused &&
+    !isDifferentPlaybackSource(view, source)
+  ) {
     controls.toggle()
     return
   }
-  const next = source?.()
+  const next = typeof source === 'function' ? source() : source
   function start(resolved: PlaybackSource | PendingPlaybackSource | undefined) {
     if (playRequests.get(controls) !== request) return
-    const pendingCurrent =
+    const startingCurrent =
       resolved &&
-      'resolve' in resolved &&
+      ('resolve' in resolved || typeof source === 'object') &&
       view.starting &&
       view.current?.uri === item.uri
     if (
-      (current || pendingCurrent) &&
+      (current || startingCurrent) &&
       (!resolved || view.source?.href === resolved.href)
     )
       controls.toggle()
     else controls.play(item, resolved)
   }
-  if (next instanceof Promise) void next.then(start, () => start(undefined))
-  else start(next)
+  if (next instanceof Promise) {
+    controls.activate?.()
+    void next.then(start, () => start(undefined))
+  } else start(next)
 }
 
 /** The album's playable form and whether the player is on it. Null while playback is off. */
 function useAlbumPlayback(album: AlbumSource) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const item = view.enabled ? albumPlayable(album) : null
   if (!item) return null
@@ -232,7 +253,7 @@ function AlbumPair({
   source?: PlaybackSourceFactory
   place: 'tile' | 'row'
 }) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const playback = useAlbumPlayback(album)
   if (!playback)
     return (
@@ -240,10 +261,7 @@ function AlbumPair({
         place={place}
         title={album.title}
         disabled
-        disabledReason={unavailableReason(
-          albumPlayable(album) !== null,
-          view.enabled,
-        )}
+        disabledReason={unavailableReason(albumPlayable(album) !== null, view)}
         onPlay={() => undefined}
         onQueue={() => undefined}
       />
@@ -312,7 +330,7 @@ export function TrackPlayButton({
   track: Track
   source?: PlaybackSourceFactory
 }) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const item = view.enabled ? albumPlayable(album, track) : null
   const queued = view.enabled ? trackPlayable(album, track) : null
@@ -347,7 +365,7 @@ export function TrackPlayButton({
 
 /** A library track's playable form and whether Spotify is playing it. Null while playback is off. */
 function useLibraryTrackPlayback(track: LibraryTrackSource) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const item = view.enabled ? libraryTrackPlayable(track) : null
   if (!item) return null
@@ -358,7 +376,7 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
     current,
     playing: current && !snapshot.paused,
     controls,
-    play: (source?: PlaybackSourceFactory) =>
+    play: (source?: PlaybackSourceInput) =>
       playFromView(controls, view, item, current, source),
   }
 }
@@ -376,10 +394,10 @@ export function LibraryTrackPlayButton({
 }: {
   track: LibraryTrackSource
   position?: number
-  source?: PlaybackSourceFactory
+  source?: PlaybackSourceInput
   place?: 'tile' | 'row'
 }) {
-  const view = usePlayback()
+  const view = usePlaybackForPlayButton()
   const playback = useLibraryTrackPlayback(track)
   if (!playback)
     return (
@@ -391,7 +409,7 @@ export function LibraryTrackPlayButton({
           disabled
           disabledReason={unavailableReason(
             libraryTrackPlayable(track) !== null,
-            view.enabled,
+            view,
           )}
           onPlay={() => undefined}
           onQueue={() => undefined}
@@ -405,7 +423,7 @@ export function LibraryTrackPlayButton({
       <PlayPair
         place={place}
         title={track.title}
-        playing={playing}
+        playing={playing && !isDifferentPlaybackSource(view, source)}
         onPlay={() => play(source)}
         onQueue={() => controls.enqueue(item)}
       />

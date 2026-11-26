@@ -28,6 +28,10 @@ import {
 import { restorePlaybackSource } from '@/utils/playback-source'
 import { recordPlaybackCatalog } from '@/utils/playback-catalog'
 import {
+  createPlaybackDiagnostics,
+  type PlaybackEvent,
+} from '@/utils/playback-diagnostics'
+import {
   createPlaybackSync,
   createSessionApi,
   type PlaybackSync,
@@ -61,6 +65,7 @@ export type PlaybackView = PlaybackState & {
 }
 export type PlaybackControls = Pick<
   PlaybackSync,
+  | 'activate'
   | 'play'
   | 'enqueue'
   | 'playFromQueue'
@@ -101,6 +106,7 @@ const disabledView: PlaybackView = {
   connection: 'loading',
 }
 const disabledControls: PlaybackControls = {
+  activate: () => undefined,
   play: () => undefined,
   enqueue: () => undefined,
   playFromQueue: () => undefined,
@@ -130,6 +136,14 @@ export const PlaybackControlsContext =
 /** What is playing and queued. Outside the provider, playback reads as off. */
 export function usePlayback() {
   return useContext(PlaybackViewContext)
+}
+
+/** A local Play button needs an audio element it can unlock within the tap. */
+export function usePlaybackForPlayButton(): PlaybackView {
+  const view = usePlayback()
+  return view.localPlayerLoading && view.target.kind === 'local'
+    ? { ...view, enabled: false }
+    : view
 }
 
 export function usePlaybackControls() {
@@ -199,6 +213,7 @@ function createEngine(
   apiBaseUrl: string,
   scrobbling: Scrobbling,
   sonos: ReturnType<typeof createSonosControlApi>,
+  recordDiagnostic: (event: PlaybackEvent) => void,
 ) {
   const seenCatalog = new Set<string>()
   // The access token is held in memory only and never written to storage.
@@ -226,6 +241,7 @@ function createEngine(
     return pending
   }
   return createPlaybackEngine({
+    recordDiagnostic,
     api: createPlayerApi(token, fetch, (operation, items) => {
       const unique = new Map(
         items.map((item) => [`${operation}:${JSON.stringify(item)}`, item]),
@@ -271,7 +287,11 @@ function createEngine(
 function createPlayer(apiBaseUrl: string, scrobbling: Scrobbling) {
   const clientId = playerClientId()
   const sonos = createSonosControlApi(apiBaseUrl, clientId)
-  const engine = createEngine(apiBaseUrl, scrobbling, sonos)
+  const diagnostics = createPlaybackDiagnostics(
+    apiBaseUrl,
+    window.navigator.userAgent,
+  )
+  const engine = createEngine(apiBaseUrl, scrobbling, sonos, diagnostics.record)
   const sync = createPlaybackSync({
     engine,
     api: createSessionApi(apiBaseUrl),
@@ -281,7 +301,7 @@ function createPlayer(apiBaseUrl: string, scrobbling: Scrobbling) {
     resuming: takeDriving(Date.now()),
     visible: () => document.visibilityState === 'visible',
   })
-  return { engine, sync }
+  return { engine, sync, diagnostics }
 }
 
 /** The Spotify connection and what it may do; shared by everything that asks. */
@@ -340,7 +360,7 @@ export default function PlaybackProvider({
       onDisconnected: () =>
         void client.invalidateQueries({ queryKey: ['lastfm-scrobbling'] }),
     })
-    const { engine, sync } = createPlayer(apiBaseUrl, {
+    const { engine, sync, diagnostics } = createPlayer(apiBaseUrl, {
       enabled: () => scrobbling.current,
       reporter,
     })
@@ -349,11 +369,15 @@ export default function PlaybackProvider({
     sync.start()
     setPlayer(sync)
     const refresh = () => {
-      if (document.visibilityState !== 'visible') return
+      if (document.visibilityState !== 'visible') {
+        diagnostics.flushOnExit()
+        return
+      }
       engine.refresh()
       sync.refresh()
     }
     const close = () => {
+      diagnostics.flushOnExit()
       if (sync.close()) markDriving(Date.now())
     }
     document.addEventListener('visibilitychange', refresh)
@@ -364,6 +388,7 @@ export default function PlaybackProvider({
       sync.close()
       sync.dispose()
       engine.dispose()
+      diagnostics.dispose()
       reporter.dispose()
       setPlayer(null)
     }

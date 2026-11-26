@@ -4,8 +4,15 @@ import type {
   PlaybackSyncInput,
   PlaybackSyncResult,
 } from '@repo/schemas/playback'
+import type {
+  PlaybackDiagnostic,
+  PlaybackDiagnosticInput,
+  PlaybackDiagnosticsAppendInput,
+  PlaybackDiagnosticsResult,
+} from '@repo/schemas/playback-diagnostics'
 import { env } from '@/env'
 import { ServerError } from '@/lib/error'
+import { updatePlaybackDiagnostics } from './playback-diagnostics'
 import {
   canDispatchSonos,
   EMPTY_PLAYBACK_SESSION,
@@ -23,6 +30,11 @@ export interface PlaybackSessions {
     userId: string,
     input: PlaybackReleaseInput,
   ): Promise<PlaybackReleaseResult>
+  appendDiagnostics(
+    userId: string,
+    input: PlaybackDiagnosticInput[],
+  ): Promise<void>
+  readDiagnostics(userId: string): Promise<PlaybackDiagnosticsResult>
 }
 
 /** Sessions held in this process; for the Node runtime and tests. */
@@ -30,6 +42,7 @@ export function createMemoryPlaybackSessions(
   now: () => number = Date.now,
 ): PlaybackSessions {
   const records = new Map<string, PlaybackSessionRecord>()
+  const diagnostics = new Map<string, PlaybackDiagnostic[]>()
   return {
     async canDispatchSonos(userId, clientId) {
       return canDispatchSonos(
@@ -55,6 +68,24 @@ export function createMemoryPlaybackSessions(
       )
       records.set(userId, next.stored)
       return next.result
+    },
+    async appendDiagnostics(userId, input) {
+      const { events } = updatePlaybackDiagnostics(
+        diagnostics.get(userId) ?? [],
+        now(),
+        input,
+      )
+      diagnostics.set(userId, events)
+    },
+    async readDiagnostics(userId) {
+      const { events } = updatePlaybackDiagnostics(
+        diagnostics.get(userId) ?? [],
+        now(),
+        [],
+      )
+      if (events.length) diagnostics.set(userId, events)
+      else diagnostics.delete(userId)
+      return { events }
     },
   }
 }
@@ -93,4 +124,18 @@ export function releaseUserPlayback(
   input: PlaybackReleaseInput,
 ) {
   return playbackSessions().release(userId, input)
+}
+
+export function appendUserPlaybackDiagnostics(
+  userId: string,
+  input: PlaybackDiagnosticsAppendInput,
+) {
+  return playbackSessions().appendDiagnostics(
+    userId,
+    'events' in input ? input.events : [input],
+  )
+}
+
+export function readUserPlaybackDiagnostics(userId: string) {
+  return playbackSessions().readDiagnostics(userId)
 }

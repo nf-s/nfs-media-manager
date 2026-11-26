@@ -15,6 +15,7 @@ import {
 } from '@repo/schemas/playback'
 import type { SonosRooms } from '@repo/schemas/sonos'
 import { createPlaybackSonosRooms } from './playback-sonos-rooms'
+import type { PlaybackTrace } from './playback-diagnostics'
 import { fetchApiData } from './api'
 import {
   positionAt,
@@ -515,14 +516,22 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
    * over first, which takes one exchange with the server and a look at the
    * device.
    */
-  function drive<A extends unknown[]>(command: (...args: A) => void) {
+  function drive<A extends unknown[]>(
+    command: (...args: A) => void,
+    request?: (...args: A) => PlaybackTrace | undefined,
+  ) {
     return (...args: A) => {
       if (disposed || closed) return
-      if (role === 'driver' && (!onSonos() || hasSonosLease)) {
+      const report = request?.(...args)
+      const execute = () => {
+        if (report) engine.followAttempt(report)
         command(...args)
+      }
+      if (role === 'driver' && (!onSonos() || hasSonosLease)) {
+        execute()
         return
       }
-      engine.activate()
+      engine.activate(undefined, report)
       void exchange(true, true).then(() => {
         if (
           !disposed &&
@@ -530,7 +539,8 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
           role === 'driver' &&
           (!onSonos() || hasSonosLease)
         )
-          command(...args)
+          execute()
+        else report?.('failed', { reason: 'lease-denied' })
       })
     }
   }
@@ -542,6 +552,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
 
   return {
     getState: () => shown,
+    activate: () => engine.activate(),
     subscribe(listener: () => void) {
       listeners.add(listener)
       return () => {
@@ -587,27 +598,56 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
         item: PlayableItem,
         definition?: PlaybackSource | PendingPlaybackSource,
       ) => engine.play(item, definition),
+      (
+        item: PlayableItem,
+        definition?: PlaybackSource | PendingPlaybackSource,
+      ) => engine.request('play', item, definition),
     ),
-    enqueue: drive(engine.enqueue),
-    playFromQueue: drive(engine.playFromQueue),
+    enqueue(item: PlayableItem) {
+      const report = engine.request('enqueue', item)
+      drive(() => {
+        engine.enqueue(item)
+        report?.('command', {
+          reason: 'queue',
+          queued: engine.getState().queue.length,
+        })
+      })()
+    },
+    playFromQueue: drive(engine.playFromQueue, (key) =>
+      engine.request(
+        'play-queue',
+        shown.queue.find((entry) => entry.key === key)?.item,
+      ),
+    ),
     removeFromQueue: drive(engine.removeFromQueue),
     moveInQueue: drive(engine.moveInQueue),
     clearQueue: drive(engine.clearQueue),
-    playUpcoming: drive(engine.playUpcoming),
+    playUpcoming: drive(engine.playUpcoming, (key) =>
+      engine.request(
+        'play-upcoming',
+        shown.upcoming.find((entry) => entry.key === key)?.item,
+      ),
+    ),
     removeUpcoming: drive(engine.removeUpcoming),
     moveUpcoming: drive(engine.moveUpcoming),
     queueUpcoming: drive(engine.queueUpcoming),
     toggleShuffle: drive(engine.toggleShuffle),
-    next: drive(engine.next),
-    previous: drive(engine.previous),
+    next: drive(engine.next, () => engine.request('next')),
+    previous: drive(engine.previous, () => engine.request('previous')),
     /**
      * Spotify devices can be controlled from a follower. Sonos operations
      * and starting a queue require the playback driver.
      */
     toggle() {
-      if (onSonos()) drive(engine.toggle)()
-      else if (role === 'driver' || engine.getState().snapshot) engine.toggle()
-      else drive(engine.toggle)()
+      const report = engine.request('toggle')
+      if (shown.starting) report?.('command', { reason: 'pending' })
+      const toggle = () => {
+        if (!engine.getState().starting && report) engine.followAttempt(report)
+        engine.toggle()
+      }
+      if (onSonos() || (role !== 'driver' && !engine.getState().snapshot))
+        drive(toggle)()
+      else toggle()
     },
     seek(position: number) {
       if (onSonos()) drive(engine.seek)(position)
@@ -625,13 +665,14 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
     refreshDevices: engine.refreshDevices,
     clearFailure: engine.clearFailure,
     async selectDevice(next: SelectableTarget) {
+      const report = engine.request('device', undefined, undefined, next)
       if (
         role !== 'driver' ||
         ((next.kind === 'room' || onSonos()) && !hasSonosLease)
       ) {
         // Audio is unlocked inside the click, for the device about to play:
         // by the time the session has been taken over, the click is over.
-        engine.activate(next)
+        engine.activate(next, report)
         await exchange(true, true)
       }
       if (
@@ -639,8 +680,11 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
         closed ||
         role !== 'driver' ||
         ((next.kind === 'room' || onSonos()) && !hasSonosLease)
-      )
+      ) {
+        report?.('failed', { reason: 'lease-denied' })
         return
+      }
+      if (report) engine.followAttempt(report)
       await engine.selectDevice(next)
     },
   }
