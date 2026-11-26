@@ -1,4 +1,5 @@
 import { albumMergeEffects } from './album-merge-effects'
+import { albumTracklistEffects } from './album-tracklist-effect'
 import { artistMergeEffects } from './artist-merge-effects'
 import { automaticMatchEffects } from './automatic-match-effects'
 import { keepSeparateEffects } from './keep-separate-effects'
@@ -10,6 +11,7 @@ for (const handler of [
   ...trackVersionEffects,
   ...keepSeparateEffects,
   ...albumMergeEffects,
+  ...albumTracklistEffects,
   ...artistMergeEffects,
   ...automaticMatchEffects,
 ]) {

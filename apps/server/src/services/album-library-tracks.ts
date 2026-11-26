@@ -9,7 +9,11 @@ import { measureCatalogWriteLock } from '@/lib/request-log'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import { isInteractiveSpotifyTrackSearchResponse } from '@/lib/spotify-interactive-search'
 import { album, libraryTrack, mediaItem, track } from '@/schemas/db'
-import { admitAlbumTrackMembers } from './album-track-membership'
+import {
+  admitAlbumTrackMembers,
+  hasStandaloneTrackAdmission,
+} from './album-track-membership'
+import { albumTracklistEffectType } from './album-tracklist-effect'
 import {
   spotifyTrackBilling,
   replaceSpotifyArtistCredits,
@@ -721,21 +725,29 @@ export async function removeOrphanTracks(
         sql`, `,
       )})`
     : sql``
+  // An album correction still needs both recordings after either list is put back.
+  const inTracklistHistory = sql`exists (
+    select 1 from library_change_effect e
+    join library_change c on c.id = e.change_id and c.reversible
+    join album a on a.media_item_id = e.payload->>'albumId'
+    where e.type = ${albumTracklistEffectType}
+      and e.record_ids @> array[mi.id]::text[])`
   const orphan = sql`mi.media_type = 'track' ${candidates}
-      and not coalesce(mi.metadata ? 'spotifyTrackSearch', false)
+      and not ${hasStandaloneTrackAdmission(sql`mi.metadata`)}
       and not exists (select 1 from catalog_addition a where a.media_item_id = mi.id)
       and not exists (select 1 from track t where t.track_media_item_id = mi.id)
       and not exists (select 1 from playlist_item pi where pi.media_item_id = mi.id and pi.admits_to_library)
       and not exists (select 1 from lastfm_track_source s where s.track_media_item_id = mi.id)`
-  const observed = sql`(exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
+  const retained = sql`(exists (select 1 from catalog_observation o where o.media_item_id = mi.id)
       or exists (select 1 from catalog_media_alias a where a.media_item_id = mi.id)
-      or exists (select 1 from playlist_item pi where pi.media_item_id = mi.id))`
+      or exists (select 1 from playlist_item pi where pi.media_item_id = mi.id)
+      or ${inTracklistHistory})`
   const demoted = await database.execute(
     sql`update media_item mi set in_library = false
-      where mi.in_library and ${orphan} and ${observed} returning mi.id`,
+      where mi.in_library and ${orphan} and ${retained} returning mi.id`,
   )
   const removed = await database.execute(sql`with removed as (
-    delete from media_item mi where ${orphan} and not ${observed} returning in_library
+    delete from media_item mi where ${orphan} and not ${retained} returning in_library
   ) select count(*) filter (where in_library)::int as members from removed`)
   const demotedIds = z.array(z.object({ id: z.string() })).parse(demoted.rows)
   if (demotedIds.length)
