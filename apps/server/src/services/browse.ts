@@ -327,6 +327,32 @@ function trackValueExpression(key: string): SQL | null {
 const albumIsEdition = sql`exists (select 1 from album e
   where e.media_item_id = ${mediaItem.id} and e.edition_of_id is not null)`
 
+export function rejectedAlbumMetacriticIds() {
+  return sql`select ${mediaOverride.mediaItemId} from ${mediaOverride}
+  where ${mediaOverride.field} = ${albumMatchRejectionField}
+    and ${mediaOverride.value}->>'provider' = 'google-custom-search'
+    and ${mediaOverride.value}->>'referenceType' = 'metacritic-url'`
+}
+
+function storedBrowseField(
+  key: string,
+  mediaType: MediaType,
+  fields = sql`${mediaItem.metadata}->'browse'`,
+  metacriticAccepted?: SQL,
+): SQL {
+  const value = sql`(${fields}->${key}::text)`
+  if (
+    mediaType !== 'album' ||
+    (key !== 'ratingMetacriticValue' && key !== 'ratingMetacriticVotes')
+  )
+    return value
+  const accepted =
+    metacriticAccepted ??
+    sql`not exists (
+    select 1 from (${rejectedAlbumMetacriticIds()}) rejected where rejected.media_item_id = ${mediaItem.id})`
+  return sql`(case when ${accepted} then ${value} end)`
+}
+
 function valueExpression(key: string, mediaType: MediaType): SQL {
   const trackValue = mediaType === 'track' ? trackValueExpression(key) : null
   if (trackValue) return trackValue
@@ -359,18 +385,8 @@ function valueExpression(key: string, mediaType: MediaType): SQL {
       return sql`(select jsonb_agg(p.name order by p.name) from playlist_item pi join playlist p on p.id = pi.playlist_id where pi.media_item_id = ${mediaItem.id} and p.kind = ${key})`
     case 'provider':
       return sql`(select jsonb_agg(distinct r.provider) from provider_reference r where r.media_item_id = ${mediaItem.id})`
-    case 'ratingMetacriticValue':
-    case 'ratingMetacriticVotes':
-      if (mediaType === 'album')
-        return sql`(case when not exists (
-          select 1 from ${mediaOverride} where ${mediaOverride.mediaItemId} = ${mediaItem.id}
-            and ${mediaOverride.field} = ${albumMatchRejectionField}
-            and ${mediaOverride.value}->>'provider' = 'google-custom-search'
-            and ${mediaOverride.value}->>'referenceType' = 'metacritic-url'
-        ) then ${mediaItem.metadata}->'browse'->${key}::text end)`
-      return sql`(${mediaItem.metadata}->'browse'->${key}::text)`
     default:
-      return sql`(${mediaItem.metadata}->'browse'->${key}::text)`
+      return storedBrowseField(key, mediaType)
   }
 }
 
@@ -379,6 +395,21 @@ function textExpression(key: string, mediaType: MediaType): SQL {
   if (key === 'summary') return sql`${mediaItem.summary}`
   const value = valueExpression(key, mediaType)
   return sql`case when jsonb_typeof(${value}) = 'array' then ${value}->>0 else ${value} #>> '{}' end`
+}
+
+function jsonNumber(value: SQL): SQL {
+  return sql`case when jsonb_typeof(${value}) = 'number' then (${value} #>> '{}')::numeric else null end`
+}
+
+export function storedBrowseNumber(
+  key: string,
+  mediaType: MediaType,
+  fields?: SQL,
+  metacriticAccepted?: SQL,
+): SQL {
+  return jsonNumber(
+    storedBrowseField(key, mediaType, fields, metacriticAccepted),
+  )
 }
 
 function numericExpression(key: string, mediaType: MediaType): SQL {
@@ -420,8 +451,7 @@ function numericExpression(key: string, mediaType: MediaType): SQL {
         return sql`extract(epoch from ${libraryTrack.lastListenedAt}) * 1000`
       break
   }
-  const value = valueExpression(key, mediaType)
-  return sql`case when jsonb_typeof(${value}) = 'number' then (${value} #>> '{}')::numeric else null end`
+  return jsonNumber(valueExpression(key, mediaType))
 }
 
 /**
@@ -489,7 +519,7 @@ function titlePageHasTrackTags(value: string): SQL {
   )
 }
 
-function matchesValue(
+export function matchesValue(
   key: string,
   value: string,
   mediaType: MediaType,

@@ -10,6 +10,12 @@ Library search keeps case-insensitive substring matching: every word must match 
 4. Add the representative workload and its ceiling to the performance suite. A budget change needs the old and new measurements and a reason. Include an interaction test when request fan-out, cancellation or visibility changes. The CI log records the measured plans' work for each tested workload.
 5. After deployment compare successful requests from the same route and query shape against their previous window. Report elapsed time, median, p95, sample count and errors. An empty window is unmeasured. Capture frontend timings separately when the browser still feels slow.
 
+### Film and album rankings
+
+`POST /api/v1/ratings/ranking` uses stored Browse fields. One statement computes source distributions over visible library items, applies the display filters and scoring rules, and returns the exact total and one sorted page. A page defaults to 40 items and is capped at 100. The response contains only the source definitions and values needed to display and explain those rows. Opening a calculation uses the page already in memory. A weight drag commits once when released, and search is debounced. Neither action contacts a provider.
+
+The ratings performance fixture exercises 1,500 and 12,000 synthetic films, a deep page after an edit, and 1,000 sparse albums. It checks statement count, logical reads, temporary blocks and response size. It also replays the film query with and without the exact count and records both execution times. The 40-row film payload must stay below 80,000 bytes and grow by less than 15 percent between the two fixture sizes.
+
 ### Running the regression check
 
 Run the following from a checkout with the normal local test environment and a disposable PostgreSQL server.

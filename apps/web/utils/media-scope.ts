@@ -166,6 +166,10 @@ export function libraryMatchesHref(view: LibraryView) {
   return `${libraryHome(view)}/matches`
 }
 
+export function libraryRatingsHref(view: MediaScope) {
+  return `${libraryHome(view)}/ratings`
+}
+
 export function switchMediaScopeHref(
   path: string,
   search: string,
@@ -234,6 +238,12 @@ export function switchLibraryHref(path: string, search: string, view: Library) {
   const current = new URLSearchParams(search)
   const shown = libraryViewForPath(path, current.get('mediaType'))
   if (shown === view) return `${path}${current.size ? `?${current}` : ''}`
+  if (
+    (shown === 'film' || shown === 'album') &&
+    (view === 'film' || view === 'album') &&
+    path === libraryRatingsHref(shown)
+  )
+    return libraryRatingsHref(view)
   // Mixes has no Matches page.
   if (shown !== 'mix' && view !== 'mix' && path === libraryMatchesHref(shown))
     return libraryMatchesHref(view)

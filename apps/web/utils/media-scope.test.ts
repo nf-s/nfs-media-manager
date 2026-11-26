@@ -669,3 +669,14 @@ test('mix syncs belong only to Mixes', () => {
   assert.equal(jobMatchesScope(taskJob(YOUTUBE_SYNC_TASK, null), 'mix'), false)
   assert.equal(metadataLibrary('mix', 'artist'), 'artist')
 })
+test('switching the Ratings workspace opens the other library with its own settings', () => {
+  assert.equal(
+    switchLibraryHref('/films/ratings', 'sort=ratingImdb', 'album'),
+    '/albums/ratings',
+  )
+  assert.equal(
+    switchLibraryHref('/albums/ratings', '', 'film'),
+    '/films/ratings',
+  )
+  assert.equal(switchLibraryHref('/albums/ratings', '', 'track'), '/tracks')
+})

@@ -44,6 +44,7 @@ import media from '@/routes/media'
 import providers from '@/routes/providers'
 import tags from '@/routes/tags'
 import libraryChanges from '@/routes/library-changes'
+import ratingsExplorer from '@/routes/ratings-explorer'
 import {
   albumUnlistedNames,
   trackParts,
@@ -125,6 +126,7 @@ v1ApiBase.route('/tracks', trackParts)
 v1ApiBase.route('/tracks', trackDuplicates)
 v1ApiBase.route('/albums', albums)
 v1ApiBase.route('/films', films)
+v1ApiBase.route('/ratings', ratingsExplorer)
 v1ApiBase.route('/tracks', tracks)
 v1ApiBase.route('/playlists', playlists)
 v1ApiBase.route('/collections', filmCollections)

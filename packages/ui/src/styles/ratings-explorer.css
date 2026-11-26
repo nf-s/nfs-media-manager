@@ -1,0 +1,29 @@
+/* The ranking keeps its own scroll window below the scoring controls. */
+.ratings-scoring {
+  padding-inline: var(--ds-gutter);
+  max-height: 35%;
+  overflow: auto;
+}
+.ratings-weights,
+.ratings-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-4) var(--ds-6);
+}
+.ratings-field {
+  display: grid;
+  gap: var(--ds-2);
+  min-width: 0;
+}
+.ratings-fields > .ratings-field {
+  max-width: 100%;
+  flex: 1 1 calc(var(--ds-9) * 5);
+}
+.ratings-key {
+  margin: 0;
+  padding: 0 var(--ds-gutter) var(--ds-4);
+}
+.ratings-page > .ds-toolbar {
+  flex-wrap: wrap;
+}

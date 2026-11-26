@@ -18,8 +18,10 @@ export const BrowserBrowseTimingSchema = z
     screen: z.enum([
       'tracks',
       'albums',
+      'album-ratings',
       'artists',
       'films',
+      'film-ratings',
       'playlists',
       'collections',
       'subscriptions',

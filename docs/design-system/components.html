@@ -1351,6 +1351,53 @@
               ),
           },
           {
+            id: 'ratings-explorer',
+            title: 'Ratings explorer',
+            body:
+              g.spec(D.ratingWeight('Source weight', 1)) +
+              g.spec(
+                g.flow([
+                  g.item(
+                    D.ratingDifference(
+                      '9.0',
+                      20,
+                      'Show first source calculation',
+                      'rating-example-evidence',
+                    ),
+                    'First source',
+                  ),
+                  g.item(
+                    D.ratingDifference(
+                      '7.0',
+                      0,
+                      'Show second source calculation',
+                      'rating-example-evidence',
+                    ),
+                    'Second source',
+                  ),
+                  g.item(
+                    D.ratingDifference(
+                      '5.0',
+                      -20,
+                      'Show third source calculation',
+                      'rating-example-evidence',
+                    ),
+                    'Third source',
+                  ),
+                  g.item(
+                    '70.0' + D.ratingPosition([90, 70, 50], 70),
+                    'Combined score',
+                  ),
+                ]) +
+                  '<details id="rating-example-evidence"><summary>Example calculation</summary><p>The three source ratings are 9, 7 and 5 out of 10. With equal weights, their combined score is (90 + 70 + 50) / 3 = 70 out of 100.</p></details>',
+              ) +
+              g.rules([
+                '<b>Source weights</b> range from 0 to 3 in steps of 0.5. A weight of 0 excludes a source. The multiplier follows the slider as it moves. Results update when the pointer or adjustment key is released.',
+                '<b>Rating differences</b> show the native or adjusted source value followed by the signed distance between the adjusted value and the combined score, in points out of 100. At a difference of 20 points or more, use blue above and amber below. Omit the difference when there is no combined score. Selecting a value opens its calculation.',
+                '<b>The position strip</b> appears beside the combined score. Thin marks show the counted source ratings and the wider mark shows the combined score. The accessible label and tooltip give their values.',
+              ]),
+          },
+          {
             id: 'chart',
             title: 'Trend chart and sparkline',
             body:

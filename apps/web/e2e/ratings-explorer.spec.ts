@@ -1,0 +1,282 @@
+import { expect, test } from '@playwright/test'
+import {
+  RatingsRankingRequestSchema,
+  type RatingsRankingRequest,
+  type RatingsRankingPage,
+} from '@repo/schemas/ratings-explorer'
+
+const source = {
+  key: 'ratingFixture',
+  label: 'Fixture rating',
+  hasVotes: true,
+  votesKey: 'ratingFixtureVotes',
+  scale: 10,
+  group: 'audience',
+} satisfies RatingsRankingPage['sources'][number]
+
+function ranking(request: RatingsRankingRequest): RatingsRankingPage {
+  const total = request.search ? 1 : 120
+  const length = Math.max(0, Math.min(request.limit, total - request.offset))
+  const sources: RatingsRankingPage['sources'] = [
+    source,
+    {
+      key: 'ratingPanel',
+      label: 'Panel',
+      scale: 100,
+      hasVotes: false,
+      group: 'critics',
+    },
+    ...(request.library === 'film'
+      ? [
+          {
+            key: 'mine',
+            label: 'Personal',
+            scale: 10,
+            hasVotes: false,
+            group: 'personal',
+          } satisfies RatingsRankingPage['sources'][number],
+        ]
+      : []),
+  ]
+  return {
+    total,
+    sources,
+    rows: Array.from({ length }, (_, i) => ({
+      id: 'fixture-' + (request.offset + i),
+      title: (request.search || 'Fixture') + ' ' + (request.offset + i + 1),
+      year: 2010,
+      score: 80,
+      core: 80,
+      counted: 2,
+      spread: 0,
+      criticGap: 0,
+      personalGap: request.library === 'film' ? 0 : null,
+      observedWeight:
+        (request.settings.sources.find((setting) => setting.key === source.key)
+          ?.weight ?? 1) + 1,
+      missingWeight: 0,
+      missingSum: 0,
+      ratings: sources.map((s) => ({
+        key: s.key,
+        raw: 0.8 * s.scale,
+        adjusted: 80,
+        votes: s.hasVotes ? 9 : null,
+        center: 70,
+        status: s.group === 'personal' ? 'disabled' : 'counted',
+      })),
+    })),
+  }
+}
+
+test('ranking reads one page per committed query and reuses calculation evidence and visited pages', async ({
+  page,
+}) => {
+  const requests: RatingsRankingRequest[] = []
+  await page.route('**/api/v1/ratings/ranking', async (route) => {
+    const request = RatingsRankingRequestSchema.parse(
+      route.request().postDataJSON(),
+    )
+    requests.push(request)
+    await route.fulfill({
+      json: { statusCode: 200, message: 'OK', data: ranking(request) },
+    })
+  })
+  await page.goto('/films/ratings')
+  const first = page.getByRole('button', { name: 'Fixture 1', exact: true })
+  await expect(first).toBeVisible()
+  await expect(
+    page
+      .getByRole('row')
+      .filter({ has: first })
+      .getByRole('cell', { name: '2 / 2', exact: true }),
+  ).toHaveCount(1)
+  expect(requests.map((request) => request.offset)).toEqual([0])
+  await first.click()
+  const calculation = page.getByRole('complementary', {
+    name: 'Rating calculation',
+  })
+  await expect(
+    calculation.getByRole('link', { name: 'Vote evidence for Fixture rating' }),
+  ).toHaveAttribute('href', /ratingFixtureVotes/)
+  await expect(
+    calculation.getByRole('link', { name: 'Sources' }),
+  ).toHaveAttribute('href', /sources/)
+  await expect(calculation.getByText('2 of 2', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(first).toBeFocused()
+  await page.getByRole('button', { name: 'Adjusted', exact: true }).click()
+  expect(requests).toHaveLength(1)
+
+  const slider = page.getByRole('slider', { name: 'Fixture rating' })
+  await slider.focus()
+  await page.keyboard.down('ArrowRight')
+  await page.keyboard.down('ArrowRight')
+  await expect(slider).toHaveValue('2')
+  expect(requests).toHaveLength(1)
+  await page.keyboard.up('ArrowRight')
+  await expect.poll(() => requests.length).toBe(2)
+  expect(requests[1]?.settings.sources).toEqual([
+    { key: source.key, weight: 2, minVotes: 0 },
+  ])
+  await expect(first).toBeVisible()
+  const search = page.getByRole('searchbox', {
+    name: 'Search titles or directors',
+  })
+  await search.pressSequentially('River', { delay: 15 })
+  await expect(
+    page.getByRole('button', { name: 'River 1', exact: true }),
+  ).toBeVisible()
+  expect(requests.map((request) => request.search)).toEqual(['', '', 'River'])
+  await search.fill('')
+  await expect(first).toBeVisible()
+  expect(requests).toHaveLength(3)
+  const table = page.getByRole('region', { name: 'Film rankings', exact: true })
+  await table.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  await expect(
+    page.getByRole('button', { name: 'Fixture 120', exact: true }),
+  ).toBeVisible()
+  expect(requests.at(-1)?.offset).toBeGreaterThan(0)
+  const deepRequests = requests.length
+  await table.evaluate((el) => el.scrollTo(0, 0))
+  await expect(first).toBeVisible()
+  expect(requests).toHaveLength(deepRequests)
+  await page.goto('/albums/ratings')
+  await expect(
+    page.getByRole('searchbox', { name: 'Search titles or artists' }),
+  ).toBeVisible()
+  await expect(slider).toHaveValue('1')
+  expect(requests.at(-1)?.library).toBe('album')
+  await page.goto('/films/ratings')
+  await expect(slider).toHaveValue('2')
+  expect(requests.at(-1)?.settings.sources[0]?.weight).toBe(2)
+})
+
+test('a later search replaces an outstanding read, and a slider drag commits once', async ({
+  page,
+}) => {
+  const requests: RatingsRankingRequest[] = []
+  let finishSlowRead: (() => void) | undefined
+  const slowRead = new Promise<void>((resolve) => {
+    finishSlowRead = resolve
+  })
+  await page.route('**/api/v1/ratings/ranking', async (route) => {
+    const query = RatingsRankingRequestSchema.parse(
+      route.request().postDataJSON(),
+    )
+    requests.push(query)
+    if (query.search === 'Slow') await slowRead
+    await route.fulfill({
+      json: { statusCode: 200, message: 'OK', data: ranking(query) },
+    })
+  })
+  try {
+    await page.goto('/albums/ratings')
+    const slider = page.getByRole('slider', { name: 'Fixture rating' })
+    await slider.scrollIntoViewIfNeeded()
+    const box = await slider.boundingBox()
+    if (!box) throw new Error('Weight slider has no bounds')
+    const y = box.y + box.height / 2
+    await page.mouse.move(box.x + box.width / 3, y)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width - 2, y, { steps: 8 })
+    await expect(slider).toHaveValue('3')
+    expect(requests).toHaveLength(1)
+    await page.mouse.up()
+    await expect.poll(() => requests.length).toBe(2)
+    expect(requests[1]?.settings.sources[0]?.weight).toBe(3)
+
+    const search = page.getByRole('searchbox', {
+      name: 'Search titles or artists',
+    })
+    await search.fill('Slow')
+    await expect.poll(() => requests.at(-1)?.search).toBe('Slow')
+    const aborted = page.waitForEvent(
+      'requestfailed',
+      (req) =>
+        req.url().endsWith('/ratings/ranking') &&
+        RatingsRankingRequestSchema.parse(req.postDataJSON()).search === 'Slow',
+    )
+    await search.fill('New')
+    await aborted
+    await expect(
+      page.getByRole('button', { name: 'New 1', exact: true }),
+    ).toBeVisible()
+    finishSlowRead?.()
+    await expect(
+      page.getByRole('button', { name: 'Slow 1', exact: true }),
+    ).toHaveCount(0)
+    expect(requests.map((request) => request.search)).toEqual([
+      '',
+      '',
+      'Slow',
+      'New',
+    ])
+  } finally {
+    finishSlowRead?.()
+  }
+})
+
+test('film filters commit together, source sorts reach the server and unscored results stay accessible', async ({
+  page,
+}) => {
+  const requests: RatingsRankingRequest[] = []
+  await page.route('**/api/v1/ratings/ranking', async (route) => {
+    const request = RatingsRankingRequestSchema.parse(
+      route.request().postDataJSON(),
+    )
+    requests.push(request)
+    const data = ranking(request)
+    if (request.tag === 'Sparse') {
+      if (request.scoredOnly) {
+        data.rows = []
+        data.total = 0
+      } else {
+        data.rows = data.rows
+          .slice(0, 1)
+          .map((item) => ({ ...item, score: null, counted: 1 }))
+        data.total = data.rows.length
+      }
+    }
+    await route.fulfill({ json: { statusCode: 200, message: 'OK', data } })
+  })
+  await page.goto('/films/ratings')
+  await expect(
+    page.getByRole('button', { name: 'Fixture 1', exact: true }),
+  ).toBeVisible()
+  const sort = page.getByRole('button', { name: 'Sort by: Score / 100' })
+  await sort.click()
+  await page.getByRole('option', { name: 'Fixture rating / 10' }).click()
+  await expect.poll(() => requests.at(-1)?.sort).toBe(source.key)
+  await page.getByRole('button', { name: 'Sort direction: descending' }).click()
+  await expect.poll(() => requests.at(-1)?.direction).toBe('asc')
+  const previous = requests.length
+  await page.getByRole('button', { name: /^Filters, columns/ }).click()
+  const filters = page.getByRole('dialog', { name: 'Filters and view' })
+  await filters.getByLabel('Tag', { exact: true }).fill('Sparse')
+  await filters.getByLabel('From year').fill('1980')
+  await filters.getByLabel('Through year').fill('2010')
+  await filters.getByLabel('Watched', { exact: true }).selectOption('no')
+  expect(requests).toHaveLength(previous)
+  await filters.getByRole('button', { name: 'Apply filters' }).click()
+  await filters.getByRole('button', { name: 'Close filters' }).click()
+  await expect(
+    page.getByText('No matching films.', { exact: false }),
+  ).toBeVisible()
+  expect(requests.at(-1)).toMatchObject({
+    tag: 'Sparse',
+    yearFrom: 1980,
+    yearTo: 2010,
+    watched: false,
+    scoredOnly: true,
+    sort: source.key,
+    direction: 'asc',
+  })
+  await page.getByRole('button', { name: 'Include unscored items' }).click()
+  await page
+    .getByRole('button', { name: 'Combined score calculation for Fixture 1' })
+    .click()
+  await expect(
+    page.getByText('Needs 1 more qualifying rating to reach the minimum of 2.'),
+  ).toBeVisible()
+  expect(requests.length).toBe(previous + 2)
+})

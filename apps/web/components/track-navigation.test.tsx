@@ -97,6 +97,19 @@ test('each library activates Matches without activating Browse', () => {
   }
 })
 
+test('Ratings is a separate destination in the film and album libraries', () => {
+  for (const path of ['/films', '/albums']) {
+    const html = render(`${path}/ratings`, '', <AppNavigation />)
+    assert.ok(
+      html.includes(`aria-current="page" href="${path}/ratings">Ratings`),
+    )
+    assert.ok(html.includes(`href="${path}">Browse`))
+    assert.ok(!html.includes(`aria-current="page" href="${path}">Browse`))
+  }
+  for (const path of ['/tracks', '/artists', '/subscriptions', '/mixes'])
+    assert.doesNotMatch(render(path, '', <AppNavigation />), />Ratings</)
+})
+
 test('Tracks History is current on its own page without Browse or Matches', () => {
   const html = render('/tracks/changes', 'actor=owner', <AppNavigation />)
   assert.match(

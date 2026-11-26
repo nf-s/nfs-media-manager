@@ -11,6 +11,7 @@ import {
   Library,
   ListChecks,
   ListMusic,
+  Star,
   Tag,
   Users,
   type LucideIcon,
@@ -19,6 +20,7 @@ import { Count } from '@repo/ui/components/ds/pill'
 import {
   libraryImportsHome,
   libraryMatchesHref,
+  libraryRatingsHref,
   scopedHref,
   type Library as LibraryName,
 } from '@/utils/media-scope'
@@ -148,6 +150,13 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
       Icon: LayoutGrid,
       section: film ? '/films' : '/albums',
     },
+    {
+      href: libraryRatingsHref(view),
+      label: 'Ratings',
+      Icon: Star,
+      section: libraryRatingsHref(view),
+      exact: true,
+    },
     matches,
     ...(film
       ? []
@@ -201,7 +210,7 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
 }
 
 /** A library's own pages under its Browse path, which leave Browse unmarked. */
-const libraryPages = ['matches', 'changes']
+const libraryPages = ['matches', 'changes', 'ratings']
 
 function isCurrent(path: string, item: Pick<NavItem, 'section' | 'exact'>) {
   return item.exact

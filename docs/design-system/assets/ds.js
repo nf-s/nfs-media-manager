@@ -302,6 +302,30 @@
     return `<span class="ds-rating"${attrs({ 'data-sorted': o.sorted })}><i>${esc(source)}</i>${esc(value)}</span>`
   }
 
+  function ratingWeight(label, value) {
+    return `<label class="ds-rating-weight">${esc(label)}<input type="range" min="0" max="3" step="0.5" value="${value}" aria-label="${esc(label)}" aria-valuetext="${value}×"><span class="ds-num" aria-hidden="true">${value}×</span></label>`
+  }
+
+  function ratingDifference(value, difference, label, evidenceId) {
+    const text =
+      difference === null
+        ? value
+        : `${value} (${difference > 0 ? '+' : ''}${difference.toFixed(1)})`
+    const direction =
+      difference !== null && Math.abs(difference) >= 20
+        ? difference > 0
+          ? 'high'
+          : 'low'
+        : undefined
+    return `<button type="button" class="ds-rating-difference"${attrs({ 'aria-label': `${label}, ${text}`, 'aria-controls': evidenceId, 'data-direction': direction })}>${esc(text)}</button>`
+  }
+
+  function ratingPosition(values, score) {
+    if (score === null) return ''
+    const label = `Source ratings ${values.map((value) => value.toFixed(1)).join(', ')}. Combined score ${score.toFixed(1)} out of 100.`
+    return `<span class="ds-rating-position" role="img"${attrs({ 'aria-label': label, title: label })}>${values.map((value) => `<i style="left:${value}%"></i>`).join('')}<i data-score style="left:${score}%"></i></span>`
+  }
+
   function tabs(items, selected = 0) {
     return `<div class="ds-tabs" role="tablist">${items
       .map((item, i) => {
@@ -1526,6 +1550,23 @@
   ]
 
   function hydrate(root) {
+    root.querySelectorAll('.ds-rating-weight input').forEach((input) => {
+      input.addEventListener('input', () => {
+        const text = `${input.value}×`
+        input.nextElementSibling.textContent = text
+        input.setAttribute('aria-valuetext', text)
+      })
+    })
+    root
+      .querySelectorAll('.ds-rating-difference[aria-controls]')
+      .forEach((button) => {
+        button.addEventListener('click', () => {
+          const evidence = document.getElementById(
+            button.getAttribute('aria-controls'),
+          )
+          if (evidence) evidence.open = true
+        })
+      })
     const charts = [...root.querySelectorAll('[data-chart]')]
     charts.forEach(drawChart)
     if ('ResizeObserver' in window) {
@@ -1694,6 +1735,9 @@
     logoLinks,
     PROVIDERS,
     rating,
+    ratingWeight,
+    ratingDifference,
+    ratingPosition,
     EMPTY,
     tabs,
     workspaceTabs,

@@ -11,6 +11,7 @@ These requirements describe supported behavior for film and album libraries, inc
 - [Sonovault identifiers and track facts](sonovault.md)
 - [Track tags](track-tags.md)
 - [Films](films.md)
+- [Ratings explorer for films and albums](ratings-explorer.md)
 - [Details, overrides and history](details.md)
 - [Imports, providers and safety](imports-and-plugins.md)
 - [Verification criteria](verification.md)
