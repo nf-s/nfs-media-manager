@@ -110,14 +110,14 @@ export function RatingDifference({
   value,
   difference,
   compact = false,
-  excluded = false,
+  status = 'counted',
   label,
   onClick,
 }: {
   value: string
   difference: number | null
   compact?: boolean
-  excluded?: boolean
+  status?: 'counted' | 'trimmed' | 'disabled' | 'votes' | 'outlier' | 'missing'
   label: string
   onClick: () => void
 }) {
@@ -125,12 +125,15 @@ export function RatingDifference({
     difference === null
       ? value
       : `${value} (${difference > 0 ? '+' : ''}${difference.toFixed(1)})`
+  const shown = compact ? value : text
+  const qualified = status === 'counted' || status === 'trimmed'
   return (
     <button
       type="button"
       className="ds-rating-difference"
+      data-status={status}
       data-direction={
-        !excluded && difference !== null && Math.abs(difference) >= 20
+        qualified && difference !== null && Math.abs(difference) >= 20
           ? difference > 0
             ? 'high'
             : 'low'
@@ -140,7 +143,7 @@ export function RatingDifference({
       title={`${label}, ${text}`}
       onClick={onClick}
     >
-      {excluded ? <s>{compact ? value : text}</s> : compact ? value : text}
+      {status === 'votes' || status === 'outlier' ? <s>{shown}</s> : shown}
     </button>
   )
 }

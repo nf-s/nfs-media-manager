@@ -5,7 +5,9 @@ import {
   RatingsRankingRequestSchema,
   type RatingsRankingRequest,
 } from '@repo/schemas/ratings-explorer'
+import { formatTagName } from '@repo/schemas/tags'
 import { Notice } from '@repo/ui/components/ds/feedback'
+import { SearchSelect } from '@repo/ui/components/ds/sort-picker'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { Input } from '@repo/ui/components/ui/input'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
@@ -16,6 +18,21 @@ export type RatingFilters = Pick<
   'tag' | 'tagField' | 'yearFrom' | 'yearTo' | 'watched' | 'minPlays'
 >
 
+type TagSelection = Pick<RatingFilters, 'tag' | 'tagField'>
+export function ratingTagLabel({ tag, tagField }: TagSelection) {
+  return tag
+    ? formatTagName(tag) + (tagField === 'artistTag' ? ' (artist tag)' : '')
+    : 'Any'
+}
+function tagOption({ tag, tagField }: TagSelection) {
+  return {
+    key: tag ? `${tagField ?? 'genre'}:${tag}` : '',
+    label: ratingTagLabel({ tag, tagField }),
+    tag,
+    tagField,
+  }
+}
+
 export function RatingsFilters({
   request,
   onChange,
@@ -25,23 +42,48 @@ export function RatingsFilters({
 }) {
   const [error, setError] = useState('')
   const { apiBaseUrl } = useConfig()
-  const [draftTag, setDraftTag] = useState(request.tag)
+  const formRef = useRef<HTMLFormElement>(null)
+  const [draftTag, setDraftTag] = useState('')
+  const [tagOpen, setTagOpen] = useState(false)
   const facets = useBrowseFacets(
     apiBaseUrl,
     request.library === 'film' ? 'films' : 'albums',
     draftTag,
+    tagOpen,
   )
+  const selected = tagOption(request)
+  const options = (facets.data ?? []).flatMap(({ field, value }) =>
+    field === 'genre' || (request.library === 'album' && field === 'artistTag')
+      ? [
+          tagOption({
+            tag: value,
+            tagField: field === 'artistTag' ? field : undefined,
+          }),
+        ]
+      : [],
+  )
+  if (
+    !draftTag.trim() &&
+    selected.tag &&
+    !options.some((option) => option.key === selected.key)
+  )
+    options.push(selected)
+  options.sort((a, b) => a.label.localeCompare(b.label))
+  if (!draftTag.trim()) options.unshift(tagOption({ tag: '' }))
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
-  function commit(form: HTMLFormElement, delay: boolean) {
+  function commit(
+    form: HTMLFormElement,
+    delay: boolean,
+    selection: TagSelection = request,
+  ) {
     clearTimeout(timer.current)
     const data = new FormData(form)
     const numeric = (key: string) =>
       data.get(key) ? Number(data.get(key)) : undefined
-    const tag = String(data.get('tag') ?? '').trim()
     const filters = {
-      tag,
-      tagField: tag === request.tag ? request.tagField : undefined,
+      tag: selection.tag,
+      tagField: selection.tagField,
       yearFrom: numeric('yearFrom'),
       yearTo: numeric('yearTo'),
       minPlays: numeric('minPlays'),
@@ -66,36 +108,49 @@ export function RatingsFilters({
   }
   return (
     <form
+      ref={formRef}
       className="ratings-options"
       aria-label="Rating filters"
       onSubmit={(e) => {
         e.preventDefault()
         commit(e.currentTarget, false)
       }}
-      onChange={(e) =>
-        commit(e.currentTarget, !(e.target instanceof HTMLSelectElement))
-      }
+      onChange={(e) => {
+        if (e.target instanceof HTMLSelectElement)
+          commit(e.currentTarget, false)
+        else if (e.target instanceof HTMLInputElement && e.target.name)
+          commit(e.currentTarget, true)
+      }}
     >
       <div className="ratings-fields">
-        <label className="ratings-field">
+        <div className="ratings-field">
           Tag
-          <Input
-            list="rating-tags"
-            name="tag"
-            value={draftTag}
-            maxLength={200}
-            placeholder="Any"
-            onFocus={facets.activate}
-            onChange={(e) => setDraftTag(e.target.value)}
+          <SearchSelect
+            label="Tag"
+            searchLabel="Find a tag"
+            value={selected.key}
+            selectedLabel={selected.label}
+            options={options}
+            emptyMessage="No matching tags."
+            statusMessage={
+              facets.isDebouncing || facets.isPending
+                ? 'Loading tags…'
+                : facets.isError
+                  ? 'Could not load tags.'
+                  : undefined
+            }
+            onOpenChange={(open) => {
+              setTagOpen(open)
+              if (open) facets.activate()
+            }}
+            onSearch={setDraftTag}
+            onChange={(key) => {
+              const choice = options.find((option) => option.key === key)
+              if (choice && formRef.current)
+                commit(formRef.current, false, choice)
+            }}
           />
-          <datalist id="rating-tags">
-            {facets.data
-              ?.filter((f) => f.field === 'genre')
-              .map((f) => (
-                <option key={f.value} value={f.value} />
-              ))}
-          </datalist>
-        </label>
+        </div>
         <label className="ratings-field">
           Year from
           <Input

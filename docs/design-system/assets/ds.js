@@ -315,18 +315,30 @@
     return `<label class="ds-rating-weight">${esc(label)}<input type="range" min="0" max="3" step="0.5" value="${value}" aria-label="${esc(label)}" aria-valuetext="${value}×"><span class="ds-num" aria-hidden="true">${value}×</span></label>`
   }
 
-  function ratingDifference(value, difference, label, evidenceId) {
+  function ratingDifference(
+    value,
+    difference,
+    label,
+    evidenceId,
+    status = 'counted',
+  ) {
     const text =
       difference === null
         ? value
         : `${value} (${difference > 0 ? '+' : ''}${difference.toFixed(1)})`
     const direction =
-      difference !== null && Math.abs(difference) >= 20
+      (status === 'counted' || status === 'trimmed') &&
+      difference !== null &&
+      Math.abs(difference) >= 20
         ? difference > 0
           ? 'high'
           : 'low'
         : undefined
-    return `<button type="button" class="ds-rating-difference"${attrs({ 'aria-label': `${label}, ${text}`, 'aria-controls': evidenceId, 'data-direction': direction })}>${esc(text)}</button>`
+    const shown =
+      status === 'votes' || status === 'outlier'
+        ? `<s>${esc(text)}</s>`
+        : esc(text)
+    return `<button type="button" class="ds-rating-difference"${attrs({ 'aria-label': `${label}, ${text}`, title: `${label}, ${text}`, 'aria-controls': evidenceId, 'data-status': status, 'data-direction': direction })}>${shown}</button>`
   }
 
   function ratingPosition(values, score) {

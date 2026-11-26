@@ -51,7 +51,7 @@ import { useConfig } from './providers'
 import { RatingsCalculation, nativeScore } from './ratings-explorer-calculation'
 import { normalizationLabels } from './ratings-explorer-scoring'
 import { ReadButton } from './read-button'
-import { ResultButton } from './result-feedback'
+import { ResultButton, useResultAction } from './result-feedback'
 
 type Pair = { x: string; y: string }
 type RankingSort = (
@@ -190,6 +190,8 @@ function Agreement({
   onRanking: RankingSort
   onOpen: OpenItem
 }) {
+  const rankingAction = useResultAction('Ratings view-ranking')
+  const compareAction = useResultAction('Ratings view-compare')
   const maxRun = Math.max(
     5,
     ...page.bias.map((source) => Math.abs(source.runs ?? 0)),
@@ -210,7 +212,10 @@ function Agreement({
               shortLabel: shortSource(source, library),
             }))}
             pairs={page.pairs}
-            onCompare={onCompare}
+            onCompare={(pair) => {
+              compareAction.begin()
+              onCompare(pair)
+            }}
           />
         </Section>
         <Section title="How each source sits against the others">
@@ -296,14 +301,16 @@ function Agreement({
                 ],
               }))}
               aside={
-                <ResultButton
+                <Button
                   size="xs"
-                  control={list.key}
                   aria-label={'See all: ' + list.title}
-                  onClick={() => onRanking(list.sort, list.direction)}
+                  onClick={() => {
+                    rankingAction.begin()
+                    onRanking(list.sort, list.direction)
+                  }}
                 >
                   See all
-                </ResultButton>
+                </Button>
               }
               onOpen={onOpen}
             />
@@ -346,6 +353,7 @@ function Compare({
   onOpen: OpenItem
 }) {
   const [selected, setSelected] = useState<string | null>(null)
+  const compareAction = useResultAction('Ratings view-compare')
   const options: RatingAxis[] = [
     { key: 'score', label: 'Score' },
     { key: 'spread', label: 'Spread' },
@@ -377,6 +385,7 @@ function Compare({
         aria-label={label}
         value={current.key}
         onChange={(event) => {
+          compareAction.begin()
           setSelected(null)
           onAxes({ x: x.key, y: y.key, [key]: event.target.value })
         }}

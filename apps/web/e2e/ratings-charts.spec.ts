@@ -45,6 +45,36 @@ for (const library of ['film', 'album']) {
         .object({ data: RatingsRankingPageSchema })
         .parse(await ranking.json())
       const views = page.getByRole('group', { name: 'Ratings view' })
+      async function followDrill(
+        view: 'ranking' | 'compare',
+        click: () => Promise<void>,
+      ) {
+        let release = () => {}
+        const held = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        await page.route(
+          '**/ratings/' + view,
+          async (route) => {
+            await held
+            await route.continue()
+          },
+          { times: 1 },
+        )
+        const destination = views.getByRole('button', {
+          name: new RegExp(view, 'i'),
+        })
+        try {
+          await click()
+          await expect(destination).toHaveAttribute('data-feedback', 'pending')
+          await expect(
+            page.locator('.ratings-page [data-feedback="pending"]'),
+          ).toHaveCount(1)
+        } finally {
+          release()
+        }
+        await expect(destination).toHaveAttribute('data-feedback', 'done')
+      }
       const [agreement] = await Promise.all([
         next('agreement'),
         views.getByRole('button', { name: 'Agreement' }).click(),
@@ -82,11 +112,13 @@ for (const library of ['film', 'album']) {
       const start = reads.length
       const [compared] = await Promise.all([
         next('compare'),
-        pair
-          ? matrix
-              .getByRole('button', { name: xLabel + ' and ' + yLabel + ':' })
-              .click()
-          : views.getByRole('button', { name: 'Compare' }).click(),
+        followDrill('compare', () =>
+          pair
+            ? matrix
+                .getByRole('button', { name: xLabel + ' and ' + yLabel + ':' })
+                .click()
+            : views.getByRole('button', { name: 'Compare' }).click(),
+        ),
       ])
       const { data: c } = z
         .object({ data: RatingsComparePageSchema })
@@ -152,7 +184,9 @@ for (const library of ['film', 'album']) {
       await expect(matrix).toBeVisible()
       const [sorted] = await Promise.all([
         next('ranking'),
-        page.getByRole('button', { name: 'See all: Most divided' }).click(),
+        followDrill('ranking', () =>
+          page.getByRole('button', { name: 'See all: Most divided' }).click(),
+        ),
       ])
       expect(
         RatingsRankingRequestSchema.parse(sorted.request().postDataJSON()),

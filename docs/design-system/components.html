@@ -786,6 +786,7 @@
               ) +
               g.rules([
                 '<b>A button with the select’s box</b> at a fixed width of 112px (<code>SortPicker</code>). A longer field name ends in an ellipsis and shows in full on hover. On a phone it takes the room the other controls leave on its line.',
+                '<b>Ratings tag selection</b> uses the same searchable list (<code>SearchSelect</code>). The button shows Any or the selected tag. Typing searches the tag vocabulary. Choosing a result applies the filter, with artist tags identified separately. Choosing Any clears it.',
                 '<b>It opens every sortable field</b> under the button, with a search field above the list that has focus on opening. The chosen field carries the check mark.',
                 '<b>Typing narrows the list:</b> names that start with the text come first, then names with a word that starts with it, then the rest. Enter picks the first match, the Up and Down keys move through the list, and Escape closes the list and nothing else.',
                 '<b>On a phone</b> the list is a sheet from the bottom edge over a scrim, and the search field waits for a tap so the keyboard does not cover the list.',
@@ -1418,15 +1419,35 @@
                     'Third source',
                   ),
                   g.item(
+                    D.ratingDifference(
+                      '9.0',
+                      20,
+                      'Show zero-weight source calculation',
+                      'rating-example-evidence',
+                      'disabled',
+                    ),
+                    'Zero weight',
+                  ),
+                  g.item(
+                    D.ratingDifference(
+                      '4.0',
+                      -30,
+                      'Show below-minimum source calculation',
+                      'rating-example-evidence',
+                      'votes',
+                    ),
+                    'Below vote minimum',
+                  ),
+                  g.item(
                     '70.0' + D.ratingPosition([90, 70, 50], 70),
                     'Combined score',
                   ),
                 ]) +
-                  '<details id="rating-example-evidence"><summary>Example calculation</summary><p>The three source ratings are 9, 7 and 5 out of 10. With equal weights, their combined score is (90 + 70 + 50) / 3 = 70 out of 100.</p></details>',
+                  '<details id="rating-example-evidence"><summary>Example calculation</summary><p>The three qualifying ratings are 9, 7 and 5 out of 10. With equal weights, their combined score is (90 + 70 + 50) / 3 = 70 out of 100. The other 9 has zero weight. The 4 has too few votes.</p></details>',
               ) +
               g.rules([
-                '<b>Ranking</b> keeps the item identity visible across the ratings on a phone. Album artwork, title and artist open the corresponding record. Play and Add to queue follow in the next cell.',
-                '<b>Compact source cells</b> show the value alone, with the difference in the accessible label and tooltip. A struck value was left out. Only a counted rating 20 or more adjusted points from the score gets the high or low colour.',
+                '<b>Ranking</b> uses compact table spacing and abbreviated source headings. Keep Year and the nine built-in film sources visible at a desktop width of 1360px. The full source name appears in the sort tooltip. Keep the item identity visible across the ratings on a phone. Album artwork, title and artist open the corresponding record. Play and Add to queue follow in the next cell.',
+                '<b>Compact source cells</b> show the value alone, with the difference in the accessible label and tooltip. Dim a zero-weight rating. Strike a rating excluded by the vote minimum or outlier rule. Counted ratings and qualified ratings trimmed from the mean both use the high or low colour at a distance of 20 adjusted points.',
                 '<b>Source weights</b> range from 0 to 3 in steps of 0.5. A weight of 0 excludes a source. The multiplier follows the slider as it moves. Results update when the pointer or adjustment key is released.',
                 '<b>Rating differences</b> show the native or adjusted source value followed by the signed distance between the adjusted value and the combined score, in points out of 100. At a difference of 20 points or more, use blue above and amber below. Omit the difference when there is no combined score. Selecting a value opens its calculation.',
                 '<b>The position strip</b> places the adjusted ratings on a 0–100 scale. A vertical line marks the combined score. A hollow dot marks an excluded observation in the calculation. The accessible label and tooltip give their values.',

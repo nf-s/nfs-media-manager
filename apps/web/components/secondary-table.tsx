@@ -826,6 +826,7 @@ export function SecondaryVirtualRows<Item>({
 export function SecondaryTableHead<Key extends string>({
   sortKey,
   label,
+  sortLabel = label,
   sortBy,
   direction,
   onSort,
@@ -840,6 +841,7 @@ export function SecondaryTableHead<Key extends string>({
 }: {
   sortKey: Key
   label: string
+  sortLabel?: string
   sortBy: Key
   direction: 'asc' | 'desc'
   onSort: (key: Key) => void
@@ -872,7 +874,7 @@ export function SecondaryTableHead<Key extends string>({
             sortAction.begin()
             onSort(sortKey)
           }}
-          title={`Sort by ${label}`}
+          title={`Sort by ${sortLabel}`}
         >
           {label}
         </TableSortButton>

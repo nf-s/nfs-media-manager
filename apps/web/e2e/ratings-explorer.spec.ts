@@ -188,18 +188,28 @@ test('sort shows the outstanding read and its result on the direction button', a
   })
   const idle = await direction.boundingBox()
   expect(idle).not.toBeNull()
+  const count = page.locator('.ratings-page .ds-toolbar-count')
+  await expect(count).toHaveText('120 of 120')
+  const countBounds = await count.boundingBox()
   hold = true
   try {
     await direction.click()
     await expect(direction).toHaveAttribute('data-feedback', 'pending')
     await expect(direction).toHaveAccessibleName(/Updating…/)
     expect(await direction.boundingBox()).toEqual(idle)
+    await expect(count.locator('span')).toBeHidden()
+    expect(await count.boundingBox()).toEqual(countBounds)
+    await expect(
+      page.locator('.ratings-page [data-feedback="pending"]'),
+    ).toHaveCount(1)
   } finally {
     releaseRead()
   }
   await expect(direction).toHaveAttribute('data-feedback', 'done')
   await expect(direction).toHaveAccessibleName(/Results updated/)
   expect(await direction.boundingBox()).toEqual(idle)
+  await expect(count.locator('span')).toBeVisible()
+  expect(await count.boundingBox()).toEqual(countBounds)
 })
 
 test('ranking reads one page per committed query and reuses calculation evidence and visited pages', async ({
@@ -370,6 +380,17 @@ test('film filters commit together, source sorts reach the server and unscored r
   page,
 }) => {
   const requests: RatingsRankingRequest[] = []
+  await page.route('**/api/v1/films/facets?**', (route) =>
+    route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: [
+          { field: 'genre', value: 'Sparse', label: 'Tags: Sparse', count: 1 },
+        ],
+      },
+    }),
+  )
   await page.route('**/api/v1/ratings/ranking', async (route) => {
     const request = RatingsRankingRequestSchema.parse(
       route.request().postDataJSON(),
@@ -402,7 +423,9 @@ test('film filters commit together, source sorts reach the server and unscored r
   const previous = requests.length
   await page.getByRole('button', { name: 'Filters', exact: true }).click()
   const filters = page.getByRole('form', { name: 'Rating filters' })
-  await filters.getByLabel('Tag', { exact: true }).fill('Sparse')
+  await filters.getByRole('button', { name: 'Tag: Any' }).click()
+  await filters.getByRole('option', { name: 'Sparse' }).click()
+  await expect.poll(() => requests.at(-1)?.tag).toBe('Sparse')
   await filters.getByLabel('Year from').fill('1980')
   await filters.getByLabel('Year to').fill('2010')
   await filters
@@ -427,5 +450,5 @@ test('film filters commit together, source sorts reach the server and unscored r
   await expect(
     page.getByText('Needs 1 more qualifying rating to reach the minimum of 2.'),
   ).toBeVisible()
-  expect(requests.length).toBe(previous + 2)
+  expect(requests.length).toBe(previous + 3)
 })

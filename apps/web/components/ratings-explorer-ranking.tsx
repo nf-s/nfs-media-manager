@@ -45,7 +45,11 @@ import {
 
 type Library = RatingsRankingRequest['library']
 type Display = 'native' | 'adjusted'
-type Column = TableColumn & { text?: boolean; sortable?: false }
+type Column = TableColumn & {
+  text?: boolean
+  sortable?: false
+  sortLabel?: string
+}
 type Counts = { total: number; libraryTotal: number; unscored: number }
 type Props = {
   request: RatingsRankingRequest
@@ -84,6 +88,54 @@ export function ratingSortOptions(
   ]
 }
 
+// Native source columns follow the Explorer's reading order. Registry fields
+// added by plugins follow these and keep their own labels and relative order.
+const nativeColumns: Record<
+  Library,
+  { key: string; label: string; width: number }[]
+> = {
+  film: [
+    { key: 'ratingImdbPersonal', label: 'Mine', width: 41 },
+    { key: 'ratingImdbValue', label: 'IMDb', width: 44 },
+    { key: 'ratingTmdbValue', label: 'TMDb', width: 46 },
+    { key: 'ratingTrakt', label: 'Trakt', width: 43 },
+    { key: 'ratingLetterboxd', label: 'Lbxd', width: 42 },
+    { key: 'ratingRtAudience', label: 'RT aud', width: 52 },
+    { key: 'ratingMetacriticUser', label: 'MC users', width: 64 },
+    { key: 'ratingRt', label: 'RT', width: 40 },
+    { key: 'ratingMetascore', label: 'Meta', width: 42 },
+  ],
+  album: [
+    { key: 'ratingRymValue', label: 'RYM', width: 46 },
+    { key: 'ratingDiscogsValue', label: 'Discogs', width: 58 },
+    { key: 'ratingMetacriticValue', label: 'Meta', width: 42 },
+  ],
+}
+
+export function rankingSourceColumns(
+  sources: readonly RatingsSource[],
+  library: Library,
+) {
+  const native = nativeColumns[library]
+  return [
+    ...native.flatMap((column) => {
+      const source = sources.find(({ key }) => key === column.key)
+      return source ? [{ ...column, sortLabel: source.label }] : []
+    }),
+    ...sources
+      .filter((source) => !native.some(({ key }) => key === source.key))
+      .map((source) => {
+        const label = shortSource(source, library)
+        return {
+          key: source.key,
+          label,
+          sortLabel: source.label,
+          width: Math.max(44, Math.min(190, label.length * 8 + 18)),
+        }
+      }),
+  ]
+}
+
 function ratingColumns(
   sources: readonly RatingsSource[],
   library: Library,
@@ -91,13 +143,13 @@ function ratingColumns(
   const position: Column = {
     key: 'position',
     label: '#',
-    width: 48,
+    width: 44,
     sortable: false,
   }
   const identity: Column = {
     key: 'title',
     label: library === 'album' ? 'Album' : 'Film',
-    width: 210,
+    width: library === 'album' ? 224 : 200,
     text: true,
   }
   return [
@@ -114,35 +166,28 @@ function ratingColumns(
           position,
         ]
       : [position, identity]),
-    { key: 'score', label: 'Score', width: 66 },
-    { key: 'spread', label: 'Spread', width: 72 },
-    { key: 'counted', label: 'Counted', width: 78 },
+    { key: 'score', label: 'Score', width: 62 },
+    { key: 'spread', label: 'Spread', width: 54 },
+    { key: 'counted', label: 'Counted', width: 60 },
     {
       key: 'furthest',
       label: 'Furthest',
-      width: 122,
+      width: 93,
       text: true,
       sortable: false,
     },
-    { key: 'criticGap', label: 'Crit − aud', width: 90 },
+    { key: 'criticGap', label: 'Crit − aud', width: 68 },
     ...(library === 'film' && sources.some((s) => s.group === 'personal')
-      ? [{ key: 'personalGap', label: 'Mine − score', width: 104 }]
+      ? [{ key: 'personalGap', label: 'Mine − score', width: 85 }]
       : []),
-    ...sources.map((source) => {
-      const label = shortSource(source, library)
-      return {
-        key: source.key,
-        label,
-        width: Math.max(68, Math.min(190, label.length * 8 + 32)),
-      }
-    }),
-    { key: 'year', label: 'Year', width: 70 },
+    ...rankingSourceColumns(sources, library),
+    { key: 'year', label: 'Year', width: 49 },
     ...(library === 'film'
       ? [
           {
             key: 'creator',
             label: 'Director',
-            width: 150,
+            width: 124,
             text: true,
             sortable: false,
           } satisfies Column,
@@ -303,7 +348,10 @@ function RatingCell({
       const source = far && sources.find((s) => s.key === far.key)
       return far && source ? (
         <Rating
-          source={shortSource(source, library)}
+          source={
+            nativeColumns[library].find(({ key }) => key === source.key)
+              ?.label ?? shortSource(source, library)
+          }
           value={signed.format(far.difference)}
           title={source.label + ' compared with the other counted ratings'}
         />
@@ -324,7 +372,7 @@ function RatingCell({
               ? nativeScore(rating.raw, source.scale)
               : String(Math.round(rating.adjusted))
           }
-          excluded={rating.status !== 'counted' && rating.status !== 'trimmed'}
+          status={rating.status}
           difference={row.score === null ? null : rating.adjusted - row.score}
           label={
             source.label +
@@ -407,7 +455,11 @@ export function Ranking({
   const count = sources.filter(
     (s) => settingFor(s, request.settings).weight > 0,
   ).length
-  const columns = ratingColumns(sources, library)
+  const columns = ratingColumns(sources, library).map((column) =>
+    column.key === request.sort && column.key !== 'score' && column.width
+      ? { ...column, width: column.width + 16 }
+      : column,
+  )
   const widths = useTableWidths('ratings-ranking-' + library, columns)
   const layout = widths.layout(columns.map((c) => c.key))
   const label = library === 'film' ? 'Film rankings' : 'Album rankings'
@@ -469,6 +521,7 @@ export function Ranking({
         <table
           className="ds-table"
           {...layout.table}
+          data-density="compact"
           data-pin-identity=""
           data-scrolled={scrolledSideways ? '' : undefined}
           data-rows={library === 'album' ? 'two' : undefined}
@@ -495,6 +548,7 @@ export function Ranking({
                     key={c.key}
                     {...shared}
                     label={c.label}
+                    sortLabel={c.sortLabel}
                     sortKey={c.key}
                     sortBy={request.sort}
                     direction={request.direction}

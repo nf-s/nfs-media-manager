@@ -36,16 +36,46 @@ const phone = '(max-width: 700px)'
  * picks the first match and Escape closes it. On a phone the list is a sheet
  * from the bottom edge and the search field waits for a tap.
  */
-export function SortPicker<Key extends string>({
-  value,
-  options,
-  onChange,
-  feedback,
-}: {
+type PickerProps<Key extends string> = {
   value: Key
   options: readonly SortOption<Key>[]
   onChange: (key: Key) => void
   feedback?: ButtonFeedback
+}
+
+export function SortPicker<Key extends string>(props: PickerProps<Key>) {
+  return (
+    <SearchSelect
+      {...props}
+      label="Sort by"
+      searchLabel="Find a field"
+      emptyMessage="No field matches"
+    />
+  )
+}
+
+/** A searchable list of choices. Only picking a listed option commits a value. */
+export function SearchSelect<Key extends string>({
+  value,
+  options,
+  onChange,
+  feedback,
+  label,
+  selectedLabel,
+  searchLabel,
+  emptyMessage,
+  statusMessage,
+  onSearch,
+  onOpenChange,
+}: PickerProps<Key> & {
+  label: string
+  selectedLabel?: string
+  searchLabel: string
+  emptyMessage: string
+  statusMessage?: string
+  /** When supplied, the caller loads matching options for this draft. */
+  onSearch?: (query: string) => void
+  onOpenChange?: (open: boolean) => void
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
@@ -53,13 +83,17 @@ export function SortPicker<Key extends string>({
   const input = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const selected = Math.max(
+  const [preferredKey, setPreferredKey] = useState<Key | undefined>(value)
+  const selection =
+    selectedLabel ??
+    options.find((option) => option.key === value)?.label ??
+    value
+  const accessibleLabel = `${label}: ${selection}`
+  const matches = onSearch ? options : matchSortOptions(options, query)
+  const active = Math.max(
     0,
-    options.findIndex((option) => option.key === value),
+    matches.findIndex((option) => option.key === preferredKey),
   )
-  const [active, setActive] = useState(selected)
-  const label = options.find((option) => option.key === value)?.label ?? value
-  const matches = matchSortOptions(options, query)
   const activeKey = matches[active]?.key
 
   useEffect(() => {
@@ -131,7 +165,7 @@ export function SortPicker<Key extends string>({
       event.key === 'ArrowDown'
         ? (active + 1) % matches.length
         : (active - 1 + matches.length) % matches.length
-    setActive(next)
+    setPreferredKey(matches[next]?.key)
     const rows = panel.current?.querySelectorAll('[role="option"]')
     rows?.[next]?.scrollIntoView({ block: 'nearest' })
   }
@@ -146,20 +180,20 @@ export function SortPicker<Key extends string>({
         aria-expanded={open}
         aria-controls={id}
         aria-label={
-          feedback
-            ? `${feedback.label} · Sort by: ${label}`
-            : `Sort by: ${label}`
+          feedback ? `${feedback.label} · ${accessibleLabel}` : accessibleLabel
         }
         aria-busy={feedback?.phase === 'pending' || undefined}
         aria-live={feedback ? 'polite' : undefined}
         data-feedback={feedback?.phase}
-        title={feedback?.label ?? label}
+        title={feedback?.label ?? selection}
         popoverTarget={id}
       >
         {feedback ? (
-          <ButtonFeedbackLabel feedback={feedback}>{label}</ButtonFeedbackLabel>
+          <ButtonFeedbackLabel feedback={feedback}>
+            {selection}
+          </ButtonFeedbackLabel>
         ) : (
-          label
+          selection
         )}
       </button>
       <div
@@ -167,12 +201,16 @@ export function SortPicker<Key extends string>({
         ref={panel}
         popover="auto"
         className="ds-pop ds-sortpop"
+        onBeforeToggle={(event) => {
+          if (event.newState === 'open') setPreferredKey(value)
+          else {
+            setQuery('')
+            onSearch?.('')
+          }
+          onOpenChange?.(event.newState === 'open')
+        }}
         onToggle={(event) => {
-          const opened = event.newState === 'open'
-          setOpen(opened)
-          if (!opened) return
-          setQuery('')
-          setActive(selected)
+          setOpen(event.newState === 'open')
         }}
         onKeyDown={onKeyDown}
         onBlur={(event) => {
@@ -188,32 +226,35 @@ export function SortPicker<Key extends string>({
             ref={input}
             type="search"
             role="combobox"
-            aria-label="Find a field"
+            aria-label={searchLabel}
             aria-expanded="true"
             aria-controls={`${id}-list`}
             aria-autocomplete="list"
             aria-activedescendant={
-              activeKey === undefined ? undefined : `${id}-${activeKey}`
+              activeKey === undefined
+                ? undefined
+                : `${id}-${encodeURIComponent(activeKey)}`
             }
-            placeholder="Find a field"
+            placeholder={searchLabel}
             autoComplete="off"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
-              setActive(0)
+              onSearch?.(event.target.value)
+              setPreferredKey(undefined)
             }}
           />
         </label>
         <div
           id={`${id}-list`}
           role="listbox"
-          aria-label="Sort by"
+          aria-label={label}
           className="ds-sortpop-list"
         >
           {matches.map((option, index) => (
             <button
               key={option.key}
-              id={`${id}-${option.key}`}
+              id={`${id}-${encodeURIComponent(option.key)}`}
               type="button"
               role="option"
               tabIndex={-1}
@@ -221,7 +262,7 @@ export function SortPicker<Key extends string>({
               data-active={index === active ? '' : undefined}
               className="ds-menu-item"
               onPointerMove={() => {
-                if (index !== active) setActive(index)
+                if (index !== active) setPreferredKey(option.key)
               }}
               onClick={() => pick(option.key)}
             >
@@ -233,8 +274,10 @@ export function SortPicker<Key extends string>({
               {option.label}
             </button>
           ))}
-          {matches.length === 0 && (
-            <p className="ds-sortpop-none">No field matches</p>
+          {(statusMessage || matches.length === 0) && (
+            <p className="ds-sortpop-none" role="status">
+              {statusMessage ?? emptyMessage}
+            </p>
           )}
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ListFilter, SlidersHorizontal } from 'lucide-react'
+import { normalizeTagName } from '@repo/schemas/tags'
 import {
   defaultRatingsRankingRequest,
   RatingsSettingsSchema,
@@ -30,7 +31,11 @@ import {
 import { BrowseFilterPill } from './browse-controls'
 import { SecondaryTableSearch } from './secondary-table'
 import { RatingsScoring } from './ratings-explorer-scoring'
-import { RatingsFilters, type RatingFilters } from './ratings-explorer-filters'
+import {
+  ratingTagLabel,
+  RatingsFilters,
+  type RatingFilters,
+} from './ratings-explorer-filters'
 import {
   RatingsSources,
   type RatingSelection,
@@ -183,7 +188,7 @@ function Explorer({ library }: { library: Library }) {
     ...(base.tag
       ? [
           {
-            label: base.tag,
+            label: ratingTagLabel(base),
             clear: () => updateFilters({ tag: '', tagField: undefined }, true),
           },
         ]
@@ -382,7 +387,9 @@ function Explorer({ library }: { library: Library }) {
           onScoredOnly={(scoredOnly) =>
             setRequest((p) => ({ ...p, scoredOnly }))
           }
-          onTag={(tag, tagField) => updateFilters({ tag, tagField }, true)}
+          onTag={(tag, tagField) =>
+            updateFilters({ tag: normalizeTagName(tag), tagField }, true)
+          }
         />
       ) : view === 'sources' ? (
         <RatingsSources
