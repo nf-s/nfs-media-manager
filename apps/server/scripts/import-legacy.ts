@@ -31,7 +31,7 @@ import {
   normalizeOmdbPayload,
   normalizeTmdbPayload,
 } from '@/lib/provider-normalizers'
-import { legacySpotifyAlbumTracklist } from '@/lib/spotify-api'
+import { legacySpotifyAlbumTracklist, spotifyAlbumId } from '@/lib/spotify-api'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import {
   album,
@@ -63,6 +63,7 @@ export interface ImportOptions {
 
 interface AlbumBaseRecord {
   id: string
+  spotifyId: string
   title: string
   releaseDate: string | null
   artworkUrl: string | null
@@ -684,17 +685,29 @@ export function normalizeGoogleSearchPayload(
   }
 }
 
-function deriveAlbumBase(rawAlbum: JsonRecord): AlbumBaseRecord | null {
+function deriveAlbumBase(
+  rawAlbum: JsonRecord,
+  sourceKey: string,
+): AlbumBaseRecord | null {
   const spotify = getNestedRecord(rawAlbum, 'spotify')
-  const spotifyId = getNestedString(spotify, 'id')
+  const spotifyId = spotifyAlbumId(getNestedString(spotify, 'id') ?? '')
+  const mappedSpotifyId = spotifyAlbumId(sourceKey)
+  const savedSpotifyId = getNestedString(rawAlbum, 'id', 'spotify')
   const title = getNestedString(spotify, 'name')
 
-  if (!spotifyId || !title) {
+  if (
+    !spotifyId ||
+    !title ||
+    (!mappedSpotifyId && !savedSpotifyId) ||
+    (mappedSpotifyId !== null && mappedSpotifyId !== spotifyId) ||
+    (savedSpotifyId !== null && spotifyAlbumId(savedSpotifyId) !== spotifyId)
+  ) {
     return null
   }
 
   return {
     id: createMediaId('album', `spotify:${spotifyId}`),
+    spotifyId,
     title,
     releaseDate: getNestedString(spotify, 'release_date'),
     artworkUrl: getImageUrl(getRecordValue(spotify, 'images'), 300),
@@ -980,6 +993,7 @@ async function importPluginLegacyResults(
   mediaType: 'album' | 'film',
   rawRecord: JsonRecord,
   plugins: MediaProviderPlugin[],
+  legacySpotifyAlbumId?: string,
 ): Promise<void> {
   for (const plugin of plugins) {
     if (!plugin.importLegacyRecord) {
@@ -1005,6 +1019,7 @@ async function importPluginLegacyResults(
       mediaType,
       provider: plugin.manifest.id,
       source: 'legacy-import',
+      legacySpotifyAlbumId,
       payload: result.payload,
       normalized: result.normalized,
     })
@@ -1049,16 +1064,23 @@ async function importMusicLibrary(
       continue
     }
 
-    const base = deriveAlbumBase(rawAlbum)
+    const base = deriveAlbumBase(rawAlbum, sourceKey)
 
     if (!base) {
       continue
     }
 
     await upsertAlbumBase(base)
-    await applyProviderResult({
+    const albumInput: Pick<
+      Parameters<typeof applyProviderResult>[0],
+      'mediaItemId' | 'mediaType' | 'legacySpotifyAlbumId'
+    > = {
       mediaItemId: base.id,
       mediaType: 'album',
+      legacySpotifyAlbumId: base.spotifyId,
+    }
+    await applyProviderResult({
+      ...albumInput,
       provider: 'legacy-record',
       source: `legacy-import:${sourceKey}`,
       payload: rawAlbum,
@@ -1069,8 +1091,7 @@ async function importMusicLibrary(
     if (spotify) {
       const spotifyResult = normalizeSpotifyAlbum(rawAlbum, playlistLibrary)
       await applyProviderResult({
-        mediaItemId: base.id,
-        mediaType: 'album',
+        ...albumInput,
         provider: 'spotify',
         source: 'legacy-import',
         payload: spotifyResult.payload,
@@ -1082,8 +1103,7 @@ async function importMusicLibrary(
     if (musicBrainz) {
       const result = normalizeMusicBrainzPayload(musicBrainz)
       await applyProviderResult({
-        mediaItemId: base.id,
-        mediaType: 'album',
+        ...albumInput,
         provider: 'musicbrainz',
         source: 'legacy-import',
         payload: result.payload,
@@ -1095,8 +1115,7 @@ async function importMusicLibrary(
     if (discogs) {
       const result = normalizeDiscogsPayload(discogs)
       await applyProviderResult({
-        mediaItemId: base.id,
-        mediaType: 'album',
+        ...albumInput,
         provider: 'discogs',
         source: 'legacy-import',
         payload: result.payload,
@@ -1108,8 +1127,7 @@ async function importMusicLibrary(
     if (lastFm) {
       const result = normalizeLastFmPayload(lastFm)
       await applyProviderResult({
-        mediaItemId: base.id,
-        mediaType: 'album',
+        ...albumInput,
         provider: 'lastfm',
         source: 'legacy-import',
         payload: result.payload,
@@ -1120,8 +1138,7 @@ async function importMusicLibrary(
     const googleResult = normalizeGoogleSearchPayload(rawAlbum)
     if (googleResult) {
       await applyProviderResult({
-        mediaItemId: base.id,
-        mediaType: 'album',
+        ...albumInput,
         provider: 'google-custom-search',
         source: 'legacy-import',
         payload: googleResult.payload,
@@ -1129,7 +1146,13 @@ async function importMusicLibrary(
       })
     }
 
-    await importPluginLegacyResults(base.id, 'album', rawAlbum, plugins)
+    await importPluginLegacyResults(
+      base.id,
+      'album',
+      rawAlbum,
+      plugins,
+      base.spotifyId,
+    )
   }
 }
 
@@ -1299,19 +1322,31 @@ export async function importCleanLibraries(
         .onConflictDoNothing()
       if (mediaType === 'album')
         await db.insert(album).values({ mediaItemId: id }).onConflictDoNothing()
-      else
+      else {
         await db.insert(film).values({ mediaItemId: id }).onConflictDoNothing()
-      await db.delete(mediaItemTag).where(eq(mediaItemTag.mediaItemId, id))
-      await db.delete(playlistItem).where(eq(playlistItem.mediaItemId, id))
+        await db.delete(mediaItemTag).where(eq(mediaItemTag.mediaItemId, id))
+        await db.delete(playlistItem).where(eq(playlistItem.mediaItemId, id))
+      }
+      const legacySpotifyAlbumId =
+        mediaType === 'album'
+          ? (spotifyAlbumId(externalId) ?? undefined)
+          : undefined
       await applyProviderResult({
         mediaItemId: id,
         mediaType,
         provider: 'legacy-browser',
         source: 'legacy-clean-import',
+        legacySpotifyAlbumId,
         payload: result.payload,
         normalized: result.normalized,
       })
-      await importPluginLegacyResults(id, mediaType, row, plugins)
+      await importPluginLegacyResults(
+        id,
+        mediaType,
+        row,
+        plugins,
+        legacySpotifyAlbumId,
+      )
       if (mediaType === 'album') counts.albums += 1
       else counts.films += 1
     }

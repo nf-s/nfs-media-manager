@@ -17,7 +17,11 @@ import {
 } from '@/lib/album-match-identities'
 import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
-import { legacySpotifyAlbumTracklist, spotifyAlbumId } from '@/lib/spotify-api'
+import {
+  legacySpotifyAlbumTracklist,
+  spotifyAlbumId,
+  SpotifyIdSchema,
+} from '@/lib/spotify-api'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
 import { observeFilmRelations } from './film-catalog-observations'
@@ -50,6 +54,7 @@ import {
   film,
   mediaCredit,
   mediaItem,
+  mediaItemTag,
   mediaOverride,
   playlist,
   playlistItem,
@@ -69,6 +74,7 @@ interface ApplyProviderResultInput {
   payload: JsonValue
   normalized: PluginNormalizedResult
   scrapeJobId?: string | null
+  legacySpotifyAlbumId?: string
 }
 
 interface NormalizedCreditInsert {
@@ -383,10 +389,28 @@ async function spotifyOwnsAlbumTracklist(
   if (!evidence) return false
   if (evidence.source !== 'legacy-import') return true
 
-  // Legacy normalized lists can be empty or a partial page. Use the raw receipt.
+  const identity = await readActiveSpotifyAlbumIdentity(
+    database,
+    mediaItemId,
+    knownRejections,
+  )
+  if (!identity || identity.ids.size !== 1) return false
+  const [id] = identity.ids
+  if (!id || identity.isRejectedId(id)) return false
+
+  // Legacy normalized lists can be empty or a partial page. Inspect raw
+  // receipts for the active edition without returning the market lists.
+  const release = sql<unknown>`coalesce(${providerSnapshot.payload}->'spotify', ${providerSnapshot.payload})`
+  const items = sql`(${release}) #> '{tracks,items}'`
   const legacyReceipts = await database
     .select({
-      release: sql<unknown>`coalesce(${providerSnapshot.payload}->'spotify', ${providerSnapshot.payload})`,
+      release: sql<unknown>`jsonb_set((${release}) - 'available_markets', '{tracks,items}', (
+        select jsonb_agg(
+          case when jsonb_typeof(item) = 'object' then item - 'available_markets' else item end
+          order by position
+        )
+        from jsonb_array_elements(${items}) with ordinality as tracks(item, position)
+      ))`,
     })
     .from(providerSnapshot)
     .where(
@@ -394,16 +418,20 @@ async function spotifyOwnsAlbumTracklist(
         eq(providerSnapshot.mediaItemId, mediaItemId),
         eq(providerSnapshot.provider, 'spotify'),
         eq(providerSnapshot.source, 'legacy-import'),
+        sql`(${release})->>'id' = ${id}`,
+        sql`jsonb_typeof(${items}) = 'array'`,
       ),
     )
-  const completeIds = new Set(
-    legacyReceipts.flatMap(({ release }) => {
-      const list = legacySpotifyAlbumTracklist(release)
-      return list ? [list.id] : []
-    }),
+  return legacyReceipts.some(
+    ({ release }) => !!legacySpotifyAlbumTracklist(release),
   )
-  if (!completeIds.size) return false
+}
 
+async function readActiveSpotifyAlbumIdentity(
+  database: ProviderDatabase,
+  mediaItemId: string,
+  knownRejections?: readonly RejectedAlbumIdentity[],
+) {
   const item = await database.query.mediaItem.findFirst({
     columns: {},
     where: (table, operators) => operators.eq(table.id, mediaItemId),
@@ -431,7 +459,7 @@ async function spotifyOwnsAlbumTracklist(
       },
     },
   })
-  if (!item) return false
+  if (!item) return
   const rejections =
     knownRejections ?? (await readAlbumMatchRejections(database, mediaItemId))
   const isRejected = createAlbumMatchRejectionPredicate('spotify', rejections)
@@ -445,18 +473,69 @@ async function spotifyOwnsAlbumTracklist(
         item.album?.spotifyUrl ?? '',
         ...item.providerReferences.map(({ externalId }) => externalId),
       ]
-  const ids = new Set(active.map(spotifyAlbumId).filter((id) => id))
-  if (ids.size !== 1) return false
-  const [id] = ids
-  return (
-    !!id &&
-    completeIds.has(id) &&
-    !isRejected({ referenceType: 'album', externalId: id }) &&
-    !isRejected({
-      referenceType: 'url',
-      externalId: `https://open.spotify.com/album/${id}`,
-    })
+  const ids = new Set(
+    active.flatMap((reference) => {
+      const id = spotifyAlbumId(reference)
+      return id ? [id] : []
+    }),
   )
+  return {
+    ids,
+    selected: activeOverrides.latestCount > 0,
+    isRejectedId: (id: string) =>
+      isRejected({ referenceType: 'album', externalId: id }) ||
+      isRejected({
+        referenceType: 'url',
+        externalId: `https://open.spotify.com/album/${id}`,
+      }),
+  }
+}
+
+function legacySpotifyReceiptId(payload: JsonValue) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return
+  const release = payload.spotify ?? payload
+  if (release && typeof release === 'object' && !Array.isArray(release))
+    return SpotifyIdSchema.safeParse(release.id).data
+}
+
+async function legacyAlbumProjection(
+  database: ProviderDatabase,
+  input: ApplyProviderResultInput,
+) {
+  if (input.mediaType !== 'album' || !input.source.startsWith('legacy'))
+    return 'apply'
+  const spotifyLegacy = input.provider === 'spotify'
+  if (!spotifyLegacy && !input.legacySpotifyAlbumId) return 'apply'
+  const releaseId = spotifyLegacy
+    ? legacySpotifyReceiptId(input.payload)
+    : input.legacySpotifyAlbumId
+  if (!releaseId) return 'history'
+  // The raw receipt and the saved edition must agree before projecting either.
+  if (input.legacySpotifyAlbumId && input.legacySpotifyAlbumId !== releaseId)
+    return 'history'
+  const identity = await readActiveSpotifyAlbumIdentity(
+    database,
+    input.mediaItemId,
+  )
+  if (
+    !identity ||
+    identity.isRejectedId(releaseId) ||
+    ((identity.selected || identity.ids.size > 0) &&
+      (identity.ids.size !== 1 || !identity.ids.has(releaseId)))
+  )
+    return 'history'
+  const modern = await database.query.providerSnapshot.findFirst({
+    columns: { id: true },
+    where: (table, { and, eq, isNotNull, notLike }) =>
+      and(
+        eq(table.mediaItemId, input.mediaItemId),
+        eq(table.provider, 'spotify'),
+        notLike(table.source, 'legacy%'),
+        isNotNull(table.normalizedData),
+      ),
+  })
+  if (!modern) return 'apply'
+  return spotifyLegacy ? 'playlists' : 'enrich'
 }
 
 export async function applyProviderResultInTransaction(
@@ -478,6 +557,7 @@ export async function applyProviderResultInTransaction(
   await database.execute(
     sql`select id from media_item where id = ${input.mediaItemId} for update`,
   )
+  const projection = await legacyAlbumProjection(database, input)
   // An album match can be rejected after its evidence was collected.
   const rejections =
     input.mediaType === 'album' &&
@@ -559,7 +639,18 @@ export async function applyProviderResultInTransaction(
       })
     : undefined
 
-  if (!localImport || !currentState || currentState.checksum !== checksum) {
+  const spotifyFileImport =
+    input.mediaType === 'album' &&
+    input.provider === 'spotify' &&
+    input.source === 'file-import' &&
+    currentState?.latestSnapshotId !== previousImport?.id
+  if (
+    !localImport ||
+    !currentState ||
+    currentState.checksum !== checksum ||
+    spotifyFileImport ||
+    (projection !== 'apply' && !previousImport)
+  ) {
     const snapshotId = previousImport?.id ?? nanoid()
 
     if (!previousImport)
@@ -575,6 +666,28 @@ export async function applyProviderResultInTransaction(
       })
 
     latestSnapshotId = snapshotId
+  }
+  if (projection === 'playlists')
+    await upsertPlaylistMemberships(
+      database,
+      input.mediaItemId,
+      input.normalized.playlists,
+    )
+  if (projection === 'history' || projection === 'playlists') return
+
+  const preserveSpotify = projection === 'enrich'
+  if (
+    !preserveSpotify &&
+    input.mediaType === 'album' &&
+    input.provider === 'legacy-browser' &&
+    input.source === 'legacy-clean-import'
+  ) {
+    await database
+      .delete(mediaItemTag)
+      .where(eq(mediaItemTag.mediaItemId, input.mediaItemId))
+    await database
+      .delete(playlistItem)
+      .where(eq(playlistItem.mediaItemId, input.mediaItemId))
   }
   if (
     input.mediaType === 'album' &&
@@ -624,10 +737,22 @@ export async function applyProviderResultInTransaction(
     patch: Record<string, JsonValue> | undefined,
   ) {
     if (!patch) return undefined
-    return sql`coalesce(${column}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb || jsonb_build_object('browse', coalesce(${column}->'browse', '{}'::jsonb) || coalesce(${JSON.stringify(patch)}::jsonb->'browse', '{}'::jsonb))`
+    const current = sql`coalesce(${column}, '{}'::jsonb)`
+    const incoming = sql`${JSON.stringify(patch)}::jsonb`
+    const [base, preferred] = preserveSpotify
+      ? [incoming, current]
+      : [current, incoming]
+    const albumBrowse =
+      preserveSpotify && column === mediaItem.metadata
+        ? sql`|| coalesce((select ${album.metadata}->'browse' from ${album}
+            where ${album.mediaItemId} = ${input.mediaItemId}), '{}'::jsonb)`
+        : sql``
+    return sql`${base} || ${preferred} || jsonb_build_object('browse',
+      coalesce((${base})->'browse', '{}'::jsonb) ||
+      coalesce((${preferred})->'browse', '{}'::jsonb) ${albumBrowse})`
   }
   if (mediaPatch) {
-    const nextTitle = mediaPatch.title
+    const nextTitle = preserveSpotify ? undefined : mediaPatch.title
     await database
       .update(mediaItem)
       .set({
@@ -638,12 +763,14 @@ export async function applyProviderResultInTransaction(
         summary: overridden.has('summary')
           ? undefined
           : (mediaPatch.summary ?? undefined),
-        artworkUrl: overridden.has('artworkUrl')
-          ? undefined
-          : (mediaPatch.artworkUrl ?? undefined),
-        releaseDate: overridden.has('releaseDate')
-          ? undefined
-          : (parseOptionalDate(mediaPatch.releaseDate) ?? undefined),
+        artworkUrl:
+          preserveSpotify || overridden.has('artworkUrl')
+            ? undefined
+            : (mediaPatch.artworkUrl ?? undefined),
+        releaseDate:
+          preserveSpotify || overridden.has('releaseDate')
+            ? undefined
+            : (parseOptionalDate(mediaPatch.releaseDate) ?? undefined),
         sourceLabel: overridden.has('sourceLabel')
           ? undefined
           : (mediaPatch.sourceLabel ?? undefined),
@@ -658,7 +785,9 @@ export async function applyProviderResultInTransaction(
   }
 
   if (input.mediaType === 'album' && input.normalized.albumPatch) {
-    let spotifyUrl = normalizedSpotifyUrl ?? undefined
+    let spotifyUrl = preserveSpotify
+      ? undefined
+      : (normalizedSpotifyUrl ?? undefined)
     if (spotifyUrl && overridden.has('spotifyUrl')) {
       const existing = isRejectedMatch
         ? await database.query.album.findFirst({
@@ -683,9 +812,10 @@ export async function applyProviderResultInTransaction(
           ? undefined
           : (parseOptionalDate(input.normalized.albumPatch.dateAdded) ??
             undefined),
-        durationSec: overridden.has('durationSec')
-          ? undefined
-          : (input.normalized.albumPatch.durationSec ?? undefined),
+        durationSec:
+          preserveSpotify || overridden.has('durationSec')
+            ? undefined
+            : (input.normalized.albumPatch.durationSec ?? undefined),
         spotifyUrl,
         metadata: mergeMetadata(
           album.metadata,
@@ -747,12 +877,15 @@ export async function applyProviderResultInTransaction(
     )
   }
 
-  if (input.normalized.links.length > 0) {
+  const links = preserveSpotify
+    ? input.normalized.links.filter(({ provider }) => provider !== 'spotify')
+    : input.normalized.links
+  if (links.length > 0) {
     await replaceExternalLinks(
       database,
       input.mediaItemId,
       input.provider,
-      input.normalized.links,
+      links,
     )
   }
 
@@ -766,7 +899,7 @@ export async function applyProviderResultInTransaction(
     )
   }
 
-  if (input.normalized.credits.length > 0) {
+  if (!preserveSpotify && input.normalized.credits.length > 0) {
     await replaceCredits(database, input.mediaItemId, input.normalized.credits)
   }
 

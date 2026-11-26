@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
 import pg from 'pg'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -33,6 +34,26 @@ const connection = {
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
 const databaseClient = drizzle(pool, { schema })
+const legacyFiles = vi.hoisted(() => new Map<string, unknown>())
+const legacyDirectory = resolve('integration/fixtures')
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    readFile: async (path: string, options: BufferEncoding) => {
+      const synthetic = legacyFiles.get(path)
+      return synthetic === undefined
+        ? fs.readFile(path, options)
+        : JSON.stringify(synthetic)
+    },
+  }
+})
+vi.mock('@/env', async (importOriginal) => {
+  const { env } = await importOriginal<typeof import('@/env')>()
+  return {
+    env: { ...env, LEGACY_SERVER_DATA_DIR: resolve('integration/fixtures') },
+  }
+})
 const execute = vi.fn<NonNullable<MediaProviderPlugin['scrapeMediaItem']>>()
 const plugin = (
   id: string,
@@ -89,6 +110,7 @@ beforeAll(async () => {
   await migrate(databaseClient, { migrationsFolder: './drizzle' })
 })
 beforeEach(async () => {
+  legacyFiles.clear()
   execute.mockReset()
   await databaseClient.delete(schema.scrapeJob)
   await databaseClient.delete(schema.lastfmScrobble)
@@ -540,10 +562,11 @@ describe('album tracklist provider priority', () => {
     provider: string,
     source: string,
     result: unknown,
+    mediaItemId = albumId,
   ) {
     const { applyProviderResult } = await import('@/services/provider-state')
     await applyProviderResult({
-      mediaItemId: albumId,
+      mediaItemId,
       mediaType: 'album',
       provider,
       source,
@@ -551,14 +574,14 @@ describe('album tracklist provider priority', () => {
     })
   }
 
-  async function albumTracks() {
+  async function albumTracks(mediaItemId = albumId) {
     return databaseClient
       .select({
         externalId: schema.track.externalId,
         title: schema.track.title,
       })
       .from(schema.track)
-      .where(eq(schema.track.albumMediaItemId, albumId))
+      .where(eq(schema.track.albumMediaItemId, mediaItemId))
       .orderBy(schema.track.position)
   }
 
@@ -670,6 +693,229 @@ describe('album tracklist provider priority', () => {
     await applyAlbumProvider('discogs', 'scrape-job', discogsResult)
     expect(await albumTracks()).toEqual([
       { externalId: savedTrack, title: 'Fixture Song (Concert)' },
+    ])
+  })
+
+  it('keeps the explicit modern Spotify edition when a different legacy edition is replayed', async () => {
+    const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
+    const { patchAlbum } = await import('@/services/media')
+    const legacy = normalizeSpotifyAlbum(rawSpotifyAlbum)
+    const wrappedLegacy = { ...legacy, payload: { spotify: legacy.payload } }
+    const [oldTrack] = rawSpotifyAlbum.tracks.items
+    if (!oldTrack) throw new Error('Missing fixture track')
+    const modernTrack = 'FixtureOtherRecording1'
+    const modern = normalizeSpotifyAlbum({
+      ...rawSpotifyAlbum,
+      id: otherEdition,
+      name: 'Fixture Album (Selected Edition)',
+      tracks: {
+        ...rawSpotifyAlbum.tracks,
+        items: [
+          { ...oldTrack, id: modernTrack, name: 'Fixture Song (Studio)' },
+        ],
+      },
+    })
+    await album(albumId)
+    await applyAlbumProvider('spotify', 'legacy-import', wrappedLegacy)
+    await patchAlbum(
+      albumId,
+      {
+        providerReference: {
+          provider: 'spotify',
+          referenceType: 'album',
+          externalId: otherEdition,
+        },
+      },
+      null,
+    )
+    await applyAlbumProvider('spotify', 'scrape-job', modern)
+    await applyAlbumProvider('spotify', 'legacy-import', wrappedLegacy)
+
+    expect(await albumTracks()).toEqual([
+      { externalId: modernTrack, title: 'Fixture Song (Studio)' },
+    ])
+    const [item, state] = await Promise.all([
+      databaseClient.query.mediaItem.findFirst({
+        where: (table, { eq }) => eq(table.id, albumId),
+        with: { album: true },
+      }),
+      databaseClient.query.providerCurrentState.findFirst({
+        where: (table, { and, eq }) =>
+          and(eq(table.mediaItemId, albumId), eq(table.provider, 'spotify')),
+      }),
+    ])
+    expect(item?.title).toBe('Fixture Album (Selected Edition)')
+    expect(item?.album?.spotifyUrl).toBe(
+      `https://open.spotify.com/album/${otherEdition}`,
+    )
+    expect(state?.payload).toMatchObject({ id: otherEdition })
+  })
+
+  it('keeps modern metadata when a partial direct legacy receipt is replayed for the same edition', async () => {
+    const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
+    await album(albumId)
+    await applyAlbumProvider(
+      'spotify',
+      'album-open',
+      normalizeSpotifyAlbum(rawSpotifyAlbum),
+    )
+    const partial = normalizeSpotifyAlbum({
+      ...rawSpotifyAlbum,
+      name: 'Older Title',
+      total_tracks: 2,
+      tracks: { ...rawSpotifyAlbum.tracks, total: 2, next: 'next-page' },
+    })
+    await applyAlbumProvider('spotify', 'legacy-import', partial)
+
+    expect(await albumTracks()).toEqual([
+      { externalId: savedTrack, title: 'Fixture Song (Concert)' },
+    ])
+    const state = await databaseClient.query.providerCurrentState.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.mediaItemId, albumId), eq(table.provider, 'spotify')),
+    })
+    expect(state?.payload).toMatchObject({ name: rawSpotifyAlbum.name })
+    const retained = await databaseClient.query.providerSnapshot.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.mediaItemId, albumId), eq(table.source, 'legacy-import')),
+    })
+    expect(retained?.payload).toEqual(partial.payload)
+  })
+
+  it('keeps the modern Spotify album through the raw and cleaned legacy import stages', async () => {
+    const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
+    const { runLegacyImport } = await import('../scripts/import-legacy')
+    const selectedId = createStableId('album', `album:spotify:${savedEdition}`)
+    const mismatchedId = createStableId(
+      'album',
+      `album:spotify:${otherEdition}`,
+    )
+    const wrongKey = 'FixtureThirdEdition001'
+    const opaqueEdition = 'FixtureOpaqueEdition01'
+    const opaqueTrack = 'FixtureNewRecording001'
+    const opaqueId = createStableId('album', `album:spotify:${opaqueEdition}`)
+    const [originalTrack] = rawSpotifyAlbum.tracks.items
+    if (!originalTrack) throw new Error('Missing fixture track')
+    await album(selectedId)
+    await applyAlbumProvider(
+      'spotify',
+      'scrape-job',
+      normalizeSpotifyAlbum({
+        ...rawSpotifyAlbum,
+        name: 'Newer Title',
+        release_date: '2025-03-02',
+        artists: [{ name: 'Verified Artist' }],
+        images: [{ url: 'https://example.test/verified.jpg' }],
+        popularity: 73,
+      }),
+      selectedId,
+    )
+    await databaseClient.insert(schema.playlist).values({
+      id: 'existing-library-playlist',
+      name: 'Existing library playlist',
+      kind: 'playlist',
+    })
+    await databaseClient.insert(schema.playlistItem).values({
+      playlistId: 'existing-library-playlist',
+      mediaItemId: selectedId,
+      position: 0,
+    })
+
+    legacyFiles.set(resolve(legacyDirectory, 'lib-music.json'), {
+      albums: {
+        [savedEdition]: {
+          id: { spotify: savedEdition },
+          spotify: { ...rawSpotifyAlbum, name: 'Old Spotify Title' },
+          discogs: {
+            release: {
+              id: 101,
+              title: 'Old Discogs Title',
+              artists: [{ name: 'Old Discogs Artist' }],
+              genres: ['Synthetic genre'],
+            },
+          },
+        },
+        [wrongKey]: {
+          id: { spotify: wrongKey },
+          spotify: { ...rawSpotifyAlbum, id: otherEdition },
+        },
+        'opaque-archive-key': {
+          id: { spotify: opaqueEdition },
+          spotify: {
+            ...rawSpotifyAlbum,
+            id: opaqueEdition,
+            tracks: {
+              ...rawSpotifyAlbum.tracks,
+              items: [{ ...originalTrack, id: opaqueTrack }],
+            },
+          },
+        },
+      },
+    })
+    legacyFiles.set(resolve(legacyDirectory, 'lib.json'), { movies: {} })
+    legacyFiles.set(resolve('../../apps/web/public/data/lib-music.json'), {
+      albums: {
+        [savedEdition]: {
+          id: { spotify: savedEdition },
+          title: 'Old Browse Title',
+          artists: ['Old Browse Artist'],
+          durationSec: 42,
+          popularitySpotify: 1,
+          playlists: ['Legacy playlist'],
+          links: {
+            spotify: { href: `https://open.spotify.com/album/${savedEdition}` },
+          },
+        },
+      },
+    })
+    legacyFiles.set(resolve('../../apps/web/public/data/lib-movie.json'), [])
+
+    await runLegacyImport({ albumLimit: 3, filmLimit: 0 })
+
+    const media = await databaseClient.query.mediaItem.findFirst({
+      where: (table, { eq }) => eq(table.id, selectedId),
+      with: { album: true, credits: { with: { artist: true } } },
+    })
+    expect(media).toMatchObject({
+      title: 'Newer Title',
+      artworkUrl: 'https://example.test/verified.jpg',
+      metadata: { browse: { popularitySpotify: 73 } },
+      album: {
+        spotifyUrl: `https://open.spotify.com/album/${savedEdition}`,
+        durationSec: 152,
+      },
+      credits: [{ artist: { name: 'Verified Artist' }, role: 'artist' }],
+    })
+    expect(media?.releaseDate?.toISOString()).toBe('2025-03-02T00:00:00.000Z')
+    expect(await albumTracks(selectedId)).toEqual([
+      { externalId: savedTrack, title: 'Fixture Song (Concert)' },
+    ])
+    const memberships = await databaseClient
+      .select({ name: schema.playlist.name })
+      .from(schema.playlistItem)
+      .innerJoin(
+        schema.playlist,
+        eq(schema.playlist.id, schema.playlistItem.playlistId),
+      )
+      .where(eq(schema.playlistItem.mediaItemId, selectedId))
+      .orderBy(schema.playlist.name)
+    expect(memberships).toEqual([
+      { name: 'Existing library playlist' },
+      { name: 'Legacy playlist' },
+    ])
+    expect(
+      await databaseClient.query.providerReference.findFirst({
+        where: (table, { and, eq }) =>
+          and(eq(table.mediaItemId, selectedId), eq(table.provider, 'discogs')),
+      }),
+    ).toMatchObject({ externalId: '101' })
+    expect(
+      await databaseClient.query.mediaItem.findFirst({
+        where: (table, { eq }) => eq(table.id, mismatchedId),
+      }),
+    ).toBeUndefined()
+    expect(await albumTracks(opaqueId)).toEqual([
+      { externalId: opaqueTrack, title: 'Fixture Song (Concert)' },
     ])
   })
 })
