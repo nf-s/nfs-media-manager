@@ -159,6 +159,10 @@ function ReviewPairEvidence({ pair }: { pair: DuplicateReviewPair }) {
     evidence,
   } = pair
   const showPairLinks = decision !== 'applied' || undone
+  const savedChanges = pair.details.priorChanges
+  const priorChanges = Array.isArray(savedChanges)
+    ? savedChanges.filter((id) => typeof id === 'string')
+    : []
   return (
     <div>
       <strong>{describePair(pair)}</strong>
@@ -218,6 +222,21 @@ function ReviewPairEvidence({ pair }: { pair: DuplicateReviewPair }) {
           </Link>
         </Button>
       )}
+      {priorChanges.map((id, index) => (
+        <Button key={id} size="xs" variant="link" asChild>
+          <Link
+            href={{
+              pathname: libraryChangesPaths[kind],
+              query: { changeId: id },
+            }}
+            prefetch={false}
+          >
+            {priorChanges.length === 1
+              ? 'Earlier merge'
+              : `Earlier merge ${index + 1}`}
+          </Link>
+        </Button>
+      ))}
     </div>
   )
 }

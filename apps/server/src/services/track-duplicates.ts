@@ -66,10 +66,28 @@ const latestDuplicateReview = sql`
   select id, reviewed_at from duplicate_review_run
   order by reviewed_at desc, id desc limit 1`
 
+const priorReviewChanges = sql`
+  jsonb_array_elements(case when jsonb_typeof(p.details->'priorChanges') = 'array'
+    then p.details->'priorChanges' else '[]'::jsonb end)`
+
 const duplicateReviewPairColumns = sql`
   p.kind, p.left_id as "leftId", p.right_id as "rightId",
   p.left_title as "leftTitle", p.right_title as "rightTitle",
-  p.confidence, p.decision, p.evidence, p.details, p.reason,
+  p.confidence, p.decision, p.evidence,
+  case when p.details ? 'priorChanges' then
+    jsonb_set(p.details, '{priorChanges}', coalesce((
+      select jsonb_agg(prior.id order by prior.position) from (
+        select earlier.id, min(entry.position) as position
+        from ${priorReviewChanges} with ordinality as entry(value, position)
+        join library_change earlier on earlier.id = (entry.value #>> '{}')
+          and earlier.kind = p.kind and earlier.action = 'merge'
+        where jsonb_typeof(entry.value) = 'string'
+          and earlier.id is distinct from p.change_id
+        group by earlier.id
+      ) prior
+    ), '[]'::jsonb))
+  else p.details end as details,
+  p.reason,
   p.target_id as "targetId",
   coalesce(
     case when c.target->>'id' = p.target_id then c.target->>'title' end,
@@ -112,11 +130,18 @@ export async function readDuplicateReview({
     with latest_review as (${latestDuplicateReview}),
     review_pairs as not materialized (
       select * from duplicate_review_pair where run_id = (select id from latest_review)
+    ), merge_ids as (
+      select p.kind, p.change_id as id from review_pairs p where p.change_id is not null
+      union
+      select p.kind, entry.value #>> '{}' as id
+      from review_pairs p cross join lateral ${priorReviewChanges} as entry(value)
+      where jsonb_typeof(entry.value) = 'string'
     ), totals as (
       select count(*)::int as "pairCount",
-        count(distinct p.change_id) filter (where c.action = 'merge')::int as "mergeCount",
+        (select count(*)::int from merge_ids m join library_change c
+          on c.id = m.id and c.kind = m.kind and c.action = 'merge') as "mergeCount",
         count(*) filter (where ${matches})::int as "totalCount"
-      from review_pairs p left join library_change c on c.id = p.change_id
+      from review_pairs p
     ), page_pairs as (
       select * from review_pairs p where ${matches}
       order by p.kind, p.left_id, p.right_id

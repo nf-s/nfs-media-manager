@@ -376,6 +376,20 @@ it('pages the latest review, retains historical evidence and reflects the journa
     trackIds: [nightDrive.id, remaster.id],
     reviewed: true,
   })
+  await fixture.insert(schema.libraryChange).values([
+    {
+      id: 'previous-fixture-merge',
+      kind: 'track',
+      action: 'merge',
+      actor: 'owner',
+    },
+    {
+      id: 'fixture-separation',
+      kind: 'track',
+      action: 'separate',
+      actor: 'owner',
+    },
+  ])
   const reviewedAt = '2025-01-02T03:04:05.000Z'
   await fixture.insert(schema.duplicateReviewRun).values([
     { id: 'earlier-review', reviewedAt: new Date('2024-01-01') },
@@ -393,6 +407,14 @@ it('pages the latest review, retains historical evidence and reflects the journa
       rightDurationSec: 201,
       leftCredits: 'Fixture Chorus',
       rightCredits: 'Right Ensemble',
+      priorChanges: [
+        'previous-fixture-merge',
+        'missing-fixture-merge',
+        merged.id,
+        'fixture-separation',
+        'previous-fixture-merge',
+        null,
+      ],
     },
   } satisfies Omit<
     typeof schema.duplicateReviewPair.$inferInsert,
@@ -449,7 +471,7 @@ it('pages the latest review, retains historical evidence and reflects the journa
     id: 'latest-review',
     reviewedAt,
     pairCount: 4,
-    mergeCount: 1,
+    mergeCount: 2,
   }
   const first = await readDuplicateReview(query({ size: 2 }))
   expect(first).toMatchObject({ review, totalCount: 4, pageCount: 2 })
@@ -490,7 +512,7 @@ it('pages the latest review, retains historical evidence and reflects the journa
       leftId: 'removed-fixture-one',
       leftTitle: pair.leftTitle,
       evidence: pair.evidence,
-      details: pair.details,
+      details: { ...pair.details, priorChanges: ['previous-fixture-merge'] },
       targetId: nightDrive.id,
       targetTitle: nightDrive.title,
       changeId: merged.id,
@@ -522,8 +544,22 @@ it('pages the latest review, retains historical evidence and reflects the journa
     .delete(schema.libraryChange)
     .where(eq(schema.libraryChange.id, merged.id))
   expect(await readDuplicateReview(applied)).toMatchObject({
+    review: { ...review, mergeCount: 1 },
+    items: [
+      {
+        decision: 'applied',
+        changeId: null,
+        targetId: nightDrive.id,
+        details: { priorChanges: ['previous-fixture-merge'] },
+      },
+    ],
+  })
+  await fixture
+    .delete(schema.libraryChange)
+    .where(eq(schema.libraryChange.id, 'previous-fixture-merge'))
+  expect(await readDuplicateReview(applied)).toMatchObject({
     review: { ...review, mergeCount: 0 },
-    items: [{ decision: 'applied', changeId: null, targetId: nightDrive.id }],
+    items: [{ details: { priorChanges: [] } }],
   })
 })
 
