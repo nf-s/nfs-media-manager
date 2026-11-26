@@ -5,30 +5,30 @@ import {
 } from '../../scripts/import-legacy'
 
 describe('legacy import normalizers', () => {
-  it('normalizes spotify album payloads into canonical album data', () => {
+  it('keeps metadata from a partial Spotify album page without installing tracks', () => {
     const result = normalizeSpotifyAlbum(
       {
-        id: 'spotify-album-1',
-        name: 'Selected Ambient Works 85-92',
-        release_date: '1992-11-09',
+        id: 'FixtureSavedEdition001',
+        name: 'Fixture Album',
+        release_date: '2019-01-01',
         artists: [
           {
-            name: 'Aphex Twin',
+            name: 'Fixture Artist',
           },
         ],
+        total_tracks: 2,
         tracks: {
+          offset: 0,
+          total: 2,
+          next: 'https://example.test/next-page',
           items: [
             {
-              id: 'track-1',
-              name: 'Xtal',
+              id: 'FixtureSavedRecording1',
+              name: 'Fixture Song',
+              disc_number: 1,
               track_number: 1,
               duration_ms: 291000,
-            },
-            {
-              id: 'track-2',
-              name: 'Tha',
-              track_number: 2,
-              duration_ms: 540000,
+              artists: [{ name: 'Fixture Artist' }],
             },
           ],
         },
@@ -36,7 +36,7 @@ describe('legacy import normalizers', () => {
           upc: '123456789012',
         },
         external_urls: {
-          spotify: 'https://open.spotify.com/album/spotify-album-1',
+          spotify: 'https://open.spotify.com/album/FixtureSavedEdition001',
         },
         source: {
           type: 'playlist',
@@ -59,19 +59,20 @@ describe('legacy import normalizers', () => {
     )
 
     expect(result.normalized.mediaPatch).toMatchObject({
-      title: 'Selected Ambient Works 85-92',
+      title: 'Fixture Album',
       artworkUrl: 'https://images.example/cover-300.jpg',
       sourceLabel: 'playlist',
     })
     expect(result.normalized.albumPatch).toMatchObject({
       dateAdded: '2020-01-01',
-      durationSec: 831,
-      spotifyUrl: 'https://open.spotify.com/album/spotify-album-1',
+      spotifyUrl: 'https://open.spotify.com/album/FixtureSavedEdition001',
     })
+    expect(result.normalized.albumPatch?.durationSec).toBeUndefined()
+    expect(result.normalized.tracks).toEqual([])
     expect(result.normalized.references).toEqual([
       {
         referenceType: 'album',
-        externalId: 'spotify-album-1',
+        externalId: 'FixtureSavedEdition001',
         isPrimary: true,
       },
       {

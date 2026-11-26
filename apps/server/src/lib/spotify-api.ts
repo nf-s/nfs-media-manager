@@ -636,20 +636,65 @@ export function normalizeSpotifyTrackEntry(
   }
 }
 
-export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {
-  const data = SpotifyAlbumSchema.parse(value)
-  const url = `https://open.spotify.com/album/${data.id}`
-  const complete =
-    data.tracks?.offset === 0 &&
-    data.tracks.next === null &&
-    data.tracks.items.length === data.tracks.total &&
-    (data.total_tracks === undefined || data.total_tracks === data.tracks.total)
-  const tracks = complete
-    ? [...(data.tracks?.items ?? [])].sort(
+function orderedSpotifyAlbumTracks(
+  page: z.infer<typeof SpotifyTracksPageSchema> | undefined,
+  totalTracks: number | undefined,
+) {
+  return page?.offset === 0 &&
+    page.next === null &&
+    page.items.length === page.total &&
+    (totalTracks === undefined || totalTracks === page.total) &&
+    spotifyAlbumTrackPositionsUnique(page.items)
+    ? [...page.items].sort(
         (a, b) =>
           a.disc_number - b.disc_number || a.track_number - b.track_number,
       )
-    : []
+    : undefined
+}
+
+const LegacySpotifyAlbumTracklistSchema = SpotifyAlbumSchema.pick({
+  id: true,
+  tracks: true,
+  total_tracks: true,
+})
+
+export function legacySpotifyAlbumTracklist(value: unknown) {
+  const data = LegacySpotifyAlbumTracklistSchema.safeParse(value).data
+  if (!data) return
+  const tracks = orderedSpotifyAlbumTracks(data.tracks, data.total_tracks)
+  if (
+    !tracks?.length ||
+    tracks.some(({ id, name }) => id === null || !name.trim())
+  )
+    return
+  return { id: data.id, ...normalizeSpotifyAlbumTracks(tracks) }
+}
+
+function normalizeSpotifyAlbumTracks(
+  tracks: readonly z.infer<typeof SpotifyTrackSchema>[],
+) {
+  return {
+    durationSec: Math.round(
+      tracks.reduce((sum, track) => sum + track.duration_ms, 0) / 1000,
+    ),
+    tracks: tracks.map((track, index) => ({
+      externalId: track.id ?? undefined,
+      title: track.name,
+      position: index + 1,
+      durationSec: Math.round(track.duration_ms / 1000),
+      artists: [...new Set(track.artists.map((artist) => artist.name))],
+      ...(track.artists.some(({ id }) => SpotifyIdSchema.safeParse(id).success)
+        ? { spotifyArtistBilling: spotifyArtistBilling(track.artists) }
+        : {}),
+    })),
+  }
+}
+
+export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {
+  const data = SpotifyAlbumSchema.parse(value)
+  const url = `https://open.spotify.com/album/${data.id}`
+  const ordered = orderedSpotifyAlbumTracks(data.tracks, data.total_tracks)
+  const tracklist = ordered ? normalizeSpotifyAlbumTracks(ordered) : undefined
   return PluginResultSchema.parse({
     payload: data,
     normalized: {
@@ -666,14 +711,7 @@ export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {
         ...(addedAt
           ? { dateAdded: z.string().datetime({ offset: true }).parse(addedAt) }
           : {}),
-        ...(complete
-          ? {
-              durationSec: Math.round(
-                tracks.reduce((sum, track) => sum + track.duration_ms, 0) /
-                  1000,
-              ),
-            }
-          : {}),
+        durationSec: tracklist?.durationSec,
         metadata: {
           browse: {
             ...(data.popularity === undefined
@@ -695,18 +733,7 @@ export function normalizeSpotifyAlbum(value: unknown, addedAt?: string) {
         billingOrder,
       })),
       tags: (data.genres ?? []).map((name) => ({ name, kind: 'genre' })),
-      tracks: tracks.map((track, index) => ({
-        externalId: track.id ?? undefined,
-        title: track.name,
-        position: index + 1,
-        durationSec: Math.round(track.duration_ms / 1000),
-        artists: [...new Set(track.artists.map((artist) => artist.name))],
-        ...(track.artists.some(
-          ({ id }) => SpotifyIdSchema.safeParse(id).success,
-        )
-          ? { spotifyArtistBilling: spotifyArtistBilling(track.artists) }
-          : {}),
-      })),
+      tracks: tracklist?.tracks ?? [],
     },
   })
 }

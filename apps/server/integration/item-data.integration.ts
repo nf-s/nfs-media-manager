@@ -509,6 +509,171 @@ describe('listening series', () => {
   })
 })
 
+describe('album tracklist provider priority', () => {
+  const savedEdition = 'FixtureSavedEdition001'
+  const otherEdition = 'FixtureOtherEdition001'
+  const savedTrack = 'FixtureSavedRecording1'
+  const albumId = 'fixture-tracklist-priority'
+  const rawSpotifyAlbum = {
+    id: savedEdition,
+    name: 'Fixture Album',
+    artists: [{ name: 'Fixture Artist' }],
+    total_tracks: 1,
+    tracks: {
+      offset: 0,
+      total: 1,
+      next: null,
+      items: [
+        {
+          id: savedTrack,
+          name: 'Fixture Song (Concert)',
+          disc_number: 1,
+          track_number: 1,
+          duration_ms: 152000,
+          artists: [{ name: 'Fixture Artist' }],
+        },
+      ],
+    },
+  }
+
+  async function applyAlbumProvider(
+    provider: string,
+    source: string,
+    result: unknown,
+  ) {
+    const { applyProviderResult } = await import('@/services/provider-state')
+    await applyProviderResult({
+      mediaItemId: albumId,
+      mediaType: 'album',
+      provider,
+      source,
+      ...PluginResultSchema.parse(result),
+    })
+  }
+
+  async function albumTracks() {
+    return databaseClient
+      .select({
+        externalId: schema.track.externalId,
+        title: schema.track.title,
+      })
+      .from(schema.track)
+      .where(eq(schema.track.albumMediaItemId, albumId))
+      .orderBy(schema.track.position)
+  }
+
+  const discogsResult = {
+    payload: { release: { id: 101 } },
+    normalized: {
+      tracks: [{ title: 'Fixture Song (Studio)', position: 1 }],
+    },
+  }
+
+  it('retains the saved edition when its legacy receipt has only a raw tracklist', async () => {
+    await album(albumId)
+    await applyAlbumProvider('spotify', 'legacy-import', {
+      payload: { spotify: rawSpotifyAlbum },
+      normalized: {
+        references: [{ referenceType: 'album', externalId: savedEdition }],
+      },
+    })
+    await libraryTrack('existing-saved-recording', { albumId })
+    await databaseClient.insert(schema.track).values({
+      id: 'existing-saved-position',
+      albumMediaItemId: albumId,
+      trackMediaItemId: 'existing-saved-recording',
+      externalId: savedTrack,
+      title: 'Fixture Song (Concert)',
+      durationSec: 152,
+      position: 1,
+    })
+
+    await applyAlbumProvider('discogs', 'scrape-job', discogsResult)
+
+    expect(await albumTracks()).toEqual([
+      { externalId: savedTrack, title: 'Fixture Song (Concert)' },
+    ])
+    const discogs = await databaseClient.query.providerCurrentState.findFirst({
+      where: (state, { eq, and }) =>
+        and(eq(state.mediaItemId, albumId), eq(state.provider, 'discogs')),
+    })
+    expect(discogs?.normalizedData?.tracks).toEqual(
+      discogsResult.normalized.tracks,
+    )
+  })
+
+  it.each(['partial', 'different edition', 'ambiguous release'])(
+    'allows the fallback when the legacy Spotify evidence identifies a %s',
+    async (condition) => {
+      await album(albumId)
+      const release =
+        condition === 'partial'
+          ? {
+              ...rawSpotifyAlbum,
+              total_tracks: 2,
+              tracks: {
+                ...rawSpotifyAlbum.tracks,
+                total: 2,
+                next: 'https://example.test/next-page',
+              },
+            }
+          : rawSpotifyAlbum
+      const reference = {
+        referenceType: 'album',
+        externalId:
+          condition === 'different edition' ? otherEdition : savedEdition,
+      }
+      await applyAlbumProvider('spotify', 'legacy-import', {
+        payload: { spotify: release },
+        normalized: {
+          references:
+            condition === 'ambiguous release'
+              ? [reference, { ...reference, externalId: otherEdition }]
+              : [reference],
+          // An older importer could have projected just the partial first page.
+          tracks:
+            condition === 'partial'
+              ? [{ title: 'Incomplete list', position: 1 }]
+              : [],
+        },
+      })
+
+      await applyAlbumProvider('discogs', 'scrape-job', discogsResult)
+      expect(await albumTracks()).toEqual([
+        { externalId: null, title: 'Fixture Song (Studio)' },
+      ])
+    },
+  )
+
+  it('keeps the modern complete Spotify list when the later Spotify state is partial', async () => {
+    const { normalizeSpotifyAlbum } = await import('@/lib/spotify-api')
+    await album(albumId)
+    await applyAlbumProvider(
+      'spotify',
+      'scrape-job',
+      normalizeSpotifyAlbum(rawSpotifyAlbum),
+    )
+    await applyAlbumProvider(
+      'spotify',
+      'file-import',
+      normalizeSpotifyAlbum({
+        ...rawSpotifyAlbum,
+        total_tracks: 2,
+        tracks: {
+          ...rawSpotifyAlbum.tracks,
+          total: 2,
+          next: 'https://example.test/next-page',
+        },
+      }),
+    )
+
+    await applyAlbumProvider('discogs', 'scrape-job', discogsResult)
+    expect(await albumTracks()).toEqual([
+      { externalId: savedTrack, title: 'Fixture Song (Concert)' },
+    ])
+  })
+})
+
 describe('field provenance', () => {
   it('lists every provider that supplies a field, with the manual override and stored value', async () => {
     const { applyProviderResult } = await import('@/services/provider-state')

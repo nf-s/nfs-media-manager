@@ -13,9 +13,11 @@ import {
   createAlbumMatchRejectionPredicate,
   effectiveReferenceOverrides,
   isDiscogsAlbumReference,
+  type RejectedAlbumIdentity,
 } from '@/lib/album-match-identities'
 import { filmAddedDate } from '@/lib/film-added-date'
 import { resolveFileImportPatches } from '@/lib/file-import-patches'
+import { legacySpotifyAlbumTracklist, spotifyAlbumId } from '@/lib/spotify-api'
 import { sanitizeAlbumProviderResult } from '@/lib/spotify-audio-features'
 import { recordFilmAddedDate } from './film-added-dates'
 import { observeFilmRelations } from './film-catalog-observations'
@@ -358,6 +360,105 @@ export async function applyProviderResult(
   )
 }
 
+async function spotifyOwnsAlbumTracklist(
+  database: ProviderDatabase,
+  mediaItemId: string,
+  knownRejections: readonly RejectedAlbumIdentity[] | undefined,
+) {
+  // A later partial result can replace current state, so consult the history.
+  const evidence = await database.query.providerSnapshot.findFirst({
+    columns: { source: true },
+    where: (table, operators) =>
+      operators.and(
+        operators.eq(table.mediaItemId, mediaItemId),
+        operators.eq(table.provider, 'spotify'),
+        operators.or(
+          operators.eq(table.source, 'legacy-import'),
+          sql`jsonb_typeof(${table.normalizedData}->'tracks') = 'array'
+            and jsonb_typeof(${table.normalizedData}->'tracks'->0) = 'object'`,
+        ),
+      ),
+    orderBy: (table) => [sql`(${table.source} = 'legacy-import')`],
+  })
+  if (!evidence) return false
+  if (evidence.source !== 'legacy-import') return true
+
+  // Legacy normalized lists can be empty or a partial page. Use the raw receipt.
+  const legacyReceipts = await database
+    .select({
+      release: sql<unknown>`coalesce(${providerSnapshot.payload}->'spotify', ${providerSnapshot.payload})`,
+    })
+    .from(providerSnapshot)
+    .where(
+      and(
+        eq(providerSnapshot.mediaItemId, mediaItemId),
+        eq(providerSnapshot.provider, 'spotify'),
+        eq(providerSnapshot.source, 'legacy-import'),
+      ),
+    )
+  const completeIds = new Set(
+    legacyReceipts.flatMap(({ release }) => {
+      const list = legacySpotifyAlbumTracklist(release)
+      return list ? [list.id] : []
+    }),
+  )
+  if (!completeIds.size) return false
+
+  const item = await database.query.mediaItem.findFirst({
+    columns: {},
+    where: (table, operators) => operators.eq(table.id, mediaItemId),
+    with: {
+      album: { columns: { spotifyUrl: true } },
+      providerReferences: {
+        columns: { externalId: true },
+        where: (table, { and, or, eq }) =>
+          or(
+            eq(table.referenceType, 'spotify'),
+            and(
+              eq(table.provider, 'spotify'),
+              eq(table.referenceType, 'album'),
+            ),
+          ),
+      },
+      referenceOverrides: {
+        columns: { provider: true, referenceType: true, externalId: true },
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.provider, 'spotify'),
+            inArray(table.referenceType, ['album', 'spotify']),
+          ),
+        orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
+      },
+    },
+  })
+  if (!item) return false
+  const rejections =
+    knownRejections ?? (await readAlbumMatchRejections(database, mediaItemId))
+  const isRejected = createAlbumMatchRejectionPredicate('spotify', rejections)
+  const activeOverrides = effectiveReferenceOverrides(
+    item.referenceOverrides,
+    isRejected,
+  )
+  const active = activeOverrides.latestCount
+    ? activeOverrides.active.map(({ externalId }) => externalId)
+    : [
+        item.album?.spotifyUrl ?? '',
+        ...item.providerReferences.map(({ externalId }) => externalId),
+      ]
+  const ids = new Set(active.map(spotifyAlbumId).filter((id) => id))
+  if (ids.size !== 1) return false
+  const [id] = ids
+  return (
+    !!id &&
+    completeIds.has(id) &&
+    !isRejected({ referenceType: 'album', externalId: id }) &&
+    !isRejected({
+      referenceType: 'url',
+      externalId: `https://open.spotify.com/album/${id}`,
+    })
+  )
+}
+
 export async function applyProviderResultInTransaction(
   input: ApplyProviderResultInput,
   database: ProviderDatabase,
@@ -378,16 +479,16 @@ export async function applyProviderResultInTransaction(
     sql`select id from media_item where id = ${input.mediaItemId} for update`,
   )
   // An album match can be rejected after its evidence was collected.
-  const isRejectedMatch =
+  const rejections =
     input.mediaType === 'album' &&
     (input.source === 'scrape-job' ||
       input.source === 'archived-replay' ||
       input.source === 'album-open')
-      ? createAlbumMatchRejectionPredicate(
-          input.provider,
-          await readAlbumMatchRejections(database, input.mediaItemId),
-        )
+      ? await readAlbumMatchRejections(database, input.mediaItemId)
       : undefined
+  const isRejectedMatch = rejections
+    ? createAlbumMatchRejectionPredicate(input.provider, rejections)
+    : undefined
   const normalizedSpotifyUrl = input.normalized.albumPatch?.spotifyUrl
   const discogs =
     input.provider === 'discogs' && isRejectedMatch
@@ -670,20 +771,9 @@ export async function applyProviderResultInTransaction(
   }
 
   if (input.mediaType === 'album' && input.normalized.tracks.length > 0) {
-    // A later partial Spotify import can have no tracks in current state.
-    // The successful snapshot history records whether Spotify supplied a list.
     const spotifyTrackList =
       input.provider !== 'spotify' &&
-      (await database.query.providerSnapshot.findFirst({
-        columns: { id: true },
-        where: (table, operators) =>
-          operators.and(
-            operators.eq(table.mediaItemId, input.mediaItemId),
-            operators.eq(table.provider, 'spotify'),
-            sql`jsonb_typeof(${table.normalizedData}->'tracks') = 'array'
-              and jsonb_typeof(${table.normalizedData}->'tracks'->0) = 'object'`,
-          ),
-      }))
+      (await spotifyOwnsAlbumTracklist(database, input.mediaItemId, rejections))
     if (!spotifyTrackList)
       await replaceAlbumTracks(
         database,

@@ -103,6 +103,8 @@ Shared browse keys: `popularityLastFm`, `scrobbles`, `ratingDiscogsValue`, `rati
 
 Once Spotify supplies a complete album track list, subsequent provider results preserve that edition's library tracks. Another provider can supply the library track list until Spotify supplies one. Each provider's own track list remains available in its snapshots and details.
 
+Legacy Spotify imports use the full saved page ordered by disc and track number, with the native recording IDs, durations and artist credits. An older raw Spotify receipt can protect the library track list when its normalized list is empty or partial. The receipt must have a complete page, unique positions and valid recording IDs, and its release ID must match the album's unambiguous, current Spotify identity.
+
 Discogs refreshed rating/popularity covers **one release only**, not the old top-ten weighted rating or all-version popularity sum. `plugin.discogs.ratingScope` records which release. Historic aggregate snapshots are not rewritten by the plugin. Raw master and main-release bodies are both retained. This intentionally avoids the old fanout and makes the changed scope inspectable.
 
 Google snapshots, current state, imported ratings, links and tag provenance remain available as historical data. The legacy importer still translates `rymGoogle` and `metacriticGoogle` under `google-custom-search`; retiring scraping does not rewrite those records. See [Google retirement and preservation](google-search-retirement.md).

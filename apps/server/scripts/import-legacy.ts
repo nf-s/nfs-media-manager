@@ -22,7 +22,6 @@ import {
   type PluginReference,
   type PluginResult,
   type PluginTag,
-  type PluginTrack,
 } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
 import { legacyFilmAddedDate } from '@/lib/film-added-date'
@@ -32,6 +31,7 @@ import {
   normalizeOmdbPayload,
   normalizeTmdbPayload,
 } from '@/lib/provider-normalizers'
+import { legacySpotifyAlbumTracklist } from '@/lib/spotify-api'
 import { listLoadedScrapePlugins } from '@/plugins/registry'
 import {
   album,
@@ -327,8 +327,7 @@ export function normalizeSpotifyAlbum(
 ): PluginResult {
   const spotifyRecord = getNestedRecord(rawAlbum, 'spotify') ?? rawAlbum
   const artists = toJsonArray(getRecordValue(spotifyRecord, 'artists'))
-  const tracksContainer = toJsonRecord(getRecordValue(spotifyRecord, 'tracks'))
-  const trackItems = toJsonArray(getRecordValue(tracksContainer, 'items'))
+  const tracklist = legacySpotifyAlbumTracklist(spotifyRecord)
   const externalIds = toJsonRecord(
     getRecordValue(spotifyRecord, 'external_ids'),
   )
@@ -351,30 +350,6 @@ export function normalizeSpotifyAlbum(
         name: artistName,
         role: 'artist',
         billingOrder: index,
-      },
-    ]
-  })
-
-  const tracks: PluginTrack[] = trackItems.flatMap((trackValue, index) => {
-    const trackRecord = toJsonRecord(trackValue)
-    const title = getNestedString(trackRecord, 'name')
-
-    if (!title) {
-      return []
-    }
-
-    return [
-      {
-        externalId: getNestedString(trackRecord, 'id') ?? undefined,
-        title,
-        position: index + 1,
-        durationSec:
-          (toNumber(getRecordValue(trackRecord, 'duration_ms')) ?? 0) > 0
-            ? Math.round(
-                (toNumber(getRecordValue(trackRecord, 'duration_ms')) ?? 0) /
-                  1000,
-              )
-            : undefined,
       },
     ]
   })
@@ -436,10 +411,7 @@ export function normalizeSpotifyAlbum(
     },
     albumPatch: {
       dateAdded: getNestedString(rawAlbum, 'addedDate') ?? undefined,
-      durationSec:
-        tracks.length > 0
-          ? tracks.reduce((total, track) => total + (track.durationSec ?? 0), 0)
-          : undefined,
+      durationSec: tracklist?.durationSec,
       spotifyUrl: getNestedString(externalUrls, 'spotify') ?? undefined,
     },
     references,
@@ -464,7 +436,7 @@ export function normalizeSpotifyAlbum(
       },
     ),
     credits,
-    tracks,
+    tracks: tracklist?.tracks ?? [],
     playlists,
   }
 
