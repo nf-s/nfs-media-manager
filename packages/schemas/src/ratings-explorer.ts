@@ -37,11 +37,26 @@ export const RatingsSettingsSchema = z.strictObject({
 })
 export type RatingsSettings = z.infer<typeof RatingsSettingsSchema>
 
-export const RatingsRankingRequestSchema = z
+const dimension = z
+  .string()
+  .max(127)
+  .regex(/^(score|spread|counted|native\.[a-zA-Z][a-zA-Z0-9_.-]*)$/)
+const binIndex = z.number().int().min(0).max(4)
+const range = z
+  .strictObject({
+    dimension,
+    first: binIndex,
+    last: binIndex,
+  })
+  .refine(
+    ({ first, last }) => first <= last,
+    'End bin must follow the start bin',
+  )
+export type RatingsRange = z.infer<typeof range>
+
+export const RatingsSourcesRequestSchema = z
   .strictObject({
     library: MediaTypeSchema,
-    offset: integer.max(2_147_483_647).default(0),
-    limit: z.number().int().min(1).max(100).default(40),
     search: z.string().trim().max(200).default(''),
     tag: z.string().trim().max(200).default(''),
     yearFrom: year.optional(),
@@ -49,8 +64,15 @@ export const RatingsRankingRequestSchema = z
     watched: z.boolean().optional(),
     minPlays: integer.max(2_147_483_647).optional(),
     scoredOnly: z.boolean().default(true),
-    sort: key.default('score'),
-    direction: DirectionSchema.default('desc'),
+    ranges: z
+      .array(range)
+      .max(67)
+      .refine(
+        (ranges) =>
+          new Set(ranges.map((r) => r.dimension)).size === ranges.length,
+        'Each histogram can have one range',
+      )
+      .default([]),
     settings: RatingsSettingsSchema.prefault({}),
   })
   .superRefine((request, ctx) => {
@@ -77,6 +99,14 @@ export const RatingsRankingRequestSchema = z
         message: 'Only albums have a play count filter',
       })
   })
+export type RatingsSourcesRequest = z.infer<typeof RatingsSourcesRequestSchema>
+export const RatingsRankingRequestSchema =
+  RatingsSourcesRequestSchema.safeExtend({
+    offset: integer.max(2_147_483_647).default(0),
+    limit: z.number().int().min(1).max(100).default(40),
+    sort: key.default('score'),
+    direction: DirectionSchema.default('desc'),
+  })
 export type RatingsRankingRequest = z.infer<typeof RatingsRankingRequestSchema>
 export function defaultRatingsRankingRequest(
   library: RatingsRankingRequest['library'],
@@ -93,6 +123,33 @@ export const RatingsSourceSchema = z.object({
   group: groups,
 })
 export type RatingsSource = z.infer<typeof RatingsSourceSchema>
+
+export const RatingsSourcesPageSchema = z.object({
+  sources: z.array(RatingsSourceSchema).max(64),
+  total: integer,
+  coverage: z
+    .array(z.object({ key, recorded: integer, eligible: integer }))
+    .max(64),
+  histograms: z
+    .array(
+      z.object({
+        dimension,
+        bins: z
+          .array(
+            z.object({
+              lower: z.number().nonnegative(),
+              upper: z.number().nonnegative(),
+              upperInclusive: z.boolean(),
+              count: integer,
+            }),
+          )
+          .min(1)
+          .max(5),
+      }),
+    )
+    .max(67),
+})
+export type RatingsSourcesPage = z.infer<typeof RatingsSourcesPageSchema>
 
 export const RatingsObservationSchema = z.object({
   key,

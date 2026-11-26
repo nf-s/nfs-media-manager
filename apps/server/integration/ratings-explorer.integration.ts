@@ -6,11 +6,16 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import {
   RatingsRankingRequestSchema,
+  RatingsSourcesRequestSchema,
   type RatingsRankingRequest,
+  type RatingsSourcesPage,
 } from '@repo/schemas/ratings-explorer'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
-import { rankRatings } from '@/services/ratings-explorer'
+import {
+  rankRatings,
+  summarizeRatingsSources,
+} from '@/services/ratings-explorer'
 
 const name = 'ratings_explorer_' + randomUUID().replaceAll('-', '')
 const connection = {
@@ -51,7 +56,7 @@ const plugin: MediaProviderPlugin = {
         label: 'Duplicate',
         type: 'number',
         filterable: true,
-        rating: { provider: 'fixture', scale: 5 },
+        rating: { provider: 'fixture', scale: 3 },
       },
       {
         key: 'plugin.fixture.text',
@@ -106,6 +111,22 @@ function page(input: Record<string, unknown> = {}) {
       ...input,
     }),
   )
+}
+function summary(input: Record<string, unknown> = {}) {
+  return summarizeRatingsSources(
+    RatingsSourcesRequestSchema.parse({
+      library: 'film',
+      scoredOnly: false,
+      ...input,
+    }),
+  )
+}
+function bins(summary: RatingsSourcesPage, dimension: string) {
+  const histogram = summary.histograms.find(
+    (entry) => entry.dimension === dimension,
+  )
+  if (!histogram) throw new Error('Missing histogram ' + dimension)
+  return histogram.bins
 }
 function weight(key: string, value: number, minVotes = 0) {
   return { key, weight: value, minVotes }
@@ -164,6 +185,25 @@ it('normalizes against visible library members before filtering, sorting and exa
     yearTo: 2017,
   })
   expect(filtered.rows).toEqual([full.rows[1]])
+  const visible = await summary({
+    search: 'DIRECTOR',
+    tag: 'drama',
+    watched: true,
+    yearFrom: 2017,
+    yearTo: 2017,
+    settings: { minSources: 1 },
+  })
+  expect(visible.total).toBe(1)
+  expect(bins(visible, 'native.ratingImdbValue')[2]).toEqual({
+    lower: 4,
+    upper: 6,
+    upperInclusive: false,
+    count: 1,
+  })
+  expect(bins(visible, 'score').map((bin) => bin.count)).toEqual([
+    0, 0, 1, 0, 0,
+  ])
+  expect((await summary()).total).toBe(4)
   expect(await page({ search: 'film-%' })).toMatchObject({ total: 0, rows: [] })
   expect(await page({ offset: 4 })).toMatchObject({ total: 4, rows: [] })
   expect(
@@ -178,6 +218,7 @@ it('normalizes against visible library members before filtering, sorting and exa
     "update media_item set metadata = jsonb_set(metadata, '{browse,ratingImdbValue}', '10') where id='film-1'",
   )
   expect((await page({ sort: 'ratingImdbValue' })).rows[0]?.id).toBe('film-1')
+  expect(bins(await summary(), 'native.ratingImdbValue').at(-1)?.count).toBe(2)
 })
 
 it('shows native scores, independent vote counts, group gaps and both combination weights', async () => {
@@ -288,13 +329,22 @@ it('requires a majority for outliers, and trims endpoints only inside the mean',
     [votesKey]: 10,
   })
   await film('empty', {})
-  const { rows } = await page({
+  const request = {
     settings: {
       normalization: 'scale',
       outlierDistance: 25,
       combine: 'trimmed',
       sources: [weight('ratingRt', 3)],
     },
+  }
+  const { rows } = await page(request)
+  const coverage = (await summary(request)).coverage
+  expect(coverage).toContainEqual({ key: 'ratingRt', recorded: 2, eligible: 0 })
+  expect(coverage).toContainEqual({ key: pluginKey, recorded: 2, eligible: 1 })
+  expect(coverage).toContainEqual({
+    key: 'ratingTrakt',
+    recorded: 2,
+    eligible: 2,
   })
   const majority = rows.find((row) => row.id === 'majority')
   const split = rows.find((row) => row.id === 'split')
@@ -388,6 +438,14 @@ it('keeps legal zeros and ties, rejects malformed data and distinguishes missing
   }
   const sources = (await page()).sources.map((s) => weight(s.key, 0))
   const none = await page({ settings: { sources, outlierDistance: 25 } })
+  const disabled = await summary({ settings: { sources, outlierDistance: 25 } })
+  expect(disabled.total).toBe(4)
+  expect(disabled.coverage).toContainEqual({
+    key: pluginKey,
+    recorded: 3,
+    eligible: 0,
+  })
+  expect(bins(disabled, 'score').every((bin) => bin.count === 0)).toBe(true)
   expect(
     none.rows.every(
       (r) =>
@@ -503,6 +561,19 @@ it.each(libraries)(
         status: 'counted',
       })
     }
+    const floor = await summary({
+      library,
+      settings: { minSources: 1, sources: [weight(pluginKey, 1, 4)] },
+    })
+    expect(floor.total).toBe(7)
+    expect(floor.coverage).toContainEqual({
+      key: pluginKey,
+      recorded: 3,
+      eligible: 1,
+    })
+    expect(bins(floor, 'native.' + pluginKey).map((bin) => bin.count)).toEqual([
+      2, 1, 0, 0, 0,
+    ])
   },
 )
 
@@ -559,4 +630,197 @@ it('uses first albums, existing listening totals and accepted score fields for a
   expect(filtered.sources.some((source) => source.group === 'personal')).toBe(
     false,
   )
+  const albums = await summary({
+    library: 'album',
+    minPlays: 3,
+    search: 'artist',
+  })
+  expect(albums.total).toBe(1)
+  expect(albums.coverage).toContainEqual({
+    key: 'ratingRymValue',
+    recorded: 1,
+    eligible: 0,
+  })
+  expect(albums.coverage).toContainEqual({
+    key: 'ratingMetacriticValue',
+    recorded: 0,
+    eligible: 0,
+  })
+  expect((await summary({ library: 'album' })).total).toBe(2)
+})
+
+it.each(libraries)(
+  'uses the same %s range edges for histograms and Ranking drill-down',
+  async (library) => {
+    const critic = library === 'film' ? 'ratingRt' : 'ratingMetacriticValue'
+    const native = 'native.' + pluginKey
+    const input = {
+      library,
+      search: 'included',
+      settings: { normalization: 'scale', missingWeight: 0 },
+    }
+    const values: [number, number][] = [
+      [0, 0],
+      [20, 20],
+      [40, 40],
+      [60, 60],
+      [80, 80],
+      [100, 0],
+      [100, 100],
+    ]
+    await database.insert(schema.mediaItem).values(
+      values.map(([plugin, builtin], i) => ({
+        id: 'edge-' + i,
+        slug: 'edge-' + i,
+        title: 'Included ' + i,
+        mediaType: library,
+        metadata: {
+          browse: {
+            [critic]: builtin,
+            ratingMetacriticVotes: 10,
+            [pluginKey]: plugin,
+            [votesKey]: 10,
+          },
+        },
+      })),
+    )
+    await database.insert(schema.mediaItem).values([
+      {
+        id: 'missing',
+        slug: 'missing',
+        title: 'Included missing',
+        mediaType: library,
+      },
+      {
+        id: 'excluded',
+        slug: 'excluded',
+        title: 'Other title',
+        mediaType: library,
+        metadata: { browse: { [pluginKey]: 35, [votesKey]: 10 } },
+      },
+    ])
+    const full = await summary(input)
+    expect(full.total).toBe(8)
+    expect(full.coverage).toContainEqual({
+      key: pluginKey,
+      recorded: 7,
+      eligible: 7,
+    })
+    expect(bins(full, native)).toEqual(
+      [1, 1, 1, 1, 3].map((count, i) => ({
+        lower: i * 20,
+        upper: (i + 1) * 20,
+        upperInclusive: i === 4,
+        count,
+      })),
+    )
+    expect(bins(full, 'spread').map((bin) => bin.count)).toEqual([
+      6, 0, 0, 0, 1,
+    ])
+    expect(bins(full, 'score').map((bin) => bin.count)).toEqual([1, 1, 2, 1, 2])
+    const width = Math.ceil((full.sources.length + 1) / 5)
+    const countBins = bins(full, 'counted')
+    expect(countBins).toHaveLength(Math.floor(full.sources.length / width) + 1)
+    expect(countBins).toEqual(
+      countBins.map((_, i) => ({
+        lower: i * width,
+        upper: Math.min((i + 1) * width - 1, full.sources.length),
+        upperInclusive: true,
+        count: Number(i === 0) + (i === Math.floor(2 / width) ? 7 : 0),
+      })),
+    )
+    for (const dimension of [native, 'score', 'spread', 'counted']) {
+      for (const [index, bin] of bins(full, dimension).entries()) {
+        const drilled = await page({
+          ...input,
+          ranges: [{ dimension, first: index, last: index }],
+        })
+        expect(drilled.total).toBe(bin.count)
+      }
+    }
+    const intersect = {
+      ...input,
+      ranges: [
+        { dimension: native, first: 1, last: 3 },
+        { dimension: 'score', first: 2, last: 3 },
+      ],
+    }
+    const selected = await summary(intersect)
+    expect(selected.total).toBe(2)
+    expect(selected.coverage).toContainEqual({
+      key: pluginKey,
+      recorded: 2,
+      eligible: 2,
+    })
+    expect(bins(selected, native).map((bin) => bin.count)).toEqual([
+      0, 0, 1, 1, 1,
+    ])
+    expect(bins(selected, 'score').map((bin) => bin.count)).toEqual([
+      0, 1, 1, 1, 0,
+    ])
+    expect(bins(selected, 'spread').map((bin) => bin.count)).toEqual([
+      2, 0, 0, 0, 0,
+    ])
+    expect((await page(intersect)).rows.map((row) => row.id)).toEqual([
+      'edge-3',
+      'edge-2',
+    ])
+    const miss = await summary({ ...intersect, search: 'absent title' })
+    expect(miss.total).toBe(0)
+    expect(
+      miss.histograms
+        .flatMap((hist) => hist.bins)
+        .every((bin) => bin.count === 0),
+    ).toBe(true)
+    expect(await database.$count(schema.scrapeJob)).toBe(0)
+    expect(plugin.scrapeMediaItem).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  },
+)
+
+it('validates histogram dimensions and bin bounds for both read operations', async () => {
+  for (const read of [page, summary]) {
+    for (const range of [
+      { dimension: 'native.plugin.fixture.unknown', first: 0, last: 1 },
+      { dimension: 'native.ratingImdbValue', first: 0, last: 1 },
+      { dimension: 'counted', first: 4, last: 4 },
+      { dimension: 'score', first: -1, last: 0 },
+      { dimension: 'spread', first: 0, last: 5 },
+      { dimension: 'score', first: 2, last: 1 },
+    ]) {
+      await expect(async () =>
+        read({ library: 'album', ranges: [range] }),
+      ).rejects.toThrow()
+    }
+  }
+})
+
+it('reports the exact decimal boundary used for a plugin native rating', async () => {
+  // This plugin key is a built-in duplicate for films but is registered for albums.
+  await database.insert(schema.mediaItem).values(
+    [0, 0.59999, 0.6, 3].map((value, i) => ({
+      id: 'decimal-' + i,
+      slug: 'decimal-' + i,
+      title: 'Decimal ' + i,
+      mediaType: 'album',
+      metadata: { browse: { ratingRt: value } },
+    })),
+  )
+  const dimension = 'native.ratingRt'
+  const histogram = bins(await summary({ library: 'album' }), dimension)
+  expect(histogram[0]).toEqual({
+    lower: 0,
+    upper: 0.6,
+    upperInclusive: false,
+    count: 2,
+  })
+  expect(histogram[1]?.lower).toBe(0.6)
+  expect(
+    (
+      await page({
+        library: 'album',
+        ranges: [{ dimension, first: 1, last: 1 }],
+      })
+    ).rows.map((row) => row.id),
+  ).toEqual(['decimal-2'])
 })

@@ -1,5 +1,9 @@
 import { expect, it, vi } from 'vitest'
-import { RatingsRankingRequestSchema } from '@repo/schemas/ratings-explorer'
+import {
+  RatingsRankingRequestSchema,
+  RatingsSourcesRequestSchema,
+  type RatingsSourcesRequest,
+} from '@repo/schemas/ratings-explorer'
 import {
   createTrackPerformanceFixture,
   ExplainSchema,
@@ -15,6 +19,29 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/plugins/registry', () => ({
   listLoadedScrapePlugins: async () => [],
 }))
+
+async function measureSources(
+  label: string,
+  maxBlocks: number,
+  request: RatingsSourcesRequest,
+) {
+  const { summarizeRatingsSources } =
+    await import('@/services/ratings-explorer')
+  const result = await checkBudget(label, maxBlocks, 1, async () => {
+    const start = performance.now()
+    const page = await summarizeRatingsSources(request)
+    process.stdout.write(
+      `${label}: ${Buffer.byteLength(JSON.stringify(page))} response bytes, ${(performance.now() - start).toFixed(1)} ms to service result\n`,
+    )
+    return page
+  })
+  expect(result.coverage).toHaveLength(result.sources.length)
+  expect(result.histograms).toHaveLength(result.sources.length + 3)
+  const bytes = Buffer.byteLength(JSON.stringify(result))
+  expect(bytes).toBeLessThan(8_000)
+  expect(fetch).not.toHaveBeenCalled()
+  return { result, bytes }
+}
 
 // Replay the measured plan with only the exact count removed. Both variants
 // still normalize, filter, sort and construct the same page of evidence.
@@ -47,6 +74,7 @@ it('bounds the ranking page at two film library sizes and after a rating edit', 
     limit: 40,
   })
   const sizes: number[] = []
+  const sourcesSizes: number[] = []
   let total = 0
   for (const count of [1500, 12000]) {
     await pool.query(
@@ -89,8 +117,43 @@ it('bounds the ranking page at two film library sizes and after a rating edit', 
     expect(size).toBeLessThan(80_000)
     sizes.push(size)
     await measureExactCount(count)
+    const requestSources = RatingsSourcesRequestSchema.parse({
+      library: 'film',
+    })
+    const sources = await measureSources(
+      'Dense film Sources ' + count,
+      count === 1500 ? 320 : 1000,
+      requestSources,
+    )
+    expect(sources.result.total).toBe(count)
+    expect(sources.result.coverage).toContainEqual({
+      key: 'ratingRt',
+      recorded: count,
+      eligible: count,
+    })
+    sourcesSizes.push(sources.bytes)
+    if (count === 12000) {
+      // Searching also scans 165 credit blocks for director names.
+      const selected = await measureSources(
+        'Film Sources with two ranges and title filter',
+        1200,
+        {
+          ...requestSources,
+          search: 'fixture film 11',
+          ranges: [
+            { dimension: 'native.ratingRt', first: 2, last: 3 },
+            { dimension: 'score', first: 1, last: 3 },
+          ],
+        },
+      )
+      expect(selected.result.total).toBeGreaterThan(0)
+      expect(selected.result.total).toBeLessThan(count)
+    }
   }
   expect(Math.max(...sizes) / Math.min(...sizes)).toBeLessThan(1.15)
+  expect(Math.max(...sourcesSizes) / Math.min(...sourcesSizes)).toBeLessThan(
+    1.15,
+  )
   await pool.query(`update media_item set metadata = jsonb_set(metadata, '{browse,ratingRt}', '100')
     where id = 'film-1'`)
   const edited = await checkBudget(
@@ -156,4 +219,39 @@ it('bounds sparse album rankings with unrated rows and missing source values', a
   expect(result.rows).toHaveLength(40)
   expect(result.rows[0]?.spread).toBe(0)
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(40_000)
+  const sourcesRequest = RatingsSourcesRequestSchema.parse({
+    library: 'album',
+    scoredOnly: false,
+  })
+  const small = await measureSources(
+    'Sparse album Sources 1000',
+    Math.min(1050, membershipBlocks + 25),
+    sourcesRequest,
+  )
+  expect(small.result.total).toBe(1000)
+  expect(small.result.coverage).toContainEqual({
+    key: 'ratingDiscogsValue',
+    recorded: 333,
+    eligible: 333,
+  })
+  await pool.query(`insert into media_item(id, slug, title, media_type, metadata)
+    select 'extra-album-' || i, 'extra-album-' || i, 'Extra fixture album ' || i, 'album',
+      case when i % 3 = 0 then '{"browse":{"ratingDiscogsValue":4.5,"ratingDiscogsVotes":11,"ratingMetacriticValue":80,"ratingMetacriticVotes":7}}'::jsonb
+      else '{"browse":{}}'::jsonb end from generate_series(1001, 8000) i`)
+  await pool.query(`insert into album(media_item_id)
+    select 'extra-album-' || i from generate_series(1001, 8000) i`)
+  await pool.query('analyze media_item')
+  await pool.query('analyze album')
+  const large = await measureSources(
+    'Sparse album Sources 8000',
+    1100,
+    sourcesRequest,
+  )
+  expect(large.result.total).toBe(8000)
+  expect(large.result.coverage).toContainEqual({
+    key: 'ratingDiscogsValue',
+    recorded: 2666,
+    eligible: 2666,
+  })
+  expect(large.bytes / small.bytes).toBeLessThan(1.15)
 })

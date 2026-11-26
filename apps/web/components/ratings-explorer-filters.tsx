@@ -21,9 +21,11 @@ type Filters = Pick<
 export function RatingsFilters({
   request,
   onChange,
+  onResetRanges,
 }: {
   request: RatingsRankingRequest
   onChange: (filters: Filters) => void
+  onResetRanges: () => void
 }) {
   const [error, setError] = useState('')
   const { library, tag, yearFrom, yearTo, minPlays, watched, scoredOnly } =
@@ -36,9 +38,9 @@ export function RatingsFilters({
     scoredOnly,
   ].filter(Boolean).length
   return (
-    <BrowseFilterPanel count={count}>
+    <BrowseFilterPanel count={count + request.ranges.length}>
       <FilterPanelSection
-        title="Ranking filters"
+        title="Rating filters"
         icon={<ListFilter className="ds-i" aria-hidden />}
         defaultOpen
       >
@@ -154,6 +156,7 @@ export function RatingsFilters({
                 const form = event.currentTarget.form
                 form?.reset()
                 setError('')
+                onResetRanges()
                 onChange({
                   tag: '',
                   yearFrom: undefined,

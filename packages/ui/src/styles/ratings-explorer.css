@@ -27,3 +27,20 @@
 .ratings-page > .ds-toolbar {
   flex-wrap: wrap;
 }
+.ratings-page > .ds-filterline {
+  flex-wrap: wrap;
+  max-height: 20%;
+  overflow: auto;
+}
+.ratings-sources {
+  padding: 0 var(--ds-gutter) var(--ds-6);
+}
+.ratings-distributions {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, var(--ds-rail)), 1fr)
+  );
+  align-items: start;
+  gap: var(--ds-6);
+}

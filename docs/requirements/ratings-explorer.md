@@ -1,6 +1,6 @@
 # Ratings explorer for films and albums
 
-Open **Ratings** beside **Browse** in Films or Albums. Adjust the source weights to rank the library, then select a title, score or rating to inspect its calculation and open the stored evidence. The browser remembers scoring settings separately for the two libraries. Sources, Agreement and Compare are planned in subsequent releases.
+Open **Ratings** beside **Browse** in Films or Albums. Adjust the source weights to rank the library, then select a title, score or rating to inspect its calculation and open the stored evidence. Switch to **Sources** to inspect coverage and select a range of ratings. The browser remembers scoring settings separately for the two libraries.
 
 ## Ranking and scoring
 
@@ -12,9 +12,14 @@ Open **Ratings** beside **Browse** in Films or Albums. Adjust the source weights
 - Optionally omit an outlier only if at least three eligible ratings exist and a strict majority lies within the selected distance of their unweighted median. Start this rule switched off, with a distance of 25 points. Missing or excluded positive-weight sources may count as zero, half (default) or full weight at their source average. Weight-zero sources have no influence. The minimum counts observed qualifying ratings after outlier removal, before trimmed-mean extrema are dropped. Show an unscored item and its shortfall on request.
 - Each result opens its calculation in the shared inspector. Show raw score and scale, votes, adjusted value, weight, eligibility and any exclusion, the combination step, the observed and missing weights, and the displayed result using the same rounding as the table. In a trimmed mean the extrema leave the mean's numerator and denominator, and the inspector separately shows the qualifying weight used for the missing-rating adjustment. Link to the item's stored Sources evidence, preserving separate score and vote provenance when available.
 
-## Planned views: Sources, Agreement and Compare
+## Sources
 
-- **Sources** shows coverage and histograms of native ratings, combined score, spread and counted sources. Select a bin or range to filter the other views. Each histogram counts items matching every other filter. Give the numerator and denominator for coverage and distinguish recorded ratings from ratings used in a score.
+- Show how many matching items have a recorded rating from each source and how many have one that contributed to a combined score. Give the filtered item total as the denominator in each case. Recorded ratings include valid observations below a vote floor or from a source with zero weight.
+- Show native rating distributions on each source's scale, combined scores from 0 to 100, spread from 0 to 50, and the number of qualifying sources. Divide continuous scales into five equal bins. Each lower bound is inclusive and the final bin includes the maximum. Counted-source bins cover whole numbers, including zero.
+- Open a bin or a contiguous range in Ranking with the current search, filters and scoring settings. Multiple dimensions can be filtered together. Each histogram ignores its own selected range and applies the others, so adjacent bins remain available. Coverage and Ranking apply the complete set.
+
+## Planned views: Agreement and Compare
+
 - **Agreement** shows the correlation and shared-item count for each source pair, the sources that score systematically higher or lower than their peers, and the items with the largest disagreements. Spread is the unweighted population standard deviation of at least two qualifying adjusted ratings. With three or more, identify the source furthest from the mean of the others when there is a difference. Report pairwise Pearson correlation for at least 20 shared items with variation on both axes. Show the reason when it is unavailable.
 - **Compare** opens from a pair or from the view switch. Plot source ratings, combined scores, critic or audience averages, spread or year, with selectable axes. Show overlap, signed differences on comparable axes and a route from a point or group of points to the contributing items. Agreement and Compare use the same vote-qualified pairs under the same filters. Weights and outlier rules affect the composite, while comparisons between the original sources retain the evidence of disagreement. A library with zero or one source still opens.
 

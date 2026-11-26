@@ -3,7 +3,10 @@ import {
   RatingsRankingRequestSchema,
   type RatingsRankingRequest,
   type RatingsRankingPage,
+  RatingsRankingPageSchema,
+  RatingsSourcesPageSchema,
 } from '@repo/schemas/ratings-explorer'
+import { z } from 'zod'
 
 const source = {
   key: 'ratingFixture',
@@ -13,6 +16,121 @@ const source = {
   scale: 10,
   group: 'audience',
 } satisfies RatingsRankingPage['sources'][number]
+
+for (const library of ['film', 'album']) {
+  test(
+    library +
+      ' Sources opens real matching Ranking rows from a bin and a range',
+    async ({ page }) => {
+      const reads: string[] = []
+      page.on('request', (request) => {
+        const path = new URL(request.url()).pathname
+        if (request.method() === 'POST' && path.startsWith('/api/v1/ratings/'))
+          reads.push(path.split('/').at(-1) ?? '')
+      })
+      const response = (view: string) =>
+        page.waitForResponse(
+          (r) =>
+            r.request().method() === 'POST' &&
+            r.url().endsWith('/ratings/' + view),
+        )
+      await Promise.all([
+        response('ranking'),
+        page.goto('/' + library + 's/ratings'),
+      ])
+      await page.getByRole('button', { name: /^Filters, columns/ }).click()
+      const filters = page.getByRole('dialog', { name: 'Filters and view' })
+      await filters.getByLabel('From year').fill('1900')
+      await Promise.all([
+        response('ranking'),
+        filters.getByRole('button', { name: 'Apply filters' }).click(),
+      ])
+      await filters.getByRole('button', { name: 'Close filters' }).click()
+      const views = page.getByRole('group', { name: 'Ratings view' })
+      const began = Date.now()
+      const [summaryResponse] = await Promise.all([
+        response('sources'),
+        views.getByRole('button', { name: 'Sources' }).click(),
+      ])
+      const { data: summary } = z
+        .object({ data: RatingsSourcesPageSchema })
+        .parse(await summaryResponse.json())
+      const chart = page.getByRole('group', {
+        name: 'Combined score distribution',
+      })
+      await expect(chart).toBeVisible()
+      test.info().annotations.push({
+        type: 'Sources visible',
+        description: String(Date.now() - began) + ' ms',
+      })
+      const score = summary.histograms.find((h) => h.dimension === 'score')
+      if (!score) throw new Error('Missing score histogram')
+      const first = score.bins.findIndex((bin) => bin.count > 0)
+      expect(first).toBeGreaterThanOrEqual(0)
+      expect(reads).toEqual(['ranking', 'ranking', 'sources'])
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true)
+      const [rankedResponse] = await Promise.all([
+        response('ranking'),
+        chart.getByRole('button').nth(first).click(),
+      ])
+      const { data: ranked } = z
+        .object({ data: RatingsRankingPageSchema })
+        .parse(await rankedResponse.json())
+      expect(ranked.total).toBe(score.bins[first]?.count)
+      const row = ranked.rows[0]
+      if (!row) throw new Error('Expected a matching title')
+      await expect(
+        page.getByRole('button', { name: row.title, exact: true }).first(),
+      ).toBeVisible()
+      await page
+        .getByRole('button', { name: 'Edit Combined score range' })
+        .click()
+      await expect(chart).toBeVisible()
+      const from = Math.max(0, first - 1)
+      const through = Math.min(first + 1, score.bins.length - 1)
+      await page.getByLabel('From bin').selectOption({ index: from })
+      await page.getByLabel('Through bin').selectOption({ index: through })
+      const [rangeResponse] = await Promise.all([
+        response('ranking'),
+        page.getByRole('button', { name: 'Show in Ranking' }).click(),
+      ])
+      const { data: rangeRows } = z
+        .object({ data: RatingsRankingPageSchema })
+        .parse(await rangeResponse.json())
+      expect(rangeRows.total).toBe(
+        score.bins
+          .slice(from, through + 1)
+          .reduce((sum, bin) => sum + bin.count, 0),
+      )
+      expect(
+        RatingsRankingRequestSchema.parse(
+          rangeResponse.request().postDataJSON(),
+        ),
+      ).toMatchObject({
+        yearFrom: 1900,
+        ranges: [{ dimension: 'score', first: from, last: through }],
+      })
+      expect(reads).toEqual([
+        'ranking',
+        'ranking',
+        'sources',
+        'ranking',
+        'sources',
+        'ranking',
+      ])
+      await page
+        .getByRole('button', { name: 'Clear Combined score range' })
+        .click()
+      await expect(
+        page.getByRole('button', { name: 'Edit Combined score range' }),
+      ).toHaveCount(0)
+    },
+  )
+}
 
 function ranking(request: RatingsRankingRequest): RatingsRankingPage {
   const total = request.search ? 1 : 120

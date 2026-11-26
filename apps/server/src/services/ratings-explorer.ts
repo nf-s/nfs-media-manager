@@ -1,10 +1,13 @@
 import { sql, type SQL } from 'drizzle-orm'
 import {
   RatingsRankingPageSchema,
+  RatingsSourcesPageSchema,
   type RatingsRankingPage,
   type RatingsRankingRequest,
   type RatingsSettings,
   type RatingsSource,
+  type RatingsSourcesPage,
+  type RatingsSourcesRequest,
 } from '@repo/schemas/ratings-explorer'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
@@ -47,7 +50,7 @@ function group(key: string): RatingsSource['group'] {
 }
 
 async function rankingSources(
-  request: RatingsRankingRequest,
+  request: RatingsSourcesRequest,
 ): Promise<Source[]> {
   const fields = await listBrowseFields(request.library)
   const overrides = new Map(
@@ -94,7 +97,7 @@ async function rankingSources(
   return sources
 }
 
-function displayFilter(request: RatingsRankingRequest) {
+function displayFilter(request: RatingsSourcesRequest) {
   const conditions: SQL[] = []
   if (request.search) {
     const search = request.search.toLowerCase()
@@ -130,7 +133,7 @@ function numericArray(expressions: SQL[]) {
 
 // Source keys only enter bound JSON field expressions. Array positions come
 // from the registry and preserve its order, including on exact scoring ties.
-function cohort(request: RatingsRankingRequest, sources: Source[]) {
+function cohort(request: RatingsSourcesRequest, sources: Source[]) {
   const metacriticAccepted =
     request.library === 'album'
       ? sql`media_item.id not in (${rejectedAlbumMetacriticIds()})`
@@ -169,8 +172,8 @@ function cohort(request: RatingsRankingRequest, sources: Source[]) {
       and media_item.metadata->>'legacyHidden' is distinct from 'true'
       ${
         request.library === 'album'
-          ? sql`and not exists (
-        select 1 from album where album.media_item_id = media_item.id and edition_of_id is not null)`
+          ? sql`and media_item.id not in (
+        select media_item_id from album where edition_of_id is not null)`
           : sql``
       }`
 }
@@ -293,22 +296,94 @@ function sortExpression(request: RatingsRankingRequest, sources: Source[]) {
   })
 }
 
-export async function rankRatings(
-  request: RatingsRankingRequest,
-): Promise<RatingsRankingPage> {
-  const sources = await rankingSources(request)
-  const order = sql`${sortExpression(request, sources)} ${request.direction === 'asc' ? sql`asc` : sql`desc`} nulls last, id asc`
-  const keys = sql`${sql.param(sources.map((s) => s.key))}::text[]`
-  const result =
-    await db.execute(sql`with cohort as materialized (${cohort(request, sources)}),
+function scoringCtes(request: RatingsSourcesRequest, sources: Source[]) {
+  return sql`cohort as materialized (${cohort(request, sources)}),
     normalized as (${normalized(request.settings, sources)}),
     combined as (
       select n.*, s.*, case when s.counted >= ${request.settings.minSources} then
         (s.core * s.observed_weight + s.missing_sum) / nullif(s.observed_weight + s.missing_weight, 0)
         end as score
       from normalized n cross join lateral (${scoreItem(request.settings, sources)}) s where n.matches
-    ), eligible as materialized (
+    ), matching as (
       select * from combined ${request.scoredOnly ? sql`where score is not null` : sql``}
+    )`
+}
+
+function continuousDimension(dimension: string, value: SQL, scale: number) {
+  // Compute decimal edges in PostgreSQL, just like width_bucket, so a plugin
+  // scale of seven reports its first upper edge as 1.4.
+  const edge = (i: number) => sql`${scale}::numeric * ${i}::int * 0.2`
+  const bins = Array.from({ length: 5 }, (_, i) => ({
+    lower: edge(i),
+    upper: edge(i + 1),
+    upperInclusive: i === 4,
+  }))
+  // width_bucket is strict on NULL and otherwise uses half-open intervals.
+  // Include the scale maximum in the final bin, including a perfect score.
+  const bucket = sql`case when ${value} >= ${scale}::numeric then 4
+    else width_bucket(${value}, 0::numeric, ${scale}::numeric, 5) - 1 end`
+  return { dimension, bucket, bins }
+}
+
+function histogramDimensions(sources: Source[]) {
+  const width = Math.ceil((sources.length + 1) / 5)
+  const countBins = Array.from(
+    { length: Math.floor(sources.length / width) + 1 },
+    (_, i) => ({
+      lower: sql`${i * width}::int`,
+      upper: sql`${Math.min((i + 1) * width - 1, sources.length)}::int`,
+      upperInclusive: true,
+    }),
+  )
+  return [
+    ...sources.map((source, i) =>
+      continuousDimension(
+        'native.' + source.key,
+        sql`raw[${i + 1}]`,
+        source.scale,
+      ),
+    ),
+    continuousDimension('score', sql`score`, 100),
+    continuousDimension('spread', sql`spread`, 50),
+    {
+      dimension: 'counted',
+      bucket: sql`counted / ${width}::int`,
+      bins: countBins,
+    },
+  ]
+}
+
+function selectedRanges(
+  request: RatingsSourcesRequest,
+  dimensions: ReturnType<typeof histogramDimensions>,
+) {
+  return request.ranges.map(({ dimension, first, last }) => {
+    const index = dimensions.findIndex((entry) => entry.dimension === dimension)
+    const entry = dimensions[index]
+    if (!entry || last >= entry.bins.length)
+      throw new ServerError({
+        statusCode: 422,
+        message: 'Unknown rating histogram or bin',
+      })
+    return { position: index + 1, bucket: entry.bucket, first, last }
+  })
+}
+
+export async function rankRatings(
+  request: RatingsRankingRequest,
+): Promise<RatingsRankingPage> {
+  const sources = await rankingSources(request)
+  const ranges = request.ranges.length
+    ? selectedRanges(request, histogramDimensions(sources))
+    : []
+  const predicates = ranges.map(
+    (r) => sql`${r.bucket} between ${r.first} and ${r.last}`,
+  )
+  const order = sql`${sortExpression(request, sources)} ${request.direction === 'asc' ? sql`asc` : sql`desc`} nulls last, id asc`
+  const keys = sql`${sql.param(sources.map((s) => s.key))}::text[]`
+  const result =
+    await db.execute(sql`with ${scoringCtes(request, sources)}, eligible as materialized (
+      select * from matching ${predicates.length ? sql`where ${sql.join(predicates, sql` and `)}` : sql``}
     ), page as (select * from eligible order by ${order} limit ${request.limit} offset ${request.offset})
     select (select count(*)::int from eligible) as total, coalesce(jsonb_agg(jsonb_build_object(
       'id', id, 'title', title, 'year', year, 'score', score, 'core', core, 'spread', spread,
@@ -320,4 +395,54 @@ export async function rankRatings(
           with ordinality as observation(key, val, adj, v, c, status, pos))
     ) order by ${order}), '[]'::jsonb) as rows from page`)
   return RatingsRankingPageSchema.parse({ ...result.rows[0], sources })
+}
+
+export async function summarizeRatingsSources(
+  request: RatingsSourcesRequest,
+): Promise<RatingsSourcesPage> {
+  const sources = await rankingSources(request)
+  // Native dimensions lead the array in registry order, aligned with statuses.
+  const dimensions = histogramDimensions(sources)
+  const ranges = selectedRanges(request, dimensions)
+  const failures = ranges.map(
+    (r) => sql`case when bins[${r.position}] between
+    ${r.first} and ${r.last} then null else ${r.position}::int end`,
+  )
+  const matches = sql`cardinality(failed) = 0`
+  const coverage = sources.map(
+    (source, i) => sql`jsonb_build_object(
+    'key', ${source.key}::text,
+    'recorded', count(*) filter (where ${matches} and bins[${i + 1}] is not null),
+    'eligible', count(*) filter (where ${matches} and scored and statuses[${i + 1}] = 'counted'))`,
+  )
+  // A histogram includes a row when it passes every range, or when only
+  // that histogram's range failed. Keep one row per item during aggregation:
+  // expanding and sorting (items × dimensions) spills even for a modest library.
+  const histograms = dimensions.map(({ dimension, bins }, i) => {
+    const accepts = ranges.some((r) => r.position === i + 1)
+      ? sql`(${matches} or failed = array[${i + 1}::int])`
+      : matches
+    const counts = bins.map(
+      (bin, j) => sql`jsonb_build_object(
+      'lower', ${bin.lower}, 'upper', ${bin.upper}, 'upperInclusive', ${bin.upperInclusive}::boolean,
+      'count', count(*) filter (where ${accepts} and bins[${i + 1}] = ${j}))`,
+    )
+    return sql`jsonb_build_object('dimension', ${dimension}::text,
+      'bins', jsonb_build_array(${sql.join(counts, sql`, `)}))`
+  })
+  const result =
+    await db.execute(sql`with ${scoringCtes(request, sources)}, binned as (
+      select array[${sql.join(
+        dimensions.map((d) => d.bucket),
+        sql`, `,
+      )}] as bins,
+        score is not null as scored, statuses from matching offset 0
+    ), ranged as (
+      select binned.*, array_remove(array[${sql.join(failures, sql`, `)}]::int[], null) as failed
+      from binned offset 0
+    )
+    select count(*) filter (where ${matches})::int as total,
+      jsonb_build_array(${sql.join(coverage, sql`, `)}) as coverage,
+      jsonb_build_array(${sql.join(histograms, sql`, `)}) as histograms from ranged`)
+  return RatingsSourcesPageSchema.parse({ ...result.rows[0], sources })
 }

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { ArrowDown, ArrowUp } from 'lucide-react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { ArrowDown, ArrowUp, X } from 'lucide-react'
 import {
   defaultRatingsRankingRequest,
   RatingsSettingsSchema,
@@ -17,7 +17,7 @@ import {
 } from '@repo/ui/components/ds/ratings-explorer'
 import { Segmented } from '@repo/ui/components/ds/segmented'
 import { SortPicker } from '@repo/ui/components/ds/sort-picker'
-import { PageHead } from '@repo/ui/components/ds/toolbar'
+import { FilterLine, PageHead } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
@@ -38,6 +38,10 @@ import {
 import { RatingsFilters } from './ratings-explorer-filters'
 import { RatingsScoring, settingFor } from './ratings-explorer-scoring'
 import {
+  RatingsSources,
+  type RatingSelection,
+} from './ratings-explorer-sources'
+import {
   SecondaryTableScroll,
   SecondaryTableToolbar,
   SecondaryTableSearch,
@@ -49,6 +53,11 @@ import {
 
 type Library = RatingsRankingRequest['library']
 type Display = 'native' | 'adjusted'
+type View = 'ranking' | 'sources'
+const views: { value: View; label: string }[] = [
+  { value: 'ranking', label: 'Ranking' },
+  { value: 'sources', label: 'Sources' },
+]
 const modes: { value: Display; label: string }[] = [
   { value: 'native', label: 'Native' },
   { value: 'adjusted', label: 'Adjusted' },
@@ -161,23 +170,26 @@ function RatingCell({
 }
 
 export function RatingsExplorer({ library }: { library: Library }) {
-  return <Ranking key={library} library={library} />
+  return <Explorer key={library} library={library} />
 }
 
-function Ranking({ library }: { library: Library }) {
-  const { apiBaseUrl } = useConfig()
-  const [request, setRequest] = useState(() =>
+function Explorer({ library }: { library: Library }) {
+  const [baseRequest, setRequest] = useState(() =>
     defaultRatingsRankingRequest(library),
   )
-  const [ready, setReady] = useState(false)
   const [search, setSearch] = useState('')
   const [display, setDisplay] = useState<Display>('native')
-  const [calculation, setCalculation] = useState<{
-    row: RatingsRankingRow
-    sources: RatingsSource[]
-    settings: RatingsSettings
-  } | null>(null)
-  const close = useCallback(() => setCalculation(null), [])
+  const [view, setView] = useState<View>('ranking')
+  const [readyView, setReadyView] = useState<View | null>(null)
+  const [sources, setSources] = useState<RatingsSource[]>([])
+  const [selections, setSelections] = useState<RatingSelection[]>([])
+  const [editing, setEditing] = useState<string | null>(null)
+  const { offset, limit, sort: sortKey, direction, ...filters } = baseRequest
+  const sharedRequest = {
+    ...filters,
+    ranges: selections.map(({ range }) => range),
+  }
+  const request = { ...sharedRequest, offset, limit, sort: sortKey, direction }
   const storageKey = 'ratings-explorer:' + library + ':settings'
   useEffect(() => {
     try {
@@ -188,8 +200,10 @@ function Ranking({ library }: { library: Library }) {
     } catch {
       /* The defaults also work without browser storage. */
     }
-    setReady(true)
   }, [storageKey])
+  // Subscribe after the view mounts, so React's development effect replay
+  // cannot start, abort and repeat a feature read for the same interaction.
+  useEffect(() => setReadyView(view), [view])
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setRequest((previous) =>
@@ -222,6 +236,164 @@ function Ranking({ library }: { library: Library }) {
             : 'desc',
     }))
   }
+  const searchControl = (
+    <SecondaryTableSearch
+      label={
+        library === 'film'
+          ? 'Search titles or directors'
+          : 'Search titles or artists'
+      }
+      maxLength={200}
+      value={search}
+      onChange={setSearch}
+    />
+  )
+  const filterControl = (
+    <RatingsFilters
+      request={request}
+      onResetRanges={() => {
+        setSelections([])
+        setEditing(null)
+      }}
+      onChange={(filters) =>
+        setRequest((previous) => ({ ...previous, ...filters }))
+      }
+    />
+  )
+  const rangeControls = selections.length > 0 && (
+    <FilterLine>
+      {selections.map(({ range, label, interval }) => (
+        <span key={range.dimension} className="ds-actions">
+          <Button
+            size="xs"
+            aria-label={'Edit ' + label + ' range'}
+            onClick={() => {
+              setEditing(range.dimension)
+              setView('sources')
+            }}
+          >
+            {label} {interval}
+          </Button>
+          <Button
+            icon
+            size="xs"
+            variant="ghost"
+            aria-label={'Clear ' + label + ' range'}
+            onClick={() => {
+              setEditing(null)
+              setSelections((previous) =>
+                previous.filter(
+                  ({ range: other }) => other.dimension !== range.dimension,
+                ),
+              )
+            }}
+          >
+            <X className="ds-i" aria-hidden />
+          </Button>
+        </span>
+      ))}
+    </FilterLine>
+  )
+  return (
+    <section className="sec-page ratings-page">
+      <PageHead
+        title="Ratings"
+        actions={
+          <Segmented
+            label="Ratings view"
+            value={view}
+            options={views}
+            onChange={(next) => {
+              setEditing(null)
+              setView(next)
+            }}
+          />
+        }
+      />
+      <RatingsScoring
+        sources={sources}
+        settings={request.settings}
+        onChange={scoring}
+      />
+      {view === 'ranking' ? (
+        <Ranking
+          request={request}
+          ready={readyView === 'ranking'}
+          sources={sources}
+          onSources={setSources}
+          sort={sort}
+          display={display}
+          setDisplay={setDisplay}
+          search={searchControl}
+          filters={filterControl}
+          rangeControls={rangeControls}
+          includeUnscored={() =>
+            setRequest((previous) => ({ ...previous, scoredOnly: false }))
+          }
+        />
+      ) : (
+        <RatingsSources
+          request={sharedRequest}
+          ready={readyView === 'sources'}
+          onSources={setSources}
+          search={searchControl}
+          filters={filterControl}
+          rangeControls={rangeControls}
+          editing={editing}
+          onEdit={setEditing}
+          onDrill={(selection) => {
+            setSelections((previous) =>
+              [
+                ...previous.filter(
+                  ({ range }) => range.dimension !== selection.range.dimension,
+                ),
+                selection,
+              ].sort((a, b) =>
+                a.range.dimension.localeCompare(b.range.dimension),
+              ),
+            )
+            setEditing(null)
+            setView('ranking')
+          }}
+        />
+      )}
+    </section>
+  )
+}
+
+function Ranking({
+  request,
+  ready,
+  sources: knownSources,
+  onSources,
+  sort,
+  display,
+  setDisplay,
+  search,
+  filters,
+  rangeControls,
+  includeUnscored,
+}: {
+  request: RatingsRankingRequest
+  ready: boolean
+  sources: RatingsSource[]
+  onSources: (sources: RatingsSource[]) => void
+  sort: (key: string) => void
+  display: Display
+  setDisplay: (display: Display) => void
+  search: ReactNode
+  filters: ReactNode
+  rangeControls: ReactNode
+  includeUnscored: () => void
+}) {
+  const { library } = request
+  const { apiBaseUrl } = useConfig()
+  const [calculation, setCalculation] = useState<{
+    row: RatingsRankingRow
+    sources: RatingsSource[]
+    settings: RatingsSettings
+  } | null>(null)
+  const close = useCallback(() => setCalculation(null), [])
   const query = useVirtualTable({
     queryKey: [
       library === 'film' ? 'films' : 'albums',
@@ -247,11 +419,10 @@ function Ranking({ library }: { library: Library }) {
     },
   })
   // A changed ranking can be loading while the reader is still using a weight.
-  const [knownSources, setKnownSources] = useState<RatingsSource[]>([])
   const currentSources = query.firstPage?.sources
   useEffect(() => {
-    if (currentSources) setKnownSources(currentSources)
-  }, [currentSources])
+    if (currentSources) onSources(currentSources)
+  }, [currentSources, onSources])
   const sources = currentSources ?? knownSources
   const weightedCount = sources.filter(
     (source) => settingFor(source, request.settings).weight > 0,
@@ -263,183 +434,151 @@ function Ranking({ library }: { library: Library }) {
   const label = library === 'film' ? 'Film rankings' : 'Album rankings'
   return (
     <>
-      <section className="sec-page ratings-page">
-        <PageHead title="Ratings" />
-        <RatingsScoring
-          sources={sources}
-          settings={request.settings}
-          onChange={scoring}
-        />
-        <SecondaryTableToolbar
-          search={
-            <SecondaryTableSearch
-              label={
-                library === 'film'
-                  ? 'Search titles or directors'
-                  : 'Search titles or artists'
-              }
-              maxLength={200}
-              value={search}
-              onChange={setSearch}
+      <SecondaryTableToolbar
+        search={search}
+        filters={
+          <>
+            <SortPicker
+              value={request.sort}
+              options={allColumns}
+              onChange={sort}
             />
-          }
-          filters={
-            <>
-              <SortPicker
-                value={request.sort}
-                options={allColumns}
-                onChange={sort}
-              />
-              <Button
-                icon
-                onClick={() => sort(request.sort)}
-                aria-label={
-                  'Sort direction: ' +
-                  (request.direction === 'asc' ? 'ascending' : 'descending')
-                }
-              >
-                {request.direction === 'asc' ? (
-                  <ArrowUp className="ds-i" aria-hidden />
-                ) : (
-                  <ArrowDown className="ds-i" aria-hidden />
-                )}
-              </Button>
-              <Segmented
-                label="Source rating values"
-                options={modes}
-                value={display}
-                onChange={setDisplay}
-              />
-              <RatingsFilters
-                request={request}
-                onChange={(filters) =>
-                  setRequest((previous) => ({ ...previous, ...filters }))
-                }
-              />
-            </>
-          }
-          count={
-            query.hasTotal
-              ? formatItemCount(query.total, {
-                  one: library,
-                  other: library + 's',
-                })
-              : query.isError
-                ? undefined
-                : 'Loading ratings…'
-          }
-          columns={columns.controls}
-        />
-        <p className="ds-muted ratings-key">
-          Parentheses show adjusted points above or below the combined score.
-          The strip marks counted ratings and the combined score.
-        </p>
-        {query.isError && (
-          <Notice
-            tone="danger"
-            action={
-              <Button size="xs" onClick={query.retry}>
-                Retry
-              </Button>
-            }
-          >
-            Could not load rankings.
-          </Notice>
-        )}
-        <SecondaryTableScroll
-          ref={query.scroller}
-          onScroll={query.onScroll}
-          role="region"
-          aria-label={label}
-          aria-busy={query.isFetching}
-        >
-          <table
-            className="ds-table"
-            {...layout.table}
-            aria-label={label}
-            aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
-          >
-            {layout.colgroup}
-            <TableHeader>
-              <TableRow>
-                {shown.map((column) => (
-                  <SecondaryTableHead
-                    key={column.key}
-                    label={column.label}
-                    sortKey={column.key}
-                    sortBy={request.sort}
-                    direction={request.direction}
-                    onSort={sort}
-                    resizer={columns.resizer(column.key)}
-                    align={column.key === 'title' ? undefined : 'end'}
-                    sticky={column.key === 'title' ? 0 : undefined}
-                    stickyEdge={column.key === 'title'}
-                  />
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {query.hasTotal && query.total === 0 && (
-                <TableState colSpan={shown.length}>
-                  No matching {library === 'film' ? 'films' : 'albums'}.{' '}
-                  {request.scoredOnly && (
-                    <Button
-                      variant="link"
-                      size="xs"
-                      onClick={() =>
-                        setRequest((previous) => ({
-                          ...previous,
-                          scoredOnly: false,
-                        }))
-                      }
-                    >
-                      Include unscored items
-                    </Button>
-                  )}
-                </TableState>
+            <Button
+              icon
+              onClick={() => sort(request.sort)}
+              aria-label={
+                'Sort direction: ' +
+                (request.direction === 'asc' ? 'ascending' : 'descending')
+              }
+            >
+              {request.direction === 'asc' ? (
+                <ArrowUp className="ds-i" aria-hidden />
+              ) : (
+                <ArrowDown className="ds-i" aria-hidden />
               )}
-              <SecondaryVirtualRows
-                window={query}
-                colSpan={shown.length}
-                renderRow={(item, index) => (
-                  <TableRow
-                    key={item.id}
-                    aria-rowindex={index + 2}
-                    selected={calculation?.row.id === item.id}
-                    style={{ height: query.rowHeight }}
-                  >
-                    {shown.map((column) => (
-                      <TableCell
-                        key={column.key}
-                        sticky={column.key === 'title' ? 0 : undefined}
-                        stickyEdge={column.key === 'title'}
-                        align={column.key === 'title' ? undefined : 'end'}
-                      >
-                        <RatingCell
-                          row={item}
-                          column={column.key}
-                          source={sources.find(
-                            (source) => source.key === column.key,
-                          )}
-                          sourceCount={weightedCount}
-                          display={display}
-                          onOpen={() =>
-                            setCalculation({
-                              row: item,
-                              sources,
-                              settings: request.settings,
-                            })
-                          }
-                        />
-                      </TableCell>
-                    ))}
-                  </TableRow>
+            </Button>
+            <Segmented
+              label="Source rating values"
+              options={modes}
+              value={display}
+              onChange={setDisplay}
+            />
+            {filters}
+          </>
+        }
+        count={
+          query.hasTotal
+            ? formatItemCount(query.total, {
+                one: library,
+                other: library + 's',
+              })
+            : query.isError
+              ? undefined
+              : 'Loading ratings…'
+        }
+        columns={columns.controls}
+      />
+      {rangeControls}
+      <p className="ds-muted ratings-key">
+        Parentheses show adjusted points above or below the combined score. The
+        strip marks counted ratings and the combined score.
+      </p>
+      {query.isError && (
+        <Notice
+          tone="danger"
+          action={
+            <Button size="xs" onClick={query.retry}>
+              Retry
+            </Button>
+          }
+        >
+          Could not load rankings.
+        </Notice>
+      )}
+      <SecondaryTableScroll
+        ref={query.scroller}
+        onScroll={query.onScroll}
+        role="region"
+        aria-label={label}
+        aria-busy={query.isFetching}
+      >
+        <table
+          className="ds-table"
+          {...layout.table}
+          aria-label={label}
+          aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
+        >
+          {layout.colgroup}
+          <TableHeader>
+            <TableRow>
+              {shown.map((column) => (
+                <SecondaryTableHead
+                  key={column.key}
+                  label={column.label}
+                  sortKey={column.key}
+                  sortBy={request.sort}
+                  direction={request.direction}
+                  onSort={sort}
+                  resizer={columns.resizer(column.key)}
+                  align={column.key === 'title' ? undefined : 'end'}
+                  sticky={column.key === 'title' ? 0 : undefined}
+                  stickyEdge={column.key === 'title'}
+                />
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {query.hasTotal && query.total === 0 && (
+              <TableState colSpan={shown.length}>
+                No matching {library === 'film' ? 'films' : 'albums'}.{' '}
+                {request.scoredOnly && (
+                  <Button variant="link" size="xs" onClick={includeUnscored}>
+                    Include unscored items
+                  </Button>
                 )}
-              />
-            </TableBody>
-          </table>
-        </SecondaryTableScroll>
-      </section>
+              </TableState>
+            )}
+            <SecondaryVirtualRows
+              window={query}
+              colSpan={shown.length}
+              renderRow={(item, index) => (
+                <TableRow
+                  key={item.id}
+                  aria-rowindex={index + 2}
+                  selected={calculation?.row.id === item.id}
+                  style={{ height: query.rowHeight }}
+                >
+                  {shown.map((column) => (
+                    <TableCell
+                      key={column.key}
+                      sticky={column.key === 'title' ? 0 : undefined}
+                      stickyEdge={column.key === 'title'}
+                      align={column.key === 'title' ? undefined : 'end'}
+                    >
+                      <RatingCell
+                        row={item}
+                        column={column.key}
+                        source={sources.find(
+                          (source) => source.key === column.key,
+                        )}
+                        sourceCount={weightedCount}
+                        display={display}
+                        onOpen={() =>
+                          setCalculation({
+                            row: item,
+                            sources,
+                            settings: request.settings,
+                          })
+                        }
+                      />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              )}
+            />
+          </TableBody>
+        </table>
+      </SecondaryTableScroll>
       {calculation && (
         <RatingsCalculation
           {...calculation}
