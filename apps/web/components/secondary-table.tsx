@@ -960,7 +960,7 @@ export function useTableWidths(
     const item = column(columnKey)
     return item.resizable === false ? undefined : widths.resizer(item)
   }
-  return { layout, resizer, reset: widths.reset }
+  return { layout, resizer, widthFor, reset: widths.reset }
 }
 
 const HiddenColumnsSchema = z.array(z.string())

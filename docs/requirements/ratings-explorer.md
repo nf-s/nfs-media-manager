@@ -1,6 +1,6 @@
 # Ratings explorer for films and albums
 
-Open **Ratings** beside **Browse** in Films or Albums. Adjust the source weights to rank the library, then select a title, score or rating to inspect its calculation and open the stored evidence. Switch to **Sources** to inspect coverage and select a range of ratings. The browser remembers scoring settings separately for the two libraries.
+Open **Ratings** beside **Browse** in Films or Albums. Adjust the source weights to rank the library, then select a score to inspect its calculation and open the stored evidence. In Albums, the artwork, title and artist open their library records. Switch to **Sources** to inspect coverage and select a range of ratings. The browser remembers scoring settings separately for the two libraries.
 
 ## Ranking and scoring
 
@@ -15,10 +15,10 @@ Open **Ratings** beside **Browse** in Films or Albums. Adjust the source weights
 ## Sources
 
 - Show how many matching items have a recorded rating from each source and how many have one that contributed to a combined score. Give the filtered item total as the denominator in each case. Recorded ratings include valid observations below a vote floor or from a source with zero weight.
-- Show native rating distributions on each source's scale, combined scores from 0 to 100, spread from 0 to 50, and the number of qualifying sources. Divide continuous scales into five equal bins. Each lower bound is inclusive and the final bin includes the maximum. Counted-source bins cover whole numbers, including zero.
-- Open a bin or a contiguous range in Ranking with the current search, filters and scoring settings. Multiple dimensions can be filtered together. Each histogram ignores its own selected range and applies the others, so adjacent bins remain available. Coverage and Ranking apply the complete set.
+- Show score deciles, spread in four-point steps through 36+, native source deciles, whole personal ratings and one bin per counted-source total including zero. Include the top of each scale in the final bin. Show coverage, median, middle half, typical votes and source weight alongside the distribution.
+- Pick a bar to select its range in Sources. An outside bar extends it, an inside bar narrows it to that bin, and selecting the same single bar clears it. Each histogram ignores its own range and applies the others. Carry selections, search and media filters across views. Hiding unscored items applies only to Ranking.
 
-## Planned views: Agreement and Compare
+## Agreement and Compare
 
 - **Agreement** shows the correlation and shared-item count for each source pair, the sources that score systematically higher or lower than their peers, and the items with the largest disagreements. Spread is the unweighted population standard deviation of at least two qualifying adjusted ratings. With three or more, identify the source furthest from the mean of the others when there is a difference. Report pairwise Pearson correlation for at least 20 shared items with variation on both axes. Show the reason when it is unavailable.
 - **Compare** opens from a pair or from the view switch. Plot source ratings, combined scores, critic or audience averages, spread or year, with selectable axes. Show overlap, signed differences on comparable axes and a route from a point or group of points to the contributing items. Agreement and Compare use the same vote-qualified pairs under the same filters. Weights and outlier rules affect the composite, while comparisons between the original sources retain the evidence of disagreement. A library with zero or one source still opens.
@@ -36,7 +36,7 @@ The browser needs one page of ranked items or a chart summary. Global percentile
 
 Use the existing owner access middleware and private response caching policy. Validate request and response shapes with shared schemas. Bind registered rating keys literally, including dotted plugin keys. Bound page size, filter and settings lists, text length, axes and numeric parameters. Use stored values throughout the explorer. Opening a view or changing a weight must issue zero provider calls, enqueue zero jobs and transfer zero raw provider payloads. Key the in-memory query cache by library and effective settings, and invalidate affected reads on library changes.
 
-Deliver Ranking, Scoring and item evidence for both libraries first, then Sources, then Agreement and Compare. Build with the shared toolbar, segmented control, secondary table, condition, histogram, stats and inspector. Verify each release at desktop and phone widths on disposable data. For API changes, follow the [query performance checks](../query-performance.md#performance-review-for-a-feature).
+Open in Ranking with native source values, descending score, and Filters and Scoring closed. Show the four view buttons together above the toolbar. Keep the album artwork, linked title and artist at the left, with Browse play controls and tag pills. The score opens its calculation. The weights panel includes source coverage and Equal, Critics only, Audiences only and Reset scoring. Keep the original matrix-to-pair, See all, axis selection, Swap and point-to-calculation interactions at desktop and phone widths. Build with the shared toolbar, segmented control, table, condition, histogram, stats and inspector. For API changes, follow the [query performance checks](../query-performance.md#performance-review-for-a-feature).
 
 ### Acceptance examples
 

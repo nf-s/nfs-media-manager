@@ -135,7 +135,7 @@ test('table errors keep explicit retry controls without firing them during rende
   assert.equal(retries, 0)
 })
 
-test('no column stays in place on a phone', () => {
+test('phone tables release their pinned columns unless the table opts into a persistent identity', () => {
   // Every pinned cell carries the shared table's own mark.
   const html = renderToStaticMarkup(
     <Table aria-label="Tracks" layout="fixed">
@@ -159,6 +159,7 @@ test('no column stays in place on a phone', () => {
   )
   assert.equal((html.match(/<th[^>]*data-sticky="(edge)?"/g) ?? []).length, 2)
   assert.equal((html.match(/<td[^>]*data-sticky="(edge)?"/g) ?? []).length, 2)
+  assert.doesNotMatch(html, /data-pin-identity/)
   const css = readFileSync(
     new URL(
       '../../../packages/ui/src/design-system/components.css',
@@ -175,15 +176,15 @@ test('no column stays in place on a phone', () => {
   // Body cells scroll with the rest; headings keep only their place at the top.
   assert.match(
     phone,
-    /\.ds-table td\[data-sticky\] \{\s*position: static;\s*\}/,
+    /\.ds-table:not\(\[data-pin-identity\]\) td\[data-sticky\] \{\s*position: static;\s*\}/,
   )
   assert.match(
     phone,
-    /\.ds-table th\[data-sticky\] \{\s*right: auto;\s*left: auto;\s*\}/,
+    /\.ds-table:not\(\[data-pin-identity\]\) th\[data-sticky\] \{\s*right: auto;\s*left: auto;\s*\}/,
   )
   assert.match(
     phone,
-    /\.ds-table\[data-scrolled\] \[data-sticky='edge'\] \{\s*box-shadow: none;\s*\}/,
+    /\.ds-table\[data-scrolled\]:not\(\[data-pin-identity\]\) \[data-sticky='edge'\] \{\s*box-shadow: none;\s*\}/,
   )
   assert.match(phone, /--ds-col-max: 66vw;/)
 })

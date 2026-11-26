@@ -1425,9 +1425,29 @@
                   '<details id="rating-example-evidence"><summary>Example calculation</summary><p>The three source ratings are 9, 7 and 5 out of 10. With equal weights, their combined score is (90 + 70 + 50) / 3 = 70 out of 100.</p></details>',
               ) +
               g.rules([
+                '<b>Ranking</b> keeps the item identity visible across the ratings on a phone. Album artwork, title and artist open the corresponding record. Play and Add to queue follow in the next cell.',
+                '<b>Compact source cells</b> show the value alone, with the difference in the accessible label and tooltip. A struck value was left out. Only a counted rating 20 or more adjusted points from the score gets the high or low colour.',
                 '<b>Source weights</b> range from 0 to 3 in steps of 0.5. A weight of 0 excludes a source. The multiplier follows the slider as it moves. Results update when the pointer or adjustment key is released.',
                 '<b>Rating differences</b> show the native or adjusted source value followed by the signed distance between the adjusted value and the combined score, in points out of 100. At a difference of 20 points or more, use blue above and amber below. Omit the difference when there is no combined score. Selecting a value opens its calculation.',
-                '<b>The position strip</b> appears beside the combined score. Thin marks show the counted source ratings and the wider mark shows the combined score. The accessible label and tooltip give their values.',
+                '<b>The position strip</b> places the adjusted ratings on a 0–100 scale. A vertical line marks the combined score. A hollow dot marks an excluded observation in the calculation. The accessible label and tooltip give their values.',
+              ]),
+          },
+          {
+            id: 'rating-charts',
+            title: 'Rating agreement and comparison',
+            body:
+              g.spec(
+                '<table class="ds-table ds-rating-matrix" aria-label="Source agreement example"><thead><tr><th></th><th>Panel A</th><th>Panel B</th></tr></thead><tbody><tr><th scope="row">Panel A</th><td><span class="ds-rating-self"></span></td><td><a class="ds-rating-pair" data-strong style="background:var(--ds-accent)" href="#rating-chart-example" aria-label="Panel A and Panel B, correlation 0.82. Compare">.82</a></td></tr></tbody></table>' +
+                  '<div class="ds-rating-bias"><span class="ds-rating-bar" data-diverging><i style="left:50%;width:32%"></i></span><span class="ds-num">+8</span></div>',
+              ) +
+              g.spec(
+                '<div class="ds-rating-scatter" id="rating-chart-example"><svg role="img" aria-label="Panel B against Panel A, three example points" viewBox="0 0 400 200"><line x1="32" x2="380" y1="172" y2="172"/><line x1="32" x2="32" y1="12" y2="172"/><line class="ds-rating-diagonal" x1="32" x2="380" y1="172" y2="12"/><circle cx="85" cy="93" data-direction="high"/><circle cx="196" cy="99"/><circle cx="270" cy="116" data-direction="low"/><text x="200" y="192" text-anchor="middle">Panel A</text><text transform="translate(12 92) rotate(-90)" text-anchor="middle">Panel B</text></svg></div>',
+              ) +
+              g.rules([
+                '<b>Agreement.</b> Read the row across and the column up. A cell opens those two sources in Compare. Slate darkens with positive correlation. Amber indicates a negative correlation. Leave self-pairs blank and show a dash where correlation cannot be measured.',
+                '<b>Source bias.</b> Centre signed differences on zero. Ordinary distance bars start at the left. Show the numeric value beside each bar.',
+                '<b>Compare.</b> The diagonal marks equal ratings. A difference of at least 20 adjusted points uses blue for the vertical source and amber for the horizontal source. Year and spread use their own scales. The selected point has an outlined ring.',
+                '<b>Point selection.</b> Pick near a point or focus the chart and use the arrow keys. The selection shows its title, year and axis values. Open or Enter displays the item calculation.',
               ]),
           },
           {

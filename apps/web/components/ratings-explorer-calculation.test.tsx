@@ -30,13 +30,33 @@ function row(
   statuses: RatingsObservation['status'][],
   fields: Omit<
     RatingsRankingRow,
-    'id' | 'title' | 'year' | 'spread' | 'personalGap' | 'criticGap' | 'ratings'
+    | 'id'
+    | 'title'
+    | 'year'
+    | 'spread'
+    | 'personalGap'
+    | 'criticGap'
+    | 'ratings'
+    | 'artworkUrl'
+    | 'credits'
+    | 'album'
+    | 'tags'
+    | 'artistTags'
+    | 'watched'
+    | 'plays'
   >,
 ): RatingsRankingRow {
   return {
     ...fields,
     id: 'fixture',
     title: 'Glass Signals',
+    artworkUrl: null,
+    credits: [],
+    album: null,
+    tags: [],
+    artistTags: [],
+    watched: null,
+    plays: null,
     year: null,
     spread: null,
     personalGap: null,

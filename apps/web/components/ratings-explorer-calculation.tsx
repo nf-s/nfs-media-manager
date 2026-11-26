@@ -9,7 +9,9 @@ import type {
   RatingsSettings,
   RatingsObservation,
 } from '@repo/schemas/ratings-explorer'
-import { Section, KeyValues } from '@repo/ui/components/ds/facts'
+import { Section, KeyValues, Facts } from '@repo/ui/components/ds/facts'
+import { Pill, Pills } from '@repo/ui/components/ds/pill'
+import { RatingPositionStrip } from '@repo/ui/components/ds/ratings-explorer'
 import { Button } from '@repo/ui/components/ui/button'
 import {
   Table,
@@ -195,7 +197,17 @@ export function RatingsCalculation({
               </DetailLink>
             }
           >
-            <KeyValues
+            <p className="ds-muted">
+              {[row.credits.map((credit) => credit.name).join(', '), row.year]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+            <Pills wrap>
+              {row.tags.map((tag) => (
+                <Pill key={tag}>{tag}</Pill>
+              ))}
+            </Pills>
+            <Facts
               items={[
                 {
                   label: 'Combined score',
@@ -204,6 +216,39 @@ export function RatingsCalculation({
                       ? 'Unscored'
                       : displayedScore(row.score) + ' / 100',
                 },
+                {
+                  label: 'Spread',
+                  value: displayedScore(row.spread),
+                },
+                {
+                  label: 'Critics − audiences',
+                  value: displayedScore(row.criticGap),
+                },
+                ...(library === 'film'
+                  ? [
+                      {
+                        label: 'Mine − score',
+                        value: displayedScore(row.personalGap),
+                      },
+                      {
+                        label: 'Watched',
+                        value:
+                          row.watched == null
+                            ? EMPTY_VALUE
+                            : row.watched
+                              ? 'Yes'
+                              : 'No',
+                      },
+                    ]
+                  : [
+                      {
+                        label: 'Plays',
+                        value:
+                          row.plays == null
+                            ? EMPTY_VALUE
+                            : formatCount(row.plays),
+                      },
+                    ]),
                 {
                   label: 'Qualified ratings',
                   value:
@@ -306,6 +351,15 @@ export function RatingsCalculation({
                         )}
                       </TableCell>
                       <TableCell>
+                        <RatingPositionStrip
+                          values={
+                            observation.adjusted === null
+                              ? []
+                              : [observation.adjusted]
+                          }
+                          score={row.score}
+                          excluded={observation.status !== 'counted'}
+                        />
                         {observation.adjusted === null
                           ? EMPTY_VALUE
                           : number(observation.adjusted)}
@@ -329,7 +383,7 @@ export function RatingsCalculation({
               </TableBody>
             </Table>
           </Section>
-          <Section title="Calculation">
+          <Section title="How the score is worked out">
             <KeyValues
               items={[
                 {
@@ -350,6 +404,13 @@ export function RatingsCalculation({
                 {
                   label: 'Combined score',
                   value: combinedProof(row),
+                },
+                {
+                  label: 'Shown in Ranking',
+                  value:
+                    row.score === null
+                      ? 'Unscored'
+                      : Math.round(row.score) + ' / 100',
                 },
               ]}
             />

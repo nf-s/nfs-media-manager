@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest'
 import {
   RatingsRankingRequestSchema,
   RatingsSourcesRequestSchema,
+  type RatingsRankingPage,
   type RatingsSourcesRequest,
 } from '@repo/schemas/ratings-explorer'
 import {
@@ -38,19 +39,32 @@ async function measureSources(
   expect(result.coverage).toHaveLength(result.sources.length)
   expect(result.histograms).toHaveLength(result.sources.length + 3)
   const bytes = Buffer.byteLength(JSON.stringify(result))
-  expect(bytes).toBeLessThan(8_000)
+  expect(bytes).toBeLessThan(request.library === 'film' ? 12_000 : 5_000)
   expect(fetch).not.toHaveBeenCalled()
   return { result, bytes }
 }
 
-// Replay the measured plan with only the exact count removed. Both variants
-// still normalize, filter, sort and construct the same page of evidence.
-async function measureExactCount(count: number) {
+// Give the footer aggregate an empty input so PostgreSQL skips its scan.
+// The page still reads the original eligible rows with the same parameters.
+async function measureExactCount(page: RatingsRankingPage) {
   const statement = logQuery.mock.calls.at(-1)
   if (!statement) throw new Error('Expected a recorded ranking statement')
   const [sql, params] = statement
-  const withoutCount = sql.replace('(select count(*)::int from eligible)', '0')
-  expect(withoutCount).not.toBe(sql)
+  const countInput =
+    /(\bcounts as\s*\([\s\S]*?\bfrom eligible)(?=\s*\),\s*page as materialized\s*\()/g
+  expect(sql.match(countInput)).toHaveLength(1)
+  const withoutCount = sql.replace(countInput, '$1 where false')
+  const replay = await pool.query<Record<string, unknown>>(withoutCount, params)
+  expect(replay.rows).toEqual([
+    {
+      libraryTotal: page.libraryTotal,
+      recorded: page.sources.map((source) => source.recorded),
+      matchingTotal: 0,
+      unscored: 0,
+      total: 0,
+      rows: page.rows,
+    },
+  ])
   async function executionTime(query: string) {
     const result = await pool.query(
       'explain (analyze, timing off, format json, buffers) ' + query,
@@ -63,7 +77,7 @@ async function measureExactCount(count: number) {
   const pageMs = await executionTime(withoutCount)
   const countedMs = await executionTime(sql)
   process.stdout.write(
-    `Exact-count comparison for ${count} films: ${pageMs.toFixed(1)} ms page only, ${countedMs.toFixed(1)} ms page with total on a warm connection\n`,
+    `Exact-count comparison for ${page.matchingTotal} of ${page.libraryTotal} films: ${pageMs.toFixed(1)} ms without footer counts, ${countedMs.toFixed(1)} ms with footer counts on a warm connection\n`,
   )
 }
 
@@ -100,7 +114,7 @@ it('bounds the ranking page at two film library sizes and after a rating edit', 
     await pool.query('analyze media_item')
     const result = await checkBudget(
       'Dense film ranking ' + count,
-      1000,
+      (count === 1500 ? 320 : 1000) + request.limit * 8,
       1,
       async () => {
         const start = performance.now()
@@ -116,7 +130,7 @@ it('bounds the ranking page at two film library sizes and after a rating edit', 
     const size = Buffer.byteLength(JSON.stringify(result))
     expect(size).toBeLessThan(80_000)
     sizes.push(size)
-    await measureExactCount(count)
+    await measureExactCount(result)
     const requestSources = RatingsSourcesRequestSchema.parse({
       library: 'film',
     })
@@ -134,20 +148,33 @@ it('bounds the ranking page at two film library sizes and after a rating edit', 
     sourcesSizes.push(sources.bytes)
     if (count === 12000) {
       // Searching also scans 165 credit blocks for director names.
+      const filters = {
+        ...requestSources,
+        search: 'fixture film 11',
+        ranges: [
+          { dimension: 'native.ratingRt', first: 2, last: 3 },
+          { dimension: 'score', first: 1, last: 3 },
+        ],
+      }
       const selected = await measureSources(
         'Film Sources with two ranges and title filter',
         1200,
-        {
-          ...requestSources,
-          search: 'fixture film 11',
-          ranges: [
-            { dimension: 'native.ratingRt', first: 2, last: 3 },
-            { dimension: 'score', first: 1, last: 3 },
-          ],
-        },
+        filters,
       )
       expect(selected.result.total).toBeGreaterThan(0)
       expect(selected.result.total).toBeLessThan(count)
+      const filtered = await rankRatings({ ...request, ...filters, offset: 3 })
+      expect(filtered.total).toBe(selected.result.total)
+      expect(filtered.rows.length).toBeGreaterThan(0)
+      for (const row of filtered.rows) {
+        expect(row.title.toLowerCase()).toContain(filters.search)
+        const raw = row.ratings.find((source) => source.key === 'ratingRt')?.raw
+        expect(raw).toBeGreaterThanOrEqual(20)
+        expect(raw).toBeLessThan(40)
+        expect(row.score).toBeGreaterThanOrEqual(10)
+        expect(row.score).toBeLessThan(40)
+      }
+      await measureExactCount(filtered)
     }
   }
   expect(Math.max(...sizes) / Math.min(...sizes)).toBeLessThan(1.15)
@@ -158,7 +185,7 @@ it('bounds the ranking page at two film library sizes and after a rating edit', 
     where id = 'film-1'`)
   const edited = await checkBudget(
     'Edited film ranking and deep offset',
-    1000,
+    1000 + 10 * 8,
     1,
     () =>
       rankRatings({
@@ -185,7 +212,7 @@ it('bounds sparse album rankings with unrated rows and missing source values', a
   })
   const unrated = await checkBudget(
     'Packed unrated album ranking',
-    300,
+    40 + req.limit * 14,
     1,
     () => rankRatings(req),
   )
@@ -211,7 +238,7 @@ it('bounds sparse album rankings with unrated rows and missing source values', a
   )
   const result = await checkBudget(
     'Sparse album ranking with unrated rows',
-    Math.min(1050, membershipBlocks + 25),
+    Math.min(1050, membershipBlocks + 25) + req.limit * 14,
     1,
     () => rankRatings(req),
   )
@@ -254,4 +281,39 @@ it('bounds sparse album rankings with unrated rows and missing source values', a
     eligible: 2666,
   })
   expect(large.bytes / small.bytes).toBeLessThan(1.15)
+
+  // Exercise the Album table's actual projection with populated relations.
+  // Its tags, credits and playback references must only be hydrated for the
+  // requested page, even though normalization still sees 8,000 albums.
+  await pool.query(`
+    insert into tag(id,media_type,name) values('fixture-style','album','Fixture style');
+    insert into media_item_tag(media_item_id,tag_id) select media_item_id,'fixture-style' from album;
+    insert into media_credit(media_item_id,artist_id,role) select media_item_id,
+      'artist-' || (1 + substring(media_item_id from '[0-9]+$')::int % 1000), 'artist' from album;
+    insert into external_link(id,media_item_id,provider,label,url) select 'link-' || media_item_id,
+      media_item_id,'fixture','Listen','https://open.spotify.com/album/' || lpad(substring(media_item_id from '[0-9]+$'),22,'0') from album;
+    insert into provider_reference(id,media_item_id,provider,reference_type,external_id) select 'ref-' || media_item_id,
+      media_item_id,'fixture','spotify',lpad(substring(media_item_id from '[0-9]+$'),22,'0') from album;
+    update album set track_count=10;
+    analyze album; analyze media_item_tag; analyze media_credit; analyze external_link; analyze provider_reference;
+  `)
+  const hydrated = await checkBudget(
+    'Populated 40-row Album table in 8000 albums',
+    2400,
+    1,
+    () => rankRatings(req),
+  )
+  expect(hydrated.total).toBe(8000)
+  expect(hydrated.rows).toHaveLength(40)
+  for (const row of hydrated.rows) {
+    expect(row.credits).toHaveLength(1)
+    expect(row.tags).toEqual(['Fixture style'])
+    expect(row.album?.trackCount).toBe(10)
+    expect(row.album?.links).toHaveLength(1)
+    expect(row.album?.providerReferences).toHaveLength(1)
+  }
+  const bytes = Buffer.byteLength(JSON.stringify(hydrated))
+  process.stdout.write(`40 populated album rows: ${bytes} response bytes\n`)
+  expect(bytes).toBeLessThan(60_000)
+  expect(fetch).not.toHaveBeenCalled()
 })

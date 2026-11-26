@@ -16,10 +16,12 @@ const adjustmentKeys = new Set([
 /** Keep a gesture local until it ends, so moving the slider triggers one results query. */
 export function RatingWeightControl({
   label,
+  coverage,
   value,
   onChange,
 }: {
   label: string
+  coverage?: number
   value: number
   onChange: (value: number) => void
 }) {
@@ -41,7 +43,12 @@ export function RatingWeightControl({
 
   return (
     <label className="ds-rating-weight">
-      {label}
+      <span>
+        {label}
+        {coverage !== undefined && (
+          <span className="ds-muted"> {coverage}%</span>
+        )}
+      </span>
       <input
         type="range"
         min={0}
@@ -102,11 +109,15 @@ export function RatingWeightControl({
 export function RatingDifference({
   value,
   difference,
+  compact = false,
+  excluded = false,
   label,
   onClick,
 }: {
   value: string
   difference: number | null
+  compact?: boolean
+  excluded?: boolean
   label: string
   onClick: () => void
 }) {
@@ -119,16 +130,17 @@ export function RatingDifference({
       type="button"
       className="ds-rating-difference"
       data-direction={
-        difference !== null && Math.abs(difference) >= 20
+        !excluded && difference !== null && Math.abs(difference) >= 20
           ? difference > 0
             ? 'high'
             : 'low'
           : undefined
       }
       aria-label={`${label}, ${text}`}
+      title={`${label}, ${text}`}
       onClick={onClick}
     >
-      {text}
+      {excluded ? <s>{compact ? value : text}</s> : compact ? value : text}
     </button>
   )
 }
@@ -137,12 +149,13 @@ export function RatingDifference({
 export function RatingPositionStrip({
   values,
   score,
+  excluded = false,
 }: {
   values: readonly number[]
   score: number | null
+  excluded?: boolean
 }) {
-  if (score === null) return null
-  const label = `Source ratings ${values.map((value) => value.toFixed(1)).join(', ')}. Combined score ${score.toFixed(1)} out of 100.`
+  const label = `Adjusted ratings ${values.map((value) => value.toFixed(1)).join(', ') || 'missing'}. ${score === null ? 'Unscored' : 'Combined score ' + score.toFixed(1) + ' out of 100'}.`
   return (
     <span
       className="ds-rating-position"
@@ -151,9 +164,13 @@ export function RatingPositionStrip({
       title={label}
     >
       {values.map((value, index) => (
-        <i key={index} style={{ left: `${value}%` }} />
+        <i
+          key={index}
+          data-observation={excluded ? 'excluded' : 'counted'}
+          style={{ left: `${value}%` }}
+        />
       ))}
-      <i data-score="" style={{ left: `${score}%` }} />
+      {score !== null && <i data-score="" style={{ left: `${score}%` }} />}
     </span>
   )
 }

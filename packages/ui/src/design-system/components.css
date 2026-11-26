@@ -742,6 +742,12 @@ a:focus-visible > .ds-logo[data-none] {
 .ds-seg button[data-icon] {
   padding: 0;
 }
+.ds-seg button[data-feedback] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-2);
+}
 
 /* 7 Inputs ---------------------------------------------------------------- */
 
@@ -1075,14 +1081,20 @@ a:focus-visible > .ds-logo[data-none] {
   .ds-table {
     --ds-col-max: 66vw;
   }
-  .ds-table td[data-sticky] {
+  /* Reserve the larger share of the phone for the rating being compared. The
+     scroll area's matching cap keeps focused actions clear of the pinned cell. */
+  .ds-table[data-pin-identity],
+  .ds-table-wrap[data-pin-identity] {
+    --ds-col-max: 40vw;
+  }
+  .ds-table:not([data-pin-identity]) td[data-sticky] {
     position: static;
   }
-  .ds-table th[data-sticky] {
+  .ds-table:not([data-pin-identity]) th[data-sticky] {
     right: auto;
     left: auto;
   }
-  .ds-table[data-scrolled] [data-sticky='edge'] {
+  .ds-table[data-scrolled]:not([data-pin-identity]) [data-sticky='edge'] {
     box-shadow: none;
   }
 }
@@ -1572,11 +1584,17 @@ a:focus-visible > .ds-logo[data-none] {
   white-space: nowrap;
   cursor: pointer;
 }
-.ds-rating-difference[data-direction='high'] {
+.ds-rating-key {
+  padding: 0 var(--ds-3);
+  border-radius: var(--ds-r-xs);
+}
+.ds-rating-difference[data-direction='high'],
+.ds-rating-key[data-direction='high'] {
   background: var(--ds-info-bg);
   color: var(--ds-info);
 }
-.ds-rating-difference[data-direction='low'] {
+.ds-rating-difference[data-direction='low'],
+.ds-rating-key[data-direction='low'] {
   background: var(--ds-attention-bg);
   color: var(--ds-attention);
 }
@@ -1598,11 +1616,20 @@ a:focus-visible > .ds-logo[data-none] {
   background: var(--ds-accent);
 }
 .ds-rating-position > [data-score] {
+  width: var(--ds-1);
+  height: var(--ds-5);
   top: calc(-1 * var(--ds-1));
-  width: var(--ds-3);
+}
+.ds-rating-position > [data-observation] {
+  top: calc(-1 * var(--ds-1));
+  width: var(--ds-5);
   height: var(--ds-5);
   border: thin solid var(--ds-surface);
   border-radius: var(--ds-r-pill);
+}
+.ds-rating-position > [data-observation='excluded'] {
+  background: var(--ds-surface);
+  border-color: var(--ds-accent);
 }
 
 /* 13 Chart and sparkline --------------------------------------------------- */
@@ -2567,4 +2594,178 @@ a:focus-visible > .ds-logo[data-none] {
   align-items: center;
   gap: var(--ds-3);
   padding: 0 var(--ds-gutter) var(--ds-4);
+}
+
+/* Source correlations and paired ratings. The number stays readable without colour. */
+.ds-rating-matrix.ds-table {
+  width: max-content;
+  border-spacing: var(--ds-1);
+}
+.ds-rating-matrix.ds-table :is(th, td) {
+  height: var(--ds-h-sm);
+  padding: 0 var(--ds-1);
+  border: 0;
+  text-align: center;
+}
+.ds-rating-matrix.ds-table th span {
+  display: block;
+  max-width: calc(var(--ds-row) * 3);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--ds-leading-tight);
+}
+.ds-rating-matrix.ds-table th[scope='row'] {
+  text-align: left;
+}
+.ds-rating-pair,
+.ds-rating-self {
+  display: inline-grid;
+  place-content: center;
+  width: var(--ds-row);
+  height: var(--ds-h-sm);
+  border: 0;
+  padding: 0;
+  border-radius: var(--ds-r-xs);
+  background: var(--ds-sunken);
+  color: var(--ds-ink);
+  font: 500 var(--ds-text-xs) var(--ds-mono);
+}
+.ds-rating-pair {
+  cursor: pointer;
+}
+.ds-rating-pair[data-strong] {
+  color: var(--ds-on-inverse);
+}
+.ds-rating-pair[data-negative] {
+  background: var(--ds-attention-bg);
+  color: var(--ds-attention);
+}
+.ds-rating-pair:is(:hover, :focus-visible) {
+  outline: var(--ds-1) solid var(--ds-accent-strong);
+  outline-offset: calc(-1 * var(--ds-1));
+}
+.ds-rating-bias {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-4);
+}
+.ds-rating-bar {
+  position: relative;
+  display: inline-block;
+  width: calc(var(--ds-row) * 2);
+  height: var(--ds-4);
+  border-radius: var(--ds-r-pill);
+  background: var(--ds-sunken);
+}
+.ds-rating-bar[data-diverging] {
+  width: calc(var(--ds-row) * 3);
+}
+.ds-rating-bar[data-diverging]::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  inset-block: calc(-1 * var(--ds-1));
+  width: calc(var(--ds-1) / 2);
+  background: var(--ds-ink-4);
+}
+.ds-rating-bar i {
+  position: absolute;
+  inset-block: 0;
+  border-radius: var(--ds-r-pill);
+  background: var(--ds-ink-3);
+}
+.ds-rating-bar[data-diverging] i {
+  background: var(--ds-accent);
+}
+.ds-rating-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, calc(var(--ds-inspector) / 2)), 1fr)
+  );
+  align-items: start;
+  gap: var(--ds-6);
+}
+.ds-rating-chart-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ds-5);
+  align-content: start;
+  min-width: 0;
+}
+.ds-rating-chart-controls,
+.ds-rating-picked {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-3) var(--ds-5);
+}
+.ds-rating-chart-controls label {
+  min-width: 0;
+}
+.ds-rating-chart-controls select {
+  min-width: 0;
+  max-width: 100%;
+}
+.ds-rating-picked {
+  min-height: var(--ds-h-md);
+  padding: var(--ds-4) var(--ds-5);
+  border-radius: var(--ds-r-md);
+  background: var(--ds-sunken);
+  font-size: var(--ds-text-sm);
+}
+.ds-rating-scatter {
+  max-width: calc(var(--ds-inspector) + var(--ds-7));
+}
+.ds-rating-scatter svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: manipulation;
+}
+.ds-rating-scatter line {
+  stroke: var(--ds-line-soft);
+}
+.ds-rating-scatter text {
+  fill: var(--ds-ink-3);
+  font: 400 var(--ds-text-xs) var(--ds-font);
+}
+.ds-rating-scatter .ds-rating-axis {
+  stroke: var(--ds-line);
+  fill: none;
+}
+.ds-rating-scatter .ds-rating-diagonal {
+  stroke: var(--ds-ink-4);
+  stroke-dasharray: var(--ds-2) var(--ds-2);
+}
+.ds-rating-scatter circle {
+  r: calc(var(--ds-3) / 2);
+  fill: var(--ds-accent);
+  fill-opacity: 0.4;
+}
+.ds-rating-scatter circle[data-direction='high'] {
+  fill: var(--ds-info);
+  fill-opacity: 0.6;
+}
+.ds-rating-scatter circle[data-direction='low'] {
+  fill: var(--ds-attention-mark);
+  fill-opacity: 0.7;
+}
+.ds-rating-scatter circle.ds-rating-selected {
+  r: var(--ds-3);
+  fill: var(--ds-surface);
+  fill-opacity: 1;
+  stroke: var(--ds-ink);
+  stroke-width: var(--ds-1);
+}
+@media (max-width: 700px) {
+  .ds-rating-chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ds-rating-bar {
+    width: var(--ds-row-media);
+  }
+  .ds-rating-bar[data-diverging] {
+    width: calc(var(--ds-row) * 2);
+  }
 }

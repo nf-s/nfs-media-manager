@@ -332,7 +332,7 @@
   function ratingPosition(values, score) {
     if (score === null) return ''
     const label = `Source ratings ${values.map((value) => value.toFixed(1)).join(', ')}. Combined score ${score.toFixed(1)} out of 100.`
-    return `<span class="ds-rating-position" role="img"${attrs({ 'aria-label': label, title: label })}>${values.map((value) => `<i style="left:${value}%"></i>`).join('')}<i data-score style="left:${score}%"></i></span>`
+    return `<span class="ds-rating-position" role="img"${attrs({ 'aria-label': label, title: label })}>${values.map((value) => `<i data-observation="counted" style="left:${value}%"></i>`).join('')}<i data-score style="left:${score}%"></i></span>`
   }
 
   function tabs(items, selected = 0) {

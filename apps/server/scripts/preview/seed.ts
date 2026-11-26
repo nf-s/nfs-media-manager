@@ -2115,6 +2115,33 @@ async function main() {
     return new Date(NOW - days * DAY - between(0, 20) * HOUR)
   }
 
+  // A small imported ratings cohort for the paired-source charts. Later
+  // snapshots below replace the imported values for sources actually scraped.
+  const ratedAlbums = albums
+    .filter((item) => item.plan === 'scraped' && !item.hidden)
+    .slice(0, 24)
+  for (const [index, item] of ratedAlbums.entries()) {
+    const browse = {
+      ratingRymValue: (240 + ((index * 19) % 205)) / 100,
+      ratingRymVotes: 40 + index * 12,
+      ratingDiscogsValue: (225 + ((index * 13) % 240)) / 100,
+      ratingDiscogsVotes: 17 + index * 5,
+      ratingMetacriticValue: 31 + ((index * 7) % 65),
+      ratingMetacriticVotes: 10 + ((index * 3) % 28),
+    }
+    await apply(
+      item.id,
+      'album',
+      'legacy-record',
+      PluginResultSchema.parse({
+        payload: { title: item.title, ...browse },
+        normalized: { mediaPatch: { metadata: { browse } } },
+      }),
+      'legacy-import',
+      daysAgo(450),
+    )
+  }
+
   for (const item of albums) {
     if (item.plan === 'none') continue
     const source = item.plan === 'scraped' ? 'scrape-job' : 'legacy-import'
@@ -2150,7 +2177,30 @@ async function main() {
   console.log('albums:', albums.length)
 
   // -------------------------------------------------- provider results: films
-  for (const film of films) {
+  for (const [index, film] of films.entries()) {
+    if (film.watched && film.plan !== 'none') {
+      const rating = 1 + ((index * 3) % 10)
+      const payload = {
+        Title: film.title,
+        Const: film.imdbId,
+        'Your Rating': String(rating),
+      }
+      await apply(
+        film.id,
+        'film',
+        'imdb-ratings',
+        PluginResultSchema.parse({
+          payload,
+          normalized: {
+            mediaPatch: {
+              metadata: { browse: { ratingImdbPersonal: rating } },
+            },
+          },
+        }),
+        'legacy-import',
+        daysAgo(450),
+      )
+    }
     const source = film.plan === 'scraped' ? 'scrape-job' : 'legacy-import'
     for (const provider of film.providers) {
       const result =

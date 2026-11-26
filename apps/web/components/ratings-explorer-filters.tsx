@@ -1,183 +1,157 @@
 'use client'
 
-import { useState } from 'react'
-import { useResultAction } from './result-feedback'
-import { ListFilter } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import {
   RatingsRankingRequestSchema,
-  defaultRatingsRankingRequest,
   type RatingsRankingRequest,
 } from '@repo/schemas/ratings-explorer'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Select } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
-import BrowseFilterPanel, { FilterPanelSection } from './browse-filter-panel'
+import { useBrowseFacets } from '@/hooks/useBrowseFacets'
+import { useConfig } from './providers'
 
-type Filters = Pick<
+export type RatingFilters = Pick<
   RatingsRankingRequest,
-  'tag' | 'yearFrom' | 'yearTo' | 'minPlays' | 'watched' | 'scoredOnly'
+  'tag' | 'tagField' | 'yearFrom' | 'yearTo' | 'watched' | 'minPlays'
 >
 
 export function RatingsFilters({
   request,
   onChange,
-  onResetRanges,
 }: {
   request: RatingsRankingRequest
-  onChange: (filters: Filters) => void
-  onResetRanges: () => void
+  onChange: (filters: RatingFilters) => void
 }) {
   const [error, setError] = useState('')
-  const apply = useResultAction('apply-filters')
-  const reset = useResultAction('reset-filters')
-  const { library, tag, yearFrom, yearTo, minPlays, watched, scoredOnly } =
-    request
-  const count = [
-    Boolean(tag),
-    yearFrom !== undefined || yearTo !== undefined,
-    watched !== undefined,
-    minPlays !== undefined,
-    scoredOnly,
-  ].filter(Boolean).length
+  const { apiBaseUrl } = useConfig()
+  const [draftTag, setDraftTag] = useState(request.tag)
+  const facets = useBrowseFacets(
+    apiBaseUrl,
+    request.library === 'film' ? 'films' : 'albums',
+    draftTag,
+  )
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  function commit(form: HTMLFormElement, delay: boolean) {
+    clearTimeout(timer.current)
+    const data = new FormData(form)
+    const numeric = (key: string) =>
+      data.get(key) ? Number(data.get(key)) : undefined
+    const tag = String(data.get('tag') ?? '').trim()
+    const filters = {
+      tag,
+      tagField: tag === request.tag ? request.tagField : undefined,
+      yearFrom: numeric('yearFrom'),
+      yearTo: numeric('yearTo'),
+      minPlays: numeric('minPlays'),
+      watched:
+        data.get('watched') === 'yes'
+          ? true
+          : data.get('watched') === 'no'
+            ? false
+            : undefined,
+    }
+    const parsed = RatingsRankingRequestSchema.safeParse({
+      ...request,
+      ...filters,
+    })
+    if (!parsed.success || !form.checkValidity()) {
+      setError(parsed.error?.issues[0]?.message ?? 'Check the filter values.')
+      return
+    }
+    setError('')
+    if (delay) timer.current = setTimeout(() => onChange(filters), 300)
+    else onChange(filters)
+  }
   return (
-    <BrowseFilterPanel count={count + request.ranges.length}>
-      <FilterPanelSection
-        title="Rating filters"
-        icon={<ListFilter className="ds-i" aria-hidden />}
-        defaultOpen
-      >
-        <form
-          className="data-stack"
-          key={JSON.stringify([
-            tag,
-            yearFrom,
-            yearTo,
-            minPlays,
-            watched,
-            scoredOnly,
-          ])}
-          onSubmit={(event) => {
-            event.preventDefault()
-            const data = new FormData(event.currentTarget)
-            function numeric(name: string) {
-              const value = data.get(name)
-              return value ? Number(value) : undefined
-            }
-            const watched = data.get('watched')
-            const filters = {
-              tag: String(data.get('tag') ?? '').trim(),
-              yearFrom: numeric('yearFrom'),
-              yearTo: numeric('yearTo'),
-              minPlays: numeric('minPlays'),
-              watched:
-                watched === 'yes' ? true : watched === 'no' ? false : undefined,
-              scoredOnly: data.has('scoredOnly'),
-            }
-            const result = RatingsRankingRequestSchema.safeParse({
-              ...request,
-              ...filters,
-            })
-            if (!result.success) {
-              setError(result.error.issues[0]?.message ?? 'Check the filters.')
-              return
-            }
-            setError('')
-            apply.begin()
-            onChange(filters)
-          }}
-        >
+    <form
+      className="ratings-options"
+      aria-label="Rating filters"
+      onSubmit={(e) => {
+        e.preventDefault()
+        commit(e.currentTarget, false)
+      }}
+      onChange={(e) =>
+        commit(e.currentTarget, !(e.target instanceof HTMLSelectElement))
+      }
+    >
+      <div className="ratings-fields">
+        <label className="ratings-field">
+          Tag
+          <Input
+            list="rating-tags"
+            name="tag"
+            value={draftTag}
+            maxLength={200}
+            placeholder="Any"
+            onFocus={facets.activate}
+            onChange={(e) => setDraftTag(e.target.value)}
+          />
+          <datalist id="rating-tags">
+            {facets.data
+              ?.filter((f) => f.field === 'genre')
+              .map((f) => (
+                <option key={f.value} value={f.value} />
+              ))}
+          </datalist>
+        </label>
+        <label className="ratings-field">
+          Year from
+          <Input
+            type="number"
+            name="yearFrom"
+            min={1}
+            max={9999}
+            defaultValue={request.yearFrom}
+          />
+        </label>
+        <label className="ratings-field">
+          Year to
+          <Input
+            type="number"
+            name="yearTo"
+            min={1}
+            max={9999}
+            defaultValue={request.yearTo}
+          />
+        </label>
+        {request.library === 'film' ? (
           <label className="ratings-field">
-            Tag
-            <Input name="tag" defaultValue={tag} maxLength={200} />
-          </label>
-          <div className="ratings-fields">
-            <label className="ratings-field">
-              From year
-              <Input
-                name="yearFrom"
-                type="number"
-                min="1"
-                max="9999"
-                defaultValue={yearFrom}
-              />
-            </label>
-            <label className="ratings-field">
-              Through year
-              <Input
-                name="yearTo"
-                type="number"
-                min="1"
-                max="9999"
-                defaultValue={yearTo}
-              />
-            </label>
-          </div>
-          {library === 'film' ? (
-            <label className="ratings-field">
-              Watched
-              <Select
-                aria-label="Watched"
-                name="watched"
-                defaultValue={
-                  watched === undefined ? '' : watched ? 'yes' : 'no'
-                }
-              >
-                <option value="">Any</option>
-                <option value="yes">Watched</option>
-                <option value="no">Unwatched</option>
-              </Select>
-            </label>
-          ) : (
-            <label className="ratings-field">
-              Minimum plays
-              <Input
-                type="number"
-                min="0"
-                max="2147483647"
-                name="minPlays"
-                defaultValue={minPlays}
-              />
-            </label>
-          )}
-          <label>
-            <input
-              type="checkbox"
-              name="scoredOnly"
-              defaultChecked={scoredOnly}
-            />{' '}
-            Only show items with a combined score
-          </label>
-          {error && <Notice tone="danger">{error}</Notice>}
-          <div className="ds-actions">
-            <Button type="submit" variant="primary" feedback={apply.feedback}>
-              Apply filters
-            </Button>
-            <Button
-              type="button"
-              feedback={reset.feedback}
-              onClick={(event) => {
-                reset.begin()
-                const defaults = defaultRatingsRankingRequest(library)
-                const form = event.currentTarget.form
-                form?.reset()
-                setError('')
-                onResetRanges()
-                onChange({
-                  tag: '',
-                  yearFrom: undefined,
-                  yearTo: undefined,
-                  minPlays: undefined,
-                  watched: undefined,
-                  scoredOnly: defaults.scoredOnly,
-                })
-              }}
+            Watched
+            <Select
+              name="watched"
+              aria-label="Watched"
+              defaultValue={
+                request.watched === undefined
+                  ? ''
+                  : request.watched
+                    ? 'yes'
+                    : 'no'
+              }
             >
-              Reset filters
-            </Button>
-          </div>
-        </form>
-      </FilterPanelSection>
-    </BrowseFilterPanel>
+              <option value="">Any</option>
+              <option value="yes">Watched</option>
+              <option value="no">Not watched</option>
+            </Select>
+          </label>
+        ) : (
+          <label className="ratings-field">
+            Plays, at least
+            <Input
+              type="number"
+              min={0}
+              max={2147483647}
+              name="minPlays"
+              defaultValue={request.minPlays}
+            />
+          </label>
+        )}
+      </div>
+      <p className="ds-help">
+        To filter by a rating, score or spread, pick bars on the Sources view.
+      </p>
+      {error && <Notice tone="danger">{error}</Notice>}
+    </form>
   )
 }

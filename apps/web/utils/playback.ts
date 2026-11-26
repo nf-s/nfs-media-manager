@@ -7,7 +7,11 @@ import type {
   QueueEntry,
   SourceDescriptor,
 } from '@repo/schemas/playback'
-import { albumSpotifyUri, spotifyTrackUri } from './album-links'
+import {
+  albumSpotifyUri,
+  spotifyTrackUri,
+  type AlbumLinkSource,
+} from './album-links'
 
 export type {
   PlayableItem,
@@ -59,15 +63,9 @@ export type LibraryTrackSource = Pick<
 
 export type AlbumSource = Pick<
   AlbumListItem,
-  | 'id'
-  | 'title'
-  | 'artworkUrl'
-  | 'credits'
-  | 'trackCount'
-  | 'spotifyUrl'
-  | 'links'
-  | 'providerReferences'
->
+  'id' | 'title' | 'artworkUrl' | 'credits' | 'trackCount'
+> &
+  AlbumLinkSource
 type TrackSource = { externalId: string | null; title: string }
 
 function albumCredits(album: AlbumSource) {

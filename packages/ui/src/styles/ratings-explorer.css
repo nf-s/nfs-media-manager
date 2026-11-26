@@ -1,10 +1,43 @@
 /* The ranking keeps its own scroll window below the scoring controls. */
-.ratings-scoring {
-  padding-inline: var(--ds-gutter);
-  max-height: 35%;
+.ratings-panels {
+  max-height: 50%;
   overflow: auto;
+  flex-shrink: 0;
 }
-.ratings-weights,
+.ratings-views,
+.ratings-options {
+  padding: var(--ds-3) var(--ds-gutter);
+}
+.ratings-options,
+.ratings-weights {
+  display: grid;
+  gap: var(--ds-3);
+}
+.ratings-weight-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--ds-8) minmax(
+      0,
+      1fr
+    );
+  align-items: center;
+  gap: var(--ds-3);
+  width: min(100%, calc(var(--ds-rail) * 3));
+}
+.ratings-weight-row .ds-rating-weight {
+  display: contents;
+}
+.ratings-weight-row input[type='range'] {
+  width: 100%;
+}
+.ratings-weight-row .ds-input {
+  min-width: 0;
+  width: 100%;
+  max-width: calc(var(--ds-9) * 3);
+}
+.ratings-options h3,
+.ratings-options p {
+  margin: 0;
+}
 .ratings-fields {
   display: flex;
   align-items: center;
@@ -39,7 +72,7 @@
   display: grid;
   grid-template-columns: repeat(
     auto-fit,
-    minmax(min(100%, var(--ds-rail)), 1fr)
+    minmax(min(100%, calc(var(--ds-rail) + var(--ds-9) * 3)), 1fr)
   );
   align-items: start;
   gap: var(--ds-6);

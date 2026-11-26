@@ -13,6 +13,7 @@ import {
 import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { SortPicker, type SortOption } from '@repo/ui/components/ds/sort-picker'
 import { Segmented } from '@repo/ui/components/ds/segmented'
+import { ToolbarToggle } from '@repo/ui/components/ds/toolbar'
 
 type Receipt = {
   control: string
@@ -144,6 +145,15 @@ export function ResultSortPicker<Key extends string>({
       }}
     />
   )
+}
+
+/** Panel edits report on their persistent toggle, including when the panel closes. */
+export function ResultToolbarToggle({
+  control,
+  ...props
+}: ComponentProps<typeof ToolbarToggle> & { control: string }) {
+  const action = useResultAction(control)
+  return <ToolbarToggle {...props} feedback={action.feedback} />
 }
 
 export function ResultSegmented<Value extends string>({

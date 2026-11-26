@@ -20,13 +20,12 @@ const source = {
 for (const library of ['film', 'album']) {
   test(
     library +
-      ' Sources opens real matching Ranking rows from a bin and a range',
+      ' Sources selects and extends a range in place and ranks exactly those scores',
     async ({ page }) => {
       const reads: string[] = []
-      page.on('request', (request) => {
-        const path = new URL(request.url()).pathname
-        if (request.method() === 'POST' && path.startsWith('/api/v1/ratings/'))
-          reads.push(path.split('/').at(-1) ?? '')
+      page.on('request', (r) => {
+        if (r.method() === 'POST' && r.url().includes('/api/v1/ratings/'))
+          reads.push(r.url().split('/').at(-1) ?? '')
       })
       const response = (view: string) =>
         page.waitForResponse(
@@ -38,16 +37,7 @@ for (const library of ['film', 'album']) {
         response('ranking'),
         page.goto('/' + library + 's/ratings'),
       ])
-      await page.getByRole('button', { name: /^Filters, columns/ }).click()
-      const filters = page.getByRole('dialog', { name: 'Filters and view' })
-      await filters.getByLabel('From year').fill('1900')
-      await Promise.all([
-        response('ranking'),
-        filters.getByRole('button', { name: 'Apply filters' }).click(),
-      ])
-      await filters.getByRole('button', { name: 'Close filters' }).click()
       const views = page.getByRole('group', { name: 'Ratings view' })
-      const began = Date.now()
       const [summaryResponse] = await Promise.all([
         response('sources'),
         views.getByRole('button', { name: 'Sources' }).click(),
@@ -55,83 +45,59 @@ for (const library of ['film', 'album']) {
       const { data: summary } = z
         .object({ data: RatingsSourcesPageSchema })
         .parse(await summaryResponse.json())
-      const chart = page.getByRole('group', {
-        name: 'Combined score distribution',
-      })
-      await expect(chart).toBeVisible()
-      test.info().annotations.push({
-        type: 'Sources visible',
-        description: String(Date.now() - began) + ' ms',
-      })
+      const chart = page.getByRole('group', { name: 'Score distribution' })
       const score = summary.histograms.find((h) => h.dimension === 'score')
       if (!score) throw new Error('Missing score histogram')
-      const first = score.bins.findIndex((bin) => bin.count > 0)
+      const first = score.bins.findIndex((b) => b.count > 0)
       expect(first).toBeGreaterThanOrEqual(0)
-      expect(reads).toEqual(['ranking', 'ranking', 'sources'])
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true)
-      const [rankedResponse] = await Promise.all([
-        response('ranking'),
+      const last = first === 9 ? first - 1 : first + 1
+      await Promise.all([
+        response('sources'),
         chart.getByRole('button').nth(first).click(),
       ])
-      const { data: ranked } = z
-        .object({ data: RatingsRankingPageSchema })
-        .parse(await rankedResponse.json())
-      expect(ranked.total).toBe(score.bins[first]?.count)
-      const row = ranked.rows[0]
-      if (!row) throw new Error('Expected a matching title')
-      await expect(
-        page.getByRole('button', { name: row.title, exact: true }).first(),
-      ).toBeVisible()
-      await page
-        .getByRole('button', { name: 'Edit Combined score range' })
-        .click()
-      await expect(chart).toBeVisible()
-      const from = Math.max(0, first - 1)
-      const through = Math.min(first + 1, score.bins.length - 1)
-      await page.getByLabel('From bin').selectOption({ index: from })
-      await page.getByLabel('Through bin').selectOption({ index: through })
-      const [rangeResponse] = await Promise.all([
-        response('ranking'),
-        page.getByRole('button', { name: 'Show in Ranking' }).click(),
+      await expect(chart.getByRole('button').nth(first)).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+      await Promise.all([
+        response('sources'),
+        chart.getByRole('button').nth(last).click(),
       ])
-      const { data: rangeRows } = z
+      const lo = Math.min(first, last),
+        hi = Math.max(first, last)
+      const [ranked] = await Promise.all([
+        response('ranking'),
+        views.getByRole('button', { name: 'Ranking' }).click(),
+      ])
+      const { data } = z
         .object({ data: RatingsRankingPageSchema })
-        .parse(await rangeResponse.json())
-      expect(rangeRows.total).toBe(
-        score.bins
-          .slice(from, through + 1)
-          .reduce((sum, bin) => sum + bin.count, 0),
+        .parse(await ranked.json())
+      expect(data.total).toBe(
+        score.bins.slice(lo, hi + 1).reduce((n, b) => n + b.count, 0),
       )
       expect(
-        RatingsRankingRequestSchema.parse(
-          rangeResponse.request().postDataJSON(),
-        ),
-      ).toMatchObject({
-        yearFrom: 1900,
-        ranges: [{ dimension: 'score', first: from, last: through }],
-      })
+        RatingsRankingRequestSchema.parse(ranked.request().postDataJSON())
+          .ranges,
+      ).toEqual([{ dimension: 'score', first: lo, last: hi }])
       expect(reads).toEqual([
         'ranking',
-        'ranking',
         'sources',
-        'ranking',
+        'sources',
         'sources',
         'ranking',
       ])
-      await page
-        .getByRole('button', { name: 'Clear Combined score range' })
-        .click()
+      await page.getByRole('button', { name: /^Clear Score / }).click()
       await expect(
-        page.getByRole('button', { name: 'Edit Combined score range' }),
+        page.getByRole('button', { name: /^Clear Score / }),
       ).toHaveCount(0)
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true)
     },
   )
 }
-
 function ranking(request: RatingsRankingRequest): RatingsRankingPage {
   const total = request.search ? 1 : 120
   const length = Math.max(0, Math.min(request.limit, total - request.offset))
@@ -158,10 +124,20 @@ function ranking(request: RatingsRankingRequest): RatingsRankingPage {
   ]
   return {
     total,
+    unscored: 0,
+    libraryTotal: 120,
+    matchingTotal: total,
     sources,
     rows: Array.from({ length }, (_, i) => ({
       id: 'fixture-' + (request.offset + i),
       title: (request.search || 'Fixture') + ' ' + (request.offset + i + 1),
+      artworkUrl: null,
+      credits: [],
+      tags: [],
+      artistTags: [],
+      album: null,
+      watched: null,
+      plays: null,
       year: 2010,
       score: 80,
       core: 80,
@@ -207,7 +183,9 @@ test('sort shows the outstanding read and its result on the direction button', a
   await expect(
     page.getByRole('button', { name: 'Fixture 1', exact: true }),
   ).toBeVisible()
-  const direction = page.getByRole('button', { name: /Sort direction:/ })
+  const direction = page.getByRole('button', {
+    name: /Highest first|Lowest first/,
+  })
   const idle = await direction.boundingBox()
   expect(idle).not.toBeNull()
   hold = true
@@ -244,7 +222,7 @@ test('ranking reads one page per committed query and reuses calculation evidence
     page
       .getByRole('row')
       .filter({ has: first })
-      .getByRole('cell', { name: '2 / 2', exact: true }),
+      .getByRole('cell', { name: '2/2', exact: true }),
   ).toHaveCount(1)
   expect(requests.map((request) => request.offset)).toEqual([0])
   await first.click()
@@ -260,9 +238,12 @@ test('ranking reads one page per committed query and reuses calculation evidence
   await expect(calculation.getByText('2 of 2', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(first).toBeFocused()
-  await page.getByRole('button', { name: 'Adjusted', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Adjusted 0–100', exact: true })
+    .click()
   expect(requests).toHaveLength(1)
 
+  await page.getByRole('button', { name: 'Scoring', exact: true }).click()
   const slider = page.getByRole('slider', { name: 'Fixture rating' })
   await slider.focus()
   const sliderBounds = await slider.boundingBox()
@@ -277,12 +258,14 @@ test('ranking reads one page per committed query and reuses calculation evidence
     { key: source.key, weight: 2, minVotes: 0 },
   ])
   await expect(
-    page.locator('.ratings-scoring summary[data-feedback]').first(),
+    page
+      .getByRole('button', { name: /Scoring/ })
+      .and(page.locator('[data-feedback]')),
   ).toBeVisible()
   expect(await slider.boundingBox()).toEqual(sliderBounds)
   await expect(first).toBeVisible()
   const search = page.getByRole('searchbox', {
-    name: 'Search titles or directors',
+    name: 'Search title or director',
   })
   await search.pressSequentially('River', { delay: 15 })
   await expect(
@@ -292,6 +275,8 @@ test('ranking reads one page per committed query and reuses calculation evidence
   await search.fill('')
   await expect(first).toBeVisible()
   expect(requests).toHaveLength(3)
+  await page.getByRole('button', { name: 'Scoring', exact: true }).click()
+  await page.getByRole('button', { name: 'Show 200 more' }).click()
   const table = page.getByRole('region', { name: 'Film rankings', exact: true })
   await table.evaluate((el) => el.scrollTo(0, el.scrollHeight))
   await expect(
@@ -304,11 +289,13 @@ test('ranking reads one page per committed query and reuses calculation evidence
   expect(requests).toHaveLength(deepRequests)
   await page.goto('/albums/ratings')
   await expect(
-    page.getByRole('searchbox', { name: 'Search titles or artists' }),
+    page.getByRole('searchbox', { name: 'Search title or artist' }),
   ).toBeVisible()
+  await page.getByRole('button', { name: 'Scoring', exact: true }).click()
   await expect(slider).toHaveValue('1')
   expect(requests.at(-1)?.library).toBe('album')
   await page.goto('/films/ratings')
+  await page.getByRole('button', { name: 'Scoring', exact: true }).click()
   await expect(slider).toHaveValue('2')
   expect(requests.at(-1)?.settings.sources[0]?.weight).toBe(2)
 })
@@ -333,6 +320,7 @@ test('a later search replaces an outstanding read, and a slider drag commits onc
   })
   try {
     await page.goto('/albums/ratings')
+    await page.getByRole('button', { name: 'Scoring', exact: true }).click()
     const slider = page.getByRole('slider', { name: 'Fixture rating' })
     await slider.scrollIntoViewIfNeeded()
     const box = await slider.boundingBox()
@@ -348,7 +336,7 @@ test('a later search replaces an outstanding read, and a slider drag commits onc
     expect(requests[1]?.settings.sources[0]?.weight).toBe(3)
 
     const search = page.getByRole('searchbox', {
-      name: 'Search titles or artists',
+      name: 'Search title or artist',
     })
     await search.fill('Slow')
     await expect.poll(() => requests.at(-1)?.search).toBe('Slow')
@@ -361,11 +349,11 @@ test('a later search replaces an outstanding read, and a slider drag commits onc
     await search.fill('New')
     await aborted
     await expect(
-      page.getByRole('button', { name: 'New 1', exact: true }),
+      page.getByRole('link', { name: 'New 1', exact: true }),
     ).toBeVisible()
     finishSlowRead?.()
     await expect(
-      page.getByRole('button', { name: 'Slow 1', exact: true }),
+      page.getByRole('link', { name: 'Slow 1', exact: true }),
     ).toHaveCount(0)
     expect(requests.map((request) => request.search)).toEqual([
       '',
@@ -405,25 +393,24 @@ test('film filters commit together, source sorts reach the server and unscored r
   await expect(
     page.getByRole('button', { name: 'Fixture 1', exact: true }),
   ).toBeVisible()
-  const sort = page.getByRole('button', { name: 'Sort by: Score / 100' })
+  const sort = page.getByRole('button', { name: 'Sort by: Score' })
   await sort.click()
-  await page.getByRole('option', { name: 'Fixture rating / 10' }).click()
+  await page.getByRole('option', { name: 'Fixture rating' }).click()
   await expect.poll(() => requests.at(-1)?.sort).toBe(source.key)
-  await page.getByRole('button', { name: 'Sort direction: descending' }).click()
+  await page.getByRole('button', { name: 'Highest first' }).click()
   await expect.poll(() => requests.at(-1)?.direction).toBe('asc')
   const previous = requests.length
-  await page.getByRole('button', { name: /^Filters, columns/ }).click()
-  const filters = page.getByRole('dialog', { name: 'Filters and view' })
+  await page.getByRole('button', { name: 'Filters', exact: true }).click()
+  const filters = page.getByRole('form', { name: 'Rating filters' })
   await filters.getByLabel('Tag', { exact: true }).fill('Sparse')
-  await filters.getByLabel('From year').fill('1980')
-  await filters.getByLabel('Through year').fill('2010')
-  await filters.getByLabel('Watched', { exact: true }).selectOption('no')
-  expect(requests).toHaveLength(previous)
-  await filters.getByRole('button', { name: 'Apply filters' }).click()
-  await filters.getByRole('button', { name: 'Close filters' }).click()
-  await expect(
-    page.getByText('No matching films.', { exact: false }),
-  ).toBeVisible()
+  await filters.getByLabel('Year from').fill('1980')
+  await filters.getByLabel('Year to').fill('2010')
+  await filters
+    .getByRole('combobox', { name: 'Watched', exact: true })
+    .selectOption('no')
+  await expect.poll(() => requests.at(-1)?.watched).toBe(false)
+  await page.getByRole('button', { name: /^Filters/ }).click()
+  await expect(page.getByText('No items match', { exact: false })).toBeVisible()
   expect(requests.at(-1)).toMatchObject({
     tag: 'Sparse',
     yearFrom: 1980,
@@ -433,7 +420,7 @@ test('film filters commit together, source sorts reach the server and unscored r
     sort: source.key,
     direction: 'asc',
   })
-  await page.getByRole('button', { name: 'Include unscored items' }).click()
+  await page.getByRole('checkbox', { name: /Hide .*without a score/ }).uncheck()
   await page
     .getByRole('button', { name: 'Combined score calculation for Fixture 1' })
     .click()

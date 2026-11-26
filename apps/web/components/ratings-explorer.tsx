@@ -1,320 +1,224 @@
 'use client'
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
-import { ReadButton } from './read-button'
+import { ArrowDown, ArrowUp, ListFilter, SlidersHorizontal } from 'lucide-react'
+import {
+  defaultRatingsRankingRequest,
+  RatingsSettingsSchema,
+  type RatingsRankingRequest,
+  type RatingsSettings,
+  type RatingsSource,
+} from '@repo/schemas/ratings-explorer'
+import {
+  FilterLine,
+  PageHead,
+  Toolbar,
+  ToolbarCount,
+} from '@repo/ui/components/ds/toolbar'
+import { Button } from '@repo/ui/components/ui/button'
+import { formatCount } from '@repo/ui/lib/format'
+import { rankingKey, ratingSourcesKey } from '@/utils/ratings-explorer-api'
+import { ratingChartsKey } from '@/utils/ratings-explorer-charts-api'
 import {
   ResultButton,
   ResultSection,
   ResultSegmented,
   ResultSortPicker,
+  ResultToolbarToggle,
 } from './result-feedback'
-import { ArrowDown, ArrowUp, X } from 'lucide-react'
+import { BrowseFilterPill } from './browse-controls'
+import { SecondaryTableSearch } from './secondary-table'
+import { RatingsScoring } from './ratings-explorer-scoring'
+import { RatingsFilters, type RatingFilters } from './ratings-explorer-filters'
 import {
-  defaultRatingsRankingRequest,
-  RatingsSettingsSchema,
-  type RatingsRankingRequest,
-  type RatingsRankingRow,
-  type RatingsSettings,
-  type RatingsSource,
-} from '@repo/schemas/ratings-explorer'
-import { Notice } from '@repo/ui/components/ds/feedback'
-import {
-  RatingDifference,
-  RatingPositionStrip,
-} from '@repo/ui/components/ds/ratings-explorer'
-import { Segmented } from '@repo/ui/components/ds/segmented'
-import { FilterLine, PageHead } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
-import {
-  TableBody,
-  TableHeader,
-  TableState,
-  TableCell,
-  TableRow,
-} from '@repo/ui/components/ui/table'
-import { EMPTY_VALUE } from '@repo/ui/lib/format'
-import { useVirtualTable } from '@/hooks/useVirtualTable'
-import {
-  fetchRatingsRanking,
-  rankingKey,
-  ratingSourcesKey,
-} from '@/utils/ratings-explorer-api'
-import { useConfig } from './providers'
-import {
-  RatingsCalculation,
-  displayedScore,
-  nativeScore,
-} from './ratings-explorer-calculation'
-import { RatingsFilters } from './ratings-explorer-filters'
-import { RatingsScoring, settingFor } from './ratings-explorer-scoring'
-import {
-  RatingsCount,
   RatingsSources,
   type RatingSelection,
 } from './ratings-explorer-sources'
-import {
-  SecondaryTableScroll,
-  SecondaryTableToolbar,
-  SecondaryTableSearch,
-  SecondaryTableHead,
-  SecondaryVirtualRows,
-  useTableColumns,
-  type TableColumn,
-} from './secondary-table'
+import { RatingsCharts } from './ratings-explorer-charts'
+import { Ranking, ratingSortOptions } from './ratings-explorer-ranking'
 
 type Library = RatingsRankingRequest['library']
-type Display = 'native' | 'adjusted'
-type View = 'ranking' | 'sources'
+type View = 'ranking' | 'sources' | 'agreement' | 'compare'
 const views: { value: View; label: string }[] = [
   { value: 'ranking', label: 'Ranking' },
   { value: 'sources', label: 'Sources' },
+  { value: 'agreement', label: 'Agreement' },
+  { value: 'compare', label: 'Compare' },
 ]
-const modes: { value: Display; label: string }[] = [
-  { value: 'native', label: 'Native' },
-  { value: 'adjusted', label: 'Adjusted' },
-]
-
-function ratingColumns(
-  sources: readonly RatingsSource[],
-  display: Display,
-): TableColumn[] {
-  const groups = new Set(sources.map((source) => source.group))
-  return [
-    { key: 'title', label: 'Title', width: 195, required: true, fill: true },
-    { key: 'score', label: 'Score / 100', width: 145 },
-    ...sources.map((source) => ({
-      key: source.key,
-      label: source.label + ' / ' + (display === 'native' ? source.scale : 100),
-      width: 155,
-    })),
-    { key: 'counted', label: 'Ratings counted', width: 120 },
-    { key: 'year', label: 'Year', width: 78, defaultVisible: false },
-    { key: 'spread', label: 'Spread', width: 95, defaultVisible: false },
-    ...(groups.has('audience') && groups.has('critics')
-      ? [
-          {
-            key: 'criticGap',
-            label: 'Critic–audience gap',
-            width: 155,
-            defaultVisible: false,
-          },
-        ]
-      : []),
-    ...(groups.has('personal')
-      ? [
-          {
-            key: 'personalGap',
-            label: 'Personal–combined gap',
-            width: 170,
-            defaultVisible: false,
-          },
-        ]
-      : []),
-  ]
-}
-
-function RatingCell({
-  column,
-  row,
-  source,
-  sourceCount,
-  display,
-  onOpen,
-}: {
-  column: string
-  row: RatingsRankingRow
-  source: RatingsSource | undefined
-  sourceCount: number
-  display: Display
-  onOpen: () => void
-}) {
-  if (column === 'title')
-    return (
-      <Button
-        variant="link"
-        className="ds-cell-title"
-        title={row.title}
-        onClick={onOpen}
-      >
-        {row.title}
-      </Button>
-    )
-  if (column === 'score')
-    return (
-      <Button
-        variant="ghost"
-        size="xs"
-        aria-label={'Combined score calculation for ' + row.title}
-        onClick={onOpen}
-      >
-        {row.score === null ? 'Unscored' : displayedScore(row.score)}
-        <RatingPositionStrip
-          values={row.ratings.flatMap((r) =>
-            r.status === 'counted' && r.adjusted !== null ? [r.adjusted] : [],
-          )}
-          score={row.score}
-        />
-      </Button>
-    )
-  if (column === 'counted') return row.counted + ' / ' + sourceCount
-  if (column === 'year') return row.year ?? EMPTY_VALUE
-  if (column === 'spread' || column === 'criticGap' || column === 'personalGap')
-    return displayedScore(row[column])
-  const rating = row.ratings.find((r) => r.key === source?.key)
-  if (!source || !rating || rating.raw === null) return EMPTY_VALUE
-  return (
-    <RatingDifference
-      value={
-        display === 'native'
-          ? nativeScore(rating.raw, source.scale)
-          : displayedScore(rating.adjusted)
-      }
-      difference={
-        rating.adjusted !== null && row.score !== null
-          ? rating.adjusted - row.score
-          : null
-      }
-      label={source.label + ' calculation for ' + row.title}
-      onClick={onOpen}
-    />
-  )
-}
-
 export function RatingsExplorer({ library }: { library: Library }) {
   return <Explorer key={library} library={library} />
 }
 
+/** Reserve the last count's space while the active view loads its next cohort. */
+function RatingsCount({ text, failed }: { text?: string; failed: boolean }) {
+  const [previous, setPrevious] = useState(text)
+  useEffect(() => {
+    if (text !== undefined) setPrevious(text)
+  }, [text])
+  if (text === undefined && previous === undefined)
+    return failed ? null : 'Loading ratings…'
+  return (
+    <span className={text === undefined ? 'invisible' : undefined}>
+      {text ?? previous}
+    </span>
+  )
+}
 function Explorer({ library }: { library: Library }) {
-  const [baseRequest, setRequest] = useState(() =>
+  const [base, setRequest] = useState(() =>
     defaultRatingsRankingRequest(library),
   )
-  const [search, setSearch] = useState('')
-  const [display, setDisplay] = useState<Display>('native')
   const [view, setView] = useState<View>('ranking')
   const [readyView, setReadyView] = useState<View | null>(null)
+  const [search, setSearch] = useState('')
+  const [scoringOpen, setScoringOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [filterVersion, resetFilterInputs] = useState(0)
   const [sources, setSources] = useState<RatingsSource[]>([])
+  const [display, setDisplay] = useState<'native' | 'adjusted'>('native')
   const [selections, setSelections] = useState<RatingSelection[]>([])
-  const [editing, setEditing] = useState<string | null>(null)
-  const { offset, limit, sort: sortKey, direction, ...filters } = baseRequest
-  const sharedRequest = {
+  const [counts, setCounts] = useState({
+    total: 0,
+    unscored: 0,
+    libraryTotal: 0,
+  })
+  const [axes, setAxes] = useState<{ x?: string; y?: string }>({})
+  const {
+    offset,
+    limit,
+    sort: sortKey,
+    direction,
+    scoredOnly,
+    ...filters
+  } = base
+  const shared = {
     ...filters,
-    ranges: selections.map(({ range }) => range),
+    scoredOnly: false,
+    ranges: selections.map((s) => s.range),
   }
-  const request = { ...sharedRequest, offset, limit, sort: sortKey, direction }
+  const request = {
+    ...shared,
+    offset,
+    limit,
+    sort: sortKey,
+    direction,
+    scoredOnly,
+    ...(display === 'adjusted' && sources.some((s) => s.key === sortKey)
+      ? { adjustedSort: true }
+      : {}),
+  }
   const client = useQueryClient()
   const activeKey =
-    view === 'ranking' ? rankingKey(request) : ratingSourcesKey(sharedRequest)
+    view === 'ranking'
+      ? rankingKey(request)
+      : view === 'sources'
+        ? ratingSourcesKey(shared)
+        : ratingChartsKey(view, shared, axes)
   const fetching = useIsFetching({ queryKey: activeKey })
-  const first = client.getQueryState(
+  const first = client.getQueryState<{ total: number; libraryTotal: number }>(
     view === 'ranking' ? [...activeKey, 1] : activeKey,
   )
+  const libraryTotal =
+    view === 'ranking'
+      ? counts.libraryTotal
+      : (first?.data?.libraryTotal ?? counts.libraryTotal)
+  const shown = view === 'ranking' ? counts.total : first?.data?.total
   const storageKey = 'ratings-explorer:' + library + ':settings'
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(storageKey)
+      const saved = localStorage.getItem(storageKey)
       const parsed = saved && RatingsSettingsSchema.safeParse(JSON.parse(saved))
       if (parsed && parsed.success)
-        setRequest((previous) => ({ ...previous, settings: parsed.data }))
+        setRequest((p) => ({ ...p, settings: parsed.data }))
     } catch {
-      /* The defaults also work without browser storage. */
+      /* Browser storage is optional. */
     }
   }, [storageKey])
-  // Subscribe after the view mounts, so React's development effect replay
-  // cannot start, abort and repeat a feature read for the same interaction.
   useEffect(() => setReadyView(view), [view])
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setRequest((previous) =>
-        previous.search === search.trim()
-          ? previous
-          : { ...previous, search: search.trim() },
-      )
-    }, 300)
-    return () => window.clearTimeout(timer)
+    const timer = setTimeout(
+      () =>
+        setRequest((p) =>
+          p.search === search.trim() ? p : { ...p, search: search.trim() },
+        ),
+      300,
+    )
+    return () => clearTimeout(timer)
   }, [search])
   function scoring(settings: RatingsSettings) {
-    setRequest((previous) => ({ ...previous, settings }))
+    setRequest((p) => ({ ...p, settings }))
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify(settings))
+      localStorage.setItem(storageKey, JSON.stringify(settings))
     } catch {
-      /* In-memory settings remain usable. */
+      /* In-memory controls remain usable. */
     }
   }
   function sort(key: string) {
-    setRequest((previous) => ({
-      ...previous,
+    setRequest((p) => ({
+      ...p,
       sort: key,
       direction:
-        previous.sort === key
-          ? previous.direction === 'asc'
+        p.sort === key
+          ? p.direction === 'asc'
             ? 'desc'
             : 'asc'
-          : key === 'title'
+          : key === 'title' || key === 'year'
             ? 'asc'
             : 'desc',
     }))
   }
-  const searchControl = (
-    <SecondaryTableSearch
-      label={
-        library === 'film'
-          ? 'Search titles or directors'
-          : 'Search titles or artists'
-      }
-      maxLength={200}
-      value={search}
-      onChange={setSearch}
-    />
-  )
-  const filterControl = (
-    <RatingsFilters
-      request={request}
-      onResetRanges={() => {
-        setSelections([])
-        setEditing(null)
-      }}
-      onChange={(filters) =>
-        setRequest((previous) => ({ ...previous, ...filters }))
-      }
-    />
-  )
-  const rangeControls = selections.length > 0 && (
-    <FilterLine>
-      {selections.map(({ range, label, interval }) => (
-        <span key={range.dimension} className="ds-actions">
-          <ResultButton
-            control={'edit-range-' + range.dimension}
-            track={view !== 'sources'}
-            size="xs"
-            aria-label={'Edit ' + label + ' range'}
-            onClick={() => {
-              setEditing(range.dimension)
-              setView('sources')
-            }}
-          >
-            {label} {interval}
-          </ResultButton>
-          <Button
-            icon
-            size="xs"
-            variant="ghost"
-            aria-label={'Clear ' + label + ' range'}
-            onClick={() => {
-              setEditing(null)
-              setSelections((previous) =>
-                previous.filter(
-                  ({ range: other }) => other.dimension !== range.dimension,
-                ),
-              )
-            }}
-          >
-            <X className="ds-i" aria-hidden />
-          </Button>
-        </span>
-      ))}
-    </FilterLine>
-  )
+  function selectRange(dimension: string, selection?: RatingSelection) {
+    setSelections((prev) =>
+      [
+        ...prev.filter((s) => s.range.dimension !== dimension),
+        ...(selection ? [selection] : []),
+      ].sort((a, b) => a.range.dimension.localeCompare(b.range.dimension)),
+    )
+  }
+  function updateFilters(next: Partial<RatingFilters>, external = false) {
+    setRequest((p) => ({ ...p, ...next }))
+    if (external) resetFilterInputs((n) => n + 1)
+  }
+  const chips = [
+    ...(base.tag
+      ? [
+          {
+            label: base.tag,
+            clear: () => updateFilters({ tag: '', tagField: undefined }, true),
+          },
+        ]
+      : []),
+    ...(base.yearFrom || base.yearTo
+      ? [
+          {
+            label:
+              'Year ' + (base.yearFrom ?? '…') + '–' + (base.yearTo ?? '…'),
+            clear: () =>
+              updateFilters({ yearFrom: undefined, yearTo: undefined }, true),
+          },
+        ]
+      : []),
+    ...(base.watched !== undefined
+      ? [
+          {
+            label: base.watched ? 'Watched' : 'Not watched',
+            clear: () => updateFilters({ watched: undefined }, true),
+          },
+        ]
+      : []),
+    ...(base.minPlays !== undefined
+      ? [
+          {
+            label: 'Plays ≥ ' + base.minPlays,
+            clear: () => updateFilters({ minPlays: undefined }, true),
+          },
+        ]
+      : []),
+    ...selections.map((s) => ({
+      label: s.label + ' ' + s.interval,
+      clear: () => selectRange(s.range.dimension),
+    })),
+  ]
   return (
     <ResultSection
       className="sec-page ratings-page"
@@ -330,288 +234,181 @@ function Explorer({ library }: { library: Library }) {
     >
       <PageHead
         title="Ratings"
-        actions={
-          <ResultSegmented
-            label="Ratings view"
-            value={view}
-            options={views}
-            onChange={(next) => {
-              setEditing(null)
-              setView(next)
-            }}
-          />
+        note={
+          sources.length || first?.data
+            ? formatCount(libraryTotal) +
+              ' ' +
+              library +
+              's · ' +
+              formatCount(sources.length) +
+              ' sources'
+            : undefined
         }
       />
-      <RatingsScoring
-        sources={sources}
-        settings={request.settings}
-        onChange={scoring}
-      />
-      {view === 'ranking' ? (
-        <Ranking
-          request={request}
-          ready={readyView === 'ranking'}
-          sources={sources}
-          onSources={setSources}
-          sort={sort}
-          display={display}
-          setDisplay={setDisplay}
-          search={searchControl}
-          filters={filterControl}
-          rangeControls={rangeControls}
-          includeUnscored={() =>
-            setRequest((previous) => ({ ...previous, scoredOnly: false }))
+      <div className="ratings-views">
+        <ResultSegmented
+          label="Ratings view"
+          value={view}
+          options={views}
+          onChange={setView}
+        />
+      </div>
+      <Toolbar>
+        <SecondaryTableSearch
+          label={
+            library === 'film'
+              ? 'Search title or director'
+              : 'Search title or artist'
           }
+          maxLength={200}
+          value={search}
+          onChange={setSearch}
         />
-      ) : (
-        <RatingsSources
-          request={sharedRequest}
-          ready={readyView === 'sources'}
-          onSources={setSources}
-          search={searchControl}
-          filters={filterControl}
-          rangeControls={rangeControls}
-          editing={editing}
-          onEdit={setEditing}
-          onDrill={(selection) => {
-            setSelections((previous) =>
-              [
-                ...previous.filter(
-                  ({ range }) => range.dimension !== selection.range.dimension,
-                ),
-                selection,
-              ].sort((a, b) =>
-                a.range.dimension.localeCompare(b.range.dimension),
-              ),
-            )
-            setEditing(null)
-            setView('ranking')
-          }}
-        />
-      )}
-    </ResultSection>
-  )
-}
-
-function Ranking({
-  request,
-  ready,
-  sources: knownSources,
-  onSources,
-  sort,
-  display,
-  setDisplay,
-  search,
-  filters,
-  rangeControls,
-  includeUnscored,
-}: {
-  request: RatingsRankingRequest
-  ready: boolean
-  sources: RatingsSource[]
-  onSources: (sources: RatingsSource[]) => void
-  sort: (key: string) => void
-  display: Display
-  setDisplay: (display: Display) => void
-  search: ReactNode
-  filters: ReactNode
-  rangeControls: ReactNode
-  includeUnscored: () => void
-}) {
-  const { library } = request
-  const { apiBaseUrl } = useConfig()
-  const [calculation, setCalculation] = useState<{
-    row: RatingsRankingRow
-    sources: RatingsSource[]
-    settings: RatingsSettings
-  } | null>(null)
-  const close = useCallback(() => setCalculation(null), [])
-  const query = useVirtualTable({
-    queryKey: rankingKey(request),
-    pageSize: request.limit,
-    enabled: ready,
-    performanceScreen: library === 'film' ? 'film-ratings' : 'album-ratings',
-    loadPage: async (page, size, signal) => {
-      const requestedAt = performance.now()
-      const result = await fetchRatingsRanking(
-        apiBaseUrl,
-        { ...request, offset: (page - 1) * size, limit: size },
-        signal,
-      )
-      return {
-        items: result.rows,
-        totalCount: result.total,
-        sources: result.sources,
-        pageTiming: { requestedAt, readyAt: performance.now() },
-      }
-    },
-  })
-  // A changed ranking can be loading while the reader is still using a weight.
-  const currentSources = query.firstPage?.sources
-  useEffect(() => {
-    if (currentSources) onSources(currentSources)
-  }, [currentSources, onSources])
-  const sources = currentSources ?? knownSources
-  const weightedCount = sources.filter(
-    (source) => settingFor(source, request.settings).weight > 0,
-  ).length
-  const allColumns = ratingColumns(sources, display)
-  const columns = useTableColumns('ratings-' + library, allColumns)
-  const shown = allColumns.filter((column) => columns.visible(column.key))
-  const layout = columns.layout(shown.map((column) => column.key))
-  const label = library === 'film' ? 'Film rankings' : 'Album rankings'
-  return (
-    <>
-      <SecondaryTableToolbar
-        search={search}
-        filters={
+        {view === 'ranking' && (
           <>
             <ResultSortPicker
-              value={request.sort}
-              options={allColumns}
+              value={sortKey}
+              options={ratingSortOptions(sources, library)}
               onChange={sort}
             />
             <ResultButton
               control="sort-direction"
               icon
-              onClick={() => sort(request.sort)}
+              onClick={() => sort(sortKey)}
               aria-label={
-                'Sort direction: ' +
-                (request.direction === 'asc' ? 'ascending' : 'descending')
+                direction === 'desc' ? 'Highest first' : 'Lowest first'
               }
             >
-              {request.direction === 'asc' ? (
-                <ArrowUp className="ds-i" aria-hidden />
+              {direction === 'desc' ? (
+                <ArrowDown className="ds-i" />
               ) : (
-                <ArrowDown className="ds-i" aria-hidden />
+                <ArrowUp className="ds-i" />
               )}
             </ResultButton>
-            <Segmented
-              label="Source rating values"
-              options={modes}
-              value={display}
-              onChange={setDisplay}
-            />
-            {filters}
           </>
-        }
-        count={
+        )}
+        <ResultToolbarToggle
+          control="filters"
+          aria-label="Filters"
+          pressed={filtersOpen}
+          onPressedChange={setFiltersOpen}
+          icon={<ListFilter className="ds-i" />}
+          count={chips.length || undefined}
+        >
+          Filters
+        </ResultToolbarToggle>
+        <ResultToolbarToggle
+          control="scoring"
+          aria-label="Scoring"
+          pressed={scoringOpen}
+          onPressedChange={setScoringOpen}
+          icon={<SlidersHorizontal className="ds-i" />}
+        >
+          Scoring
+        </ResultToolbarToggle>
+        <ToolbarCount>
           <RatingsCount
-            library={library}
-            total={query.hasTotal ? query.total : undefined}
-            failed={query.isError}
+            text={
+              first?.data && shown !== undefined
+                ? formatCount(shown) + ' of ' + formatCount(libraryTotal)
+                : undefined
+            }
+            failed={first?.status === 'error'}
           />
-        }
-        columns={columns.controls}
-      />
-      {rangeControls}
-      <p className="ds-muted ratings-key">
-        Parentheses show adjusted points above or below the combined score. The
-        strip marks counted ratings and the combined score.
-      </p>
-      {query.isError && (
-        <Notice
-          tone="danger"
-          action={
-            <ReadButton size="xs" read={query.retry}>
-              Retry
-            </ReadButton>
-          }
-        >
-          Could not load rankings.
-        </Notice>
-      )}
-      <SecondaryTableScroll
-        ref={query.scroller}
-        onScroll={query.onScroll}
-        role="region"
-        aria-label={label}
-        aria-busy={query.isFetching}
-      >
-        <table
-          className="ds-table"
-          {...layout.table}
-          aria-label={label}
-          aria-rowcount={query.hasTotal ? query.total + 1 : undefined}
-        >
-          {layout.colgroup}
-          <TableHeader>
-            <TableRow>
-              {shown.map((column) => (
-                <SecondaryTableHead
-                  key={column.key}
-                  label={column.label}
-                  sortKey={column.key}
-                  sortBy={request.sort}
-                  direction={request.direction}
-                  onSort={sort}
-                  resizer={columns.resizer(column.key)}
-                  align={column.key === 'title' ? undefined : 'end'}
-                  sticky={column.key === 'title' ? 0 : undefined}
-                  stickyEdge={column.key === 'title'}
-                />
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {query.hasTotal && query.total === 0 && (
-              <TableState colSpan={shown.length}>
-                No matching {library === 'film' ? 'films' : 'albums'}.{' '}
-                {request.scoredOnly && (
-                  <Button variant="link" size="xs" onClick={includeUnscored}>
-                    Include unscored items
-                  </Button>
-                )}
-              </TableState>
-            )}
-            <SecondaryVirtualRows
-              window={query}
-              colSpan={shown.length}
-              renderRow={(item, index) => (
-                <TableRow
-                  key={item.id}
-                  aria-rowindex={index + 2}
-                  selected={calculation?.row.id === item.id}
-                  style={{ height: query.rowHeight }}
-                >
-                  {shown.map((column) => (
-                    <TableCell
-                      key={column.key}
-                      sticky={column.key === 'title' ? 0 : undefined}
-                      stickyEdge={column.key === 'title'}
-                      align={column.key === 'title' ? undefined : 'end'}
-                    >
-                      <RatingCell
-                        row={item}
-                        column={column.key}
-                        source={sources.find(
-                          (source) => source.key === column.key,
-                        )}
-                        sourceCount={weightedCount}
-                        display={display}
-                        onOpen={() =>
-                          setCalculation({
-                            row: item,
-                            sources,
-                            settings: request.settings,
-                          })
-                        }
-                      />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              )}
+        </ToolbarCount>
+      </Toolbar>
+      {(filtersOpen || scoringOpen) && (
+        <div className="ratings-panels">
+          {filtersOpen && (
+            <RatingsFilters
+              key={filterVersion}
+              request={request}
+              onChange={updateFilters}
             />
-          </TableBody>
-        </table>
-      </SecondaryTableScroll>
-      {calculation && (
-        <RatingsCalculation
-          {...calculation}
-          library={library}
-          onClose={close}
+          )}
+          {scoringOpen && (
+            <RatingsScoring
+              settings={base.settings}
+              sources={sources}
+              libraryTotal={libraryTotal}
+              onChange={scoring}
+            />
+          )}
+        </div>
+      )}
+      {chips.length > 0 && (
+        <FilterLine>
+          {chips.map((c, i) => (
+            <BrowseFilterPill
+              key={i + '-' + c.label}
+              removeLabel={'Clear ' + c.label}
+              onRemove={c.clear}
+            >
+              {c.label}
+            </BrowseFilterPill>
+          ))}
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              setSelections([])
+              updateFilters(
+                {
+                  tag: '',
+                  tagField: undefined,
+                  yearFrom: undefined,
+                  yearTo: undefined,
+                  watched: undefined,
+                  minPlays: undefined,
+                },
+                true,
+              )
+            }}
+          >
+            Clear all
+          </Button>
+        </FilterLine>
+      )}
+      {view === 'ranking' ? (
+        <Ranking
+          request={request}
+          ready={readyView === view}
+          sources={sources}
+          onSources={setSources}
+          onCounts={setCounts}
+          sort={sort}
+          display={display}
+          setDisplay={setDisplay}
+          onScoredOnly={(scoredOnly) =>
+            setRequest((p) => ({ ...p, scoredOnly }))
+          }
+          onTag={(tag, tagField) => updateFilters({ tag, tagField }, true)}
+        />
+      ) : view === 'sources' ? (
+        <RatingsSources
+          request={shared}
+          ready={readyView === view}
+          onSources={setSources}
+          onSelect={selectRange}
+        />
+      ) : (
+        <RatingsCharts
+          view={view}
+          request={shared}
+          ready={readyView === view}
+          axes={axes}
+          onSources={setSources}
+          onAxes={setAxes}
+          onCompare={(next) => {
+            setAxes(next)
+            setView('compare')
+          }}
+          onRanking={(sort, direction) => {
+            setRequest((p) => ({ ...p, sort, direction }))
+            setView('ranking')
+          }}
         />
       )}
-    </>
+    </ResultSection>
   )
 }

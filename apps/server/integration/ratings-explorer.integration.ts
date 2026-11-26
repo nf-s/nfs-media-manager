@@ -194,14 +194,14 @@ it('normalizes against visible library members before filtering, sorting and exa
     settings: { minSources: 1 },
   })
   expect(visible.total).toBe(1)
-  expect(bins(visible, 'native.ratingImdbValue')[2]).toEqual({
+  expect(bins(visible, 'native.ratingImdbValue')[4]).toEqual({
     lower: 4,
-    upper: 6,
+    upper: 5,
     upperInclusive: false,
     count: 1,
   })
   expect(bins(visible, 'score').map((bin) => bin.count)).toEqual([
-    0, 0, 1, 0, 0,
+    0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
   ])
   expect((await summary()).total).toBe(4)
   expect(await page({ search: 'film-%' })).toMatchObject({ total: 0, rows: [] })
@@ -218,7 +218,7 @@ it('normalizes against visible library members before filtering, sorting and exa
     "update media_item set metadata = jsonb_set(metadata, '{browse,ratingImdbValue}', '10') where id='film-1'",
   )
   expect((await page({ sort: 'ratingImdbValue' })).rows[0]?.id).toBe('film-1')
-  expect(bins(await summary(), 'native.ratingImdbValue').at(-1)?.count).toBe(2)
+  expect(bins(await summary(), 'native.ratingImdbValue').at(-1)?.count).toBe(1)
 })
 
 it('shows native scores, independent vote counts, group gaps and both combination weights', async () => {
@@ -566,13 +566,20 @@ it.each(libraries)(
       settings: { minSources: 1, sources: [weight(pluginKey, 1, 4)] },
     })
     expect(floor.total).toBe(7)
+    expect(
+      floor.histograms.find((h) => h.dimension === 'native.' + pluginKey),
+    ).toMatchObject({
+      typicalVotes: 3,
+      quartiles: [0, 12, 24],
+      population: 7,
+    })
     expect(floor.coverage).toContainEqual({
       key: pluginKey,
       recorded: 3,
       eligible: 1,
     })
     expect(bins(floor, 'native.' + pluginKey).map((bin) => bin.count)).toEqual([
-      2, 1, 0, 0, 0,
+      1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
     ])
   },
 )
@@ -707,26 +714,28 @@ it.each(libraries)(
       eligible: 7,
     })
     expect(bins(full, native)).toEqual(
-      [1, 1, 1, 1, 3].map((count, i) => ({
-        lower: i * 20,
-        upper: (i + 1) * 20,
-        upperInclusive: i === 4,
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 2].map((count, i) => ({
+        lower: i * 10,
+        upper: (i + 1) * 10,
+        upperInclusive: i === 9,
         count,
       })),
     )
     expect(bins(full, 'spread').map((bin) => bin.count)).toEqual([
-      6, 0, 0, 0, 1,
+      6, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     ])
-    expect(bins(full, 'score').map((bin) => bin.count)).toEqual([1, 1, 2, 1, 2])
-    const width = Math.ceil((full.sources.length + 1) / 5)
+    expect(bins(full, 'score').map((bin) => bin.count)).toEqual([
+      1, 0, 1, 0, 1, 1, 1, 0, 1, 1,
+    ])
+    const weighted = full.sources.filter((s) => s.group !== 'personal').length
     const countBins = bins(full, 'counted')
-    expect(countBins).toHaveLength(Math.floor(full.sources.length / width) + 1)
+    expect(countBins).toHaveLength(weighted + 1)
     expect(countBins).toEqual(
       countBins.map((_, i) => ({
-        lower: i * width,
-        upper: Math.min((i + 1) * width - 1, full.sources.length),
+        lower: i,
+        upper: i,
         upperInclusive: true,
-        count: Number(i === 0) + (i === Math.floor(2 / width) ? 7 : 0),
+        count: Number(i === 0) + (i === 2 ? 7 : 0),
       })),
     )
     for (const dimension of [native, 'score', 'spread', 'counted']) {
@@ -741,8 +750,8 @@ it.each(libraries)(
     const intersect = {
       ...input,
       ranges: [
-        { dimension: native, first: 1, last: 3 },
-        { dimension: 'score', first: 2, last: 3 },
+        { dimension: native, first: 2, last: 7 },
+        { dimension: 'score', first: 4, last: 7 },
       ],
     }
     const selected = await summary(intersect)
@@ -753,13 +762,13 @@ it.each(libraries)(
       eligible: 2,
     })
     expect(bins(selected, native).map((bin) => bin.count)).toEqual([
-      0, 0, 1, 1, 1,
+      0, 0, 0, 0, 1, 0, 1, 0, 0, 1,
     ])
     expect(bins(selected, 'score').map((bin) => bin.count)).toEqual([
-      0, 1, 1, 1, 0,
+      0, 0, 1, 0, 1, 0, 1, 0, 0, 0,
     ])
     expect(bins(selected, 'spread').map((bin) => bin.count)).toEqual([
-      2, 0, 0, 0, 0,
+      2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ])
     expect((await page(intersect)).rows.map((row) => row.id)).toEqual([
       'edge-3',
@@ -783,9 +792,9 @@ it('validates histogram dimensions and bin bounds for both read operations', asy
     for (const range of [
       { dimension: 'native.plugin.fixture.unknown', first: 0, last: 1 },
       { dimension: 'native.ratingImdbValue', first: 0, last: 1 },
-      { dimension: 'counted', first: 4, last: 4 },
+      { dimension: 'counted', first: 65, last: 65 },
       { dimension: 'score', first: -1, last: 0 },
-      { dimension: 'spread', first: 0, last: 5 },
+      { dimension: 'spread', first: 0, last: 10 },
       { dimension: 'score', first: 2, last: 1 },
     ]) {
       await expect(async () =>
@@ -798,7 +807,7 @@ it('validates histogram dimensions and bin bounds for both read operations', asy
 it('reports the exact decimal boundary used for a plugin native rating', async () => {
   // This plugin key is a built-in duplicate for films but is registered for albums.
   await database.insert(schema.mediaItem).values(
-    [0, 0.59999, 0.6, 3].map((value, i) => ({
+    [0, 0.29999, 0.3, 3].map((value, i) => ({
       id: 'decimal-' + i,
       slug: 'decimal-' + i,
       title: 'Decimal ' + i,
@@ -810,11 +819,11 @@ it('reports the exact decimal boundary used for a plugin native rating', async (
   const histogram = bins(await summary({ library: 'album' }), dimension)
   expect(histogram[0]).toEqual({
     lower: 0,
-    upper: 0.6,
+    upper: 0.3,
     upperInclusive: false,
     count: 2,
   })
-  expect(histogram[1]?.lower).toBe(0.6)
+  expect(histogram[1]?.lower).toBe(0.3)
   expect(
     (
       await page({

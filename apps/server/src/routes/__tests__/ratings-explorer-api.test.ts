@@ -5,10 +5,18 @@ import {
   RatingsSourcesRequestSchema,
 } from '@repo/schemas/ratings-explorer'
 
-const { getSession, rankRatings, summarizeRatingsSources } = vi.hoisted(() => ({
+const {
+  getSession,
+  rankRatings,
+  summarizeRatingsSources,
+  ratingsAgreement,
+  ratingsCompare,
+} = vi.hoisted(() => ({
   getSession: vi.fn(),
   rankRatings: vi.fn(),
   summarizeRatingsSources: vi.fn(),
+  ratingsAgreement: vi.fn(),
+  ratingsCompare: vi.fn(),
 }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession } } }))
 vi.mock('@/lib/db', () => ({ db: {} }))
@@ -18,6 +26,10 @@ vi.mock('@/env', () => ({
 vi.mock('@/services/ratings-explorer', () => ({
   rankRatings,
   summarizeRatingsSources,
+}))
+vi.mock('@/services/ratings-charts', () => ({
+  ratingsAgreement,
+  ratingsCompare,
 }))
 
 async function submit(
@@ -113,7 +125,7 @@ describe('ratings sources API', () => {
       { ...film, minPlays: 1 },
       { ...film, ranges: [range, range] },
       { ...film, ranges: [{ ...range, first: 4 }] },
-      { ...film, ranges: [{ ...range, last: 5 }] },
+      { ...film, ranges: [{ ...range, last: 1000 }] },
       { ...film, ranges: [{ ...range, dimension: 'native.' }] },
       { ...film, yearFrom: 2020, yearTo: 2010 },
     ])
@@ -130,4 +142,60 @@ describe('ratings sources API', () => {
     expect(await response.json()).toMatchObject({ data: summary })
     expect(summarizeRatingsSources).toHaveBeenCalledExactlyOnceWith(request)
   })
+})
+
+describe('rating chart actions', () => {
+  it.each([
+    { view: 'agreement', fields: {}, service: ratingsAgreement },
+    {
+      view: 'compare',
+      fields: { x: 'ratingRt', y: 'score' },
+      service: ratingsCompare,
+    },
+    {
+      view: 'calculation',
+      fields: { id: 'fixture-item' },
+      service: rankRatings,
+    },
+  ])(
+    'authenticates and validates $view before running one read',
+    async ({ view, fields, service }) => {
+      const body = { library: 'film', ...fields }
+      service.mockClear()
+      getSession.mockResolvedValue(null)
+      expect((await submit(body, undefined, view)).status).toBe(401)
+      getSession.mockResolvedValue({
+        user: { id: 'fixture-owner', email: 'owner@example.test' },
+        session: { userId: 'fixture-owner', id: 'fixture-session' },
+      })
+      expect((await submit(body, 'https://other.example', view)).status).toBe(
+        403,
+      )
+      expect(
+        (await submit({ ...body, limit: 100000 }, undefined, view)).status,
+      ).toBe(422)
+      expect(
+        (
+          await submit(
+            { ...body, search: 'x'.repeat(32 * 1024) },
+            undefined,
+            view,
+          )
+        ).status,
+      ).toBe(413)
+      expect(service).not.toHaveBeenCalled()
+      service.mockResolvedValue({ rows: [] })
+      const response = await submit(body, undefined, view)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Cache-Control')).toContain('no-store')
+      expect(service).toHaveBeenCalledTimes(1)
+      if (view === 'calculation') {
+        expect(service).toHaveBeenCalledWith(
+          expect.objectContaining({ limit: 1, offset: 0 }),
+          'fixture-item',
+        )
+        expect(await response.json()).toMatchObject({ data: null })
+      }
+    },
+  )
 })

@@ -1,5 +1,13 @@
 import { createRoute } from '@hono/zod-openapi'
 import { bodyLimit } from 'hono/body-limit'
+import { type ZodType } from 'zod'
+import {
+  RatingsAgreementPageSchema,
+  RatingsCalculationRequestSchema,
+  RatingsCalculationSchema,
+  RatingsComparePageSchema,
+  RatingsCompareRequestSchema,
+} from '@repo/schemas/ratings-charts'
 import {
   RatingsRankingPageSchema,
   RatingsRankingRequestSchema,
@@ -14,6 +22,7 @@ import {
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
+import { ratingsAgreement, ratingsCompare } from '@/services/ratings-charts'
 import {
   rankRatings,
   summarizeRatingsSources,
@@ -37,6 +46,34 @@ const errors = {
   403: jsonErrorResponse('Forbidden'),
   413: jsonErrorResponse('Ratings settings exceed the size limit'),
   422: validationErrorResponse,
+}
+
+function chartRoute<
+  Path extends string,
+  Input extends ZodType,
+  Output extends ZodType,
+>(path: Path, summary: string, input: Input, output: Output) {
+  return createRoute({
+    method: 'post',
+    path,
+    summary,
+    middleware,
+    request: {
+      body: {
+        required: true,
+        content: { 'application/json': { schema: input } },
+      },
+    },
+    responses: {
+      200: {
+        description: summary,
+        content: {
+          'application/json': { schema: createResponseSchema(output) },
+        },
+      },
+      ...errors,
+    },
+  })
 }
 
 const app = createOpenAPIApp()
@@ -103,6 +140,43 @@ const app = createOpenAPIApp()
         await summarizeRatingsSources(c.req.valid('json')),
         200,
       ),
+  )
+
+  .openapi(
+    chartRoute(
+      '/agreement',
+      'Compare agreement among stored rating sources',
+      RatingsSourcesRequestSchema,
+      RatingsAgreementPageSchema,
+    ),
+    async (c) =>
+      generateJsonResponse(c, await ratingsAgreement(c.req.valid('json')), 200),
+  )
+  .openapi(
+    chartRoute(
+      '/compare',
+      'Compare two axes across the filtered library',
+      RatingsCompareRequestSchema,
+      RatingsComparePageSchema,
+    ),
+    async (c) =>
+      generateJsonResponse(c, await ratingsCompare(c.req.valid('json')), 200),
+  )
+  .openapi(
+    chartRoute(
+      '/calculation',
+      'Read the selected item’s rating calculation',
+      RatingsCalculationRequestSchema,
+      RatingsCalculationSchema,
+    ),
+    async (c) => {
+      const { id, ...request } = c.req.valid('json')
+      const page = await rankRatings(
+        { ...request, sort: 'score', direction: 'desc', limit: 1, offset: 0 },
+        id,
+      )
+      return generateJsonResponse(c, page.rows[0] ?? null, 200)
+    },
   )
 
 export default app

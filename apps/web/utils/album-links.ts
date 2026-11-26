@@ -2,6 +2,14 @@ import type { AlbumListItem } from '@repo/schemas/media'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import { safeRatingHref } from './provider-ratings'
 
+export type AlbumLinkSource = Pick<AlbumListItem, 'spotifyUrl'> & {
+  links: ReadonlyArray<{ url: string }>
+  providerReferences: ReadonlyArray<{
+    referenceType: string
+    externalId: string
+  }>
+}
+
 export function spotifyAlbumUrl(
   value: string | null | undefined,
 ): string | undefined {
@@ -19,8 +27,8 @@ export function spotifyAlbumUrl(
     : undefined
 }
 
-export function albumSpotifyDestination(
-  item: Pick<AlbumListItem, 'spotifyUrl' | 'links' | 'providerReferences'>,
+export function albumSpotifyDestination<T extends AlbumLinkSource>(
+  item: T,
 ): string | undefined {
   for (const value of [
     item.spotifyUrl,
@@ -40,9 +48,7 @@ export function albumSpotifyDestination(
   return undefined
 }
 
-export function albumSpotifyUri(
-  item: Pick<AlbumListItem, 'spotifyUrl' | 'links' | 'providerReferences'>,
-): string | undefined {
+export function albumSpotifyUri(item: AlbumLinkSource): string | undefined {
   const id = /\/album\/([A-Za-z0-9]{22})$/.exec(
     albumSpotifyDestination(item) ?? '',
   )?.[1]

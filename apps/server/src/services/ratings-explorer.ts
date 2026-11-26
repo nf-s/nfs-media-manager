@@ -1,4 +1,5 @@
 import { sql, type SQL } from 'drizzle-orm'
+import { z } from 'zod'
 import {
   RatingsRankingPageSchema,
   RatingsSourcesPageSchema,
@@ -11,6 +12,7 @@ import {
 } from '@repo/schemas/ratings-explorer'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { artistTagsForItems } from './music-tags'
 import {
   listBrowseFields,
   matchesValue,
@@ -18,7 +20,7 @@ import {
   rejectedAlbumMetacriticIds,
 } from './browse'
 
-type Source = RatingsSource & {
+export type Source = RatingsSource & {
   votesKey?: string
   zeroIsMissing: boolean
   weight: number
@@ -49,7 +51,7 @@ function group(key: string): RatingsSource['group'] {
   return 'other'
 }
 
-async function rankingSources(
+export async function rankingSources(
   request: RatingsSourcesRequest,
 ): Promise<Source[]> {
   const fields = await listBrowseFields(request.library)
@@ -77,6 +79,7 @@ async function rankingSources(
     sources.push({
       key: field.key,
       label: field.label,
+      shortLabel: field.rating?.shortLabel,
       scale: rating.scale,
       hasVotes: Boolean(rating.votesKey),
       votesKey: rating.votesKey,
@@ -107,7 +110,9 @@ function displayFilter(request: RatingsSourcesRequest) {
       where c.role = ${role} and strpos(lower(a.name), ${search}) > 0))`)
   }
   if (request.tag)
-    conditions.push(matchesValue('genre', request.tag, request.library))
+    conditions.push(
+      matchesValue(request.tagField ?? 'genre', request.tag, request.library),
+    )
   if (request.watched !== undefined)
     conditions.push(
       sql`(media_item.id in (select media_item_id from film where watched)) = ${request.watched}`,
@@ -259,8 +264,8 @@ function scoreItem(settings: RatingsSettings, sources: Source[]) {
       ${core} as core,
       case when count(*) filter (where status = 'counted') >= 2 then
         stddev_pop(adjusted) filter (where status = 'counted') end as spread,
-      avg(adjusted) filter (where reason not in ('missing','votes') and source_group = 'critics')
-        - avg(adjusted) filter (where reason not in ('missing','votes') and source_group = 'audience') as critic_gap,
+      avg(adjusted) filter (where reason not in ('missing','votes') and source_group = 'critics') as critics,
+      avg(adjusted) filter (where reason not in ('missing','votes') and source_group = 'audience') as audience,
       max(adjusted) filter (where source_group = 'personal') as mine,
       coalesce(sum(weight) filter (where status = 'counted'), 0) as observed_weight,
       ${settings.missingWeight}::numeric * coalesce(sum(weight) filter (where status <> 'counted' and center is not null), 0) as missing_weight,
@@ -287,7 +292,10 @@ function sortExpression(request: RatingsRankingRequest, sources: Source[]) {
       break
     default: {
       const index = sources.findIndex((source) => source.key === request.sort)
-      if (index >= 0) return sql`raw[${index + 1}]`
+      if (index >= 0)
+        return request.adjustedSort
+          ? sql`adjusted[${index + 1}]`
+          : sql`raw[${index + 1}]`
     }
   }
   throw new ServerError({
@@ -296,71 +304,99 @@ function sortExpression(request: RatingsRankingRequest, sources: Source[]) {
   })
 }
 
-function scoringCtes(request: RatingsSourcesRequest, sources: Source[]) {
+export function scoringCtes(
+  request: RatingsSourcesRequest,
+  sources: Source[],
+  itemId?: string,
+) {
   return sql`cohort as materialized (${cohort(request, sources)}),
     normalized as (${normalized(request.settings, sources)}),
     combined as (
-      select n.*, s.*, case when s.counted >= ${request.settings.minSources} then
+      select n.*, s.*, s.critics - s.audience as critic_gap, case when s.counted >= ${request.settings.minSources} then
         (s.core * s.observed_weight + s.missing_sum) / nullif(s.observed_weight + s.missing_weight, 0)
         end as score
       from normalized n cross join lateral (${scoreItem(request.settings, sources)}) s where n.matches
+      ${itemId === undefined ? sql`` : sql`and n.id = ${itemId}`}
     ), matching as (
       select * from combined ${request.scoredOnly ? sql`where score is not null` : sql``}
     )`
 }
 
+export function ratingsLibraryStats(sources: Source[]) {
+  return sql`select count(*)::int as library_total, array[${sql.join(
+    sources.map((_, i) => sql`count(raw[${i + 1}])::int`),
+    sql`, `,
+  )}]::int[] as recorded from cohort`
+}
+
+export function attachRatingsCoverage(sources: Source[], recorded: unknown) {
+  const counts = z
+    .array(z.number().int().nonnegative())
+    .length(sources.length)
+    .parse(recorded)
+  return sources.map((source, index) => ({
+    ...source,
+    recorded: counts[index],
+  }))
+}
+
 function continuousDimension(dimension: string, value: SQL, scale: number) {
-  // Compute decimal edges in PostgreSQL, just like width_bucket, so a plugin
-  // scale of seven reports its first upper edge as 1.4.
-  const edge = (i: number) => sql`${scale}::numeric * ${i}::int * 0.2`
-  const bins = Array.from({ length: 5 }, (_, i) => ({
+  const edge = (i: number) => sql`${scale}::numeric * ${i}::int / 10`
+  const bins = Array.from({ length: 10 }, (_, i) => ({
     lower: edge(i),
-    upper: edge(i + 1),
-    upperInclusive: i === 4,
+    upper: dimension === 'spread' && i === 9 ? sql`50` : edge(i + 1),
+    upperInclusive: i === 9,
   }))
   // width_bucket is strict on NULL and otherwise uses half-open intervals.
   // Include the scale maximum in the final bin, including a perfect score.
-  const bucket = sql`case when ${value} >= ${scale}::numeric then 4
-    else width_bucket(${value}, 0::numeric, ${scale}::numeric, 5) - 1 end`
+  const bucket = sql`case when ${value} >= ${scale}::numeric then 9
+    else width_bucket(${value}, 0::numeric, ${scale}::numeric, 10) - 1 end`
   return { dimension, bucket, bins }
 }
 
-function histogramDimensions(sources: Source[]) {
-  const width = Math.ceil((sources.length + 1) / 5)
-  const countBins = Array.from(
-    { length: Math.floor(sources.length / width) + 1 },
-    (_, i) => ({
-      lower: sql`${i * width}::int`,
-      upper: sql`${Math.min((i + 1) * width - 1, sources.length)}::int`,
-      upperInclusive: true,
-    }),
-  )
+export function histogramDimensions(sources: Source[]) {
+  const weighted = sources.filter(({ weight }) => weight > 0).length
+  const countBins = Array.from({ length: weighted + 1 }, (_, i) => ({
+    lower: sql`${i}::int`,
+    upper: sql`${i}::int`,
+    upperInclusive: true,
+  }))
   return [
     ...sources.map((source, i) =>
-      continuousDimension(
-        'native.' + source.key,
-        sql`raw[${i + 1}]`,
-        source.scale,
-      ),
+      source.key === personal
+        ? {
+            dimension: 'native.' + source.key,
+            bucket: sql`round(raw[${i + 1}])::int - 1`,
+            bins: Array.from({ length: 10 }, (_, j) => ({
+              lower: sql`${j + 1}::int`,
+              upper: sql`${j + 1}::int`,
+              upperInclusive: true,
+            })),
+          }
+        : continuousDimension(
+            'native.' + source.key,
+            sql`raw[${i + 1}]`,
+            source.scale,
+          ),
     ),
     continuousDimension('score', sql`score`, 100),
-    continuousDimension('spread', sql`spread`, 50),
+    continuousDimension('spread', sql`spread`, 40),
     {
       dimension: 'counted',
-      bucket: sql`counted / ${width}::int`,
+      bucket: sql`counted`,
       bins: countBins,
     },
   ]
 }
 
-function selectedRanges(
+export function selectedRanges(
   request: RatingsSourcesRequest,
   dimensions: ReturnType<typeof histogramDimensions>,
 ) {
   return request.ranges.map(({ dimension, first, last }) => {
     const index = dimensions.findIndex((entry) => entry.dimension === dimension)
     const entry = dimensions[index]
-    if (!entry || last >= entry.bins.length)
+    if (!entry || (dimension !== 'counted' && last >= entry.bins.length))
       throw new ServerError({
         statusCode: 422,
         message: 'Unknown rating histogram or bin',
@@ -371,6 +407,7 @@ function selectedRanges(
 
 export async function rankRatings(
   request: RatingsRankingRequest,
+  itemId?: string,
 ): Promise<RatingsRankingPage> {
   const sources = await rankingSources(request)
   const ranges = request.ranges.length
@@ -381,20 +418,66 @@ export async function rankRatings(
   )
   const order = sql`${sortExpression(request, sources)} ${request.direction === 'asc' ? sql`asc` : sql`desc`} nulls last, id asc`
   const keys = sql`${sql.param(sources.map((s) => s.key))}::text[]`
+  const isAlbum = request.library === 'album'
+  const album = isAlbum
+    ? sql`(select jsonb_build_object(
+    'trackCount', a.track_count, 'spotifyUrl', a.spotify_url,
+    'links', (select coalesce(jsonb_agg(jsonb_build_object('url', l.url) order by l.provider, l.id), '[]')
+      from external_link l where l.media_item_id = p.id and l.url ilike '%open.spotify.com%'),
+    'providerReferences', (select coalesce(jsonb_agg(jsonb_build_object('referenceType', r.reference_type,
+        'externalId', r.external_id) order by r.provider, r.id), '[]')
+      from provider_reference r where r.media_item_id = p.id and r.reference_type = 'spotify')
+    ) from album a where a.media_item_id = p.id)`
+    : sql`null::jsonb`
+  const artistTags = isAlbum
+    ? sql`left join (${artistTagsForItems(sql`any(array(select id from page))`)})
+    artist_tags on artist_tags.media_item_id = p.id`
+    : sql``
   const result =
-    await db.execute(sql`with ${scoringCtes(request, sources)}, eligible as materialized (
-      select * from matching ${predicates.length ? sql`where ${sql.join(predicates, sql` and `)}` : sql``}
-    ), page as (select * from eligible order by ${order} limit ${request.limit} offset ${request.offset})
-    select (select count(*)::int from eligible) as total, coalesce(jsonb_agg(jsonb_build_object(
+    await db.execute(sql`with ${scoringCtes(request, sources, itemId)}, library_stats as (${ratingsLibraryStats(sources)}),
+    eligible as materialized (
+      select * from combined ${predicates.length ? sql`where ${sql.join(predicates, sql` and `)}` : sql``}
+    ), counts as (
+      select count(*)::int as matches, count(*) filter (where score is null)::int as unscored from eligible
+    ), page as materialized (select * from eligible
+      ${request.scoredOnly ? sql`where score is not null` : sql``}
+      order by ${order} limit ${request.limit} offset ${request.offset}),
+    enriched as (
+      select p.*, m.artwork_url, ${album} as album_data,
+        ${isAlbum ? sql`null::boolean` : sql`(select f.watched from film f where f.media_item_id = p.id)`} as watched,
+        ${isAlbum ? storedBrowseNumber('scrobbles', 'album', sql`m.metadata->'browse'`) : sql`null::numeric`} as plays,
+        (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name, 'role', c.role,
+          'billingOrder', c.billing_order) order by c.billing_order, a.name, a.id), '[]')
+        from media_credit c join artist a on a.id = c.artist_id
+        where c.media_item_id = p.id and c.role = ${isAlbum ? 'artist' : 'director'}) as credits,
+        (select coalesce(jsonb_agg(t.name order by
+          case when exists (select 1 from tag_occurrence o where o.tag_id = t.id
+            and o.media_item_id = p.id and ${isAlbum ? sql`o.source = 'rym'` : sql`o.kind = 'genre'`})
+            ${isAlbum ? sql`` : sql`or t.kind = 'genre'`} then 0
+            when trim(t.name) ~ '^(?:[0-9]{4}|[0-9]{2})s?$' then 2 else 1 end, t.name), '[]')
+        from media_item_tag mt join tag t on t.id = mt.tag_id where mt.media_item_id = p.id and not t.hidden) as tags,
+        ${isAlbum ? sql`coalesce(artist_tags.tags, '[]'::jsonb)` : sql`'[]'::jsonb`} as artist_tags
+      from page p join media_item m on m.id = p.id ${artistTags}
+    )
+    select (select library_total from library_stats) as "libraryTotal", (select recorded from library_stats) as recorded,
+      (select matches from counts) as "matchingTotal", (select unscored from counts) as unscored,
+      (select ${request.scoredOnly ? sql`matches - unscored` : sql`matches`} from counts) as total,
+      coalesce(jsonb_agg(jsonb_build_object(
       'id', id, 'title', title, 'year', year, 'score', score, 'core', core, 'spread', spread,
+      'artworkUrl', artwork_url, 'credits', credits, 'tags', tags, 'artistTags', artist_tags, 'album', album_data,
+      'watched', watched, 'plays', plays,
       'counted', counted, 'criticGap', critic_gap, 'personalGap', mine - score,
       'observedWeight', observed_weight, 'missingWeight', missing_weight, 'missingSum', missing_sum,
       'ratings', (select coalesce(jsonb_agg(jsonb_build_object('key', key, 'raw', val,
         'adjusted', adj, 'votes', v, 'center', c, 'status', status) order by pos), '[]'::jsonb)
         from unnest(${keys}, raw, adjusted, votes, centers, statuses)
           with ordinality as observation(key, val, adj, v, c, status, pos))
-    ) order by ${order}), '[]'::jsonb) as rows from page`)
-  return RatingsRankingPageSchema.parse({ ...result.rows[0], sources })
+    ) order by ${order}), '[]'::jsonb) as rows from enriched`)
+  const row = result.rows[0]
+  return RatingsRankingPageSchema.parse({
+    ...row,
+    sources: attachRatingsCoverage(sources, row?.recorded),
+  })
 }
 
 export async function summarizeRatingsSources(
@@ -427,22 +510,48 @@ export async function summarizeRatingsSources(
       'lower', ${bin.lower}, 'upper', ${bin.upper}, 'upperInclusive', ${bin.upperInclusive}::boolean,
       'count', count(*) filter (where ${accepts} and bins[${i + 1}] = ${j}))`,
     )
+    const source = sources[i]
+    const quartiles = source
+      ? sql`, 'quartiles',
+      percentile_disc(array[0.75,0.5,0.25]) within group (order by raw[${i + 1}] desc)
+        filter (where ${accepts} and raw[${i + 1}] is not null),
+      'typicalVotes', (select medians[${i + 1}] from vote_medians)`
+      : sql``
     return sql`jsonb_build_object('dimension', ${dimension}::text,
-      'bins', jsonb_build_array(${sql.join(counts, sql`, `)}))`
+      'population', count(*) filter (where ${accepts}),
+      'bins', jsonb_build_array(${sql.join(counts, sql`, `)}) ${quartiles})`
   })
   const result =
-    await db.execute(sql`with ${scoringCtes(request, sources)}, binned as (
+    await db.execute(sql`with ${scoringCtes(request, sources)}, vote_medians as materialized (
+      select ${numericArray(
+        sources.map((s, i) =>
+          s.hasVotes
+            ? sql`percentile_disc(0.5)
+        within group (order by votes[${i + 1}] desc)`
+            : sql`null`,
+        ),
+      )} as medians from cohort limit 1
+    ), binned as (
       select array[${sql.join(
         dimensions.map((d) => d.bucket),
         sql`, `,
       )}] as bins,
-        score is not null as scored, statuses from matching offset 0
+        score is not null as scored, statuses, counted, spread, raw from matching offset 0
     ), ranged as (
       select binned.*, array_remove(array[${sql.join(failures, sql`, `)}]::int[], null) as failed
       from binned offset 0
     )
     select count(*) filter (where ${matches})::int as total,
+      (select count(*)::int from cohort) as "libraryTotal",
+      (select recorded from (${ratingsLibraryStats(sources)}) lib) as recorded,
+      count(*) filter (where ${matches} and scored)::int as scored,
+      percentile_disc(0.5) within group (order by counted desc) filter (where ${matches}) as "medianCounted",
+      (percentile_disc(0.5) within group (order by spread desc) filter (where ${matches}))::float8 as "medianSpread",
       jsonb_build_array(${sql.join(coverage, sql`, `)}) as coverage,
       jsonb_build_array(${sql.join(histograms, sql`, `)}) as histograms from ranged`)
-  return RatingsSourcesPageSchema.parse({ ...result.rows[0], sources })
+  const summary = result.rows[0]
+  return RatingsSourcesPageSchema.parse({
+    ...summary,
+    sources: attachRatingsCoverage(sources, summary?.recorded),
+  })
 }
