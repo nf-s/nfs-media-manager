@@ -13,6 +13,11 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { SpotifyIdSchema, spotifyAlbumTrackPaths } from '@/lib/spotify-api'
 import { listCurrentArtistProfiles } from './artist-profiles'
+import { currentArtistId } from './artist-names'
+import {
+  readSpotifyArtistCatalogIdentity,
+  spotifyArtistCatalogIdentities,
+} from './spotify-artist-identity'
 import {
   artistNameKey,
   artistSearchNameMatches,
@@ -216,10 +221,37 @@ function evidenceQuery(
         snapshot.scrape_job_id, snapshot.created_at
       from artist_provider_current_state state
       join artist_provider_snapshot snapshot on snapshot.id = state.latest_snapshot_id
-      where state.artist_id = ${artistId} and state.provider in (${sql.join(
+      where (state.artist_id = ${artistId} ${
+        provider === 'spotify'
+          ? sql`or state.artist_id in (
+        select id from artist where merged_into_id = ${artistId}
+      )`
+          : sql``
+      }) and state.provider in (${sql.join(
         providers.map((value) => sql`${value}`),
         sql`, `,
       )})
+      ${
+        provider === 'spotify'
+          ? sql`
+        union all
+        select ${artistId}, ${name}, native.catalog_external_id, ${name}, null::text,
+          'spotify', coalesce(subject.media_type::text, 'artist'),
+          coalesce(subject.id, ${artistId}), coalesce(subject.title, native.name),
+          case when subject.id is not null then discovery.snapshot_id end,
+          discovery.job_id, coalesce(discovery.observed_at, native.created_at)
+        from (${spotifyArtistCatalogIdentities(sql`${artistId}`)}) native
+        left join catalog_observation discovery on discovery.target_kind = 'artist'
+          and discovery.target_id = native.id and discovery.provider = 'spotify'
+        left join catalog_media_alias alias on alias.alias_id = discovery.subject_id
+          and discovery.subject_kind in ('album', 'track')
+        left join media_item subject on subject.id = coalesce(alias.media_item_id, discovery.subject_id)
+          and subject.media_type::text = discovery.subject_kind
+          and subject.media_type in ('album', 'track')
+          and subject.metadata->>'legacyHidden' is distinct from 'true'
+      `
+          : sql``
+      }
     )
   `
 }
@@ -251,7 +283,7 @@ async function acceptedEvidence(
   })
 }
 
-/** Read native artist credits from linked library records without provider calls. */
+/** Read saved artist IDs from catalog identities, profiles and linked credits. */
 export async function listStoredArtistProviderCandidates(
   artistId: string,
   name: string,
@@ -369,6 +401,18 @@ export async function listArtistIdentifiers(
             status: 'confirmed',
             url: profile?.url ?? identifierUrl(provider, saved),
           }
+        if (provider === 'spotify') {
+          const identity = await readSpotifyArtistCatalogIdentity(artistId)
+          if (identity.externalId)
+            return {
+              provider,
+              externalId: identity.externalId,
+              status: 'confirmed',
+              url: identifierUrl(provider, identity.externalId),
+            }
+          if (identity.conflictingIds.length)
+            return { provider, externalId: null, status: 'conflict', url: null }
+        }
         const candidates = await listStoredArtistProviderCandidates(
           artistId,
           name,
@@ -407,10 +451,11 @@ export async function listArtistIdentifiers(
 }
 
 export async function listArtistIdentifierSources(
-  artistId: string,
+  requestedId: string,
   provider: ArtistProviderId,
   { page, size }: { page: number; size: number },
 ) {
+  const artistId = await currentArtistId(db, requestedId)
   const target = await db.query.artist.findFirst({
     where: (table, operators) => operators.eq(table.id, artistId),
   })
@@ -471,7 +516,7 @@ export async function listArtistIdentifierSources(
     db.execute(sql`${sourceQuery}
       select "externalId", provider, kind, id, title, "snapshotId", "jobId",
         to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt"
-      from sources order by (kind = 'artist') desc, created_at desc nulls last, kind, title, id, "externalId", provider, "snapshotId"
+      from sources order by (kind = 'artist') desc, created_at desc nulls last, kind, title, id, "externalId", provider, "snapshotId", "jobId"
       limit ${size} offset ${(page - 1) * size}
     `),
   ])

@@ -90,9 +90,7 @@ async function loadTarget(artistId: string, tx?: Transaction) {
   })
   if (!target)
     throw new ServerError({ statusCode: 404, message: 'Artist not found.' })
-  const nativeId =
-    target.catalogProvider === 'spotify' ? target.catalogExternalId : null
-  const result = SpotifyIdSchema.safeParse(target.providerArtistId ?? nativeId)
+  const result = SpotifyIdSchema.safeParse(target.providerArtistId)
   return {
     name: target.name,
     spotifyArtistId: result.success ? result.data : null,

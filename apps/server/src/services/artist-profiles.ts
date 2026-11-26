@@ -25,6 +25,11 @@ import {
   resolveEntityRelationships,
   visibleArtist,
 } from './entity-relationships'
+import {
+  resolveSpotifyArtistIdentity,
+  spotifyArtistCatalogIdentities,
+  spotifyArtistCatalogIdentityList,
+} from './spotify-artist-identity'
 
 type ArtistProfileTransaction = Parameters<
   Parameters<typeof db.transaction>[0]
@@ -38,7 +43,7 @@ function lockArtist(database: ArtistProfileTransaction, id: string) {
     .for('update')
 }
 
-/** Look up the library identity and use only a confirmed artist profile ID. */
+/** Look up an artist and its saved profile or native Spotify identity. */
 export async function loadArtistProviderTarget(
   artistId: string,
   provider: ArtistProviderId,
@@ -46,23 +51,15 @@ export async function loadArtistProviderTarget(
   options?: { includeCatalog?: boolean },
 ) {
   if (transaction) await lockArtist(transaction, artistId)
-  const [target] = await (transaction ?? db)
+  const database = transaction ?? db
+  const family = spotifyArtistCatalogIdentities(sql`${artist.id}`)
+  const current = database
     .select({
-      name: artist.name,
-      catalogProvider: artist.catalogProvider,
-      catalogExternalId: artist.catalogExternalId,
       snapshotId: artistProviderSnapshot.id,
       profile: artistProviderSnapshot.normalizedData,
     })
-    .from(artist)
-    .leftJoin(
-      artistProviderCurrentState,
-      and(
-        eq(artistProviderCurrentState.artistId, artist.id),
-        eq(artistProviderCurrentState.provider, provider),
-      ),
-    )
-    .leftJoin(
+    .from(artistProviderCurrentState)
+    .innerJoin(
       artistProviderSnapshot,
       and(
         eq(
@@ -75,20 +72,67 @@ export async function loadArtistProviderTarget(
     )
     .where(
       and(
-        eq(artist.id, artistId),
-        options?.includeCatalog ? isNull(artist.mergedIntoId) : visibleArtist,
+        eq(artistProviderCurrentState.provider, provider),
+        or(
+          eq(artistProviderCurrentState.artistId, artist.id),
+          provider === 'spotify'
+            ? sql`${artistProviderCurrentState.artistId} in (
+                select kept.id from artist kept where kept.merged_into_id = ${artist.id}
+              )`
+            : undefined,
+        ),
       ),
     )
-  return target
-    ? {
-        name: target.name,
-        catalogProvider: target.catalogProvider,
-        catalogExternalId: target.catalogExternalId,
-        providerArtistId: target.profile?.externalId ?? null,
-        snapshotId: target.snapshotId,
-        profile: target.profile,
-      }
-    : null
+    .orderBy(
+      desc(eq(artistProviderCurrentState.artistId, artist.id)),
+      desc(artistProviderSnapshot.createdAt),
+      desc(artistProviderSnapshot.id),
+    )
+    .limit(1)
+    .as('current_profile')
+  const [target] = await database
+    .select({
+      name: artist.name,
+      catalogProvider: artist.catalogProvider,
+      catalogExternalId: artist.catalogExternalId,
+      snapshotId: current.snapshotId,
+      profile: current.profile,
+      catalog:
+        provider === 'spotify'
+          ? spotifyArtistCatalogIdentityList(sql`${artist.id}`)
+          : sql`'[]'::jsonb`,
+    })
+    .from(artist)
+    .leftJoinLateral(current, sql`true`)
+    .where(
+      and(
+        eq(artist.id, artistId),
+        options?.includeCatalog
+          ? isNull(artist.mergedIntoId)
+          : or(
+              visibleArtist,
+              provider === 'spotify'
+                ? and(isNull(artist.mergedIntoId), sql`exists (${family})`)
+                : undefined,
+            ),
+      ),
+    )
+  if (!target) return null
+  const profileId = target.profile?.externalId ?? null
+  const spotifyIdentity =
+    provider === 'spotify'
+      ? resolveSpotifyArtistIdentity(artistId, profileId, target.catalog)
+      : null
+  return {
+    name: target.name,
+    catalogProvider: target.catalogProvider,
+    catalogExternalId: target.catalogExternalId,
+    providerArtistId:
+      spotifyIdentity?.externalId ??
+      (spotifyIdentity?.conflictingIds.length ? null : profileId),
+    snapshotId: target.snapshotId,
+    profile: target.profile,
+  }
 }
 
 function legacyRelationships(

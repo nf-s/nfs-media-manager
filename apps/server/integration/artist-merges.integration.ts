@@ -569,7 +569,49 @@ it('uses exact library Spotify ISRC evidence for TIDAL Similar artist repair', a
     .where(eq(schema.tidalSimilar.mediaItemId, spotifyTrack))
   expect(await repairStoredSimilarArtists(false, fixture)).toBe(1)
   expect((await artistOf(shadow))?.mergedIntoId).toBeNull()
-  expect(await reconcile()).toBe(1)
+  await setSuggestions([])
+  const jobId = 'older-similar-artists'
+  await fixture.insert(schema.scrapeJob).values({
+    id: jobId,
+    provider: 'tidal',
+    scope: {},
+    status: 'succeeded',
+    options: { task: 'tidal-similar', itemId: spotifyTrack },
+  })
+  const text = JSON.stringify({
+    data: [{ type: 'tracks', id: suggestion.tidalId }],
+    included: [
+      {
+        type: 'tracks',
+        id: suggestion.tidalId,
+        attributes: {
+          title: suggestion.title,
+          isrc: code,
+          duration: 'PT3M20S',
+        },
+        relationships: {
+          artists: { data: [{ type: 'artists', id: '12346' }] },
+        },
+      },
+      { type: 'artists', id: '12346', attributes: { name: KEPT } },
+    ],
+  })
+  await fixture.insert(schema.providerResponse).values({
+    id: 'older-similar-artist-receipt',
+    jobId,
+    provider: 'tidal',
+    attempt: 1,
+    ordinal: 1,
+    phase: 'task',
+    method: 'GET',
+    status: 200,
+    requestUrl:
+      'https://openapi.tidal.com/v2/tracks/999/relationships/similarTracks',
+    bodyState: 'captured',
+    body: { state: 'captured', text },
+    retainedBytes: Buffer.byteLength(text),
+  })
+  expect(await repairStoredSimilarArtists(true, fixture)).toBe(1)
   expect((await artistOf(shadow))?.mergedIntoId).toBe(keptId)
   expect(await repairStoredSimilarArtists(true, fixture)).toBe(0)
 })
@@ -738,10 +780,12 @@ it('keeps a manually merged provisional artist credit on the survivor when its r
   })
 })
 
-it.each(['profile', 'catalog credit'])(
+it.each(['profile', 'catalog credit', 'reordered collaboration'])(
   'repairs an old TIDAL artist link using a directly matched recording and its Spotify %s',
   async (identity) => {
     const nativeId = 'F'.repeat(22)
+    const collaboration = identity === 'reordered collaboration'
+    const guest = { id: 'H'.repeat(22), name: 'Fixture Guest' }
     const jobId = `fixture-tidal-evidence-${identity}`
     const responseId = `fixture-tidal-capture-${identity}`
     const item = TidalSuggestionSchema.parse({
@@ -774,10 +818,27 @@ it.each(['profile', 'catalog credit'])(
     await fixture
       .update(schema.mediaItem)
       .set({
-        metadata: { spotifyArtistCredits: [{ id: nativeId, name: KEPT }] },
+        metadata: {
+          spotifyArtistCredits: [
+            { id: nativeId, name: KEPT },
+            ...(collaboration ? [guest] : []),
+          ],
+        },
       })
       .where(eq(schema.mediaItem.id, spotifyTrack))
-    if (identity === 'profile') {
+    if (collaboration) {
+      await fixture
+        .insert(schema.artist)
+        .values({ id: otherId, name: guest.name, sortName: guest.name })
+      await fixture.insert(schema.mediaCredit).values({
+        artistId: otherId,
+        mediaItemId: spotifyTrack,
+        role: 'artist',
+        billingOrder: 1,
+      })
+      await addProfile(otherId, 'spotify', guest.id)
+    }
+    if (identity !== 'catalog credit') {
       await fixture
         .update(schema.artistProviderSnapshot)
         .set({ normalizedData: { tags: [], externalId: nativeId } })
@@ -808,10 +869,18 @@ it.each(['profile', 'catalog credit'])(
           id: '903',
           attributes: { title: recording.title },
           relationships: {
-            artists: { data: [{ id: '901', type: 'artists' }] },
+            artists: {
+              data: [
+                ...(collaboration ? [{ id: '905', type: 'artists' }] : []),
+                { id: '901', type: 'artists' },
+              ],
+            },
           },
         },
         { id: '901', type: 'artists', attributes: { name: KEPT } },
+        ...(collaboration
+          ? [{ id: '905', type: 'artists', attributes: { name: guest.name } }]
+          : []),
       ],
     })
     await fixture.insert(schema.providerResponse).values({

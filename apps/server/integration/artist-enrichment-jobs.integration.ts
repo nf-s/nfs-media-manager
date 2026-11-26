@@ -893,6 +893,247 @@ describe('artist enrichment through queued jobs and stored evidence', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('shows exact Spotify IDs on artists observed in the catalog before enrichment', async () => {
+    const artists = [
+      {
+        id: 'catalog-artist-a',
+        name: 'Catalog Artist A',
+        externalId: spotifyArtistId,
+      },
+      {
+        id: 'catalog-artist-b',
+        name: 'Catalog Artist B',
+        externalId: duplicateSpotifyArtistId,
+      },
+    ]
+    await databaseClient.insert(schema.artist).values(
+      artists.map(({ id, name, externalId }) => ({
+        id,
+        name,
+        catalogProvider: 'spotify',
+        catalogExternalId: externalId,
+      })),
+    )
+    await seedArtistRecording('source-track', spotifyTrackId, 'Source Track')
+    await databaseClient.insert(schema.scrapeJob).values({
+      id: 'source-job',
+      provider: 'spotify',
+      status: 'succeeded',
+      scope: {},
+      options: {},
+    })
+    await databaseClient.insert(schema.catalogObservation).values(
+      artists.map(({ id }, index) => ({
+        id: id + '-discovery',
+        targetKind: 'artist',
+        targetId: id,
+        operation: 'direct-search',
+        provider: 'spotify',
+        ...(index === 0
+          ? {
+              subjectKind: 'track',
+              subjectId: 'source-track',
+              jobId: 'source-job',
+            }
+          : {}),
+      })),
+    )
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    const identifiers = await Promise.all(
+      artists.map(async ({ id }) =>
+        (await getArtist(id)).identifiers.find(
+          ({ provider }) => provider === 'spotify',
+        ),
+      ),
+    )
+    expect(identifiers).toEqual(
+      artists.map(({ externalId }) => ({
+        provider: 'spotify',
+        externalId,
+        status: 'confirmed',
+        url: 'https://open.spotify.com/artist/' + externalId,
+      })),
+    )
+    expect(
+      await listArtistIdentifierSources('catalog-artist-a', 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          kind: 'track',
+          id: 'source-track',
+          title: 'Source Track',
+          externalId: spotifyArtistId,
+          jobId: 'source-job',
+        },
+      ],
+    })
+    expect(
+      await listArtistIdentifierSources('catalog-artist-b', 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [
+        {
+          kind: 'artist',
+          id: 'catalog-artist-b',
+          externalId: duplicateSpotifyArtistId,
+          snapshotId: null,
+        },
+      ],
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a native Spotify artist by exact ID and retains a later explicit match', async () => {
+    const nativeId = 'catalog-artist'
+    await databaseClient.insert(schema.artist).values({
+      id: nativeId,
+      name: artistName,
+      catalogProvider: 'spotify',
+      catalogExternalId: spotifyArtistId,
+    })
+    await databaseClient.insert(schema.catalogObservation).values({
+      id: 'artist-discovery',
+      targetKind: 'artist',
+      targetId: nativeId,
+      provider: 'spotify',
+      operation: 'direct-search',
+    })
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getArtist } = await import('@/services/creators')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    request.mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/token')
+        return Response.json({
+          access_token: 'fixture-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        })
+      if (path === '/v1/artists/' + spotifyArtistId)
+        return Response.json({
+          id: spotifyArtistId,
+          name: artistName,
+          type: 'artist',
+        })
+      if (path === '/v1/artists/' + duplicateSpotifyArtistId)
+        return Response.json({
+          id: duplicateSpotifyArtistId,
+          name: artistName,
+          type: 'artist',
+        })
+      throw new Error('Unexpected request')
+    })
+    for (const providerArtistId of [
+      undefined,
+      duplicateSpotifyArtistId,
+      undefined,
+    ]) {
+      const job = await enqueueArtistEnrichment(
+        { artistId: nativeId, provider: 'spotify', providerArtistId },
+        null,
+      )
+      await processQueuedJobs()
+      expect(await getJob(job.id)).toMatchObject({ status: 'succeeded' })
+    }
+    expect(
+      request.mock.calls
+        .map(([url]) => new URL(String(url)).pathname)
+        .filter((path) => path !== '/api/token'),
+    ).toEqual([
+      '/v1/artists/' + spotifyArtistId,
+      '/v1/artists/' + duplicateSpotifyArtistId,
+      '/v1/artists/' + duplicateSpotifyArtistId,
+    ])
+    expect((await getArtist(nativeId)).identifiers).toContainEqual({
+      provider: 'spotify',
+      externalId: duplicateSpotifyArtistId,
+      status: 'confirmed',
+      url: 'https://open.spotify.com/artist/' + duplicateSpotifyArtistId,
+    })
+    const snapshots = await databaseClient
+      .select()
+      .from(schema.artistProviderSnapshot)
+    expect(
+      snapshots.map(({ normalizedData }) => normalizedData.externalId),
+    ).toEqual(
+      expect.arrayContaining([spotifyArtistId, duplicateSpotifyArtistId]),
+    )
+  })
+
+  it('keeps native Spotify evidence on former artist URLs and leaves competing IDs unresolved', async () => {
+    const alias = 'catalog-alias'
+    const otherAlias = 'other-catalog-alias'
+    await databaseClient.insert(schema.artist).values({
+      id: alias,
+      name: 'Former Artist Name',
+      catalogProvider: 'spotify',
+      catalogExternalId: spotifyArtistId,
+      mergedIntoId: artistId,
+    })
+    const { getArtist } = await import('@/services/creators')
+    const { listArtistIdentifierSources } =
+      await import('@/services/artist-provider-evidence')
+    const confirmed = {
+      provider: 'spotify',
+      externalId: spotifyArtistId,
+      status: 'confirmed',
+      url: 'https://open.spotify.com/artist/' + spotifyArtistId,
+    }
+    expect(await getArtist(alias)).toMatchObject({
+      id: artistId,
+      identifiers: expect.arrayContaining([confirmed]),
+    })
+    expect(
+      await listArtistIdentifierSources(alias, 'spotify', {
+        page: 1,
+        size: 10,
+      }),
+    ).toMatchObject({
+      totalCount: 1,
+      items: [{ id: artistId, externalId: spotifyArtistId }],
+    })
+    await databaseClient.insert(schema.artist).values({
+      id: otherAlias,
+      name: 'Other Artist Name',
+      catalogProvider: 'spotify',
+      catalogExternalId: duplicateSpotifyArtistId,
+      mergedIntoId: artistId,
+    })
+    expect((await getArtist(artistId)).identifiers).toContainEqual({
+      provider: 'spotify',
+      externalId: null,
+      status: 'conflict',
+      url: null,
+    })
+    const { enqueueArtistEnrichment } =
+      await import('@/services/artist-enrichment')
+    const { getJob, processQueuedJobs } = await import('@/services/jobs')
+    const job = await enqueueArtistEnrichment(
+      { artistId, provider: 'spotify' },
+      null,
+    )
+    await processQueuedJobs()
+    expect(await getJob(job.id)).toMatchObject({
+      status: 'failed',
+      logs: expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({ classification: 'ambiguous' }),
+        }),
+      ]),
+    })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('recovers wrapped imports and paginates exact album provenance without scraping', async () => {
     await seedArtistAlbum('second-album')
     const payload = {

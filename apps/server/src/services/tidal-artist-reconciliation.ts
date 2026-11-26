@@ -1,14 +1,17 @@
 import { and, asc, eq, gt, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { SpotifyIdSchema } from '@/lib/spotify-api'
 import {
-  TidalArtistResourceSchema,
+  includedArtists,
+  tidalCatalogCredits,
   TidalTrackResourceSchema,
 } from '@/lib/tidal-api'
 import { providerResponse } from '@/schemas/db'
 import { observeCatalogOccurrence } from './catalog-discoveries'
 import { reconcileArtistPair } from './catalog-artist-reconciliation'
 import type { ChangeTransaction } from './library-change-effect'
+import { matchRecordingArtistBilling } from './recording-artist-billing'
 
 const operation = 'matched-recording-artist-credit'
 const document = z.object({
@@ -34,7 +37,7 @@ function unambiguousSpotifyArtist(externalId: SQL) {
     having count(*)=1`
 }
 
-function singleCredits(text: string) {
+function capturedRecordings(text: string) {
   let json: unknown
   try {
     json = JSON.parse(text)
@@ -47,55 +50,82 @@ function singleCredits(text: string) {
     ...page.included,
     ...(Array.isArray(page.data) ? page.data : [page.data]),
   ]
-  const names = new Map<string, string>()
-  for (const resource of resources) {
-    const artist = TidalArtistResourceSchema.safeParse(resource).data
-    if (artist) names.set(artist.id, artist.attributes.name)
-  }
+  const artists = includedArtists(resources)
   return resources.flatMap((resource) => {
     const track = TidalTrackResourceSchema.safeParse(resource).data
-    const billing = track?.relationships?.artists?.data
-    const [artist] = billing ?? []
-    if (!track || billing?.length !== 1 || artist?.type !== 'artists') return []
-    const name = names.get(artist.id)
-    return name
-      ? [
-          {
-            track: track.id,
-            artist: artist.id,
-            title: track.attributes.title,
-            name,
-          },
-        ]
+    if (!track) return []
+    const references = track.relationships?.artists?.data
+    const billing = tidalCatalogCredits(track, artists)
+    return billing.length &&
+      billing.length === references?.length &&
+      references.every((entry) => entry.type === 'artists')
+      ? [{ track: track.id, title: track.attributes.title, billing }]
       : []
   })
 }
 
-/** The accepted first-party recording is already in the library. Its sole local credit must also have a corroborating Spotify artist ID. */
+const nativeBilling = z
+  .array(z.object({ id: SpotifyIdSchema, name: z.string().min(1) }))
+  .min(1)
+const spotifyBilling = sql`coalesce(nullif(m.metadata->'spotifyArtistBilling','null'::jsonb), m.metadata->'spotifyArtistCredits')`
+
+// The saved Spotify bill must still describe all the local credits on this recording.
+const libraryBillingAgrees = sql`array(
+    select lower(trim(a.name)) from media_credit c join artist a on a.id=c.artist_id
+    where c.media_item_id=m.id and c.role='artist' order by 1
+  ) = array(
+    select lower(trim(b->>'name')) from jsonb_array_elements(case when jsonb_typeof(${spotifyBilling})='array' then ${spotifyBilling} else '[]'::jsonb end) b
+    order by 1
+  )`
+
+/** Pair independently identified credits on an accepted first-party recording. */
 async function recordMatchedCredits(
   tx: ChangeTransaction,
   response: typeof providerResponse.$inferSelect,
 ) {
   if (response.body.state !== 'captured') return
-  const credits = singleCredits(response.body.text)
-  if (!credits.length) return
-  const spotifyId = sql`(m.metadata->'spotifyArtistCredits'->0->>'id')`
-  const result = await tx.execute(sql`
-    select distinct n.id as source, m.id as track, a.id as target, e.artist as tidal_id, e.track as tidal_track, ${spotifyId} as spotify_id
-    from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb) e(track text,artist text,title text,name text)
+  const recordings = capturedRecordings(response.body.text)
+  if (!recordings.length) return
+  const bills = await tx.execute(sql`
+    select m.id, e.track, e.billing, ${spotifyBilling} as spotify
+    from jsonb_to_recordset(${JSON.stringify(recordings)}::jsonb) e(track text,title text,billing jsonb)
     join provider_reference r on r.provider='tidal' and r.reference_type='track' and r.external_id=e.track
       and r.is_primary and r.metadata->>'source'='tidal-track-match'
       and r.metadata->>'rejected' is distinct from 'true' and r.metadata->>'verified' is distinct from 'false'
     join media_item m on m.id=r.media_item_id and m.title=e.title and m.in_library
       and m.metadata->>'legacyHidden' is distinct from 'true'
     join library_track t on t.media_item_id=m.id and t.spotify_track_id is not null
-    join media_credit c on c.media_item_id=m.id and c.role='artist'
-    join artist a on a.id=c.artist_id and a.name=e.name and a.merged_into_id is null
-    join lateral (${unambiguousSpotifyArtist(spotifyId)}) owner on owner.id=a.id
-    join artist n on n.catalog_provider='tidal' and n.catalog_external_id=e.artist and n.name=e.name
-    where ${spotifyId} ~ '^[A-Za-z0-9]{22}$'
-      and m.metadata->'spotifyArtistCredits' = jsonb_build_array(jsonb_build_object('name',a.name,'id',${spotifyId}))
-      and not exists (select 1 from media_credit other where other.media_item_id=m.id and other.role='artist' and other.artist_id<>a.id)`)
+    where ${libraryBillingAgrees}`)
+  const credits = z
+    .array(
+      z.object({
+        id: z.string(),
+        track: z.string(),
+        billing: z.array(z.object({ id: z.string(), name: z.string() })),
+        spotify: z.unknown(),
+      }),
+    )
+    .parse(bills.rows)
+    .flatMap((row) => {
+      const spotify = nativeBilling.safeParse(row.spotify).data
+      if (!spotify) return []
+      return matchRecordingArtistBilling(row.billing, spotify).map((pair) => ({
+        track: row.id,
+        tidal_track: row.track,
+        artist: pair.tidalId,
+        spotify_id: pair.spotifyId,
+        name: pair.name,
+        billing: spotify,
+      }))
+    })
+  if (!credits.length) return
+  const result = await tx.execute(sql`
+    select distinct n.id as source, e.track, a.id as target, e.artist as tidal_id, e.tidal_track, e.spotify_id, e.billing
+    from jsonb_to_recordset(${JSON.stringify(credits)}::jsonb) e(track text,tidal_track text,artist text,spotify_id text,name text,billing jsonb)
+    join media_credit c on c.media_item_id=e.track and c.role='artist'
+    join artist a on a.id=c.artist_id and lower(trim(a.name))=lower(trim(e.name)) and a.merged_into_id is null
+    join lateral (${unambiguousSpotifyArtist(sql`e.spotify_id`)}) owner on owner.id=a.id
+    join artist n on n.catalog_provider='tidal' and n.catalog_external_id=e.artist and n.name=e.name`)
   for (const row of z
     .array(
       z.object({
@@ -105,6 +135,7 @@ async function recordMatchedCredits(
         tidal_id: z.string(),
         tidal_track: z.string(),
         spotify_id: z.string(),
+        billing: nativeBilling,
       }),
     )
     .parse(result.rows))
@@ -126,6 +157,7 @@ async function recordMatchedCredits(
           tidalArtistId: row.tidal_id,
           tidalTrackId: row.tidal_track,
           spotifyArtistId: row.spotify_id,
+          spotifyBilling: row.billing,
         },
       },
     )
@@ -149,9 +181,9 @@ async function mergeMatchedCredits(
         and m.metadata->>'legacyHidden' is distinct from 'true'
       join library_track t on t.media_item_id=m.id and t.spotify_track_id is not null
       where o.operation=${operation} and o.target_kind='artist' and o.provider='tidal'
-        and o.response_id is not null and m.metadata->'spotifyArtistCredits' = jsonb_build_array(jsonb_build_object('id',o.details->>'spotifyArtistId','name',a.name))
-        and exists (select 1 from media_credit c where c.media_item_id=o.subject_id and c.role='artist' and c.artist_id=coalesce(a.merged_into_id,a.id))
-        and not exists (select 1 from media_credit other where other.media_item_id=o.subject_id and other.role='artist' and other.artist_id<>coalesce(a.merged_into_id,a.id)))
+        and o.response_id is not null and ${spotifyBilling} = coalesce(o.details->'spotifyBilling',jsonb_build_array(jsonb_build_object('id',o.details->>'spotifyArtistId','name',a.name)))
+        and ${libraryBillingAgrees}
+        and exists (select 1 from media_credit c where c.media_item_id=o.subject_id and c.role='artist' and c.artist_id=coalesce(a.merged_into_id,a.id)))
     select e.source,e.target from evidence e join artist n on n.id=e.source and n.merged_into_id is null
     where e.source<>e.target ${onlyId ? sql`and e.source=${onlyId}` : sql``}
       ${jobId ? sql`and exists (select 1 from catalog_observation o where o.operation=${operation} and o.target_id=e.source and o.job_id=${jobId})` : sql``}

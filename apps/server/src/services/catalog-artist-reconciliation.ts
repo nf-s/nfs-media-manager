@@ -2,7 +2,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   SpotifyCodeMatchSchema,
-  TidalSuggestionSchema,
   type SpotifyCodeMatch,
   type TidalSuggestion,
 } from '@repo/schemas/tidal'
@@ -10,14 +9,15 @@ import { db } from '@/lib/db'
 import { validIsrc } from '@/lib/isrc'
 import { spotifyAlbumTrackPaths } from '@/lib/spotify-api'
 import { createStableId } from '@/lib/media-utils'
-import { spotifyCodeLookup, tidalSimilar, providerResponse } from '@/schemas/db'
+import { spotifyCodeLookup, providerResponse } from '@/schemas/db'
 import { normalizeSpotifyCatalogTrack } from './provider-search-task-replay'
 import type { ChangeTransaction } from './library-change-effect'
 import { scopedSpotifyRetainedBilling } from './scoped-spotify-billing'
 import { similarRecordingArtistEvidence } from './similar-recording-artist-evidence'
+import { readStoredSimilarPages } from './stored-tidal-similar-pages'
 
 /** Both native artist IDs must identify just one current artist. Names never select a record. */
-async function exactOwners(
+export async function exactOwners(
   tx: ChangeTransaction,
   provider: string,
   externalId: string,
@@ -27,7 +27,8 @@ async function exactOwners(
     where a.catalog_provider = ${provider} and a.catalog_external_id = ${externalId}
     union
     select coalesce(a.merged_into_id, a.id) from artist_provider_current_state s
-    join artist a on a.id = s.artist_id join artist_provider_snapshot p on p.id = s.latest_snapshot_id
+    join artist a on a.id = s.artist_id
+    join artist_provider_snapshot p on p.id = s.latest_snapshot_id and p.artist_id = s.artist_id and p.provider = s.provider
     where s.provider = ${provider} and p.normalized_data->>'externalId' = ${externalId}`)
   return z
     .array(z.object({ id: z.string() }))
@@ -52,7 +53,10 @@ export async function reconcileArtistPair(
   const previous = await tx.execute(sql`
     select 1 from library_change c join library_change_effect e on e.change_id = c.id
     where c.kind = 'artist' and c.action = 'merge' and c.undone_at is not null
-      and e.type = 'artist-merge' and e.record_ids @> array[${sourceId},${targetId}]::text[] limit 1`)
+      and e.type = 'artist-merge'
+      and e.record_ids && array(select id from artist where id = ${sourceId} or merged_into_id = ${sourceId})
+      and e.record_ids && array(select id from artist where id = ${targetId} or merged_into_id = ${targetId})
+    limit 1`)
   if (previous.rows.length) return false
   // The journal also handles recording merges that call the catalog writer.
   const { readArtistMerge } = await import('./artist-merge-plan')
@@ -95,7 +99,7 @@ export async function reconcileArtistPair(
   return true
 }
 
-/** Join native credits on the same first-party recording with corroborating version, duration and sole billing. */
+/** Join independently identifiable credits on the same first-party recording. */
 export async function reconcileSimilarArtistCredits(
   tx: ChangeTransaction,
   items: readonly TidalSuggestion[],
@@ -104,18 +108,25 @@ export async function reconcileSimilarArtistCredits(
 ) {
   if (
     !items.some(
-      ({ code, artistCredits }) =>
-        artistCredits?.length === 1 && validIsrc(code),
+      ({ code, artistCredits }) => artistCredits?.length && validIsrc(code),
     )
   )
     return 0
   await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-  let reconciled = 0
   const pairs = await similarRecordingArtistEvidence(
     tx,
     items,
     includesStoredItems,
   )
+  return reconcileSimilarArtistPairs(tx, pairs, apply)
+}
+
+async function reconcileSimilarArtistPairs(
+  tx: ChangeTransaction,
+  pairs: Awaited<ReturnType<typeof similarRecordingArtistEvidence>>,
+  apply: boolean,
+) {
+  let reconciled = 0
   for (const pair of pairs) {
     const source = await exactOwners(tx, 'tidal', pair.tidalId)
     const target = await exactOwners(tx, 'spotify', pair.spotifyId)
@@ -429,23 +440,22 @@ export async function repairStoredSimilarArtists(
   try {
     await database.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(614106)`)
-      const rows = await tx
-        .select({ items: tidalSimilar.items })
-        .from(tidalSimilar)
-        .where(eq(tidalSimilar.kind, 'track'))
-      const items = rows.flatMap((row) =>
-        Array.isArray(row.items)
-          ? row.items.flatMap(
-              (item) => TidalSuggestionSchema.safeParse(item).data ?? [],
-            )
-          : [],
-      )
+      const { pages } = await readStoredSimilarPages(tx, 'artist-credits')
+      const items = pages.flatMap((page) => page.items)
       const codes = [
         ...new Set(items.flatMap((item) => validIsrc(item.code) ?? [])),
       ]
       for (let i = 0; i < codes.length; i += 100)
         await restoreLookupCredits(tx, codes.slice(i, i + 100))
-      merged = await reconcileSimilarArtistCredits(tx, items, true, true)
+      const pairs = await similarRecordingArtistEvidence(tx, items, true)
+      const { repairProvisionalTidalSimilarArtists } =
+        await import('./tidal-provisional-artist-repair')
+      merged = await repairProvisionalTidalSimilarArtists(
+        tx,
+        pages.filter((page) => page.source === 'receipt'),
+        pairs,
+      )
+      merged += await reconcileSimilarArtistPairs(tx, pairs, true)
       if (!apply) throw dryRun
     })
   } catch (error) {

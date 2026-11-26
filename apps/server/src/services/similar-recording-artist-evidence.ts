@@ -9,6 +9,12 @@ import {
 import { validIsrc, validIsrcSql } from '@/lib/isrc'
 import { SpotifyIdSchema } from '@/lib/spotify-api'
 import type { ChangeTransaction } from './library-change-effect'
+import {
+  matchRecordingArtistBilling,
+  recordingCreditName,
+  sharedRecordingBilling,
+} from './recording-artist-billing'
+import { parseStoredTrackSimilarReceipt } from './stored-tidal-similar-pages'
 import { spotifyRecordingSources } from './track-isrcs'
 
 const Billing = z.object({ id: SpotifyIdSchema, name: z.string().min(1) })
@@ -27,88 +33,107 @@ const LocalRecording = z.object({
   durationSec: z.number().int().nonnegative().nullable(),
   searchDurationBounds: z.tuple([z.number(), z.number()]).nullish(),
   spotifyCredits: z.array(Billing).nullish(),
-  libraryCredits: z.tuple([LocalBilling]),
+  spotifyBilling: z.array(Billing).nullish(),
+  libraryCredits: z.array(LocalBilling),
 })
 
 type Billing = z.infer<typeof Billing>
-type SpotifyCredit = {
+type RecordingBilling = {
   title: string
   durationSec: number
-  artist: Billing
-  owner?: string
+  artists: Billing[]
+}
+type SpotifyRecording = RecordingBilling & {
+  owners?: Map<string, string>
   searchDurationBounds?: [number, number] | null
+}
+type TidalRecording = RecordingBilling & {
+  code: string
+  item: TidalSuggestion
 }
 type RecordingClaims = {
   tracks: Set<string>
-  credits: SpotifyCredit[]
+  billings: SpotifyRecording[]
   blocked: boolean
 }
 
-function tidalCredit(item: TidalSuggestion) {
+function completeBilling(names: string[], credits: Billing[]) {
+  return (
+    names.length > 0 &&
+    names.length === credits.length &&
+    credits.every(({ name }, index) => name === names[index])
+  )
+}
+
+function tidalRecording(item: TidalSuggestion): TidalRecording | undefined {
   const code = validIsrc(item.code)
-  const artist = item.artistCredits?.[0]
+  const artists = item.artistCredits
   return code &&
-    artist &&
-    item.artistCredits?.length === 1 &&
-    item.artists.length === 1 &&
-    item.artists[0] === artist.name &&
+    artists &&
+    completeBilling(item.artists, artists) &&
     item.durationSec !== null
     ? {
         code,
-        artist,
+        artists,
+        item,
         title: tidalSuggestionTitle(item),
         durationSec: item.durationSec,
       }
     : undefined
 }
 
-function spotifyCredit(
+function spotifyRecording(
   row: z.infer<typeof EvidenceRows>[number],
-): SpotifyCredit | undefined {
+): SpotifyRecording | undefined {
   if (row.blocked) return
   if (row.local) {
     const recording = LocalRecording.safeParse(row.payload).data
-    const artist = recording?.spotifyCredits?.[0]
+    if (!recording?.spotifyCredits || recording.durationSec === null) return
+    const { libraryCredits, spotifyBilling, spotifyCredits } = recording
     if (
-      recording &&
-      artist &&
-      recording.spotifyCredits?.length === 1 &&
-      recording.libraryCredits[0].name === artist.name &&
-      recording.durationSec !== null
+      spotifyBilling &&
+      (spotifyBilling.length !== spotifyCredits.length ||
+        spotifyBilling.some(
+          ({ id, name }, index) =>
+            id !== spotifyCredits[index]?.id ||
+            name !== spotifyCredits[index]?.name,
+        ))
     )
-      return {
-        title: recording.title,
-        durationSec: recording.durationSec,
-        artist,
-        owner: recording.libraryCredits[0].id,
-        searchDurationBounds: recording.searchDurationBounds,
-      }
-    return
+      return
+    const groups = sharedRecordingBilling(libraryCredits, spotifyCredits)
+    if (!groups.length) return
+    const owners = new Map<string, string>()
+    for (const { leftIds, rightIds } of groups) {
+      const [owner] = leftIds
+      const [native] = rightIds
+      if (leftIds.length === 1 && owner && native) owners.set(native, owner)
+    }
+    return {
+      title: recording.title,
+      durationSec: recording.durationSec,
+      artists: spotifyCredits,
+      owners,
+      searchDurationBounds: recording.searchDurationBounds,
+    }
   }
   const recording = SpotifyCodeMatchSchema.safeParse(row.payload).data
-  const artist = recording?.artistCredits?.[0]
+  const artists = recording?.artistCredits
   if (
     recording &&
     recording.spotifyId === row.spotify_id &&
-    artist &&
-    recording.artistCredits?.length === 1 &&
-    recording.artists.length === 1 &&
-    recording.artists[0] === artist.name &&
+    artists &&
+    completeBilling(recording.artists, artists) &&
     recording.durationSec !== null
   )
     return {
       title: recording.title,
       durationSec: recording.durationSec,
-      artist,
+      artists,
     }
 }
 
-function agrees(
-  tidal: NonNullable<ReturnType<typeof tidalCredit>>,
-  spotify: SpotifyCredit,
-) {
+function sameRecording(tidal: TidalRecording, spotify: SpotifyRecording) {
   return (
-    tidal.artist.name === spotify.artist.name &&
     tidal.title.toLowerCase() === spotify.title.toLowerCase() &&
     Math.abs(tidal.durationSec - spotify.durationSec) <= 2 &&
     (spotify.searchDurationBounds ?? []).every(
@@ -117,13 +142,25 @@ function agrees(
   )
 }
 
-async function relatedTidalCredits(
+async function relatedTidalRecordings(
   tx: ChangeTransaction,
-  wanted: NonNullable<ReturnType<typeof tidalCredit>>[],
+  wanted: TidalRecording[],
   spotifyIds: string[],
 ) {
+  const tidalArtists = wanted.flatMap(({ artists }) =>
+    artists.map(({ id, name }) => ({ id, name: recordingCreditName(name) })),
+  )
+  const codes = [...new Set(wanted.map(({ code }) => code))]
+  const receiptBody = sql`r.body->>'text'`
+  // Match the track identifiers returned in data. Included resources can
+  // contain tracks that the provider did not recommend on this page.
   const { rows } = await tx.execute(sql`
-    with wanted_spotify as (select jsonb_array_elements_text(${JSON.stringify(spotifyIds)}::jsonb) id),
+    with wanted_tidal as (
+      select distinct id, name
+      from jsonb_to_recordset(${JSON.stringify(tidalArtists)}::jsonb) as wanted(id text, name text)
+    ), wanted_spotify as (
+      select jsonb_array_elements_text(${JSON.stringify(spotifyIds)}::jsonb) id
+    ),
     spotify_owners as (
       select coalesce(a.merged_into_id,a.id) id from artist a
       join wanted_spotify w on w.id=a.catalog_external_id where a.catalog_provider='spotify'
@@ -140,24 +177,61 @@ async function relatedTidalCredits(
       select r.external_id from spotify_owners owner
       join media_credit c on c.artist_id=owner.id and c.role='artist'
       join provider_reference r on r.media_item_id=c.media_item_id and r.provider='spotify' and r.reference_type='isrc'
+      union
+      select jsonb_array_elements_text(${JSON.stringify(codes)}::jsonb)
     )
-    select p.items from tidal_similar p where p.kind='track' and (
-      exists (
-        select 1 from jsonb_to_recordset(${JSON.stringify(wanted.map(({ artist }) => artist))}::jsonb) w(id text, name text)
-        where p.items @> jsonb_build_array(jsonb_build_object('artistCredits',jsonb_build_array(jsonb_build_object('id',w.id))))
-           or p.items @> jsonb_build_array(jsonb_build_object('artists',jsonb_build_array(w.name)))
-      ) or exists (
-        select 1 from jsonb_array_elements(case when jsonb_typeof(p.items)='array' then p.items else '[]'::jsonb end) item
-        join related_codes r on r.code=${validIsrcSql(sql`item->>'code'`)}
+    select item, null::text as request_url, null::jsonb as document
+    from tidal_similar p cross join lateral jsonb_path_query(p.items, '$[*]') item
+    where p.kind='track' and jsonb_typeof(p.items)='array' and (
+      exists (select 1 from related_codes c where c.code=${validIsrcSql(sql`item->>'code'`)})
+      or exists (
+        select 1 from wanted_tidal w
+        where item->'artistCredits' @> jsonb_build_array(jsonb_build_object('id',w.id))
+           or exists (
+             select 1 from jsonb_path_query(item, '$.artists[*]') name
+             where lower(btrim(name #>> '{}'))=w.name
+           )
       )
-    )`)
-  return rows.flatMap(({ items }) =>
-    (z.array(z.unknown()).safeParse(items).data ?? []).flatMap((item) => {
-      const parsed = TidalSuggestionSchema.safeParse(item).data
-      const credit = parsed && tidalCredit(parsed)
-      return credit ? [credit] : []
-    }),
-  )
+    )
+    union all
+    select null, r.request_url, receipt.document
+    from scrape_job j join provider_response r on r.job_id=j.id
+    cross join lateral (
+      select case when pg_input_is_valid(${receiptBody}, 'jsonb')
+        then (${receiptBody})::jsonb end as document
+      offset 0
+    ) receipt
+    where j.options->>'task'='tidal-similar' and j.status='succeeded'
+      and j.options->>'itemId' is not null and r.provider='tidal'
+      and r.status=200 and r.body_state='captured'
+      and r.request_url ~ '/tracks/[0-9]+/relationships/similarTracks$'
+      and exists (
+        select 1 from jsonb_path_query(receipt.document, '$.included[*]') track
+        where track->>'type'='tracks'
+          and receipt.document->'data' @> jsonb_build_array(jsonb_build_object('id',track->>'id'))
+          and (
+            exists (select 1 from related_codes c
+              where c.code=${validIsrcSql(sql`track #>> '{attributes,isrc}'`)})
+            or exists (
+              select 1 from jsonb_path_query(track, '$.relationships.artists.data[*]') credit
+              join wanted_tidal w on w.id=credit->>'id'
+            )
+            or exists (
+              select 1 from jsonb_path_query(receipt.document, '$.included[*]') billed
+              join wanted_tidal w on lower(btrim(billed #>> '{attributes,name}'))=w.name
+              where billed->>'type'='artists' and track #> '{relationships,artists,data}'
+                @> jsonb_build_array(jsonb_build_object('id',billed->>'id'))
+            )
+          )
+      )`)
+  return rows.flatMap(({ item, request_url, document }) => {
+    if (typeof request_url === 'string')
+      return (
+        parseStoredTrackSimilarReceipt(request_url, document) ?? []
+      ).flatMap((suggestion) => tidalRecording(suggestion) ?? [])
+    const suggestion = TidalSuggestionSchema.safeParse(item).data
+    return suggestion ? (tidalRecording(suggestion) ?? []) : []
+  })
 }
 
 function addMapping(map: Map<string, Set<string>>, from: string, to: string) {
@@ -171,6 +245,9 @@ function retainedSpotifySearchDurations() {
   const duration = sql`case when candidate->>'durationSec' ~ '^[0-9]{1,10}$'
     then (candidate->>'durationSec')::numeric end`
   const trackBilling = sql`m.metadata->'spotifyArtistCredits'`
+  const billedNames = sql`(select jsonb_agg(credit->>'name' order by ordinal)
+    from jsonb_array_elements(case when jsonb_typeof(${trackBilling})='array'
+      then ${trackBilling} else '[]'::jsonb end) with ordinality as bill(credit,ordinal))`
   return sql`
     select jsonb_build_array(min(${duration}),max(${duration})) as bounds
     from scrape_job j
@@ -181,7 +258,7 @@ function retainedSpotifySearchDurations() {
       then diagnostic->'candidates' else '[]'::jsonb end) candidate
     where r.metadata->>'source'='library-track' and t.duration_sec is not null
       and r.metadata->>'rejected' is distinct from 'true' and r.metadata->>'verified' is distinct from 'false'
-      and ${trackBilling}->0->>'id' ~ '^[A-Za-z0-9]{22}$' and ${trackBilling}->1 is null
+      and ${trackBilling}->0->>'id' ~ '^[A-Za-z0-9]{22}$'
       and j.options->>'task'='spotify-track-search' and j.provider='spotify' and j.status='succeeded'
       and coalesce(j.options->>'acceptedTrackId',j.options->>'trackId')=r.media_item_id
       and j.options->>'acceptedSpotifyTrackId'=t.spotify_track_id
@@ -191,7 +268,7 @@ function retainedSpotifySearchDurations() {
       lower(candidate->>'title')=lower(m.title)
       and abs(${duration}-t.duration_sec)<=2
       and candidate->'artistCredits'=${trackBilling}
-      and candidate->'artists'=jsonb_build_array(${trackBilling}->0->>'name')
+      and candidate->'artists'=${billedNames}
       and (not candidate ? 'artistBilling' or candidate->'artistBilling'=${trackBilling}),false
     ))`
 }
@@ -210,6 +287,7 @@ async function readSpotifyClaims(tx: ChangeTransaction, codes: string[]) {
       jsonb_build_object('title',m.title,'durationSec',t.duration_sec,
         'searchDurationBounds',saved_search.bounds,
         'spotifyCredits',m.metadata->'spotifyArtistCredits',
+        'spotifyBilling',m.metadata->'spotifyArtistBilling',
         'libraryCredits', (
           select jsonb_agg(jsonb_build_object('id',a.id,'name',coalesce(c.credited_as,a.name)))
           from media_credit c join artist a on a.id=c.artist_id
@@ -225,13 +303,13 @@ async function readSpotifyClaims(tx: ChangeTransaction, codes: string[]) {
   for (const row of EvidenceRows.parse(rows)) {
     const claims = byCode.get(row.code) ?? {
       tracks: new Set<string>(),
-      credits: [],
+      billings: [],
       blocked: false,
     }
     claims.tracks.add(row.spotify_id)
     claims.blocked ||= row.blocked
-    const credit = spotifyCredit(row)
-    if (credit) claims.credits.push(credit)
+    const recording = spotifyRecording(row)
+    if (recording) claims.billings.push(recording)
     byCode.set(row.code, claims)
   }
   return byCode
@@ -243,22 +321,31 @@ export async function similarRecordingArtistEvidence(
   items: readonly TidalSuggestion[],
   includesStoredItems: boolean,
 ) {
-  const wanted = items.flatMap((item) => tidalCredit(item) ?? [])
+  const wanted = items.flatMap((item) => tidalRecording(item) ?? [])
   if (!wanted.length) return []
   const codes = new Set(wanted.map(({ code }) => code))
   const byCode = await readSpotifyClaims(tx, [...codes])
   const spotifyIds = new Set<string>()
-  const candidates = wanted.filter((t) => {
-    const claims = byCode.get(t.code)
-    if (!claims || claims.blocked || claims.tracks.size !== 1) return false
-    const matches = claims.credits.filter((s) => agrees(t, s))
-    for (const match of matches) spotifyIds.add(match.artist.id)
-    return matches.length > 0
-  })
-  if (!candidates.length) return []
+  const candidates = new Map<
+    TidalRecording,
+    ReturnType<typeof matchRecordingArtistBilling>
+  >()
+  for (const tidal of wanted) {
+    const claims = byCode.get(tidal.code)
+    if (!claims || claims.blocked || claims.tracks.size !== 1) continue
+    const pairs = claims.billings.flatMap((spotify) =>
+      sameRecording(tidal, spotify)
+        ? matchRecordingArtistBilling(tidal.artists, spotify.artists)
+        : [],
+    )
+    if (!pairs.length) continue
+    for (const pair of pairs) spotifyIds.add(pair.spotifyId)
+    candidates.set(tidal, pairs)
+  }
+  if (!candidates.size) return []
   const related = includesStoredItems
     ? []
-    : await relatedTidalCredits(tx, candidates, [...spotifyIds])
+    : await relatedTidalRecordings(tx, [...candidates.keys()], [...spotifyIds])
   const otherCodes = [
     ...new Set(
       related.map(({ code }) => code).filter((code) => !codes.has(code)),
@@ -269,40 +356,72 @@ export async function similarRecordingArtistEvidence(
 
   const tidalToSpotify = new Map<string, Set<string>>()
   const spotifyToTidal = new Map<string, Set<string>>()
-  for (const t of [...wanted, ...related])
-    for (const s of byCode.get(t.code)?.credits ?? [])
-      if (agrees(t, s)) {
-        addMapping(tidalToSpotify, t.artist.id, s.artist.id)
-        addMapping(spotifyToTidal, s.artist.id, t.artist.id)
+  for (const tidal of [...wanted, ...related])
+    for (const spotify of byCode.get(tidal.code)?.billings ?? []) {
+      if (!sameRecording(tidal, spotify)) continue
+      // An ambiguous bill can rule out a pair, but only unique names can prove it.
+      for (const { leftIds, rightIds } of sharedRecordingBilling(
+        tidal.artists,
+        spotify.artists,
+      )) {
+        for (const tidalId of leftIds)
+          for (const spotifyId of rightIds) {
+            addMapping(tidalToSpotify, tidalId, spotifyId)
+            addMapping(spotifyToTidal, spotifyId, tidalId)
+          }
       }
+    }
 
   const pairs = new Map<
     string,
-    { tidalId: string; spotifyId: string; owners: Set<string> }
-  >()
-  for (const t of candidates) {
-    const claims = byCode.get(t.code)
-    if (!claims || claims.blocked || claims.tracks.size !== 1) continue
-    const credits = claims.credits.filter((s) => agrees(t, s))
-    const [credit] = credits
-    if (
-      !credit ||
-      claims.credits.some((s) => s.artist.id !== credit.artist.id) ||
-      tidalToSpotify.get(t.artist.id)?.size !== 1 ||
-      spotifyToTidal.get(credit.artist.id)?.size !== 1
-    )
-      continue
-    const pair = pairs.get(t.artist.id) ?? {
-      tidalId: t.artist.id,
-      spotifyId: credit.artist.id,
-      owners: new Set<string>(),
+    {
+      tidalId: string
+      spotifyId: string
+      owners: Set<string>
+      suggestions: Set<TidalSuggestion>
     }
-    for (const { owner } of credits) if (owner) pair.owners.add(owner)
-    pairs.set(t.artist.id, pair)
+  >()
+  for (const [tidal, matches] of candidates) {
+    const claims = byCode.get(tidal.code)
+    if (!claims) continue
+    for (const { tidalId, spotifyId, name } of matches) {
+      if (
+        tidalToSpotify.get(tidalId)?.size !== 1 ||
+        spotifyToTidal.get(spotifyId)?.size !== 1 ||
+        claims.billings.some(({ artists }) => {
+          const [first, second] = artists.filter(
+            (credit) =>
+              recordingCreditName(credit.name) === recordingCreditName(name),
+          )
+          return first?.id !== spotifyId || second !== undefined
+        })
+      )
+        continue
+      const pair = pairs.get(tidalId) ?? {
+        tidalId,
+        spotifyId,
+        owners: new Set<string>(),
+        suggestions: new Set<TidalSuggestion>(),
+      }
+      for (const { owners } of claims.billings) {
+        const owner = owners?.get(spotifyId)
+        if (owner) pair.owners.add(owner)
+      }
+      pair.suggestions.add(tidal.item)
+      pairs.set(tidalId, pair)
+    }
   }
-  return [...pairs.values()].flatMap(({ tidalId, spotifyId, owners }) =>
-    owners.size <= 1
-      ? [{ tidalId, spotifyId, owner: owners.values().next().value }]
-      : [],
+  return [...pairs.values()].flatMap(
+    ({ tidalId, spotifyId, owners, suggestions }) =>
+      owners.size <= 1
+        ? [
+            {
+              tidalId,
+              spotifyId,
+              owner: owners.values().next().value,
+              suggestions,
+            },
+          ]
+        : [],
   )
 }

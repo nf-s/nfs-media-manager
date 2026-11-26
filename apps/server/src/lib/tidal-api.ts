@@ -285,7 +285,7 @@ export const TidalSimilarDocumentSchema = z.object({
 })
 
 export function includedArtists(
-  included: z.infer<typeof IncludedSchema>,
+  included: readonly unknown[],
 ): Map<string, TidalArtistResource> {
   const artists = new Map<string, TidalArtistResource>()
   for (const resource of included) {

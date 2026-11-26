@@ -39,7 +39,9 @@ export function ArtistIdentifierSourceRow({
   const label = artistProviderLabel(source.provider, catalog)
   const kind =
     source.kind === 'artist'
-      ? 'Artist profile'
+      ? source.snapshotId
+        ? 'Artist profile'
+        : 'Catalog artist'
       : source.kind === 'album'
         ? 'Album'
         : 'Track'

@@ -663,6 +663,27 @@ test('Similar tracks open discovered track, artist and album inspectors', async 
   ).toEqual(suggested)
 })
 
+test('a discovered artist opened from Similar shows the native Spotify ID in Sources', async ({
+  page,
+}) => {
+  await openTrackSimilar(page)
+  const row = page
+    .getByRole('tabpanel', { name: 'Similar', exact: true })
+    .getByRole('row', { name: /Northbound Echo/ })
+  await row.getByRole('link', { name: 'Glass Meridian', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Glass Meridian', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('tab', { name: 'Sources', exact: true }).click()
+  const sources = page.getByRole('tabpanel', { name: 'Sources', exact: true })
+  const spotify = sources.locator('summary').filter({
+    has: page.getByText('Spotify', { exact: true }),
+  })
+  await expect(
+    spotify.getByText('pvKQhaowdxw4wYTFqEA9V7', { exact: true }),
+  ).toBeVisible()
+})
+
 test('Similar albums and tracks remember their views independently', async ({
   page,
 }) => {

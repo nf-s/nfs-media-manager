@@ -10,7 +10,10 @@ import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { PluginResultSchema, type JsonValue } from '@repo/media-plugin-sdk'
 import { ArtistProfileSchema } from '@repo/schemas/artist-profiles'
-import type { TidalSuggestion } from '@repo/schemas/tidal'
+import {
+  TidalSuggestionSchema,
+  type TidalSuggestion,
+} from '@repo/schemas/tidal'
 import { env } from '@/env'
 import { db } from '@/lib/db'
 import { createStableId } from '@/lib/media-utils'
@@ -1086,8 +1089,10 @@ async function main() {
   const { patchAlbum, patchFilm } = await import('@/services/media')
   const { mergeTags, setTagVisibility } = await import('@/services/tags')
   const { relinkLastfmScrobbles } = await import('@/services/lastfm-scrobbles')
-  const { observeTidalSuggestion } =
+  const { observeSpotifySearchTrack, observeTidalSuggestion } =
     await import('@/services/music-catalog-observations')
+  const { storeSpotifyCodeLookup } =
+    await import('@/services/spotify-similar-lookup')
 
   const wiped = await wipe()
   console.log(`cleared ${wiped} tables`)
@@ -2372,6 +2377,99 @@ async function main() {
         },
       })
     }
+  }
+
+  // A recommendation with corroborating TIDAL and Spotify recording credits.
+  // The artist has a native Spotify identity but has never had a profile scrape.
+  const similarTrack = standalone[2]
+  if (similarTrack) {
+    const name = 'Glass Meridian'
+    const tidalId = '930023'
+    const code = 'QZFX22600003'
+    const title = 'Northbound Echo'
+    const durationSec = 228
+    const spotifyTrackId = spotifyId(`track:${title}`)
+    const match = {
+      spotifyId: spotifyTrackId,
+      url: `https://open.spotify.com/track/${spotifyTrackId}`,
+      title,
+      artists: [name],
+      artistCredits: [{ id: spotifyId(`artist:${name}`), name }],
+      durationSec,
+      albumName: null,
+      spotifyAlbumId: null,
+      artworkUrl: null,
+      trackCount: null,
+    }
+    const suggestion: TidalSuggestion = {
+      tidalId,
+      title,
+      artists: [name],
+      artistCredits: [{ id: '930024', name }],
+      code,
+      url: `https://tidal.com/browse/track/${tidalId}`,
+      durationSec,
+      version: null,
+      releaseDate: null,
+    }
+    const { id: jobId } = await addJob({
+      provider: 'spotify',
+      status: 'succeeded',
+      mediaType: null,
+      createdAt: daysAgo(1),
+    })
+    const savedLocation = and(
+      eq(schema.tidalSimilar.mediaItemId, similarTrack.id),
+      eq(schema.tidalSimilar.kind, 'track'),
+    )
+    await db.transaction(async (tx) => {
+      const catalogMediaItemId = await observeTidalSuggestion(
+        tx,
+        'track',
+        suggestion,
+        {
+          subjectKind: 'track',
+          subjectId: similarTrack.id,
+          operation: 'similar',
+          key: similarTrack.id,
+          position: 2,
+        },
+      )
+      const [saved] = await tx
+        .select({ items: schema.tidalSimilar.items })
+        .from(schema.tidalSimilar)
+        .where(savedLocation)
+      if (!saved) throw new Error('Missing saved Similar preview')
+      const items = z.array(TidalSuggestionSchema).parse(saved.items)
+      await tx
+        .update(schema.tidalSimilar)
+        .set({ items: [...items, { ...suggestion, catalogMediaItemId }] })
+        .where(savedLocation)
+      await observeSpotifySearchTrack(
+        tx,
+        {
+          ...match,
+          spotifyTrackId,
+          spotifyUrl: match.url,
+          isrc: code,
+        },
+        {
+          subjectKind: 'track',
+          subjectId: similarTrack.id,
+          operation: 'spotify-code-search',
+          key: jobId,
+          jobId,
+          position: 1,
+        },
+      )
+    })
+    await storeSpotifyCodeLookup({
+      kind: 'track',
+      key: code,
+      itemId: similarTrack.id,
+      match,
+      jobId,
+    })
   }
 
   // TIDAL track matches for the Similar tab: one left two TIDAL tracks for
