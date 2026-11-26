@@ -1,9 +1,11 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Eye, LoaderCircle, Mic, Square, X } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
+import { Eye, Mic, Square, X } from 'lucide-react'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
+import { useResultAction } from './result-feedback'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import {
   AI_AUDIO_MAX_SECONDS,
@@ -40,6 +42,13 @@ export default function AiSearch<Plan>({
 }: Props<Plan>) {
   const { apiBaseUrl } = useConfig()
   const id = useId()
+  const results = useResultAction('ai')
+  const [outcome, setOutcome] = useState<ButtonFeedback>()
+  useEffect(() => {
+    if (!outcome) return
+    const timeout = window.setTimeout(() => setOutcome(undefined), 4000)
+    return () => window.clearTimeout(timeout)
+  }, [outcome])
   const [open, setOpen] = useState(false)
   const [submittedText, setSubmittedText] = useState('')
   const [result, setResult] = useState<AiSearchResult<Plan> | null>(null)
@@ -147,6 +156,7 @@ export default function AiSearch<Plan>({
 
   function beginRequest() {
     cancelRequest()
+    setOutcome(undefined)
     setError('')
     setOpen(false)
     const controller = new AbortController()
@@ -196,7 +206,15 @@ export default function AiSearch<Plan>({
           if (!isCurrentRequest(request)) return
           setResult(data)
           setSubmittedText(input.data.text)
-          if (data.plan) onApply(data.plan)
+          if (data.plan) {
+            results.begin()
+            onApply(data.plan)
+          }
+          setOutcome(
+            data.plan
+              ? { phase: 'done', label: 'Plan applied' }
+              : { phase: 'partial', label: 'Review search' },
+          )
           setOpen(!data.plan || data.warnings.length > 0)
         },
         onError: (failure) => {
@@ -242,7 +260,14 @@ export default function AiSearch<Plan>({
     cancelRequest()
     microphone.cancel()
     setOpen(false)
+    setOutcome({ phase: 'cancelled', label: 'Cancelled' })
   }
+
+  const feedback: ButtonFeedback | undefined = activity
+    ? { phase: recording ? 'running' : 'pending', label: activity }
+    : error || microphone.error
+      ? { phase: 'failed', label: 'Search failed' }
+      : (results.feedback ?? outcome)
 
   return (
     <BrowseFilterAutocomplete
@@ -258,6 +283,7 @@ export default function AiSearch<Plan>({
       }}
       onValueChange={(value) => {
         cancelRequest()
+        setOutcome(undefined)
         setError('')
         microphone.clearError()
         setOpen(false)
@@ -267,40 +293,36 @@ export default function AiSearch<Plan>({
       aiSearchDisabled={recording || working || status.isPending}
       inputActions={
         <>
-          {working || microphone.phase === 'requesting' ? (
-            <LoaderCircle
-              className={`ds-i ${styles.spinner}`}
-              data-size="sm"
-              aria-hidden
-            />
-          ) : (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              icon
-              aria-label={
-                recording ? 'Stop recording and search' : 'Record search'
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            icon
+            aria-label={
+              recording ? 'Stop recording and search' : 'Record search'
+            }
+            title={recording ? 'Stop recording and search' : 'Record search'}
+            feedback={feedback}
+            disabled={
+              status.isPending || working || microphone.phase === 'requesting'
+            }
+            onClick={() => {
+              if (recording) microphone.stop()
+              else if (!available) setOpen(true)
+              else {
+                setOpen(false)
+                setError('')
+                setOutcome(undefined)
+                void microphone.start()
               }
-              title={recording ? 'Stop recording and search' : 'Record search'}
-              disabled={status.isPending}
-              onClick={() => {
-                if (recording) microphone.stop()
-                else if (!available) setOpen(true)
-                else {
-                  setOpen(false)
-                  setError('')
-                  void microphone.start()
-                }
-              }}
-            >
-              {recording ? (
-                <Square className="ds-i" data-size="sm" aria-hidden />
-              ) : (
-                <Mic className="ds-i" data-size="sm" aria-hidden />
-              )}
-            </Button>
-          )}
+            }}
+          >
+            {recording ? (
+              <Square className="ds-i" data-size="sm" aria-hidden />
+            ) : (
+              <Mic className="ds-i" data-size="sm" aria-hidden />
+            )}
+          </Button>
           {recording || working ? (
             <Button
               type="button"
@@ -340,13 +362,13 @@ export default function AiSearch<Plan>({
                   <Notice
                     tone="danger"
                     action={
-                      <Button
+                      <ReadButton
                         type="button"
                         size="xs"
-                        onClick={() => void status.refetch()}
+                        read={() => status.refetch()}
                       >
                         Retry
-                      </Button>
+                      </ReadButton>
                     }
                   >
                     Could not check AI availability.

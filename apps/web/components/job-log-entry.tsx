@@ -13,7 +13,7 @@ import {
 } from '@repo/schemas/job'
 import { KeyValues } from '@repo/ui/components/ds/facts'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { formatCount, formatDateTime, formatElapsed } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { jobActivityCount, jobActivityLabel } from '@/utils/job-activity'
@@ -141,10 +141,10 @@ export function JobLogEntry({
           body: JSON.stringify({ confirm: true }),
         },
       ),
-    onSuccess: async () => {
+    onSuccess: () => {
       setConfirming(false)
-      await client.invalidateQueries({ queryKey: ['jobs'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
+      void client.invalidateQueries({ queryKey: ['jobs'] })
+      void client.invalidateQueries({ queryKey: ['job-activity'] })
     },
   })
   const parsed = ErrorMetadataSchema.safeParse(log.metadata)
@@ -196,15 +196,16 @@ export function JobLogEntry({
             <Button
               size="xs"
               disabled={review.isPending}
+              feedback={mutationFeedback(review, {
+                pending: 'Marking benign…',
+                success: 'Marked benign',
+                error: 'Review unconfirmed',
+              })}
               onClick={() =>
                 confirming ? review.mutate() : setConfirming(true)
               }
             >
-              {review.isPending
-                ? 'Saving...'
-                : confirming
-                  ? 'Confirm benign'
-                  : 'Mark benign'}
+              {confirming ? 'Confirm benign' : 'Mark benign'}
             </Button>
             {confirming && (
               <Button

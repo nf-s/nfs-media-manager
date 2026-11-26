@@ -175,10 +175,9 @@ function ArtistPlaylistChoices({
           tone="danger"
           action={
             <RetryButton
-              onClick={() => {
-                choices.retry()
-                if (countError) retryCount()
-              }}
+              onClick={() =>
+                Promise.all([choices.retry(), countError && retryCount()])
+              }
             />
           }
         >

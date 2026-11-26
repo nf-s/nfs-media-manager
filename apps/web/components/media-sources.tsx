@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { JobSchema } from '@repo/schemas/job'
@@ -148,9 +149,9 @@ export function MediaEditHistory({ id }: { id: string }) {
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={() => summary.refetch()}>
+              <ReadButton size="xs" read={() => summary.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load changes.
@@ -356,11 +357,12 @@ export default function MediaSources({
       : undefined
     const refreshAndInvalidate = refresh
       ? async () => {
-          await refresh()
-          await Promise.all([
+          const job = await refresh()
+          void Promise.all([
             client.invalidateQueries({ queryKey: ['jobs'] }),
             client.invalidateQueries({ queryKey: ['job-activity'] }),
           ])
+          return job
         }
       : undefined
     return {
@@ -400,7 +402,7 @@ export default function MediaSources({
             <div className="data-stack" aria-label={`${label} identifiers`}>
               {identifiers.map((identifier) => (
                 <IdentifierRow
-                  key={`${identifier.referenceType}:${identifier.current}`}
+                  key={identifier.referenceType}
                   item={item}
                   label={label}
                   {...identifier}
@@ -483,10 +485,12 @@ export default function MediaSources({
         pending={summary.isPending || catalog.isPending}
         unavailable={unavailable}
         allowRefreshAll={!focused}
-        onRetry={() => {
-          if (summary.isError) void summary.refetch()
-          if (catalog.isError) void catalog.refetch()
-        }}
+        onRetry={() =>
+          Promise.all([
+            summary.isError && summary.refetch(),
+            catalog.isError && catalog.refetch(),
+          ])
+        }
       />
     </>
   )

@@ -408,7 +408,10 @@ test('the sync tab shows the schedule, progress and the latest job', async () =>
     { kind: 'playlist', id: 'playlist-1', view: 'tab=sync' },
     { kind: 'job', id: 'job-1' },
   ])
-  assert.match(html, /disabled=""[^>]*>Sync now</)
+  assert.match(
+    html,
+    /<button[^>]*data-feedback="running"[^>]*disabled=""[^>]*aria-label="Running… · Sync now"/,
+  )
   assert.match(html, /role="progressbar"/)
 })
 

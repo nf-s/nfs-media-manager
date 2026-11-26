@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useId, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -19,7 +20,7 @@ import {
   ToolbarCount,
   ToolbarEnd,
 } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import {
@@ -145,8 +146,13 @@ function NewTagForm({
           type="submit"
           variant="primary"
           disabled={!name.trim() || create.isPending}
+          feedback={mutationFeedback(create, {
+            pending: 'Creating tag…',
+            success: 'Tag created',
+            error: 'Could not create tag',
+          })}
         >
-          {create.isPending ? 'Creating...' : 'Create tag'}
+          Create tag
         </Button>
         <Button type="button" disabled={create.isPending} onClick={onCancel}>
           Cancel
@@ -238,6 +244,11 @@ export default function TagHierarchyPageClient() {
       <Toolbar>
         <Button
           aria-expanded={creating}
+          feedback={
+            created
+              ? { phase: 'done', label: 'Tag created · New tag' }
+              : undefined
+          }
           onClick={() => {
             setCreating(!creating)
             setCreated(null)
@@ -348,9 +359,9 @@ export default function TagHierarchyPageClient() {
             {hierarchy.isError && !nodes && (
               <TableState colSpan={columns.count} error>
                 Could not load tags.{' '}
-                <Button size="xs" onClick={() => void hierarchy.refetch()}>
+                <ReadButton size="xs" read={() => hierarchy.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               </TableState>
             )}
             {hierarchy.isPending && (

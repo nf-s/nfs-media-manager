@@ -1,5 +1,6 @@
 'use client'
 
+import { useResultAction } from './result-feedback'
 import {
   Fragment,
   forwardRef,
@@ -850,6 +851,7 @@ export function SecondaryTableHead<Key extends string>({
   resizer?: HTMLAttributes<HTMLSpanElement>
 } & ColumnLayout) {
   const active = sortKey === sortBy
+  const sortAction = useResultAction('column-' + sortKey)
   return (
     <TableHead
       className={className}
@@ -865,7 +867,11 @@ export function SecondaryTableHead<Key extends string>({
         <TableSortButton
           direction={active ? direction : undefined}
           disabled={disabled}
-          onClick={() => onSort(sortKey)}
+          feedback={sortAction.feedback}
+          onClick={() => {
+            sortAction.begin()
+            onSort(sortKey)
+          }}
           title={`Sort by ${label}`}
         >
           {label}

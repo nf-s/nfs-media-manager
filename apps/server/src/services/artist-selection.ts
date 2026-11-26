@@ -71,7 +71,11 @@ export async function queueArtistSelection(
       try {
         result.jobs.push(
           await createTaskJob(ARTIST_ENRICHMENT_TASK, userId, {
-            taskOptions: { artistId, provider },
+            taskOptions: {
+              artistId,
+              provider,
+              ...(options.batchId ? { batchId: options.batchId } : {}),
+            },
             skipActive: true,
           }),
         )

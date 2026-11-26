@@ -1,11 +1,12 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useCallback, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { TrackListItemSchema, type TrackListItem } from '@repo/schemas/tracks'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import { clientQueryDefaults } from '@/utils/query-cache'
 
@@ -17,6 +18,7 @@ type Expansion = {
   id: string
   index: number
   page: number
+  control: 'toggle' | 'previous' | 'next'
 }
 
 export function useTrackRecordingVersions(
@@ -47,10 +49,17 @@ export function useTrackRecordingVersions(
     retry: false,
   })
   const items = query.data?.items ?? []
-  const needsPager = page > 1 || query.data?.hasMore === true
+  const needsPager =
+    page > 1 || query.data?.hasMore === true || expanded?.control === 'previous'
+  const feedback: ButtonFeedback = query.isFetching
+    ? { phase: 'pending', label: 'Loading versions…' }
+    : query.isError
+      ? { phase: 'failed', label: 'Load failed' }
+      : { phase: 'done', label: 'Versions loaded' }
 
   return {
     expanded,
+    feedback,
     items,
     needsPager,
     loading: query.isPending,
@@ -59,13 +68,20 @@ export function useTrackRecordingVersions(
     page,
     rowCount: Math.max(1, items.length) + Number(needsPager),
     collapse,
-    retry: () => void query.refetch(),
+    retry: () => query.refetch(),
     goToPage: (page: number) => {
-      if (expanded) setSelection({ ...expanded, page })
+      if (expanded)
+        setSelection({
+          ...expanded,
+          page,
+          control: page > expanded.page ? 'next' : 'previous',
+        })
     },
     toggle: (id: string, index: number) => {
       setSelection(
-        expanded?.id === id ? null : { identity, id, index, page: 1 },
+        expanded?.id === id
+          ? null
+          : { identity, id, index, page: 1, control: 'toggle' },
       )
     },
   }
@@ -93,6 +109,11 @@ export function RecordingVersionsToggle({
       icon
       className="shrink-0"
       aria-expanded={open}
+      feedback={
+        open && versions.expanded?.control === 'toggle'
+          ? versions.feedback
+          : undefined
+      }
       aria-label={label}
       title={label}
       onClick={() => versions.toggle(track.id, index)}
@@ -112,9 +133,14 @@ export function RecordingVersionsStatus({
     return (
       <span role="alert">
         Could not load versions.{' '}
-        <Button type="button" variant="link" size="xs" onClick={versions.retry}>
+        <ReadButton
+          type="button"
+          variant="link"
+          size="xs"
+          read={versions.retry}
+        >
           Retry
-        </Button>
+        </ReadButton>
       </span>
     )
   return <span role="status">No matching versions.</span>
@@ -131,6 +157,11 @@ export function RecordingVersionsPager({
         type="button"
         size="xs"
         aria-label="Previous release versions"
+        feedback={
+          versions.expanded?.control === 'previous'
+            ? versions.feedback
+            : undefined
+        }
         disabled={versions.page === 1}
         onClick={() => versions.goToPage(versions.page - 1)}
       >
@@ -141,6 +172,9 @@ export function RecordingVersionsPager({
         type="button"
         size="xs"
         aria-label="Next release versions"
+        feedback={
+          versions.expanded?.control === 'next' ? versions.feedback : undefined
+        }
         disabled={!versions.nextPage}
         onClick={() => versions.goToPage(versions.page + 1)}
       >

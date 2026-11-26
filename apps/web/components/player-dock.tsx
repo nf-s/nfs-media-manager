@@ -35,7 +35,11 @@ import {
   VolumeX,
   X,
 } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { DetailLink } from './detail-link'
 import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 import { MediaInspector } from './media-inspector'
@@ -51,6 +55,7 @@ import {
 } from './player-library-actions'
 import {
   ConnectionOutcome,
+  connectionFeedback,
   ConnectPrompt,
   PlayerConnections,
   SonosMark,
@@ -62,6 +67,11 @@ import {
   usePlaybackControls,
   type PlaybackView,
 } from './playback-provider'
+import {
+  playButtonRequest,
+  queueButtonRequest,
+  usePlaybackCommand,
+} from './playback-button-feedback'
 import {
   formatClock,
   playbackReportsTrack,
@@ -83,10 +93,12 @@ import {
   queuedPlaybackCatalog,
 } from '@/utils/playback-catalog'
 import type { DetailTarget } from '@/utils/detail-inspector'
-import type {
-  PlaybackRejoin,
-  PlaybackTarget,
-  SelectableTarget,
+import {
+  sameDevice,
+  type PlaybackState,
+  type PlaybackRejoin,
+  type PlaybackTarget,
+  type SelectableTarget,
 } from '@/utils/playback-engine'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 import { browseFilterHref } from '@/utils/browse-items'
@@ -440,13 +452,35 @@ function Scrubber({
   readOnly: boolean
 }) {
   const { seek } = usePlaybackControls()
+  const action = usePlaybackCommand('transport:seek')
   const position = usePosition(snapshot)
   const [drag, setDrag] = useState<number | null>(null)
   const duration = snapshot?.durationMs ?? 0
   const shown = Math.min(drag ?? position, duration)
   function commit() {
     if (drag === null) return
-    seek(drag)
+    const position = drag
+    action.run(
+      {
+        pending: 'Seeking…',
+        lane: 'seek',
+        repeated: true,
+        observe(next, previous) {
+          const snapshot = next.observation?.snapshot
+          if (
+            snapshot &&
+            next.observation !== previous.observation &&
+            Math.abs(snapshot.positionMs - position) < 2500
+          )
+            return {
+              phase: 'done',
+              label: `At ${formatClock(snapshot.positionMs)}`,
+            }
+          return undefined
+        },
+      },
+      () => seek(position),
+    )
     setDrag(null)
   }
   return (
@@ -473,12 +507,26 @@ function Scrubber({
         />
       </div>
       <span className="player-time">{formatClock(duration)}</span>
+      <PlayerControlReceipt feedback={action.feedback} />
     </div>
+  )
+}
+
+function PlayerControlReceipt({ feedback }: { feedback?: ButtonFeedback }) {
+  if (!feedback) return null
+  return (
+    <span className="player-control-feedback" role="status">
+      <ButtonFeedbackLabel feedback={feedback} />
+    </span>
   )
 }
 
 function Transport({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
+  const shuffle = usePlaybackCommand('transport:shuffle')
+  const previous = usePlaybackCommand('transport:previous')
+  const toggle = usePlaybackCommand('transport:toggle')
+  const next = usePlaybackCommand('transport:next')
   const { snapshot, starting } = view
   const playing = snapshot !== null && !snapshot.paused
   const hasNext = view.queue.length > 0 || view.upcoming.length > 0
@@ -490,20 +538,83 @@ function Transport({ view }: { view: PlaybackView }) {
   // Sonos can start the track due on the group when its own tracks run out.
   const startsNext =
     view.target.kind === 'sonos' && view.target.group.playable && hasNext
+  function skip(action: typeof next, direction: 'previous' | 'next') {
+    action.run(
+      {
+        pending: direction === 'next' ? 'Skipping…' : 'Going back…',
+        lane: 'transport',
+        repeated: true,
+        observe(after, before) {
+          const report = after.observation?.snapshot
+          if (
+            !report ||
+            after.observation === before.observation ||
+            after.starting
+          )
+            return undefined
+          if (report.trackUri !== before.snapshot?.trackUri)
+            return {
+              phase: 'done',
+              label: direction === 'next' ? 'Skipped' : 'Previous track',
+            }
+          if (
+            direction === 'previous' &&
+            report.positionMs < 2500 &&
+            (before.snapshot?.positionMs ?? 0) > 2500
+          )
+            return { phase: 'done', label: 'Track restarted' }
+          return undefined
+        },
+      },
+      controls[direction],
+    )
+  }
+  function togglePlayback() {
+    const item = view.current ?? view.queue[0]?.item ?? view.upcoming[0]?.item
+    toggle.run(
+      item
+        ? playButtonRequest(item, playing)
+        : {
+            pending: playing ? 'Pausing…' : 'Starting…',
+            lane: 'transport',
+            observe(after, before) {
+              if (
+                !after.starting &&
+                after.observation !== before.observation &&
+                after.observation?.snapshot.paused === playing
+              )
+                return { phase: 'done', label: playing ? 'Paused' : 'Playing' }
+              return undefined
+            },
+          },
+      controls.toggle,
+    )
+  }
   return (
     <div className="player-buttons">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="player-skip"
         aria-label="Shuffle"
         aria-pressed={view.shuffle}
         title="Shuffle"
-        onClick={controls.toggleShuffle}
+        feedback={shuffle.feedback}
+        onClick={() =>
+          shuffle.run(
+            queueButtonRequest(
+              (after, before) => after.shuffle !== before.shuffle,
+              view.shuffle ? 'Shuffle off' : 'Shuffle on',
+            ),
+            controls.toggleShuffle,
+          )
+        }
       >
         <Shuffle size={16} aria-hidden="true" />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="ghost"
         className="player-skip"
         aria-label="Previous"
         disabled={
@@ -511,11 +622,12 @@ function Transport({ view }: { view: PlaybackView }) {
           readOnly ||
           (sonos !== null && !sonos.previous && !sonos.seek)
         }
-        onClick={controls.previous}
+        feedback={previous.feedback}
+        onClick={() => skip(previous, 'previous')}
       >
         <SkipBack size={16} aria-hidden="true" />
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
         className="player-toggle"
         aria-label={starting ? 'Starting' : playing ? 'Pause' : 'Play'}
@@ -525,7 +637,11 @@ function Transport({ view }: { view: PlaybackView }) {
           readOnly ||
           (sonos !== null && !(playing ? sonos.pause : sonos.play))
         }
-        onClick={controls.toggle}
+        feedback={
+          toggle.feedback ??
+          (starting ? { phase: 'pending', label: 'Starting…' } : undefined)
+        }
+        onClick={togglePlayback}
       >
         {starting ? (
           <LoaderCircle
@@ -538,9 +654,10 @@ function Transport({ view }: { view: PlaybackView }) {
         ) : (
           <Play size={16} aria-hidden="true" />
         )}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="ghost"
         className="player-skip"
         aria-label="Next"
         disabled={
@@ -548,29 +665,56 @@ function Transport({ view }: { view: PlaybackView }) {
             ? !snapshot || (!sonos.next && !startsNext)
             : readOnly || (!snapshot && !hasNext)
         }
-        onClick={controls.next}
+        feedback={next.feedback}
+        onClick={() => skip(next, 'next')}
       >
         <SkipForward size={16} aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   )
 }
 
 function VolumeControl({ volume }: { volume: number | null }) {
   const { setVolume } = usePlaybackControls()
+  const mute = usePlaybackCommand('transport:mute')
+  const slider = usePlaybackCommand('transport:volume')
   const restore = useRef(0.5)
   if (volume === null) return null
   const muted = volume === 0
+  function change(value: number, action: typeof mute) {
+    action.run(
+      {
+        pending: 'Setting volume…',
+        lane: 'volume',
+        repeated: true,
+        observe(after, before) {
+          if (
+            after.volumeReceipt !== before.volumeReceipt &&
+            after.volumeReceipt?.volume === value
+          )
+            return {
+              phase: 'done',
+              label:
+                value === 0 ? 'Muted' : `Volume ${Math.round(value * 100)}%`,
+            }
+          return undefined
+        },
+      },
+      () => setVolume(value),
+    )
+  }
   return (
     <div className="player-volume">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="player-tool"
         aria-label={muted ? 'Unmute' : 'Mute'}
+        feedback={mute.feedback}
         onClick={() => {
-          if (muted) return setVolume(restore.current)
+          if (muted) return change(restore.current, mute)
           restore.current = volume
-          setVolume(0)
+          change(0, mute)
         }}
       >
         {muted ? (
@@ -578,7 +722,7 @@ function VolumeControl({ volume }: { volume: number | null }) {
         ) : (
           <Volume2 size={16} aria-hidden="true" />
         )}
-      </button>
+      </Button>
       <div className="player-range">
         <span
           className="player-range-fill"
@@ -592,9 +736,10 @@ function VolumeControl({ volume }: { volume: number | null }) {
           max={1}
           step={0.01}
           value={volume}
-          onChange={(event) => setVolume(Number(event.target.value))}
+          onChange={(event) => change(Number(event.target.value), slider)}
         />
       </div>
+      <PlayerControlReceipt feedback={slider.feedback} />
     </div>
   )
 }
@@ -690,18 +835,15 @@ function QueueLibrarySlot({
   membership: PlayerLibraryMembership
   touch?: boolean
 }) {
-  const { add } = playerItemIdentity(item, membership)
   return (
     <span className="queue-library-slot" data-touch={touch ? '' : undefined}>
-      {add && (
-        <span ref={focusQueueTitleOnRemoval}>
-          <PlayerLibraryAction
-            item={item}
-            membership={membership}
-            touch={touch}
-          />
-        </span>
-      )}
+      <span ref={focusQueueTitleOnRemoval}>
+        <PlayerLibraryAction
+          item={item}
+          membership={membership}
+          touch={touch}
+        />
+      </span>
     </span>
   )
 }
@@ -764,6 +906,7 @@ function QueueRows({
   onNavigate: () => void
 }) {
   const controls = usePlaybackControls()
+  const edit = usePlaybackCommand('queue:edit')
   const rows = entries.map((entry) => ({
     ...entry,
     identity: queuedLibraryItem(entry.item),
@@ -787,18 +930,29 @@ function QueueRows({
     const dragged = drag.dragging
     drag.end()
     if (!dragged || !accepts(dragged, section)) return
-    if (dragged.section !== section) controls.queueUpcoming(dragged.key, index)
-    else if (from >= 0 && placeAt(index) !== null)
-      move(from, index > from ? index - 1 : index)
+    if (dragged.section !== section) {
+      edit.run(
+        queueButtonRequest(
+          (next) => !next.upcoming.some(({ key }) => key === dragged.key),
+          'Moved to queue',
+        ),
+        () => controls.queueUpcoming(dragged.key, index),
+      )
+    } else if (from >= 0 && placeAt(index) !== null) {
+      const to = index > from ? index - 1 : index
+      edit.run(
+        queueButtonRequest(
+          (next) => next[section][to]?.key === dragged.key,
+          `Moved to position ${to + 1}`,
+        ),
+        () => move(from, to),
+      )
+    }
   }
   return (
     <ol className="queue-list">
       {rows.map((entry, index) => {
         const { title } = entry.item
-        const play = queued ? `Play ${title} now` : `Skip to ${title}`
-        const remove = queued
-          ? `Remove ${title} from queue`
-          : `Remove ${title} from upcoming tracks`
         /** The half of the row the pointer is over decides the side. */
         const target = (event: DragEvent<HTMLLIElement>) => {
           const box = event.currentTarget.getBoundingClientRect()
@@ -852,64 +1006,131 @@ function QueueRows({
               membership={membership}
               touch
             />
-            <span className="queue-actions">
-              <button
-                type="button"
-                aria-label={play}
-                title={play}
-                onClick={() =>
-                  queued
-                    ? controls.playFromQueue(entry.key)
-                    : controls.playUpcoming(entry.key)
-                }
-              >
-                <Play size={14} aria-hidden="true" />
-              </button>
-              {!queued && (
-                <button
-                  type="button"
-                  aria-label={`Move ${title} to queue`}
-                  title={`Move ${title} to queue`}
-                  onClick={() => controls.queueUpcoming(entry.key)}
-                >
-                  <ListPlus size={14} aria-hidden="true" />
-                </button>
-              )}
-              <button
-                type="button"
-                aria-label={`Move ${title} up`}
-                title={`Move ${title} up`}
-                disabled={index === 0}
-                onClick={() => move(index, index - 1)}
-              >
-                <ChevronUp size={14} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                aria-label={`Move ${title} down`}
-                title={`Move ${title} down`}
-                disabled={index === entries.length - 1}
-                onClick={() => move(index, index + 1)}
-              >
-                <ChevronDown size={14} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                aria-label={remove}
-                title={remove}
-                onClick={() =>
-                  queued
-                    ? controls.removeFromQueue(entry.key)
-                    : controls.removeUpcoming(entry.key)
-                }
-              >
-                <X size={14} aria-hidden="true" />
-              </button>
-            </span>
+            <QueueRowActions
+              section={section}
+              entry={entry}
+              index={index}
+              count={entries.length}
+            />
           </li>
         )
       })}
     </ol>
+  )
+}
+
+function QueueRowActions({
+  section,
+  entry,
+  index,
+  count,
+}: {
+  section: QueueSection
+  entry: QueueEntry
+  index: number
+  count: number
+}) {
+  const controls = usePlaybackControls()
+  const play = usePlaybackCommand('queue:play')
+  const edit = usePlaybackCommand('queue:edit')
+  const up = usePlaybackCommand(`queue:up:${entry.key}`)
+  const down = usePlaybackCommand(`queue:down:${entry.key}`)
+  const queued = section === 'queue'
+  const { title } = entry.item
+  const playLabel = queued ? `Play ${title} now` : `Skip to ${title}`
+  const removeLabel = queued
+    ? `Remove ${title} from queue`
+    : `Remove ${title} from upcoming tracks`
+  const removed = (next: PlaybackState) =>
+    !next[section].some(({ key }) => key === entry.key)
+
+  function move(action: typeof up, to: number) {
+    const send = queued ? controls.moveInQueue : controls.moveUpcoming
+    action.run(
+      queueButtonRequest(
+        (next) => next[section][to]?.key === entry.key,
+        `Position ${to + 1}`,
+      ),
+      () => send(index, to),
+    )
+  }
+  return (
+    <span className="queue-actions">
+      <Button
+        type="button"
+        icon
+        variant="ghost"
+        aria-label={playLabel}
+        title={playLabel}
+        onClick={() =>
+          play.run(playButtonRequest(entry.item), () =>
+            queued
+              ? controls.playFromQueue(entry.key)
+              : controls.playUpcoming(entry.key),
+          )
+        }
+      >
+        <Play size={14} aria-hidden="true" />
+      </Button>
+      {!queued && (
+        <Button
+          type="button"
+          icon
+          variant="ghost"
+          aria-label={`Move ${title} to queue`}
+          title={`Move ${title} to queue`}
+          onClick={() =>
+            edit.run(queueButtonRequest(removed, 'Moved to queue'), () =>
+              controls.queueUpcoming(entry.key),
+            )
+          }
+        >
+          <ListPlus size={14} aria-hidden="true" />
+        </Button>
+      )}
+      <Button
+        type="button"
+        icon
+        variant="ghost"
+        aria-label={`Move ${title} up`}
+        title={`Move ${title} up`}
+        feedback={up.feedback}
+        disabled={index === 0}
+        onClick={() => move(up, index - 1)}
+      >
+        <ChevronUp size={14} aria-hidden="true" />
+      </Button>
+      <Button
+        type="button"
+        icon
+        variant="ghost"
+        aria-label={`Move ${title} down`}
+        title={`Move ${title} down`}
+        feedback={down.feedback}
+        disabled={index === count - 1}
+        onClick={() => move(down, index + 1)}
+      >
+        <ChevronDown size={14} aria-hidden="true" />
+      </Button>
+      <Button
+        type="button"
+        icon
+        variant="ghost"
+        aria-label={removeLabel}
+        title={removeLabel}
+        onClick={() =>
+          edit.run(
+            queueButtonRequest(removed, `Removed ${title}`, 'Removing…'),
+            () =>
+              queued
+                ? controls.removeFromQueue(entry.key)
+                : controls.removeUpcoming(entry.key),
+          )
+        }
+      >
+        <X size={14} aria-hidden="true" />
+      </Button>
+    </span>
   )
 }
 
@@ -928,6 +1149,8 @@ function QueueContents({
   /** A source track dragged over the empty queue becomes its first entry. */
   const intoEmptyQueue = drag.dragging?.section === 'upcoming'
   const controls = usePlaybackControls()
+  const edit = usePlaybackCommand('queue:edit')
+  const play = usePlaybackCommand('queue:play')
   return (
     <div
       className="queue-contents"
@@ -944,6 +1167,8 @@ function QueueContents({
           change made here moves it to this browser.
         </p>
       )}
+      <PlayerControlReceipt feedback={edit.feedback} />
+      <PlayerControlReceipt feedback={play.feedback} />
       {(target.kind === 'restricted' ||
         (target.kind === 'sonos' && !target.group.playable)) && (
         <p className="quiet">
@@ -1018,8 +1243,16 @@ function QueueContents({
               event.preventDefault()
               const dragged = drag.dragging
               drag.end()
-              if (dragged?.section === 'upcoming')
-                controls.queueUpcoming(dragged.key, 0)
+              if (dragged?.section === 'upcoming') {
+                edit.run(
+                  queueButtonRequest(
+                    (next) =>
+                      !next.upcoming.some(({ key }) => key === dragged.key),
+                    'Moved to queue',
+                  ),
+                  () => controls.queueUpcoming(dragged.key, 0),
+                )
+              }
             }}
           >
             Nothing queued.
@@ -1064,6 +1297,9 @@ function DeviceList({
   onChosen: () => void
 }) {
   const controls = usePlaybackControls()
+  const transfer = usePlaybackCommand('device-transfer')
+  const discovery = useDeviceDiscovery()
+  const [retrying, setRetrying] = useState(false)
   const { target } = view
   const listed =
     target.kind === 'remote' &&
@@ -1073,7 +1309,60 @@ function DeviceList({
         ? view.devices.filter((device) => device.name !== target.name)
         : view.devices
   function choose(next: SelectableTarget) {
-    void controls.selectDevice(next)
+    transfer.run(
+      {
+        pending: `Switching to ${targetLabel(next)}…`,
+        lane: 'device-transfer',
+        observe(after, before) {
+          const result =
+            after.transfer !== before.transfer &&
+            after.transfer &&
+            sameDevice(after.transfer.target, next)
+              ? after.transfer
+              : null
+          if (result?.status === 'fallback')
+            return {
+              phase: 'partial',
+              label: 'Selected for next play · current audio stayed',
+            }
+          if (result?.status === 'selected')
+            return {
+              phase: 'done',
+              label:
+                before.observation &&
+                sameDevice(before.observation.target, next) &&
+                !before.observation.snapshot.paused
+                  ? 'Already playing here'
+                  : 'Selected for next play',
+            }
+          const report = after.observation
+          const current = before.observation?.snapshot ?? before.snapshot
+          if (
+            report &&
+            report !== before.observation &&
+            sameDevice(report.target, next) &&
+            (!current?.trackUri ||
+              playbackReportsTrack(report.snapshot, current.trackUri)) &&
+            !after.starting
+          )
+            return {
+              phase: 'done',
+              label: report.snapshot.paused
+                ? `Paused on ${targetLabel(next)}`
+                : `Playing on ${targetLabel(next)}`,
+            }
+          if (
+            result?.status === 'accepted' ||
+            (after.startAccepted &&
+              after.starting &&
+              sameDevice(next, after.target))
+          )
+            return { phase: 'running', label: 'Accepted · waiting for device' }
+          return undefined
+        },
+      },
+      () => controls.selectDevice(next),
+    )
     onChosen()
   }
   return (
@@ -1083,6 +1372,7 @@ function DeviceList({
           <button
             type="button"
             aria-pressed={target.kind === 'local'}
+            disabled={transfer.pending}
             onClick={() => choose({ kind: 'local' })}
           >
             <Laptop size={16} aria-hidden="true" />
@@ -1107,7 +1397,7 @@ function DeviceList({
               <button
                 type="button"
                 aria-pressed={chosen}
-                disabled={device.restricted}
+                disabled={device.restricted || transfer.pending}
                 onClick={() => choose({ kind: 'remote', device })}
               >
                 <DeviceIcon type={device.type} />
@@ -1118,20 +1408,29 @@ function DeviceList({
           )
         })}
       </ul>
-      {view.devicesStatus === 'loading' && !view.devices.length && (
-        <p role="status">Looking for devices...</p>
-      )}
-      {view.devicesStatus === 'error' && (
-        <p role="alert">
-          Devices could not be loaded.{' '}
-          <button
+      {view.devicesStatus === 'loading' &&
+        !view.devices.length &&
+        !retrying && <p role="status">Looking for devices...</p>}
+      {(view.devicesStatus === 'error' || retrying) && (
+        <div className="ds-actions">
+          {view.devicesStatus === 'error' && (
+            <span role="alert">Devices could not be loaded.</span>
+          )}
+          <Button
+            size="xs"
             type="button"
-            className="underline"
-            onClick={() => void controls.refreshDevices()}
+            variant="link"
+            aria-label="Retry device list"
+            feedback={retrying ? discovery.feedback : undefined}
+            disabled={discovery.pending}
+            onClick={() => {
+              setRetrying(true)
+              discovery.refresh()
+            }}
           >
-            Retry
-          </button>
-        </p>
+            {view.devicesStatus === 'error' ? 'Retry' : 'Find devices again'}
+          </Button>
+        </div>
       )}
       {target.kind === 'restricted' && !view.findingSonos && (
         <p className="quiet">
@@ -1164,6 +1463,7 @@ function DockPopover({
   action,
   highlighted = false,
   onOpen,
+  feedback,
   children,
 }: {
   label: string
@@ -1172,6 +1472,7 @@ function DockPopover({
   action?: ReactNode
   highlighted?: boolean
   onOpen?: () => void
+  feedback?: ButtonFeedback
   children: (close: () => void, open: boolean) => ReactNode
 }) {
   const id = useId()
@@ -1204,8 +1505,9 @@ function DockPopover({
   }
   return (
     <>
-      <button
+      <Button
         type="button"
+        variant="ghost"
         ref={trigger}
         className="player-tool"
         popoverTarget={id}
@@ -1213,9 +1515,10 @@ function DockPopover({
         aria-expanded={open}
         aria-controls={id}
         data-highlighted={highlighted}
+        feedback={feedback}
       >
         {triggerContent}
-      </button>
+      </Button>
       <div
         id={id}
         ref={panel}
@@ -1260,6 +1563,61 @@ function TargetIcon({ view }: { view: PlaybackView }) {
   return <MonitorSpeaker size={16} aria-hidden="true" />
 }
 
+function useDeviceDiscovery() {
+  const controls = usePlaybackControls()
+  const lookup = usePlaybackCommand('device-discovery')
+  return {
+    ...lookup,
+    refresh: () =>
+      lookup.run(
+        {
+          pending: 'Finding devices…',
+          observe(after, before) {
+            if (after.devicesStatus === 'error')
+              return { phase: 'failed', label: 'Device list failed · retry' }
+            if (
+              after.devicesStatus === 'idle' &&
+              after.devices !== before.devices
+            )
+              return {
+                phase: 'done',
+                label:
+                  after.devices.length === 0
+                    ? 'No other Spotify devices'
+                    : `${after.devices.length} Spotify ${after.devices.length === 1 ? 'device' : 'devices'} found`,
+              }
+            return undefined
+          },
+        },
+        controls.refreshDevices,
+      ),
+  }
+}
+
+function useDevicePickerFeedback(view: PlaybackView) {
+  const transfer = usePlaybackCommand('device-transfer')
+  const discovery = useDeviceDiscovery()
+  if (transfer.feedback || discovery.feedback)
+    return { ...discovery, feedback: transfer.feedback ?? discovery.feedback }
+  if (view.devicesStatus === 'loading')
+    return {
+      ...discovery,
+      feedback: {
+        phase: 'pending',
+        label: 'Finding devices…',
+      } satisfies ButtonFeedback,
+    }
+  if (view.devicesStatus === 'error')
+    return {
+      ...discovery,
+      feedback: {
+        phase: 'failed',
+        label: 'Device list failed · retry',
+      } satisfies ButtonFeedback,
+    }
+  return discovery
+}
+
 function NowPlayingSheet({
   view,
   playing,
@@ -1269,7 +1627,7 @@ function NowPlayingSheet({
   playing: PlayingIdentity
   onClose: () => void
 }) {
-  const controls = usePlaybackControls()
+  const devices = useDevicePickerFeedback(view)
   const panel = useRef<HTMLElement>(null)
   const [devicesOpen, setDevicesOpen] = useState(false)
   const shown = describe(view)
@@ -1335,19 +1693,22 @@ function NowPlayingSheet({
             />
             <Transport view={view} />
             <div className="player-sheet-actions">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 className="player-tool"
+                aria-label={`Play on: ${targetLabel(view.target)}`}
                 aria-expanded={devicesOpen}
                 data-highlighted={view.target.kind !== 'local'}
+                feedback={devices.feedback}
                 onClick={() => {
-                  if (!devicesOpen) void controls.refreshDevices()
+                  if (!devicesOpen) devices.refresh()
                   setDevicesOpen(!devicesOpen)
                 }}
               >
                 <TargetIcon view={view} />
                 <span>{targetLabel(view.target)}</span>
-              </button>
+              </Button>
               {shown.spotifyUrl && (
                 <ServiceIconLinks
                   links={[
@@ -1410,6 +1771,8 @@ function RejoinNotice({ rejoin }: { rejoin: PlaybackRejoin }) {
 
 function Dock({ view }: { view: PlaybackView }) {
   const controls = usePlaybackControls()
+  const devices = useDevicePickerFeedback(view)
+  const clearQueue = usePlaybackCommand('queue:clear')
   const { apiBaseUrl } = useConfig()
   const phone = usePhoneLayout()
   const [sheet, setSheet] = useState(false)
@@ -1447,7 +1810,8 @@ function Dock({ view }: { view: PlaybackView }) {
             <Button
               variant="primary"
               type="button"
-              disabled={reconnect.isPending}
+              disabled={reconnect.isPending || reconnect.isSuccess}
+              feedback={connectionFeedback(reconnect)}
               onClick={() => reconnect.mutate()}
             >
               Reconnect
@@ -1549,7 +1913,17 @@ function Dock({ view }: { view: PlaybackView }) {
                 type="button"
                 variant="ghost"
                 disabled={!view.queue.length}
-                onClick={controls.clearQueue}
+                feedback={clearQueue.feedback}
+                onClick={() =>
+                  clearQueue.run(
+                    queueButtonRequest(
+                      (next, before) =>
+                        before.queue.length > 0 && next.queue.length === 0,
+                      'Queue cleared',
+                    ),
+                    controls.clearQueue,
+                  )
+                }
               >
                 Clear
               </Button>
@@ -1562,8 +1936,9 @@ function Dock({ view }: { view: PlaybackView }) {
           <DockPopover
             label={`Play on: ${targetLabel(view.target)}`}
             title="Play on"
+            feedback={devices.feedback}
             highlighted={view.target.kind !== 'local'}
-            onOpen={() => void controls.refreshDevices()}
+            onOpen={devices.refresh}
             trigger={
               <>
                 <TargetIcon view={view} />

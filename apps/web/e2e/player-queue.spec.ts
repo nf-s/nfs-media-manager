@@ -556,9 +556,15 @@ test('queue titles leave room for controls and saving clears the library action'
         controlsInsideRow: controls.every((control) => control.right <= right),
         titleClearOfControls:
           title &&
-          controls.every(
-            (control) => title.getBoundingClientRect().right <= control.left,
-          ),
+          controls.every((control) => {
+            const bounds = title.getBoundingClientRect()
+            return (
+              bounds.right <= control.left ||
+              bounds.left >= control.right ||
+              bounds.bottom <= control.top ||
+              bounds.top >= control.bottom
+            )
+          }),
       }
     })
     expect(geometry).toEqual({
@@ -658,12 +664,11 @@ test('queue titles leave room for controls and saving clears the library action'
     await expect(queuedRow.locator('.queue-actions')).toHaveCSS('opacity', '1')
     await add.tap()
   }
-  await expect(queuedRow.locator('.ds-library-action')).toHaveCount(0)
+  await expect(queuedRow.locator('.ds-library-action')).toHaveText('Added')
   await expect(
-    page.getByRole('status').filter({
-      hasText: `Added album to library · ${queued.title}`,
-    }),
-  ).toHaveAttribute('aria-atomic', 'true')
+    page.getByText(`Added album to library · ${queued.title}`, { exact: true }),
+  ).toBeVisible()
+  await expect(queuedRow.locator('.ds-library-action')).toHaveCount(0)
   const savedLink = queuedRow.getByRole('link', { name: queued.title })
   await expect(savedLink).toHaveAttribute(
     'data-workspace-href',
@@ -700,6 +705,53 @@ test('queue titles leave room for controls and saving clears the library action'
   )
   expect(promotions).toEqual([externalId(queued)])
   expect(writes).toEqual([])
+})
+
+test('a device discovery retry stays visible and reports the result it read', async ({
+  page,
+  isMobile,
+}) => {
+  const playing = item('track', 1, 'Playing track')
+  await mockPlayback(page, playback(playing), new Set([externalId(playing)]))
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let reads = 0
+  await page.route(
+    'https://api.spotify.com/v1/me/player/devices',
+    async (route) => {
+      reads += 1
+      if (reads === 1) {
+        await route.fulfill({
+          status: 503,
+          json: { error: { status: 503, message: 'Synthetic device failure' } },
+        })
+        return
+      }
+      await held
+      await route.fulfill({ json: { devices: [] } })
+    },
+  )
+  await page.goto('/tracks')
+  if (isMobile)
+    await page.getByRole('button', { name: /^Open player:/ }).click()
+  const surface = isMobile
+    ? page.locator('.player-sheet-body')
+    : page.locator('.player-dock')
+  await surface.getByRole('button', { name: /Play on:/ }).click()
+  const devices = surface.locator('.device-list')
+  await expect(devices.getByText('Devices could not be loaded.')).toBeVisible()
+  const retry = devices.getByRole('button', { name: /Retry device list$/ })
+  try {
+    await retry.click()
+    await expect(retry).toHaveText('Finding devices…')
+    await expect(retry).toBeDisabled()
+  } finally {
+    release()
+  }
+  await expect(retry).toHaveText('No other Spotify devices')
+  expect(reads).toBe(2)
 })
 
 test('saving the playing recording preserves independent album navigation', async ({
@@ -753,11 +805,12 @@ test('saving the playing recording preserves independent album navigation', asyn
   }
   await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(1)
   await add.press('Enter')
+  await expect(dockNowPlaying.locator('.ds-library-action')).toHaveText('Added')
   await expect(
-    page.getByRole('status').filter({
-      hasText: `Added track to library · ${playing.title}`,
+    page.getByText(`Added track to library · ${playing.title}`, {
+      exact: true,
     }),
-  ).toHaveAttribute('aria-atomic', 'true')
+  ).toBeVisible()
   await expect(dockNowPlaying.locator('.ds-library-action')).toHaveCount(0)
   if (isMobile) {
     await expect(miniPlayer).toBeFocused()

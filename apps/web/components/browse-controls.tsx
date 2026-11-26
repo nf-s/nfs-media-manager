@@ -9,7 +9,11 @@ import {
   Table2,
   X,
 } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Segmented } from '@repo/ui/components/ds/segmented'
 import {
   Pill,
@@ -227,6 +231,8 @@ export function BrowseFilterPill({
   destination,
   onRemove,
   removeLabel,
+  removeDisabled,
+  removeFeedback,
 }: {
   mode?: PillMode
   children: ReactNode
@@ -236,6 +242,8 @@ export function BrowseFilterPill({
   destination?: { href: string; label: string }
   onRemove: () => void
   removeLabel: string
+  removeDisabled?: boolean
+  removeFeedback?: ButtonFeedback
 }) {
   return (
     <Pill mode={mode} asChild>
@@ -266,11 +274,22 @@ export function BrowseFilterPill({
         <button
           type="button"
           className="browse-pill-action"
-          aria-label={removeLabel}
+          aria-label={
+            removeFeedback
+              ? `${removeFeedback.label} · ${removeLabel}`
+              : removeLabel
+          }
+          aria-live={removeFeedback ? 'polite' : undefined}
+          aria-busy={removeFeedback?.phase === 'pending' || undefined}
+          disabled={removeDisabled}
           title={removeLabel}
           onClick={onRemove}
         >
-          <X className="ds-i" aria-hidden />
+          {removeFeedback ? (
+            <ButtonFeedbackLabel feedback={removeFeedback} />
+          ) : (
+            <X className="ds-i" aria-hidden />
+          )}
         </button>
       </span>
     </Pill>

@@ -20,6 +20,7 @@ import {
   RefreshPreviewSchema,
   StartRefreshSchema,
   RetryJobsSchema,
+  RetryJobBatchSchema,
   ReviewJobErrorSchema,
   DismissJobSchema,
 } from '@repo/schemas/job'
@@ -505,7 +506,7 @@ app.openapi(
       params: z.object({ id: z.string().min(1) }),
       body: {
         required: true,
-        content: { 'application/json': { schema: RetryJobsSchema } },
+        content: { 'application/json': { schema: RetryJobBatchSchema } },
       },
     },
     responses: {
@@ -528,6 +529,7 @@ app.openapi(
         c.req.valid('param').id,
         c.get('user')?.id ?? null,
         c.req.valid('json').confirmBroadRun,
+        c.req.valid('json').batchId,
       ),
       200,
     ),

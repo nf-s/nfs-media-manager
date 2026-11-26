@@ -1,5 +1,6 @@
 'use client'
 
+import { useResultAction } from './result-feedback'
 import {
   createContext,
   useContext,
@@ -11,7 +12,11 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, SlidersHorizontal, X } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Count } from '@repo/ui/components/ds/pill'
 
 const FilterPanelVisibility = createContext(true)
@@ -26,6 +31,7 @@ export function FilterPanelSection({
   count,
   defaultOpen = false,
   onToggle,
+  feedback,
   children,
 }: {
   title: string
@@ -34,6 +40,7 @@ export function FilterPanelSection({
   defaultOpen?: boolean
   /** Told when the section opens or closes, to load its content on demand. */
   onToggle?: (open: boolean) => void
+  feedback?: ButtonFeedback
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -49,6 +56,11 @@ export function FilterPanelSection({
       <summary>
         {icon}
         <span>{title}</span>
+        {feedback && (
+          <span className="ds-cell-id" aria-live="polite">
+            <ButtonFeedbackLabel feedback={feedback} />
+          </span>
+        )}
         {Boolean(count) && <Count>{count}</Count>}
         <ChevronDown
           className="ds-i browse-disclosure-chevron"
@@ -152,11 +164,13 @@ export default function BrowseFilterPanel({
     count > 0
       ? `Filters, columns and grid size, ${count} ${count === 1 ? 'filter' : 'filters'} on`
       : 'Filters, columns and grid size'
+  const filters = useResultAction('filters')
   return (
     <>
       <Button
         type="button"
         data-filters={short ? 'short' : 'full'}
+        feedback={filters.feedback}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}

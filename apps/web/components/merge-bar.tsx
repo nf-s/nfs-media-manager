@@ -21,7 +21,11 @@ import type {
   LibraryChangeAction,
 } from '@repo/schemas/library-changes'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { TableSelectionResult } from '@repo/ui/components/ui/table'
 import { formatItemCount } from '@repo/ui/lib/format'
 import { updateJobSelection } from '@/utils/job-selection'
@@ -161,13 +165,14 @@ export function LibraryChangeUndo({
   const client = useQueryClient()
   const toggle = useMutation({
     retry: false,
-    mutationFn: () => toggleLibraryChange(apiBaseUrl, change),
-    onSuccess: async (next) => {
+    mutationFn: (current: LibraryChange) =>
+      toggleLibraryChange(apiBaseUrl, current),
+    onSuccess: (next) => {
       onChanged?.(next)
       const removed = [...next.sources, ...(next.target ? [next.target] : [])]
         .filter((record) => !record.exists)
         .map((record) => record.id)
-      await (next.kind === 'track'
+      void (next.kind === 'track'
         ? invalidateScrobbleLinks(client, removed)
         : invalidateLibraryRecords(client, next.kind, removed))
     },
@@ -181,7 +186,20 @@ export function LibraryChangeUndo({
       variant={change.undoneAt ? redoVariant : 'default'}
       disabled={toggle.isPending || block !== null}
       title={block ?? undefined}
-      onClick={() => toggle.mutate()}
+      onClick={() => toggle.mutate(change)}
+      feedback={
+        toggle.variables?.id === change.id
+          ? mutationFeedback(toggle, {
+              pending: toggle.variables.undoneAt ? 'Redoing…' : 'Undoing…',
+              success: toggle.variables.undoneAt
+                ? 'Redone · Undo'
+                : 'Undone · Redo',
+              error: toggle.variables.undoneAt
+                ? 'Could not redo'
+                : 'Could not undo',
+            })
+          : undefined
+      }
     >
       {change.undoneAt ? 'Redo' : 'Undo'}
     </Button>
@@ -249,6 +267,7 @@ function MergeReviewDialog<Plan>({
   adapter,
   plan,
   pending,
+  reviewing,
   error,
   follow,
   onFollow,
@@ -259,6 +278,7 @@ function MergeReviewDialog<Plan>({
   adapter: MergeAdapter<Plan>
   plan: Plan
   pending: boolean
+  reviewing: boolean
   error: string | null
   follow: boolean
   onFollow: (follow: boolean) => void
@@ -344,8 +364,16 @@ function MergeReviewDialog<Plan>({
                 Boolean(acknowledgement && acknowledged !== plan)
               }
               onClick={onMerge}
+              feedback={
+                pending
+                  ? {
+                      phase: 'pending',
+                      label: reviewing ? 'Rechecking plan…' : 'Merging…',
+                    }
+                  : undefined
+              }
             >
-              {pending ? 'Merging...' : 'Merge'}
+              Merge
             </Button>
             <Button disabled={pending} onClick={onClose}>
               Cancel
@@ -382,6 +410,7 @@ export function useMerge<Plan>(
   const [follow, setFollow] = useState(true)
   const [change, setChange] = useState<LibraryChange | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
 
   const plan = useMutation({
     retry: false,
@@ -401,7 +430,10 @@ export function useMerge<Plan>(
       ...chosen
     }: MergeRequest & { reviewed: boolean }): Promise<MergeOutcome<Plan>> => {
       if (!reviewed) {
-        const next = await adapter.plan(apiBaseUrl, chosen)
+        setChecking(true)
+        const next = await adapter
+          .plan(apiBaseUrl, chosen)
+          .finally(() => setChecking(false))
         if (requireReview || adapter.needsReview(next))
           return { status: 'review', plan: next }
       }
@@ -411,7 +443,7 @@ export function useMerge<Plan>(
       }
     },
     onMutate: () => setError(null),
-    onSuccess: async (outcome) => {
+    onSuccess: (outcome) => {
       if (outcome.status === 'review') {
         setFollow(true)
         setReview(outcome.plan)
@@ -420,12 +452,24 @@ export function useMerge<Plan>(
       setReview(null)
       setChange(outcome.change)
       onMerge?.(outcome.change)
-      await adapter.invalidate(client, outcome.change)
+      void adapter.invalidate(client, outcome.change)
     },
     onError: (failure) =>
       setError(errorMessage(failure, adapter.wording.failed)),
   })
   const pending = plan.isPending || make.isPending
+  const feedback: ButtonFeedback | undefined =
+    plan.isPending || checking
+      ? { phase: 'pending', label: 'Checking merge…' }
+      : make.isPending
+        ? { phase: 'pending', label: 'Merging…' }
+        : review
+          ? { phase: 'waiting', label: 'Needs review' }
+          : error && make.isError
+            ? { phase: 'failed', label: 'Merge failed' }
+            : change
+              ? { phase: 'done', label: 'Merged' }
+              : undefined
   const failedRequest = make.variables
   const dismiss = () => {
     setChange(null)
@@ -439,8 +483,7 @@ export function useMerge<Plan>(
         .mutateAsync({ ids: [...ids], keepId, reviewed: false })
         .catch(() => null),
     pending,
-    /** A merge is being checked or made with no review open. */
-    merging: make.isPending && !review,
+    feedback,
     /** The plan the review dialog shows. */
     review,
     /** The last finished change. */
@@ -458,6 +501,7 @@ export function useMerge<Plan>(
         adapter={adapter}
         plan={review}
         pending={pending}
+        reviewing={plan.isPending}
         error={error}
         follow={follow}
         onFollow={setFollow}
@@ -490,9 +534,46 @@ export function useMerge<Plan>(
 
 /** Where one record set stands in the background work, by its key. */
 export type MergeQueueItem =
-  | { status: 'queued' | 'running' | 'review'; action: LibraryChangeAction }
+  | {
+      status: 'queued' | 'running' | 'review'
+      action: LibraryChangeAction
+      checking?: boolean
+    }
   | { status: 'done'; action: LibraryChangeAction; change: LibraryChange }
   | { status: 'failed'; action: LibraryChangeAction; message: string }
+
+export function mergeQueueFeedback(
+  item: MergeQueueItem | undefined,
+  action: LibraryChangeAction,
+): ButtonFeedback | undefined {
+  if (!item || item.action !== action) return undefined
+  const merging = action === 'merge'
+  switch (item.status) {
+    case 'queued':
+      return {
+        phase: 'waiting',
+        label: merging ? 'Waiting to merge' : 'Waiting to separate',
+      }
+    case 'running':
+      return {
+        phase: 'running',
+        label: item.checking
+          ? 'Checking merge…'
+          : merging
+            ? 'Merging…'
+            : 'Keeping separate…',
+      }
+    case 'review':
+      return { phase: 'waiting', label: 'Needs review' }
+    case 'done':
+      return { phase: 'done', label: merging ? 'Merged' : 'Kept separate' }
+    case 'failed':
+      return {
+        phase: 'failed',
+        label: merging ? 'Merge failed' : 'Could not keep separate',
+      }
+  }
+}
 
 export type MergeQueueSnapshot<Plan> = {
   items: ReadonlyMap<string, MergeQueueItem>
@@ -652,9 +733,12 @@ export function createMergeQueue<Plan>(
         action: 'merge',
         failed: adapter.wording.failed,
         run: async () => {
+          setItem(key, { status: 'running', action: 'merge', checking: true })
           const plan = await adapter.plan(apiBaseUrl, request)
-          if (!adapter.needsReview(plan))
+          if (!adapter.needsReview(plan)) {
+            setItem(key, { status: 'running', action: 'merge' })
             return adapter.merge(apiBaseUrl, { ...request, reviewed: false })
+          }
           setItem(key, { status: 'review', action: 'merge' })
           publish({ reviews: [...snapshot.reviews, { key, plan }] })
           return null
@@ -773,6 +857,7 @@ export function useMergeQueue<Plan>(
         adapter={adapter}
         plan={review.plan}
         pending={replan.isPending}
+        reviewing={replan.isPending}
         error={
           replan.isError
             ? errorMessage(replan.error, 'The merge could not be planned.')
@@ -918,14 +1003,20 @@ export function MergeBar<Plan>({
   adapter: MergeAdapter<Plan>
 }) {
   const client = useQueryClient()
-  const [change, setChange] = useState<LibraryChange | null>(null)
+  const [changes, setChanges] = useState<LibraryChange[]>([])
   const [error, setError] = useState<string | null>(null)
+  function updateReceipt(next: LibraryChange) {
+    setError(null)
+    setChanges((current) =>
+      current.map((entry) => (entry.id === next.id ? next : entry)),
+    )
+  }
   // A merge that failed or was not confirmed comes back as the selection.
   const restore = (ids: readonly string[]) => {
     if (selection.count === 0) selection.replace([...ids])
   }
   const merges = useMergeQueue(adapter, {
-    onDone: setChange,
+    onDone: (next) => setChanges((current) => [...current, next]),
     onFail: (message, ids) => {
       setError(message)
       restore(ids)
@@ -937,10 +1028,9 @@ export function MergeBar<Plan>({
     },
   })
   const progress = describeMergeProgress(merges.snapshot.waiting.length)
-  const dismiss = () => {
-    setChange(null)
-    setError(null)
-  }
+  const [lastKey, setLastKey] = useState<string | null>(null)
+  const lastAction = lastKey ? merges.status(lastKey) : undefined
+  const lastFeedback = mergeQueueFeedback(lastAction, 'merge')
   return (
     <>
       <SecondaryTableSelectionBar
@@ -961,7 +1051,9 @@ export function MergeBar<Plan>({
                 }
                 onClick={() => {
                   setError(null)
-                  void merges.queue.merge(selection.ids.join(' '), {
+                  const key = selection.ids.join(' ')
+                  setLastKey(key)
+                  void merges.queue.merge(key, {
                     ids: [...selection.ids],
                   })
                   selection.clear()
@@ -982,20 +1074,44 @@ export function MergeBar<Plan>({
             </span>
           </>
         ) : (
-          <LibraryChangeReport
-            progress={progress}
-            change={change}
-            describe={adapter.describe}
-            error={error}
-            onChanged={(next) => {
-              setError(null)
-              setChange(next)
-            }}
-            onError={setError}
-            onDismiss={dismiss}
-          />
+          <>
+            {lastFeedback && !error && lastAction?.status !== 'done' && (
+              <Button disabled feedback={lastFeedback}>
+                Merge
+              </Button>
+            )}
+            <LibraryChangeReport
+              progress={progress}
+              change={null}
+              describe={adapter.describe}
+              error={error}
+              onChanged={updateReceipt}
+              onError={setError}
+              onDismiss={() => setError(null)}
+            />
+          </>
         )}
       </SecondaryTableSelectionBar>
+      {changes.map((change) => (
+        <SecondaryTableSelectionBar
+          key={change.id}
+          selectedCount={0}
+          hideWhenEmpty
+        >
+          <LibraryChangeResult
+            change={change}
+            describe={adapter.describe}
+            error={null}
+            onChanged={updateReceipt}
+            onError={setError}
+            onDismiss={() =>
+              setChanges((current) =>
+                current.filter((entry) => entry.id !== change.id),
+              )
+            }
+          />
+        </SecondaryTableSelectionBar>
+      ))}
       {merges.dialog}
     </>
   )

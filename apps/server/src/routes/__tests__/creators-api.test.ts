@@ -382,6 +382,7 @@ describe('creator API', () => {
         providers: ['spotify'],
       },
       { artistIds: ['fixture'], providers: ['spotify'], all: true },
+      { artistIds: ['fixture'], providers: ['spotify'], batchId: 'invalid' },
     ])
       expect((await request(body)).status).toBe(422)
     expect(mocks.selection).not.toHaveBeenCalled()
@@ -395,6 +396,25 @@ describe('creator API', () => {
         artistIds: ['fixture'],
         providers: ['spotify'],
         confirmBroadRun: false,
+      },
+      'user-1',
+    )
+    const batchId = '0c46c034-3934-4013-8abc-2070f506076f'
+    expect(
+      (
+        await request({
+          artistIds: ['fixture'],
+          providers: ['spotify'],
+          batchId,
+        })
+      ).status,
+    ).toBe(200)
+    expect(mocks.selection).toHaveBeenLastCalledWith(
+      {
+        artistIds: ['fixture'],
+        providers: ['spotify'],
+        confirmBroadRun: false,
+        batchId,
       },
       'user-1',
     )

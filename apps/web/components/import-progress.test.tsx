@@ -4,6 +4,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ImportRunSchema, type ImportRun } from '@repo/schemas/imports'
 import { ImportProgress, resultSummary } from './pages/imports-page-client'
+import { importRunFeedback } from '../utils/import-cache'
 
 function run(overrides: Partial<ImportRun>): ImportRun {
   return ImportRunSchema.parse({
@@ -40,6 +41,38 @@ test('a finished import shows its counts in words and no bar', () => {
   )
   assert.doesNotMatch(html, /progressbar/)
   assert.equal(html, '60 of 128')
+})
+
+test('import receipts keep queue delivery, durable progress and partial work distinct', () => {
+  assert.deepEqual(
+    importRunFeedback(
+      run({ status: 'queued', stage: 'Awaiting queue delivery' }),
+    ),
+    {
+      phase: 'waiting',
+      label: 'Waiting for import worker',
+    },
+  )
+  assert.deepEqual(
+    importRunFeedback(run({ stage: 'Queueing selected metadata' })),
+    {
+      phase: 'running',
+      label: 'Queueing metadata…',
+    },
+  )
+  assert.deepEqual(
+    importRunFeedback(
+      run({ status: 'failed', result: { albums: 9, films: 0, created: 9 } }),
+    ),
+    {
+      phase: 'partial',
+      label: 'Partly imported',
+    },
+  )
+  assert.equal(
+    importRunFeedback(run({ status: 'cancelled' })).phase,
+    'cancelled',
+  )
 })
 
 test('an import without a known total shows an empty value', () => {

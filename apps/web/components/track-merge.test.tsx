@@ -190,7 +190,10 @@ test('review identifies both records and explains what is retained before confir
       onBack={unexpectedAction}
     />,
   )
-  assert.match(pending, /disabled=""[^>]*>Merging/)
+  assert.match(
+    pending,
+    /data-feedback="pending"[^>]*disabled=""[^>]*>.*?<span>Merging…<\/span>/,
+  )
   assert.match(pending, /disabled=""[^>]*>Choose another track/)
 })
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useQuery } from '@tanstack/react-query'
 import { Disc3, ListMusic, Music2 } from 'lucide-react'
 import { TrackAppearancesSchema } from '@repo/schemas/catalog'
@@ -7,7 +8,6 @@ import type { TrackDetail } from '@repo/schemas/tracks'
 import { Thumb } from '@repo/ui/components/ds/artwork'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
-import { Button } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import { DetailLink } from './detail-link'
 import { useConfig } from './providers'
@@ -127,13 +127,9 @@ export default function TrackAppearances({
           <Notice
             tone="danger"
             action={
-              <Button
-                variant="link"
-                size="xs"
-                onClick={() => void query.refetch()}
-              >
+              <ReadButton variant="link" size="xs" read={() => query.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load track appearances.

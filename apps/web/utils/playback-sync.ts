@@ -183,6 +183,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   /** The key of the state this page saved last; undefined when it must save. */
   let savedAs: string | undefined = 'null'
   let savedAt = 0
+  let syncUnavailable = false
   /** Whether this page last ran its queue without an answer from the server. */
   let alone = false
   let busy: Promise<void> | null = null
@@ -247,12 +248,43 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
 
   function compose(): PlaybackState {
     const state = engine.getState()
-    if (role !== 'follower') return state
+    if (role !== 'follower') {
+      const queue = stored?.queue ?? []
+      const sameQueue =
+        state.queue.length === queue.length &&
+        state.queue.every(
+          (entry, index) =>
+            entry.key === queue[index]?.key &&
+            entry.item.uri === queue[index]?.item.uri,
+        )
+      const upcoming = stored?.source
+        ? upcomingEntries(stored.source.upcoming)
+        : []
+      const sameUpcoming =
+        state.upcoming.length === upcoming.length &&
+        state.upcoming.every(
+          (entry, index) =>
+            entry.key === upcoming[index]?.key &&
+            entry.item.uri === upcoming[index]?.item.uri,
+        )
+      const differs =
+        !sameQueue ||
+        !sameUpcoming ||
+        state.shuffle !== (stored?.shuffle ?? false)
+      return {
+        ...state,
+        queueSync: differs
+          ? syncUnavailable
+            ? 'unconfirmed'
+            : 'pending'
+          : 'saved',
+      }
+    }
     const sharing: PlaybackSharing = {
       role: 'follower',
       driverName: driver?.name ?? null,
     }
-    if (!stored) return { ...state, sharing }
+    if (!stored) return { ...state, sharing, queueSync: 'saved' }
     const source = stored.source
     const snapshot = state.snapshot
     const session = stored.session
@@ -287,6 +319,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
           ? { ...stored.snapshot, at: storedAt }
           : null),
       sharing,
+      queueSync: 'saved',
     }
   }
 
@@ -320,6 +353,7 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   ) {
     const version = generation
     if (disposed || closed) return
+    syncUnavailable = false
     const before = role
     // What was started here while the server could not be reached replaces
     // the session the server still has.
@@ -390,9 +424,13 @@ export function createPlaybackSync(options: PlaybackSyncOptions) {
   /** Spotify can run locally during a sync outage. Sonos requires a live lease. */
   async function standAlone(claim: boolean, command: boolean) {
     if (disposed || closed) return
+    syncUnavailable = true
     stopSonos()
     rooms.unavailable()
-    if (role !== null && !claim) return
+    if (role !== null && !claim) {
+      publish()
+      return
+    }
     const before = role
     alone = true
     role = 'driver'

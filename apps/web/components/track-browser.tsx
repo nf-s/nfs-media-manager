@@ -1,5 +1,6 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { TrackArtistLinks } from './creator-links'
 import {
@@ -199,7 +200,7 @@ function versionMark(item: TrackListItem) {
 }
 
 function TrackBrowseLibraryAction({ track }: { track: TrackListItem }) {
-  if (track.inLibrary !== false) return null
+  if (track.inLibrary === undefined) return null
   return (
     <CatalogLibraryAction
       id={track.id}
@@ -942,7 +943,9 @@ function TrackBrowse({
     ) : null
 
   return (
-    <section
+    <ResultSection
+      identity={queryKey}
+      result={query}
       className={embedded ? undefined : 'media-browser'}
       aria-label={collection}
     >
@@ -1358,6 +1361,6 @@ function TrackBrowse({
           }}
         />
       )}
-    </section>
+    </ResultSection>
   )
 }

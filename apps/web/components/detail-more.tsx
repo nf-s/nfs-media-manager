@@ -4,7 +4,11 @@ import Link from 'next/link'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Ellipsis } from 'lucide-react'
-import { Button, type ButtonSize } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  type ButtonFeedback,
+  type ButtonSize,
+} from '@repo/ui/components/ui/button'
 import type { DetailCrumb } from '@/utils/detail-inspector'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import { useInspectorPage } from './detail-inspector-context'
@@ -40,10 +44,12 @@ export type DetailMenuItem =
 export function DetailMore({
   crumb,
   items = [],
+  feedback,
 }: {
   /** The item's breadcrumb; leave it out until the details have loaded. */
   crumb?: DetailCrumb
   items?: readonly DetailMenuItem[]
+  feedback?: ButtonFeedback
 }) {
   const page = useInspectorPage()
   const setCrumb = page?.setCrumb
@@ -65,10 +71,16 @@ export function DetailMore({
         pageHref={page?.pageHref}
         size="md"
         className={page?.moreSlot ? 'dtl-more' : undefined}
+        feedback={feedback}
       />
       {page?.moreSlot &&
         createPortal(
-          <MoreMenu items={all} pageHref={page.pageHref} size="sm" />,
+          <MoreMenu
+            items={all}
+            pageHref={page.pageHref}
+            size="sm"
+            feedback={feedback}
+          />,
           page.moreSlot,
         )}
     </>
@@ -80,17 +92,21 @@ function MoreMenu({
   pageHref,
   size,
   className,
+  feedback,
 }: {
   items: readonly DetailMenuItem[]
   pageHref: string | undefined
   size: ButtonSize
   className?: string
+  feedback?: ButtonFeedback
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
-  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>(
+    'idle',
+  )
   useEffect(() => {
     if (!open) {
       setCopy('idle')
@@ -124,6 +140,7 @@ function MoreMenu({
     trigger.current?.focus({ preventScroll: true })
   }
   async function copyLink() {
+    setCopy('copying')
     const url = pageHref
       ? new URL(pageHref, window.location.origin).href
       : window.location.href
@@ -170,6 +187,7 @@ function MoreMenu({
         variant="ghost"
         size={size}
         icon
+        feedback={feedback}
         className={className}
         aria-label="More actions"
         title="More actions"
@@ -261,12 +279,16 @@ function MoreMenu({
           role="menuitem"
           className="ds-menu-item"
           onClick={() => void copyLink()}
+          disabled={copy === 'copying'}
+          aria-busy={copy === 'copying'}
         >
           {copy === 'copied'
             ? 'Link copied'
             : copy === 'failed'
               ? 'Could not copy link'
-              : 'Copy link'}
+              : copy === 'copying'
+                ? 'Copying…'
+                : 'Copy link'}
         </button>
         <span className="sr-only" role="status">
           {copy === 'copied'

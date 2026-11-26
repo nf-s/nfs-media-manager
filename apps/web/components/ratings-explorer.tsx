@@ -1,6 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useIsFetching, useQueryClient } from '@tanstack/react-query'
+import { ReadButton } from './read-button'
+import {
+  ResultButton,
+  ResultSection,
+  ResultSegmented,
+  ResultSortPicker,
+} from './result-feedback'
 import { ArrowDown, ArrowUp, X } from 'lucide-react'
 import {
   defaultRatingsRankingRequest,
@@ -16,7 +24,6 @@ import {
   RatingPositionStrip,
 } from '@repo/ui/components/ds/ratings-explorer'
 import { Segmented } from '@repo/ui/components/ds/segmented'
-import { SortPicker } from '@repo/ui/components/ds/sort-picker'
 import { FilterLine, PageHead } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import {
@@ -28,7 +35,11 @@ import {
 } from '@repo/ui/components/ui/table'
 import { EMPTY_VALUE, formatItemCount } from '@repo/ui/lib/format'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
-import { fetchRatingsRanking } from '@/utils/ratings-explorer-api'
+import {
+  fetchRatingsRanking,
+  rankingKey,
+  ratingSourcesKey,
+} from '@/utils/ratings-explorer-api'
 import { useConfig } from './providers'
 import {
   RatingsCalculation,
@@ -190,6 +201,13 @@ function Explorer({ library }: { library: Library }) {
     ranges: selections.map(({ range }) => range),
   }
   const request = { ...sharedRequest, offset, limit, sort: sortKey, direction }
+  const client = useQueryClient()
+  const activeKey =
+    view === 'ranking' ? rankingKey(request) : ratingSourcesKey(sharedRequest)
+  const fetching = useIsFetching({ queryKey: activeKey })
+  const first = client.getQueryState(
+    view === 'ranking' ? [...activeKey, 1] : activeKey,
+  )
   const storageKey = 'ratings-explorer:' + library + ':settings'
   useEffect(() => {
     try {
@@ -264,7 +282,9 @@ function Explorer({ library }: { library: Library }) {
     <FilterLine>
       {selections.map(({ range, label, interval }) => (
         <span key={range.dimension} className="ds-actions">
-          <Button
+          <ResultButton
+            control={'edit-range-' + range.dimension}
+            track={view !== 'sources'}
             size="xs"
             aria-label={'Edit ' + label + ' range'}
             onClick={() => {
@@ -273,8 +293,9 @@ function Explorer({ library }: { library: Library }) {
             }}
           >
             {label} {interval}
-          </Button>
-          <Button
+          </ResultButton>
+          <ResultButton
+            control="filters"
             icon
             size="xs"
             variant="ghost"
@@ -289,17 +310,28 @@ function Explorer({ library }: { library: Library }) {
             }}
           >
             <X className="ds-i" aria-hidden />
-          </Button>
+          </ResultButton>
         </span>
       ))}
     </FilterLine>
   )
   return (
-    <section className="sec-page ratings-page">
+    <ResultSection
+      className="sec-page ratings-page"
+      identity={JSON.stringify(activeKey)}
+      result={{
+        isFetching:
+          readyView !== view ||
+          fetching > 0 ||
+          !first ||
+          first.status === 'pending',
+        isError: first?.status === 'error',
+      }}
+    >
       <PageHead
         title="Ratings"
         actions={
-          <Segmented
+          <ResultSegmented
             label="Ratings view"
             value={view}
             options={views}
@@ -357,7 +389,7 @@ function Explorer({ library }: { library: Library }) {
           }}
         />
       )}
-    </section>
+    </ResultSection>
   )
 }
 
@@ -395,11 +427,7 @@ function Ranking({
   } | null>(null)
   const close = useCallback(() => setCalculation(null), [])
   const query = useVirtualTable({
-    queryKey: [
-      library === 'film' ? 'films' : 'albums',
-      'ratings-explorer',
-      request,
-    ],
+    queryKey: rankingKey(request),
     pageSize: request.limit,
     enabled: ready,
     performanceScreen: library === 'film' ? 'film-ratings' : 'album-ratings',
@@ -438,12 +466,13 @@ function Ranking({
         search={search}
         filters={
           <>
-            <SortPicker
+            <ResultSortPicker
               value={request.sort}
               options={allColumns}
               onChange={sort}
             />
-            <Button
+            <ResultButton
+              control="sort-direction"
               icon
               onClick={() => sort(request.sort)}
               aria-label={
@@ -456,7 +485,7 @@ function Ranking({
               ) : (
                 <ArrowDown className="ds-i" aria-hidden />
               )}
-            </Button>
+            </ResultButton>
             <Segmented
               label="Source rating values"
               options={modes}
@@ -487,9 +516,9 @@ function Ranking({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={query.retry}>
+            <ReadButton size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load rankings.
@@ -532,9 +561,14 @@ function Ranking({
               <TableState colSpan={shown.length}>
                 No matching {library === 'film' ? 'films' : 'albums'}.{' '}
                 {request.scoredOnly && (
-                  <Button variant="link" size="xs" onClick={includeUnscored}>
+                  <ResultButton
+                    control="filters"
+                    variant="link"
+                    size="xs"
+                    onClick={includeUnscored}
+                  >
                     Include unscored items
-                  </Button>
+                  </ResultButton>
                 )}
               </TableState>
             )}

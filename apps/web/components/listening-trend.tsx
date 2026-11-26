@@ -1,12 +1,12 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useQuery } from '@tanstack/react-query'
 import { ListeningSeriesSchema } from '@repo/schemas/lastfm'
 import { Section, Stats } from '@repo/ui/components/ds/facts'
 import { Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { TrendChart } from '@repo/ui/components/ds/trend-chart'
-import { Button } from '@repo/ui/components/ui/button'
 import { formatCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -73,9 +73,9 @@ export function ListeningTrend({
             error
             size="sm"
             action={
-              <Button size="xs" onClick={() => series.refetch()}>
+              <ReadButton size="xs" read={() => series.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           />
         ) : (

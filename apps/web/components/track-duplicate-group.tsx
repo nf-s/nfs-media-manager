@@ -30,6 +30,7 @@ import {
   combineLibraryChanges,
   LibraryChangeReport,
   LibraryChangeUndo,
+  mergeQueueFeedback,
   useMergeQueue,
   type MergeQueueItem,
   type RowSelection,
@@ -235,6 +236,7 @@ export function TrackDuplicateGroupRow({
           <Button
             size="xs"
             disabled={busy || alone}
+            feedback={mergeQueueFeedback(item, 'merge')}
             title={alone ? trackMergeAdapter.wording.selectMore : undefined}
             onClick={() => {
               // The merged rows leave the selection, as from the bar.
@@ -253,6 +255,7 @@ export function TrackDuplicateGroupRow({
             size="xs"
             variant="ghost"
             disabled={busy}
+            feedback={mergeQueueFeedback(item, 'keep-separate')}
             onClick={() => void actions.keepSeparate(group)}
           >
             Keep separate
@@ -376,6 +379,7 @@ export function TrackDuplicateNotice({
               <Button
                 size="xs"
                 disabled={groupBusy(actions.status(group))}
+                feedback={mergeQueueFeedback(actions.status(group), 'merge')}
                 onClick={() => {
                   actions.setError(null)
                   void actions.merge(group)
@@ -387,6 +391,10 @@ export function TrackDuplicateNotice({
                 size="xs"
                 variant="ghost"
                 disabled={groupBusy(actions.status(group))}
+                feedback={mergeQueueFeedback(
+                  actions.status(group),
+                  'keep-separate',
+                )}
                 onClick={() => {
                   actions.setError(null)
                   void actions.keepSeparate(group)

@@ -84,6 +84,7 @@ test('a deleted cached album is resolved only on the next explicit retry', async
 test('a transient link failure retains a created album and retry does not add again', async () => {
   const identities = new Map<string, string | null>()
   const calls: string[] = []
+  const ready: string[] = []
   const request = mock.method(
     globalThis,
     'fetch',
@@ -91,11 +92,13 @@ test('a transient link failure retains a created album and retry does not add ag
       calls.push(String(url))
       if (calls.length === 1)
         return ok({ mediaItemId: 'created-album', created: true })
-      if (calls.length === 2)
+      if (calls.length === 2) {
+        assert.deepEqual(ready, ['created-album'])
         return Response.json(
           { statusCode: 500, message: 'Link failed' },
           { status: 500 },
         )
+      }
       return ok(status)
     },
   )
@@ -105,11 +108,13 @@ test('a transient link failure retains a created album and retry does not add ag
       source,
       item,
       identities,
+      onAlbumReady: (id) => ready.push(id),
     })
   try {
     await assert.rejects(save(), { message: 'Link failed' })
     assert.equal(identities.get(item.externalId), 'created-album')
     await save()
+    assert.deepEqual(ready, ['created-album', 'created-album'])
     assert.deepEqual(calls, [
       'http://localhost/api/v1/manual-add/add',
       'http://localhost/api/v1/lastfm/links',

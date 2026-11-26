@@ -1,5 +1,6 @@
 'use client'
 
+import { openReadFeedback, ReadButton } from '@/components/read-button'
 import { useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Headphones, Plus, X } from 'lucide-react'
@@ -533,6 +534,12 @@ export function ListeningControls({
       count={filter?.rules.length}
       defaultOpen={open}
       onToggle={setOpen}
+      feedback={openReadFeedback(
+        visible && open,
+        histogram.isFetching,
+        histogram.isError,
+        'Histogram loaded',
+      )}
     >
       <Section
         title={`Show ${item.other} with`}
@@ -769,13 +776,13 @@ export function ListeningControls({
           <Notice
             tone="danger"
             action={
-              <Button
+              <ReadButton
                 type="button"
                 size="xs"
-                onClick={() => histogram.refetch()}
+                read={() => histogram.refetch()}
               >
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load the counts.

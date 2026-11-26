@@ -9,6 +9,11 @@ import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
 import { useCatalogMembership } from '@/hooks/use-catalog-membership'
+import {
+  libraryAdditionUnavailable,
+  saveLibraryAddition,
+  useLibraryAddition,
+} from '@/hooks/use-library-addition'
 import { fetchApiData } from '@/utils/api'
 import {
   invalidateManualMediaAddition,
@@ -31,6 +36,9 @@ export function useTrackAlbumAddition(item: TrackDetail) {
   const announceAddition = useAnnounceLibraryAddition()
   const client = useQueryClient()
   const { exactId, album, openBySpotify } = trackAlbumReference(item)
+  const target = { kind: 'album', catalogId: album?.id, externalId: exactId }
+  const receipt = useLibraryAddition(target, album?.inLibrary)
+  const feedback = receipt?.feedback
   const identities: CatalogMembershipInput['items'] = exactId
     ? [{ mediaType: 'album', externalId: exactId }]
     : []
@@ -42,18 +50,27 @@ export function useTrackAlbumAddition(item: TrackDetail) {
   const name = album?.title ?? recordedName ?? (openBySpotify ? 'Album' : null)
   const add = useMutation({
     retry: false,
-    mutationFn: async (spotifyAlbumId: string) => {
-      const { mediaItemId } = await fetchApiData(
-        apiBaseUrl,
-        '/api/v1/catalog/spotify-album-reference',
-        SpotifyAlbumReferenceResultSchema,
-        {
-          method: 'POST',
-          body: JSON.stringify({ trackId: item.id, spotifyAlbumId, add: true }),
-        },
-      )
-      return mediaItemId
-    },
+    mutationFn: (spotifyAlbumId: string) =>
+      saveLibraryAddition(
+        client,
+        target,
+        async () =>
+          (
+            await fetchApiData(
+              apiBaseUrl,
+              '/api/v1/catalog/spotify-album-reference',
+              SpotifyAlbumReferenceResultSchema,
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  trackId: item.id,
+                  spotifyAlbumId,
+                  add: true,
+                }),
+              },
+            )
+          ).mediaItemId,
+      ),
     onSuccess: (id, externalId) => {
       rememberManualMediaAddition(client, 'album', externalId, id)
       if (name) announceAddition('album', name)
@@ -63,6 +80,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
   const addedId = add.isSuccess && add.variables === exactId ? add.data : null
   const savedId =
     addedId ??
+    receipt?.committedId ??
     exact?.mediaItemId ??
     (album?.inLibrary === false ? null : (album?.id ?? null))
   const unlisted = album?.id === savedId ? null : savedId
@@ -85,9 +103,10 @@ export function useTrackAlbumAddition(item: TrackDetail) {
         name={name}
         kind="album"
         saved={saved}
-        pending={add.isPending}
+        feedback={feedback}
         onAdd={() => {
-          if (canAdd && exactId) add.mutate(exactId)
+          if (canAdd && exactId && !libraryAdditionUnavailable(client, target))
+            add.mutate(exactId)
         }}
       />
     ) : undefined
@@ -118,6 +137,7 @@ export function useTrackAlbumAddition(item: TrackDetail) {
     exactId,
     openBySpotify,
     action,
+    showingReceipt: feedback?.phase === 'done',
     error,
   }
 }
@@ -167,9 +187,11 @@ export function TrackAlbumNotices({
     openBySpotify,
     catalogId,
     savedId,
+    showingReceipt,
   } = addition
   const unlistedText = describeUnlistedAlbum(name)
-  const showRelease = Boolean(name) && (!album || album.id !== savedId)
+  const showRelease =
+    Boolean(name) && (showingReceipt || !album || album.id !== savedId)
   if (!showRelease && !error && item.scrobbledAlbums.length === 0) return null
   return (
     <Section title="Album">

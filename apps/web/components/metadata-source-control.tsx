@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import React, {
   useEffect,
   useId,
@@ -132,9 +133,9 @@ function TagSources({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={query.retry}>
+            <ReadButton size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load sources.

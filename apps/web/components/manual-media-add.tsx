@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import {
   useEffect,
   useId,
@@ -10,7 +11,13 @@ import {
 } from 'react'
 import { useVirtualRows, useVirtualTable } from '@/hooks/useVirtualTable'
 import {
+  libraryAdditionUnavailable,
+  saveLibraryAddition,
+  useLibraryAddition,
+} from '@/hooks/use-library-addition'
+import {
   skipToken,
+  useIsMutating,
   useMutation,
   useQuery,
   useQueryClient,
@@ -24,7 +31,7 @@ import {
   type ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
 import { SPOTIFY_TRACK_SEARCH_LIMIT } from '@repo/schemas/spotify-track-search'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
@@ -58,6 +65,48 @@ const searchFields = {
     placeholder: 'Track or artist',
     pageSize: SPOTIFY_TRACK_SEARCH_LIMIT,
   },
+}
+
+function manualAdditionTarget(
+  kind: ManualMediaSearchInput['mediaType'],
+  item: ManualMediaSearchItem,
+) {
+  return {
+    kind,
+    catalogId: item.catalogMediaItemId,
+    externalId: item.externalId,
+  }
+}
+
+function ManualResultAdd({
+  kind,
+  item,
+  saved,
+  disabled,
+  onAdd,
+}: {
+  kind: ManualMediaSearchInput['mediaType']
+  item: ManualMediaSearchItem
+  saved: boolean
+  disabled: boolean
+  onAdd: () => void
+}) {
+  const client = useQueryClient()
+  const target = manualAdditionTarget(kind, item)
+  const receipt = useLibraryAddition(target, Boolean(item.mediaItemId))
+  return (
+    <LibraryAction
+      kind={kind}
+      name={item.title}
+      short
+      saved={saved || Boolean(receipt?.committedId)}
+      disabled={disabled}
+      feedback={receipt?.feedback}
+      onAdd={() => {
+        if (!libraryAdditionUnavailable(client, target)) onAdd()
+      }}
+    />
+  )
 }
 
 export function ManualMediaSearch({
@@ -95,8 +144,11 @@ export function ManualMediaSearch({
   const [query, setQuery] = useState(initialQuery.slice(0, 200))
   const automaticallySearched = useRef(false)
   const [showInitialResult, setShowInitialResult] = useState(true)
+  const [lastResult, setLastResult] = useState<ManualMediaSearchResult>()
   const { provider, placeholder } = searchFields[mediaType]
   const inputId = useId()
+  const additionKey = ['manual-add-panel', inputId]
+  const openAddedFor = useRef<string | null>(null)
   const isLinking = Boolean(onChoose) || existingActionLabel !== 'Open'
   const exactMembership = isLinking ? undefined : true
   const { data: additions } = useQuery<ManualMediaAdditions>({
@@ -127,7 +179,10 @@ export function ManualMediaSearch({
             },
           ),
       }),
-    onSuccess: (result, input) => onSearchResult?.(input.q, result),
+    onSuccess: (result, input) => {
+      setLastResult(result)
+      onSearchResult?.(input.q, result)
+    },
   })
   function libraryIdFor(item: ManualMediaSearchItem) {
     const added = additions?.get(item.externalId)
@@ -137,19 +192,31 @@ export function ManualMediaSearch({
     )
   }
   const add = useMutation({
+    mutationKey: additionKey,
     retry: false,
     mutationFn: async (item: ManualMediaSearchItem) => {
       let id = libraryIdFor(item)
       if (!id) {
-        id = await addManualMediaItem(apiBaseUrl, mediaType, item)
+        id = await saveLibraryAddition(
+          client,
+          manualAdditionTarget(mediaType, item),
+          () => addManualMediaItem(apiBaseUrl, mediaType, item),
+        )
         rememberManualMediaAddition(client, mediaType, item.externalId, id)
         announceAddition(mediaType, item.title)
-        await invalidateManualMediaAddition(client, mediaType)
+        void invalidateManualMediaAddition(client, mediaType)
       }
-      await onAdded(id)
+      if (isLinking || openAddedFor.current === item.externalId)
+        await onAdded(id)
     },
   })
-  const found = search.data ?? (showInitialResult ? initialResult : undefined)
+  const adding = useIsMutating({ mutationKey: additionKey, exact: true }) > 0
+  function choose(item: ManualMediaSearchItem) {
+    openAddedFor.current = item.externalId
+    add.mutate(item)
+  }
+  const found =
+    search.data ?? lastResult ?? (showInitialResult ? initialResult : undefined)
   const result = useMemo(
     () =>
       found && { ...found, items: orderSearchItems(found.items, tracksPlayed) },
@@ -182,15 +249,30 @@ export function ManualMediaSearch({
     mediaType,
     searchMedia,
   ])
-  const busy = disabled || search.isPending || add.isPending
+  const busy = disabled || search.isPending || (isLinking && adding)
   useEffect(() => {
-    onPendingChange?.(add.isPending)
-  }, [add.isPending, onPendingChange])
+    onPendingChange?.(adding)
+  }, [adding, onPendingChange])
 
-  function find(page = 1) {
+  const [searchControl, setSearchControl] = useState<
+    'search' | 'previous' | 'next'
+  >('search')
+  const searchFeedback = mutationFeedback(search, {
+    pending: searchControl === 'search' ? 'Searching…' : 'Loading page…',
+    success: search.data?.items.length
+      ? searchControl === 'search'
+        ? 'Results loaded'
+        : `Page ${search.data.page} loaded`
+      : 'No matches',
+    error: 'Search failed · retry',
+  })
+
+  function find(page = 1, control: typeof searchControl = 'search') {
     if (busy || !query.trim()) return
+    openAddedFor.current = null
     add.reset()
     setShowInitialResult(false)
+    setSearchControl(control)
     search.mutate({
       mediaType,
       q: query.trim(),
@@ -220,6 +302,8 @@ export function ManualMediaSearch({
             onChange={(event) => {
               setQuery(event.target.value)
               setShowInitialResult(false)
+              setLastResult(undefined)
+              openAddedFor.current = null
               search.reset()
               add.reset()
             }}
@@ -230,6 +314,7 @@ export function ManualMediaSearch({
           variant="primary"
           type="submit"
           disabled={busy || !query.trim()}
+          feedback={searchControl === 'search' ? searchFeedback : undefined}
         >
           {search.isPending ? 'Searching…' : 'Search'}
         </Button>
@@ -249,13 +334,13 @@ export function ManualMediaSearch({
           <ManualSearchResults
             mediaType={mediaType}
             query={search.variables?.q ?? initialQuery}
-            result={search.isPending ? undefined : result}
+            result={result}
             revision={search.submittedAt}
             loading={search.isPending}
             liveSearch={liveSearch}
             exactMembership={exactMembership}
             tracksPlayed={tracksPlayed}
-            disabled={disabled || add.isPending}
+            disabled={busy}
             renderItem={(item) => {
               const libraryId = libraryIdFor(item)
               const detailId = libraryId ?? item.catalogMediaItemId
@@ -283,7 +368,10 @@ export function ManualMediaSearch({
                             )
                               return
                             event.preventDefault()
-                            if (!busy) void onAdded(detailId)
+                            if (!busy) {
+                              openAddedFor.current = null
+                              void onAdded(detailId)
+                            }
                           }}
                         >
                           {item.title}
@@ -314,7 +402,7 @@ export function ManualMediaSearch({
                           disabled={busy}
                           aria-label={`${inLibrary ? existingActionLabel : 'Add'} ${item.title}`}
                           onClick={() =>
-                            onChoose ? onChoose(item) : add.mutate(item)
+                            onChoose ? onChoose(item) : choose(item)
                           }
                         >
                           {pending
@@ -324,13 +412,12 @@ export function ManualMediaSearch({
                               : 'Add'}
                         </Button>
                       ) : !item.membershipAmbiguous ? (
-                        <LibraryAction
+                        <ManualResultAdd
                           kind={mediaType}
-                          name={item.title}
+                          item={item}
                           saved={inLibrary}
-                          pending={pending}
                           disabled={busy}
-                          onAdd={() => add.mutate(item)}
+                          onAdd={() => choose(item)}
                         />
                       ) : null}
                     </span>
@@ -346,7 +433,10 @@ export function ManualMediaSearch({
                 <Button
                   type="button"
                   disabled={busy || result.page <= 1}
-                  onClick={() => find(result.page - 1)}
+                  feedback={
+                    searchControl === 'previous' ? searchFeedback : undefined
+                  }
+                  onClick={() => find(result.page - 1, 'previous')}
                 >
                   Previous
                 </Button>
@@ -354,7 +444,10 @@ export function ManualMediaSearch({
                 <Button
                   type="button"
                   disabled={busy || !result.hasMore || result.page >= 50}
-                  onClick={() => find(result.page + 1)}
+                  feedback={
+                    searchControl === 'next' ? searchFeedback : undefined
+                  }
+                  onClick={() => find(result.page + 1, 'next')}
                 >
                   Next
                 </Button>
@@ -394,7 +487,7 @@ function ManualSearchResults({
   const { pageSize, provider } = searchFields[mediaType]
   const rowHeight = RESULT_ROW_HEIGHT
   const storedOnly = Boolean(
-    result && !loading && (!liveSearch || result.totalCount === undefined),
+    result && (!liveSearch || result.totalCount === undefined),
   )
   const storedRows = useVirtualRows({
     rows: storedOnly ? (result?.items ?? []) : [],
@@ -438,9 +531,14 @@ function ManualSearchResults({
         className="sec-bounded sec-results"
         role="region"
         aria-label={`${provider} results`}
-        aria-busy={!storedOnly && (loading || results.isFetching)}
+        aria-busy={loading || (!storedOnly && results.isFetching)}
         tabIndex={0}
       >
+        {loading && result && (
+          <span className="ds-muted" role="status">
+            Previous results
+          </span>
+        )}
         {!loading && (storedOnly || results.hasTotal) && window.total === 0 && (
           <State
             size="sm"
@@ -486,9 +584,9 @@ function ManualSearchResults({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={results.retry}>
+            <ReadButton size="xs" read={results.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load results.

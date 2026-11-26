@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
@@ -39,7 +40,11 @@ import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
   formatCount,
@@ -56,6 +61,7 @@ import { DetailLink } from './detail-link'
 import { errorMessage, invalidateScrobbleLinks } from './lastfm-sync'
 import { MediaThumb } from './media-artwork'
 import { useConfig } from './providers'
+import { useJobBatchFeedback } from './job-button-feedback'
 import { SecondaryTableSelectionBar } from './secondary-table'
 import ServiceIconLinks from './service-icon-links'
 
@@ -253,7 +259,7 @@ function useSpotifyTrackSearchStatusGroups(
     ),
     isPending: queries.some((query) => query.isPending),
     isError: queries.some((query) => query.isError),
-    retry: () => void Promise.all(queries.map((query) => query.refetch())),
+    retry: () => Promise.all(queries.map((query) => query.refetch())),
   }
 }
 
@@ -280,6 +286,7 @@ export function SpotifyTrackSearchSelectionBar({
   otherActions?: ReactNode
 }) {
   const search = useQueueSpotifyTrackSearch()
+  const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [batchId, setBatchId] = useState('')
   const [progress, setProgress] = useState(0)
@@ -318,6 +325,27 @@ export function SpotifyTrackSearchSelectionBar({
       }
     },
   })
+  const jobs = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? batchId : undefined,
+  )
+  const queueFeedback: ButtonFeedback | undefined = queue.isPending
+    ? {
+        phase: 'pending',
+        label: `Submitting · ${formatCount(progress)} confirmed`,
+      }
+    : queue.isError
+      ? { phase: 'failed', label: 'Could not submit searches' }
+      : queue.data
+        ? (jobs ?? {
+            phase: queue.data.interrupted
+              ? 'partial'
+              : queue.data.queued
+                ? 'queued'
+                : 'done',
+            label: `${formatCount(queue.data.queued)} queued · ${formatCount(queue.data.skipped)} skipped`,
+          })
+        : undefined
   if (
     !selectedIds.length &&
     !queue.isPending &&
@@ -374,27 +402,37 @@ export function SpotifyTrackSearchSelectionBar({
             </span>
           )}
         {otherStatus}
-        {selectedIds.length > 0 && (
+        {(selectedIds.length > 0 || queueFeedback || otherStatus) && (
           <span className="ds-actions flex-wrap">
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={queue.isPending}
-              onClick={() => onSelect([])}
-            >
-              Clear selection
-            </Button>
-            <ConfirmAction
-              variant="primary"
-              confirm={broad}
-              question={`Search Spotify for ${formatItemCount(selectedIds.length, TRACKS)}?`}
-              details="Each track uses one search job. Unique exact matches link automatically."
-              confirmLabel="Search Spotify tracks"
-              disabled={disabled || queue.isPending || search.invalidMarket}
-              onConfirm={() => queue.mutate(selectedIds)}
-            >
-              Search Spotify tracks
-            </ConfirmAction>
+            {selectedIds.length > 0 && (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={queue.isPending}
+                onClick={() => onSelect([])}
+              >
+                Clear selection
+              </Button>
+            )}
+            {(selectedIds.length > 0 || queueFeedback) && (
+              <ConfirmAction
+                variant="primary"
+                confirm={broad}
+                question={`Search Spotify for ${formatItemCount(selectedIds.length, TRACKS)}?`}
+                details="Each track uses one search job. Unique exact matches link automatically."
+                confirmLabel="Search Spotify tracks"
+                disabled={
+                  !selectedIds.length ||
+                  disabled ||
+                  queue.isPending ||
+                  search.invalidMarket
+                }
+                feedback={queueFeedback}
+                onConfirm={() => queue.mutate(selectedIds)}
+              >
+                Search Spotify tracks
+              </ConfirmAction>
+            )}
             {otherActions}
           </span>
         )}
@@ -613,8 +651,17 @@ export function SpotifyTrackSearchConfirmation({
           variant="primary"
           disabled={pending || Boolean(conflict)}
           onClick={onConfirm}
+          feedback={
+            pending
+              ? { phase: 'pending', label: 'Saving match…' }
+              : conflict
+                ? { phase: 'waiting', label: 'Review conflict' }
+                : failure
+                  ? { phase: 'failed', label: 'Could not save match' }
+                  : undefined
+          }
         >
-          {pending ? 'Saving...' : 'Confirm Spotify match'}
+          Confirm Spotify match
         </Button>
         <Button disabled={pending} onClick={onChooseAnother}>
           Choose another track
@@ -981,8 +1028,18 @@ export function SpotifyTrackSearchReview({
                 </label>
                 {catalog.marketField}
                 <div className="ds-actions">
-                  <Button type="submit" disabled={!canSubmit}>
-                    {lookup.isPending ? 'Searching…' : 'Search'}
+                  <Button
+                    type="submit"
+                    disabled={!canSubmit}
+                    feedback={mutationFeedback(lookup, {
+                      pending: 'Searching…',
+                      success: lookup.data?.candidates.length
+                        ? `${formatCount(lookup.data.candidates.length)} matches`
+                        : 'No matches',
+                      error: 'Search failed',
+                    })}
+                  >
+                    Search
                   </Button>
                   {onSearchLibrary && (
                     <Button
@@ -1012,9 +1069,9 @@ export function SpotifyTrackSearchReview({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => search.refetch()}>
+                <ReadButton size="xs" read={() => search.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load the saved Spotify search.

@@ -6,7 +6,7 @@ import type {
 } from 'react'
 import { formatCount } from '../../lib/format'
 import { cn } from '../../lib/utils'
-import { Button } from '../ui/button'
+import { Button, type ButtonFeedback } from '../ui/button'
 import { Count } from './pill'
 
 /**
@@ -48,6 +48,7 @@ export function ToolbarToggle({
   onPressedChange: (pressed: boolean) => void
   icon: ReactNode
   iconButton?: boolean
+  feedback?: ButtonFeedback
   count?: number
 }) {
   return (

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@repo/ui/components/ui/button'
@@ -61,9 +62,9 @@ export default function FileImportPageClient({
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={() => formats.refetch()}>
+              <ReadButton size="xs" read={() => formats.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load CSV formats.

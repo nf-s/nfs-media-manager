@@ -365,7 +365,13 @@ test('a saved track offers manual Spotify matching in its title and opens the ex
   await page.goto(
     `/tracks?view=${isMobile ? 'list' : 'table'}&q=Faraway%20Light`,
   )
-  const trackLink = page.getByRole('link', { name: trackTitle, exact: true })
+  const trackLink = page
+    .getByRole('link', { name: trackTitle, exact: true })
+    .and(
+      page.locator(
+        `[data-workspace-href="/tracks/${unmatchedTrackId}"], [data-workspace-href="/tracks/${matchedTrackId}"]`,
+      ),
+    )
   const matchButton = page
     .locator('.ds-cell-id')
     .filter({ has: trackLink })

@@ -1,5 +1,7 @@
 'use client'
 
+import { ResultFeedbackScope } from './result-feedback'
+import { ReadButton } from '@/components/read-button'
 import {
   useDeferredValue,
   useEffect,
@@ -8,7 +10,6 @@ import {
   type ReactNode,
 } from 'react'
 import type { z } from 'zod'
-import { Button } from '@repo/ui/components/ui/button'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { formatCount, formatDate, formatDateTime } from '@repo/ui/lib/format'
@@ -235,7 +236,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
   const columnOptions = presentation === 'table' ? table.options : null
 
   return (
-    <>
+    <ResultFeedbackScope identity={params.toString()} result={query}>
       {card ? (
         <BrowseToolbar
           search={searchControl}
@@ -274,9 +275,9 @@ export function CreatorLibraryTable<Row extends { id: string }>({
         <Notice
           tone="danger"
           action={
-            <Button type="button" size="xs" onClick={query.retry}>
+            <ReadButton type="button" size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load {label}.
@@ -394,7 +395,7 @@ export function CreatorLibraryTable<Row extends { id: string }>({
           </table>
         </SecondaryTableScroll>
       )}
-    </>
+    </ResultFeedbackScope>
   )
 }
 

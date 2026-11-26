@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from './read-button'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -15,7 +16,7 @@ import { Meter } from '@repo/ui/components/ds/meter'
 import { EmptyValue, Pill } from '@repo/ui/components/ds/pill'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { TrendChart } from '@repo/ui/components/ds/trend-chart'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import {
   Table,
   TableBody,
@@ -102,6 +103,7 @@ export function ListeningSources({
   const [adding, setAdding] = useState(false)
   // The last name merged here, with Undo; kept apart so Undo can update it.
   const [moved, setMoved] = useState<LibraryChange | null>(null)
+  const [linkingKey, setLinkingKey] = useState<string | null>(null)
   const move = useMerge(albumNameMoveAdapter, { onMerge: setMoved })
   const pending = update.isPending || move.pending
   const widths = useTableWidths('album-scrobble-names', nameColumns)
@@ -111,13 +113,18 @@ export function ListeningSources({
   ])
   // Linking a name merges it into this album, as a change that can be undone.
   const link = (name: { artistName: string; albumName: string }) => {
+    if (pending) return
     setMoved(null)
     update.reset()
-    void move.merge([albumNameKey(name)], albumId)
+    const key = albumNameKey(name)
+    setLinkingKey(key)
+    void move.merge([key], albumId)
   }
   const unlink = (name: { artistName: string; albumName: string }) => {
+    if (pending) return
     setMoved(null)
     move.clearError()
+    setLinkingKey(null)
     update.mutate({
       action: 'unlink',
       artistName: name.artistName,
@@ -178,6 +185,18 @@ export function ListeningSources({
                       variant={name.linked ? 'ghost' : 'default'}
                       disabled={pending}
                       aria-label={`${name.linked ? 'Unlink' : 'Link'} ${label}`}
+                      feedback={
+                        linkingKey === albumNameKey(name)
+                          ? move.feedback
+                          : update.variables?.artistName === name.artistName &&
+                              update.variables.albumName === name.albumName
+                            ? mutationFeedback(update, {
+                                pending: 'Unlinking…',
+                                success: 'Unlinked',
+                                error: 'Could not unlink',
+                              })
+                            : undefined
+                      }
                       onClick={() => (name.linked ? unlink(name) : link(name))}
                     >
                       {name.linked ? 'Unlink' : 'Link'}
@@ -203,7 +222,18 @@ export function ListeningSources({
           </Link>
         </Button>
       </div>
-      {adding && <ScrobbledNamePicker disabled={pending} onPick={link} />}
+      {adding && (
+        <ScrobbledNamePicker
+          disabled={pending}
+          onPick={link}
+          feedback={(name) =>
+            linkingKey === albumNameKey(name) ? move.feedback : undefined
+          }
+        />
+      )}
+      {update.isSuccess && update.variables && (
+        <p role="status">Unlinked {update.variables.albumName}.</p>
+      )}
       {moved && (
         <AlbumChangeNotice
           change={moved}
@@ -332,14 +362,16 @@ export default function AlbumListening({
           title="Could not load listening history"
           error
           action={
-            <Button
-              onClick={() => {
-                if (series.isError) void series.refetch()
-                if (listening.isError) void listening.refetch()
-              }}
+            <ReadButton
+              read={() =>
+                Promise.all([
+                  series.isError && series.refetch(),
+                  listening.isError && listening.refetch(),
+                ])
+              }
             >
               Retry
-            </Button>
+            </ReadButton>
           }
         />
       )

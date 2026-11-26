@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
@@ -45,6 +46,7 @@ import {
   type DuplicateReviewFilters,
 } from '@/utils/track-duplicates'
 import { libraryChangesPaths } from './library-changes'
+import { ResultButton } from './result-feedback'
 import { useConfig } from './providers'
 import {
   SecondaryCellDetails,
@@ -260,9 +262,9 @@ function ReviewedGroupEvidence({
     return (
       <>
         Could not load review evidence.
-        <Button size="xs" onClick={() => query.refetch()}>
+        <ReadButton size="xs" read={() => query.refetch()}>
           Retry
-        </Button>
+        </ReadButton>
       </>
     )
   const pairs = query.data?.items.find(
@@ -351,14 +353,18 @@ export function TrackDuplicateReviewSummary({
         )}
       </ToolbarCount>
       {(review || open) && (
-        <Button size="xs" onClick={onToggle}>
+        <ResultButton
+          control="duplicate-review-view"
+          size="xs"
+          onClick={onToggle}
+        >
           {open ? 'Back to suggestions' : 'View review'}
-        </Button>
+        </ResultButton>
       )}
       {query.isError && !query.data && (
-        <Button size="xs" onClick={() => query.refetch()}>
+        <ReadButton size="xs" read={() => query.refetch()}>
           Retry
-        </Button>
+        </ReadButton>
       )}
     </FilterLine>
   )
@@ -412,7 +418,7 @@ function ReviewRow({
   )
 }
 
-export function TrackDuplicateReview() {
+export function useTrackDuplicateReview(active: boolean) {
   const { apiBaseUrl } = useConfig()
   const [filters, setFilters] = useState(defaultDuplicateReviewFilters)
   const [draft, setDraft] = useState('')
@@ -422,18 +428,42 @@ export function TrackDuplicateReview() {
     const timer = window.setTimeout(() => setSearch(draft.trim()), 250)
     return () => window.clearTimeout(timer)
   }, [draft])
+  const queryKey = duplicateReviewKey(query)
   const page = useVirtualTable({
-    queryKey: duplicateReviewKey(query),
+    queryKey,
+    enabled: active,
     pageSize: duplicateReviewPageSize,
     rowHeight: twoLineRowHeight,
     loadPage: (page, size, signal) =>
       loadDuplicateReview(apiBaseUrl, { ...query, page, size }, signal),
   })
-  const table = useTableColumns('duplicate-review', columns)
-  const layout = table.layout(columns.map(({ key }) => key))
   function update(next: DuplicateReviewFilters) {
     setFilters((previous) => ({ ...previous, ...next }))
   }
+  function reset() {
+    setFilters(defaultDuplicateReviewFilters)
+    setDraft('')
+    setSearch('')
+  }
+  return {
+    identity: JSON.stringify(queryKey),
+    page,
+    filters,
+    draft,
+    setDraft,
+    update,
+    reset,
+  }
+}
+
+export function TrackDuplicateReview({
+  model,
+}: {
+  model: ReturnType<typeof useTrackDuplicateReview>
+}) {
+  const { page, filters, draft, setDraft, update } = model
+  const table = useTableColumns('duplicate-review', columns)
+  const layout = table.layout(columns.map(({ key }) => key))
   return (
     <>
       <SecondaryTableToolbar
@@ -516,9 +546,9 @@ export function TrackDuplicateReview() {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={page.retry}>
+            <ReadButton size="xs" read={page.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load reviewed pairs.

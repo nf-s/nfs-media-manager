@@ -5,6 +5,7 @@ const bulkDismissJobs = vi.fn()
 const bulkCancelJobs = vi.fn()
 const cancelJobBatch = vi.fn()
 const createJob = vi.fn()
+const retryEnrichmentBatch = vi.fn()
 
 function mockAppSession(authenticated: boolean) {
   vi.doMock('@/env', () => ({
@@ -44,11 +45,43 @@ function mockAppSession(authenticated: boolean) {
     bulkCancelJobs,
     cancelJobBatch,
   }))
+  vi.doMock('@/services/film-enrichment', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/services/film-enrichment')>()),
+    retryEnrichmentBatch,
+  }))
 }
 
 afterEach(() => {
   vi.resetModules()
   vi.resetAllMocks()
+})
+
+it('keeps a batch retry receipt distinct from the original batch', async () => {
+  mockAppSession(true)
+  const batchId = '0c46c034-3934-4013-8abc-2070f506076f'
+  retryEnrichmentBatch.mockResolvedValue({
+    batchId,
+    queued: 1,
+    skipped: 0,
+    warnings: [],
+  })
+  const { default: app } = await import('@/app')
+  const response = await app.request(
+    '/api/v1/scrape/jobs/batches/fixture-batch/retry',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmBroadRun: true, batchId }),
+    },
+  )
+  expect(response.status).toBe(200)
+  expect(retryEnrichmentBatch).toHaveBeenCalledExactlyOnceWith(
+    'fixture-batch',
+    'user-1',
+    true,
+    batchId,
+  )
+  expect(await response.json()).toMatchObject({ data: { batchId, queued: 1 } })
 })
 
 describe('single-item job creation', () => {

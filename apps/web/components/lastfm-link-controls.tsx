@@ -11,7 +11,7 @@ import {
 import { AlbumListItemSchema } from '@repo/schemas/media'
 import { formatCount } from '@repo/ui/lib/format'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -35,9 +35,9 @@ export function useLastfmLinkUpdate() {
         method: 'PUT',
         body: JSON.stringify(input),
       }),
-    onSuccess: async (next) => {
+    onSuccess: (next) => {
       client.setQueryData(['lastfm-sync'], next)
-      await invalidateScrobbleLinks(client)
+      void invalidateScrobbleLinks(client)
     },
   })
 }
@@ -58,12 +58,14 @@ export function AlbumPicker({
   onPick,
   initialQuery = '',
   enabled = true,
+  feedback,
 }: {
   label: string
   disabled: boolean
   onPick: (albumId: string) => void
   initialQuery?: string
   enabled?: boolean
+  feedback?: (albumId: string) => ButtonFeedback | undefined
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState(initialQuery.slice(0, 200))
@@ -102,6 +104,7 @@ export function AlbumPicker({
               <Button
                 size="xs"
                 disabled={disabled}
+                feedback={feedback?.(album.id)}
                 onClick={() => onPick(album.id)}
               >
                 Link
@@ -126,9 +129,14 @@ export function AlbumPicker({
 export function ScrobbledNamePicker({
   disabled,
   onPick,
+  feedback,
 }: {
   disabled: boolean
   onPick: (name: { artistName: string; albumName: string }) => void
+  feedback?: (name: {
+    artistName: string
+    albumName: string
+  }) => ButtonFeedback | undefined
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState('')
@@ -173,6 +181,11 @@ export function ScrobbledNamePicker({
                 <Button
                   size="xs"
                   disabled={disabled || albumName === null}
+                  feedback={
+                    albumName === null
+                      ? undefined
+                      : feedback?.({ artistName: group.artistName, albumName })
+                  }
                   onClick={() => {
                     if (albumName !== null)
                       onPick({ artistName: group.artistName, albumName })

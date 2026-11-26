@@ -1,5 +1,7 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
+import { useResultAction } from './result-feedback'
 import { type CSSProperties, type HTMLAttributes, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Filter, RefreshCw } from 'lucide-react'
@@ -43,6 +45,7 @@ export function BrowseItemsHead({
   resizer: HTMLAttributes<HTMLSpanElement>
 }) {
   const active = sortable && sortBy === field.key && direction !== undefined
+  const sort = useResultAction('column-' + field.key)
   return (
     <TableHead
       align={field.type === 'number' ? 'end' : undefined}
@@ -57,7 +60,11 @@ export function BrowseItemsHead({
         <TableSortButton
           direction={active ? direction : undefined}
           title={`Sort by ${field.label}`}
-          onClick={() => onSort(field.key)}
+          feedback={sort.feedback}
+          onClick={() => {
+            sort.begin()
+            onSort(field.key)
+          }}
         >
           {field.label}
         </TableSortButton>
@@ -213,7 +220,7 @@ export function ActiveFiltersSection({
 type CountQuery = {
   countError: boolean
   isCounting: boolean
-  retryCount: () => void
+  retryCount: () => Promise<unknown>
 }
 
 /**
@@ -233,21 +240,21 @@ export function BrowseItemsCount({
 }) {
   if (query.countError)
     return (
-      <Button variant="link" size="xs" onClick={query.retryCount}>
+      <ReadButton variant="link" size="xs" read={query.retryCount}>
         Retry count
-      </Button>
+      </ReadButton>
     )
   if (query.isCounting)
     return <Skeleton className="bi-count-skeleton" width={64} height={10} />
   return formatItemCount(total, noun, unfiltered)
 }
 
-export function RetryButton({ onClick }: { onClick: () => void }) {
+export function RetryButton({ onClick }: { onClick: () => Promise<unknown> }) {
   return (
-    <Button size="xs" onClick={onClick}>
+    <ReadButton size="xs" read={onClick}>
       <RefreshCw className="ds-i" data-size="sm" aria-hidden />
       Retry
-    </Button>
+    </ReadButton>
   )
 }
 
@@ -267,7 +274,7 @@ export function BrowseItemsStates({
     isError: boolean
     isFetching: boolean
     hasTotal: boolean
-    retry: () => void
+    retry: () => Promise<unknown>
   }
   total: number
   noun: string

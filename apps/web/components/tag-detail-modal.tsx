@@ -18,7 +18,12 @@ import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
@@ -48,7 +53,7 @@ function TagManagement({ tag }: { tag: Tag }) {
   const [pending, setPending] = useState(false)
   const [outcome, setOutcome] = useState<{
     message: string
-    interrupted: boolean
+    feedback: ButtonFeedback
   } | null>(null)
   return (
     <Section title="Manage tag">
@@ -85,13 +90,13 @@ function TagManagement({ tag }: { tag: Tag }) {
         key={`${tag.id}:${candidate?.id ?? ''}`}
         tags={candidate ? [tag, candidate] : [tag]}
         onPendingChange={setPending}
-        onComplete={(_ids, message, interrupted) => {
+        onComplete={(_ids, message, feedback) => {
           setCandidate(null)
-          setOutcome({ message, interrupted })
+          setOutcome({ message, feedback })
         }}
       />
       {outcome &&
-        (outcome.interrupted ? (
+        (outcome.feedback.phase !== 'done' ? (
           <Notice tone="attention">{outcome.message}</Notice>
         ) : (
           <p role="status" className="ds-help">
@@ -127,6 +132,41 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
   const failure = parents.isError
     ? errorMessage(parents.error, 'Could not update parent tags.')
     : parents.data?.message
+  function relationshipFeedback(
+    mode: SetTagParentsInput['mode'],
+    childId: string,
+    parentId: string,
+  ): ButtonFeedback | undefined {
+    if (
+      parents.variables?.mode !== mode ||
+      parents.variables?.tagIds[0] !== childId ||
+      parents.variables?.parentIds[0] !== parentId
+    )
+      return undefined
+    if (parents.data?.interrupted)
+      return { phase: 'unconfirmed', label: 'Change unconfirmed' }
+    return mutationFeedback(
+      parents,
+      mode === 'add'
+        ? {
+            pending: 'Adding relationship…',
+            success: 'Relationship added',
+            error: 'Could not add relationship',
+          }
+        : {
+            pending: 'Removing relationship…',
+            success: 'Relationship removed',
+            error: 'Could not remove relationship',
+          },
+    )
+  }
+  const action = parents.variables
+  const childId = action?.tagIds[0]
+  const parentId = action?.parentIds[0]
+  const receipt =
+    action && childId && parentId
+      ? relationshipFeedback(action.mode, childId, parentId)
+      : undefined
   return (
     <>
       <Section title="Parent tags" flush>
@@ -138,6 +178,12 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
                 label={`Open ${formatTagName(parent.name)}`}
                 {...tagActivation(parent.id, parent.name)}
                 removeLabel={`Remove parent ${formatTagName(parent.name)}`}
+                removeDisabled={pending}
+                removeFeedback={relationshipFeedback(
+                  'remove',
+                  tag.id,
+                  parent.id,
+                )}
                 onRemove={() => {
                   if (pending) return
                   change({
@@ -160,6 +206,7 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
           inputLabel="Find parent tag"
           listLabel="Tags to add as parent"
           disabled={pending}
+          pickFeedback={(item) => relationshipFeedback('add', tag.id, item.id)}
           unavailable={(item) =>
             item.id === tag.id
               ? 'current tag'
@@ -181,6 +228,12 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
                 label={`Open ${formatTagName(child.name)}`}
                 {...tagActivation(child.id, child.name)}
                 removeLabel={`Remove subtag ${formatTagName(child.name)}`}
+                removeDisabled={pending}
+                removeFeedback={relationshipFeedback(
+                  'remove',
+                  child.id,
+                  tag.id,
+                )}
                 onRemove={() => {
                   if (pending) return
                   change({
@@ -203,6 +256,7 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
           inputLabel="Find subtag"
           listLabel="Tags to add as subtag"
           disabled={pending}
+          pickFeedback={(item) => relationshipFeedback('add', item.id, tag.id)}
           unavailable={(item) =>
             item.id === tag.id
               ? 'current tag'
@@ -214,9 +268,9 @@ function TagHierarchySections({ detail }: { detail: TagDetailData }) {
             change({ tagIds: [item.id], parentIds: [tag.id], mode: 'add' })
           }
         />
-        {pending && (
-          <p role="status" className="ds-help">
-            Updating tags...
+        {receipt?.phase === 'done' && (
+          <p role="status" className="ds-cell-id">
+            <ButtonFeedbackLabel feedback={receipt} />
           </p>
         )}
         {failure && <Notice tone="danger">{failure}</Notice>}

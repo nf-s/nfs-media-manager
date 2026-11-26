@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import {
@@ -20,7 +21,7 @@ import {
   type SubscriptionSyncStatus,
   type SubscriptionType,
 } from '@repo/schemas/subscriptions'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Label } from '@repo/ui/components/ui/label'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
@@ -37,6 +38,7 @@ import { youtubeScheduleLabels, youtubeSyncPollInterval } from '@/utils/youtube'
 import { syncStatusStates } from '@/utils/run-status'
 import { subscriptionLibraryPages } from '@/utils/subscriptions'
 import { ConfirmAction } from './confirm-action'
+import { useSyncButtonFeedback } from './job-button-feedback'
 
 type SyncWording = {
   name: string
@@ -157,6 +159,7 @@ export function SubscriptionSync({
   const wording = subscriptionSyncWording[data.provider]
   const queryKey = subscriptionSyncQueryKey(data.provider)
   const path = `/api/v1/subscriptions/sync/${data.provider}`
+  const syncProgress = useSyncButtonFeedback(apiBaseUrl, data)
   const update = async (next: SubscriptionSyncStatus) => {
     client.setQueryData(queryKey, next)
     await Promise.all([
@@ -276,25 +279,45 @@ export function SubscriptionSync({
           size="md"
           variant="primary"
           disabled={!data.account.connected || running || sync.isPending}
+          feedback={
+            sync.isPending || sync.isError
+              ? mutationFeedback(sync, {
+                  pending: 'Requesting sync…',
+                  success: 'Sync queued',
+                  error: 'Sync request unconfirmed',
+                })
+              : data.state === 'paused'
+                ? { phase: 'waiting', label: 'Resume sync · waiting' }
+                : running || sync.isSuccess
+                  ? syncProgress
+                  : undefined
+          }
           onClick={() => sync.mutate()}
         >
-          {sync.isPending
-            ? 'Starting...'
-            : resumable
-              ? 'Resume sync'
-              : 'Sync now'}
+          {resumable ? 'Resume sync' : 'Sync now'}
         </Button>
-        {stopJob && (
+        {(stopJob || stop.isSuccess) && (
           <ConfirmAction
             size="md"
             confirmVariant="danger"
             question="Stop the sync job?"
             details={`Stored ${wording.sources} and ${wording.items} are kept.`}
             confirmLabel="Stop"
-            disabled={stop.isPending}
-            onConfirm={() => stop.mutate(stopJob)}
+            disabled={stop.isPending || !stopJob}
+            feedback={
+              stopJob && stop.variables?.id !== stopJob.id
+                ? undefined
+                : mutationFeedback(stop, {
+                    pending: 'Stopping…',
+                    success: 'Sync stopped',
+                    error: 'Stop unconfirmed',
+                  })
+            }
+            onConfirm={() => {
+              if (stopJob) stop.mutate(stopJob)
+            }}
           >
-            {stop.isPending ? 'Stopping...' : 'Stop'}
+            Stop
           </ConfirmAction>
         )}
         {data.job && (
@@ -312,6 +335,7 @@ export function SubscriptionSync({
           <Select
             id={scheduleId}
             value={data.schedule}
+            aria-busy={schedule.isPending}
             disabled={!data.account.configured || schedule.isPending}
             onChange={(event) => {
               const parsed = SubscriptionSyncScheduleSchema.safeParse(
@@ -326,6 +350,8 @@ export function SubscriptionSync({
               </option>
             ))}
           </Select>
+          {schedule.isPending && <span role="status">Saving schedule…</span>}
+          {schedule.isSuccess && <span role="status">Schedule saved</span>}
         </div>
         {data.nextScheduledAt && (
           <span className="ds-help">
@@ -374,9 +400,9 @@ export default function SubscriptionSyncPanel({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => status.refetch()}>
+            <ReadButton size="xs" read={() => status.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load {wording.name} sync.

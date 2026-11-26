@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ImportRunSchema } from '@repo/schemas/imports'
+import { mutationFeedback } from '@repo/ui/components/ui/button'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
@@ -32,10 +33,12 @@ export default function LegacyImportPageClient() {
         method: 'POST',
         body: JSON.stringify({ fullLibrary, albumLimit: 2, filmLimit: 2 }),
       }),
-    onSuccess: async () => {
+    onSuccess: async (run) => {
       await client.invalidateQueries({ queryKey: ['imports'] })
       await client.invalidateQueries({ queryKey: ['job-activity'] })
-      router.push(scopedHref('/imports', mediaType))
+      router.push(
+        scopedHref(`/imports?runId=${encodeURIComponent(run.id)}`, mediaType),
+      )
     },
   })
   return (
@@ -70,12 +73,15 @@ export default function LegacyImportPageClient() {
                 !query.data.sources.every((source) => source.available)
               }
               onConfirm={() => start.mutate()}
+              feedback={mutationFeedback(start, {
+                pending: 'Starting…',
+                success: 'Import started',
+                error: 'Import not confirmed',
+              })}
             >
-              {start.isPending
-                ? 'Starting...'
-                : fullLibrary
-                  ? 'Import full library'
-                  : 'Test import: 2 albums + 2 films'}
+              {fullLibrary
+                ? 'Import full library'
+                : 'Test import: 2 albums + 2 films'}
             </ConfirmAction>
           </>
         }

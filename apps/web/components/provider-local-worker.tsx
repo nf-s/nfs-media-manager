@@ -6,7 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ProviderLocalWorkerControlResultSchema,
   ProviderLocalWorkerControlSchema,
@@ -90,6 +90,7 @@ export function useProviderLocalWorkerPair(provider: string) {
   const queryKey = workerKey(provider)
   const pendingToken = useRef<{ provider: string; token: string } | null>(null)
   const mountedProvider = useRef<string | null>(null)
+  const [downloadedFor, setDownloadedFor] = useState<string | null>(null)
   useEffect(() => {
     mountedProvider.current = provider
     return () => {
@@ -100,6 +101,7 @@ export function useProviderLocalWorkerPair(provider: string) {
   const request = useMutation({
     retry: false,
     mutationFn: async () => {
+      setDownloadedFor(null)
       try {
         const { token, status } = await fetchApiData(
           apiBaseUrl,
@@ -136,6 +138,7 @@ export function useProviderLocalWorkerPair(provider: string) {
     request,
     canDownload:
       request.isSuccess && pendingToken.current?.provider === provider,
+    downloadStarted: downloadedFor === provider,
     download() {
       const result = pendingToken.current
       if (result?.provider !== provider || !request.isSuccess) return
@@ -148,6 +151,7 @@ export function useProviderLocalWorkerPair(provider: string) {
       document.body.appendChild(link)
       link.click()
       link.remove()
+      setDownloadedFor(provider)
       pendingToken.current = null
       request.reset()
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)

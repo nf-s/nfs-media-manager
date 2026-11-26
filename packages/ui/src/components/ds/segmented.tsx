@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ButtonFeedbackLabel, type ButtonFeedback } from '../ui/button'
 
 /**
  * Switches how one panel is shown (view, range). Tabs switch panels.
@@ -10,6 +11,7 @@ export function Segmented<Value extends string>({
   options,
   onChange,
   className,
+  feedbackFor,
 }: {
   label: string
   value: Value
@@ -21,6 +23,7 @@ export function Segmented<Value extends string>({
   }[]
   onChange: (value: Value) => void
   className?: string
+  feedbackFor?: (value: Value) => ButtonFeedback | undefined
 }) {
   return (
     <div
@@ -28,20 +31,35 @@ export function Segmented<Value extends string>({
       role="group"
       aria-label={label}
     >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          aria-pressed={option.value === value}
-          aria-label={option.icon ? option.label : undefined}
-          title={option.icon ? option.label : undefined}
-          data-icon={option.icon ? '' : undefined}
-          disabled={option.disabled}
-          onClick={() => onChange(option.value)}
-        >
-          {option.icon ?? option.label}
-        </button>
-      ))}
+      {options.map((option) => {
+        const feedback = feedbackFor?.(option.value)
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={option.value === value}
+            aria-label={
+              feedback
+                ? `${feedback.label} · ${option.label}`
+                : option.icon
+                  ? option.label
+                  : undefined
+            }
+            aria-live={feedback ? 'polite' : undefined}
+            data-feedback={feedback?.phase}
+            title={option.icon ? option.label : undefined}
+            data-icon={option.icon && !feedback ? '' : undefined}
+            disabled={option.disabled}
+            onClick={() => onChange(option.value)}
+          >
+            {feedback ? (
+              <ButtonFeedbackLabel feedback={feedback} />
+            ) : (
+              (option.icon ?? option.label)
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }

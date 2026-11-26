@@ -91,6 +91,7 @@ async function dispatchArtistBatches(
   let queued = 0
   let skipped = 0
   const warnings = new Set<string>()
+  let interrupted = false
   try {
     for await (const chunk of batches) {
       const result = await send(chunk)
@@ -101,9 +102,10 @@ async function dispatchArtistBatches(
       onProgress(completed.length)
     }
   } catch {
+    interrupted = true
     warnings.add(
       'Stopped: this batch could not be confirmed or the selection expired. Check artist jobs before retrying the remaining selection.',
     )
   }
-  return { queued, skipped, completed, warnings: [...warnings] }
+  return { queued, skipped, completed, warnings: [...warnings], interrupted }
 }

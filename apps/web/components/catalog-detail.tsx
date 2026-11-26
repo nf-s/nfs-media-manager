@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import {
   useInfiniteQuery,
   useMutation,
@@ -12,8 +13,12 @@ import { Section, KeyValues } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
 import { SourceRow } from '@repo/ui/components/ds/source'
-import { Button } from '@repo/ui/components/ui/button'
 import { formatDateTime } from '@repo/ui/lib/format'
+import {
+  libraryAdditionUnavailable,
+  saveLibraryAddition,
+  useLibraryAddition,
+} from '@/hooks/use-library-addition'
 import { addCatalogMedia, catalogDiscoveries } from '@/utils/catalog-api'
 import { invalidateManualMediaAddition } from '@/utils/manual-media-add'
 import { providerLogoUrl } from '@/utils/provider-logos'
@@ -66,14 +71,23 @@ export function CatalogLibraryAction({
         ? 'item'
         : kind
   const client = useQueryClient()
+  const target = { kind, catalogId: id }
+  const receipt = useLibraryAddition(target, inLibrary)
   const action = useMutation({
     mutationFn: () =>
-      addCatalogMedia(
-        apiBaseUrl,
-        id,
-        kind === 'album' || kind === 'film' || kind === 'track'
-          ? 'media'
-          : kind,
+      saveLibraryAddition(
+        client,
+        target,
+        async () =>
+          (
+            await addCatalogMedia(
+              apiBaseUrl,
+              id,
+              kind === 'album' || kind === 'film' || kind === 'track'
+                ? 'media'
+                : kind,
+            )
+          ).mediaItemId,
       ),
     onSuccess: () => {
       announce(labelKind, title)
@@ -99,9 +113,12 @@ export function CatalogLibraryAction({
       <LibraryAction
         kind={labelKind}
         name={title}
-        saved={inLibrary || action.isSuccess}
-        pending={action.isPending}
-        onAdd={() => action.mutate()}
+        short={inline}
+        saved={inLibrary || Boolean(receipt?.committedId)}
+        feedback={receipt?.feedback}
+        onAdd={() => {
+          if (!libraryAdditionUnavailable(client, target)) action.mutate()
+        }}
       />
       {!inline && action.isError && (
         <Notice tone="danger">
@@ -240,22 +257,24 @@ export function CatalogDiscoveries({
         <Notice
           tone="danger"
           action={
-            <Button variant="link" onClick={() => void discoveries.refetch()}>
+            <ReadButton variant="link" read={() => discoveries.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load discoveries.
         </Notice>
       )}
       {discoveries.hasNextPage && (
-        <Button
+        <ReadButton
           variant="link"
           disabled={discoveries.isFetchingNextPage}
-          onClick={() => void discoveries.fetchNextPage()}
+          loadingLabel="Loading more…"
+          loadedLabel="Loaded more"
+          read={() => discoveries.fetchNextPage()}
         >
           Show more
-        </Button>
+        </ReadButton>
       )}
     </Section>
   )

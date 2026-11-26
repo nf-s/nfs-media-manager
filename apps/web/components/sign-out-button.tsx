@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthClient } from '@/hooks/useAuthClient'
 import { forgetWorkspace } from '@/utils/workspace-tabs'
@@ -20,19 +20,29 @@ export default function SignOutButton() {
     },
     onSuccess: async () => {
       forgetWorkspace()
-      await clearSessionData(queryClient, (path) =>
-        window.location.replace(path),
-      )
+      await clearSessionData(queryClient, (path) => {
+        try {
+          window.sessionStorage.setItem('sign-out-confirmed', 'yes')
+        } catch {
+          // Document navigation also works when storage is unavailable.
+        }
+        window.location.replace(path)
+      })
     },
   })
 
   return (
     <Button
       size="md"
+      feedback={mutationFeedback(signOutMutation, {
+        pending: 'Signing out…',
+        success: 'Signed out',
+        error: 'Sign-out failed · retry',
+      })}
       onClick={() => signOutMutation.mutate()}
       disabled={signOutMutation.isPending}
     >
-      {signOutMutation.isPending ? 'Signing out...' : 'Sign out'}
+      Sign out
     </Button>
   )
 }

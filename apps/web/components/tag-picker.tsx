@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useState } from 'react'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import {
@@ -9,7 +10,7 @@ import {
   type Tag,
 } from '@repo/schemas/tags'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { TableBody, TableCell, TableRow } from '@repo/ui/components/ui/table'
 import { useConfig } from './providers'
@@ -31,6 +32,8 @@ export function TagPicker({
   unavailable,
   onPick,
   onCreate,
+  pickFeedback,
+  createFeedback,
 }: {
   mediaType: 'album' | 'film'
   label: string
@@ -40,13 +43,17 @@ export function TagPicker({
   unavailable?: (tag: Tag) => string | null
   onPick: (tag: Tag) => void
   onCreate?: (name: string) => void
+  pickFeedback?: (tag: Tag) => ButtonFeedback | undefined
+  createFeedback?: (name: string) => ButtonFeedback | undefined
 }) {
   const { apiBaseUrl } = useConfig()
   const [search, setSearch] = useState('')
   const query = useDeferredValue(search.trim())
   const matches = useVirtualTable({
     queryKey: ['tags', 'search', mediaType, query],
-    enabled: query.length > 0 && !disabled,
+    enabled:
+      query.length > 0 &&
+      (!disabled || Boolean(pickFeedback || createFeedback)),
     pageSize: 25,
     headerHeight: 0,
     loadPage: (page, size, signal) =>
@@ -70,15 +77,15 @@ export function TagPicker({
           onChange={(event) => setSearch(event.target.value)}
         />
       </label>
-      {query && !disabled && (
+      {query && (!disabled || pickFeedback || createFeedback) && (
         <>
           {matches.isError && (
             <Notice
               tone="danger"
               action={
-                <Button type="button" size="xs" onClick={matches.retry}>
+                <ReadButton type="button" size="xs" read={matches.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not find tags.
@@ -117,9 +124,10 @@ export function TagPicker({
                             type="button"
                             variant="link"
                             size="xs"
-                            disabled={reason !== null}
+                            disabled={disabled || reason !== null}
+                            feedback={pickFeedback?.(item)}
                             onClick={() => {
-                              setSearch('')
+                              if (!pickFeedback) setSearch('')
                               onPick(item)
                             }}
                           >
@@ -145,8 +153,10 @@ export function TagPicker({
                   type="button"
                   variant="link"
                   size="xs"
+                  disabled={disabled}
+                  feedback={createFeedback?.(query)}
                   onClick={() => {
-                    setSearch('')
+                    if (!createFeedback) setSearch('')
                     onCreate(query)
                   }}
                 >

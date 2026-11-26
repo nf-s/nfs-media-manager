@@ -64,7 +64,11 @@ import { CatalogLibraryAction } from './catalog-detail'
 import { TrackRecordParts } from './track-record-parts'
 import MetadataSourceControl from './metadata-source-control'
 import { BrowseFilterPill } from './browse-controls'
-import { TrackTagEditor, useTrackTagEdits } from './track-tag-editor'
+import {
+  TrackTagEditReceipt,
+  TrackTagEditor,
+  useTrackTagEdits,
+} from './track-tag-editor'
 import { TrackSpotifySource } from './track-spotify-source'
 import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import { TrackTidalSource } from './tidal-track-match'
@@ -275,7 +279,19 @@ function TrackTags({
                   size="xs"
                   disabled={edits.isPending}
                   aria-label={`Restore ${formatTagName(tag.name)}`}
-                  onClick={() => edits.mutate({ kind: 'add', tagId: tag.id })}
+                  onClick={() =>
+                    edits.mutate({
+                      kind: 'restore',
+                      tagId: tag.id,
+                      name: tag.name,
+                    })
+                  }
+                  feedback={
+                    edits.variables?.kind === 'restore' &&
+                    edits.variables.tagId === tag.id
+                      ? edits.feedback
+                      : undefined
+                  }
                 >
                   Restore
                 </Button>
@@ -301,7 +317,20 @@ function TrackTags({
               <BrowseFilterPill
                 key={tag.id}
                 removeLabel={`Remove ${formatTagName(tag.name)}`}
-                onRemove={() => edits.mutate({ kind: 'remove', tagId: tag.id })}
+                removeDisabled={edits.isPending}
+                removeFeedback={
+                  edits.variables?.kind === 'remove' &&
+                  edits.variables.tagId === tag.id
+                    ? edits.feedback
+                    : undefined
+                }
+                onRemove={() =>
+                  edits.mutate({
+                    kind: 'remove',
+                    tagId: tag.id,
+                    name: tag.name,
+                  })
+                }
               >
                 {formatTagName(tag.name)}
               </BrowseFilterPill>
@@ -326,6 +355,7 @@ function TrackTags({
         </div>
       ))}
       {editing && <TrackTagEditor tags={item.tags} edits={edits} />}
+      <TrackTagEditReceipt edits={edits} />
     </Section>
   )
 }
@@ -562,7 +592,7 @@ function TrackDetailContent({
   filterHref: BrowseFilterHref
   onMerged?: (targetId: string, tab?: 'sources') => void
   stale: boolean
-  retry: () => void
+  retry: () => Promise<unknown>
 }) {
   const { tab, setTab, tabHref } = useDetailTab(trackTabs, {
     aliases: trackTabAliases,

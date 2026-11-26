@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { SpotifyTrackSearchJob } from '@repo/schemas/spotify-track-search'
@@ -224,9 +225,9 @@ export function TrackSpotifySource({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => search.refetch()}>
+            <ReadButton size="xs" read={() => search.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load the saved Spotify search.

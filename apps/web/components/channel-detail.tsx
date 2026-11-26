@@ -207,7 +207,7 @@ function ShowDetail({
   tab: ChannelTab
   setTab: (tab: string) => void
   stale: boolean
-  retry: () => void
+  retry: () => Promise<unknown>
 }) {
   const station = subscriptionTypeLabels[source.type]
   return (

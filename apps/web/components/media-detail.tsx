@@ -42,7 +42,8 @@ import {
   type StatItem,
 } from '@repo/ui/components/ds/facts'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
+import { unconfirmedWrite } from '@/utils/write-feedback'
 import { Input } from '@repo/ui/components/ui/input'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import {
@@ -298,9 +299,11 @@ function withSortedFact(
 function EditMedia({
   item,
   onSaved,
+  saved,
 }: {
   item: AlbumDetail | FilmDetail
   onSaved: () => Promise<void>
+  saved: boolean
 }) {
   const { apiBaseUrl } = useConfig()
   const [error, setError] = useState('')
@@ -353,6 +356,7 @@ function EditMedia({
       className="dtl-form"
       onSubmit={(event) => {
         event.preventDefault()
+        if (mutation.isPending) return
         setError('')
         const data = new FormData(event.currentTarget)
         const patch: Record<string, unknown> = {}
@@ -447,15 +451,30 @@ function EditMedia({
           size="md"
           variant="primary"
           disabled={mutation.isPending}
+          feedback={
+            unconfirmedWrite(mutation.error) ??
+            mutationFeedback(
+              {
+                isPending: mutation.isPending,
+                isError: mutation.isError,
+                isSuccess: saved,
+              },
+              { pending: 'Saving…', success: 'Saved', error: 'Could not save' },
+            )
+          }
           type="submit"
         >
-          {mutation.isPending ? 'Saving...' : 'Save changes'}
+          Save changes
         </Button>
         <span role="status" className="ds-muted">
-          {mutation.isSuccess ? 'Saved' : error}
+          {error}
         </span>
         {mutation.isError && (
-          <span role="alert">Could not save. Check the values and retry.</span>
+          <span role="alert">
+            {unconfirmedWrite(mutation.error)
+              ? 'Check edit history before trying again.'
+              : 'Could not save. Check the values and retry.'}
+          </span>
         )}
       </div>
     </form>
@@ -472,13 +491,19 @@ function WatchedButton({ item }: { item: FilmDetail }) {
         method: 'PATCH',
         body: JSON.stringify(FilmPatchSchema.parse({ watched })),
       }),
-    onSuccess: () => invalidateMediaItem(client, 'film', item.id),
+    onSuccess: (updated) => {
+      client.setQueryData(['film', item.id], updated)
+      void invalidateMediaItem(client, 'film', item.id)
+    },
   })
   return (
     <WatchedToggle
       watched={item.watched}
       pending={mutation.isPending}
       error={mutation.isError}
+      failure={mutation.error}
+      saved={mutation.isSuccess}
+      nextWatched={mutation.variables ?? !item.watched}
       onToggle={() => mutation.mutate(!item.watched)}
     />
   )
@@ -1211,7 +1236,12 @@ export default function MediaDetail({
           )}
         </TabsContent>
         <TabsContent value="edit" onInputCapture={() => setSaved(false)}>
-          <EditMedia key={item.updatedAt} item={item} onSaved={onSaved} />
+          <EditMedia
+            key={item.updatedAt}
+            item={item}
+            onSaved={onSaved}
+            saved={saved}
+          />
           {saved && <Notice>Changes saved.</Notice>}
           <MediaEditHistory id={item.id} />
         </TabsContent>

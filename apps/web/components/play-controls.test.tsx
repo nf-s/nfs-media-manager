@@ -135,7 +135,7 @@ test('the playing album and track offer pause', () => {
   })
   assert.match(
     html,
-    /data-place="tile"><button type="button" aria-label="Pause Fixture album"[^>]*aria-pressed="true"/,
+    /data-place="tile"><button[^>]*aria-label="Pause Fixture album"[^>]*aria-pressed="true"/,
   )
   assert.match(html, />Pause<\/button>/)
   assert.match(html, /aria-label="Pause Second track"[^>]*aria-pressed="true"/)
@@ -244,7 +244,7 @@ test("a library track pair can sit on a card's artwork", () => {
   )
   assert.match(
     html,
-    /^<span class="ds-play" data-place="tile"><button type="button" aria-label="Play Playlist track"/,
+    /^<span class="ds-play" data-place="tile"><button[^>]*aria-label="Play Playlist track"/,
   )
   assert.match(html, /aria-label="Add Playlist track to queue"/)
   const off = render(

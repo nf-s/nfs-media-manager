@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, type ReactNode } from 'react'
+import { useResultAction } from './result-feedback'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
 import {
   TableCell,
@@ -44,6 +45,7 @@ export function BrowseSortHead({
   stickyEdge?: boolean
 }) {
   const drag = useRef<{ x: number; width: number; next: number } | null>(null)
+  const sort = useResultAction('column-' + label)
   return (
     <TableHead
       align={align}
@@ -86,7 +88,11 @@ export function BrowseSortHead({
     >
       <TableSortButton
         direction={active ? direction : undefined}
-        onClick={onSort}
+        feedback={sort.feedback}
+        onClick={() => {
+          sort.begin()
+          onSort()
+        }}
       >
         {label}
       </TableSortButton>

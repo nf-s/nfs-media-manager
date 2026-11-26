@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { JsonValue } from '@repo/schemas/common'
@@ -29,7 +30,9 @@ function SavedPayload({
 }) {
   const view = useDetailView()
   const [open, setOpen] = useState(view.params.get('jobPayload') === payloadKey)
-  const [copied, setCopied] = useState(false)
+  const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>(
+    'idle',
+  )
   const destination = new URLSearchParams(view.params)
   destination.set('tab', 'data')
   destination.set('jobPayload', payloadKey)
@@ -46,14 +49,30 @@ function SavedPayload({
         <Button
           size="xs"
           variant="ghost"
-          onClick={(event) => {
+          disabled={copy === 'copying'}
+          feedback={
+            copy === 'copying'
+              ? { phase: 'pending', label: 'Copying…' }
+              : copy === 'copied'
+                ? { phase: 'done', label: 'Copied' }
+                : copy === 'failed'
+                  ? { phase: 'failed', label: 'Copy failed' }
+                  : undefined
+          }
+          onClick={async (event) => {
             event.preventDefault()
-            void navigator.clipboard
-              .writeText(JSON.stringify(value, null, 2))
-              .then(() => setCopied(true))
+            setCopy('copying')
+            try {
+              await navigator.clipboard.writeText(
+                JSON.stringify(value, null, 2),
+              )
+              setCopy('copied')
+            } catch {
+              setCopy('failed')
+            }
           }}
         >
-          {copied ? 'Copied' : 'Copy'}
+          Copy
         </Button>
       </summary>
       {open && <JsonTree value={value} />}
@@ -83,13 +102,13 @@ export function StoredJobData({ job }: { job: DataJob }) {
         <Notice
           tone="danger"
           action={
-            <Button
+            <ReadButton
               size="xs"
               disabled={result.isFetching}
-              onClick={() => result.refetch()}
+              read={() => result.refetch()}
             >
               Reload stored data
-            </Button>
+            </ReadButton>
           }
         >
           Could not load stored JSON.

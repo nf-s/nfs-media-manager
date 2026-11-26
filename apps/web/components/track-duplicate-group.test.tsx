@@ -195,8 +195,6 @@ test('only the pressed group’s actions are off, and its row says what is happe
         </tbody>
       </table>,
     )
-  const off =
-    /<button class="ds-btn" data-size="xs" disabled="">Merge<\/button><button class="ds-btn" data-variant="ghost" data-size="xs" disabled="">Keep separate<\/button>/
   const on =
     /<button class="ds-btn" data-size="xs">Merge<\/button><button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button>/
   const line = (text: string) =>
@@ -217,7 +215,14 @@ test('only the pressed group’s actions are off, and its row says what is happe
     ],
   ] satisfies [Item, string][]) {
     const html = row(item)
-    assert.match(html, off)
+    assert.equal(
+      (html.match(/<button class="ds-btn"[^>]*disabled=""/g) ?? []).length,
+      2,
+    )
+    assert.match(
+      html,
+      /data-feedback="(?:waiting|running|done)"[^>]*disabled=""/,
+    )
     assert.match(html, line(text))
   }
   // A failed group can be tried again; its row says why it failed.
@@ -226,7 +231,14 @@ test('only the pressed group’s actions are off, and its row says what is happe
     action: 'merge',
     message: 'The tracks could not be merged.',
   })
-  assert.match(failed, on)
+  assert.match(
+    failed,
+    /<button(?![^>]*disabled)[^>]*data-feedback="failed"[^>]*>.*?<span>Merge failed<\/span><\/button>/,
+  )
+  assert.match(
+    failed,
+    /<button class="ds-btn" data-variant="ghost" data-size="xs">Keep separate<\/button>/,
+  )
   assert.match(failed, line('The tracks could not be merged\\.'))
 })
 

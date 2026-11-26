@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
+import type { ButtonFeedback } from '@repo/ui/components/ui/button'
 import {
   LastfmSpotifySearchInputSchema,
   type LastfmLinkGroup,
@@ -15,6 +16,7 @@ import { canSearchLastfmGroup, lastfmLinkKey } from '@/utils/lastfm-sync'
 import { scopedHref } from '@/utils/media-scope'
 import { useConfig } from './providers'
 import { ConfirmAction } from './confirm-action'
+import { useJobBatchFeedback } from './job-button-feedback'
 
 const ALBUMS = { one: 'album', other: 'albums' }
 
@@ -91,12 +93,28 @@ export default function LastfmSearchActions({
       }
     },
   })
-  if (
-    !selectedIds.length &&
-    !queue.isPending &&
-    !queue.isError &&
-    !queue.data
+  const jobs = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? batchId : undefined,
   )
+  const feedback: ButtonFeedback | undefined = queue.isPending
+    ? {
+        phase: 'pending',
+        label: `Submitting · ${formatCount(progress)} confirmed`,
+      }
+    : queue.isError
+      ? { phase: 'failed', label: 'Could not submit searches' }
+      : queue.data
+        ? (jobs ?? {
+            phase: queue.data.interrupted
+              ? 'partial'
+              : queue.data.queued
+                ? 'queued'
+                : 'done',
+            label: `${formatCount(queue.data.queued)} queued · ${formatCount(queue.data.skipped)} skipped`,
+          })
+        : undefined
+  if (!selectedIds.length && !queue.isPending && !queue.isError && !queue.data)
     return null
   return (
     <div className="sec-selectbar-actions">
@@ -132,7 +150,7 @@ export default function LastfmSearchActions({
           ))}
         </span>
       )}
-      {selectedIds.length > 0 && (
+      {(selectedIds.length > 0 || feedback) && (
         <span className="ds-actions">
           <ConfirmAction
             variant="primary"
@@ -141,6 +159,7 @@ export default function LastfmSearchActions({
             details="Each search is a Spotify request; provider pacing applies."
             confirmLabel="Search"
             disabled={disabled || queue.isPending || !ids.length}
+            feedback={feedback}
             onConfirm={() => queue.mutate(ids.length > 5)}
           >
             Search Spotify albums

@@ -1,5 +1,8 @@
 'use client'
 
+import { ResultButton, ResultSection, useResultAction } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -32,6 +35,11 @@ import {
   type StatusState,
 } from '@repo/ui/components/ds/status'
 import { Button } from '@repo/ui/components/ui/button'
+import {
+  queueReceipt,
+  submissionFeedback,
+  useJobBatchFeedback,
+} from './job-button-feedback'
 import {
   TableCell,
   TableHead,
@@ -362,6 +370,7 @@ function SelectionTable({
   const [confirmedKey, setConfirmedKey] = useState('')
   const broadConfirmed = confirmed && confirmedKey === confirmationKey
   const [batchId, setBatchId] = useState('')
+  const [submissionCount, setSubmissionCount] = useState(0)
   const queue = useMutation({
     mutationKey: queueKey,
     mutationFn: async () => {
@@ -395,6 +404,7 @@ function SelectionTable({
     },
     onMutate: () => {
       setProgress(0)
+      setSubmissionCount(selected.length)
     },
     onSuccess: (result) => {
       setSelected((current) =>
@@ -402,12 +412,23 @@ function SelectionTable({
       )
       setConfirmed(false)
     },
-    onSettled: async () => {
-      await client.invalidateQueries({ queryKey: ['jobs'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
-      await client.invalidateQueries({ queryKey: [`${mediaType}-selection`] })
+    onSettled: () => {
+      void Promise.all([
+        client.invalidateQueries({ queryKey: ['jobs'] }),
+        client.invalidateQueries({ queryKey: ['job-activity'] }),
+        client.invalidateQueries({ queryKey: [`${mediaType}-selection`] }),
+      ])
     },
   })
+  const batchFeedback = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? batchId : undefined,
+  )
+  const queueFeedback =
+    batchFeedback ??
+    (queue.data
+      ? queueReceipt(queue.data.queued, queue.data.skipped)
+      : undefined)
   useEffect(() => {
     if (all.current) all.current.indeterminate = partiallyChecked
   }, [partiallyChecked])
@@ -454,7 +475,12 @@ function SelectionTable({
   const noun = mediaType === 'album' ? 'Album' : 'Film'
   const browseHref = embeddedBrowseHref(plural, {}, params)
   return (
-    <div className="ops-fill">
+    <ResultSection
+      as="div"
+      className="ops-fill"
+      identity={queryIdentity}
+      result={films}
+    >
       <MetadataSelectionToolbar
         disabled={queue.isPending}
         libraryScope={{
@@ -593,9 +619,9 @@ function SelectionTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={films.retry}>
+                <ReadButton size="xs" read={films.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load {plural}.
@@ -605,9 +631,9 @@ function SelectionTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => facets.refetch()}>
+                <ReadButton size="xs" read={() => facets.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Filter suggestions unavailable.
@@ -688,23 +714,20 @@ function SelectionTable({
                             })
                           }}
                         />
-                        {ranges.some((range) => range.field === field.key) && (
-                          <Button
-                            size="md"
-                            type="button"
-                            variant="ghost"
-                            onClick={() => {
-                              changeFilters({
-                                ...browseFilters,
-                                ranges: ranges.filter(
-                                  (range) => range.field !== field.key,
-                                ),
-                              })
-                            }}
-                          >
-                            Clear range
-                          </Button>
-                        )}
+                        <ClearSelectionRange
+                          field={field.key}
+                          active={ranges.some(
+                            (range) => range.field === field.key,
+                          )}
+                          onClear={() =>
+                            changeFilters({
+                              ...browseFilters,
+                              ranges: ranges.filter(
+                                (range) => range.field !== field.key,
+                              ),
+                            })
+                          }
+                        />
                       </SecondaryHeaderFilter>
                     ) : undefined
                   }
@@ -870,44 +893,53 @@ function SelectionTable({
                     ? `${noun}s unavailable.`
                     : `No matching ${plural}.`}
                 {films.isError && (
-                  <Button variant="link" size="xs" onClick={films.retry}>
+                  <ReadButton variant="link" size="xs" read={films.retry}>
                     Retry
-                  </Button>
+                  </ReadButton>
                 )}
               </TableState>
             )}
           </tbody>
         </table>
       </SecondaryTableScroll>
-      {(selected.length > 0 || queue.isPending) && (
+      {(selected.length > 0 ||
+        queue.isPending ||
+        queue.isError ||
+        queue.data) && (
         <TableSelectionBar className="ops-selectbar">
           <span role="status">
             <b>{formatCount(selected.length)} selected</b>
           </span>
-          <FilmProviderSelection
-            providers={providers}
-            selected={launchProviders}
-            disabled={queue.isPending}
-            onChange={(next) => {
-              setSelectedProviders(next)
-              setConfirmed(false)
-            }}
-          />
+          {(selected.length > 0 || queue.isPending) && (
+            <FilmProviderSelection
+              providers={providers}
+              selected={launchProviders}
+              disabled={queue.isPending}
+              onChange={(next) => {
+                setSelectedProviders(next)
+                setConfirmed(false)
+              }}
+            />
+          )}
           <span className="ds-actions ds-toolbar-end">
             {!broadConfirmed ? (
-              <Button
-                variant="primary"
-                type="button"
-                disabled={
-                  queue.isPending || !selected.length || !launchProviders.length
-                }
-                onClick={() => {
-                  setConfirmed(true)
-                  setConfirmedKey(confirmationKey)
-                }}
-              >
-                Review {formatCount(operations)} metadata jobs
-              </Button>
+              selected.length > 0 ? (
+                <Button
+                  variant="primary"
+                  type="button"
+                  disabled={
+                    queue.isPending ||
+                    !selected.length ||
+                    !launchProviders.length
+                  }
+                  onClick={() => {
+                    setConfirmed(true)
+                    setConfirmedKey(confirmationKey)
+                  }}
+                >
+                  Review {formatCount(operations)} metadata jobs
+                </Button>
+              ) : null
             ) : (
               <span
                 className="ops-review"
@@ -927,11 +959,17 @@ function SelectionTable({
                     variant="primary"
                     type="button"
                     disabled={queue.isPending}
+                    feedback={
+                      queue.isPending
+                        ? {
+                            phase: 'pending',
+                            label: `Submitting ${formatCount(progress)}/${formatCount(submissionCount)}…`,
+                          }
+                        : undefined
+                    }
                     onClick={() => queue.mutate()}
                   >
-                    {queue.isPending
-                      ? `Queueing ${progress}/${selected.length} ${plural}...`
-                      : `Confirm ${formatCount(operations)} metadata jobs`}
+                    Confirm {formatCount(operations)} metadata jobs
                   </Button>
                   <Button
                     type="button"
@@ -944,6 +982,21 @@ function SelectionTable({
                 </span>
               </span>
             )}
+            {!queue.isPending &&
+              (queue.isError || queue.data?.interrupted || queueFeedback) && (
+                <Button
+                  disabled
+                  feedback={
+                    queue.isError || queue.data?.interrupted
+                      ? submissionFeedback(
+                          queue.data?.queued ? queueFeedback : undefined,
+                        )
+                      : queueFeedback
+                  }
+                >
+                  Metadata jobs
+                </Button>
+              )}
           </span>
           <details className="ops-rules">
             <summary>Scrape rules</summary>
@@ -986,6 +1039,33 @@ function SelectionTable({
           )}
         </div>
       )}
-    </div>
+    </ResultSection>
+  )
+}
+
+function ClearSelectionRange({
+  field,
+  active,
+  onClear,
+}: {
+  field: string
+  active: boolean
+  onClear: () => void
+}) {
+  const control = `clear-range-${field}`
+  const feedback = useResultAction(control).feedback
+  if (!active && !feedback) return null
+  return (
+    <ResultButton
+      control={control}
+      size="md"
+      type="button"
+      variant="ghost"
+      disabled={!active}
+      aria-label="Clear range"
+      onClick={onClear}
+    >
+      Clear range
+    </ResultButton>
   )
 }

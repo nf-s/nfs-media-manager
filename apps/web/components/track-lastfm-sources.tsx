@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -12,7 +13,11 @@ import {
 } from '@repo/schemas/tracks'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
   Table,
@@ -106,10 +111,12 @@ function TrackScrobbledNamePicker({
   track,
   disabled,
   onPick,
+  feedback,
 }: {
   track: TrackDetail
   disabled: boolean
   onPick: (name: TrackScrobbledName) => void
+  feedback: (name: TrackScrobbledName) => ButtonFeedback | undefined
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState(track.title.slice(0, 200))
@@ -148,9 +155,9 @@ function TrackScrobbledNamePicker({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={names.retry}>
+            <ReadButton size="xs" read={names.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not search scrobbled names.
@@ -231,6 +238,7 @@ function TrackScrobbledNamePicker({
                             details="Later syncs will keep this recorded name and its listening history linked here."
                             confirmLabel="Link"
                             onConfirm={() => onPick(name)}
+                            feedback={feedback(name)}
                           >
                             Link
                           </ConfirmAction>
@@ -286,7 +294,7 @@ export function TrackLastfmSources({
       )
     },
     onMutate: () => setResult(null),
-    onSuccess: async ({ targetId, sourceRemoved }, { action, name }) => {
+    onSuccess: ({ targetId, sourceRemoved }, { action, name }) => {
       if (action === 'link') setAdding(false)
       const sourceId = action === 'link' ? name.trackId : item.id
       if (sourceRemoved && sourceId === item.id && onResolved)
@@ -301,12 +309,36 @@ export function TrackLastfmSources({
                 : 'Scrobbled name kept separate.',
           targetId,
         })
-      await invalidateScrobbleLinks(
-        client,
-        sourceRemoved ? sourceId : undefined,
-      )
+      void invalidateScrobbleLinks(client, sourceRemoved ? sourceId : undefined)
     },
   })
+  function feedback(action: NameUpdate['action'], name: TrackScrobbleNameKey) {
+    if (
+      update.variables?.action !== action ||
+      nameKey(update.variables.name) !== nameKey(name)
+    )
+      return undefined
+    return mutationFeedback(
+      update,
+      action === 'link'
+        ? {
+            pending: 'Linking name…',
+            success: 'Name linked',
+            error: 'Could not link',
+          }
+        : action === 'automatic'
+          ? {
+              pending: 'Restoring automatic match…',
+              success: 'Automatic matching restored',
+              error: 'Could not restore match',
+            }
+          : {
+              pending: 'Keeping name separate…',
+              success: 'Kept separate',
+              error: 'Could not keep separate',
+            },
+    )
+  }
   const recordedWidths = useTableWidths('track-lastfm-sources', recordedColumns)
   const recordedLayout = recordedWidths.layout(
     recordedColumns.map((column) => column.key),
@@ -347,6 +379,7 @@ export function TrackLastfmSources({
         variant="ghost"
         disabled={update.isPending}
         ariaLabel={`${action} ${label}`}
+        feedback={feedback('remove', source)}
         question={
           listeningOnly
             ? `Keep ${label} separate?`
@@ -402,6 +435,7 @@ export function TrackLastfmSources({
               track={item}
               disabled={update.isPending}
               onPick={(name) => update.mutate({ action: 'link', name })}
+              feedback={(name) => feedback('link', name)}
             />
           )}
           {update.isError && (
@@ -486,6 +520,7 @@ export function TrackLastfmSources({
                               size="xs"
                               variant="ghost"
                               disabled={update.isPending}
+                              feedback={feedback('automatic', source)}
                               onClick={() =>
                                 update.mutate({
                                   action: 'automatic',

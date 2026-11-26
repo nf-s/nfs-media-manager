@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
@@ -14,7 +15,11 @@ import {
   trackSpotifyMatchLabels,
   type TrackListItem,
 } from '@repo/schemas/tracks'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { fetchApiData } from '@/utils/api'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
@@ -173,6 +178,7 @@ export function TrackMergeReview({
   correction,
   namesOnly = false,
   pending,
+  feedback,
   onConfirm,
   onBack,
 }: {
@@ -181,6 +187,7 @@ export function TrackMergeReview({
   correction?: TrackScrobbleCorrection
   namesOnly?: boolean
   pending: boolean
+  feedback?: ButtonFeedback
   onConfirm: () => void
   onBack: () => void
 }) {
@@ -208,8 +215,18 @@ export function TrackMergeReview({
           </p>
         </Section>
         <div className="ds-actions">
-          <Button variant="primary" disabled={pending} onClick={onConfirm}>
-            {pending ? 'Saving...' : 'Confirm match'}
+          <Button
+            variant="primary"
+            disabled={pending}
+            onClick={onConfirm}
+            feedback={
+              feedback ??
+              (pending
+                ? { phase: 'pending', label: 'Saving match…' }
+                : undefined)
+            }
+          >
+            Confirm match
           </Button>
           <Button disabled={pending} onClick={onBack}>
             Choose another track
@@ -253,8 +270,16 @@ export function TrackMergeReview({
         )}
       </Section>
       <div className="ds-actions">
-        <Button variant="primary" disabled={pending} onClick={onConfirm}>
-          {pending ? 'Merging...' : 'Confirm merge'}
+        <Button
+          variant="primary"
+          disabled={pending}
+          onClick={onConfirm}
+          feedback={
+            feedback ??
+            (pending ? { phase: 'pending', label: 'Merging…' } : undefined)
+          }
+        >
+          Confirm merge
         </Button>
         <Button disabled={pending} onClick={onBack}>
           Choose another track
@@ -389,6 +414,20 @@ export function TrackMergePanel({
               correction={correction}
               namesOnly={namesOnly}
               pending={merge.isPending}
+              feedback={mutationFeedback(
+                merge,
+                correction
+                  ? {
+                      pending: 'Saving match…',
+                      success: 'Matched',
+                      error: 'Could not match',
+                    }
+                  : {
+                      pending: 'Merging…',
+                      success: 'Merged',
+                      error: 'Could not merge',
+                    },
+              )}
               onConfirm={() => merge.mutate(target)}
               onBack={() => {
                 setTarget(null)
@@ -436,9 +475,9 @@ export function TrackMergePanel({
                     <Notice
                       tone="danger"
                       action={
-                        <Button size="xs" onClick={candidates.retry}>
+                        <ReadButton size="xs" read={candidates.retry}>
                           Retry
-                        </Button>
+                        </ReadButton>
                       }
                     >
                       Could not search tracks.

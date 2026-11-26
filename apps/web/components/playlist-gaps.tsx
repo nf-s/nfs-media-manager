@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { X } from 'lucide-react'
-import { Segmented } from '@repo/ui/components/ds/segmented'
+import { ResultSegmented } from './result-feedback'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatItemCount } from '@repo/ui/lib/format'
@@ -58,7 +58,7 @@ export function GapFilterControls({
           )}
         </Select>
       )}
-      <Segmented<Show>
+      <ResultSegmented<Show>
         label="Show"
         value={filter ? 'gaps' : 'all'}
         options={[
@@ -161,6 +161,7 @@ export function GapSelection({
               <Button
                 variant="primary"
                 disabled={!provider || Boolean(reason) || state.queue.isPending}
+                feedback={state.feedbackFor(active.provider, filter.gap)}
                 title={reason ? coverageUnavailableLabels[reason] : undefined}
                 onClick={() =>
                   provider &&

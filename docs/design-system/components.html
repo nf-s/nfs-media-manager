@@ -342,6 +342,33 @@
               ),
           },
           {
+            id: 'action-feedback',
+            title: 'Button feedback',
+            body:
+              g.spec(
+                g.flow([
+                  btn('Adding…', { feedback: 'pending', icon: 'clock' }),
+                  btn('Added', { feedback: 'done', icon: 'check' }),
+                  btn('Queued', { feedback: 'queued', icon: 'layers' }),
+                  btn('Fetching page 2', {
+                    feedback: 'running',
+                    icon: 'activity',
+                  }),
+                  btn('Waiting to retry', {
+                    feedback: 'waiting',
+                    icon: 'clock',
+                  }),
+                  btn('Retry link', { feedback: 'failed', icon: 'alert' }),
+                ]),
+              ) +
+              g.rules([
+                'Put a short verb or result together with an icon on the control that started the action. A direct save can show Added as soon as membership is confirmed.',
+                'Use the returned job to show Queued, Running, Waiting and its actual outcome. Keep job evidence openable from the result.',
+                'Identify saved steps and remaining work when an operation partially succeeds. Keep duplicate submissions disabled where appropriate and expose recovery at the affected item.',
+                'Use the result in the same slot after a confirmation closes. If results replace the trigger or navigation changes the screen, carry the receipt to the surviving view.',
+              ]),
+          },
+          {
             id: 'play',
             title: 'Play control',
             body:
@@ -415,6 +442,10 @@
                 g.flow([
                   g.item(D.libraryAction('track', 'Glass Meridian'), 'Add'),
                   g.item(
+                    D.libraryAction('track', 'Glass Meridian', { added: true }),
+                    'Confirmed',
+                  ),
+                  g.item(
                     btn('', {
                       icon: 'search',
                       size: 'xs',
@@ -430,7 +461,7 @@
                 ]),
               ) +
               g.rules([
-                'Use the outlined book with a plus for an item outside the library. A catalog item can already have a detail page and still be eligible for Add. Keep the detail link for a library member. Remove the add action immediately after a successful save and announce the result to screen readers.',
+                'Use the outlined book with a plus for an item outside the library. A catalog item can already have a detail page and still be eligible for Add. Show Adding… on activation and Added in the same place after a successful save. Announce the result to screen readers. Keep the detail link when returning to a previously saved item.',
                 'Include the item kind and title in the tooltip and accessible name.',
                 'Put the action beside the title in the player or beside the service link in external results. Use the larger touch target beside the title on the phone player.',
                 'In queue rows, keep action space separate from the truncated text and leave the library slot empty for saved items. Use secondary label ink at rest and the shared ghost button hover and focus states.',

@@ -6,6 +6,14 @@ import {
 } from '@repo/schemas/ratings-explorer'
 import { fetchApiData } from './api'
 
+export function rankingKey(request: RatingsRankingRequest) {
+  return [request.library + 's', 'ratings-explorer', request]
+}
+
+export function ratingSourcesKey(request: RatingsSourcesRequest) {
+  return [request.library + 's', 'ratings-explorer', 'sources', request]
+}
+
 export function fetchRatingsRanking(
   apiBaseUrl: string,
   request: RatingsRankingRequest,

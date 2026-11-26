@@ -1,5 +1,7 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
+import { ReadButton } from '@/components/read-button'
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { DetailInspector } from './detail-inspector'
 import { DetailListFrame } from './detail-list-frame'
@@ -1339,7 +1341,9 @@ function MediaBrowse({
     ) : null
 
   return (
-    <section
+    <ResultSection
+      identity={queryKey}
+      result={query}
       className={embedded ? undefined : 'browse-page'}
       aria-label={collection}
       ref={browser}
@@ -1555,13 +1559,13 @@ function MediaBrowse({
                       <Notice
                         tone="danger"
                         action={
-                          <Button
+                          <ReadButton
                             type="button"
                             size="xs"
-                            onClick={() => savedViews.refetch()}
+                            read={() => savedViews.refetch()}
                           >
                             Retry
-                          </Button>
+                          </ReadButton>
                         }
                       >
                         Saved views unavailable.
@@ -1613,14 +1617,14 @@ function MediaBrowse({
           }}
           count={
             query.countError ? (
-              <Button
+              <ReadButton
                 type="button"
                 variant="link"
                 size="xs"
-                onClick={query.retryCount}
+                read={query.retryCount}
               >
                 Retry count
-              </Button>
+              </ReadButton>
             ) : !query.isCounting ? (
               formatItemCount(
                 total,
@@ -1693,9 +1697,9 @@ function MediaBrowse({
                 <Notice
                   tone="danger"
                   action={
-                    <Button type="button" size="xs" onClick={query.retry}>
+                    <ReadButton type="button" size="xs" read={query.retry}>
                       Retry
-                    </Button>
+                    </ReadButton>
                   }
                 >
                   Could not load {collection}.
@@ -2101,6 +2105,6 @@ function MediaBrowse({
           }}
         />
       )}
-    </section>
+    </ResultSection>
   )
 }

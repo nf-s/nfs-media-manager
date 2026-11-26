@@ -1,12 +1,13 @@
 'use client'
 
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { useMutation } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { toast } from '@repo/ui/components/ui/sonner'
 import { useAuthClient } from '@/hooks/useAuthClient'
 
 export default function LoginForm() {
@@ -14,6 +15,15 @@ export default function LoginForm() {
   const authClient = useAuthClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  useEffect(() => {
+    try {
+      if (window.sessionStorage.getItem('sign-out-confirmed') !== 'yes') return
+      window.sessionStorage.removeItem('sign-out-confirmed')
+      toast.success('Signed out')
+    } catch {
+      // Storage is optional for the sign-out receipt.
+    }
+  }, [])
 
   const loginMutation = useMutation({
     mutationFn: async () => {
@@ -27,6 +37,7 @@ export default function LoginForm() {
       }
     },
     onSuccess: async () => {
+      toast.success('Signed in')
       router.replace('/albums')
       router.refresh()
     },
@@ -76,11 +87,16 @@ export default function LoginForm() {
         size="md"
         variant="primary"
         type="submit"
+        feedback={mutationFeedback(loginMutation, {
+          pending: 'Signing in…',
+          success: 'Signed in',
+          error: 'Sign-in failed · retry',
+        })}
         disabled={
           loginMutation.isPending || email.length === 0 || password.length === 0
         }
       >
-        {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
+        Sign in
       </Button>
     </form>
   )

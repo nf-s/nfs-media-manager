@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import {
   ArtistIdentifierSourcePageSchema,
   type ArtistIdentifier,
@@ -7,7 +8,6 @@ import {
 } from '@repo/schemas/artist-profiles'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
 import { TableHead, TableState } from '@repo/ui/components/ui/table'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
 import { fetchApiData } from '@/utils/api'
@@ -122,9 +122,9 @@ export function ArtistIdentifierSources({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={query.retry}>
+            <ReadButton size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load identifier sources.

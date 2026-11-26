@@ -295,7 +295,11 @@ test('a listing in progress shows its page, polls and disables the button', () =
     [['playlists', 'spotify-imports'], imports],
     [['playlists', 'spotify-listing'], running],
   ])
-  assert.match(html, /disabled=""[^>]*>List again/)
+  assert.match(
+    html,
+    /<button[^>]*data-feedback="running"[^>]*disabled=""[^>]*>/,
+  )
+  assert.match(html, /<span>Running…<\/span>/)
   assert.match(
     html,
     /data-status="running">Running<\/span><\/a><span class="ds-muted"> 1 page</,

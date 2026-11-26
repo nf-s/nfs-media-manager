@@ -70,9 +70,15 @@ function render(data: SubscriptionSyncStatus, search = '') {
 }
 
 function button(html: string, label: string) {
-  const match = new RegExp(`<button[^>]*>${label}</button>`).exec(html)
+  const match = html
+    .match(/<button\b[^>]*>.*?<\/button>/g)
+    ?.find(
+      (markup) =>
+        markup.endsWith(`>${label}</button>`) ||
+        markup.endsWith(`<span>${label}</span></button>`),
+    )
   assert.ok(match, `Missing ${label} button`)
-  return match[0]
+  return match
 }
 
 test('an unconfigured account links to the YouTube credentials and cannot sync', () => {
@@ -88,10 +94,7 @@ test('an unconfigured account links to the YouTube credentials and cannot sync',
       nextScheduledAt: null,
     }),
   )
-  assert.match(
-    html,
-    /href="\/providers\/youtube\?tab=settings"/,
-  )
+  assert.match(html, /href="\/providers\/youtube\?tab=settings"/)
   assert.doesNotMatch(html, /Connect YouTube|Reconnect|Disconnect/)
   assert.match(button(html, 'Sync now'), / disabled=""/)
   assert.match(
@@ -131,7 +134,10 @@ test('a running sync shows channel progress, stop and the current job', () => {
     html,
     /role="progressbar" aria-valuemin="0" aria-valuemax="6" aria-valuenow="2"/,
   )
-  assert.match(button(html, 'Sync now'), / disabled=""/)
+  assert.match(
+    button(html, 'Syncing…'),
+    /data-feedback="running"[^>]* disabled=""/,
+  )
   assert.doesNotMatch(button(html, 'Stop'), / disabled=""/)
   assert.match(html, /href="\/jobs\/job-2">View current job/)
   assert.match(button(html, 'Reconnect'), /<button/)
@@ -166,7 +172,9 @@ test('a paused sync explains the quota and can be resumed', () => {
   )
   assert.match(html, /Paused: the daily YouTube API quota is used up\./)
   assert.match(html, /The schedule resumes it after /)
-  assert.doesNotMatch(button(html, 'Resume sync'), / disabled=""/)
+  const resume = button(html, 'Resume sync · waiting')
+  assert.match(resume, /data-feedback="waiting"/)
+  assert.doesNotMatch(resume, / disabled=""/)
   assert.doesNotMatch(html, />Stop</)
   const manual = render(
     status({

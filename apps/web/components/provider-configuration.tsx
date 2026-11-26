@@ -9,7 +9,7 @@ import {
 } from '@repo/schemas/provider'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Select } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { formatCount, formatItemCount, formatUntil } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
@@ -53,12 +53,17 @@ export function jobLimitText(
 function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
-  const [period, setPeriod] = useState(
-    provider.rateLimit.requestBudget?.period ?? 'day',
-  )
-  const [limit, setLimit] = useState(
-    String(provider.rateLimit.requestBudget?.limit ?? 1000),
-  )
+  const savedPeriod = provider.rateLimit.requestBudget?.period ?? 'day'
+  const savedLimit = String(provider.rateLimit.requestBudget?.limit ?? 1000)
+  const [period, setPeriod] = useState(savedPeriod)
+  const [limit, setLimit] = useState(savedLimit)
+  const budgetIdentity = `${savedPeriod}:${savedLimit}`
+  const [lastBudget, setLastBudget] = useState(budgetIdentity)
+  if (lastBudget !== budgetIdentity) {
+    setLastBudget(budgetIdentity)
+    setPeriod(savedPeriod)
+    setLimit(savedLimit)
+  }
   const parsed = ProviderRequestBudgetSchema.safeParse({
     period,
     limit: Number(limit),
@@ -76,8 +81,8 @@ function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
           ),
         },
       ),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ['providers'] })
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['providers'] })
     },
   })
   return (
@@ -86,7 +91,7 @@ function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
         className="providers-form"
         onSubmit={(event) => {
           event.preventDefault()
-          if (parsed.success) update.mutate()
+          if (parsed.success && !update.isPending) update.mutate()
         }}
       >
         {provider.budgetStatus && (
@@ -143,8 +148,13 @@ function RequestBudgetForm({ provider }: { provider: ProviderSummary }) {
             size="md"
             type="submit"
             disabled={update.isPending || !parsed.success}
+            feedback={mutationFeedback(update, {
+              pending: 'Saving…',
+              success: 'Budget saved',
+              error: 'Budget not saved',
+            })}
           >
-            {update.isPending ? 'Saving...' : 'Update budget'}
+            Update budget
           </Button>
         </div>
         <p className="ds-help">
@@ -237,10 +247,7 @@ export default function ProviderConfiguration({
   return (
     <>
       {provider.rateLimit.configurableRequestBudget && (
-        <RequestBudgetForm
-          key={`${provider.id}:${provider.rateLimit.requestBudget?.period}:${provider.rateLimit.requestBudget?.limit}`}
-          provider={provider}
-        />
+        <RequestBudgetForm key={provider.id} provider={provider} />
       )}
       <Section title="Request limits">
         <KeyValues items={requestLimits} />

@@ -200,17 +200,21 @@ export async function queueSpotifyPlaylistImports(
       PlaylistTargetSchema.parse({ ...item, source: 'spotify' }),
     ),
   ]
-  const batchId = nanoid()
-  for (const target of targets)
-    await createTaskJob(SPOTIFY_PLAYLIST_IMPORT_TASK, userId, {
+  const batchId = parsed.batchId ?? nanoid()
+  let queued = 0
+  for (const target of targets) {
+    const job = await createTaskJob(SPOTIFY_PLAYLIST_IMPORT_TASK, userId, {
       taskOptions: { ...target, batchId },
     })
+    if (job.options.batchId === batchId) queued++
+  }
   const missing = chosen.size - listed.length
   const refusedCount = listed.length - importable.length
+  const alreadyActive = targets.length - queued
   return EnrichmentResultSchema.parse({
     batchId,
-    queued: targets.length,
-    skipped: missing + refusedCount,
+    queued,
+    skipped: missing + refusedCount + alreadyActive,
     warnings: [
       ...(missing
         ? [
@@ -218,6 +222,7 @@ export async function queueSpotifyPlaylistImports(
           ]
         : []),
       ...(refusedCount ? [NOT_IMPORTABLE] : []),
+      ...(alreadyActive ? [`${alreadyActive} already queued or running.`] : []),
     ],
   })
 }

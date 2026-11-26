@@ -1,9 +1,9 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import type { MatchDiagnosticsPage } from '@repo/schemas/match-diagnostics'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
 import { formatDateTime } from '@repo/ui/lib/format'
 import {
   albumMatchHistoryKey,
@@ -40,16 +40,17 @@ export function AlbumMatchHistory({
         <Notice
           tone="danger"
           action={
-            <Button
+            <ReadButton
               size="xs"
               disabled={history.isFetching}
-              onClick={() => {
-                if (history.isFetchNextPageError) void history.fetchNextPage()
-                else void history.refetch()
-              }}
+              read={() =>
+                history.isFetchNextPageError
+                  ? history.fetchNextPage()
+                  : history.refetch()
+              }
             >
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load match history.
@@ -85,14 +86,16 @@ export function AlbumMatchHistory({
         </ul>
       )}
       {history.hasNextPage && !history.isFetchNextPageError && (
-        <Button
+        <ReadButton
           size="xs"
           variant="ghost"
           disabled={history.isFetching}
-          onClick={() => void history.fetchNextPage()}
+          loadingLabel="Loading more…"
+          loadedLabel="Loaded more"
+          read={() => history.fetchNextPage()}
         >
           Show older
-        </Button>
+        </ReadButton>
       )}
     </div>
   )

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useRef, useState } from 'react'
@@ -12,7 +13,7 @@ import {
   LastfmLinkReportSchema,
   type LastfmLinkGroup,
 } from '@repo/schemas/lastfm'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
@@ -452,8 +453,13 @@ export default function LastfmLinks() {
             <Button
               disabled={relink.isPending || running || queuePending}
               onClick={() => relink.mutate()}
+              feedback={mutationFeedback(relink, {
+                pending: 'Relinking…',
+                success: 'Matches updated',
+                error: 'Could not relink',
+              })}
             >
-              {relink.isPending ? 'Relinking...' : 'Relink'}
+              Relink
             </Button>
             <span className="ds-help">
               Links are recomputed after every sync. Relink applies library
@@ -469,9 +475,9 @@ export default function LastfmLinks() {
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={links.retry}>
+                <ReadButton size="xs" read={links.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load scrobble links.
@@ -589,9 +595,9 @@ export default function LastfmLinks() {
                   ) : links.isError ? (
                     <>
                       Could not load scrobble links.{' '}
-                      <Button size="xs" onClick={links.retry}>
+                      <ReadButton size="xs" read={links.retry}>
                         Retry
-                      </Button>
+                      </ReadButton>
                     </>
                   ) : (
                     'No scrobbled names match.'

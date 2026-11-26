@@ -1,10 +1,10 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import type { ReactNode } from 'react'
 import type { TrackListItem } from '@repo/schemas/tracks'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
 import {
   AdditionList,
   AdditionState,
@@ -28,7 +28,12 @@ function MatchedTrack({
     trackId,
     onResolved,
   )
-  const adding = useAddToPlaylist('track', trackId, additionList)
+  const adding = useAddToPlaylist(
+    'track',
+    trackId,
+    additionList,
+    playlists.data,
+  )
   const names = new Map(
     (playlists.data ?? []).map((playlist) => [playlist.id, playlist.name]),
   )
@@ -40,9 +45,9 @@ function MatchedTrack({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => additions.refetch()}>
+            <ReadButton size="xs" read={() => additions.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load playlist additions.

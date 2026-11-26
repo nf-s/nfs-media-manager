@@ -15,6 +15,29 @@ import {
 
 const filteredCount = /^[\d,]+ of [\d,]+ tracks$/
 
+test('Possible duplicates reports the server read on its own toggle', async ({
+  page,
+}) => {
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/tracks/duplicates/layout?*', async (route) => {
+    await held
+    await route.continue()
+  })
+  await page.goto('/tracks/matches')
+  const toggle = page.getByRole('button', { name: /Possible duplicates/ })
+  try {
+    await toggle.click()
+    await expect(toggle).toHaveText('Updating…')
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  } finally {
+    release()
+  }
+  await expect(toggle).toHaveText('Results updated')
+})
+
 test('Tracks Browse filters by a field, selects rows and keeps the filter on reload', async ({
   page,
 }) => {
@@ -147,12 +170,11 @@ test('Tracks Browse adds an outside track from its title cell', async ({
     created: true,
     mediaItemId: id,
   })
+  await expect(titleCell.locator('.ds-library-action')).toHaveText('Added')
   await expect(add).toHaveCount(0)
   await expect(
-    page
-      .getByRole('status')
-      .filter({ hasText: `Added track to library · ${title}` }),
-  ).toHaveAttribute('aria-atomic', 'true')
+    page.getByText(`Added track to library · ${title}`, { exact: true }),
+  ).toBeVisible()
   expect(new URL(page.url()).searchParams.get('inspect')).toBeNull()
   expect(adds).toBe(1)
 

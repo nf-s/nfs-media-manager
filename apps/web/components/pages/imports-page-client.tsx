@@ -1,6 +1,8 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -8,14 +10,17 @@ import {
   ImportRunSchema,
   type ImportRun,
 } from '@repo/schemas/imports'
-import { Button } from '@repo/ui/components/ui/button'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Progress } from '@repo/ui/components/ds/meter'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
 import { EMPTY_VALUE, formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
-import { importIdlePollMs, importPollInterval } from '@/utils/import-cache'
+import {
+  importIdlePollMs,
+  importPollInterval,
+  importRunFeedback,
+} from '@/utils/import-cache'
 import { runStatusLabel, runStatusStates } from '@/utils/run-status'
 import { useConfig } from '@/components/providers'
 import {
@@ -65,6 +70,7 @@ export function ImportProgress({ run }: { run: ImportRun }) {
 
 export default function ImportsPageClient() {
   const [status, setStatus] = useState<ImportRun['status'][]>([])
+  const runId = useSearchParams().get('runId')
   const { apiBaseUrl } = useConfig()
   const mediaType = useMediaScope()
   const query = useQuery({
@@ -82,18 +88,25 @@ export default function ImportsPageClient() {
     query.data?.runs.filter(
       (run) => run.mediaType === null || run.mediaType === mediaType,
     ) ?? []
+  const currentRun = runs.find((run) => run.id === runId)
   return (
     <section className="sec-page">
       <PageHead title={`Recent ${mediaType} imports`} />
       <div className="sec-notices">
         <ImportStatusNotice />
+        {currentRun && (
+          <Notice tone={currentRun.status === 'failed' ? 'danger' : undefined}>
+            {importRunFeedback(currentRun).label}.{' '}
+            {currentRun.errorMessage || currentRun.stage}
+          </Notice>
+        )}
         {query.isError && (
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={() => query.refetch()}>
+              <ReadButton size="xs" read={() => query.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load {mediaType} import history.

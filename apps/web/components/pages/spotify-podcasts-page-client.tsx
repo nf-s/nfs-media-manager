@@ -1,10 +1,11 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
@@ -15,8 +16,7 @@ import SubscriptionSyncPanel from '@/components/subscription-sync'
 import { fetchApiData } from '@/utils/api'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
 
-export const SPOTIFY_PODCAST_SETTINGS_HREF =
-  '/providers/spotify?tab=settings'
+export const SPOTIFY_PODCAST_SETTINGS_HREF = '/providers/spotify?tab=settings'
 
 export function SpotifyPodcastAccount() {
   const { apiBaseUrl } = useConfig()
@@ -44,9 +44,9 @@ export function SpotifyPodcastAccount() {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => account.refetch()}>
+            <ReadButton size="xs" read={() => account.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load the Spotify account.
@@ -81,13 +81,21 @@ export function SpotifyPodcastAccount() {
             size="md"
             variant={status.connected ? 'default' : 'primary'}
             disabled={!status.configured || authorize.isPending}
+            feedback={
+              authorize.isSuccess
+                ? { phase: 'waiting', label: 'Waiting for authorization' }
+                : (mutationFeedback(authorize, {
+                    pending: 'Opening Spotify…',
+                    success: 'Connected',
+                    error: 'Could not open sign-in',
+                  }) ??
+                  (outcome === 'connected' && status.connected
+                    ? { phase: 'done', label: 'Spotify connected' }
+                    : undefined))
+            }
             onClick={() => authorize.mutate()}
           >
-            {authorize.isPending
-              ? 'Connecting...'
-              : status.connected
-                ? 'Reconnect Spotify'
-                : 'Connect Spotify'}
+            {status.connected ? 'Reconnect Spotify' : 'Connect Spotify'}
           </Button>
         </span>
       )}

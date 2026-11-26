@@ -7,7 +7,11 @@ import type { AlbumDetail, AlbumEdition } from '@repo/schemas/media'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
@@ -41,7 +45,11 @@ function EditionsTable({
   label: string
   albums: readonly AlbumEdition[]
   /** Separate for each row; the rows have none when omitted. */
-  separate?: { pending: boolean; onSeparate: (albumId: string) => void }
+  separate?: {
+    pending: boolean
+    onSeparate: (albumId: string) => void
+    feedback: (albumId: string) => ButtonFeedback | undefined
+  }
 }) {
   const widths = useTableWidths('album-editions', editionColumns)
   const layout = widths.layout([
@@ -105,6 +113,7 @@ function EditionsTable({
                     disabled={separate.pending}
                     aria-label={`Separate ${album.title}`}
                     onClick={() => separate.onSeparate(album.id)}
+                    feedback={separate.feedback(album.id)}
                   >
                     Separate
                   </Button>
@@ -130,9 +139,9 @@ export default function AlbumEditions({ album }: { album: AlbumDetail }) {
   const separate = useMutation({
     retry: false,
     mutationFn: (albumId: string) => separateAlbumEdition(apiBaseUrl, albumId),
-    onSuccess: async (next) => {
+    onSuccess: (next) => {
       setChange(next)
-      await invalidateAlbumChange(client, next)
+      void invalidateAlbumChange(client, next)
     },
   })
   const editions = album.editions ?? []
@@ -157,6 +166,14 @@ export default function AlbumEditions({ album }: { album: AlbumDetail }) {
     setChange(null)
     separate.mutate(albumId)
   }
+  const feedback = (albumId: string) =>
+    separate.variables === albumId
+      ? mutationFeedback(separate, {
+          pending: 'Separating…',
+          success: 'Separated',
+          error: 'Could not separate',
+        })
+      : undefined
   if (editionOf)
     return (
       <Section
@@ -168,6 +185,7 @@ export default function AlbumEditions({ album }: { album: AlbumDetail }) {
             disabled={separate.isPending}
             aria-label={`Separate ${album.title} from ${editionOf.title}`}
             onClick={() => onSeparate(album.id)}
+            feedback={feedback(album.id)}
           >
             Separate
           </Button>
@@ -184,7 +202,7 @@ export default function AlbumEditions({ album }: { album: AlbumDetail }) {
         <EditionsTable
           label={`Editions of ${album.title}`}
           albums={editions}
-          separate={{ pending: separate.isPending, onSeparate }}
+          separate={{ pending: separate.isPending, onSeparate, feedback }}
         />
       </Section>
     )

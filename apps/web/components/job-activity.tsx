@@ -1,5 +1,6 @@
 'use client'
 
+import { openReadFeedback, ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useEffect, useId, useRef, useState } from 'react'
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -206,9 +207,17 @@ export default function JobActivity() {
       className="shell-activity"
       data-idle={failed === 0 && active === 0 ? '' : undefined}
     >
-      <button
+      <Button
         type="button"
         ref={trigger}
+        variant="ghost"
+        size="xs"
+        feedback={openReadFeedback(
+          open,
+          running.isPending || queued.isPending || providers.isPending,
+          running.isError || queued.isError || providers.isError,
+          'Activity loaded',
+        )}
         popoverTarget={id}
         aria-label={`Job activity: ${summary}`}
         aria-expanded={open}
@@ -226,7 +235,7 @@ export default function JobActivity() {
         <span className="sr-only" aria-live="polite" aria-atomic="true">
           {summary}
         </span>
-      </button>
+      </Button>
       <div
         id={id}
         ref={panel}
@@ -265,9 +274,9 @@ export default function JobActivity() {
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => activity.refetch()}>
+                <ReadButton size="xs" read={() => activity.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Status unavailable.{counts ? ' Showing last known counts.' : ''}

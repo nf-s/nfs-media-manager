@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -13,7 +14,12 @@ import type {
   ManualMediaSearchItem,
   ManualMediaSearchResult,
 } from '@repo/schemas/manual-add'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { DetailHeader } from '@repo/ui/components/ds/detail-header'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
@@ -41,8 +47,6 @@ import { addAndLinkLastfmAlbum } from '@/utils/lastfm-album-add'
 export type LastfmLinkPanelMode = 'library' | 'new'
 
 const SCROBBLES = { one: 'scrobble', other: 'scrobbles' }
-const ALBUMS = { one: 'album', other: 'albums' }
-
 type SearchSnapshot = {
   query: string
   result: ManualMediaSearchResult
@@ -110,9 +114,9 @@ function ScrobbleSpotifySearch({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => stored.refetch()}>
+            <ReadButton size="xs" read={() => stored.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load the saved Spotify search.
@@ -180,6 +184,7 @@ export default function LastfmLinkPanel({
   backgroundError,
   backgroundPending = false,
   onRetry,
+  onChanged,
 }: {
   group: LastfmLinkGroup
   initialMode?: LastfmLinkPanelMode
@@ -188,6 +193,7 @@ export default function LastfmLinkPanel({
   backgroundError?: string
   backgroundPending?: boolean
   onRetry?: () => void
+  onChanged?: (label: string, albumId?: string) => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -196,6 +202,35 @@ export default function LastfmLinkPanel({
   const [mode, setMode] = useState<LastfmLinkPanelMode>(initialMode)
   const [openedNew, setOpenedNew] = useState(initialMode === 'new')
   const locallyBusy = adding || update.isPending
+  function linkFeedback(action: 'link' | 'unlink' | 'auto', albumId?: string) {
+    if (
+      update.variables?.action !== action ||
+      (action === 'link' &&
+        update.variables.action === 'link' &&
+        update.variables.albumId !== albumId)
+    )
+      return undefined
+    return mutationFeedback(
+      update,
+      action === 'link'
+        ? {
+            pending: 'Linking scrobbles…',
+            success: 'Scrobbles linked',
+            error: 'Could not link',
+          }
+        : action === 'unlink'
+          ? {
+              pending: 'Unlinking…',
+              success: 'Unlinked',
+              error: 'Could not unlink',
+            }
+          : {
+              pending: 'Restoring automatic linking…',
+              success: 'Automatic linking restored',
+              error: 'Could not restore automatic linking',
+            },
+    )
+  }
   const busy = backgroundPending || locallyBusy
   const albumName = group.albumName
   const linked = group.reason === 'linked' || group.reason === 'manual'
@@ -220,6 +255,11 @@ export default function LastfmLinkPanel({
       albumName,
       albumId,
     })
+    finish('Scrobbles linked', albumId)
+  }
+
+  function finish(label: string, albumId?: string) {
+    onChanged?.(label, albumId)
     onClose()
   }
 
@@ -227,7 +267,7 @@ export default function LastfmLinkPanel({
     if (albumName === null || busy) return
     update.mutate(
       { action: 'link', artistName: group.artistName, albumName, albumId },
-      { onSuccess: onClose },
+      { onSuccess: () => finish('Scrobbles linked', albumId) },
     )
   }
 
@@ -282,6 +322,7 @@ export default function LastfmLinkPanel({
                     <Button
                       size="md"
                       disabled={busy}
+                      feedback={linkFeedback('unlink')}
                       onClick={() =>
                         update.mutate(
                           {
@@ -290,7 +331,7 @@ export default function LastfmLinkPanel({
                             artistName: group.artistName,
                             albumName,
                           },
-                          { onSuccess: onClose },
+                          { onSuccess: () => finish('Scrobbles unlinked') },
                         )
                       }
                     >
@@ -302,6 +343,7 @@ export default function LastfmLinkPanel({
                     <Button
                       size="md"
                       disabled={busy}
+                      feedback={linkFeedback('auto')}
                       onClick={() =>
                         update.mutate(
                           {
@@ -309,7 +351,10 @@ export default function LastfmLinkPanel({
                             artistName: group.artistName,
                             albumName,
                           },
-                          { onSuccess: onClose },
+                          {
+                            onSuccess: () =>
+                              finish('Automatic linking restored'),
+                          },
                         )
                       }
                     >
@@ -391,6 +436,7 @@ export default function LastfmLinkPanel({
                             <Button
                               size="xs"
                               disabled={busy}
+                              feedback={linkFeedback('link', album.id)}
                               onClick={() => chooseLibraryAlbum(album.id)}
                             >
                               Link
@@ -417,6 +463,7 @@ export default function LastfmLinkPanel({
                   <AlbumPicker
                     label={`Album for ${group.artistName} — ${albumName}`}
                     initialQuery={albumName}
+                    feedback={(id) => linkFeedback('link', id)}
                     enabled={mode === 'library'}
                     disabled={busy}
                     onPick={chooseLibraryAlbum}
@@ -459,6 +506,20 @@ type BackgroundAddition = {
   item: ManualMediaSearchItem
   key: string
   error: string | null
+  albumId: string | null
+  done: boolean
+}
+
+function additionFeedback(operation: BackgroundAddition): ButtonFeedback {
+  if (operation.done) return { phase: 'done', label: 'Scrobbles linked' }
+  if (operation.error)
+    return operation.albumId
+      ? { phase: 'partial', label: 'Album saved · retry linking' }
+      : { phase: 'failed', label: 'Could not add and link' }
+  return {
+    phase: 'pending',
+    label: operation.albumId ? 'Album saved · linking…' : 'Adding album…',
+  }
 }
 
 /** Keeps album additions alive while the user moves between scrobbled names. */
@@ -472,13 +533,18 @@ export function LastfmLinkWorkflow({
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const [operations, setOperations] = useState<BackgroundAddition[]>([])
+  const [linkResult, setLinkResult] = useState<{
+    label: string
+    group: LastfmLinkGroup
+    albumId?: string
+  } | null>(null)
   const pending = useRef(new Set<string>())
   const added = useRef(new Map<string, string | null>())
   const currentSelection = useRef(selection)
   currentSelection.current = selection
   const addition = useMutation({
     retry: false,
-    mutationFn: async ({ group, item }: BackgroundAddition) => {
+    mutationFn: async ({ group, item, key }: BackgroundAddition) => {
       if (group.albumName === null)
         throw new Error('The scrobble has no album name.')
       const next = await addAndLinkLastfmAlbum({
@@ -486,23 +552,37 @@ export function LastfmLinkWorkflow({
         source: { artistName: group.artistName, albumName: group.albumName },
         item,
         identities: added.current,
+        onAlbumReady: (albumId) =>
+          setOperations((current) =>
+            current.map((operation) =>
+              operation.key === key ? { ...operation, albumId } : operation,
+            ),
+          ),
       })
       client.setQueryData(['lastfm-sync'], next)
-      await Promise.all([
+      void Promise.all([
         invalidateScrobbleLinks(client),
         invalidateManualMediaAddition(client, 'album'),
       ])
     },
     onSuccess: (_, operation) => {
       setOperations((current) =>
-        current.filter((item) => item.key !== operation.key),
+        current.map((item) =>
+          item.key === operation.key ? { ...item, done: true } : item,
+        ),
       )
     },
     onError: (error, operation) => {
       const message = errorMessage(error, 'Could not add and link the album.')
       setOperations((current) =>
         current.map((item) =>
-          item.key === operation.key ? { ...item, error: message } : item,
+          item.key === operation.key
+            ? {
+                ...item,
+                error: message,
+                albumId: added.current.get(operation.item.externalId) ?? null,
+              }
+            : item,
         ),
       )
       if (currentSelection.current === null) {
@@ -523,7 +603,14 @@ export function LastfmLinkWorkflow({
     const key = lastfmLinkKey(group)
     if (pending.current.has(key)) return
     pending.current.add(key)
-    const operation = { group, item, key, error: null }
+    const operation = {
+      group,
+      item,
+      key,
+      error: null,
+      albumId: added.current.get(item.externalId) ?? null,
+      done: false,
+    }
     setOperations((current) => [
       ...current.filter((entry) => entry.key !== key),
       operation,
@@ -538,49 +625,90 @@ export function LastfmLinkWorkflow({
         (operation) => operation.key === lastfmLinkKey(selection.group),
       )
     : undefined
-  const pendingCount = operations.filter(
-    (operation) => operation.error === null,
-  ).length
-  const failures = operations.filter((operation) => operation.error !== null)
   return (
     <>
-      {(pendingCount > 0 || failures.length > 0) && (
-        <div className="sec-notices">
-          {pendingCount > 0 && (
-            <Notice>
-              Adding and linking {formatItemCount(pendingCount, ALBUMS)} in the
-              background…
-            </Notice>
+      {linkResult && (
+        <Notice
+          action={
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => setLinkResult(null)}
+            >
+              Dismiss
+            </Button>
+          }
+        >
+          <span className="ds-cell-id" role="status">
+            <ButtonFeedbackLabel
+              feedback={{ phase: 'done', label: linkResult.label }}
+            />
+          </span>{' '}
+          {linkResult.albumId ? (
+            <DetailLink kind="album" id={linkResult.albumId}>
+              {linkResult.group.albumName}
+            </DetailLink>
+          ) : (
+            linkResult.group.albumName
           )}
-          {failures.map((operation) => (
+        </Notice>
+      )}
+      {operations.length > 0 && (
+        <div className="sec-notices">
+          {operations.map((operation) => (
             <Notice
               key={operation.key}
-              tone="danger"
+              tone={operation.error ? 'danger' : undefined}
               action={
                 <span className="ds-actions">
-                  <Button
-                    size="xs"
-                    onClick={() =>
-                      onSelectionChange({ group: operation.group, mode: 'new' })
-                    }
-                  >
-                    Review
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    onClick={() =>
-                      setOperations((current) =>
-                        current.filter((item) => item.key !== operation.key),
-                      )
-                    }
-                  >
-                    Dismiss
-                  </Button>
+                  {operation.error && operation.albumId && (
+                    <Button
+                      size="xs"
+                      feedback={additionFeedback(operation)}
+                      onClick={() => start(operation.group, operation.item)}
+                    >
+                      Retry linking
+                    </Button>
+                  )}
+                  {operation.error && !operation.albumId && (
+                    <Button
+                      size="xs"
+                      onClick={() =>
+                        onSelectionChange({
+                          group: operation.group,
+                          mode: 'new',
+                        })
+                      }
+                    >
+                      Review
+                    </Button>
+                  )}
+                  {(operation.error || operation.done) && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() =>
+                        setOperations((current) =>
+                          current.filter((item) => item.key !== operation.key),
+                        )
+                      }
+                    >
+                      Dismiss
+                    </Button>
+                  )}
                 </span>
               }
             >
-              {operation.group.artistName} — {operation.group.albumName}:{' '}
+              <span className="ds-cell-id" role="status">
+                <ButtonFeedbackLabel feedback={additionFeedback(operation)} />
+              </span>{' '}
+              {operation.albumId ? (
+                <DetailLink kind="album" id={operation.albumId}>
+                  {operation.item.title}
+                </DetailLink>
+              ) : (
+                operation.item.title
+              )}{' '}
               {operation.error}
             </Notice>
           ))}
@@ -592,10 +720,15 @@ export function LastfmLinkWorkflow({
           group={selection.group}
           initialMode={selection.mode}
           onClose={() => onSelectionChange(null)}
+          onChanged={(label, albumId) =>
+            setLinkResult({ label, albumId, group: selection.group })
+          }
           onChoose={(item) => start(selection.group, item)}
           backgroundError={selectedOperation?.error ?? undefined}
           backgroundPending={
-            selectedOperation !== undefined && selectedOperation.error === null
+            selectedOperation !== undefined &&
+            !selectedOperation.done &&
+            selectedOperation.error === null
           }
           onRetry={
             selectedOperation?.error

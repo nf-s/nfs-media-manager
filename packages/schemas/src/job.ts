@@ -450,6 +450,9 @@ export const StartRefreshSchema = RefreshFilmsSchema.extend({
 export const RetryJobsSchema = z.object({
   confirmBroadRun: z.boolean().default(false),
 })
+export const RetryJobBatchSchema = RetryJobsSchema.extend({
+  batchId: z.string().uuid().optional(),
+})
 
 const BulkJobIdsSchema = z
   .array(z.string().min(1))
@@ -459,7 +462,7 @@ const BulkJobIdsSchema = z
     message: 'Job IDs must be unique',
   })
 
-export const BulkRetryJobsSchema = RetryJobsSchema.extend({
+export const BulkRetryJobsSchema = RetryJobBatchSchema.extend({
   jobIds: BulkJobIdsSchema,
   confirmRunning: z.boolean().optional(),
 })

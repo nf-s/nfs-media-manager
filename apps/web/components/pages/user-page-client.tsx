@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { z } from 'zod'
@@ -12,7 +13,11 @@ import {
   CreateApiKeySchema,
   RevokedApiKeySchema,
 } from '@repo/schemas/api-key'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { Section } from '@repo/ui/components/ds/facts'
@@ -50,7 +55,7 @@ function CreatedKeyDetails({
   now: number
   onDone: () => void
 }) {
-  const [copyStatus, setCopyStatus] = useState('')
+  const [copyStatus, setCopyStatus] = useState<ButtonFeedback>()
   const output = useRef<HTMLTextAreaElement>(null)
   const expiresAt = created.apiKey.expiresAt
   const remaining = expiresAt
@@ -62,13 +67,14 @@ function CreatedKeyDetails({
     output.current?.select()
   }, [])
   async function copy() {
+    setCopyStatus({ phase: 'pending', label: 'Copying…' })
     try {
       await navigator.clipboard.writeText(value)
-      setCopyStatus('Copied.')
+      setCopyStatus({ phase: 'done', label: 'Copied' })
     } catch {
       output.current?.focus()
       output.current?.select()
-      setCopyStatus('Copy was blocked. Copy the selected text manually.')
+      setCopyStatus({ phase: 'failed', label: 'Copy blocked' })
     }
   }
   return (
@@ -99,13 +105,21 @@ function CreatedKeyDetails({
         />
       </label>
       <span className="sec-line">
-        <Button variant="primary" type="button" onClick={() => void copy()}>
+        <Button
+          variant="primary"
+          type="button"
+          feedback={copyStatus}
+          disabled={copyStatus?.phase === 'pending'}
+          onClick={() => void copy()}
+        >
           {created.instructions ? 'Copy agent instructions' : 'Copy API key'}
         </Button>
         <Button type="button" onClick={onDone}>
           Done
         </Button>
-        {copyStatus && <span role="status">{copyStatus}</span>}
+        {copyStatus?.phase === 'failed' && (
+          <span role="status">Copy the selected text manually.</span>
+        )}
       </span>
     </Section>
   )
@@ -260,6 +274,15 @@ export default function UserPageClient() {
               variant={created ? 'default' : 'primary'}
               type="button"
               disabled={creating}
+              feedback={
+                create.variables?.kind === 'agent'
+                  ? mutationFeedback(create, {
+                      pending: 'Granting access…',
+                      success: 'Access granted',
+                      error: 'Grant failed',
+                    })
+                  : undefined
+              }
               onClick={() => create.mutate({ kind: 'agent' })}
             >
               {create.isPending && create.variables?.kind === 'agent'
@@ -330,7 +353,20 @@ export default function UserPageClient() {
               </Select>
             </div>
             <ApiKeyRateLimitFields disabled={creating} />
-            <Button size="md" type="submit" disabled={creating || !name.trim()}>
+            <Button
+              size="md"
+              type="submit"
+              disabled={creating || !name.trim()}
+              feedback={
+                create.variables?.kind === 'manual'
+                  ? mutationFeedback(create, {
+                      pending: 'Creating…',
+                      success: 'Key created',
+                      error: 'Creation failed',
+                    })
+                  : undefined
+              }
+            >
               {create.isPending && create.variables?.kind === 'manual'
                 ? 'Creating...'
                 : 'Create key'}
@@ -361,6 +397,11 @@ export default function UserPageClient() {
                 variant="primary"
                 type="submit"
                 disabled={updateLimit.isPending}
+                feedback={mutationFeedback(updateLimit, {
+                  pending: 'Saving limit…',
+                  success: 'Limit saved',
+                  error: 'Save failed',
+                })}
               >
                 {updateLimit.isPending ? 'Saving...' : 'Save limit'}
               </Button>
@@ -389,9 +430,9 @@ export default function UserPageClient() {
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={() => void keys.refetch()}>
+              <ReadButton size="xs" read={() => keys.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not refresh API keys.
@@ -417,9 +458,9 @@ export default function UserPageClient() {
           ) : keys.isError ? (
             <>
               Could not load API keys.{' '}
-              <Button size="xs" onClick={() => void keys.refetch()}>
+              <ReadButton size="xs" read={() => keys.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             </>
           ) : (
             'No API keys.'
@@ -523,6 +564,12 @@ export default function UserPageClient() {
                   size="xs"
                   type="button"
                   aria-label={`Edit rate limit for ${key.name}`}
+                  feedback={
+                    updateLimit.variables?.id === key.id &&
+                    updateLimit.isSuccess
+                      ? { phase: 'done', label: 'Limit saved' }
+                      : undefined
+                  }
                   disabled={
                     apiKeyStatus(key, now) !== 'Active' || updateLimit.isPending
                   }
@@ -541,6 +588,15 @@ export default function UserPageClient() {
                   question={`Revoke ${key.name}?`}
                   details="Requests that use this key stop working at once."
                   confirmLabel="Revoke"
+                  feedback={
+                    revoke.variables === key.id
+                      ? mutationFeedback(revoke, {
+                          pending: 'Revoking…',
+                          success: 'Revoked',
+                          error: 'Revoke failed',
+                        })
+                      : undefined
+                  }
                   disabled={!key.enabled || revoke.isPending}
                   onConfirm={() => revoke.mutate(key.id)}
                 >

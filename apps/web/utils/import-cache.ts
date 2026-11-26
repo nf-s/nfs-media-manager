@@ -1,7 +1,38 @@
 import type { ImportRun } from '@repo/schemas/imports'
 import type { QueryClient } from '@tanstack/react-query'
+import type { ButtonFeedback } from '@repo/ui/components/ui/button'
+import { formatCount } from '@repo/ui/lib/format'
 
 export const importIdlePollMs = 30_000
+
+export function importRunFeedback(run: ImportRun): ButtonFeedback {
+  switch (run.status) {
+    case 'queued':
+      return run.stage === 'Awaiting queue delivery'
+        ? { phase: 'waiting', label: 'Waiting for import worker' }
+        : { phase: 'queued', label: 'Import queued' }
+    case 'running':
+      return {
+        phase: 'running',
+        label:
+          run.stage === 'Queueing selected metadata'
+            ? 'Queueing metadata…'
+            : run.total
+              ? `${formatCount(run.processed)}/${formatCount(run.total)} rows processed`
+              : 'Importing…',
+      }
+    case 'succeeded':
+      return run.result?.warnings?.length
+        ? { phase: 'partial', label: 'Imported with warnings' }
+        : { phase: 'done', label: 'Imported' }
+    case 'failed':
+      return run.result?.created || run.result?.updated
+        ? { phase: 'partial', label: 'Partly imported' }
+        : { phase: 'failed', label: 'Import failed' }
+    case 'cancelled':
+      return { phase: 'cancelled', label: 'Import cancelled' }
+  }
+}
 
 export function importPollInterval(
   runs: ReadonlyArray<Pick<ImportRun, 'status'>> | undefined,

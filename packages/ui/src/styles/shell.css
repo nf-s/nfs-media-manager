@@ -100,6 +100,11 @@
 .shell-activity-trigger:hover {
   background: var(--ds-chip);
 }
+.shell-activity-trigger[data-feedback] {
+  align-items: center;
+  width: auto;
+  background: var(--ds-surface);
+}
 
 /* Second-level navigation: in the rail, or as tabs above the page */
 .shell-section-nav {

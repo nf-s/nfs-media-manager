@@ -162,7 +162,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
       !count.isFetching &&
       ((!rows.hasTotal && count.isError) ||
         (conflict !== undefined && lastConflict.current === conflict)),
-    retryCount: () => void count.refetch({ cancelRefetch: false }),
+    retryCount: () => count.refetch({ cancelRefetch: false }),
     resolveTotal: async (index: number) => {
       if (rows.hasTotal && !conflict) return rows.total
       // A playing queue still needs its count if the user leaves Browse.
@@ -398,9 +398,7 @@ export function useVirtualPages<Page extends VirtualPageData>({
       prioritizeVisible && visible ? visible.isPending : first.isPending,
     isError: failures.length > 0,
     isFetching: [...pages.values()].some((query) => query.isFetching),
-    retry: () => {
-      for (const query of failures) void query.refetch()
-    },
+    retry: () => Promise.all(failures.map((query) => query.refetch())),
   }
 }
 

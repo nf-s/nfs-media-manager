@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { Check, Search } from 'lucide-react'
+import { ButtonFeedbackLabel, type ButtonFeedback } from '../ui/button'
 
 export type SortOption<Key extends string> = { key: Key; label: string }
 
@@ -39,10 +40,12 @@ export function SortPicker<Key extends string>({
   value,
   options,
   onChange,
+  feedback,
 }: {
   value: Key
   options: readonly SortOption<Key>[]
   onChange: (key: Key) => void
+  feedback?: ButtonFeedback
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
@@ -142,11 +145,17 @@ export function SortPicker<Key extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={id}
-        aria-label={`Sort by: ${label}`}
+        aria-label={
+          feedback
+            ? `${feedback.label} · Sort by: ${label}`
+            : `Sort by: ${label}`
+        }
+        aria-busy={feedback?.phase === 'pending' || undefined}
+        aria-live={feedback ? 'polite' : undefined}
         title={label}
         popoverTarget={id}
       >
-        {label}
+        {feedback ? <ButtonFeedbackLabel feedback={feedback} /> : label}
       </button>
       <div
         id={id}

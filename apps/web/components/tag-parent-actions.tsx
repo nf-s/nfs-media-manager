@@ -9,7 +9,11 @@ import {
   type Tag,
 } from '@repo/schemas/tags'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { formatItemCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
@@ -62,7 +66,7 @@ export default function TagParentActions({
 }: {
   tags: Tag[]
   disabled?: boolean
-  onComplete: (ids: string[], message: string, interrupted: boolean) => void
+  onComplete: (ids: string[], message: string, feedback: ButtonFeedback) => void
   onPendingChange?: (pending: boolean) => void
 }) {
   const [parent, setParent] = useState<Tag | null>(null)
@@ -90,7 +94,10 @@ export default function TagParentActions({
             onComplete(
               result.completed,
               `${updated} updated. Stopped: ${result.message ?? 'Could not update parent tags.'}`,
-              true,
+              {
+                phase: result.completed.length ? 'partial' : 'unconfirmed',
+                label: `${updated} confirmed`,
+              },
             )
             return
           }
@@ -102,7 +109,15 @@ export default function TagParentActions({
               : target
                 ? `Moved ${updated} under ${formatTagName(target.name)}.`
                 : `Removed parents from ${updated}.`,
-            false,
+            {
+              phase: 'done',
+              label:
+                mode === 'add'
+                  ? 'Parent added'
+                  : target
+                    ? 'Tags moved'
+                    : 'Parents removed',
+            },
           )
         },
         onSettled: () => onPendingChange?.(false),
@@ -110,6 +125,41 @@ export default function TagParentActions({
     )
   }
   const busy = disabled || pending || !mediaType
+  function feedback(
+    mode: SetTagParentsInput['mode'],
+    target: Tag | null,
+  ): ButtonFeedback | undefined {
+    if (
+      parents.variables?.mode !== mode ||
+      parents.variables?.parentIds[0] !== target?.id
+    )
+      return undefined
+    if (parents.data?.interrupted)
+      return {
+        phase: parents.data.completed.length ? 'partial' : 'unconfirmed',
+        label: `${parents.data.completed.length} confirmed`,
+      }
+    return mutationFeedback(
+      parents,
+      mode === 'add'
+        ? {
+            pending: 'Adding parent…',
+            success: 'Parent added',
+            error: 'Could not add parent',
+          }
+        : target
+          ? {
+              pending: 'Moving tags…',
+              success: 'Tags moved',
+              error: 'Could not move tags',
+            }
+          : {
+              pending: 'Removing parents…',
+              success: 'Parents removed',
+              error: 'Could not remove parents',
+            },
+    )
+  }
   return (
     <div className="dtl-stack" role="group" aria-label="Parent tags">
       {parent ? (
@@ -142,18 +192,24 @@ export default function TagParentActions({
         )
       )}
       <div className="ds-actions dtl-wrap">
-        <Button disabled={busy || !parent} onClick={() => run('add', parent)}>
+        <Button
+          disabled={busy || !parent}
+          onClick={() => run('add', parent)}
+          feedback={feedback('add', parent)}
+        >
           Add parent
         </Button>
         <Button
           disabled={busy || !parent}
           onClick={() => run('replace', parent)}
+          feedback={parent ? feedback('replace', parent) : undefined}
         >
           Move under
         </Button>
         <Button
           disabled={busy || !tags.some((tag) => tag.parents.length > 0)}
           onClick={() => run('replace', null)}
+          feedback={feedback('replace', null)}
         >
           Remove all parents
         </Button>

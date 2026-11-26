@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { EnrichmentResultSchema } from '@repo/schemas/job'
@@ -21,7 +22,7 @@ import { List, ListRow } from '@repo/ui/components/ds/list-row'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
 import { SourceBlock, SourceRow } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { providerLogoUrl } from '@/utils/provider-logos'
@@ -37,6 +38,7 @@ import {
   SonovaultLookupJobStatus,
 } from './sonovault-track-lookup'
 import { invalidateSpotifySearchJobs } from './spotify-track-search'
+import { useJobBatchFeedback } from './job-button-feedback'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
 
 const albumLookupPath = '/api/v1/sonovault/albums/lookup'
@@ -310,6 +312,7 @@ function AlbumLookupBody({ state }: { state: SonovaultAlbumState }) {
 
 /** The album's Sonovault row in Sources: its release, references and review. */
 export function AlbumSonovaultSource({ item }: { item: AlbumDetail }) {
+  const { apiBaseUrl } = useConfig()
   const view = useDetailView()
   const [open, setOpen] = useState(
     view.params.get('sourceProvider') === 'sonovault',
@@ -320,6 +323,21 @@ export function AlbumSonovaultSource({ item }: { item: AlbumDetail }) {
   const lookup = useSonovaultAlbumLookup(item.id)
   const queue = useQueueSonovaultAlbumLookup(item.id)
   const state = lookup.data
+  const due = sonovaultAlbumLookupDue(state)
+  const batch = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? queue.data.batchId : undefined,
+  )
+  const feedback: ButtonFeedback | undefined = queue.isPending
+    ? { phase: 'pending', label: 'Requesting lookup…' }
+    : queue.isError
+      ? { phase: 'failed', label: 'Could not queue lookup' }
+      : queue.data
+        ? (batch ?? {
+            phase: queue.data.queued ? 'queued' : 'done',
+            label: queue.data.queued ? 'Lookup queued' : 'Lookup skipped',
+          })
+        : undefined
   const job = state?.job
   const time = state?.lookup?.lookedUpAt ?? job?.finishedAt ?? job?.createdAt
   return (
@@ -352,10 +370,21 @@ export function AlbumSonovaultSource({ item }: { item: AlbumDetail }) {
         when={time && <LookupTime time={time} />}
         state={job && <SonovaultLookupJobStatus job={job} />}
         actions={
-          sonovaultAlbumLookupDue(state) && (
+          (due || feedback) && (
             <Button
               size="xs"
-              disabled={queue.isPending || lookup.isPending}
+              disabled={
+                !due ||
+                queue.isPending ||
+                lookup.isPending ||
+                (queue.data?.queued !== undefined &&
+                  queue.data.queued > 0 &&
+                  (!batch ||
+                    batch.phase === 'queued' ||
+                    batch.phase === 'running' ||
+                    batch.phase === 'waiting'))
+              }
+              feedback={feedback}
               onClick={() => queue.mutate()}
             >
               Look up on Sonovault
@@ -371,9 +400,9 @@ export function AlbumSonovaultSource({ item }: { item: AlbumDetail }) {
           tone="danger"
           action={
             lookup.isError && (
-              <Button size="xs" onClick={() => lookup.refetch()}>
+              <ReadButton size="xs" read={() => lookup.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             )
           }
         >
@@ -422,15 +451,12 @@ export function SonovaultAlbumSettings() {
         <Notice
           tone="danger"
           action={
-            <Button
+            <ReadButton
               size="xs"
-              onClick={() => {
-                void summary.refetch()
-                void review.refetch()
-              }}
+              read={() => Promise.all([summary.refetch(), review.refetch()])}
             >
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load Sonovault albums.

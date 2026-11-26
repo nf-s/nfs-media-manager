@@ -15,7 +15,12 @@ import { Select } from '@repo/ui/components/ds/toolbar'
 import { Button } from '@repo/ui/components/ui/button'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { clientQueryDefaults } from '@/utils/query-cache'
-import { fetchRatingsSources } from '@/utils/ratings-explorer-api'
+import {
+  fetchRatingsSources,
+  ratingSourcesKey,
+} from '@/utils/ratings-explorer-api'
+import { ReadButton } from './read-button'
+import { ResultButton, useResultAction } from './result-feedback'
 import { useConfig } from './providers'
 import { SecondaryTableToolbar } from './secondary-table'
 
@@ -96,13 +101,14 @@ function RangeEditor({
         </label>
       </div>
       <div className="ds-actions">
-        <Button
+        <ResultButton
+          control="Ratings view-ranking"
           size="xs"
           variant="primary"
           onClick={() => onApply(first, last)}
         >
           Show in Ranking
-        </Button>
+        </ResultButton>
         <Button size="xs" onClick={onCancel}>
           Cancel
         </Button>
@@ -147,15 +153,18 @@ function SourceDistribution({
       state: selected ? 'selected' : undefined,
     } satisfies HistogramBar
   })
+  const rankingAction = useResultAction('Ratings view-ranking')
   function drill(first: number, last: number) {
     const from = bins[first],
       through = bins[last]
-    if (from && through)
+    if (from && through) {
+      rankingAction.begin()
       onDrill({
         range: { dimension, first, last },
         label,
         interval: intervalLabel(from, through),
       })
+    }
   }
   return (
     <Section
@@ -221,7 +230,7 @@ export function RatingsSources({
   const { apiBaseUrl } = useConfig()
   const { library, ranges } = request
   const query = useQuery({
-    queryKey: [library + 's', 'ratings-explorer', 'sources', request],
+    queryKey: ratingSourcesKey(request),
     queryFn: ({ signal }) => fetchRatingsSources(apiBaseUrl, request, signal),
     ...clientQueryDefaults,
     enabled: ready,
@@ -258,9 +267,9 @@ export function RatingsSources({
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={() => void query.refetch()}>
+              <ReadButton size="xs" read={() => query.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load rating distributions.

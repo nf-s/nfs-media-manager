@@ -131,6 +131,8 @@ export type PlaybackState = {
   current: PlayableItem | null
   /** What the target device is playing. */
   snapshot: PlaybackSnapshot | null
+  /** A device report, never an optimistic snapshot. */
+  observation?: { snapshot: PlaybackSnapshot; target: PlaybackTarget }
   queue: QueueEntry[]
   source: Pick<PlaybackSource, 'label' | 'href'> | null
   /**
@@ -149,6 +151,13 @@ export type PlaybackState = {
   /** 0 to 1, or null when the target device's volume cannot be set from here. */
   volume: number | null
   starting: boolean
+  startAccepted?: boolean
+  queueSync?: 'pending' | 'saved' | 'unconfirmed'
+  transfer?: {
+    target: SelectableTarget
+    status: 'selected' | 'accepted' | 'fallback'
+  }
+  volumeReceipt?: { target: PlaybackTarget; volume: number }
   failure: PlaybackFailure | null
   /** Latest queue change, for assistive technology. */
   announcement: string
@@ -182,6 +191,7 @@ export const idlePlaybackState: PlaybackState = {
 
 export type PlaybackEngineOptions = {
   recordDiagnostic?: (event: PlaybackEvent) => void
+  needsObservation?: () => boolean
   api: PlayerApi
   token: (refresh?: boolean) => Promise<string>
   loadSdk: () => Promise<SpotifySdk>
@@ -349,7 +359,7 @@ function isSonosTarget(target: PlaybackTarget): target is SonosTarget {
   return target.kind === 'room' || target.kind === 'sonos'
 }
 
-function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
+export function sameDevice(a: PlaybackTarget, b: PlaybackTarget) {
   if (a.kind === 'remote' && b.kind === 'remote')
     return a.device.id === b.device.id
   if (a.kind === 'room' && b.kind === 'room') return a.room.id === b.room.id
@@ -476,6 +486,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   let sourceStarting = false
   let currentFromSource = false
   let latest: PlaybackSnapshot | null = null
+  let observation: PlaybackState['observation']
   let skippedAt: number | null = null
   /** The last track a device reported outside a start, and the item it was. */
   let heard: string | null = null
@@ -1262,7 +1273,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     run += 1
     const requested = run
     detach()
-    set({ starting: true })
+    set({ starting: true, startAccepted: false })
     const prepare = async () => {
       while (source === active && !disposed) {
         const revision = active.revision
@@ -1329,6 +1340,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       current: item,
       snapshot: null,
       starting: true,
+      startAccepted: false,
       failure: null,
       shuffle: definition.kind === 'album' ? false : preferredShuffle,
       source: { label: definition.label, href: definition.href },
@@ -1719,6 +1731,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       current: item,
       snapshot: null,
       starting: true,
+      startAccepted: false,
       failure: null,
       rejoin: null,
     })
@@ -1747,6 +1760,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         })
         if (started !== run || !holdsSonosLease(lease)) return
         report?.('command', { reason: 'accepted' })
+        set({ startAccepted: true })
         // Sonos has accepted the track; its own report follows a second later.
         if (item.kind === 'track') expectRoomTrack(item, from, false)
         // The tracks that follow may still be resolving; they are added as
@@ -1785,6 +1799,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'remote') await sendRemote(play)
       else await onLocalDevice(deviceId, play)
       if (started !== run) return
+      set({ startAccepted: true })
       schedule(FOLLOW_UP_MS)
     } catch (error) {
       if (
@@ -1938,8 +1953,12 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       session.verifiedRecordingUri !== after.trackUri
     )
       session.verifiedRecordingUri = after.trackUri
-    if (sameShown(state.snapshot, after) && !state.starting) return
-    set({ active: true, snapshot: after, starting: false })
+    if (sameShown(state.snapshot, after) && !state.starting) {
+      if (options.needsObservation?.() && observation !== state.observation)
+        set({ observation })
+      return
+    }
+    set({ active: true, snapshot: after, starting: false, observation })
   }
 
   /** The Spotify device a start is sent to; a Sonos room is not one. */
@@ -1978,17 +1997,18 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       .then((verification) => {
         if (started !== run || disposed || session?.phase !== 'starting') return
         session = { ...session, ...verification }
-        if (latest) observe(latest)
+        if (latest) observe(latest, observation?.target)
       })
   }
 
-  function observe(reported: PlaybackSnapshot) {
+  function observe(reported: PlaybackSnapshot, device?: PlaybackTarget | null) {
     const after = withVerifiedPlaybackTrack(
       reported,
       session?.item ?? null,
       session?.verifiedRecordingUri,
     )
     const before = latest
+    if (device) observation = { snapshot: after, target: device }
     if (
       session?.phase === 'playing' &&
       before &&
@@ -2597,7 +2617,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     }
     missing = 0
     const shown = roomTrack(snapshot)
-    observe(shown)
+    observe(shown, target)
     heardRoom(shown)
     maintainRoom()
     // The track due next is described ahead, so a skip to it shows at once.
@@ -2610,7 +2630,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (snapshot) {
       sawLocalState = true
       missing = 0
-      observe(snapshot)
+      observe(snapshot, LOCAL)
       if (!timer && !ticking && shouldPoll()) schedule(LOCAL_POLL_MS)
       return true
     }
@@ -2695,7 +2715,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   /** Follows playback on a device that was not chosen here. */
   function follow(target: FollowedTarget, snapshot: PlaybackSnapshot) {
     aim(target)
-    observe(snapshot)
+    observe(snapshot, target)
   }
 
   /**
@@ -2902,7 +2922,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
           if (remote.snapshot) {
             missing = 0
             retarget(target, remote)
-            observe(remote.snapshot)
+            observe(remote.snapshot, reported(remote))
             if (
               remote.device &&
               state.target.kind === 'remote' &&
@@ -3011,13 +3031,17 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
   function moveTo(next: SelectableTarget) {
     const from = state.target
     if (!canControl(from) || !canControl(next)) return
-    if (sameDevice(from, next)) return
+    if (sameDevice(from, next)) {
+      set({ transfer: { target: next, status: 'selected' } })
+      return
+    }
     activate(next)
     if (resume && !latest) {
       // Nothing plays yet: the restored item starts on the chosen device.
       roomPolls = 0
       set({
         target: next,
+        transfer: { target: next, status: 'selected' },
         volume: selectedVolume(next),
         failure: null,
         findingSonos: false,
@@ -3057,6 +3081,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
     if (!started || !item) currentFromSource = false
     set({
       target: next,
+      transfer: item ? undefined : { target: next, status: 'selected' },
       volume: selectedVolume(next),
       snapshot: null,
       current: item,
@@ -4124,11 +4149,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       if (target.kind === 'restricted' || !canControl(target)) return
       if (target.kind === 'sonos' && target.group.volume === null) return
       if (target.kind === 'room' && state.volume === null) return
+      const confirm = () => {
+        if (sameDevice(target, state.target) && state.volume === volume)
+          set({ volumeReceipt: { target, volume } })
+      }
       set({ volume })
       if (target.kind === 'local') {
         localVolume = volume
         options.onLocalVolume?.(volume)
-        guard(player?.setVolume(volume))
+        guard(player?.setVolume(volume).then(confirm))
         return
       }
       if (volumeTimer) clearTimeout(volumeTimer)
@@ -4136,9 +4165,15 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
       volumeTimer = setTimeout(() => {
         volumeTimer = null
         if (target.kind === 'remote')
-          guard(api.volume(target.device.id, volume))
+          guard(api.volume(target.device.id, volume).then(confirm))
         else if (holdsSonosLease(lease))
-          sonosSend(groupId(target), { action: 'volume', volume })
+          guard(
+            sonosCommand(groupId(target), { action: 'volume', volume }).then(
+              () => {
+                if (holdsSonosLease(lease)) confirm()
+              },
+            ),
+          )
       }, VOLUME_DEBOUNCE_MS)
     },
     async refreshDevices() {
@@ -4170,11 +4205,25 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
             await sendRemote(() =>
               onLocalDevice(id, () => api.transfer(id, playing)),
             )
-          set({ target: next, volume: localVolume })
+          set({
+            target: next,
+            volume: localVolume,
+            transfer: {
+              target: next,
+              status: moving ? 'accepted' : 'selected',
+            },
+          })
         } else {
           if (moving)
             await sendRemote(() => api.transfer(next.device.id, playing))
-          set({ target: next, volume: next.device.volume })
+          set({
+            target: next,
+            volume: next.device.volume,
+            transfer: {
+              target: next,
+              status: moving ? 'accepted' : 'selected',
+            },
+          })
         }
         fallback = null
         sawLocalState = false
@@ -4198,6 +4247,7 @@ export function createPlaybackEngine(options: PlaybackEngineOptions) {
         missing = 0
         set({
           target: next,
+          transfer: { target: next, status: 'fallback' },
           volume: next.kind === 'local' ? localVolume : next.device.volume,
           snapshot: null,
           current: null,

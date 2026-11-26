@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { X } from 'lucide-react'
@@ -124,9 +125,9 @@ export function ArtistMergePicker({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => candidates.refetch()}>
+                <ReadButton size="xs" read={() => candidates.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not search artists.
@@ -176,13 +177,15 @@ export function ArtistMergePicker({
               )}
               {candidates.hasNextPage && (
                 <div className="ds-actions">
-                  <Button
+                  <ReadButton
                     size="xs"
                     disabled={candidates.isFetching}
-                    onClick={() => void candidates.fetchNextPage()}
+                    loadingLabel="Loading more…"
+                    loadedLabel="Loaded more"
+                    read={() => candidates.fetchNextPage()}
                   >
                     {candidates.isFetchingNextPage ? 'Loading...' : 'Show more'}
-                  </Button>
+                  </ReadButton>
                 </div>
               )}
             </>

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useEffect, useRef, useState } from 'react'
@@ -18,7 +19,16 @@ import {
   type SpotifyPlaylistJob,
   type SpotifyPlaylistStoredMetadata,
 } from '@repo/schemas/tracks'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
+import {
+  jobButtonFeedback,
+  queueReceipt,
+  useJobBatchFeedback,
+} from './job-button-feedback'
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
@@ -612,6 +622,28 @@ export default function SpotifyPlaylistImport() {
   const likedSummary = liked?.stored?.summary
   const likedResult = queue.variables?.likedSongs === true
   const listedAt = listing.data?.listedAt ?? null
+  const importJobs = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? queue.data.batchId : undefined,
+  )
+  const importFeedback: ButtonFeedback | undefined = queue.isPending
+    ? { phase: 'pending', label: 'Requesting import…' }
+    : queue.data
+      ? (importJobs ?? queueReceipt(queue.data.queued, queue.data.skipped))
+      : queue.isError
+        ? { phase: 'unconfirmed', label: 'Import request unconfirmed' }
+        : undefined
+  const listingFeedback: ButtonFeedback | undefined = list.isPending
+    ? { phase: 'pending', label: 'Requesting playlist list…' }
+    : list.isError
+      ? { phase: 'unconfirmed', label: 'Listing request unconfirmed' }
+      : listingJob &&
+          (listingActive || list.data?.job?.jobId === listingJob.jobId)
+        ? jobButtonFeedback(
+            listingJob,
+            `${formatCount(listing.data?.playlists.length ?? 0)} playlists listed`,
+          )
+        : undefined
   const result = queue.data && (
     <Notice>
       {formatCount(queue.data.queued)} queued ·{' '}
@@ -634,6 +666,19 @@ export default function SpotifyPlaylistImport() {
   const queueError = queue.isError && (
     <Notice tone="danger">
       {errorMessage(queue.error, 'Could not queue the import.')}
+      {queue.variables?.batchId && (
+        <>
+          {' '}
+          <Link
+            href={scopedHref(
+              `/jobs?batchId=${encodeURIComponent(queue.variables.batchId)}`,
+              'album',
+            )}
+          >
+            Check import jobs
+          </Link>
+        </>
+      )}
     </Notice>
   )
   const shown = importColumns.filter((column) => columns.visible(column.key))
@@ -650,9 +695,9 @@ export default function SpotifyPlaylistImport() {
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={() => account.refetch()}>
+              <ReadButton size="xs" read={() => account.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load Spotify connection.
@@ -731,13 +776,21 @@ export default function SpotifyPlaylistImport() {
               size="md"
               variant="primary"
               disabled={!status.configured || authorize.isPending}
+              feedback={
+                authorize.isSuccess
+                  ? { phase: 'waiting', label: 'Waiting for authorization' }
+                  : (mutationFeedback(authorize, {
+                      pending: 'Opening Spotify…',
+                      success: 'Connected',
+                      error: 'Could not open sign-in',
+                    }) ??
+                    (outcome === 'connected' && status.connected
+                      ? { phase: 'done', label: 'Spotify connected' }
+                      : undefined))
+              }
               onClick={() => authorize.mutate()}
             >
-              {authorize.isPending
-                ? 'Connecting...'
-                : status.connected
-                  ? 'Reconnect Spotify'
-                  : 'Connect Spotify'}
+              {status.connected ? 'Reconnect Spotify' : 'Connect Spotify'}
             </Button>
           </span>
           {authorize.isError && (
@@ -756,9 +809,24 @@ export default function SpotifyPlaylistImport() {
               liked !== undefined && (
                 <Button
                   disabled={queue.isPending || playlistJobActive(liked.job)}
+                  feedback={
+                    likedResult && importFeedback
+                      ? {
+                          ...importFeedback,
+                          label:
+                            importFeedback.phase === 'done' &&
+                            queue.data?.queued
+                              ? 'Liked Songs imported'
+                              : importFeedback.label,
+                        }
+                      : playlistJobActive(liked.job) && liked.job
+                        ? jobButtonFeedback(liked.job)
+                        : undefined
+                  }
                   onClick={() =>
                     queue.mutate({
                       playlists: [],
+                      batchId: crypto.randomUUID(),
                       likedSongs: true,
                       confirmBroadRun: false,
                     })
@@ -774,9 +842,9 @@ export default function SpotifyPlaylistImport() {
               <Notice
                 tone="danger"
                 action={
-                  <Button size="xs" onClick={() => imports.refetch()}>
+                  <ReadButton size="xs" read={() => imports.refetch()}>
                     Retry
-                  </Button>
+                  </ReadButton>
                 }
               >
                 Could not load import state.
@@ -848,13 +916,10 @@ export default function SpotifyPlaylistImport() {
             <Button
               variant={listedAt ? 'default' : 'primary'}
               disabled={listingActive || list.isPending || listing.isPending}
+              feedback={listingFeedback}
               onClick={() => list.mutate()}
             >
-              {list.isPending
-                ? 'Queueing...'
-                : listedAt
-                  ? 'List again'
-                  : 'List playlists'}
+              {listedAt ? 'List again' : 'List playlists'}
             </Button>
             {listingJob && listingActive ? (
               <span>
@@ -965,9 +1030,9 @@ export default function SpotifyPlaylistImport() {
                       ) : listing.isError ? (
                         <>
                           Could not load playlists.{' '}
-                          <Button size="xs" onClick={() => listing.refetch()}>
+                          <ReadButton size="xs" read={() => listing.refetch()}>
                             Retry
-                          </Button>
+                          </ReadButton>
                         </>
                       ) : playlists.length ? (
                         'No playlists match this filter.'
@@ -1152,21 +1217,35 @@ export default function SpotifyPlaylistImport() {
                   details="Each playlist is read from Spotify and its tracks are imported."
                   confirmLabel="Import"
                   disabled={queue.isPending || !targets.length || tooMany}
+                  feedback={
+                    !likedResult &&
+                    (!targets.length || queue.isPending || queue.isError)
+                      ? importFeedback
+                      : undefined
+                  }
                   onConfirm={() =>
                     queue.mutate({
                       playlists: targets.map(({ spotifyId, name }) => ({
                         spotifyId,
                         name,
                       })),
+                      batchId: crypto.randomUUID(),
                       likedSongs: false,
                       confirmBroadRun: broad,
                     })
                   }
                 >
-                  {queue.isPending && !likedResult
-                    ? 'Queueing...'
-                    : 'Import selected'}
+                  Import selected
                 </ConfirmAction>
+                {!likedResult &&
+                  targets.length > 0 &&
+                  !queue.isPending &&
+                  !queue.isError &&
+                  importFeedback && (
+                    <Button disabled feedback={importFeedback}>
+                      Playlist import
+                    </Button>
+                  )}
               </span>
             </SecondaryTableSelectionBar>
             {!likedResult && (result || queueError) && (

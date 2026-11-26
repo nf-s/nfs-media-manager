@@ -265,6 +265,7 @@ export async function retryEnrichmentBatch(
   batchId: string,
   userId: string | null,
   confirmed: boolean,
+  retryBatchId?: string,
 ) {
   const jobs = await db
     .select({ id: scrapeJob.id })
@@ -282,13 +283,29 @@ export async function retryEnrichmentBatch(
   const warnings = new Set<string>()
   for (const job of jobs) {
     try {
-      await retryJob(job.id, userId, confirmed)
-      queued++
+      const retry = await retryJob(
+        job.id,
+        userId,
+        confirmed,
+        Boolean(retryBatchId),
+        false,
+        retryBatchId,
+      )
+      if (!retryBatchId || retry.options.batchId === retryBatchId) queued++
+      else {
+        skipped++
+        warnings.add('A retry was already active.')
+      }
     } catch (error) {
       if (!(error instanceof ServerError)) throw error
       skipped++
       warnings.add(error.response.message)
     }
   }
-  return { batchId, queued, skipped, warnings: [...warnings] }
+  return {
+    batchId: retryBatchId ?? batchId,
+    queued,
+    skipped,
+    warnings: [...warnings],
+  }
 }

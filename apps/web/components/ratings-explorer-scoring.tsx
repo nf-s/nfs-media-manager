@@ -1,5 +1,6 @@
 'use client'
 
+import { useResultAction } from './result-feedback'
 import { SlidersHorizontal, Settings2 } from 'lucide-react'
 import {
   RatingsSettingsSchema,
@@ -92,14 +93,21 @@ function NumberSetting({
 export function RatingsScoring({
   settings,
   sources,
-  onChange,
+  onChange: changeSettings,
 }: {
   settings: RatingsSettings
   sources: readonly RatingsSource[]
   onChange: (value: RatingsSettings) => void
 }) {
+  const scoring = useResultAction('scoring')
+  const reset = useResultAction('reset-scoring')
+  function onChange(value: RatingsSettings) {
+    scoring.begin()
+    changeSettings(value)
+  }
   return (
     <div className="ratings-scoring">
+      {scoring.feedback && <span role="status">{scoring.feedback.label}</span>}
       <FilterPanelSection
         title="Scoring"
         icon={<SlidersHorizontal className="ds-i" aria-hidden />}
@@ -230,7 +238,13 @@ export function RatingsScoring({
                   }
                 />
               ))}
-            <Button onClick={() => onChange(RatingsSettingsSchema.parse({}))}>
+            <Button
+              feedback={reset.feedback}
+              onClick={() => {
+                reset.begin()
+                changeSettings(RatingsSettingsSchema.parse({}))
+              }}
+            >
               Reset scoring
             </Button>
           </div>

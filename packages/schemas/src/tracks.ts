@@ -811,6 +811,7 @@ export const SpotifyPlaylistImportsSchema = z.object({
 
 export const SpotifyPlaylistImportInputSchema = z
   .object({
+    batchId: z.string().uuid().optional(),
     playlists: z
       .array(
         z

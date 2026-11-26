@@ -2,7 +2,7 @@
 
 import { DetailLink } from './detail-link'
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArtistEnrichmentInputSchema,
   ArtistProfileProviderSchema,
@@ -16,7 +16,7 @@ import { JobSchema } from '@repo/schemas/job'
 import type { ProviderSummary } from '@repo/schemas/provider'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
@@ -26,6 +26,9 @@ import {
 } from '@/utils/artist-providers'
 import { useDetailView } from './detail-inspector-context'
 import { FindMatch } from './find-match'
+import { jobButtonFeedback } from './job-button-feedback'
+import { jobDetailOptions } from '@/utils/job-data'
+import { canCancelJob } from '@/utils/job-selection'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import {
@@ -119,13 +122,19 @@ function ArtistIdentifierEditor({
   const refresh = useMutation({
     mutationFn: (value: string) =>
       queueArtistRefresh(apiBaseUrl, id, provider, value),
-    onSuccess: async () => {
-      await Promise.all([
+    onSuccess: () => {
+      void Promise.all([
         client.invalidateQueries({ queryKey: ['jobs'] }),
         client.invalidateQueries({ queryKey: ['job-activity'] }),
       ])
     },
   })
+  const receipt = useQuery({
+    ...jobDetailOptions(apiBaseUrl, refresh.data?.id ?? ''),
+    initialData: refresh.data,
+    enabled: Boolean(refresh.data && canCancelJob(refresh.data)),
+  })
+  const job = receipt.data ?? refresh.data
   const value = identifier.trim()
   const inputId = `artist-identifier-${provider}`
   return (
@@ -148,8 +157,17 @@ function ArtistIdentifierEditor({
           variant="primary"
           type="submit"
           disabled={!value || !canRefresh || refresh.isPending}
+          feedback={
+            job
+              ? jobButtonFeedback(job, 'Artist source updated')
+              : mutationFeedback(refresh, {
+                  pending: 'Requesting refresh…',
+                  success: 'Refresh queued',
+                  error: 'Refresh failed',
+                })
+          }
         >
-          {refresh.isPending ? 'Queuing...' : 'Save and refresh'}
+          Save and refresh
         </Button>
         {onCancel && (
           <Button type="button" onClick={onCancel}>
@@ -162,11 +180,12 @@ function ArtistIdentifierEditor({
           {errorMessage(refresh.error, 'Could not queue the refresh.')}
         </Notice>
       )}
-      {refresh.data && (
+      {job && (
         <span role="status" className="data-identifier-wide">
-          <DetailLink kind="job" id={refresh.data.id}>
+          <DetailLink kind="job" id={job.id}>
             View refresh job
           </DetailLink>
+          {job.errorMessage && ` · ${job.errorMessage}`}
         </span>
       )}
     </form>
@@ -271,7 +290,7 @@ export function ArtistProfileSources({
       editor: configured
         ? (canRefresh: boolean, close: () => void) => (
             <ArtistIdentifierEditor
-              key={`${provider}:${externalId}`}
+              key={provider}
               id={id}
               provider={provider}
               label={label}
@@ -292,17 +311,19 @@ export function ArtistProfileSources({
                 chooseUnavailable={
                   context.canRefresh ? undefined : 'Cannot refresh now'
                 }
+                choosePending="Requesting refresh…"
                 onChoose={async (candidate) => {
-                  await queueArtistRefresh(
+                  const job = await queueArtistRefresh(
                     apiBaseUrl,
                     id,
                     provider,
                     candidate.externalId,
                   )
-                  await Promise.all([
+                  void Promise.all([
                     client.invalidateQueries({ queryKey: ['jobs'] }),
                     client.invalidateQueries({ queryKey: ['job-activity'] }),
                   ])
+                  return { job }
                 }}
               />
             )

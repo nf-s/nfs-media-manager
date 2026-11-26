@@ -1,7 +1,8 @@
 'use client'
 
+import { ReadButton } from './read-button'
 import Link from 'next/link'
-import type { ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import {
   useInfiniteQuery,
   useMutation,
@@ -34,10 +35,11 @@ import {
   type TimelineItem,
 } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { formatAge, formatDateTime, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { canCancelJob } from '@/utils/job-selection'
+import { jobDetailOptions } from '@/utils/job-data'
 import {
   IDENTIFIER_REQUIRED,
   jobState,
@@ -56,6 +58,7 @@ import JsonTree from './json-tree'
 import { errorMessage } from './lastfm-sync'
 import { providerLocalWorkerQuery } from './provider-local-worker'
 import { useConfig } from './providers'
+import { jobButtonFeedback } from './job-button-feedback'
 
 type SourceScope = { kind: 'album' | 'film' | 'artist'; id: string }
 type SnapshotScope = SourceScope | { kind: 'track'; id: string }
@@ -87,6 +90,13 @@ export type ProviderSourceRow = {
 }
 
 const HISTORY_PAGE = 10
+
+type SourceRefreshReceipt = {
+  provider: string
+  label: string
+  job?: Job
+  error?: string
+}
 
 type SnapshotPage = z.infer<typeof SourceSnapshotPageSchema>
 
@@ -168,15 +178,15 @@ function RetryNotice({
   onRetry,
 }: {
   message: string
-  onRetry: () => void
+  onRetry: () => Promise<unknown>
 }) {
   return (
     <Notice
       tone="danger"
       action={
-        <Button size="xs" onClick={onRetry}>
+        <ReadButton size="xs" read={onRetry}>
           Retry
-        </Button>
+        </ReadButton>
       }
     >
       {message}
@@ -377,10 +387,12 @@ export function SourceHistory({
       {failed && (
         <RetryNotice
           message="Could not load the history."
-          onRetry={() => {
-            if (snapshots.isError) void snapshots.refetch()
-            if (jobs.isError) void jobs.refetch()
-          }}
+          onRetry={() =>
+            Promise.all([
+              snapshots.isError && snapshots.refetch(),
+              jobs.isError && jobs.refetch(),
+            ])
+          }
         />
       )}
       {loading ? (
@@ -392,17 +404,21 @@ export function SourceHistory({
       )}
       {more && (
         <span>
-          <Button
+          <ReadButton
             size="xs"
             variant="ghost"
             disabled={snapshots.isFetchingNextPage || jobs.isFetchingNextPage}
-            onClick={() => {
-              if (snapshots.hasNextPage) void snapshots.fetchNextPage()
-              if (jobs.hasNextPage) void jobs.fetchNextPage()
-            }}
+            loadingLabel="Loading older…"
+            loadedLabel="History loaded"
+            read={() =>
+              Promise.all([
+                snapshots.hasNextPage && snapshots.fetchNextPage(),
+                jobs.hasNextPage && jobs.fetchNextPage(),
+              ])
+            }
           >
             Show older
-          </Button>
+          </ReadButton>
         </span>
       )}
       {selectedSnapshot && (
@@ -450,12 +466,23 @@ export function ProviderSources({
   initialProvider?: string
   pending?: boolean
   unavailable?: string
-  onRetry?: () => void
+  onRetry?: () => Promise<unknown>
   allowRefreshAll?: boolean
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
   const view = useDetailView()
+  const [receipts, setReceipts] = useState<
+    Record<string, SourceRefreshReceipt>
+  >({})
+  const [bulkProviders, setBulkProviders] = useState<string[]>([])
+  const inFlight = useRef(new Set<string>())
+  const [pendingProviders, setPendingProviders] = useState<ReadonlySet<string>>(
+    new Set(),
+  )
+  function rememberReceipt(receipt: SourceRefreshReceipt) {
+    setReceipts((previous) => ({ ...previous, [receipt.provider]: receipt }))
+  }
   const savedProvider = view.params.get('sourceProvider') ?? initialProvider
   const sourceMode = view.params.get('sourceMode')
   const opened: {
@@ -509,23 +536,28 @@ export function ProviderSources({
   })
   const refresh = useMutation({
     mutationFn: async (targets: ProviderSourceRow[]) => {
-      const results: { row: ProviderSourceRow; job?: Job; error?: string }[] =
-        []
       for (const row of targets) {
         if (!row.refresh) continue
         try {
-          results.push({ row, job: await row.refresh() })
+          rememberReceipt({
+            provider: row.id,
+            label: row.label,
+            job: await row.refresh(),
+          })
         } catch (error) {
-          results.push({
-            row,
+          rememberReceipt({
+            provider: row.id,
+            label: row.label,
             error: errorMessage(error, 'Could not refresh.'),
           })
+        } finally {
+          inFlight.current.delete(row.id)
+          setPendingProviders(new Set(inFlight.current))
         }
       }
-      return results
     },
-    onSuccess: async () => {
-      await Promise.all([
+    onSuccess: () => {
+      void Promise.all([
         client.invalidateQueries({ queryKey: ['jobs'] }),
         client.invalidateQueries({ queryKey: ['job-activity'] }),
         ...(scope && scope.kind !== 'artist'
@@ -538,11 +570,115 @@ export function ProviderSources({
       ])
     },
   })
+  function startRefresh(rows: ProviderSourceRow[], bulk = false) {
+    const targets = rows.filter(
+      (row) => row.refresh && !inFlight.current.has(row.id),
+    )
+    if (!targets.length) return
+    for (const row of targets) inFlight.current.add(row.id)
+    setPendingProviders(new Set(inFlight.current))
+    const ids = targets.map((row) => row.id)
+    if (bulk) setBulkProviders(ids)
+    else
+      setBulkProviders((previous) => previous.filter((id) => !ids.includes(id)))
+    setReceipts((previous) => {
+      const next = { ...previous }
+      for (const id of ids) delete next[id]
+      return next
+    })
+    refresh.mutate(targets)
+  }
   const activeByProvider = new Map(
     (activeJobs.data?.items ?? [])
       .filter(canCancelJob)
       .map((job) => [job.provider, job]),
   )
+  const refreshReceipts = Object.values(receipts)
+  const outstandingJobs = refreshReceipts.flatMap(({ job }) =>
+    job && canCancelJob(job) ? [job] : [],
+  )
+  const liveJobQueries = useQueries({
+    queries: outstandingJobs.map((job) => ({
+      ...jobDetailOptions(apiBaseUrl, job.id),
+      initialData: job,
+    })),
+  })
+  const liveJobs = new Map(
+    outstandingJobs.map((job, index) => [
+      job.id,
+      liveJobQueries[index]?.data ?? job,
+    ]),
+  )
+  const confirmed = refreshReceipts.map((receipt) => ({
+    ...receipt,
+    job: receipt.job
+      ? (liveJobs.get(receipt.job.id) ?? receipt.job)
+      : undefined,
+  }))
+  function rowFeedback(provider: string): ButtonFeedback | undefined {
+    const result = confirmed.find((item) => item.provider === provider)
+    if (result?.job) {
+      const index = outstandingJobs.findIndex(
+        (job) => job.id === result.job?.id,
+      )
+      if (index !== -1 && liveJobQueries[index]?.isError) {
+        return { phase: 'unconfirmed', label: 'Refresh status unconfirmed' }
+      }
+      return jobButtonFeedback(result.job, 'Source updated')
+    }
+    if (result?.error) return { phase: 'failed', label: 'Refresh failed' }
+    if (pendingProviders.has(provider)) {
+      return { phase: 'pending', label: 'Requesting refresh…' }
+    }
+    return undefined
+  }
+  const bulkResults = confirmed.filter((item) =>
+    bulkProviders.includes(item.provider),
+  )
+  const bulkFeedback: ButtonFeedback | undefined = (() => {
+    if (bulkProviders.some((id) => pendingProviders.has(id)))
+      return {
+        phase: 'pending',
+        label: `${bulkResults.length}/${bulkProviders.length} confirmed`,
+      }
+    if (!bulkResults.length) return undefined
+    const running = bulkResults.filter(
+      ({ job }) => job?.status === 'running',
+    ).length
+    const queued = bulkResults.filter(
+      ({ job }) => job?.status === 'queued',
+    ).length
+    const updated = bulkResults.filter(
+      ({ job }) => job?.status === 'succeeded',
+    ).length
+    const failed = bulkResults.filter(
+      ({ job, error }) => error || job?.status === 'failed',
+    ).length
+    const cancelled = bulkResults.length - running - queued - updated - failed
+    if (running)
+      return {
+        phase: 'running',
+        label: `${running} running · ${updated} updated`,
+      }
+    if (queued)
+      return { phase: 'queued', label: `${queued} queued · ${updated} updated` }
+    const label = [
+      updated ? `${updated} updated` : '',
+      failed ? `${failed} failed` : '',
+      cancelled ? `${cancelled} cancelled` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    const phase =
+      updated === bulkResults.length
+        ? 'done'
+        : failed === bulkResults.length
+          ? 'failed'
+          : cancelled === bulkResults.length
+            ? 'cancelled'
+            : 'partial'
+    return { phase, label }
+  })()
   const unresolved = useUnresolvedMatches(
     scope,
     rows.some((row) => row.findMatch),
@@ -555,7 +691,10 @@ export function ProviderSources({
   )
   const canRefresh = (row: ProviderSourceRow, identified = false) =>
     activeJobs.isSuccess &&
-    !refresh.isPending &&
+    !pendingProviders.has(row.id) &&
+    !confirmed.some(
+      ({ provider, job }) => provider === row.id && job && canCancelJob(job),
+    ) &&
     Boolean(
       row.refresh &&
       (!row.unavailable ||
@@ -619,21 +758,25 @@ export function ProviderSources({
             <span className="ds-section-aside">
               <Button
                 size="xs"
-                disabled={!eligible.length}
-                onClick={() => refresh.mutate(eligible)}
+                disabled={
+                  !eligible.length ||
+                  bulkProviders.some((id) => pendingProviders.has(id))
+                }
+                onClick={() => startRefresh(eligible, true)}
+                feedback={bulkFeedback}
               >
                 <RefreshCw className="ds-i" data-size="sm" aria-hidden />
-                {refresh.isPending ? 'Queuing...' : 'Refresh all'}
+                Refresh all
               </Button>
             </span>
           )}
         </div>
       )}
-      {scope && refresh.data?.length ? (
+      {scope && confirmed.length ? (
         <ul className="data-picker" aria-label="Refresh results">
-          {refresh.data.map(({ row, job, error }) => (
-            <li key={row.id} role={error ? 'alert' : 'status'}>
-              {row.label} ·{' '}
+          {confirmed.map(({ provider, label, job, error }) => (
+            <li key={provider} role={error ? 'alert' : undefined}>
+              {label} ·{' '}
               {error ??
                 (job &&
                   (job.status === 'queued' || job.status === 'running' ? (
@@ -700,6 +843,12 @@ export function ProviderSources({
                     cancel: () => setOpened(null),
                     chosen: () =>
                       setOpened({ provider: row.id, type: 'history' }),
+                    onJob: (job) =>
+                      rememberReceipt({
+                        provider: row.id,
+                        label: row.label,
+                        job,
+                      }),
                   })
                 )}
               </SourceBlock>,
@@ -881,7 +1030,8 @@ export function ProviderSources({
                         disabled={!rowCanRefresh}
                         title={row.unavailable ?? `Refresh ${row.label}`}
                         aria-label={`Refresh ${row.label}`}
-                        onClick={() => refresh.mutate([row])}
+                        onClick={() => startRefresh([row])}
+                        feedback={rowFeedback(row.id)}
                       >
                         <RefreshCw
                           className="ds-i"

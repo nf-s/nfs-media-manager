@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -14,11 +15,10 @@ import {
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
-import { Segmented } from '@repo/ui/components/ds/segmented'
 import { Timeline } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, ButtonFeedbackLabel } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
@@ -52,6 +52,11 @@ import {
   type TableColumn,
 } from './secondary-table'
 import { LibraryChangeUndo } from './merge-bar'
+import {
+  ResultSection,
+  ResultSegmented,
+  useResultAction,
+} from './result-feedback'
 
 /** Each library's History page. */
 export const libraryChangesPaths: Record<LibraryChangeKind, string> = {
@@ -164,9 +169,9 @@ export function LibraryRecordChanges({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => changes.refetch()}>
+            <ReadButton size="xs" read={() => changes.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load changes.
@@ -229,8 +234,9 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
   const parsedActor = LibraryChangeActorSchema.safeParse(params.get('actor'))
   const actor = changeId ? undefined : parsedActor.data
   const path = libraryChangesPaths[kind]
+  const queryKey = libraryChangesKey({ kind, actor, changeId, size: pageSize })
   const query = useVirtualTable({
-    queryKey: libraryChangesKey({ kind, actor, changeId, size: pageSize }),
+    queryKey,
     pageSize,
     rowHeight: twoLineRowHeight,
     loadPage: (page, size, signal) =>
@@ -258,24 +264,24 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
   }
 
   return (
-    <section className="browse-workspace" aria-label={title}>
+    <ResultSection
+      identity={JSON.stringify(queryKey)}
+      result={query}
+      className="browse-workspace"
+      aria-label={title}
+    >
       <PageHead title={title} />
       <SecondaryTableToolbar
         filters={
-          changeId ? (
-            <Button asChild>
-              <Link href={path} prefetch={false}>
-                All changes
-              </Link>
-            </Button>
-          ) : (
-            <Segmented
-              label="Changed by"
-              value={actor ?? 'all'}
-              options={actorOptions}
-              onChange={changeActor}
-            />
-          )
+          <HistoryFilters
+            filtered={Boolean(changeId)}
+            href={path}
+            actor={actor ?? 'all'}
+            onRestore={() =>
+              replaceWorkspaceUrl(path, Boolean(inspector?.active))
+            }
+            onActor={changeActor}
+          />
         }
         count={
           query.hasTotal
@@ -288,9 +294,9 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={query.retry}>
+            <ReadButton size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load changes.
@@ -350,6 +356,63 @@ export default function LibraryChanges({ kind }: { kind: LibraryChangeKind }) {
           </TableBody>
         </table>
       </SecondaryTableScroll>
-    </section>
+    </ResultSection>
+  )
+}
+
+function HistoryFilters({
+  filtered,
+  href,
+  actor,
+  onRestore,
+  onActor,
+}: {
+  filtered: boolean
+  href: string
+  actor: ActorFilter
+  onRestore: () => void
+  onActor: (actor: ActorFilter) => void
+}) {
+  const all = useResultAction('history-all')
+  return (
+    <>
+      {(filtered || all.feedback) && (
+        <Button asChild feedback={all.feedback}>
+          <Link
+            href={href}
+            prefetch={false}
+            aria-disabled={!filtered || undefined}
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return
+              event.preventDefault()
+              if (!filtered) return
+              all.begin()
+              onRestore()
+            }}
+          >
+            {all.feedback ? (
+              <ButtonFeedbackLabel feedback={all.feedback} />
+            ) : (
+              'All changes'
+            )}
+          </Link>
+        </Button>
+      )}
+      {!filtered && (
+        <ResultSegmented
+          label="Changed by"
+          value={actor}
+          options={actorOptions}
+          onChange={onActor}
+        />
+      )}
+    </>
   )
 }

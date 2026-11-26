@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -144,7 +145,9 @@ export default function ProviderPageClient({
           <State
             error
             title="Could not load provider"
-            action={<Button onClick={() => summaries.refetch()}>Retry</Button>}
+            action={
+              <ReadButton read={() => summaries.refetch()}>Retry</ReadButton>
+            }
           />
         ) : (
           <State
@@ -337,9 +340,9 @@ function ProviderDetail({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => localWorker.refetch()}>
+                <ReadButton size="xs" read={() => localWorker.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load local worker status.
@@ -358,9 +361,9 @@ function ProviderDetail({
                   error
                   title="Could not load job summary"
                   action={
-                    <Button size="xs" onClick={() => jobs.refetch()}>
+                    <ReadButton size="xs" read={() => jobs.refetch()}>
                       Retry
-                    </Button>
+                    </ReadButton>
                   }
                 />
               )}

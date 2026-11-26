@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import {
@@ -110,9 +111,9 @@ export function ProviderRequests({
           error
           title="Could not load request history"
           action={
-            <Button size="xs" onClick={() => series.refetch()}>
+            <ReadButton size="xs" read={() => series.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         />
       )}
@@ -182,9 +183,9 @@ export function ProviderCoverage({
           error
           title="Could not load coverage"
           action={
-            <Button size="xs" onClick={() => coverage.refetch()}>
+            <ReadButton size="xs" read={() => coverage.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         />
       )}
@@ -270,9 +271,9 @@ export function ProviderRecentActivity({
           error
           title="Could not load recent activity"
           action={
-            <Button size="xs" onClick={() => activity.refetch()}>
+            <ReadButton size="xs" read={() => activity.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         />
       )}

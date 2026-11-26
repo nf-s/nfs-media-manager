@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useResultAction } from './result-feedback'
 import { ListFilter } from 'lucide-react'
 import {
   RatingsRankingRequestSchema,
@@ -28,6 +29,8 @@ export function RatingsFilters({
   onResetRanges: () => void
 }) {
   const [error, setError] = useState('')
+  const apply = useResultAction('apply-filters')
+  const reset = useResultAction('reset-filters')
   const { library, tag, yearFrom, yearTo, minPlays, watched, scoredOnly } =
     request
   const count = [
@@ -80,6 +83,7 @@ export function RatingsFilters({
               return
             }
             setError('')
+            apply.begin()
             onChange(filters)
           }}
         >
@@ -146,12 +150,14 @@ export function RatingsFilters({
           </label>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="ds-actions">
-            <Button type="submit" variant="primary">
+            <Button type="submit" variant="primary" feedback={apply.feedback}>
               Apply filters
             </Button>
             <Button
               type="button"
+              feedback={reset.feedback}
               onClick={(event) => {
+                reset.begin()
                 const defaults = defaultRatingsRankingRequest(library)
                 const form = event.currentTarget.form
                 form?.reset()

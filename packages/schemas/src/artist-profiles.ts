@@ -143,6 +143,7 @@ export const QueueArtistSelectionSchema = z
   .object({
     ...CatalogScopeQuerySchema.shape,
     artistIds: z.array(CreatorIdSchema).min(1).max(100),
+    batchId: z.string().uuid().optional(),
     providers: z.array(ArtistProviderIdSchema).min(1).max(20),
     freshness: ArtistFreshnessFiltersSchema.optional(),
     confirmBroadRun: z.boolean().default(false),

@@ -1,6 +1,7 @@
 'use client'
 
 import { Filter, Library } from 'lucide-react'
+import { useResultAction } from './result-feedback'
 import { Select, ToolbarToggle } from '@repo/ui/components/ds/toolbar'
 import {
   discoverySourceLabels,
@@ -18,14 +19,17 @@ export type LibraryScopeControl = {
 
 export function LibraryScopeToggle({ value, onChange }: LibraryScopeControl) {
   const label = 'Include outside library'
+  const scope = useResultAction('library-scope')
   const description = libraryScopeLabels[value.scope]
   return (
     <ToolbarToggle
       iconButton
       pressed={value.scope === 'all'}
-      onPressedChange={(pressed) =>
+      feedback={scope.feedback}
+      onPressedChange={(pressed) => {
+        scope.begin()
         onChange({ ...value, scope: pressed ? 'all' : 'library' })
-      }
+      }}
       aria-label={label}
       aria-description={description}
       title={`${label} · ${description}`}

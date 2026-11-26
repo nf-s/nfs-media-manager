@@ -9,7 +9,7 @@ import {
 import { Section } from '@repo/ui/components/ds/facts'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { formatDateTime } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
@@ -91,7 +91,11 @@ export default function ProviderCredentials({
         className="providers-form"
         onSubmit={(event) => {
           event.preventDefault()
-          save.mutate()
+          if (
+            !save.isPending &&
+            Object.values(draft).some((value) => value.trim())
+          )
+            save.mutate()
         }}
       >
         {secrets.isPending && <Skeleton className="providers-field" />}
@@ -152,8 +156,13 @@ export default function ProviderCredentials({
                   save.isPending ||
                   !Object.values(draft).some((value) => value.trim())
                 }
+                feedback={mutationFeedback(save, {
+                  pending: 'Saving…',
+                  success: 'Credentials saved',
+                  error: 'Credentials not saved',
+                })}
               >
-                {save.isPending ? 'Saving...' : 'Save credentials'}
+                Save credentials
               </Button>
             )}
             {provider.supportsTestConnection && (
@@ -161,9 +170,17 @@ export default function ProviderCredentials({
                 size="md"
                 type="button"
                 disabled={test.isPending || checkBlocked}
+                feedback={mutationFeedback(test, {
+                  pending: 'Checking…',
+                  success:
+                    test.data?.lastVerifiedStatus === 'ok'
+                      ? 'Credentials verified'
+                      : 'Check complete',
+                  error: 'Check failed',
+                })}
                 onClick={() => test.mutate()}
               >
-                {test.isPending ? 'Checking...' : 'Check credentials'}
+                Check credentials
               </Button>
             )}
           </span>

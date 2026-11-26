@@ -1,5 +1,5 @@
 import { BookPlus, Search } from 'lucide-react'
-import { Button } from '../ui/button'
+import { Button, type ButtonFeedback } from '../ui/button'
 
 export type LibraryActionKind =
   | 'track'
@@ -54,8 +54,10 @@ export function LibraryAction({
   size = 'xs',
   saved = false,
   pending = false,
+  feedback,
   disabled = false,
   touch = false,
+  short = false,
 }: {
   name: string
   kind: LibraryActionKind
@@ -64,18 +66,33 @@ export function LibraryAction({
   size?: 'xs' | 'sm'
   saved?: boolean
   pending?: boolean
+  feedback?: ButtonFeedback
   disabled?: boolean
   /** Use the larger phone target when there is room beside the title. */
   touch?: boolean
+  /** The compact label for high-density track, search and player rows. */
+  short?: boolean
 }) {
-  if (saved) return null
-  const label = pending
-    ? `Adding ${kind} to library · ${name}`
-    : action === 'find'
-      ? `Find ${kind} in library · ${name}`
-      : `Add ${kind} to library · ${name}`
-  const unavailable = pending || disabled || !onAdd
+  const adding = pending || feedback?.phase === 'pending'
+  const added = feedback?.phase === 'done'
+  if (saved && !added && !adding) return null
+  const label = added
+    ? `Added ${kind} to library · ${name}`
+    : adding
+      ? `Adding ${kind} to library · ${name}`
+      : action === 'find'
+        ? `Find ${kind} in library · ${name}`
+        : `Add ${kind} to library · ${name}`
+  const unavailable = adding || added || disabled || !onAdd
   const Icon = action === 'find' ? Search : BookPlus
+  const text =
+    action === 'find'
+      ? short
+        ? 'Find'
+        : 'Find in library'
+      : short
+        ? 'Add'
+        : 'Add to Library'
 
   return (
     <Button
@@ -84,18 +101,23 @@ export function LibraryAction({
       className="ds-library-action"
       variant="ghost"
       size={size}
-      icon
       data-touch={touch ? '' : undefined}
       aria-label={label}
       aria-disabled={unavailable || undefined}
-      aria-busy={pending || undefined}
+      aria-busy={adding || undefined}
+      aria-live={added ? 'off' : undefined}
       title={label}
+      feedback={
+        feedback ??
+        (adding ? { phase: 'pending', label: 'Adding…' } : undefined)
+      }
       onClick={(event) => {
         event.stopPropagation()
         if (!unavailable) onAdd?.()
       }}
     >
       <Icon className="ds-i" aria-hidden />
+      <span>{text}</span>
     </Button>
   )
 }

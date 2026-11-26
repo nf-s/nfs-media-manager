@@ -1,7 +1,9 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useId, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import type { Job } from '@repo/schemas/job'
 import { ExternalLink } from 'lucide-react'
 import {
   MatchSearchInputSchema,
@@ -12,7 +14,7 @@ import {
 } from '@repo/schemas/find-match'
 import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { fetchApiData } from '@/utils/api'
@@ -33,7 +35,10 @@ export type FindMatchContext = {
   cancel: () => void
   /** Called after a candidate is stored, to show the row's history. */
   chosen: () => void
+  onJob?: (job: Job) => void
 }
+
+type FindMatchChoice = { job?: Job; refreshError?: string }
 
 /**
  * The providers whose latest lookup for the item found no match or several.
@@ -88,6 +93,7 @@ export function FindMatch({
   context,
   chooseUnavailable,
   onChoose,
+  choosePending = 'Saving ID…',
 }: {
   scope: MatchScope
   provider: string
@@ -95,7 +101,8 @@ export function FindMatch({
   context: FindMatchContext
   /** Why a candidate cannot be chosen now. */
   chooseUnavailable?: string
-  onChoose: (candidate: MatchCandidate) => Promise<unknown>
+  onChoose: (candidate: MatchCandidate) => Promise<FindMatchChoice | void>
+  choosePending?: string
 }) {
   const { apiBaseUrl } = useConfig()
   const inputId = useId()
@@ -142,7 +149,11 @@ export function FindMatch({
   const choose = useMutation({
     retry: false,
     mutationFn: onChoose,
-    onSuccess: () => context.chosen(),
+    onSuccess: (result) => {
+      if (result?.refreshError) return
+      if (result?.job) context.onJob?.(result.job)
+      context.chosen()
+    },
   })
   const value = searchFieldValue(
     text,
@@ -175,8 +186,25 @@ export function FindMatch({
           onChange={(event) => setText(event.target.value)}
         />
         <span className="ds-actions">
-          <Button type="submit" disabled={busy || !value.trim()}>
-            {searching ? 'Searching...' : 'Search'}
+          <Button
+            type="submit"
+            disabled={busy || !value.trim()}
+            feedback={mutationFeedback(
+              {
+                isPending: searching,
+                isError: search.isError,
+                isSuccess: search.isSuccess,
+              },
+              {
+                pending: 'Searching…',
+                success: search.data?.items.length
+                  ? `${search.data.items.length} matches`
+                  : 'No matches',
+                error: 'Search failed',
+              },
+            )}
+          >
+            Search
           </Button>
           <Button
             type="button"
@@ -191,9 +219,9 @@ export function FindMatch({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => search.refetch()}>
+            <ReadButton size="xs" read={() => search.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           {errorMessage(search.error, `Could not search ${label}.`)}
@@ -202,6 +230,24 @@ export function FindMatch({
       {choose.isError && (
         <Notice tone="danger">
           {errorMessage(choose.error, 'Could not save the ID.')}
+        </Notice>
+      )}
+      {choose.data?.refreshError && choose.variables && (
+        <Notice
+          tone="attention"
+          action={
+            <Button
+              feedback={{ phase: 'partial', label: 'ID saved · retry refresh' }}
+              disabled={busy}
+              onClick={() => {
+                if (choose.variables) choose.mutate(choose.variables)
+              }}
+            >
+              Retry refresh
+            </Button>
+          }
+        >
+          {choose.data.refreshError}
         </Notice>
       )}
       {searching ? (
@@ -280,8 +326,19 @@ export function FindMatch({
                       }
                       aria-label={`Choose ${candidate.title}`}
                       onClick={() => choose.mutate(candidate)}
+                      feedback={
+                        pending
+                          ? { phase: 'pending', label: choosePending }
+                          : choose.isError &&
+                              choose.variables?.externalId ===
+                                candidate.externalId &&
+                              choose.variables.referenceType ===
+                                candidate.referenceType
+                            ? { phase: 'failed', label: 'Could not save ID' }
+                            : undefined
+                      }
                     >
-                      {pending ? 'Saving...' : 'Choose'}
+                      Choose
                     </Button>
                   </span>
                 }

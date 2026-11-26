@@ -1,5 +1,7 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -23,7 +25,11 @@ import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
@@ -40,6 +46,7 @@ import {
 import { tableHeaderHeight, useVirtualTable } from '@/hooks/useVirtualTable'
 import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { fetchApiData } from '@/utils/api'
+import { unconfirmedWrite } from '@/utils/write-feedback'
 import { defaultColumnWidth } from '@/utils/column-widths'
 import {
   browseFilterHref,
@@ -113,6 +120,7 @@ import { TrackBrowseValue } from './track-browse-cells'
 import {
   TrackDuplicateReview,
   TrackDuplicateReviewSummary,
+  useTrackDuplicateReview,
 } from './track-duplicate-review'
 import {
   TrackDuplicateGroupRow,
@@ -272,6 +280,7 @@ function ProviderMatchCell({
   onCorrect,
   onReject,
   rejecting,
+  rejectionFeedback,
 }: {
   item: MatchDiagnosticsRow
   library: LibraryView
@@ -279,6 +288,9 @@ function ProviderMatchCell({
   onCorrect: (correction: TrackScrobbleCorrection) => void
   onReject: (target: AlbumMatchRejectionInput) => void
   rejecting: boolean
+  rejectionFeedback: (
+    target: AlbumMatchRejectionInput,
+  ) => ButtonFeedback | undefined
 }) {
   const matches = item.matches.filter(
     (match) => match.provider === provider.key,
@@ -435,22 +447,38 @@ function ProviderMatchCell({
                       </time>
                     </div>
                   )}
-                  {rejectionTarget && !rejectedAt && (
-                    <ConfirmAction
-                      size="xs"
-                      variant="ghost"
-                      question="Mark this match as incorrect?"
-                      ariaLabel={`Mark ${text} as incorrect`}
-                      details={
-                        <>{text}. Future scrapes will skip this match.</>
-                      }
-                      confirmLabel="Mark incorrect"
-                      onConfirm={() => onReject(rejectionTarget)}
-                      disabled={rejecting}
-                    >
-                      Mark incorrect
-                    </ConfirmAction>
-                  )}
+                  {rejectionTarget &&
+                    (!rejectedAt ||
+                      rejectionFeedback(rejectionTarget)?.phase === 'done') && (
+                      <ConfirmAction
+                        size="xs"
+                        variant="ghost"
+                        question="Mark this match as incorrect?"
+                        ariaLabel={`Mark ${text} as incorrect`}
+                        details={
+                          <>{text}. Future scrapes will skip this match.</>
+                        }
+                        confirmLabel="Mark incorrect"
+                        onConfirm={() => onReject(rejectionTarget)}
+                        disabled={
+                          rejecting ||
+                          Boolean(rejectedAt) ||
+                          rejectionFeedback(rejectionTarget)?.phase === 'done'
+                        }
+                        feedback={rejectionFeedback(rejectionTarget)}
+                      >
+                        Mark incorrect
+                      </ConfirmAction>
+                    )}
+                  {rejectionTarget &&
+                    (rejectionFeedback(rejectionTarget)?.phase === 'failed' ||
+                      rejectionFeedback(rejectionTarget)?.phase ===
+                        'unconfirmed') && (
+                      <Notice tone="danger">
+                        Open match history to check the result before trying
+                        again.
+                      </Notice>
+                    )}
                 </li>
               ),
             )}
@@ -605,11 +633,12 @@ export default function MatchDiagnosticsWorkspace({
       id: string
       target: AlbumMatchRejectionInput
     }) => rejectAlbumMatch(apiBaseUrl, id, target),
-    onSettled: (_, __, { id }) =>
-      Promise.all([
+    onSettled: (_, __, { id }) => {
+      void Promise.all([
         client.invalidateQueries({ queryKey: matchDiagnosticsKey('album') }),
         client.invalidateQueries({ queryKey: albumMatchHistoryKey(id) }),
-      ]),
+      ])
+    },
   })
   const tracks = library === 'track'
   const path = libraryMatchesHref(library)
@@ -636,6 +665,7 @@ export default function MatchDiagnosticsWorkspace({
   const duplicates = tracks && trackQuery.duplicates === true
   const showDuplicateReview =
     duplicates && params.get('duplicateReview') === 'true'
+  const duplicateReview = useTrackDuplicateReview(showDuplicateReview)
   // The group rows, read with the same request as the rows they stand above.
   const duplicateLayout = useQuery({
     queryKey: trackDuplicateLayoutKey(trackQuery),
@@ -909,6 +939,18 @@ export default function MatchDiagnosticsWorkspace({
           }
           onReject={(target) => rejection.mutate({ id: item.id, target })}
           rejecting={rejection.isPending}
+          rejectionFeedback={(target) =>
+            rejection.variables?.id === item.id &&
+            JSON.stringify(rejection.variables.target) ===
+              JSON.stringify(target)
+              ? (unconfirmedWrite(rejection.error) ??
+                mutationFeedback(rejection, {
+                  pending: 'Marking incorrect…',
+                  success: 'Marked incorrect',
+                  error: 'Could not mark incorrect',
+                }))
+              : undefined
+          }
         />
       )
     if (column.key === 'name' || column.key === 'title') {
@@ -1020,26 +1062,43 @@ export default function MatchDiagnosticsWorkspace({
   const duplicateReviewSummary = duplicates && (
     <TrackDuplicateReviewSummary
       open={showDuplicateReview}
-      onToggle={() =>
+      onToggle={() => {
+        if (showDuplicateReview) duplicateReview.reset()
         setTrackParams(
           { duplicateReview: showDuplicateReview ? null : 'true' },
           true,
         )
-      }
+      }}
     />
   )
 
   if (showDuplicateReview)
     return (
-      <section className="browse-workspace" aria-label={title}>
+      <ResultSection
+        identity={duplicateReview.identity}
+        result={duplicateReview.page}
+        className="browse-workspace"
+        aria-label={title}
+      >
         <PageHead title={title} />
         {duplicateReviewSummary}
-        <TrackDuplicateReview />
-      </section>
+        <TrackDuplicateReview model={duplicateReview} />
+      </ResultSection>
     )
 
   return (
-    <section className="browse-workspace" aria-label={title}>
+    <ResultSection
+      identity={JSON.stringify(
+        tracks ? trackQuery : [library, q, sortBy, direction],
+      )}
+      result={{
+        isFetching:
+          query.isFetching || (duplicates && duplicateLayout.isFetching),
+        isError: query.isError || (duplicates && duplicateLayout.isError),
+      }}
+      className="browse-workspace"
+      aria-label={title}
+    >
       <PageHead title={title} />
       {duplicateReviewSummary}
       {tracks ? (
@@ -1088,9 +1147,9 @@ export default function MatchDiagnosticsWorkspace({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={query.retry}>
+            <ReadButton size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load matches.
@@ -1274,6 +1333,6 @@ export default function MatchDiagnosticsWorkspace({
         />
       )}
       {tracks && <DetailInspector track={{ onFilter: addTrackFilter }} />}
-    </section>
+    </ResultSection>
   )
 }

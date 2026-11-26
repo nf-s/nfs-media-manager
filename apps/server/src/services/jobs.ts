@@ -3234,6 +3234,7 @@ export async function retryJob(
   confirmBroadRun: boolean,
   skipExistingRetry = false,
   confirmRunning = false,
+  batchId?: string,
 ): Promise<Job> {
   const original = await getJobRecord(jobId)
   if (!original)
@@ -3250,12 +3251,15 @@ export async function retryJob(
     }
   }
   const task = getJobTask(original.options)
+  const retryOptions = batchId
+    ? { ...original.options, batchId }
+    : original.options
   if (task !== null)
     return createTaskJob(task, userId, {
       retryOf: original.id,
       skipExistingRetry,
       confirmRunning,
-      taskOptions: original.options,
+      taskOptions: retryOptions,
     })
   if (
     !isRetryableJobStatus(original.status) ||
@@ -3311,7 +3315,7 @@ export async function retryJob(
       provider: original.provider,
       scope: { ...scope, mediaType, mediaItemIds },
       options: {
-        ...original.options,
+        ...retryOptions,
         benignReviewed: false,
         dismissal: null,
         cancellation: null,
@@ -3329,7 +3333,7 @@ export async function bulkRetryJobs(
   input: BulkRetryJobsInput,
   userId: string | null,
 ): Promise<BulkRetryJobsResult> {
-  const { jobIds, confirmBroadRun, confirmRunning } =
+  const { jobIds, confirmBroadRun, confirmRunning, batchId } =
     BulkRetryJobsSchema.parse(input)
   const originals = await db.query.scrapeJob.findMany({
     where: (table, operators) => operators.inArray(table.id, jobIds),
@@ -3386,8 +3390,18 @@ export async function bulkRetryJobs(
         confirmBroadRun,
         true,
         confirmRunning,
+        batchId,
       )
-      results.push({ jobId, status: 'queued', retryJobId: retry.id })
+      results.push(
+        !batchId || retry.options.batchId === batchId
+          ? { jobId, status: 'queued', retryJobId: retry.id }
+          : {
+              jobId,
+              status: 'skipped',
+              retryJobId: retry.id,
+              message: 'A retry was already active.',
+            },
+      )
     } catch (error) {
       results.push(bulkJobFailure(jobId, error))
     }

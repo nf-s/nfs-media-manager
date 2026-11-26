@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ProviderSafetySchema } from '@repo/schemas/provider'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 
@@ -70,29 +70,38 @@ export function ProviderCooldownConfirm({
       role="region"
       aria-label="Clear cooldown"
     >
-      {confirming && (
+      {(confirming || clear.isSuccess) && (
         <>
-          <p>
-            Clear this cooldown early? Queued jobs may resume. Request spacing,
-            request budgets and access blocks stay enforced.
-          </p>
+          {confirming && (
+            <p>
+              Clear this cooldown early? Queued jobs may resume. Request
+              spacing, request budgets and access blocks stay enforced.
+            </p>
+          )}
           <span className="ds-actions">
             <Button
               size="xs"
               variant="primary"
-              disabled={clear.isPending}
+              disabled={clear.isPending || !confirming}
+              feedback={mutationFeedback(clear, {
+                pending: 'Clearing…',
+                success: 'Cooldown cleared',
+                error: 'Could not clear',
+              })}
               onClick={() => clear.mutate()}
             >
-              {clear.isPending ? 'Clearing...' : 'Confirm clear cooldown'}
+              Confirm clear cooldown
             </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={clear.isPending}
-              onClick={cooldown.cancel}
-            >
-              Cancel
-            </Button>
+            {confirming && (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={clear.isPending}
+                onClick={cooldown.cancel}
+              >
+                Cancel
+              </Button>
+            )}
           </span>
         </>
       )}

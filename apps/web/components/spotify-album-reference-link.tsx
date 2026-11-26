@@ -1,10 +1,11 @@
 'use client'
 
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ReadButton } from '@/components/read-button'
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { MouseEvent, ReactNode } from 'react'
 import { SpotifyAlbumReferenceResultSchema } from '@repo/schemas/spotify-album-reference'
 import { State } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import { ButtonFeedbackLabel } from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import { detailPageHref, type DetailTarget } from '@/utils/detail-inspector'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
@@ -67,14 +68,14 @@ export function SpotifyAlbumReferenceState({
   album: ReturnType<typeof useSpotifyAlbumReference>
 }) {
   function retry() {
-    void album.refetch()
+    return album.refetch()
   }
   if (album.isError && !album.isFetching)
     return (
       <State
         error
         title={errorMessage(album.error, 'Could not open the Spotify release')}
-        action={<Button onClick={retry}>Retry</Button>}
+        action={<ReadButton read={retry}>Retry</ReadButton>}
       />
     )
   return (
@@ -106,6 +107,11 @@ export function SpotifyAlbumReferenceLink({
   onNavigate?: () => void
 }) {
   const inspector = useDetailInspector()
+  const opening =
+    useIsFetching({
+      queryKey: ['spotify-album-reference', trackId, spotifyAlbumId ?? null],
+      exact: true,
+    }) > 0
   const target: DetailTarget = {
     kind: 'spotify-album-reference',
     id: trackId,
@@ -138,9 +144,17 @@ export function SpotifyAlbumReferenceLink({
       {...workspaceTabLinkProps(pageHref, workspaceLabel)}
       href={(savedAlbum && inspector?.href(savedAlbum)) || pageHref}
       className={className}
+      aria-busy={opening || undefined}
       onClick={open}
     >
       {children}
+      {opening && (
+        <span className="ds-actions" role="status">
+          <ButtonFeedbackLabel
+            feedback={{ phase: 'pending', label: 'Opening album…' }}
+          />
+        </span>
+      )}
     </a>
   )
 }

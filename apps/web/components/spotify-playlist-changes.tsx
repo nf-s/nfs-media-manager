@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation } from '@tanstack/react-query'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { errorMessage } from './lastfm-sync'
 import { spotifyAuthorizationUrl } from '@/utils/spotify-authorize'
@@ -24,7 +24,15 @@ export default function AllowPlaylistChanges({
   })
   return (
     <>
-      <Button disabled={authorize.isPending} onClick={() => authorize.mutate()}>
+      <Button
+        disabled={authorize.isPending || authorize.isSuccess}
+        feedback={mutationFeedback(authorize, {
+          pending: 'Opening Spotify sign-in…',
+          success: 'Waiting for Spotify…',
+          error: 'Could not open Spotify · retry',
+        })}
+        onClick={() => authorize.mutate()}
+      >
         {authorize.isPending ? 'Connecting...' : 'Allow playlist changes'}
       </Button>
       {authorize.isError && (

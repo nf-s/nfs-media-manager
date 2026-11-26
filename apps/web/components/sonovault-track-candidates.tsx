@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
   queryOptions,
@@ -26,7 +27,11 @@ import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { List, ListRow, RowTitle } from '@repo/ui/components/ds/list-row'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  mutationFeedback,
+} from '@repo/ui/components/ui/button'
 import { formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { LASTFM_SYNC_POLL_MS } from '@/utils/lastfm-sync'
@@ -345,25 +350,39 @@ function SonovaultCandidates({
             size="xs"
             aria-label={`Accept ${chosen.title}`}
             disabled={decide.isPending}
+            feedback={
+              decide.variables?.decision === 'accept'
+                ? mutationFeedback(decide, {
+                    pending: 'Accepting candidate…',
+                    success: 'Accepted',
+                    error: 'Could not accept',
+                  })
+                : undefined
+            }
             onClick={() =>
               decide.mutate({ candidate: chosen, decision: 'accept' })
             }
           >
-            {decide.isPending && decide.variables.decision === 'accept'
-              ? 'Saving...'
-              : 'Accept'}
+            Accept
           </Button>
           <Button
             size="xs"
             aria-label={`Mark ${chosen.title} as incorrect`}
             disabled={decide.isPending}
+            feedback={
+              decide.variables?.decision === 'reject'
+                ? mutationFeedback(decide, {
+                    pending: 'Marking incorrect…',
+                    success: 'Marked incorrect',
+                    error: 'Could not mark incorrect',
+                  })
+                : undefined
+            }
             onClick={() =>
               decide.mutate({ candidate: chosen, decision: 'reject' })
             }
           >
-            {decide.isPending && decide.variables.decision === 'reject'
-              ? 'Saving...'
-              : 'Mark incorrect'}
+            Mark incorrect
           </Button>
           {waiting.length > 1 && (
             <Button
@@ -382,7 +401,22 @@ function SonovaultCandidates({
         </p>
       )}
       {decide.data?.spotifyWarning && (
-        <Notice tone="attention">{decide.data.spotifyWarning}</Notice>
+        <Notice tone="attention">
+          Candidate accepted. {decide.data.spotifyWarning}
+        </Notice>
+      )}
+      {decide.data && !decide.data.spotifyWarning && (
+        <span role="status" className="ds-cell-id">
+          <ButtonFeedbackLabel
+            feedback={{
+              phase: 'done',
+              label:
+                decide.variables?.decision === 'reject'
+                  ? 'Marked incorrect'
+                  : 'Candidate accepted',
+            }}
+          />
+        </span>
       )}
       {decide.isError && (
         <Notice tone="danger">
@@ -459,9 +493,9 @@ export function SonovaultCandidateReviewDialog({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => review.refetch()}>
+                <ReadButton size="xs" read={() => review.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load the Sonovault candidates.

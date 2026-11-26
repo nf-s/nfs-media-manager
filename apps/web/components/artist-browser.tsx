@@ -1,5 +1,6 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import {
@@ -688,7 +689,12 @@ export default function ArtistBrowser() {
     ) : null
 
   return (
-    <section className="media-browser" aria-label={collection}>
+    <ResultSection
+      identity={queryKey}
+      result={query}
+      className="media-browser"
+      aria-label={collection}
+    >
       <div className="browse-main">
         <BrowseToolbar
           libraryScope={{ value: libraryScope, onChange: changeLibraryScope }}
@@ -1042,6 +1048,6 @@ export default function ArtistBrowser() {
           />
         )}
       </div>
-    </section>
+    </ResultSection>
   )
 }

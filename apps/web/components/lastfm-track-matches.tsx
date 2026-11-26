@@ -1,5 +1,8 @@
 'use client'
 
+import { ResultFeedbackScope } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { LibraryTrackInlinePlayButtons } from './play-controls'
@@ -15,7 +18,7 @@ import {
 import { Stats } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { formatCount } from '@repo/ui/lib/format'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
   TableBody,
@@ -177,15 +180,16 @@ export function LastfmTrackMatchList() {
     const timer = window.setTimeout(() => setQuery(draft.trim()), 250)
     return () => window.clearTimeout(timer)
   }, [draft])
+  const listKey = [
+    'tracks',
+    'lastfm-matching',
+    query,
+    playability,
+    sortBy,
+    direction,
+  ]
   const tracks = useVirtualTable({
-    queryKey: [
-      'tracks',
-      'lastfm-matching',
-      query,
-      playability,
-      sortBy,
-      direction,
-    ],
+    queryKey: listKey,
     enabled: !queuePending,
     pageSize: matchPageSize,
     loadPage: (page, _size, signal) =>
@@ -231,7 +235,7 @@ export function LastfmTrackMatchList() {
     setSortBy(key)
   }
   return (
-    <>
+    <ResultFeedbackScope identity={JSON.stringify(listKey)} result={tracks}>
       <SecondaryTableToolbar
         search={
           <Input
@@ -269,9 +273,9 @@ export function LastfmTrackMatchList() {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={tracks.retry}>
+            <ReadButton size="xs" read={tracks.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load Last.fm tracks.
@@ -281,9 +285,9 @@ export function LastfmTrackMatchList() {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={searchStatuses.retry}>
+            <ReadButton size="xs" read={searchStatuses.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load Spotify search status.
@@ -377,9 +381,9 @@ export function LastfmTrackMatchList() {
                       ? 'Could not load Last.fm tracks.'
                       : 'No matching Last.fm tracks.'}
                   {tracks.isError && (
-                    <Button size="xs" variant="link" onClick={tracks.retry}>
+                    <ReadButton size="xs" variant="link" read={tracks.retry}>
                       Retry
-                    </Button>
+                    </ReadButton>
                   )}
                 </TableState>
               )}
@@ -537,7 +541,7 @@ export function LastfmTrackMatchList() {
           disabled={selectionDisabled}
         />
       </SecondaryTableFrame>
-    </>
+    </ResultFeedbackScope>
   )
 }
 
@@ -589,9 +593,9 @@ export default function LastfmTrackMatches() {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => counts.refetch()}>
+            <ReadButton size="xs" read={() => counts.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load track matches.
@@ -634,8 +638,13 @@ export default function LastfmTrackMatches() {
             status.data.state === 'running'
           }
           onClick={() => refresh.mutate()}
+          feedback={mutationFeedback(refresh, {
+            pending: 'Refreshing matches…',
+            success: 'Matches updated',
+            error: 'Could not refresh matches',
+          })}
         >
-          {refresh.isPending ? 'Refreshing...' : 'Refresh matches'}
+          Refresh matches
         </Button>
       </span>
       <p className="ds-muted">

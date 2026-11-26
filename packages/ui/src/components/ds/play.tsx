@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react'
 import { ListPlus, Pause, Play } from 'lucide-react'
-import { Button } from '../ui/button'
+import { Button, type ButtonFeedback } from '../ui/button'
+
+type PlayFeedback = {
+  playFeedback?: ButtonFeedback
+  queueFeedback?: ButtonFeedback
+  playDisabled?: boolean
+  queueDisabled?: boolean
+}
 
 /**
  * The only control that plays. Order is always Play, then Queue.
@@ -17,6 +24,10 @@ export function PlayPair({
   playing = false,
   disabled = false,
   disabledReason,
+  playFeedback,
+  queueFeedback,
+  playDisabled = false,
+  queueDisabled = false,
   onPlay,
   onQueue,
   children,
@@ -31,17 +42,18 @@ export function PlayPair({
   onQueue: () => void
   /** Replaces the default icons, for example a "now playing" indicator. */
   children?: ReactNode
-}) {
+} & PlayFeedback) {
   const verb = playing ? 'Pause' : 'Play'
   const suffix = disabled && disabledReason ? `: ${disabledReason}` : ''
   return (
     <span className="ds-play" data-place={place}>
-      <button
+      <Button
         type="button"
         aria-label={`${verb} ${title}${suffix}`}
         title={disabled ? disabledReason : `${verb} ${title}`}
         aria-pressed={playing}
-        disabled={disabled}
+        disabled={disabled || playDisabled}
+        feedback={playFeedback}
         onClick={(event) => {
           event.stopPropagation()
           onPlay()
@@ -53,19 +65,20 @@ export function PlayPair({
           ) : (
             <Play className="ds-i" data-size="sm" data-fill="" aria-hidden />
           ))}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
         aria-label={`Add ${title} to queue${suffix}`}
         title={disabled ? disabledReason : `Add ${title} to queue`}
-        disabled={disabled}
+        disabled={disabled || queueDisabled}
+        feedback={queueFeedback}
         onClick={(event) => {
           event.stopPropagation()
           onQueue()
         }}
       >
         <ListPlus className="ds-i" data-size="sm" aria-hidden />
-      </button>
+      </Button>
     </span>
   )
 }
@@ -79,6 +92,10 @@ export function PlayHeaderButtons({
   playing = false,
   disabled = false,
   disabledReason,
+  playFeedback,
+  queueFeedback,
+  playDisabled = false,
+  queueDisabled = false,
   onPlay,
   onQueue,
 }: {
@@ -88,13 +105,14 @@ export function PlayHeaderButtons({
   disabledReason?: string
   onPlay: () => void
   onQueue: () => void
-}) {
+} & PlayFeedback) {
   return (
     <>
       <Button
         variant="primary"
         size="md"
-        disabled={disabled}
+        disabled={disabled || playDisabled}
+        feedback={playFeedback}
         title={disabled ? disabledReason : undefined}
         aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
         onClick={onPlay}
@@ -109,7 +127,8 @@ export function PlayHeaderButtons({
       <Button
         size="md"
         icon
-        disabled={disabled}
+        disabled={disabled || queueDisabled}
+        feedback={queueFeedback}
         title={disabled ? disabledReason : 'Add to queue'}
         aria-label={`Add ${title} to queue`}
         onClick={onQueue}

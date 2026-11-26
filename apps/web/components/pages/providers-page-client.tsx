@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
@@ -137,7 +138,9 @@ export default function ProvidersPageClient() {
         <State
           error
           title="Could not load providers"
-          action={<Button onClick={() => overview.refetch()}>Retry</Button>}
+          action={
+            <ReadButton read={() => overview.refetch()}>Retry</ReadButton>
+          }
         />
       ) : overview.data && !items.length ? (
         library ? (

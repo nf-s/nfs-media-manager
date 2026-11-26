@@ -1,12 +1,7 @@
 'use client'
 
 import { createContext, useContext, type ReactNode } from 'react'
-import {
-  useMutation,
-  useMutationState,
-  useQueries,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
 import type { CatalogMembershipResult } from '@repo/schemas/manual-add'
 import type {
   PlaybackCatalogInput,
@@ -15,6 +10,11 @@ import type {
 } from '@repo/schemas/playback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
 import { useCatalogMembership } from '@/hooks/use-catalog-membership'
+import {
+  libraryAdditionUnavailable,
+  saveLibraryAddition,
+  useLibraryAddition,
+} from '@/hooks/use-library-addition'
 import { addCatalogMedia } from '@/utils/catalog-api'
 import { recordPlaybackCatalog } from '@/utils/playback-catalog'
 import {
@@ -47,18 +47,18 @@ export function PlayerLibraryActions({ children }: { children: ReactNode }) {
   const announce = useAnnounceLibraryAddition()
   const save = useMutation({
     mutationKey,
-    mutationFn: async ({
-      mediaType,
-      catalogId,
-      externalId,
-    }: PlayerAddition) => {
-      if (catalogId)
-        return (await addCatalogMedia(apiBaseUrl, catalogId)).mediaItemId
-      return addManualMediaItem(apiBaseUrl, mediaType, {
-        externalId,
-        mediaItemId: null,
-      })
-    },
+    mutationFn: ({ mediaType, catalogId, externalId }: PlayerAddition) =>
+      saveLibraryAddition(
+        client,
+        { kind: mediaType, catalogId, externalId },
+        async () =>
+          catalogId
+            ? (await addCatalogMedia(apiBaseUrl, catalogId)).mediaItemId
+            : addManualMediaItem(apiBaseUrl, mediaType, {
+                externalId,
+                mediaItemId: null,
+              }),
+      ),
     onSuccess: async (
       mediaItemId,
       { mediaType, externalId, catalogId, title },
@@ -239,34 +239,31 @@ export function PlayerLibraryAction({
   touch?: boolean
 }) {
   const save = useContext(PlayerLibraryContext)
-  const { add } = playerItemIdentity(item, membership)
-  const saving = useMutationState({
-    filters: { mutationKey, status: 'pending' },
-    select: (mutation) => mutation.state.variables,
-  }).some(
-    (pending) =>
-      typeof pending === 'object' &&
-      pending !== null &&
-      add &&
-      (('catalogId' in pending &&
-        add.catalogId &&
-        pending.catalogId === add.catalogId) ||
-        item.catalog.some(
-          (entry) =>
-            'externalId' in pending &&
-            'mediaType' in pending &&
-            pending.externalId === entry.externalId &&
-            pending.mediaType === entry.mediaType,
-        )),
-  )
-  if (!add) return null
+  const client = useQueryClient()
+  const { add, mediaItemId } = playerItemIdentity(item, membership)
+  const target = {
+    kind: item.kind,
+    catalogId: add?.catalogId ?? mediaItemId,
+    externalId: add?.externalId ?? item.catalog[0]?.externalId,
+  }
+  const match = playbackItemMembership(item, membership.data)
+  const confirmed =
+    membership.unresolved ||
+    (match.status !== 'saved' && match.status !== 'missing')
+      ? undefined
+      : match.status === 'saved'
+  const receipt = useLibraryAddition(target, confirmed)
   return (
     <LibraryAction
       kind={item.kind}
       name={item.title}
+      short
       touch={touch}
-      pending={saving}
-      onAdd={() => save(add)}
+      saved={!add || Boolean(receipt?.committedId)}
+      feedback={receipt?.feedback}
+      onAdd={() => {
+        if (add && !libraryAdditionUnavailable(client, target)) save(add)
+      }}
     />
   )
 }

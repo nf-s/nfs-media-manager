@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -10,7 +11,7 @@ import type {
   ProviderLocalWorkerStatus,
   ProviderSummary,
 } from '@repo/schemas/provider'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { formatUntil } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -170,25 +171,52 @@ export function ProviderDispatchActions({
         <Button
           size={size}
           disabled={disabled || waitingToResume}
+          feedback={
+            update.variables === 'resume'
+              ? mutationFeedback(update, {
+                  pending: 'Requesting…',
+                  success: 'Restart requested',
+                  error: 'Restart unconfirmed',
+                })
+              : undefined
+          }
           onClick={() => dispatch.startReview('resume')}
         >
           {dispatch.resumeLabel}
         </Button>
       )}
-      {restricted && !compact && (
+      {(restricted || update.variables === 'resume-all') && !compact && (
         <Button
           size={size}
-          disabled={disabled || active > 0}
+          disabled={disabled || active > 0 || !restricted}
+          feedback={
+            update.variables === 'resume-all'
+              ? mutationFeedback(update, {
+                  pending: 'Requesting…',
+                  success: 'Restart requested',
+                  error: 'Restart unconfirmed',
+                })
+              : undefined
+          }
           onClick={() => dispatch.startReview('resume-all')}
         >
           Resume all queued jobs
         </Button>
       )}
-      {!data.paused && (
+      {(!data.paused || update.variables === 'pause') && (
         <Button
           size={size}
           variant="ghost"
-          disabled={disabled}
+          disabled={disabled || data.paused}
+          feedback={
+            update.variables === 'pause'
+              ? mutationFeedback(update, {
+                  pending: 'Pausing…',
+                  success: 'Queue paused',
+                  error: 'Pause unconfirmed',
+                })
+              : undefined
+          }
           onClick={() => dispatch.startReview('pause')}
         >
           Pause queue
@@ -221,9 +249,9 @@ export function ProviderDispatchReview({
       {status.isError && (
         <p role="alert">
           Could not load queue status.{' '}
-          <Button size="xs" variant="ghost" onClick={() => status.refetch()}>
+          <ReadButton size="xs" variant="ghost" read={() => status.refetch()}>
             Retry
-          </Button>
+          </ReadButton>
         </p>
       )}
       {reviewing && (
@@ -250,6 +278,12 @@ export function ProviderDispatchReview({
                 (reviewing === 'resume-all' && active > 0)
               }
               onClick={() => update.mutate(reviewing)}
+              feedback={mutationFeedback(update, {
+                pending:
+                  reviewing === 'pause' ? 'Pausing…' : 'Requesting restart…',
+                success:
+                  reviewing === 'pause' ? 'Queue paused' : 'Restart requested',
+              })}
             >
               Confirm {dispatch.actionLabel.toLowerCase()}
             </Button>
@@ -352,12 +386,17 @@ export function ProviderWorkerModeSwitch({
             status.isError
           }
           onClick={() => changeMode.mutate(nextMode)}
+          feedback={
+            switching
+              ? mutationFeedback(changeMode, {
+                  pending: 'Switching…',
+                  success: 'Worker switched',
+                  error: 'Switch unconfirmed',
+                })
+              : undefined
+          }
         >
-          {switching && changeMode.isPending
-            ? 'Switching...'
-            : nextMode === 'cloud'
-              ? 'Switch to Cloudflare'
-              : 'Switch to Local'}
+          {nextMode === 'cloud' ? 'Switch to Cloudflare' : 'Switch to Local'}
         </Button>
         {restriction && <span className="ds-help">{restriction}</span>}
       </span>
@@ -400,13 +439,20 @@ export function ProviderWorkerReview({
           details="Check the latest job and worker evidence before acknowledging. The queue stays paused."
           confirmLabel="Acknowledge request"
           disabled={disabled}
+          feedback={
+            reviewing
+              ? mutationFeedback(control, {
+                  pending: 'Acknowledging…',
+                  success: 'Request acknowledged',
+                  error: 'Could not acknowledge',
+                })
+              : undefined
+          }
           onConfirm={() => {
             if (!disabled) control.mutate('review')
           }}
         >
-          {reviewing && control.isPending
-            ? 'Reviewing...'
-            : 'Review worker request'}
+          Review worker request
         </ConfirmAction>
         {!drained && (
           <span className="ds-help">
@@ -446,7 +492,7 @@ export function ProviderWorkerPairing({
   busy: boolean
 }) {
   if (!worker) return null
-  const { request, canDownload, download } = pairing
+  const { request, canDownload, download, downloadStarted } = pairing
   const restriction = workerControlRestriction(worker, dispatch, 'pairing')
   const disabled =
     busy ||
@@ -459,7 +505,11 @@ export function ProviderWorkerPairing({
     <>
       {canDownload ? (
         <span className="ds-actions">
-          <Button type="button" onClick={download}>
+          <Button
+            type="button"
+            onClick={download}
+            feedback={{ phase: 'done', label: 'Token ready · download' }}
+          >
             Download worker token
           </Button>
           <span className="ds-help">
@@ -481,21 +531,23 @@ export function ProviderWorkerPairing({
             }
             confirmLabel={worker.paired ? 'Replace pairing' : 'Pair worker'}
             disabled={disabled}
+            feedback={mutationFeedback(request, {
+              pending: 'Pairing…',
+              success: 'Token ready',
+              error: 'Pairing unconfirmed',
+            })}
             onConfirm={() => {
               if (!disabled) request.mutate()
             }}
           >
-            {request.isPending
-              ? 'Pairing...'
-              : worker.paired
-                ? 'Replace pairing'
-                : 'Pair worker'}
+            {worker.paired ? 'Replace pairing' : 'Pair worker'}
           </ConfirmAction>
           {restriction && !worker.supportsModeSwitch && (
             <span className="ds-help">{restriction}</span>
           )}
         </span>
       )}
+      {downloadStarted && <span role="status">Token download started</span>}
       {request.isError && <p role="alert">{request.error.message}</p>}
     </>
   )

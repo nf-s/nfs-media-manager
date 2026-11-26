@@ -15,7 +15,7 @@ import {
   ToolbarCount,
   ToolbarEnd,
 } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import { ResultButton, useResultAction } from './result-feedback'
 import {
   BrowseFilterChips,
   BrowseFilterPill,
@@ -88,8 +88,9 @@ export default function MetadataSelectionToolbar({
   function change(next: MetadataSelectionFilters) {
     if (!disabled) onChange(next)
   }
+  const clearFeedback = useResultAction('clear-metadata-filters').feedback
   const activeFilters =
-    activeCount > 0 || otherFiltersActive ? (
+    activeCount > 0 || otherFiltersActive || clearFeedback ? (
       <div className="ops-chips" role="group" aria-label="Active filters">
         {value.q && (
           <BrowseFilterPill
@@ -171,7 +172,10 @@ export default function MetadataSelectionToolbar({
           </BrowseFilterPill>
         ))}
         {libraryScope && <LibraryScopePills {...libraryScope} />}
-        <Button
+        <ResultButton
+          control="clear-metadata-filters"
+          aria-label="Clear all filters"
+          disabled={!activeCount && !otherFiltersActive}
           variant="link"
           size="xs"
           onClick={() => {
@@ -179,7 +183,7 @@ export default function MetadataSelectionToolbar({
           }}
         >
           Clear all
-        </Button>
+        </ResultButton>
       </div>
     ) : null
   return (

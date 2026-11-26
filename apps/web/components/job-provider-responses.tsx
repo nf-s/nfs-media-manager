@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useId, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Job } from '@repo/schemas/job'
@@ -55,7 +56,9 @@ export function JobProviderResponseBody({
 }: {
   body: ProviderResponseBody
 }) {
-  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>(
+    'idle',
+  )
   if (body.state === 'unavailable')
     return <p className="ds-help">{unavailableReasons[body.reason]}</p>
   if (body.state === 'local') return <LocalResponseArchive receipt={body} />
@@ -65,7 +68,18 @@ export function JobProviderResponseBody({
       <div className="ds-actions dtl-wrap">
         <Button
           size="xs"
+          disabled={copy === 'copying'}
+          feedback={
+            copy === 'copying'
+              ? { phase: 'pending', label: 'Copying…' }
+              : copy === 'copied'
+                ? { phase: 'done', label: 'Copied' }
+                : copy === 'failed'
+                  ? { phase: 'failed', label: 'Copy failed' }
+                  : undefined
+          }
           onClick={async () => {
+            setCopy('copying')
             try {
               await navigator.clipboard.writeText(body.text)
               setCopy('copied')
@@ -74,7 +88,7 @@ export function JobProviderResponseBody({
             }
           }}
         >
-          {copy === 'copied' ? 'Copied' : 'Copy response'}
+          Copy response
         </Button>
         {copy === 'failed' && (
           <span role="status" className="ds-help">
@@ -159,28 +173,32 @@ function LocalResponseArchive({
   )
 }
 
-function StoredResponse({
-  base,
-  jobId,
-  responseId,
-}: {
-  base: string
-  jobId: string
-  responseId: string
-}) {
-  const { apiBaseUrl } = useConfig()
-  const result = useQuery({
+function useStoredResponse(
+  apiBaseUrl: string,
+  base: string,
+  jobId: string,
+  responseId: string | null,
+) {
+  return useQuery({
     queryKey: ['jobs', 'provider-response', jobId, responseId],
+    enabled: responseId !== null,
     queryFn: ({ signal }) =>
       fetchApiData(
         apiBaseUrl,
-        `${base}/${encodeURIComponent(responseId)}`,
+        `${base}/${encodeURIComponent(responseId ?? '')}`,
         ProviderResponseSchema,
         { signal },
       ),
     retry: false,
     staleTime: Infinity,
   })
+}
+
+function StoredResponse({
+  result,
+}: {
+  result: ReturnType<typeof useStoredResponse>
+}) {
   const row = result.data
   return (
     <Section title={row ? requestLabel(row) : 'Saved response'}>
@@ -219,9 +237,9 @@ function StoredResponse({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => result.refetch()}>
+            <ReadButton size="xs" read={() => result.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not read the saved response.
@@ -237,6 +255,7 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
   const view = useDetailView()
   const selected = view.params.get('jobResponse')
   const base = `/api/v1/scrape/jobs/${encodeURIComponent(job.id)}/data/responses`
+  const response = useStoredResponse(apiBaseUrl, base, job.id, selected)
   const rows = useVirtualTable({
     queryKey: ['jobs', 'provider-responses', job.id, job.status],
     pageSize: 24,
@@ -259,9 +278,9 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={rows.retry}>
+            <ReadButton size="xs" read={rows.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load provider response history.
@@ -307,6 +326,20 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
                         variant="link"
                         size="xs"
                         aria-pressed={selected === row.id}
+                        feedback={
+                          selected !== row.id
+                            ? undefined
+                            : response.isFetching
+                              ? { phase: 'pending', label: 'Loading response…' }
+                              : response.isError
+                                ? {
+                                    phase: 'failed',
+                                    label: 'Response unavailable',
+                                  }
+                                : response.data
+                                  ? { phase: 'done', label: 'Response opened' }
+                                  : undefined
+                        }
                         onClick={() => {
                           const params = new URLSearchParams(view.params)
                           params.set('jobResponse', row.id)
@@ -328,14 +361,7 @@ export function JobProviderResponses({ job }: { job: DataJob }) {
           </table>
         </SecondaryTableScroll>
       )}
-      {selected && (
-        <StoredResponse
-          key={selected}
-          base={base}
-          jobId={job.id}
-          responseId={selected}
-        />
-      )}
+      {selected && <StoredResponse key={selected} result={response} />}
     </Section>
   )
 }

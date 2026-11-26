@@ -158,6 +158,7 @@
     const inner = `${o.icon ? icon(o.icon, { size: 'sm' }) : ''}${label ? esc(label) : ''}${o.end ? icon(o.end, { size: 'sm' }) : ''}`
     return `<button type="button" class="ds-btn"${attrs({
       'data-variant': o.variant,
+      'data-feedback': o.feedback,
       'data-size': o.size,
       'data-icon': !label && Boolean(o.icon),
       'aria-label': o.aria,
@@ -168,13 +169,21 @@
   }
 
   function libraryAction(kind, name, o = {}) {
-    if (o.saved) return ''
-    const label = o.pending
-      ? `Adding ${kind} to library · ${name}`
-      : o.action === 'find'
+    if (o.saved && !o.added) return ''
+    if (o.pending || o.added)
+      return btn(o.pending ? 'Adding…' : 'Added', {
+        icon: o.pending ? 'clock' : 'check',
+        aria: `${o.pending ? 'Adding' : 'Added'} ${kind} · ${name}`,
+        size: 'xs',
+        variant: 'ghost',
+        feedback: o.pending ? 'pending' : 'done',
+        disabled: true,
+      })
+    const label =
+      o.action === 'find'
         ? `Find ${kind} in library · ${name}`
         : `Add ${kind} to library · ${name}`
-    return `<button type="button" class="ds-btn ds-library-action" data-variant="ghost" data-size="xs" data-icon${attrs(
+    return `<button type="button" class="ds-btn ds-library-action" data-variant="ghost" data-size="xs"${attrs(
       {
         'data-touch': o.touch,
         'aria-label': label,
@@ -182,7 +191,7 @@
         'aria-busy': o.pending ? 'true' : undefined,
         title: label,
       },
-    )}>${icon(o.action === 'find' ? 'search' : 'bookPlus')}</button>`
+    )}>${icon(o.action === 'find' ? 'search' : 'bookPlus')}<span>${o.action === 'find' ? (o.short ? 'Find' : 'Find in library') : o.short ? 'Add' : 'Add to Library'}</span></button>`
   }
 
   /* The header pair goes under the artwork (detailHead's o.play): a labelled

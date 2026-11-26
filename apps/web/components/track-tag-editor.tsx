@@ -9,16 +9,21 @@ import {
   type TrackTagGroups,
 } from '@repo/schemas/tracks'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { fetchApiData } from '@/utils/api'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import { TagPicker } from './tag-picker'
 
 type TrackTagEdit =
-  | { kind: 'add'; tagId: string }
+  | { kind: 'add' | 'restore'; tagId: string; name: string }
   | { kind: 'create'; name: string }
-  | { kind: 'remove'; tagId: string }
+  | { kind: 'remove'; tagId: string; name: string }
   | { kind: 'reset' }
 
 /**
@@ -28,22 +33,27 @@ type TrackTagEdit =
 export function useTrackTagEdits(trackId: string) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const [created, setCreated] = useState<{ id: string; name: string } | null>(
+    null,
+  )
   const path = `/api/v1/tracks/${encodeURIComponent(trackId)}/tags`
   const send = (method: 'POST' | 'DELETE', tagId: string) =>
     fetchApiData(apiBaseUrl, path, TrackTagChangeSchema, {
       method,
       body: JSON.stringify({ tagId }),
     })
-  return useMutation({
+  const editTag = useMutation({
     retry: false,
     mutationFn: async (edit: TrackTagEdit) => {
       switch (edit.kind) {
         case 'add':
+        case 'restore':
           return send('POST', edit.tagId)
         case 'remove':
           return send('DELETE', edit.tagId)
         case 'create': {
-          const created = await fetchApiData(
+          if (created?.name === edit.name) return send('POST', created.id)
+          const tag = await fetchApiData(
             apiBaseUrl,
             '/api/v1/tags',
             CreateTagResultSchema,
@@ -56,7 +66,8 @@ export function useTrackTagEdits(trackId: string) {
               }),
             },
           )
-          return send('POST', created.id)
+          setCreated({ id: tag.id, name: edit.name })
+          return send('POST', tag.id)
         }
         case 'reset':
           return fetchApiData(
@@ -67,7 +78,8 @@ export function useTrackTagEdits(trackId: string) {
           )
       }
     },
-    onSettled: async () => {
+    onSuccess: () => setCreated(null),
+    onSettled: () => {
       for (const queryKey of [
         ['track', trackId],
         ['tracks'],
@@ -75,9 +87,96 @@ export function useTrackTagEdits(trackId: string) {
         ['tag-detail'],
         ['tag-provenance'],
       ])
-        await client.invalidateQueries({ queryKey })
+        void client.invalidateQueries({ queryKey })
     },
   })
+  const matchingCreated =
+    editTag.variables?.kind === 'create' &&
+    created?.name === editTag.variables.name
+  const feedback: ButtonFeedback | undefined =
+    matchingCreated && editTag.isPending
+      ? { phase: 'pending', label: 'Tag created · attaching…' }
+      : matchingCreated && editTag.isError
+        ? { phase: 'partial', label: 'Tag created · retry attachment' }
+        : mutationFeedback(
+            editTag,
+            editTag.variables?.kind === 'remove'
+              ? {
+                  pending: 'Removing tag…',
+                  success: 'Tag removed',
+                  error: 'Could not remove tag',
+                }
+              : editTag.variables?.kind === 'reset'
+                ? {
+                    pending: 'Resetting tags…',
+                    success: 'Tags reset',
+                    error: 'Could not reset tags',
+                  }
+                : editTag.variables?.kind === 'create'
+                  ? {
+                      pending: 'Creating tag…',
+                      success: 'Tag added',
+                      error: 'Could not create tag',
+                    }
+                  : editTag.variables?.kind === 'restore'
+                    ? {
+                        pending: 'Restoring tag…',
+                        success: 'Tag restored',
+                        error: 'Could not restore tag',
+                      }
+                    : {
+                        pending: 'Adding tag…',
+                        success: 'Tag added',
+                        error: 'Could not add tag',
+                      },
+          )
+  return {
+    ...editTag,
+    feedback,
+    retryAttachment: matchingCreated && editTag.isError ? created : null,
+  }
+}
+
+export function TrackTagEditReceipt({
+  edits,
+}: {
+  edits: ReturnType<typeof useTrackTagEdits>
+}) {
+  const target =
+    edits.variables && 'name' in edits.variables ? edits.variables.name : null
+  return (
+    <>
+      {edits.feedback && !edits.isPending && !edits.isError && (
+        <span className="ds-cell-id" role="status">
+          <ButtonFeedbackLabel feedback={edits.feedback} />
+          {target && <span>{target}</span>}
+        </span>
+      )}
+      {edits.isError && (
+        <Notice
+          tone="danger"
+          action={
+            edits.retryAttachment && (
+              <Button
+                feedback={edits.feedback}
+                onClick={() => {
+                  if (edits.retryAttachment)
+                    edits.mutate({
+                      kind: 'create',
+                      name: edits.retryAttachment.name,
+                    })
+                }}
+              >
+                Retry attachment
+              </Button>
+            )
+          }
+        >
+          {errorMessage(edits.error, 'Could not change the track’s tags.')}
+        </Notice>
+      )}
+    </>
+  )
 }
 
 /** The Edit tags controls under a track's own tags. */
@@ -101,8 +200,20 @@ export function TrackTagEditor({
         listLabel="Tags to add"
         disabled={edits.isPending}
         unavailable={(tag) => (own.has(tag.id) ? 'on this track' : null)}
-        onPick={(tag) => edits.mutate({ kind: 'add', tagId: tag.id })}
+        onPick={(tag) =>
+          edits.mutate({ kind: 'add', tagId: tag.id, name: tag.name })
+        }
         onCreate={(name) => edits.mutate({ kind: 'create', name })}
+        pickFeedback={(tag) =>
+          edits.variables?.kind === 'add' && edits.variables.tagId === tag.id
+            ? edits.feedback
+            : undefined
+        }
+        createFeedback={(name) =>
+          edits.variables?.kind === 'create' && edits.variables.name === name
+            ? edits.feedback
+            : undefined
+        }
       />
       {ownerChanges &&
         (confirmReset ? (
@@ -116,6 +227,9 @@ export function TrackTagEditor({
                 variant="danger"
                 size="xs"
                 disabled={edits.isPending}
+                feedback={
+                  edits.variables?.kind === 'reset' ? edits.feedback : undefined
+                }
                 onClick={() =>
                   edits.mutate(
                     { kind: 'reset' },
@@ -141,11 +255,6 @@ export function TrackTagEditor({
             </Button>
           </span>
         ))}
-      {edits.isError && (
-        <Notice tone="danger">
-          {errorMessage(edits.error, 'Could not change the track’s tags.')}
-        </Notice>
-      )}
     </div>
   )
 }

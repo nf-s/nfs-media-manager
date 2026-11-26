@@ -186,6 +186,40 @@ function ranking(request: RatingsRankingRequest): RatingsRankingPage {
   }
 }
 
+test('sort shows the outstanding read and its result on the direction button', async ({
+  page,
+}) => {
+  let releaseRead = () => {}
+  const held = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  let hold = false
+  await page.route('**/api/v1/ratings/ranking', async (route) => {
+    const request = RatingsRankingRequestSchema.parse(
+      route.request().postDataJSON(),
+    )
+    if (hold) await held
+    await route.fulfill({
+      json: { statusCode: 200, message: 'OK', data: ranking(request) },
+    })
+  })
+  await page.goto('/films/ratings')
+  await expect(
+    page.getByRole('button', { name: 'Fixture 1', exact: true }),
+  ).toBeVisible()
+  const direction = page.getByRole('button', { name: /Sort direction:/ })
+  hold = true
+  try {
+    await direction.click()
+    await expect(direction).toHaveAttribute('data-feedback', 'pending')
+    await expect(direction).toHaveText('Updating…')
+  } finally {
+    releaseRead()
+  }
+  await expect(direction).toHaveAttribute('data-feedback', 'done')
+  await expect(direction).toHaveText('Results updated')
+})
+
 test('ranking reads one page per committed query and reuses calculation evidence and visited pages', async ({
   page,
 }) => {

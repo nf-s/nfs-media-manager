@@ -1,5 +1,8 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -27,7 +30,12 @@ import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { defaultListeningPeriod } from '@repo/schemas/listening'
 import { BrowseCountSchema, BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { Notice } from '@repo/ui/components/ds/feedback'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
+import {
+  queueReceipt,
+  submissionFeedback,
+  useJobBatchFeedback,
+} from './job-button-feedback'
 import {
   TableCell,
   TableHead,
@@ -130,6 +138,8 @@ const queueKey = ['metadata-selection-queue', 'artist']
 const snapshotKey = ['artist-selection-snapshot']
 type QueueSelection = {
   catalog: CatalogScopeQuery
+  batchId: string
+  total: number
   selectionKey: string
   snapshot: ArtistSelectionSnapshot | null
   selected: string[]
@@ -417,6 +427,7 @@ export default function ArtistMetadataTable({
             body: JSON.stringify(
               QueueArtistSelectionSchema.parse({
                 artistIds,
+                batchId: input.batchId,
                 providers: input.providers,
                 freshness: input.freshness,
                 confirmBroadRun: input.confirmBroadRun,
@@ -461,13 +472,23 @@ export default function ArtistMetadataTable({
       }
       setReview('')
     },
-    onSettled: () =>
-      Promise.all([
+    onSettled: () => {
+      void Promise.all([
         client.invalidateQueries({ queryKey: ['jobs'] }),
         client.invalidateQueries({ queryKey: ['job-activity'] }),
         client.invalidateQueries({ queryKey: ['artist-selection'] }),
-      ]),
+      ])
+    },
   })
+  const acceptedBatch = queue.data?.queued
+    ? queue.variables?.batchId
+    : undefined
+  const batchFeedback = useJobBatchFeedback(apiBaseUrl, acceptedBatch)
+  const queueFeedback =
+    batchFeedback ??
+    (queue.data
+      ? queueReceipt(queue.data.queued, queue.data.skipped)
+      : undefined)
 
   function setParams(updates: Record<string, string | null>) {
     if (pending) return
@@ -496,7 +517,17 @@ export default function ArtistMetadataTable({
       : query.sortBy
   const browseHref = embeddedBrowseHref('artists', {}, view.params)
   return (
-    <div className="ops-fill">
+    <ResultSection
+      as="div"
+      className="ops-fill"
+      identity={identity}
+      result={{
+        isFetching:
+          artists.isFetching ||
+          (counted.isCounting && !counted.countError && !artists.isError),
+        isError: artists.isError || counted.countError,
+      }}
+    >
       <MetadataSelectionToolbar
         libraryScope={{
           value: libraryScope,
@@ -599,9 +630,10 @@ export default function ArtistMetadataTable({
             <span className="ds-actions">
               <span
                 className="ds-muted"
+                role="status"
                 title={`Selection expires ${formatDateTime(snapshot.expiresAt)}`}
               >
-                Matching artists selected
+                {formatCount(selectionCount)} matching artists selected
                 {excluded.length
                   ? ` · ${formatCount(excluded.length)} excluded`
                   : ''}
@@ -628,6 +660,11 @@ export default function ArtistMetadataTable({
               type="button"
               variant="ghost"
               disabled={pending || (artists.hasTotal && artists.total === 0)}
+              feedback={mutationFeedback(createSnapshot, {
+                pending: 'Selecting…',
+                success: `${formatCount(selectionCount)} selected`,
+                error: 'Could not select artists',
+              })}
               onClick={() =>
                 createSnapshot.mutate({
                   identity,
@@ -636,17 +673,17 @@ export default function ArtistMetadataTable({
                 })
               }
             >
-              {snapshotPending
-                ? 'Selecting matching artists...'
-                : `Select all${artists.hasTotal ? ` ${formatCount(artists.total)}` : ''} matching artists`}
+              Select all
+              {artists.hasTotal ? ` ${formatCount(artists.total)}` : ''}{' '}
+              matching artists
             </Button>
           )
         }
         count={
           counted.countError ? (
-            <Button variant="link" size="xs" onClick={counted.retryCount}>
+            <ReadButton variant="link" size="xs" read={counted.retryCount}>
               Retry count
-            </Button>
+            </ReadButton>
           ) : !counted.isCounting ? (
             `${formatCount(artists.total)} ${artists.total === 1 ? 'artist' : 'artists'}`
           ) : (
@@ -690,9 +727,9 @@ export default function ArtistMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={artists.retry}>
+                <ReadButton size="xs" read={artists.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load artists.
@@ -702,9 +739,9 @@ export default function ArtistMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => catalog.refetch()}>
+                <ReadButton size="xs" read={() => catalog.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load providers.
@@ -724,9 +761,9 @@ export default function ArtistMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => members.refetch()}>
+                <ReadButton size="xs" read={() => members.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not check the selected rows. If the selection expired, clear
@@ -949,52 +986,56 @@ export default function ArtistMetadataTable({
           </tbody>
         </table>
       </SecondaryTableScroll>
-      {(selectionCount > 0 || pending) && (
+      {(selectionCount > 0 || pending || queue.isError || queue.data) && (
         <TableSelectionBar className="ops-selectbar">
           <span role="status">
             <b>{formatCount(selectionCount)} selected</b>
           </span>
-          <fieldset className="ops-providers" disabled={pending}>
-            <legend className="ds-label">Fetch metadata from</legend>
-            {!providers.length && (
-              <span>No artist enrichment providers available.</span>
-            )}
-            {providers.map((provider) => {
-              const reason = catalog.isPending
-                ? 'Loading providers...'
-                : unavailable(available.find((item) => item.id === provider))
-              return (
-                <label className="ds-checkrow" key={provider} title={reason}>
-                  <input
-                    type="checkbox"
-                    className="ds-check"
-                    checked={launchProviders.includes(provider)}
-                    disabled={Boolean(reason)}
-                    onChange={(event) => {
-                      setSelectedProviders((current) =>
-                        event.target.checked
-                          ? [...current, provider]
-                          : current.filter((id) => id !== provider),
-                      )
-                      setReview('')
-                    }}
-                  />
-                  {providerLabel(provider)}
-                  {reason ? ` (${reason})` : ''}
-                </label>
-              )
-            })}
-          </fieldset>
+          {(selectionCount > 0 || pending) && (
+            <fieldset className="ops-providers" disabled={pending}>
+              <legend className="ds-label">Fetch metadata from</legend>
+              {!providers.length && (
+                <span>No artist enrichment providers available.</span>
+              )}
+              {providers.map((provider) => {
+                const reason = catalog.isPending
+                  ? 'Loading providers...'
+                  : unavailable(available.find((item) => item.id === provider))
+                return (
+                  <label className="ds-checkrow" key={provider} title={reason}>
+                    <input
+                      type="checkbox"
+                      className="ds-check"
+                      checked={launchProviders.includes(provider)}
+                      disabled={Boolean(reason)}
+                      onChange={(event) => {
+                        setSelectedProviders((current) =>
+                          event.target.checked
+                            ? [...current, provider]
+                            : current.filter((id) => id !== provider),
+                        )
+                        setReview('')
+                      }}
+                    />
+                    {providerLabel(provider)}
+                    {reason ? ` (${reason})` : ''}
+                  </label>
+                )
+              })}
+            </fieldset>
+          )}
           <span className="ds-actions ds-toolbar-end">
             {!reviewed ? (
-              <Button
-                variant="primary"
-                type="button"
-                disabled={pending || !operations}
-                onClick={() => setReview(confirmationKey)}
-              >
-                Review {formatCount(operations)} metadata jobs
-              </Button>
+              selectionCount > 0 ? (
+                <Button
+                  variant="primary"
+                  type="button"
+                  disabled={pending || !operations}
+                  onClick={() => setReview(confirmationKey)}
+                >
+                  Review {formatCount(operations)} metadata jobs
+                </Button>
+              ) : null
             ) : (
               <span
                 className="ops-review"
@@ -1014,9 +1055,19 @@ export default function ArtistMetadataTable({
                     variant="primary"
                     type="button"
                     disabled={pending || !operations}
+                    feedback={
+                      queue.isPending
+                        ? {
+                            phase: 'pending',
+                            label: `Submitting ${formatCount(progress)}/${formatCount(queue.variables?.total ?? selectionCount)}…`,
+                          }
+                        : undefined
+                    }
                     onClick={() =>
                       queue.mutate({
                         selectionKey,
+                        batchId: crypto.randomUUID(),
+                        total: selectionCount,
                         catalog: scopeQuery,
                         snapshot,
                         selected: [...selected],
@@ -1031,9 +1082,7 @@ export default function ArtistMetadataTable({
                       })
                     }
                   >
-                    {pending
-                      ? `Queueing ${progress}/${selectionCount} artists...`
-                      : `Confirm ${formatCount(operations)} metadata jobs`}
+                    Confirm {formatCount(operations)} metadata jobs
                   </Button>
                   <Button
                     type="button"
@@ -1046,6 +1095,21 @@ export default function ArtistMetadataTable({
                 </span>
               </span>
             )}
+            {!queue.isPending &&
+              (queue.isError || queue.data?.interrupted || queueFeedback) && (
+                <Button
+                  disabled
+                  feedback={
+                    queue.isError || queue.data?.interrupted
+                      ? submissionFeedback(
+                          queue.data?.queued ? queueFeedback : undefined,
+                        )
+                      : queueFeedback
+                  }
+                >
+                  Artist metadata jobs
+                </Button>
+              )}
           </span>
         </TableSelectionBar>
       )}
@@ -1060,7 +1124,15 @@ export default function ArtistMetadataTable({
             <Notice
               action={
                 <Button asChild size="xs">
-                  <Link href="/jobs?mediaType=artist">View artist jobs</Link>
+                  <Link
+                    href={
+                      queue.variables
+                        ? `/jobs?batchId=${encodeURIComponent(queue.variables.batchId)}&mediaType=artist`
+                        : '/jobs?mediaType=artist'
+                    }
+                  >
+                    View artist jobs
+                  </Link>
                 </Button>
               }
             >
@@ -1075,6 +1147,6 @@ export default function ArtistMetadataTable({
           )}
         </div>
       )}
-    </div>
+    </ResultSection>
   )
 }

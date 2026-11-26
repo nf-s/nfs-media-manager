@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useId, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
@@ -17,7 +18,7 @@ import {
   SpotifyDisconnectResultSchema,
   SpotifySavedAlbumsInputSchema,
 } from '@repo/schemas/spotify'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Label } from '@repo/ui/components/ui/label'
 import { KeyValues } from '@repo/ui/components/ds/facts'
@@ -43,6 +44,7 @@ import { DetailLink } from './detail-link'
 import { fetchApiData } from '@/utils/api'
 import { scopedHref } from '@/utils/media-scope'
 import { spotifyCallbackSetup } from '@/utils/spotify-setup'
+import { importRunFeedback } from '@/utils/import-cache'
 
 const ALBUMS = { one: 'album', other: 'albums' }
 
@@ -87,24 +89,19 @@ export default function AlbumImportWorkflow({
       ),
   })
   const connect = useMutation({
-    mutationFn: () =>
-      fetchApiData(
+    mutationFn: async () => {
+      const result = await fetchApiData(
         apiBaseUrl,
         '/api/v1/spotify/authorize',
         SpotifyAuthorizeResultSchema,
         { method: 'POST', body: '{}' },
-      ),
-    onSuccess: (result) => {
+      )
       const url = new URL(result.url)
-      if (
-        url.protocol !== 'https:' ||
-        url.hostname !== 'accounts.spotify.com'
-      ) {
-        setError('The authorization URL was not a Spotify URL.')
-        return
-      }
-      window.location.assign(url.href)
+      if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com')
+        throw new Error('The authorization URL was not a Spotify URL.')
+      return url.href
     },
+    onSuccess: (url) => window.location.assign(url),
   })
   const disconnect = useMutation({
     mutationFn: () =>
@@ -114,9 +111,9 @@ export default function AlbumImportWorkflow({
         SpotifyDisconnectResultSchema,
         { method: 'DELETE' },
       ),
-    onSuccess: async () => {
+    onSuccess: () => {
       reset()
-      await client.invalidateQueries({ queryKey: ['spotify-account'] })
+      void client.invalidateQueries({ queryKey: ['spotify-account'] })
     },
   })
   const preview = useMutation({
@@ -159,12 +156,14 @@ export default function AlbumImportWorkflow({
           ),
         },
       ),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ['imports'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
-      await client.invalidateQueries({ queryKey: ['albums'] })
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['imports'] })
+      void client.invalidateQueries({ queryKey: ['job-activity'] })
+      void client.invalidateQueries({ queryKey: ['albums'] })
     },
   })
+  const currentRun =
+    status.data?.runs.find((run) => run.id === commit.data?.id) ?? commit.data
   const busy =
     reading ||
     preview.isPending ||
@@ -224,9 +223,9 @@ export default function AlbumImportWorkflow({
               <Notice
                 tone="danger"
                 action={
-                  <Button size="xs" onClick={() => account.refetch()}>
+                  <ReadButton size="xs" read={() => account.refetch()}>
                     Retry
-                  </Button>
+                  </ReadButton>
                 }
               >
                 Could not load Spotify connection.
@@ -293,13 +292,27 @@ export default function AlbumImportWorkflow({
                     size="md"
                     variant={account.data.connected ? 'default' : 'primary'}
                     disabled={busy || !account.data.configured}
+                    feedback={
+                      connect.isSuccess
+                        ? {
+                            phase: 'waiting',
+                            label: 'Waiting for authorization',
+                          }
+                        : (mutationFeedback(connect, {
+                            pending: 'Opening Spotify…',
+                            success: 'Waiting for authorization',
+                            error: 'Connection failed',
+                          }) ??
+                          (params.get('spotify') === 'connected' &&
+                          account.data.connected
+                            ? { phase: 'done', label: 'Spotify connected' }
+                            : undefined))
+                    }
                     onClick={() => connect.mutate()}
                   >
-                    {connect.isPending
-                      ? 'Connecting...'
-                      : account.data.connected
-                        ? 'Reconnect Spotify'
-                        : 'Connect Spotify'}
+                    {account.data.connected
+                      ? 'Reconnect Spotify'
+                      : 'Connect Spotify'}
                   </Button>
                   {account.data.connected && (
                     <ConfirmAction
@@ -309,6 +322,11 @@ export default function AlbumImportWorkflow({
                       details="Saved album previews stop until you reconnect. Imported albums stay."
                       confirmLabel="Disconnect"
                       disabled={busy}
+                      feedback={mutationFeedback(disconnect, {
+                        pending: 'Disconnecting…',
+                        success: 'Disconnected',
+                        error: 'Disconnect unconfirmed',
+                      })}
                       onConfirm={() => disconnect.mutate()}
                     >
                       Disconnect
@@ -372,15 +390,21 @@ export default function AlbumImportWorkflow({
                         variant={preview.data ? 'default' : 'primary'}
                         type="submit"
                         disabled={busy}
+                        feedback={mutationFeedback(preview, {
+                          pending: 'Loading saved albums…',
+                          success: 'Preview ready',
+                          error: 'Preview failed',
+                        })}
                       >
-                        {preview.isPending
-                          ? 'Loading saved albums...'
-                          : 'Preview saved albums'}
+                        Preview saved albums
                       </Button>
                     </span>
                   </form>
                 )}
               </>
+            )}
+            {!account.data?.connected && disconnect.isSuccess && (
+              <Notice>Disconnected from Spotify.</Notice>
             )}
           </>
         ) : (
@@ -408,9 +432,9 @@ export default function AlbumImportWorkflow({
               <Notice
                 tone="danger"
                 action={
-                  <Button size="xs" onClick={() => formats.refetch()}>
+                  <ReadButton size="xs" read={() => formats.refetch()}>
                     Retry
-                  </Button>
+                  </ReadButton>
                 }
               >
                 Could not load album CSV formats.
@@ -431,10 +455,14 @@ export default function AlbumImportWorkflow({
                   void chooseFile(event.dataTransfer.files[0])
               }}
             >
-              <span>
-                {reading || preview.isPending
-                  ? 'Checking CSV...'
-                  : 'Drop an album CSV here or choose a file'}
+              <span role="status">
+                {reading
+                  ? 'Reading CSV…'
+                  : preview.isPending
+                    ? 'Checking CSV…'
+                    : preview.isSuccess
+                      ? 'Preview ready · choose another file'
+                      : 'Drop an album CSV here or choose a file'}
               </span>
               <input
                 type="file"
@@ -539,10 +567,17 @@ export default function AlbumImportWorkflow({
                       providers.isError
                     }
                     onConfirm={() => commit.mutate(jobs > 5)}
+                    feedback={
+                      currentRun
+                        ? importRunFeedback(currentRun)
+                        : mutationFeedback(commit, {
+                            pending: 'Starting…',
+                            success: 'Import started',
+                            error: 'Import not confirmed',
+                          })
+                    }
                   >
-                    {commit.isPending
-                      ? 'Starting...'
-                      : `Import ${rows.length} albums`}
+                    Import {rows.length} albums
                   </ConfirmAction>
                 </span>
               </>
@@ -652,19 +687,29 @@ export default function AlbumImportWorkflow({
               ))}
             </details>
           )}
-          {commit.data && (
+          {currentRun && (
             <div className="sec-notices">
               <Notice>
-                Import started.{' '}
-                <Link href={scopedHref('/imports', 'album')}>
+                {importRunFeedback(currentRun).label}.{' '}
+                <Link
+                  href={scopedHref(
+                    `/imports?runId=${encodeURIComponent(currentRun.id)}`,
+                    'album',
+                  )}
+                >
                   View import progress
                 </Link>
                 .{' '}
-                <Link
-                  href={scopedHref(`/jobs?batchId=${preview.data.id}`, 'album')}
-                >
-                  View metadata jobs
-                </Link>
+                {jobs > 0 && (
+                  <Link
+                    href={scopedHref(
+                      `/jobs?batchId=${preview.data.id}`,
+                      'album',
+                    )}
+                  >
+                    View metadata jobs
+                  </Link>
+                )}
               </Notice>
             </div>
           )}

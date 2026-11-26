@@ -1,9 +1,8 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { ResultButton, ResultSortPicker } from './result-feedback'
 import { ArrowDown, ArrowUp, Columns3, Filter, Settings2 } from 'lucide-react'
-import { Button } from '@repo/ui/components/ui/button'
-import { SortPicker } from '@repo/ui/components/ds/sort-picker'
 import {
   FilterLine,
   Toolbar,
@@ -162,13 +161,14 @@ export default function BrowseToolbar<Key extends string>({
         ) : (
           find
         )}
-        <SortPicker
+        <ResultSortPicker
           value={sort.key}
           options={sort.options}
           onChange={sort.onChange}
         />
         {sort.direction && (
-          <Button
+          <ResultButton
+            control="sort-direction"
             type="button"
             icon
             aria-label={directionLabel}
@@ -180,7 +180,7 @@ export default function BrowseToolbar<Key extends string>({
             ) : (
               <ArrowDown className="ds-i" data-size="sm" aria-hidden />
             )}
-          </Button>
+          </ResultButton>
         )}
         {onViewChange && (
           <BrowseViewSwitch view={view} onChange={onViewChange} />

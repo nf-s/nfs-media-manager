@@ -1,5 +1,7 @@
 'use client'
 
+import { ResultFeedbackScope } from './result-feedback'
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { useDeferredValue } from 'react'
@@ -300,7 +302,16 @@ export function CollectionEntries({
         : `No ${members} in this collection.`
       : undefined
   const collectionItems = (
-    <>
+    <ResultFeedbackScope
+      identity={JSON.stringify([
+        sortBy,
+        direction,
+        q,
+        watchedStates,
+        catalogParams,
+      ])}
+      result={query}
+    >
       {!album && (
         <p className="ds-help">
           Stored positions are preserved, including gaps. Older imports may not
@@ -396,9 +407,9 @@ export function CollectionEntries({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={query.retry}>
+            <ReadButton size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load collection {members}.
@@ -574,15 +585,12 @@ export function CollectionEntries({
           )}
         />
       )}
-    </>
+    </ResultFeedbackScope>
   )
   if (!summary && (showSources ? sources.isError : query.isError))
     return (
       <CreatorDetailState
-        retry={() => {
-          if (showSources) void sources.refetch()
-          else query.retry()
-        }}
+        retry={() => (showSources ? sources.refetch() : query.retry())}
         subject="collection"
       />
     )
@@ -651,9 +659,9 @@ export function CollectionEntries({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={() => sources.refetch()}>
+                <ReadButton size="xs" read={() => sources.refetch()}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load collection sources.

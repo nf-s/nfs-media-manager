@@ -12,7 +12,10 @@ export const clientQueryDefaults = {
 
 /** Keep cached results visible; reload mounted reads and expire inactive ones. */
 export function refreshClientQueries(client: QueryClient) {
-  return client.invalidateQueries({ refetchType: 'active' })
+  return client.invalidateQueries(
+    { refetchType: 'active' },
+    { throwOnError: true },
+  )
 }
 
 export function invalidateMediaItem(

@@ -1,7 +1,8 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   useMutation,
   useQuery,
@@ -22,9 +23,14 @@ import { Coverage } from '@repo/ui/components/ds/meter'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
 import { Segmented } from '@repo/ui/components/ds/segmented'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
+import { useJobBatchFeedback } from './job-button-feedback'
 import { dispatchArtistSelection } from '@/utils/artist-selection'
 import {
   ARTIST_JOBS_HREF,
@@ -129,6 +135,9 @@ export function CoverageReview({
               size="xs"
               variant="primary"
               disabled={pending}
+              feedback={
+                pending ? { phase: 'pending', label: 'Submitting…' } : undefined
+              }
               onClick={onConfirm}
             >
               {pending ? 'Queuing...' : `Confirm ${jobs}`}
@@ -203,14 +212,17 @@ export function useCoverageQueue(
   const client = useQueryClient()
   const [review, setReview] = useState<CoverageRequest | null>(null)
   const [batchId, setBatchId] = useState('')
+  const [confirmed, setConfirmed] = useState(0)
   const queue = useMutation({
     mutationFn: async ({
       provider,
       gap,
       ids,
     }: CoverageRequest): Promise<CoverageQueueResult> => {
+      const batch = crypto.randomUUID()
+      setBatchId(batch)
+      setConfirmed(0)
       if (subject === 'artists') {
-        setBatchId('')
         const result = await dispatchArtistSelection(
           ids,
           (artistIds) =>
@@ -220,19 +232,19 @@ export function useCoverageQueue(
               ArtistEnrichmentResultSchema,
               {
                 method: 'POST',
-                body: JSON.stringify(
-                  artistCoverageQueueRequest({
+                body: JSON.stringify({
+                  ...artistCoverageQueueRequest({
                     provider: provider.provider,
                     gap,
                     ids: artistIds,
                     olderThanDays,
-                    // The review step is the confirmation.
                     confirmed: true,
                   }),
-                ),
+                  batchId: batch,
+                }),
               },
             ),
-          () => {},
+          setConfirmed,
         )
         return {
           queued: result.queued,
@@ -241,8 +253,6 @@ export function useCoverageQueue(
           interrupted: result.completed.length < new Set(ids).size,
         }
       }
-      const batch = crypto.randomUUID()
-      setBatchId(batch)
       return dispatchFilmSelection(
         ids,
         (mediaItemIds) =>
@@ -266,12 +276,12 @@ export function useCoverageQueue(
               ),
             },
           ),
-        () => {},
+        setConfirmed,
       )
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setReview(null)
-      onQueued?.()
+      if (!result.interrupted) onQueued?.()
     },
     onSettled: async () => {
       await Promise.all([
@@ -286,17 +296,59 @@ export function useCoverageQueue(
       ])
     },
   })
+  const batch = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? batchId : undefined,
+  )
+  const terminal =
+    batch?.phase === 'done' ||
+    batch?.phase === 'failed' ||
+    batch?.phase === 'cancelled' ||
+    batch?.phase === 'partial'
+  useEffect(() => {
+    if (terminal)
+      void client.invalidateQueries({ queryKey: coverageKey(kind, id) })
+  }, [terminal, client, kind, id])
+  const feedback: ButtonFeedback | undefined = queue.isPending
+    ? {
+        phase: 'pending',
+        label: confirmed
+          ? `${formatCount(confirmed)} confirmed · submitting…`
+          : 'Submitting…',
+      }
+    : queue.isError
+      ? { phase: 'unconfirmed', label: 'Queue result unconfirmed' }
+      : queue.data?.interrupted
+        ? {
+            phase: 'partial',
+            label: `${formatCount(queue.data.queued)} queued · remainder unconfirmed`,
+          }
+        : queue.data
+          ? (batch ?? {
+              phase: queue.data.queued ? 'queued' : 'done',
+              label: `${formatCount(queue.data.queued)} queued · ${formatCount(queue.data.skipped)} skipped`,
+            })
+          : undefined
   return {
     queue,
     review,
+    feedback,
+    feedbackFor(provider: string, gap: CoverageGap) {
+      return queue.variables?.provider.provider === provider &&
+        queue.variables.gap === gap
+        ? feedback
+        : undefined
+    },
     subject,
     storedData: kind === 'playlist' && subject === 'albums',
-    progressHref:
-      subject === 'artists'
+    progressHref: batchId
+      ? scopedHref(
+          `/jobs?batchId=${encodeURIComponent(batchId)}`,
+          subject === 'artists' ? 'artist' : 'album',
+        )
+      : subject === 'artists'
         ? ARTIST_JOBS_HREF
-        : batchId
-          ? scopedHref(`/jobs?batchId=${encodeURIComponent(batchId)}`, 'album')
-          : '',
+        : '',
     olderThanDays,
     open(request: CoverageRequest) {
       queue.reset()
@@ -344,6 +396,11 @@ export function CoverageQueueStatus({
             ) : undefined
           }
         >
+          {state.feedback && (
+            <span className="ds-actions" role="status">
+              <ButtonFeedbackLabel feedback={state.feedback} />
+            </span>
+          )}
           {formatCount(queue.data.queued)} queued ·{' '}
           {formatCount(queue.data.skipped)} skipped
           {queue.data.warnings.map((warning) => (
@@ -397,9 +454,9 @@ function CoverageSection({
             error
             size="sm"
             action={
-              <Button size="xs" onClick={() => coverage.refetch()}>
+              <ReadButton size="xs" read={() => coverage.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           />
         ) : (
@@ -484,6 +541,10 @@ function CoverageSection({
                               <Button
                                 size="xs"
                                 disabled={queue.isPending}
+                                feedback={state.feedbackFor(
+                                  provider.provider,
+                                  'missing',
+                                )}
                                 aria-label={
                                   playlistAlbums
                                     ? `Queue ${provider.displayName} scrapes for ${formatItemCount(provider.missing, noun)}`
@@ -508,6 +569,10 @@ function CoverageSection({
                                 size="xs"
                                 variant="ghost"
                                 disabled={queue.isPending}
+                                feedback={state.feedbackFor(
+                                  provider.provider,
+                                  'stale',
+                                )}
                                 aria-label={
                                   playlistAlbums
                                     ? `Refresh ${provider.displayName} metadata for ${formatItemCount(provider.stale, noun)}`

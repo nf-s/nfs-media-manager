@@ -51,7 +51,7 @@ test('the Jobs item carries one compact trigger for an accessible native popover
   const html = renderActivity(activity)
   assert.match(
     html,
-    /<button type="button" popoverTarget="[^"]+" aria-label="Job activity: 6 active, 12 issues"/,
+    /<button\b(?=[^>]*popoverTarget="[^"]+")(?=[^>]*aria-label="Job activity: 6 active, 12 issues")[^>]*>/,
   )
   assert.match(html, /class="ds-count" data-tone="danger">12</)
   assert.match(html, /popover="auto" role="region" tabindex="-1"/)

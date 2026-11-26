@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import {
   createContext,
   useContext,
@@ -16,7 +17,6 @@ import {
   ImportStatusSchema,
   type ImportRun,
 } from '@repo/schemas/imports'
-import { Button } from '@repo/ui/components/ui/button'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
@@ -104,9 +104,9 @@ export function ImportStatusNotice() {
       <Notice
         tone="danger"
         action={
-          <Button size="xs" onClick={() => status.refetch()}>
+          <ReadButton size="xs" read={() => status.refetch()}>
             Retry
-          </Button>
+          </ReadButton>
         }
       >
         Could not load imports.

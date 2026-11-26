@@ -10,7 +10,11 @@ import {
 } from '@repo/schemas/tags'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Select } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import {
@@ -30,7 +34,7 @@ export default function TagActions({
   /** Offers parent tag changes for the selection; the caller shows the form. */
   parentsOpen?: boolean
   onParentsToggle?: () => void
-  onComplete: (ids: string[], message: string, interrupted: boolean) => void
+  onComplete: (ids: string[], message: string, feedback: ButtonFeedback) => void
   onPendingChange?: (pending: boolean) => void
 }) {
   const { apiBaseUrl } = useConfig()
@@ -65,7 +69,7 @@ export default function TagActions({
       onComplete(
         tags.map((tag) => tag.id),
         'Tags merged. Original names and sources retained.',
-        false,
+        { phase: 'done', label: 'Tags merged' },
       )
     },
     onSettled: () => onPendingChange?.(false),
@@ -93,23 +97,55 @@ export default function TagActions({
         ? `${result.completed.length} tags updated. Stopped because the next batch could not be confirmed. Check the refreshed list before retrying.`
         : `${result.completed.length} tags ${hidden ? 'hidden' : 'unhidden'}.`
       await invalidateTags(client)
-      onComplete(result.completed, message, result.interrupted)
+      onComplete(
+        result.completed,
+        message,
+        result.interrupted
+          ? {
+              phase: result.completed.length ? 'partial' : 'unconfirmed',
+              label: `${result.completed.length} confirmed`,
+            }
+          : {
+              phase: 'done',
+              label: `${result.completed.length} ${hidden ? 'hidden' : 'unhidden'}`,
+            },
+      )
     },
     onSettled: () => onPendingChange?.(false),
   })
   const pending = merge.isPending || visibility.isPending
+  function visibilityFeedback(hidden: boolean): ButtonFeedback | undefined {
+    if (visibility.variables !== hidden) return undefined
+    if (visibility.data?.interrupted)
+      return {
+        phase: visibility.data.completed.length ? 'partial' : 'unconfirmed',
+        label: `${visibility.data.completed.length} confirmed`,
+      }
+    return mutationFeedback(visibility, {
+      pending: hidden ? 'Hiding tags…' : 'Unhiding tags…',
+      success: `${visibility.data?.completed.length ?? 0} ${hidden ? 'hidden' : 'unhidden'}`,
+      error: hidden ? 'Could not hide tags' : 'Could not unhide tags',
+    })
+  }
+  const mergeFeedback = mutationFeedback(merge, {
+    pending: 'Merging tags…',
+    success: 'Tags merged',
+    error: 'Could not merge tags',
+  })
   return (
     <div className="dtl-stack" aria-label="Tag management">
       <div className="ds-actions dtl-wrap">
         <Button
           disabled={pending || !mediaType || !tags.some((tag) => !tag.hidden)}
           onClick={() => visibility.mutate(true)}
+          feedback={visibilityFeedback(true)}
         >
           Hide
         </Button>
         <Button
           disabled={pending || !mediaType || !tags.some((tag) => tag.hidden)}
           onClick={() => visibility.mutate(false)}
+          feedback={visibilityFeedback(false)}
         >
           Unhide
         </Button>
@@ -172,8 +208,9 @@ export default function TagActions({
               variant="primary"
               disabled={pending}
               onClick={() => merge.mutate()}
+              feedback={mergeFeedback}
             >
-              {merge.isPending ? 'Merging...' : 'Confirm merge'}
+              Confirm merge
             </Button>
             <Button disabled={pending} onClick={() => setConfirming(false)}>
               Cancel

@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { ResultFeedbackScope } from './result-feedback'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
@@ -332,32 +333,37 @@ export default function SubscriptionChannels({
   return (
     <section className="bi-workspace" aria-label={page.sourcesTitle}>
       <PageHead title={page.sourcesTitle} />
-      <SecondaryTableToolbar
-        libraryScope={{
-          value: libraryScope,
-          onChange: (next) => replaceParams(libraryScopeUpdates(next)),
-        }}
-        search={
-          <SecondaryTableSearch
-            label="Filter by name"
-            value={draft}
-            maxLength={200}
-            onChange={setDraft}
-          />
-        }
-        count={
-          sources.data ? (
-            formatItemCount(
-              items.length,
-              noun,
-              narrowed ? all.length : undefined,
+      <ResultFeedbackScope
+        identity={JSON.stringify([library, libraryScopeQuery(libraryScope)])}
+        result={sources}
+      >
+        <SecondaryTableToolbar
+          libraryScope={{
+            value: libraryScope,
+            onChange: (next) => replaceParams(libraryScopeUpdates(next)),
+          }}
+          search={
+            <SecondaryTableSearch
+              label="Filter by name"
+              value={draft}
+              maxLength={200}
+              onChange={setDraft}
+            />
+          }
+          count={
+            sources.data ? (
+              formatItemCount(
+                items.length,
+                noun,
+                narrowed ? all.length : undefined,
+              )
+            ) : (
+              <Skeleton className="bi-count-skeleton" width={64} height={10} />
             )
-          ) : (
-            <Skeleton className="bi-count-skeleton" width={64} height={10} />
-          )
-        }
-        columns={columns.controls}
-      />
+          }
+          columns={columns.controls}
+        />
+      </ResultFeedbackScope>
       {/* The table is the only scroller and takes the height the toolbar leaves. */}
       <SecondaryTableScroll
         className="min-h-0 flex-1"

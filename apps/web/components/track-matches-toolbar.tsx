@@ -10,6 +10,7 @@ import {
   type TrackMatchDiagnosticsQuery,
 } from '@repo/schemas/match-diagnostics'
 import { Select, ToolbarToggle } from '@repo/ui/components/ds/toolbar'
+import { useResultAction } from './result-feedback'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import type { BrowseFilterHref } from '@/utils/browse-items'
 import {
@@ -88,6 +89,7 @@ export default function TrackMatchesToolbar({
 }) {
   const { apiBaseUrl } = useConfig()
   const railSlot = useRailSlot()
+  const duplicateAction = useResultAction('possible-duplicates')
   const {
     q = '',
     filters,
@@ -148,14 +150,19 @@ export default function TrackMatchesToolbar({
         actions={
           <>
             <ToolbarToggle
+              aria-label={
+                duplicateAction.feedback ? 'Possible duplicates' : undefined
+              }
               pressed={duplicates}
-              onPressedChange={(pressed) =>
+              feedback={duplicateAction.feedback}
+              onPressedChange={(pressed) => {
+                duplicateAction.begin()
                 setParams(
                   pressed
                     ? { duplicates: 'true' }
                     : { duplicates: null, duplicateCautions: null },
                 )
-              }
+              }}
               icon={<Layers className="ds-i" data-size="sm" aria-hidden />}
               count={
                 duplicateCount.data?.ready

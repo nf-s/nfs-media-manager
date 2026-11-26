@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useId, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
@@ -9,7 +10,7 @@ import {
 } from '@repo/schemas/spotify-artist-albums'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { formatDateTime, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from '@/utils/api'
 import { providerLogoUrl } from '@/utils/provider-logos'
@@ -54,6 +55,35 @@ function listingSummary(listing: SpotifyArtistAlbumListing) {
   return pagesSaved ? coverage : null
 }
 
+function listingFeedback(
+  listing: SpotifyArtistAlbumListing | undefined,
+): ButtonFeedback | undefined {
+  if (!listing) return undefined
+  if (listing.completedAt)
+    return {
+      phase: 'done',
+      label: `${formatItemCount(listing.releasesSeen, { one: 'release', other: 'releases' })} read`,
+    }
+  if (listing.retryAt)
+    return {
+      phase: 'waiting',
+      label: `Waiting until ${formatDateTime(listing.retryAt)}`,
+    }
+  if (listing.job?.status === 'queued')
+    return { phase: 'queued', label: 'Queued' }
+  if (listing.job?.status === 'running')
+    return {
+      phase: 'running',
+      label: listing.artistUrl
+        ? `Fetching page ${listing.pagesSaved + 1}`
+        : 'Matching artist…',
+    }
+  if (listing.job?.status === 'failed')
+    return { phase: 'failed', label: 'Fetch failed' }
+  if (listing.job?.status === 'cancelled')
+    return { phase: 'cancelled', label: 'Fetch cancelled' }
+}
+
 export function ArtistAlbums({
   artistId,
   showSources,
@@ -96,6 +126,11 @@ export function ArtistAlbums({
     },
   })
   const listing = query.data
+  const feedback: ButtonFeedback | undefined = fetch.isPending
+    ? { phase: 'pending', label: 'Requesting…' }
+    : fetch.isError
+      ? { phase: 'failed', label: 'Request failed · retry' }
+      : listingFeedback(listing)
   const pagesSaved = listing?.pagesSaved ?? 0
   const knownArtist = Boolean(listing?.artistUrl)
   useEffect(() => {
@@ -137,7 +172,9 @@ export function ArtistAlbums({
           type="button"
           variant="link"
           aria-expanded={open}
+          aria-label="Fetch albums"
           aria-controls={open ? panelId : undefined}
+          feedback={!open ? feedback : undefined}
           onClick={() => setOpen(!open)}
         >
           <Download className="ds-i" aria-hidden />
@@ -157,16 +194,18 @@ export function ArtistAlbums({
                   />
                 }
                 action={
-                  listing &&
-                  !listing.completedAt &&
-                  !listing.unavailableReason ? (
+                  listing && !listing.unavailableReason ? (
                     <Button
                       type="button"
                       size="xs"
                       variant="primary"
                       disabled={
-                        fetch.isPending || running || Boolean(listing.retryAt)
+                        fetch.isPending ||
+                        running ||
+                        Boolean(listing.retryAt) ||
+                        Boolean(listing.completedAt)
                       }
+                      feedback={feedback}
                       onClick={() => fetch.mutate()}
                     >
                       {resumable
@@ -200,13 +239,13 @@ export function ArtistAlbums({
                 )}
               </Notice>
               {query.isError && (
-                <Button
+                <ReadButton
                   type="button"
                   variant="link"
-                  onClick={() => void query.refetch()}
+                  read={() => query.refetch()}
                 >
                   Retry status
-                </Button>
+                </ReadButton>
               )}
               {fetch.isError && (
                 <Notice tone="danger">

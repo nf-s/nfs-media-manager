@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import {
+  ManualMediaAddInputSchema,
   ManualMediaSearchInputSchema,
   type ManualMediaSearchItem,
 } from '@repo/schemas/manual-add'
@@ -147,20 +148,52 @@ test('an outside track can be added from its detail page and stays saved on relo
   expect(track.item.inLibrary).toBe(false)
 
   const detailPath = `/tracks/${track.item.id}`
+  const dataPath = `${webOrigin}/api/v1${detailPath}`
+  const outside = await page.request.get(dataPath)
+  expect(outside.ok()).toBe(true)
+  const outsideDetail = await outside.json()
+  let staleDetail = true
+  await page.route(dataPath, (route) =>
+    staleDetail ? route.fulfill({ json: outsideDetail }) : route.continue(),
+  )
   await page.goto(detailPath)
   const heading = page.getByRole('heading', { name: title, exact: true })
   const add = page.getByRole('button', {
     name: `Add track to library · ${title}`,
   })
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let writes = 0
+  await page.route(
+    `${webOrigin}/api/v1/catalog/media/${track.item.id}/add`,
+    async (route) => {
+      writes += 1
+      await held
+      await route.continue()
+    },
+  )
   await expect(heading).toBeVisible()
   await expect(add).toBeEnabled()
-  await add.click()
+  await add.press('Enter')
+  const receipt = page.locator('.ds-library-action')
+  try {
+    await expect(receipt).toHaveText('Adding…')
+    await expect(receipt).toHaveAttribute('aria-busy', 'true')
+    await receipt.dispatchEvent('click')
+    expect(writes).toBe(1)
+  } finally {
+    release()
+  }
+  await expect(receipt).toHaveText('Added')
+  await expect(receipt).toHaveAttribute('data-feedback', 'done')
   await expect(
-    page.getByRole('status').filter({
-      hasText: `Added track to library · ${title}`,
-    }),
-  ).toHaveAttribute('aria-atomic', 'true')
-  await expect(page.locator('.ds-library-action')).toHaveCount(0)
+    page.getByText(`Added track to library · ${title}`, { exact: true }),
+  ).toBeVisible()
+  await expect(receipt).toHaveCount(0)
+  expect(writes).toBe(1)
+  staleDetail = false
   await page.reload()
   await expect(page).toHaveURL((url) => url.pathname === detailPath)
   await expect(heading).toBeVisible()
@@ -168,6 +201,201 @@ test('an outside track can be added from its detail page and stays saved on relo
     page.getByRole('button', { name: /is in your library/ }),
   ).toHaveCount(0)
   await expect(page.locator('.ds-library-action')).toHaveCount(0)
+})
+
+test('independent manual rows send and receive their own addition receipts', async ({
+  page,
+}) => {
+  const choices = [
+    {
+      externalId: '0000000000000000000101',
+      title: 'First synthetic recording',
+    },
+    {
+      externalId: '0000000000000000000102',
+      title: 'Second synthetic recording',
+    },
+  ]
+  const releases = new Map<string, () => void>()
+  const pending = new Map(
+    choices.map(({ externalId }) => [
+      externalId,
+      new Promise<void>((resolve) => {
+        releases.set(externalId, resolve)
+      }),
+    ]),
+  )
+  const writes = new Set<string>()
+  await page.route(`${webOrigin}/api/v1/manual-add/search`, (route) =>
+    route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: {
+          items: choices.map(({ externalId, title }) => ({
+            externalId,
+            title,
+            subtitle: null,
+            mediaItemId: null,
+            catalogMediaItemId: `fixture-${externalId}`,
+            releaseDate: null,
+            artworkUrl: null,
+            url: `https://open.spotify.com/track/${externalId}`,
+          })),
+          page: 1,
+          hasMore: false,
+        },
+      },
+    }),
+  )
+  await page.route(`${webOrigin}/api/v1/manual-add/add`, async (route) => {
+    const input = ManualMediaAddInputSchema.parse(
+      route.request().postDataJSON(),
+    )
+    writes.add(input.externalId)
+    await pending.get(input.externalId)
+    await route.fulfill({
+      json: {
+        statusCode: 200,
+        message: 'OK',
+        data: { mediaItemId: `fixture-${input.externalId}`, created: true },
+      },
+    })
+  })
+  await page.goto('/tracks')
+  await page.getByRole('button', { name: 'Add track', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Add track' })
+  await dialog
+    .getByRole('textbox', { name: 'Search Spotify' })
+    .fill('synthetic')
+  await dialog.getByRole('button', { name: 'Search', exact: true }).click()
+  const [first, second] = choices
+  if (!first || !second) throw new Error('Both fixture choices are required')
+  const action = (title: string) =>
+    dialog
+      .locator('.ds-library-action')
+      .and(dialog.getByRole('button', { name: new RegExp(title) }))
+  try {
+    await action(first.title).click()
+    await expect(action(first.title)).toHaveText('Adding…')
+    await expect(action(second.title)).toBeEnabled()
+    await action(second.title).click()
+    await expect(action(second.title)).toHaveText('Adding…')
+    releases.get(first.externalId)?.()
+    await expect(action(first.title)).toHaveText('Added')
+    await expect(action(second.title)).toHaveText('Adding…')
+    releases.get(second.externalId)?.()
+    await expect(dialog).not.toBeVisible()
+    await expect(page).toHaveURL(
+      (url) =>
+        url.searchParams.get('inspect')?.includes(second.externalId) === true,
+    )
+    expect(writes).toEqual(new Set(choices.map(({ externalId }) => externalId)))
+  } finally {
+    for (const release of releases.values()) release()
+  }
+})
+
+test('a rejected library addition leaves the same control available for retry', async ({
+  page,
+}) => {
+  const title = `Synthetic retry track ${randomBytes(4).toString('hex')}`
+  const observation = await page.request.post(
+    `${webOrigin}/api/v1/playback/catalog`,
+    {
+      headers: { origin: webOrigin },
+      data: PlaybackCatalogInputSchema.parse({
+        operation: 'playback',
+        items: [
+          {
+            kind: 'track',
+            spotifyId: `zz${randomBytes(10).toString('hex')}`,
+            title,
+            artists: [{ name: 'Synthetic catalog artist' }],
+          },
+        ],
+      }),
+    },
+  )
+  expect(observation.ok()).toBe(true)
+  const { data } = await observation.json()
+  const [track] = PlaybackCatalogResultSchema.parse(data).items
+  if (!track) throw new Error('The preview did not record the synthetic track')
+  let writes = 0
+  await page.route(
+    `${webOrigin}/api/v1/catalog/media/${track.item.id}/add`,
+    async (route) => {
+      writes += 1
+      if (writes === 1) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            statusCode: 409,
+            message: 'Synthetic write conflict',
+            data: null,
+          },
+        })
+      } else await route.continue()
+    },
+  )
+  await page.goto(`/tracks/${track.item.id}`)
+  const receipt = page.locator('.ds-library-action')
+  await receipt.click()
+  await expect(receipt).toHaveText('Add failed · retry')
+  await expect(receipt).toBeEnabled()
+  await receipt.click()
+  await expect(receipt).toHaveText('Added')
+  expect(writes).toBe(2)
+})
+
+test('an interrupted library response stays unconfirmed until an idempotent retry', async ({
+  page,
+}) => {
+  const title = `Synthetic interrupted track ${randomBytes(4).toString('hex')}`
+  const observation = await page.request.post(
+    `${webOrigin}/api/v1/playback/catalog`,
+    {
+      headers: { origin: webOrigin },
+      data: PlaybackCatalogInputSchema.parse({
+        operation: 'playback',
+        items: [
+          {
+            kind: 'track',
+            spotifyId: `zz${randomBytes(10).toString('hex')}`,
+            title,
+            artists: [{ name: 'Synthetic catalog artist' }],
+          },
+        ],
+      }),
+    },
+  )
+  expect(observation.ok()).toBe(true)
+  const { data } = await observation.json()
+  const [track] = PlaybackCatalogResultSchema.parse(data).items
+  if (!track) throw new Error('The preview did not record the synthetic track')
+  let writes = 0
+  await page.route(
+    `${webOrigin}/api/v1/catalog/media/${track.item.id}/add`,
+    async (route) => {
+      writes += 1
+      if (writes === 1) {
+        const saved = await route.fetch()
+        expect(saved.ok()).toBe(true)
+        await route.abort('connectionclosed')
+      } else await route.continue()
+    },
+  )
+  await page.goto(`/tracks/${track.item.id}`)
+  const receipt = page.locator('.ds-library-action')
+  await receipt.click()
+  await expect(receipt).toHaveAttribute('data-feedback', 'unconfirmed')
+  await expect(receipt).toHaveText('Add unconfirmed · retry')
+  await receipt.click()
+  await expect(receipt).toHaveText('Added')
+  expect(writes).toBe(2)
+  await page.reload()
+  await expect(page.getByRole('heading', { name: title })).toBeVisible()
+  await expect(receipt).toHaveCount(0)
 })
 
 test('Similar keeps a saved album title and its match evidence without an Add control', async ({
@@ -234,14 +462,14 @@ test('Similar keeps a saved album title and its match evidence without an Add co
     .getByRole('button', { name: `Add album to library · ${title}` })
     .click()
   await expect(
-    page.getByRole('status').filter({
-      hasText: `Added album to library · ${title}`,
-    }),
-  ).toHaveAttribute('aria-atomic', 'true')
+    page.getByText(`Added album to library · ${title}`, { exact: true }),
+  ).toBeVisible()
   await expect(
     list.getByRole('link', { name: title, exact: true }),
   ).toHaveAttribute('data-workspace-href', `/albums/${savedId}`)
-  await expect(list.locator('.ds-library-action')).toHaveCount(0)
+  await expect(
+    list.getByRole('button', { name: new RegExp(`Added.*${title}`) }),
+  ).toHaveText('Added')
   await page.reload()
   await similar.click()
   await expect(list.getByRole('link', { name: 'In library' })).toHaveAttribute(

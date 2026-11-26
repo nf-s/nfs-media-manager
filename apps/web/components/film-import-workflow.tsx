@@ -12,7 +12,7 @@ import {
   NfoSourceSchema,
   type FilmImportPreview,
 } from '@repo/schemas/imports'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Label } from '@repo/ui/components/ui/label'
 import { KeyValues } from '@repo/ui/components/ds/facts'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
@@ -30,6 +30,8 @@ import { scopedHref } from '@/utils/media-scope'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { FilterIndicator } from './filter-affordance'
+import { useImportsWorkspace } from './imports-workspace'
+import { importRunFeedback } from '@/utils/import-cache'
 import {
   FilmProviderSelection,
   useFilmProviders,
@@ -69,6 +71,7 @@ export default function FilmImportWorkflow({
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
+  const { status } = useImportsWorkspace()
   const [kind, setKind] = useState<'csv' | 'nfo'>(initialKind)
   const [format, setFormat] = useState(initialFormat)
   const [rows, setRows] = useState<number[]>([])
@@ -120,12 +123,14 @@ export default function FilmImportWorkflow({
           confirmBroadRun,
         }),
       }),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ['imports'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['imports'] })
+      void client.invalidateQueries({ queryKey: ['job-activity'] })
     },
   })
   const busy = reading || preview.isPending || start.isPending || running
+  const currentRun =
+    status.data?.runs.find((run) => run.id === start.data?.id) ?? start.data
   function reset() {
     preview.reset()
     start.reset()
@@ -254,10 +259,14 @@ export default function FilmImportWorkflow({
                 void chooseFile(event.dataTransfer.files[0])
               }}
             >
-              <span>
-                {reading || preview.isPending
-                  ? 'Checking CSV...'
-                  : 'Drop a CSV here or choose a file'}
+              <span role="status">
+                {reading
+                  ? 'Reading CSV…'
+                  : preview.isPending
+                    ? 'Checking CSV…'
+                    : preview.isSuccess
+                      ? 'Preview ready · choose another file'
+                      : 'Drop a CSV here or choose a file'}
               </span>
               <input
                 key={format}
@@ -297,14 +306,17 @@ export default function FilmImportWorkflow({
                 size="md"
                 variant={preview.data ? 'default' : 'primary'}
                 disabled={busy || !source.data?.available}
+                feedback={mutationFeedback(preview, {
+                  pending: 'Scanning folders…',
+                  success: 'Preview ready',
+                  error: 'Preview failed',
+                })}
                 onClick={() => {
                   reset()
                   preview.mutate({ kind: 'nfo' })
                 }}
               >
-                {preview.isPending
-                  ? 'Scanning folders...'
-                  : 'Preview new films'}
+                Preview new films
               </Button>
             </span>
           </>
@@ -362,10 +374,17 @@ export default function FilmImportWorkflow({
                         selection.isError
                       }
                       onConfirm={() => start.mutate(jobs > 5)}
+                      feedback={
+                        currentRun
+                          ? importRunFeedback(currentRun)
+                          : mutationFeedback(start, {
+                              pending: 'Starting…',
+                              success: 'Import started',
+                              error: 'Import not confirmed',
+                            })
+                      }
                     >
-                      {start.isPending
-                        ? 'Starting...'
-                        : `Import ${rows.length} films`}
+                      Import {rows.length} films
                     </ConfirmAction>
                   </span>
                 </>
@@ -470,19 +489,29 @@ export default function FilmImportWorkflow({
               ))}
             </details>
           )}
-          {start.data && (
+          {currentRun && (
             <div className="sec-notices">
               <Notice>
-                Import started.{' '}
-                <Link href={scopedHref('/imports', 'film')}>
+                {importRunFeedback(currentRun).label}.{' '}
+                <Link
+                  href={scopedHref(
+                    `/imports?runId=${encodeURIComponent(currentRun.id)}`,
+                    'film',
+                  )}
+                >
                   View import progress
                 </Link>
                 .{' '}
-                <Link
-                  href={scopedHref(`/jobs?batchId=${preview.data.id}`, 'film')}
-                >
-                  View metadata jobs
-                </Link>{' '}
+                {jobs > 0 && (
+                  <Link
+                    href={scopedHref(
+                      `/jobs?batchId=${preview.data.id}`,
+                      'film',
+                    )}
+                  >
+                    View metadata jobs
+                  </Link>
+                )}{' '}
                 ·{' '}
                 <Link
                   href={`/films?filters=${encodeURIComponent(JSON.stringify([{ field: 'identification', value: 'Needs ID' }]))}`}

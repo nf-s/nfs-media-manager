@@ -1,5 +1,9 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
+import { forgetLibraryAddition } from '@/hooks/use-library-addition'
 import Link from 'next/link'
 import { useDeferredValue, useState } from 'react'
 import { Trash2 } from 'lucide-react'
@@ -13,7 +17,7 @@ import {
   type PlaylistSource,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import {
@@ -242,6 +246,10 @@ export default function PlaylistsWorkspace() {
       ),
     onMutate: () => setOutcome(''),
     onSuccess: async (result, playlist) => {
+      forgetLibraryAddition(client, {
+        kind: 'playlist',
+        catalogId: playlist.id,
+      })
       setOutcome(
         `Removed ${playlist.name} and ${formatItemCount(result.removedTracks, TRACKS)}.`,
       )
@@ -261,7 +269,11 @@ export default function PlaylistsWorkspace() {
     shown.map((column) => (column.sortable ? column.key : ACTIONS_WIDTH)),
   )
   return (
-    <section className="sec-page">
+    <ResultSection
+      className="sec-page"
+      identity={JSON.stringify([filters, sortBy, direction])}
+      result={query}
+    >
       <PageHead
         title="Playlists"
         actions={
@@ -275,9 +287,9 @@ export default function PlaylistsWorkspace() {
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={query.retry}>
+              <ReadButton size="xs" read={query.retry}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load playlists.
@@ -299,9 +311,9 @@ export default function PlaylistsWorkspace() {
         />
         <ToolbarCount>
           {countError ? (
-            <Button size="xs" onClick={retryCount}>
+            <ReadButton size="xs" read={retryCount}>
               Retry count
-            </Button>
+            </ReadButton>
           ) : !isCounting ? (
             formatItemCount(query.total, PLAYLISTS)
           ) : query.isPending ? (
@@ -517,10 +529,20 @@ export default function PlaylistsWorkspace() {
                           title={`Remove ${playlist.name}`}
                           question={`Remove ${playlist.name}?`}
                           details="Its tracks that are in no other playlist are removed too. Albums stay in the library."
-                          confirmLabel={
-                            remove.isPending ? 'Removing...' : 'Remove'
+                          confirmLabel="Remove"
+                          disabled={
+                            remove.isPending &&
+                            remove.variables.id === playlist.id
                           }
-                          disabled={remove.isPending}
+                          feedback={
+                            remove.variables?.id === playlist.id
+                              ? mutationFeedback(remove, {
+                                  pending: 'Removing…',
+                                  success: 'Removed',
+                                  error: 'Removal failed · retry',
+                                })
+                              : undefined
+                          }
                           onConfirm={() => remove.mutate(playlist)}
                         >
                           <Trash2 className="ds-i" aria-hidden="true" />
@@ -534,6 +556,6 @@ export default function PlaylistsWorkspace() {
           </TableBody>
         </table>
       </SecondaryTableScroll>
-    </section>
+    </ResultSection>
   )
 }

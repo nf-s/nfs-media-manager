@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, History, X } from 'lucide-react'
@@ -13,7 +14,12 @@ import type {
 import { Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue, ProviderMark } from '@repo/ui/components/ds/pill'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  ButtonFeedbackLabel,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import {
   Table,
@@ -167,9 +173,9 @@ function TrackMergeWithDialog({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={candidates.retry}>
+                <ReadButton size="xs" read={candidates.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not search tracks.
@@ -290,6 +296,7 @@ function VersionRow({
   radioName,
   canChange,
   pending,
+  feedback,
   onChange,
 }: {
   version: TrackPartVersion
@@ -299,10 +306,15 @@ function VersionRow({
   /** The record has another version to show or separate from. */
   canChange: boolean
   pending: boolean
+  feedback: (
+    action: TrackVersionAction,
+    trackId: string,
+  ) => ButtonFeedback | undefined
   onChange: (action: TrackVersionAction, trackId: string) => void
 }) {
   const album = trackPartAlbum(version)
   const label = album ? `${version.title} · ${album}` : version.title
+  const shownFeedback = feedback('shown', version.id)
   return (
     <TableRow>
       <TableCell>
@@ -341,8 +353,14 @@ function VersionRow({
           aria-label={`Show as ${label}`}
           checked={version.shown}
           disabled={pending || !canChange}
+          aria-busy={shownFeedback?.phase === 'pending' || undefined}
           onChange={() => onChange('shown', version.id)}
         />
+        {shownFeedback && (
+          <span className="ds-cell-id" role="status">
+            <ButtonFeedbackLabel feedback={shownFeedback} />
+          </span>
+        )}
       </TableCell>
       <TableCell align="end">
         {canChange && (
@@ -352,6 +370,7 @@ function VersionRow({
             aria-label={`Separate ${label}`}
             disabled={pending}
             onClick={() => onChange('separate', version.id)}
+            feedback={feedback('separate', version.id)}
           >
             Separate
           </Button>
@@ -439,9 +458,9 @@ export function TrackRecordParts({
       setChange(null)
       setUndoError(null)
     },
-    onSuccess: async (next) => {
+    onSuccess: (next) => {
       setChange(next)
-      await invalidateScrobbleLinks(client)
+      void invalidateScrobbleLinks(client)
     },
   })
   const merge = useMerge(interactiveTrackMergeAdapter, {
@@ -470,9 +489,9 @@ export function TrackRecordParts({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => parts.refetch()}>
+            <ReadButton size="xs" read={() => parts.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load what this track is made of.
@@ -495,12 +514,13 @@ export function TrackRecordParts({
           variant="link"
           aria-haspopup="dialog"
           disabled={pending}
+          feedback={merge.feedback}
           onClick={() => {
             merge.clearError()
             setPicking(true)
           }}
         >
-          {merge.merging ? 'Merging...' : 'Merge with…'}
+          Merge with…
         </Button>
       }
     >
@@ -536,7 +556,12 @@ export function TrackRecordParts({
             tone="danger"
             action={
               !version.isError && merge.retry ? (
-                <Button size="xs" onClick={merge.retry}>
+                <Button
+                  size="xs"
+                  disabled={merge.pending}
+                  feedback={merge.feedback}
+                  onClick={merge.retry}
+                >
                   Retry
                 </Button>
               ) : undefined
@@ -552,6 +577,25 @@ export function TrackRecordParts({
           radioName={radioName}
           canChange={canChange}
           pending={pending}
+          feedback={(action, trackId) =>
+            version.variables?.action === action &&
+            version.variables.trackId === trackId
+              ? mutationFeedback(
+                  version,
+                  action === 'shown'
+                    ? {
+                        pending: 'Setting shown version…',
+                        success: 'Shown version saved',
+                        error: 'Could not set shown version',
+                      }
+                    : {
+                        pending: 'Separating…',
+                        success: 'Separated',
+                        error: 'Could not separate',
+                      },
+                )
+              : undefined
+          }
           onChange={(action, trackId) => version.mutate({ action, trackId })}
         />
       </div>
@@ -580,6 +624,7 @@ function PartsTable({
   radioName,
   canChange,
   pending,
+  feedback,
   onChange,
 }: {
   current: string
@@ -588,6 +633,10 @@ function PartsTable({
   radioName: string
   canChange: boolean
   pending: boolean
+  feedback: (
+    action: TrackVersionAction,
+    trackId: string,
+  ) => ButtonFeedback | undefined
   onChange: (action: TrackVersionAction, trackId: string) => void
 }) {
   const widths = useTableWidths('track-record-parts', partColumns)
@@ -618,6 +667,7 @@ function PartsTable({
             radioName={radioName}
             canChange={canChange}
             pending={pending}
+            feedback={feedback}
             onChange={onChange}
           />
         ))}

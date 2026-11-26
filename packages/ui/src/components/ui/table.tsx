@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { Button } from './button'
+import { Button, ButtonFeedbackLabel, type ButtonFeedback } from './button'
 
 /**
  * The one table. Header 28px, rows 32px, identity column first, numbers
@@ -219,14 +219,22 @@ TableCell.displayName = 'TableCell'
 export function TableSortButton({
   children,
   direction,
+  feedback,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   direction?: 'asc' | 'desc'
+  feedback?: ButtonFeedback
 }) {
   return (
-    <button type="button" className="ds-th-sort" {...props}>
-      {children}
-      {direction && (
+    <button
+      type="button"
+      className="ds-th-sort"
+      aria-busy={feedback?.phase === 'pending' || undefined}
+      aria-live={feedback ? 'polite' : undefined}
+      {...props}
+    >
+      {feedback ? <ButtonFeedbackLabel feedback={feedback} /> : children}
+      {!feedback && direction && (
         <svg className="ds-i" viewBox="0 0 24 24" aria-hidden="true">
           <path
             d={

@@ -18,7 +18,8 @@ import {
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Status, statusLabels } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
+import { jobButtonFeedback } from './job-button-feedback'
 import {
   Table,
   TableBody,
@@ -146,18 +147,39 @@ export function JobDetail({
   const itemWidths = useTableWidths('job-items', itemColumns)
   const itemLayout = itemWidths.layout(itemColumns.map((column) => column.key))
   const retry = useMutation({
-    mutationFn: () =>
+    mutationFn: (originalId: string) =>
       fetchApiData(
         apiBaseUrl,
-        `/api/v1/scrape/jobs/${encodeURIComponent(id)}/retry`,
+        `/api/v1/scrape/jobs/${encodeURIComponent(originalId)}/retry`,
         JobSchema,
         { method: 'POST', body: JSON.stringify({ confirmBroadRun: false }) },
       ),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ['jobs'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['jobs'] })
+      void client.invalidateQueries({ queryKey: ['job-activity'] })
     },
   })
+  const latestRetry = retry.variables === id ? retry.data : undefined
+  const savedRetry = query.data?.options.retryJobId
+  const retryId =
+    latestRetry?.id ?? (typeof savedRetry === 'string' ? savedRetry : undefined)
+  const retryStatus = useQuery({
+    ...jobDetailOptions(apiBaseUrl, retryId ?? ''),
+    enabled: Boolean(retryId),
+    initialData: latestRetry,
+  })
+  const retryFeedback: ButtonFeedback | undefined =
+    retry.variables === id && retry.isPending
+      ? { phase: 'pending', label: 'Requesting retry…' }
+      : retryStatus.isError
+        ? { phase: 'unconfirmed', label: 'Retry status unconfirmed' }
+        : retryStatus.data
+          ? jobButtonFeedback(retryStatus.data)
+          : retryId
+            ? { phase: 'queued', label: 'Retry requested' }
+            : retry.variables === id && retry.isError
+              ? { phase: 'unconfirmed', label: 'Retry unconfirmed' }
+              : undefined
   if (!query.data)
     return (
       <CreatorDetailState
@@ -206,10 +228,11 @@ export function JobDetail({
           key={action}
           size="md"
           variant={variant}
-          disabled={retry.isPending || actionPending}
-          onClick={() => retry.mutate()}
+          disabled={retry.isPending || actionPending || Boolean(retryId)}
+          feedback={retryFeedback}
+          onClick={() => retry.mutate(id)}
         >
-          {retry.isPending ? 'Retrying...' : 'Retry'}
+          Retry
         </Button>
       )
     if (action === 'find-match')
@@ -280,6 +303,9 @@ export function JobDetail({
             {summary.actions.map((action, index) =>
               actionButton(action, index === 0),
             )}
+            {retryId &&
+              !summary.actions.includes('retry') &&
+              actionButton('retry', false)}
             <DetailActionsSpacer />
             {singleItem?.mediaItemId && singleItem.mediaType && (
               <Button variant="ghost" size="md" asChild>
@@ -342,13 +368,13 @@ export function JobDetail({
                 </span>
               )}
             </Notice>
-            {retry.isError && (
+            {retry.variables === id && retry.isError && (
               <Notice tone="danger">{retry.error.message}</Notice>
             )}
-            {retry.data && (
+            {retryId && (
               <Notice>
-                Retry queued.{' '}
-                <DetailLink kind="job" id={retry.data.id}>
+                {retryFeedback?.label}.{' '}
+                <DetailLink kind="job" id={retryId}>
                   View retry
                 </DetailLink>
               </Notice>
@@ -368,11 +394,6 @@ export function JobDetail({
                 Dismissed {formatDateTime(dismissal.dismissedAt)}. Errors
                 retained.
               </p>
-            )}
-            {typeof job.options.retryJobId === 'string' && (
-              <DetailLink kind="job" id={job.options.retryJobId}>
-                View retry
-              </DetailLink>
             )}
           </Section>
           {job.items.length > 0 && (

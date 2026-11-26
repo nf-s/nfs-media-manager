@@ -125,7 +125,7 @@ function WatchedButton({ item }: { item: SubscriptionItem }) {
       ),
     onSuccess: (updated) => {
       client.setQueryData([collection, 'item', item.id], updated)
-      return client.invalidateQueries({ queryKey: [collection] })
+      void client.invalidateQueries({ queryKey: [collection] })
     },
   })
   return (
@@ -134,6 +134,13 @@ function WatchedButton({ item }: { item: SubscriptionItem }) {
       watched={watched}
       pending={mutation.isPending}
       error={mutation.isError}
+      failure={mutation.error}
+      saved={mutation.isSuccess}
+      nextWatched={
+        mutation.variables === undefined
+          ? !watched
+          : mutation.variables !== null
+      }
       onToggle={() =>
         mutation.mutate(watched ? null : new Date().toISOString())
       }

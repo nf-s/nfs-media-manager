@@ -1410,11 +1410,14 @@ button.player-track:hover strong,
 .queue-library-slot > span {
   display: contents;
 }
+.queue-library-slot:has(.ds-library-action:not([data-icon])) {
+  flex-basis: auto;
+}
 .player-text .queue-library-slot {
   overflow: visible;
 }
 @media (max-width: 700px) {
-  .queue-library-slot[data-touch] {
+  .queue-library-slot[data-touch]:not(:has(button)) {
     flex-basis: var(--ds-h-touch);
     min-height: var(--ds-h-touch);
   }
@@ -1443,6 +1446,27 @@ button.player-track:hover strong,
 }
 .queue-actions button:disabled {
   opacity: 0.35;
+}
+.queue-actions:has([data-feedback]) {
+  opacity: 1;
+}
+.queue-actions button[data-feedback],
+.player-buttons button[data-feedback],
+.player-tool[data-feedback] {
+  width: auto;
+  gap: var(--ds-2);
+  padding-inline: var(--ds-3);
+  border-radius: var(--ds-r-sm);
+  opacity: 1;
+}
+.player-control-feedback {
+  font-size: var(--ds-text-xs);
+  color: var(--ds-ink-2);
+}
+.player-buttons:has([data-feedback]) {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--ds-2);
 }
 .queue-summary {
   padding-top: 8px;

@@ -268,7 +268,7 @@ export function useCountedVirtualTable<
       !count.isFetching &&
       ((!window.hasTotal && count.isError) ||
         (conflict !== undefined && lastConflict.current === conflict)),
-    retryCount: () => void refetchCount({ cancelRefetch: false }),
+    retryCount: () => refetchCount({ cancelRefetch: false }),
   }
 }
 

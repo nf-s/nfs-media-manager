@@ -1,5 +1,8 @@
 'use client'
 
+import { ResultFeedbackScope, ResultSegmented } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -26,11 +29,14 @@ import {
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Progress } from '@repo/ui/components/ds/meter'
-import { Segmented } from '@repo/ui/components/ds/segmented'
 import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
 import { Status } from '@repo/ui/components/ds/status'
 import { Select } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { TabsContent } from '@repo/ui/components/ui/tabs'
 import {
   formatCount,
@@ -86,6 +92,7 @@ import type { PlayableItem } from '@/utils/playback'
 import { youtubeScheduleLabels } from '@/utils/youtube'
 import { errorMessage } from './lastfm-sync'
 import { usePlayback, usePlaybackControls } from './playback-provider'
+import { queueButtonRequest, usePlaybackPair } from './playback-button-feedback'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { CreatorDetailState } from './creator-detail-state'
@@ -105,6 +112,7 @@ import {
 import { useConfig } from './providers'
 import { ProviderSources } from './provider-sources'
 import { CatalogDiscoveries, CatalogLibraryAction } from './catalog-detail'
+import { jobButtonFeedback, useJobBatchFeedback } from './job-button-feedback'
 import { useNestedMediaView } from './nested-media-view'
 
 const ENTRY_PAGE_SIZE = 100
@@ -164,8 +172,16 @@ export function PlaylistPlayButton({
   const controls = usePlaybackControls()
   const detail = useDetailView()
   const inspector = useDetailInspector()
-  const [loading, setLoading] = useState(false)
+  const playback = usePlaybackPair(`playlist:${playlist.id}`)
+  const loadingActions = useRef(new Set<'play' | 'queue'>())
+  const [loading, setLoading] = useState<Record<'play' | 'queue', boolean>>({
+    play: false,
+    queue: false,
+  })
   const [error, setError] = useState('')
+  const [failedAction, setFailedAction] = useState<'play' | 'queue' | null>(
+    null,
+  )
   const knownCount =
     total ??
     (playlist.trackCount !== undefined && playlist.albumCount !== undefined
@@ -173,8 +189,11 @@ export function PlaylistPlayButton({
       : undefined)
   const hasEntries = knownCount === undefined || knownCount > 0
   async function play(action: 'play' | 'queue') {
-    setLoading(true)
+    if (loadingActions.current.has(action)) return
+    loadingActions.current.add(action)
+    setLoading((current) => ({ ...current, [action]: true }))
     setError('')
+    setFailedAction(null)
     try {
       const count =
         total ??
@@ -211,27 +230,61 @@ export function PlaylistPlayButton({
         }
         const [first] = items
         if (!first) continue
-        controls.play(first, { ...source, startIndex: index })
+        playback.start(first, false, () =>
+          controls.play(first, { ...source, startIndex: index }),
+        )
         return
       }
-      if (queued.length) queued.forEach((item) => controls.enqueue(item))
-      else setError('No playable tracks.')
+      if (queued.length) {
+        playback.queue.run(
+          queueButtonRequest(
+            (next, previous) =>
+              next.queue.filter(
+                (item) => !previous.queue.some(({ key }) => key === item.key),
+              ).length >= queued.length,
+            `${formatCount(queued.length)} queued in app`,
+            'Adding to queue…',
+          ),
+          () => queued.forEach((item) => controls.enqueue(item)),
+        )
+      } else {
+        setFailedAction(action)
+        setError('No playable tracks.')
+      }
     } catch (error) {
+      setFailedAction(action)
       setError(errorMessage(error, 'Could not load tracks.'))
     } finally {
-      setLoading(false)
+      loadingActions.current.delete(action)
+      setLoading((current) => ({ ...current, [action]: false }))
     }
   }
-  const disabled = !hasEntries || !view.enabled || loading
+  const disabled = !hasEntries || !view.enabled
   const reason = !hasEntries
     ? 'No tracks.'
     : !view.enabled
       ? 'Connect Spotify playback in the player.'
-      : 'Loading tracks...'
+      : undefined
+  function feedback(action: 'play' | 'queue'): ButtonFeedback | undefined {
+    if (loading[action]) return { phase: 'pending', label: 'Loading tracks…' }
+    if (failedAction === action)
+      return {
+        phase: 'failed',
+        label:
+          error === 'No playable tracks.'
+            ? 'No playable tracks'
+            : 'Load failed · retry',
+      }
+    return playback[action].feedback
+  }
   const pair = {
     title: playlist.name,
     disabled,
     disabledReason: reason,
+    playDisabled: loading.play || playback.play.pending,
+    queueDisabled: loading.queue,
+    playFeedback: feedback('play'),
+    queueFeedback: feedback('queue'),
     onPlay: () => void play('play'),
     onQueue: () => void play('queue'),
   }
@@ -411,158 +464,171 @@ function PlaylistEntries({
       ? `${formatItemCount(albumCount, { one: 'library album', other: 'library albums' })} ${gapDescription}`
       : null
   return (
-    <Section
-      title={canSwitch ? 'Contents' : albums ? 'Albums' : 'Tracks'}
-      className="dtl-playlist-contents"
-      aside={
-        <>
-          {canSwitch && (
-            <Segmented<PlaylistPresentation>
-              label="Playlist contents"
-              value={contents}
-              options={[
-                { value: 'albums', label: 'Albums' },
-                { value: 'tracks', label: 'Tracks' },
-              ]}
-              onChange={(next) =>
-                detail.replace(viewParams({ contents: next }))
-              }
-            />
-          )}
-          <GapFilterControls
-            playlistId={id}
-            filter={filter}
-            onChange={setFilter}
-          />
-          {/* Browse has no Metadata gaps filter, so it could not show the same rows. */}
-          {!filter && (
-            <Button variant="link" size="xs" asChild>
-              <Link
-                href={playlistBrowseHref(contents, playlist.name, {
-                  q,
-                  sortBy,
-                  direction,
-                  view: shownView,
-                })}
-              >
-                {albums ? 'Show in Albums' : 'Show in Tracks'}
-              </Link>
-            </Button>
-          )}
-        </>
-      }
+    <ResultFeedbackScope
+      identity={JSON.stringify([
+        id,
+        contents,
+        filter,
+        sortBy,
+        direction,
+        q,
+        kinds,
+      ])}
+      result={entries}
     >
-      <TrackEntriesTable
-        scope={albums ? 'playlist-albums' : 'playlist'}
-        window={{
-          slots: playlistWindowSlots(entries.slots),
-          total,
-          hasTotal: entries.hasTotal,
-          rowHeight: entries.rowHeight,
-          height: entries.height,
-          columns: entries.columns,
-          gap: entries.gap,
-          padTop: entries.padTop,
-          padBottom: entries.padBottom,
-          scroller: entries.scroller,
-          onScroll: entries.onScroll,
-        }}
-        view={shownView}
-        onViewChange={
-          filter
-            ? undefined
-            : (next) => {
-                onPresentationChange(next)
-                detail.replace(viewParams({}, next))
-              }
-        }
-        search={search}
-        onSearch={(search) => detail.replace(viewParams({ q: search }))}
-        sortBy={sortBy}
-        direction={direction}
-        onSort={onSort}
-        count={
-          entries.hasTotal
-            ? gapCount && albums && !matching
-              ? gapCount
-              : [count, gapCount].filter(Boolean).join(' · ')
-            : undefined
-        }
-        pending={!entries.hasTotal}
-        empty={
-          matching
-            ? `No matching ${noun.other}.`
-            : filter
-              ? 'No entries match this metadata gap.'
-              : albums
-                ? playlist.trackCount > 0
-                  ? 'No linked library albums. Open Tracks to see the playlist entries.'
-                  : 'No library albums.'
-                : 'No tracks.'
-        }
-        error={
-          entries.isError ? (
-            <>
-              {albums ? 'Could not load albums.' : 'Could not load tracks.'}{' '}
-              <Button size="xs" onClick={entries.retry}>
-                Retry
-              </Button>
-            </>
-          ) : undefined
-        }
-        kindFilter={
-          albums
-            ? undefined
-            : {
-                value: kinds,
-                onChange: (kinds) => detail.replace(viewParams({ kinds })),
-              }
-        }
-        gaps={
-          filter
-            ? {
-                label: gapLabels[filter.gap],
-                selected: new Set(selected.keys()),
-                onSelect: (row, checked) => {
-                  const rows = new Map(selected)
-                  if (checked) rows.set(row.key, row)
-                  else rows.delete(row.key)
-                  setSelection({ key: selectionKey, rows })
-                },
-              }
-            : undefined
-        }
-        source={
-          filter || albums
-            ? undefined
-            : ({ entry, index }) =>
-                createPlaylistPlaybackSource({
-                  apiBaseUrl,
-                  id,
-                  params: new URLSearchParams({
+      <Section
+        title={canSwitch ? 'Contents' : albums ? 'Albums' : 'Tracks'}
+        className="dtl-playlist-contents"
+        aside={
+          <>
+            {canSwitch && (
+              <ResultSegmented<PlaylistPresentation>
+                label="Playlist contents"
+                value={contents}
+                options={[
+                  { value: 'albums', label: 'Albums' },
+                  { value: 'tracks', label: 'Tracks' },
+                ]}
+                onChange={(next) =>
+                  detail.replace(viewParams({ contents: next }))
+                }
+              />
+            )}
+            <GapFilterControls
+              playlistId={id}
+              filter={filter}
+              onChange={setFilter}
+            />
+            {/* Browse has no Metadata gaps filter, so it could not show the same rows. */}
+            {!filter && (
+              <Button variant="link" size="xs" asChild>
+                <Link
+                  href={playlistBrowseHref(contents, playlist.name, {
+                    q,
                     sortBy,
                     direction,
-                    q,
-                    kinds: JSON.stringify(kinds),
-                  }),
-                  href: detail.href(viewParams({ q })),
-                  label: entries.firstPage?.name ?? 'Playlist',
-                  total,
-                  startIndex: index,
-                  initialEntry: entry,
-                })
+                    view: shownView,
+                  })}
+                >
+                  {albums ? 'Show in Albums' : 'Show in Tracks'}
+                </Link>
+              </Button>
+            )}
+          </>
         }
-      />
-      {filter && (
-        <GapSelection
-          key={gapFilterValue(filter)}
-          playlistId={id}
-          filter={filter}
-          rows={[...selected.values()]}
-          onClear={() => setSelection({ key: selectionKey, rows: new Map() })}
+      >
+        <TrackEntriesTable
+          scope={albums ? 'playlist-albums' : 'playlist'}
+          window={{
+            slots: playlistWindowSlots(entries.slots),
+            total,
+            hasTotal: entries.hasTotal,
+            rowHeight: entries.rowHeight,
+            height: entries.height,
+            columns: entries.columns,
+            gap: entries.gap,
+            padTop: entries.padTop,
+            padBottom: entries.padBottom,
+            scroller: entries.scroller,
+            onScroll: entries.onScroll,
+          }}
+          view={shownView}
+          onViewChange={
+            filter
+              ? undefined
+              : (next) => {
+                  onPresentationChange(next)
+                  detail.replace(viewParams({}, next))
+                }
+          }
+          search={search}
+          onSearch={(search) => detail.replace(viewParams({ q: search }))}
+          sortBy={sortBy}
+          direction={direction}
+          onSort={onSort}
+          count={
+            entries.hasTotal
+              ? gapCount && albums && !matching
+                ? gapCount
+                : [count, gapCount].filter(Boolean).join(' · ')
+              : undefined
+          }
+          pending={!entries.hasTotal}
+          empty={
+            matching
+              ? `No matching ${noun.other}.`
+              : filter
+                ? 'No entries match this metadata gap.'
+                : albums
+                  ? playlist.trackCount > 0
+                    ? 'No linked library albums. Open Tracks to see the playlist entries.'
+                    : 'No library albums.'
+                  : 'No tracks.'
+          }
+          error={
+            entries.isError ? (
+              <>
+                {albums ? 'Could not load albums.' : 'Could not load tracks.'}{' '}
+                <ReadButton size="xs" read={entries.retry}>
+                  Retry
+                </ReadButton>
+              </>
+            ) : undefined
+          }
+          kindFilter={
+            albums
+              ? undefined
+              : {
+                  value: kinds,
+                  onChange: (kinds) => detail.replace(viewParams({ kinds })),
+                }
+          }
+          gaps={
+            filter
+              ? {
+                  label: gapLabels[filter.gap],
+                  selected: new Set(selected.keys()),
+                  onSelect: (row, checked) => {
+                    const rows = new Map(selected)
+                    if (checked) rows.set(row.key, row)
+                    else rows.delete(row.key)
+                    setSelection({ key: selectionKey, rows })
+                  },
+                }
+              : undefined
+          }
+          source={
+            filter || albums
+              ? undefined
+              : ({ entry, index }) =>
+                  createPlaylistPlaybackSource({
+                    apiBaseUrl,
+                    id,
+                    params: new URLSearchParams({
+                      sortBy,
+                      direction,
+                      q,
+                      kinds: JSON.stringify(kinds),
+                    }),
+                    href: detail.href(viewParams({ q })),
+                    label: entries.firstPage?.name ?? 'Playlist',
+                    total,
+                    startIndex: index,
+                    initialEntry: entry,
+                  })
+          }
         />
-      )}
-    </Section>
+        {filter && (
+          <GapSelection
+            key={gapFilterValue(filter)}
+            playlistId={id}
+            filter={filter}
+            rows={[...selected.values()]}
+            onClear={() => setSelection({ key: selectionKey, rows: new Map() })}
+          />
+        )}
+      </Section>
+    </ResultFeedbackScope>
   )
 }
 
@@ -573,7 +639,7 @@ function PlaylistEntries({
  */
 function usePlaylistType(playlist: PlaylistSummary): {
   menu: DetailMenuItem
-  failed: boolean
+  feedback?: ButtonFeedback
 } {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -629,7 +695,11 @@ function usePlaylistType(playlist: PlaylistSummary): {
         })),
       ],
     },
-    failed: update.isError,
+    feedback: mutationFeedback(update, {
+      pending: 'Saving playlist type…',
+      success: 'Playlist type saved',
+      error: 'Could not save playlist type',
+    }),
   }
 }
 
@@ -638,6 +708,7 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
   const client = useQueryClient()
   const { sync } = playlist
   const request = playlistImportRequest(playlist)
+  const priorJob = useRef<string | undefined>(undefined)
   const schedule = useMutation({
     mutationFn: (value: PlaylistSyncSchedule) =>
       fetchApiData(
@@ -661,8 +732,8 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
         EnrichmentResultSchema,
         { method: 'POST', body: JSON.stringify(input) },
       ),
-    onSettled: async () => {
-      await Promise.all([
+    onSettled: () => {
+      void Promise.all([
         client.invalidateQueries({
           queryKey: ['playlist', playlist.id],
           exact: true,
@@ -673,6 +744,10 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
       ])
     },
   })
+  const batch = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? queue.data.batchId : undefined,
+  )
   if (!sync.syncable)
     return (
       <Section title="Sync">
@@ -686,6 +761,22 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
       (job.activity ? null : playlistJobProgress(job.progress)))
     : null
   const refused = queue.data?.queued === 0
+  const scheduleFeedback = mutationFeedback(schedule, {
+    pending: 'Saving schedule…',
+    success: 'Schedule saved',
+    error: 'Schedule save failed',
+  })
+  const syncFeedback: ButtonFeedback | undefined = queue.isPending
+    ? { phase: 'pending', label: 'Requesting sync…' }
+    : queue.isError || refused
+      ? { phase: 'failed', label: 'Sync request failed · retry' }
+      : job && (active || (queue.isSuccess && job.jobId !== priorJob.current))
+        ? jobButtonFeedback(job, 'Synced')
+        : queue.isSuccess
+          ? batch?.phase === 'done'
+            ? { phase: 'done', label: 'Synced' }
+            : (batch ?? { phase: 'queued', label: 'Sync queued' })
+          : undefined
   return (
     <Section
       title="Sync"
@@ -693,7 +784,12 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
         <span className="ds-actions">
           <Select
             aria-label="Schedule"
-            value={sync.schedule}
+            aria-busy={schedule.isPending || undefined}
+            value={
+              schedule.isPending
+                ? (schedule.variables ?? sync.schedule)
+                : sync.schedule
+            }
             disabled={schedule.isPending}
             onChange={(event) => {
               const parsed = PlaylistSyncScheduleSchema.safeParse(
@@ -705,12 +801,23 @@ function PlaylistSyncPanel({ playlist }: { playlist: PlaylistSummary }) {
             {PlaylistSyncScheduleSchema.options.map((value) => (
               <option key={value} value={value}>
                 {youtubeScheduleLabels[value]}
+                {scheduleFeedback &&
+                value ===
+                  (schedule.isPending ? schedule.variables : sync.schedule)
+                  ? ` · ${scheduleFeedback.label}`
+                  : ''}
               </option>
             ))}
           </Select>
           <Button
             disabled={!request || active || queue.isPending}
-            onClick={() => request && queue.mutate(request)}
+            feedback={syncFeedback}
+            aria-label="Sync now"
+            onClick={() => {
+              if (!request) return
+              priorJob.current = job?.jobId
+              queue.mutate(request)
+            }}
           >
             {queue.isPending ? 'Queueing...' : 'Sync now'}
           </Button>
@@ -864,6 +971,7 @@ function PlaylistHeader({
             )}
             <DetailMore
               crumb={{ title: playlist.name }}
+              feedback={type.feedback}
               items={[
                 filterTracks
                   ? {
@@ -889,9 +997,6 @@ function PlaylistHeader({
           </>
         }
       />
-      {type.failed && (
-        <Notice tone="danger">Could not save the playlist type.</Notice>
-      )}
     </>
   )
 }

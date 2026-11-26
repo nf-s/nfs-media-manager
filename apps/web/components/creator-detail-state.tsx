@@ -1,6 +1,6 @@
+import { ReadButton } from '@/components/read-button'
 import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
 
 /** Loading, failed and stale states of a detail drawer or page. */
 export function CreatorDetailState({
@@ -12,7 +12,7 @@ export function CreatorDetailState({
 }: {
   pending?: boolean
   pendingLabel?: string
-  retry: () => void
+  retry: () => Promise<unknown>
   subject: string
   stale?: boolean
 }) {
@@ -40,9 +40,9 @@ export function CreatorDetailState({
       <Notice
         tone="attention"
         action={
-          <Button size="xs" onClick={retry}>
+          <ReadButton size="xs" read={retry}>
             Retry
-          </Button>
+          </ReadButton>
         }
       >
         Could not refresh this {subject}.
@@ -52,7 +52,7 @@ export function CreatorDetailState({
     <State
       title={`Could not load this ${subject}`}
       error
-      action={<Button onClick={retry}>Retry</Button>}
+      action={<ReadButton read={retry}>Retry</ReadButton>}
     />
   )
 }

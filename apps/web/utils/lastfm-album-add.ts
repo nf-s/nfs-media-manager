@@ -15,11 +15,13 @@ export async function addAndLinkLastfmAlbum({
   source,
   item,
   identities,
+  onAlbumReady,
 }: {
   apiBaseUrl: string
   source: { artistName: string; albumName: string }
   item: ManualMediaSearchItem
   identities: Map<string, string | null>
+  onAlbumReady?: (albumId: string) => void
 }) {
   const remembered = identities.get(item.externalId)
   const albumId = await addManualMediaItem(apiBaseUrl, 'album', {
@@ -27,6 +29,7 @@ export async function addAndLinkLastfmAlbum({
     mediaItemId: remembered === undefined ? item.mediaItemId : remembered,
   })
   identities.set(item.externalId, albumId)
+  onAlbumReady?.(albumId)
   try {
     return await fetchApiData(
       apiBaseUrl,

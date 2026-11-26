@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { JsonValue } from '@repo/schemas/common'
@@ -15,7 +16,6 @@ import {
   Pills,
   ProviderMark,
 } from '@repo/ui/components/ds/pill'
-import { Button } from '@repo/ui/components/ui/button'
 import {
   Table,
   TableBody,
@@ -196,9 +196,9 @@ export function FieldProvenance({
           error
           size="sm"
           action={
-            <Button size="xs" onClick={() => provenance.refetch()}>
+            <ReadButton size="xs" read={() => provenance.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         />
       )

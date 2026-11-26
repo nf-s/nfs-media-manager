@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useContext, useEffect, useState, type ReactNode } from 'react'
 import { useDetailPerformance } from '@/hooks/useDetailPerformance'
@@ -212,16 +213,16 @@ function ListState({
 }: {
   pending: boolean
   label: string
-  retry: () => void
+  retry: () => Promise<unknown>
 }) {
   if (pending) return <Skeleton height={64} />
   return (
     <Notice
       tone="danger"
       action={
-        <Button size="xs" onClick={retry}>
+        <ReadButton size="xs" read={retry}>
           Retry
-        </Button>
+        </ReadButton>
       }
     >
       Could not load {label}.
@@ -688,6 +689,7 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: artist.name }}
+              feedback={merge.feedback}
               items={[
                 {
                   label: 'Merge with…',
@@ -716,6 +718,7 @@ export function ArtistDetail({ id: requestedId }: { id: string }) {
       {merge.error && !merge.review && (
         <Notice tone="danger">{merge.error}</Notice>
       )}
+      {merge.result}
       <DetailTabs
         label="Artist details"
         value={shownTab}

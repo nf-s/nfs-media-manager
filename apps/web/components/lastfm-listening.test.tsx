@@ -209,10 +209,7 @@ test('Last.fm sync retains cached status after a failed background refresh', () 
 
 test('unconfigured Last.fm links to provider settings and disables sync and schedule', () => {
   const html = syncPage({ ...idle, configured: false })
-  assert.match(
-    html,
-    /href="\/providers\/lastfm">Last\.fm provider settings/,
-  )
+  assert.match(html, /href="\/providers\/lastfm">Last\.fm provider settings/)
   assert.match(html, /disabled=""[^>]*>Sync now/)
   assert.match(
     html,
@@ -240,7 +237,11 @@ test('running sync shows progress, the current job and Stop', () => {
   assert.match(html, /<dt>New scrobbles this run<\/dt><dd>2,400<\/dd>/)
   assert.match(html, /1,800 of 2,400/)
   assert.match(html, />Stop</)
-  assert.match(html, /disabled=""[^>]*>Sync now/)
+  assert.match(
+    html,
+    /<button[^>]*data-feedback="running"[^>]*disabled=""[^>]*>/,
+  )
+  assert.match(html, /<span>Syncing…<\/span>/)
   assert.match(html, /href="\/jobs\/job-1">View current job/)
   assert.match(html, /disabled=""[^>]*>Relink/)
 })

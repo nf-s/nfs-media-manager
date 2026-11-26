@@ -3,6 +3,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlbumDetailSchema } from '@repo/schemas/media'
 import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
+import { mutationFeedback } from '@repo/ui/components/ui/button'
+import {
+  playbackItemFeedbackKey,
+  usePlaybackPair,
+} from './playback-button-feedback'
 import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import {
@@ -123,6 +128,7 @@ export function AlbumReferencePlayButton({
   const controls = usePlaybackControls()
   const current = view.current?.albumId === id
   const playing = current && view.snapshot !== null && !view.snapshot.paused
+  const pair = usePlaybackPair(`album:${id}`)
   const playback = useMutation<PlayableItem | null, Error, 'play' | 'queue'>({
     mutationFn: async () =>
       albumPlayable(
@@ -138,11 +144,23 @@ export function AlbumReferencePlayButton({
       ),
     onSuccess: (item, action) => {
       if (!item) return
-      if (action === 'queue') controls.enqueue(item)
-      else playFromView(controls, view, item, current, source)
+      if (action === 'queue') pair.enqueue(item, () => controls.enqueue(item))
+      else
+        pair.start(item, playing, () =>
+          playFromView(controls, view, item, current, source),
+        )
     },
   })
-  if (!view.enabled || playback.data === null)
+  const loading = mutationFeedback(playback, {
+    pending: 'Loading tracks…',
+    success: playback.data ? 'Tracks loaded' : 'No playable tracks',
+    error: 'Could not load tracks · retry',
+  })
+  const loadingFeedback =
+    playback.isPending || playback.isError || playback.data === null
+      ? loading
+      : undefined
+  if (!view.enabled)
     return (
       <UnavailablePlayButton
         title={title}
@@ -156,10 +174,24 @@ export function AlbumReferencePlayButton({
         place={place}
         title={title}
         playing={playing}
-        disabled={playback.isPending}
-        disabledReason="Loading album playback."
+        playDisabled={
+          pair.play.pending ||
+          (playback.isPending && playback.variables === 'play')
+        }
+        queueDisabled={playback.isPending && playback.variables === 'queue'}
+        playFeedback={
+          playback.variables === 'play' && loadingFeedback
+            ? loadingFeedback
+            : pair.play.feedback
+        }
+        queueFeedback={
+          playback.variables === 'queue' && loadingFeedback
+            ? loadingFeedback
+            : pair.queue.feedback
+        }
         onPlay={() => {
-          if (current && !source) controls.toggle()
+          if (current && !source && view.current)
+            pair.start(view.current, playing, controls.toggle)
           else {
             controls.activate?.()
             playback.mutate('play')
@@ -232,15 +264,20 @@ function useAlbumPlayback(album: AlbumSource) {
   const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const item = view.enabled ? albumPlayable(album) : null
+  const pair = usePlaybackPair(playbackItemFeedbackKey(item))
   if (!item) return null
   const current = view.current?.albumId === album.id
+  const playing = current && view.snapshot !== null && !view.snapshot.paused
   return {
     item,
     current,
-    playing: current && view.snapshot !== null && !view.snapshot.paused,
-    controls,
+    playing,
+    buttons: pair.buttons,
     play: (source?: PlaybackSourceFactory) =>
-      playFromView(controls, view, item, current, source),
+      pair.start(item, playing, () =>
+        playFromView(controls, view, item, current, source),
+      ),
+    queue: () => pair.enqueue(item, () => controls.enqueue(item)),
   }
 }
 
@@ -266,14 +303,15 @@ function AlbumPair({
         onQueue={() => undefined}
       />
     )
-  const { item, playing, controls, play } = playback
+  const { playing, buttons, play, queue } = playback
   return (
     <PlayPair
       place={place}
       title={album.title}
       playing={playing}
+      {...buttons}
       onPlay={() => play(source)}
-      onQueue={() => controls.enqueue(item)}
+      onQueue={queue}
     />
   )
 }
@@ -306,13 +344,14 @@ export function AlbumPlayButtons({
         compact={false}
       />
     )
-  const { item, playing, controls, play } = playback
+  const { playing, buttons, play, queue } = playback
   return (
     <PlayHeaderButtons
       title={album.title}
       playing={playing}
+      {...buttons}
       onPlay={() => play(source)}
-      onQueue={() => controls.enqueue(item)}
+      onQueue={queue}
     />
   )
 }
@@ -334,6 +373,10 @@ export function TrackPlayButton({
   const controls = usePlaybackControls()
   const item = view.enabled ? albumPlayable(album, track) : null
   const queued = view.enabled ? trackPlayable(album, track) : null
+  const pair = usePlaybackPair(
+    playbackItemFeedbackKey(item),
+    playbackItemFeedbackKey(queued),
+  )
   if (!item || !queued)
     return (
       <UnavailablePlayButton
@@ -356,8 +399,13 @@ export function TrackPlayButton({
         place="row"
         title={track.title}
         playing={playing}
-        onPlay={() => playFromView(controls, view, item, current, source)}
-        onQueue={() => controls.enqueue(queued)}
+        {...pair.buttons}
+        onPlay={() =>
+          pair.start(item, playing, () =>
+            playFromView(controls, view, item, current, source),
+          )
+        }
+        onQueue={() => pair.enqueue(queued, () => controls.enqueue(queued))}
       />
     </>
   )
@@ -368,16 +416,23 @@ function useLibraryTrackPlayback(track: LibraryTrackSource) {
   const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
   const item = view.enabled ? libraryTrackPlayable(track) : null
+  const pair = usePlaybackPair(playbackItemFeedbackKey(item))
   if (!item) return null
   const { snapshot } = view
   const current = snapshot !== null && playbackReportsTrack(snapshot, item.uri)
+  const playing = current && !snapshot.paused
   return {
     item,
     current,
-    playing: current && !snapshot.paused,
-    controls,
+    playing,
+    buttons: pair.buttons,
     play: (source?: PlaybackSourceInput) =>
-      playFromView(controls, view, item, current, source),
+      pair.start(
+        item,
+        playing && !isDifferentPlaybackSource(view, source),
+        () => playFromView(controls, view, item, current, source),
+      ),
+    queue: () => pair.enqueue(item, () => controls.enqueue(item)),
   }
 }
 
@@ -416,7 +471,7 @@ export function LibraryTrackPlayButton({
         />
       </>
     )
-  const { item, playing, controls, play } = playback
+  const { playing, buttons, play, queue } = playback
   return (
     <>
       <Position value={position} />
@@ -424,8 +479,9 @@ export function LibraryTrackPlayButton({
         place={place}
         title={track.title}
         playing={playing && !isDifferentPlaybackSource(view, source)}
+        {...buttons}
         onPlay={() => play(source)}
-        onQueue={() => controls.enqueue(item)}
+        onQueue={queue}
       />
     </>
   )
@@ -461,13 +517,14 @@ export function LibraryTrackPlayButtons({
         compact={false}
       />
     )
-  const { item, current, playing, controls } = playback
+  const { playing, buttons, play, queue } = playback
   return (
     <PlayHeaderButtons
       title={track.title}
       playing={playing}
-      onPlay={() => (current ? controls.toggle() : controls.play(item))}
-      onQueue={() => controls.enqueue(item)}
+      {...buttons}
+      onPlay={() => play()}
+      onQueue={queue}
     />
   )
 }

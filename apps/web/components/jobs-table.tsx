@@ -1,5 +1,9 @@
 'use client'
 
+import { TableSelectionBar } from '@repo/ui/components/ui/table'
+
+import { ReadButton } from '@/components/read-button'
+import { queueReceipt, useJobBatchFeedback } from './job-button-feedback'
 import Link from 'next/link'
 import {
   Fragment,
@@ -49,7 +53,6 @@ import {
   TableHead,
   TableRow,
   TableCell,
-  TableSelectionBar,
   TableState,
 } from '@repo/ui/components/ui/table'
 import { Button } from '@repo/ui/components/ui/button'
@@ -420,22 +423,30 @@ export function JobsTable({ provider }: { provider?: string }) {
     setExpanded(new Map())
   }, [identity])
   const retryBatch = useMutation({
-    mutationFn: ({ id, confirmed }: { id: string; confirmed: boolean }) =>
+    mutationFn: ({ id, submissionId }: { id: string; submissionId: string }) =>
       fetchApiData(
         apiBaseUrl,
         `/api/v1/scrape/jobs/batches/${encodeURIComponent(id)}/retry`,
         EnrichmentResultSchema,
         {
           method: 'POST',
-          body: JSON.stringify({ confirmBroadRun: confirmed }),
+          body: JSON.stringify({
+            confirmBroadRun: true,
+            batchId: submissionId,
+          }),
         },
       ),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ['jobs'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
-      setRetryBatchId(null)
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['jobs'] })
+      void client.invalidateQueries({ queryKey: ['job-activity'] })
     },
   })
+  const retryResult =
+    retryBatch.variables?.id === reviewedBatch ? retryBatch.data : undefined
+  const retryProgress = useJobBatchFeedback(
+    apiBaseUrl,
+    retryResult?.queued ? retryResult.batchId : undefined,
+  )
   const providerName = (id: string) => providerDisplayName(providers.data, id)
   const orderedJobs: Job[] = []
   /** Batches with unfinished jobs, which can be selected and cancelled. */
@@ -762,6 +773,7 @@ export function JobsTable({ provider }: { provider?: string }) {
                   retryBatch.reset()
                   setRetryBatchId(batch.batchId)
                   setBatchRetryConfirmed(false)
+                  retryBatch.reset()
                 }}
               >
                 Retry
@@ -796,13 +808,13 @@ export function JobsTable({ provider }: { provider?: string }) {
                 {page?.isError ? (
                   <span role="alert">
                     Could not load jobs.{' '}
-                    <Button
+                    <ReadButton
                       variant="link"
                       size="xs"
-                      onClick={() => page.refetch()}
+                      read={() => page.refetch()}
                     >
                       Retry
-                    </Button>
+                    </ReadButton>
                   </span>
                 ) : (
                   <span role="status">Loading jobs...</span>
@@ -829,11 +841,28 @@ export function JobsTable({ provider }: { provider?: string }) {
               <Link href="/jobs">All jobs</Link>
             </>
           )}
-          {retryBatch.data ? (
-            <span role="status">
-              {formatCount(retryBatch.data.queued)} queued,{' '}
-              {formatCount(retryBatch.data.skipped)} skipped.
-              {retryBatch.data.warnings.map((warning) => (
+          {retryResult ? (
+            <span role="status" className="ds-actions">
+              <Button
+                disabled
+                feedback={
+                  retryProgress ??
+                  queueReceipt(retryResult.queued, retryResult.skipped)
+                }
+              >
+                Retry batch
+              </Button>
+              {retryResult.queued > 0 && (
+                <Link
+                  href={`/jobs?batchId=${encodeURIComponent(retryResult.batchId)}`}
+                >
+                  View retry jobs
+                </Link>
+              )}
+              {retryResult.skipped > 0 && (
+                <span>{formatCount(retryResult.skipped)} skipped</span>
+              )}
+              {retryResult.warnings.map((warning) => (
                 <span className="block" key={warning}>
                   {warning}
                 </span>
@@ -860,10 +889,22 @@ export function JobsTable({ provider }: { provider?: string }) {
                       variant="primary"
                       size="xs"
                       disabled={busy}
+                      feedback={
+                        retryBatch.variables?.id === reviewedBatch &&
+                        retryBatch.isPending
+                          ? { phase: 'pending', label: 'Requesting retries…' }
+                          : retryBatch.variables?.id === reviewedBatch &&
+                              retryBatch.isError
+                            ? {
+                                phase: 'unconfirmed',
+                                label: 'Retry unconfirmed',
+                              }
+                            : undefined
+                      }
                       onClick={() =>
                         retryBatch.mutate({
                           id: reviewedBatch,
-                          confirmed: true,
+                          submissionId: crypto.randomUUID(),
                         })
                       }
                     >
@@ -888,9 +929,14 @@ export function JobsTable({ provider }: { provider?: string }) {
               </Notice>
             </div>
           )}
-          {retryBatch.isError && (
+          {retryBatch.variables?.id === reviewedBatch && retryBatch.isError && (
             <span role="alert" className="ops-danger">
-              {retryBatch.error.message}
+              {retryBatch.error.message}{' '}
+              <Link
+                href={`/jobs?batchId=${encodeURIComponent(retryBatch.variables.submissionId)}`}
+              >
+                Check requested retries
+              </Link>
             </span>
           )}
         </Toolbar>
@@ -934,9 +980,9 @@ export function JobsTable({ provider }: { provider?: string }) {
           <Notice
             tone="danger"
             action={
-              <Button size="xs" onClick={jobs.retry}>
+              <ReadButton size="xs" read={jobs.retry}>
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load jobs.
@@ -1071,9 +1117,9 @@ export function JobsTable({ provider }: { provider?: string }) {
                     ? 'Jobs unavailable.'
                     : 'No matching jobs.'}
                 {jobs.isError && (
-                  <Button variant="link" size="xs" onClick={jobs.retry}>
+                  <ReadButton variant="link" size="xs" read={jobs.retry}>
                     Retry
-                  </Button>
+                  </ReadButton>
                 )}
               </TableState>
             )}
@@ -1103,26 +1149,19 @@ export function JobsTable({ provider }: { provider?: string }) {
           </tbody>
         </table>
       </SecondaryTableScroll>
-      {(actionableIds.length + batchIds.length > 0 || bulkPending) && (
-        <TableSelectionBar>
-          {selectedCount > 0 && (
-            <span role="status">
-              <b>{formatCount(selectedCount)} selected</b>
-            </span>
-          )}
-          <JobBulkActions
-            jobs={actionableJobs}
-            selectedIds={selectedIds}
-            onSelect={selectJobs}
-            onPending={setBulkPending}
-            disabled={busy}
-            request={request}
-            batches={cancellableBatches}
-            selectedBatchIds={selectedBatchIds}
-            onSelectBatches={setCheckedBatchIds}
-          />
-        </TableSelectionBar>
-      )}
+      <TableSelectionBar>
+        <JobBulkActions
+          jobs={actionableJobs}
+          selectedIds={selectedIds}
+          onSelect={selectJobs}
+          onPending={setBulkPending}
+          disabled={busy}
+          request={request}
+          batches={cancellableBatches}
+          selectedBatchIds={selectedBatchIds}
+          onSelectBatches={setCheckedBatchIds}
+        />
+      </TableSelectionBar>
     </>
   )
   return <section className="ops-jobs">{table}</section>

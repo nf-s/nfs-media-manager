@@ -1,5 +1,6 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
 import { useRestoreBrowsePreferences } from './workspace-tab-context'
 import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
 import Link from 'next/link'
@@ -750,7 +751,9 @@ function SubscriptionBrowse({
   }
 
   return (
-    <section
+    <ResultSection
+      identity={identity}
+      result={query}
       className={embedded ? undefined : 'media-browser'}
       aria-label={page.name}
     >
@@ -1127,6 +1130,6 @@ function SubscriptionBrowse({
           }}
         />
       )}
-    </section>
+    </ResultSection>
   )
 }

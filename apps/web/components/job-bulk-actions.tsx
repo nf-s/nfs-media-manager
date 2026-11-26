@@ -12,7 +12,7 @@ import {
   type Job,
   type JobBatchEntry,
 } from '@repo/schemas/job'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { Select } from '@repo/ui/components/ds/toolbar'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
@@ -37,6 +37,7 @@ import {
   type JobActionOutcome,
 } from '@/utils/job-bulk-actions'
 import { batchTitle } from '@/utils/job-entries'
+import { useJobBatchFeedback } from './job-button-feedback'
 
 const jobNoun = { one: 'job', other: 'jobs' }
 const batchNoun = { one: 'batch', other: 'batches' }
@@ -184,9 +185,13 @@ export default function JobBulkActions({
         ? 'Cancel jobs'
         : 'Dismiss'
   const action = useMutation({
-    mutationFn: async (
-      kind: 'retry' | 'dismiss' | 'cancel',
-    ): Promise<JobActionOutcome> => {
+    mutationFn: async ({
+      kind,
+      batchId,
+    }: {
+      kind: JobAction
+      batchId?: string
+    }): Promise<JobActionOutcome> => {
       if (!reviewing) throw new Error('Review this action before continuing.')
       if (kind === 'cancel') return cancelSelection()
       if (kind === 'retry' && retriesRunning && !runningConfirmed)
@@ -208,6 +213,7 @@ export default function JobBulkActions({
                     jobIds,
                     confirmBroadRun: confirmed,
                     confirmRunning: runningConfirmed,
+                    batchId,
                   }),
                 },
               )
@@ -240,12 +246,49 @@ export default function JobBulkActions({
       setReviewedSelection('')
       setKind('')
     },
-    onSettled: async () => {
-      await client.invalidateQueries({ queryKey: ['jobs'] })
-      await client.invalidateQueries({ queryKey: ['job-activity'] })
-      onPending(false)
+    onSettled: () => {
+      void Promise.all([
+        client.invalidateQueries({ queryKey: ['jobs'] }),
+        client.invalidateQueries({ queryKey: ['job-activity'] }),
+      ]).finally(() => onPending(false))
     },
   })
+  const retryBatchId = action.data?.results.some(
+    (result) => result.status === 'queued' && result.retryJobId,
+  )
+    ? action.variables?.batchId
+    : undefined
+  const retryProgress = useJobBatchFeedback(apiBaseUrl, retryBatchId)
+  const resultFeedback: ButtonFeedback | undefined = action.data
+    ? (() => {
+        const results = action.data.results
+        const successful = results.filter(
+          ({ status }) => status !== 'failed' && status !== 'skipped',
+        ).length
+        const errors =
+          results.some(({ status }) => status === 'failed') ||
+          action.data.failedBatches.length > 0
+        if (successful > 0 && errors)
+          return { phase: 'partial', label: 'Some actions unconfirmed' }
+        if (errors) return { phase: 'unconfirmed', label: 'Action unconfirmed' }
+        if (!successful) return { phase: 'done', label: 'No changes' }
+        if (action.variables?.kind === 'retry')
+          return (
+            retryProgress ?? {
+              phase: 'queued',
+              label: `${formatCount(successful)} queued`,
+            }
+          )
+        if (action.variables?.kind === 'cancel')
+          return {
+            phase: 'cancelled',
+            label: `${formatCount(successful)} cancelled`,
+          }
+        return { phase: 'done', label: `${formatCount(successful)} dismissed` }
+      })()
+    : action.isError
+      ? { phase: 'unconfirmed', label: 'Action unconfirmed' }
+      : undefined
   async function cancelSelection(): Promise<JobActionOutcome> {
     const batchResult = await dispatchBatchCancellation(
       selectedBatches,
@@ -279,13 +322,24 @@ export default function JobBulkActions({
       failedBatches: batchResult.failedBatches,
     }
   }
-  if (single && !retryJobs.length && !dismissJobs.length && !cancelJobs.length)
+  if (
+    single &&
+    !retryJobs.length &&
+    !dismissJobs.length &&
+    !cancelJobs.length &&
+    !action.isPending &&
+    !resultFeedback
+  )
     return null
   if (!selectedCount && !action.isPending && !action.isError && !action.data)
     return null
-  return (
+  const body = (
     <div className="ops-bulk">
-      {selectedCount > 0 ? (
+      {selectedCount > 0 &&
+      (retryJobs.length > 0 ||
+        cancelJobs.length > 0 ||
+        batchJobs > 0 ||
+        dismissJobs.length > 0) ? (
         <>
           <Select
             aria-label={single ? 'Job action' : 'Selected job action'}
@@ -414,8 +468,23 @@ export default function JobBulkActions({
                 <Button
                   variant="primary"
                   disabled={disabled || action.isPending || !selectedAction}
+                  feedback={
+                    action.isPending
+                      ? {
+                          phase: 'pending',
+                          label: `Submitting · ${formatCount(progress)} confirmed`,
+                        }
+                      : undefined
+                  }
                   onClick={() => {
-                    if (selectedAction) action.mutate(selectedAction)
+                    if (selectedAction && !action.isPending)
+                      action.mutate({
+                        kind: selectedAction,
+                        batchId:
+                          selectedAction === 'retry'
+                            ? crypto.randomUUID()
+                            : undefined,
+                      })
                   }}
                 >
                   Confirm {actionLabel.toLowerCase()}
@@ -432,8 +501,21 @@ export default function JobBulkActions({
           )}
         </>
       ) : null}
-      {action.isPending && (
-        <span role="status">Processing {formatCount(progress)} jobs...</span>
+      {action.isPending && !reviewing && (
+        <Button
+          disabled
+          feedback={{
+            phase: 'pending',
+            label: `Submitting · ${formatCount(progress)} confirmed`,
+          }}
+        >
+          Job action
+        </Button>
+      )}
+      {resultFeedback && !action.isPending && (
+        <Button disabled feedback={resultFeedback}>
+          Job action
+        </Button>
       )}
       {action.isError && (
         <p className="ops-wide" role="alert">
@@ -443,6 +525,11 @@ export default function JobBulkActions({
       {action.data && (
         <div className="ops-wide" role="status">
           {jobActionSummary(action.data)}
+          {retryBatchId && (
+            <Link href={`/jobs?batchId=${encodeURIComponent(retryBatchId)}`}>
+              View retry jobs
+            </Link>
+          )}
           {(action.data.failedBatches.length > 0 ||
             action.data.results.some(
               (entry) =>
@@ -486,5 +573,17 @@ export default function JobBulkActions({
         </div>
       )}
     </div>
+  )
+  return single ? (
+    body
+  ) : (
+    <>
+      {selectedCount > 0 && (
+        <span role="status">
+          <b>{formatCount(selectedCount)} selected</b>
+        </span>
+      )}
+      {body}
+    </>
   )
 }

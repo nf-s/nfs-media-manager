@@ -1,5 +1,6 @@
 'use client'
 
+import { openReadFeedback, ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import {
@@ -10,7 +11,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { BrowseCountSchema } from '@repo/schemas/browse'
 import { SpotifyAccountStatusSchema } from '@repo/schemas/spotify'
 import {
@@ -21,7 +27,7 @@ import {
   type PlaylistSummary,
   type SpotifyPlaylistJob,
 } from '@repo/schemas/tracks'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import { Input } from '@repo/ui/components/ui/input'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Status, type StatusState } from '@repo/ui/components/ds/status'
@@ -295,6 +301,7 @@ export function useAddToPlaylist(
   mediaType: PlaylistMediaType,
   id: string,
   additions: Addition[],
+  playlists: PlaylistSummary[] | undefined,
 ): { action: ReactNode; notice: ReactNode } {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -307,8 +314,22 @@ export function useAddToPlaylist(
         SpotifyAccountStatusSchema,
       ),
   })
+  const mutationKey = ['add-to-spotify-playlist', mediaType, id]
+  const pendingDestinations = useMutationState({
+    filters: { mutationKey, exact: true, status: 'pending' },
+    select: ({ state: { variables } }) =>
+      variables &&
+      typeof variables === 'object' &&
+      'id' in variables &&
+      typeof variables.id === 'string'
+        ? variables.id
+        : null,
+  })
   const add = useMutation({
-    mutationFn: async (playlistId: string) => {
+    mutationKey,
+    mutationFn: async ({
+      id: playlistId,
+    }: Pick<PlaylistSummary, 'id' | 'name'>) => {
       if (mediaType === 'track')
         return fetchApiData(
           apiBaseUrl,
@@ -333,8 +354,8 @@ export function useAddToPlaylist(
         },
       )
     },
-    onSettled: async () => {
-      await Promise.all([
+    onSettled: () => {
+      void Promise.all([
         client.invalidateQueries({
           queryKey: [
             mediaType === 'album'
@@ -357,9 +378,9 @@ export function useAddToPlaylist(
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => account.refetch()}>
+            <ReadButton size="xs" read={() => account.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load the Spotify connection.
@@ -391,17 +412,68 @@ export function useAddToPlaylist(
         </Notice>
       ),
     }
-  const active = new Set(
-    additions
+  const active = new Set([
+    ...pendingDestinations,
+    ...additions
       .filter((addition) => playlistJobActive(addition.job))
       .map((addition) => addition.playlistId),
-  )
+  ])
+  const addition =
+    additions.find((entry) => entry.job.jobId === add.data?.job.jobId) ??
+    add.data
+  const imported = playlists?.find(({ id }) => id === addition?.playlistId)
+    ?.sync.job
+  const followOn =
+    imported &&
+    addition?.job.finishedAt &&
+    (playlistJobActive(imported) ||
+      Boolean(
+        imported.finishedAt && imported.finishedAt >= addition.job.finishedAt,
+      ))
+      ? imported
+      : null
+  const feedback: ButtonFeedback | undefined = add.isPending
+    ? { phase: 'pending', label: 'Requesting addition…' }
+    : add.isError
+      ? { phase: 'failed', label: 'Could not add · retry' }
+      : addition?.job.status === 'queued'
+        ? { phase: 'queued', label: 'Addition queued' }
+        : addition?.job.status === 'running'
+          ? {
+              phase: 'running',
+              label:
+                playlistJobActivityLabel(addition.job) ?? 'Adding on Spotify…',
+            }
+          : addition?.job.status === 'cancelled'
+            ? { phase: 'cancelled', label: 'Addition cancelled' }
+            : addition?.job.status === 'failed'
+              ? { phase: 'failed', label: 'Addition failed · retry' }
+              : addition?.job.status === 'succeeded' &&
+                  playlistJobActive(followOn)
+                ? { phase: 'running', label: 'Added on Spotify · syncing copy' }
+                : addition?.job.status === 'succeeded' &&
+                    followOn?.status === 'succeeded'
+                  ? { phase: 'done', label: 'Added · playlist updated' }
+                  : addition?.job.status === 'succeeded' &&
+                      (followOn?.status === 'failed' ||
+                        followOn?.status === 'cancelled')
+                    ? {
+                        phase: 'partial',
+                        label: 'Added on Spotify · sync stopped',
+                      }
+                    : addition?.job.status === 'succeeded'
+                      ? { phase: 'done', label: 'Added on Spotify' }
+                      : undefined
   return {
     action: (
       <PlaylistPicker
         mediaType={mediaType}
-        busy={(playlistId) => add.isPending || active.has(playlistId)}
-        onChoose={(playlistId) => add.mutate(playlistId)}
+        busy={(playlistId) => active.has(playlistId)}
+        onChoose={(playlist) => {
+          if (!active.has(playlist.id)) add.mutate(playlist)
+        }}
+        feedback={feedback}
+        destination={add.variables?.name}
       />
     ),
     notice: add.isError ? (
@@ -419,10 +491,14 @@ function PlaylistPicker({
   mediaType,
   busy,
   onChoose,
+  feedback,
+  destination,
 }: {
   mediaType: PlaylistMediaType
   busy: (playlistId: string) => boolean
-  onChoose: (playlistId: string) => void
+  onChoose: (playlist: PlaylistSummary) => void
+  feedback?: ButtonFeedback
+  destination?: string
 }) {
   const { apiBaseUrl } = useConfig()
   const importHref = scopedHref('/imports/spotify-playlists', mediaType)
@@ -516,6 +592,18 @@ function PlaylistPicker({
         popoverTarget={id}
         aria-expanded={open}
         aria-controls={id}
+        aria-label={
+          destination ? `Add to playlist · ${destination}` : undefined
+        }
+        title={destination}
+        feedback={
+          openReadFeedback(
+            open,
+            !failed && !choices.hasTotal,
+            failed,
+            'Playlists loaded',
+          ) ?? feedback
+        }
       >
         Add to playlist
       </Button>
@@ -556,15 +644,14 @@ function PlaylistPicker({
           <Notice
             tone="danger"
             action={
-              <Button
+              <ReadButton
                 size="xs"
-                onClick={() => {
-                  choices.retry()
-                  if (countError) void count.refetch()
-                }}
+                read={() =>
+                  Promise.all([choices.retry(), countError && count.refetch()])
+                }
               >
                 Retry
-              </Button>
+              </ReadButton>
             }
           >
             Could not load playlists.
@@ -612,7 +699,7 @@ function PlaylistPicker({
                       title={playlist.name}
                       onClick={() => {
                         close()
-                        onChoose(playlist.id)
+                        onChoose(playlist)
                       }}
                     >
                       <span className="ds-truncate">{playlist.name}</span>

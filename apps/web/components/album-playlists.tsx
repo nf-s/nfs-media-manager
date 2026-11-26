@@ -1,10 +1,10 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useQuery } from '@tanstack/react-query'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Section } from '@repo/ui/components/ds/facts'
-import { Button } from '@repo/ui/components/ui/button'
 import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
@@ -38,7 +38,12 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
     (playlists.data ?? []).map((playlist) => [playlist.id, playlist.name]),
   )
   const memberships = query.data?.playlists ?? []
-  const adding = useAddToPlaylist('album', albumId, additionList)
+  const adding = useAddToPlaylist(
+    'album',
+    albumId,
+    additionList,
+    playlists.data,
+  )
   return (
     <Section
       title="Playlists"
@@ -49,9 +54,9 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => query.refetch()}>
+            <ReadButton size="xs" read={() => query.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Playlists unavailable.

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { Fragment, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useVirtualTable } from '@/hooks/useVirtualTable'
@@ -9,7 +10,6 @@ import {
   TagPageSchema,
   type TagSortKey,
 } from '@repo/schemas/tags'
-import { Button } from '@repo/ui/components/ui/button'
 import {
   TableCell,
   TableHead,
@@ -17,6 +17,7 @@ import {
   TableState,
 } from '@repo/ui/components/ui/table'
 import { Skeleton } from '@repo/ui/components/ds/feedback'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import {
   PageHead,
   Select,
@@ -111,7 +112,7 @@ export default function TagsPageClient({
   const [parentsOpen, setParentsOpen] = useState(false)
   const [outcome, setOutcome] = useState<{
     message: string
-    interrupted: boolean
+    feedback: ButtonFeedback
   } | null>(null)
   const selectAll = useRef<HTMLInputElement>(null)
   const shift = useRef(false)
@@ -162,10 +163,10 @@ export default function TagsPageClient({
   function completeSelection(
     ids: string[],
     message: string,
-    interrupted: boolean,
+    feedback: ButtonFeedback,
   ) {
     setSelected((current) => current.filter((id) => !ids.includes(id)))
-    setOutcome({ message, interrupted })
+    setOutcome({ message, feedback })
   }
   function openTag(id: string) {
     inspector?.open({ kind: 'tag', id: tagDetailId(tagScope, id) })
@@ -332,9 +333,9 @@ export default function TagsPageClient({
               {tags.isError && (
                 <TableState colSpan={1 + columns.count} error>
                   Could not load tags.{' '}
-                  <Button size="xs" onClick={tags.retry}>
+                  <ReadButton size="xs" read={tags.retry}>
                     Retry
-                  </Button>
+                  </ReadButton>
                 </TableState>
               )}
               {tags.hasTotal && tags.total === 0 && (
@@ -538,9 +539,16 @@ export default function TagsPageClient({
               />
             )}
             {outcome && (
-              <span role={outcome.interrupted ? 'alert' : 'status'}>
-                {outcome.message}
-              </span>
+              <>
+                <Button disabled feedback={outcome.feedback}>
+                  {outcome.feedback.label}
+                </Button>
+                <span
+                  role={outcome.feedback.phase === 'done' ? undefined : 'alert'}
+                >
+                  {outcome.message}
+                </span>
+              </>
             )}
           </SecondaryTableSelectionBar>
         )}

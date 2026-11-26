@@ -1,5 +1,8 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import {
@@ -20,7 +23,6 @@ import { defaultListeningPeriod } from '@repo/schemas/listening'
 import { TrackQuerySchema, type TrackListItem } from '@repo/schemas/tracks'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { Select } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
 import {
   TableCell,
   TableHead,
@@ -401,7 +403,12 @@ export default function TrackMetadataTable({
     ...scopeQuery,
   })
   return (
-    <div className="ops-fill">
+    <ResultSection
+      as="div"
+      className="ops-fill"
+      identity={identity}
+      result={tracks}
+    >
       <MetadataSelectionToolbar
         disabled={pending}
         libraryScope={{
@@ -514,9 +521,9 @@ export default function TrackMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={tracks.retry}>
+                <ReadButton size="xs" read={tracks.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load tracks.
@@ -526,9 +533,9 @@ export default function TrackMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={status.retry}>
+                <ReadButton size="xs" read={status.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load Spotify search results.
@@ -538,9 +545,9 @@ export default function TrackMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={tidal.retry}>
+                <ReadButton size="xs" read={tidal.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load TIDAL matches.
@@ -550,9 +557,9 @@ export default function TrackMetadataTable({
             <Notice
               tone="danger"
               action={
-                <Button size="xs" onClick={sonovault.retry}>
+                <ReadButton size="xs" read={sonovault.retry}>
                   Retry
-                </Button>
+                </ReadButton>
               }
             >
               Could not load Sonovault lookups.
@@ -898,6 +905,6 @@ export default function TrackMetadataTable({
           onClose={() => setTidalReview(null)}
         />
       )}
-    </div>
+    </ResultSection>
   )
 }

@@ -1,5 +1,8 @@
 'use client'
 
+import { ResultSection } from './result-feedback'
+
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useDeferredValue, useState } from 'react'
@@ -12,7 +15,6 @@ import {
   FilmCollectionBrowsePageSchema,
   type FilmCollectionBrowseSort,
 } from '@repo/schemas/film-collections'
-import { Button } from '@repo/ui/components/ui/button'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
 import { PageHead } from '@repo/ui/components/ds/toolbar'
@@ -166,7 +168,16 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
     setSortBy(key)
   }
   return (
-    <section className="browse-workspace" aria-label="Collections">
+    <ResultSection
+      identity={JSON.stringify([...viewportKey, includeSources])}
+      result={{
+        isFetching:
+          query.isFetching || (isCounting && !countError && !query.isError),
+        isError: query.isError || countError,
+      }}
+      className="browse-workspace"
+      aria-label="Collections"
+    >
       <PageHead title="Collections" />
       <SecondaryTableToolbar
         libraryScope={{ value: scope, onChange: changeScope }}
@@ -180,9 +191,14 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
         }
         count={
           countError ? (
-            <Button type="button" variant="link" size="xs" onClick={retryCount}>
+            <ReadButton
+              type="button"
+              variant="link"
+              size="xs"
+              read={retryCount}
+            >
               Retry count
-            </Button>
+            </ReadButton>
           ) : !isCounting ? (
             formatItemCount(query.total, {
               one: 'collection',
@@ -200,9 +216,9 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
         <Notice
           tone="danger"
           action={
-            <Button type="button" size="xs" onClick={query.retry}>
+            <ReadButton type="button" size="xs" read={query.retry}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load collections.
@@ -321,6 +337,6 @@ function CollectionDirectory({ mediaType }: { mediaType: MediaScope }) {
           </TableBody>
         </table>
       </SecondaryTableScroll>
-    </section>
+    </ResultSection>
   )
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import Link from 'next/link'
 import { useEffect, useId, useRef } from 'react'
@@ -17,7 +18,7 @@ import {
   type LastfmSyncSchedule,
   type LastfmSyncStatus,
 } from '@repo/schemas/lastfm'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
 import { Label } from '@repo/ui/components/ui/label'
 import { Facts, Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
@@ -34,6 +35,7 @@ import {
   lastfmSyncPollInterval,
 } from '@/utils/lastfm-sync'
 import { syncStatusStates } from '@/utils/run-status'
+import { useSyncButtonFeedback } from './job-button-feedback'
 import { ConfirmAction } from './confirm-action'
 
 const ErrorMessageSchema = z.object({ message: z.string().min(1) })
@@ -122,6 +124,7 @@ export default function LastfmSync({
   const client = useQueryClient()
   const scheduleId = useId()
   const status = useLastfmSyncStatus()
+  const syncProgress = useSyncButtonFeedback(apiBaseUrl, status.data)
   const update = async (next: LastfmSyncStatus) => {
     client.setQueryData(['lastfm-sync'], next)
     await Promise.all([
@@ -193,9 +196,9 @@ export default function LastfmSync({
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => status.refetch()}>
+            <ReadButton size="xs" read={() => status.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load Last.fm sync.
@@ -274,25 +277,43 @@ export default function LastfmSync({
             size="md"
             variant="primary"
             disabled={!data.configured || running || sync.isPending}
+            feedback={
+              sync.isPending || sync.isError
+                ? mutationFeedback(sync, {
+                    pending: 'Requesting sync…',
+                    success: 'Sync queued',
+                    error: 'Sync request unconfirmed',
+                  })
+                : running || sync.isSuccess
+                  ? syncProgress
+                  : undefined
+            }
             onClick={() => sync.mutate()}
           >
-            {sync.isPending
-              ? 'Starting...'
-              : resumable
-                ? 'Resume sync'
-                : 'Sync now'}
+            {resumable ? 'Resume sync' : 'Sync now'}
           </Button>
-          {stopJob && (
+          {(stopJob || stop.isSuccess) && (
             <ConfirmAction
               size="md"
               confirmVariant="danger"
               question="Stop the sync job?"
               details="Stored scrobbles are kept."
               confirmLabel="Stop"
-              disabled={stop.isPending}
-              onConfirm={() => stop.mutate(stopJob)}
+              disabled={stop.isPending || !stopJob}
+              feedback={
+                stopJob && stop.variables?.id !== stopJob.id
+                  ? undefined
+                  : mutationFeedback(stop, {
+                      pending: 'Stopping…',
+                      success: 'Sync stopped',
+                      error: 'Stop unconfirmed',
+                    })
+              }
+              onConfirm={() => {
+                if (stopJob) stop.mutate(stopJob)
+              }}
             >
-              {stop.isPending ? 'Stopping...' : 'Stop'}
+              Stop
             </ConfirmAction>
           )}
           {data.job && (
@@ -310,6 +331,7 @@ export default function LastfmSync({
             <Select
               id={scheduleId}
               value={data.schedule}
+              aria-busy={schedule.isPending}
               disabled={!data.configured || schedule.isPending}
               onChange={(event) => {
                 const parsed = LastfmSyncScheduleSchema.safeParse(
@@ -324,6 +346,8 @@ export default function LastfmSync({
                 </option>
               ))}
             </Select>
+            {schedule.isPending && <span role="status">Saving schedule…</span>}
+            {schedule.isSuccess && <span role="status">Schedule saved</span>}
           </div>
           {data.nextScheduledAt && (
             <span className="ds-help">

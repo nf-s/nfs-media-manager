@@ -16,7 +16,12 @@ import {
   SonosDisconnectResultSchema,
   type SonosRoom,
 } from '@repo/schemas/sonos'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
+import { ReadButton } from './read-button'
 import { useConfig } from './providers'
 import {
   useLastfmScrobbling,
@@ -45,6 +50,10 @@ const STATES = {
 } as const
 const SONOS_ROOMS_KEY = ['sonos-rooms']
 const OUTCOMES: Record<string, { message: string; failed: boolean }> = {
+  'spotify-connected': {
+    message: 'Spotify connection updated.',
+    failed: false,
+  },
   'spotify-error': {
     message: 'Spotify did not connect. Try again.',
     failed: true,
@@ -56,6 +65,18 @@ const OUTCOMES: Record<string, { message: string; failed: boolean }> = {
     message: 'Last.fm did not connect. Try again.',
     failed: true,
   },
+}
+
+export function connectionFeedback(
+  action: Parameters<typeof mutationFeedback>[0],
+): ButtonFeedback | undefined {
+  if (action.isSuccess)
+    return { phase: 'waiting', label: 'Waiting for authorization…' }
+  return mutationFeedback(action, {
+    pending: 'Opening sign-in…',
+    success: 'Authorization opened',
+    error: 'Could not open sign-in · retry',
+  })
 }
 
 /** Marks a device or room that is reached through the Sonos connection. */
@@ -213,13 +234,9 @@ export function SonosRooms({
       {rooms.isError && (
         <p role="alert">
           Sonos rooms could not be loaded.{' '}
-          <button
-            type="button"
-            className="underline"
-            onClick={() => void rooms.refetch()}
-          >
+          <ReadButton variant="link" size="xs" read={() => rooms.refetch()}>
             Retry
-          </button>
+          </ReadButton>
         </p>
       )}
       {groups.some(({ room }) => !room.playable) && (
@@ -301,7 +318,8 @@ export function PlayerConnections() {
           <Button
             type="button"
             variant="ghost"
-            disabled={playbackOff.isPending}
+            disabled={playbackOff.isPending || playbackOff.isSuccess}
+            feedback={connectionFeedback(playbackOff)}
             onClick={() => playbackOff.mutate()}
           >
             Turn off playback
@@ -314,7 +332,8 @@ export function PlayerConnections() {
             <Button
               variant="primary"
               type="button"
-              disabled={allowHistory.isPending}
+              disabled={allowHistory.isPending || allowHistory.isSuccess}
+              feedback={connectionFeedback(allowHistory)}
               onClick={() => allowHistory.mutate()}
             >
               Allow
@@ -339,6 +358,11 @@ export function PlayerConnections() {
               type="button"
               variant="ghost"
               disabled={disconnect.isPending}
+              feedback={mutationFeedback(disconnect, {
+                pending: 'Disconnecting…',
+                success: 'Disconnected',
+                error: 'Disconnect failed · retry',
+              })}
               onClick={() => disconnect.mutate()}
             >
               Disconnect
@@ -348,7 +372,8 @@ export function PlayerConnections() {
             <Button
               variant="primary"
               type="button"
-              disabled={connect.isPending}
+              disabled={connect.isPending || connect.isSuccess}
+              feedback={connectionFeedback(connect)}
               onClick={() => connect.mutate()}
             >
               Connect Sonos
@@ -378,6 +403,11 @@ export function PlayerConnections() {
               type="button"
               variant="ghost"
               disabled={disconnectLastfm.isPending}
+              feedback={mutationFeedback(disconnectLastfm, {
+                pending: 'Disconnecting…',
+                success: 'Disconnected',
+                error: 'Disconnect failed · retry',
+              })}
               onClick={() => disconnectLastfm.mutate()}
             >
               Disconnect
@@ -387,7 +417,8 @@ export function PlayerConnections() {
             <Button
               variant="primary"
               type="button"
-              disabled={connectLastfm.isPending}
+              disabled={connectLastfm.isPending || connectLastfm.isSuccess}
+              feedback={connectionFeedback(connectLastfm)}
               onClick={() => connectLastfm.mutate()}
             >
               Connect Last.fm
@@ -457,7 +488,8 @@ export function ConnectPrompt({ configured }: { configured: boolean }) {
             <Button
               variant="primary"
               type="button"
-              disabled={connect.isPending}
+              disabled={connect.isPending || connect.isSuccess}
+              feedback={connectionFeedback(connect)}
               onClick={() => connect.mutate()}
             >
               Connect Spotify

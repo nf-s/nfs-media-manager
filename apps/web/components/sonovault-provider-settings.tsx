@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -14,7 +15,7 @@ import {
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { EmptyValue } from '@repo/ui/components/ds/pill'
-import { Button } from '@repo/ui/components/ui/button'
+import { mutationFeedback } from '@repo/ui/components/ui/button'
 import {
   formatAge,
   formatCount,
@@ -27,6 +28,7 @@ import { ConfirmAction } from './confirm-action'
 import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import { invalidateSpotifySearchJobs } from './spotify-track-search'
+import { useJobBatchFeedback } from './job-button-feedback'
 
 const RECORDS = { one: 'record', other: 'records' }
 const summaryKey = ['providers', 'sonovault', 'summary']
@@ -146,6 +148,10 @@ export default function SonovaultProviderSettings() {
     onSettled: invalidate,
   })
   const due = summary.data?.lookups.dueForRefresh ?? 0
+  const refreshJobs = useJobBatchFeedback(
+    apiBaseUrl,
+    refresh.data?.queued ? refresh.data.batchId : undefined,
+  )
   const busy = refresh.isPending || remove.isPending
   return (
     <Section title="Stored data">
@@ -154,9 +160,9 @@ export default function SonovaultProviderSettings() {
         <Notice
           tone="danger"
           action={
-            <Button size="xs" onClick={() => summary.refetch()}>
+            <ReadButton size="xs" read={() => summary.refetch()}>
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           Could not load Sonovault data.
@@ -169,6 +175,21 @@ export default function SonovaultProviderSettings() {
           details="Looks up again every matched record older than 11 months. Each record uses one Sonovault credit."
           confirmLabel="Refresh records"
           disabled={busy || !summary.data || due === 0}
+          feedback={
+            refreshJobs ??
+            (refresh.data
+              ? {
+                  phase: refresh.data.queued ? 'queued' : 'done',
+                  label: refresh.data.queued
+                    ? `${formatCount(refresh.data.queued)} queued`
+                    : 'No jobs queued',
+                }
+              : mutationFeedback(refresh, {
+                  pending: 'Requesting refresh…',
+                  success: 'Refresh requested',
+                  error: 'Refresh unconfirmed',
+                }))
+          }
           onConfirm={() => refresh.mutate()}
         >
           Refresh records older than 11 months
@@ -179,6 +200,11 @@ export default function SonovaultProviderSettings() {
           details="Removes every stored Sonovault response, reference and lookup, and the primary ISRCs Sonovault gave tracks. This cannot be undone."
           confirmLabel="Remove Sonovault data"
           disabled={busy || !summary.data}
+          feedback={mutationFeedback(remove, {
+            pending: 'Removing…',
+            success: 'Data removed',
+            error: 'Removal unconfirmed',
+          })}
           onConfirm={() => remove.mutate()}
         >
           Remove Sonovault data

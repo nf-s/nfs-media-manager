@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
+  type ButtonFeedback,
   type ButtonSize,
   type ButtonVariant,
 } from '@repo/ui/components/ui/button'
@@ -27,6 +28,7 @@ export function ConfirmAction({
   title,
   ariaLabel,
   icon = false,
+  feedback,
 }: {
   children: ReactNode
   question: string
@@ -42,6 +44,7 @@ export function ConfirmAction({
   ariaLabel?: string
   /** A square icon-only trigger; needs `ariaLabel`. */
   icon?: boolean
+  feedback?: ButtonFeedback
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
@@ -84,6 +87,7 @@ export function ConfirmAction({
         title={title}
         aria-label={ariaLabel}
         onClick={onConfirm}
+        feedback={feedback}
       >
         {children}
       </Button>
@@ -103,6 +107,7 @@ export function ConfirmAction({
         aria-expanded={open}
         aria-controls={id}
         popoverTarget={id}
+        feedback={feedback}
       >
         {children}
       </Button>

@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { useState } from 'react'
 import {
@@ -27,7 +28,7 @@ import { Notice, Skeleton } from '@repo/ui/components/ds/feedback'
 import { EmptyValue, ProviderMark } from '@repo/ui/components/ds/pill'
 import { SourceBlock, SourceRow } from '@repo/ui/components/ds/source'
 import { Status } from '@repo/ui/components/ds/status'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import {
   formatAge,
   formatCount,
@@ -48,6 +49,7 @@ import { errorMessage } from './lastfm-sync'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import { invalidateSpotifySearchJobs } from './spotify-track-search'
+import { useJobBatchFeedback } from './job-button-feedback'
 
 const TRACKS = { one: 'track', other: 'tracks' }
 const sonovaultLookupPath = '/api/v1/sonovault/tracks/lookup'
@@ -198,7 +200,7 @@ export function useSonovaultTrackLookupStatusForPages(
       ),
     ),
     isError: queries.some((query) => query.isError),
-    retry: () => void Promise.all(queries.map((query) => query.refetch())),
+    retry: () => Promise.all(queries.map((query) => query.refetch())),
   }
 }
 
@@ -341,21 +343,44 @@ export function useSonovaultLookupSelection({
       ))}
     </span>
   ) : null
+  const jobs = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? batchId : undefined,
+  )
+  const feedback: ButtonFeedback | undefined = queue.isPending
+    ? {
+        phase: 'pending',
+        label: `Submitting · ${formatCount(progress)} confirmed`,
+      }
+    : queue.isError
+      ? { phase: 'failed', label: 'Could not submit lookups' }
+      : queue.data
+        ? (jobs ?? {
+            phase: queue.data.interrupted
+              ? 'partial'
+              : queue.data.queued
+                ? 'queued'
+                : 'done',
+            label: `${formatCount(queue.data.queued)} queued · ${formatCount(queue.data.skipped)} skipped`,
+          })
+        : undefined
   return {
     status,
     pending: queue.isPending,
-    action: (selectedIds: string[], disabled: boolean) => (
-      <ConfirmAction
-        confirm={selectedIds.length > 5}
-        question={`Look up ${formatItemCount(selectedIds.length, TRACKS)} on Sonovault?`}
-        details="Each track looked up uses one Sonovault credit. Tracks without a Spotify ID or ISRC, and tracks already looked up, are skipped."
-        confirmLabel="Look up on Sonovault"
-        disabled={disabled || queue.isPending || !selectedIds.length}
-        onConfirm={() => queue.mutate(selectedIds)}
-      >
-        Look up on Sonovault
-      </ConfirmAction>
-    ),
+    action: (selectedIds: string[], disabled: boolean) =>
+      selectedIds.length || feedback ? (
+        <ConfirmAction
+          confirm={selectedIds.length > 5}
+          question={`Look up ${formatItemCount(selectedIds.length, TRACKS)} on Sonovault?`}
+          details="Each track looked up uses one Sonovault credit. Tracks without a Spotify ID or ISRC, and tracks already looked up, are skipped."
+          confirmLabel="Look up on Sonovault"
+          disabled={disabled || queue.isPending || !selectedIds.length}
+          feedback={feedback}
+          onConfirm={() => queue.mutate(selectedIds)}
+        >
+          Look up on Sonovault
+        </ConfirmAction>
+      ) : null,
   }
 }
 
@@ -533,6 +558,7 @@ export function SonovaultLookupBody({
 
 /** The track's Sonovault row in Sources: its lookup and the references it gave. */
 export function TrackSonovaultSource({ item }: { item: TrackDetail }) {
+  const { apiBaseUrl } = useConfig()
   const view = useDetailView()
   const [open, setOpen] = useState(
     view.params.get('sourceProvider') === 'sonovault',
@@ -549,6 +575,20 @@ export function TrackSonovaultSource({ item }: { item: TrackDetail }) {
   const state = lookup.data
   const job = state?.job
   const due = canLookUp ? sonovaultLookupDue(state) : null
+  const batch = useJobBatchFeedback(
+    apiBaseUrl,
+    queue.data?.queued ? queue.data.batchId : undefined,
+  )
+  const feedback: ButtonFeedback | undefined = queue.isPending
+    ? { phase: 'pending', label: 'Requesting lookup…' }
+    : queue.isError
+      ? { phase: 'failed', label: 'Could not queue lookup' }
+      : queue.data
+        ? (batch ?? {
+            phase: queue.data.queued ? 'queued' : 'done',
+            label: queue.data.queued ? 'Lookup queued' : 'Lookup skipped',
+          })
+        : undefined
   const time = state?.lookup?.lookedUpAt ?? job?.finishedAt ?? job?.createdAt
   return (
     <>
@@ -578,13 +618,25 @@ export function TrackSonovaultSource({ item }: { item: TrackDetail }) {
         when={time && <LookupTime time={time} />}
         state={job && <SonovaultLookupJobStatus job={job} />}
         actions={
-          due && (
+          (due || feedback) && (
             <Button
               size="xs"
-              disabled={queue.isPending || lookup.isPending}
-              onClick={() =>
-                queue.mutate({ trackIds: [item.id], refresh: due.refresh })
+              disabled={
+                !due ||
+                queue.isPending ||
+                lookup.isPending ||
+                (queue.data?.queued !== undefined &&
+                  queue.data.queued > 0 &&
+                  (!batch ||
+                    batch.phase === 'queued' ||
+                    batch.phase === 'running' ||
+                    batch.phase === 'waiting'))
               }
+              onClick={() => {
+                if (due)
+                  queue.mutate({ trackIds: [item.id], refresh: due.refresh })
+              }}
+              feedback={feedback}
             >
               Look up on Sonovault
             </Button>
@@ -599,9 +651,9 @@ export function TrackSonovaultSource({ item }: { item: TrackDetail }) {
           tone="danger"
           action={
             lookup.isError && (
-              <Button size="xs" onClick={() => lookup.refetch()}>
+              <ReadButton size="xs" read={() => lookup.refetch()}>
                 Retry
-              </Button>
+              </ReadButton>
             )
           }
         >

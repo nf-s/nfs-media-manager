@@ -18,6 +18,10 @@ import {
   SpotifyPlaybackTokenSchema,
 } from '@repo/schemas/spotify'
 import { useConfig } from './providers'
+import {
+  createPlaybackButtonFeedback,
+  PlaybackButtonFeedbackContext,
+} from './playback-button-feedback'
 import { fetchApiData } from '@/utils/api'
 import {
   createPlaybackEngine,
@@ -214,6 +218,7 @@ function createEngine(
   scrobbling: Scrobbling,
   sonos: ReturnType<typeof createSonosControlApi>,
   recordDiagnostic: (event: PlaybackEvent) => void,
+  needsObservation: () => boolean,
 ) {
   const seenCatalog = new Set<string>()
   // The access token is held in memory only and never written to storage.
@@ -242,6 +247,7 @@ function createEngine(
   }
   return createPlaybackEngine({
     recordDiagnostic,
+    needsObservation,
     api: createPlayerApi(token, fetch, (operation, items) => {
       const unique = new Map(
         items.map((item) => [`${operation}:${JSON.stringify(item)}`, item]),
@@ -284,14 +290,24 @@ function createEngine(
 }
 
 /** The engine with the account's shared session around it. */
-function createPlayer(apiBaseUrl: string, scrobbling: Scrobbling) {
+function createPlayer(
+  apiBaseUrl: string,
+  scrobbling: Scrobbling,
+  needsObservation: () => boolean,
+) {
   const clientId = playerClientId()
   const sonos = createSonosControlApi(apiBaseUrl, clientId)
   const diagnostics = createPlaybackDiagnostics(
     apiBaseUrl,
     window.navigator.userAgent,
   )
-  const engine = createEngine(apiBaseUrl, scrobbling, sonos, diagnostics.record)
+  const engine = createEngine(
+    apiBaseUrl,
+    scrobbling,
+    sonos,
+    diagnostics.record,
+    needsObservation,
+  )
   const sync = createPlaybackSync({
     engine,
     api: createSessionApi(apiBaseUrl),
@@ -353,6 +369,7 @@ export default function PlaybackProvider({
     scrobbling.current = lastfm.data?.connected === true
   }, [lastfm.data?.connected])
   const [player, setPlayer] = useState<PlaybackSync | null>(null)
+  const [feedback] = useState(createPlaybackButtonFeedback)
   useEffect(() => {
     if (!enabled) return
     const reporter = createScrobbleReporter({
@@ -360,13 +377,19 @@ export default function PlaybackProvider({
       onDisconnected: () =>
         void client.invalidateQueries({ queryKey: ['lastfm-scrobbling'] }),
     })
-    const { engine, sync, diagnostics } = createPlayer(apiBaseUrl, {
-      enabled: () => scrobbling.current,
-      reporter,
-    })
+    const { engine, sync, diagnostics } = createPlayer(
+      apiBaseUrl,
+      {
+        enabled: () => scrobbling.current,
+        reporter,
+      },
+      feedback.needsObservation,
+    )
     engine.prepare()
     engine.watch()
     sync.start()
+    feedback.observe(sync.getState())
+    const stopFeedback = sync.subscribe(() => feedback.observe(sync.getState()))
     setPlayer(sync)
     const refresh = () => {
       if (document.visibilityState !== 'visible') {
@@ -383,6 +406,8 @@ export default function PlaybackProvider({
     document.addEventListener('visibilitychange', refresh)
     window.addEventListener('pagehide', close)
     return () => {
+      stopFeedback()
+      feedback.clear()
       document.removeEventListener('visibilitychange', refresh)
       window.removeEventListener('pagehide', close)
       sync.close()
@@ -392,7 +417,7 @@ export default function PlaybackProvider({
       reporter.dispose()
       setPlayer(null)
     }
-  }, [enabled, apiBaseUrl, client])
+  }, [enabled, apiBaseUrl, client, feedback])
   const subscribe = useCallback(
     (listener: () => void) =>
       player ? player.subscribe(listener) : noSubscription(),
@@ -418,7 +443,9 @@ export default function PlaybackProvider({
   return (
     <PlaybackControlsContext.Provider value={player ?? disabledControls}>
       <PlaybackViewContext.Provider value={view}>
-        {children}
+        <PlaybackButtonFeedbackContext.Provider value={feedback}>
+          {children}
+        </PlaybackButtonFeedbackContext.Provider>
       </PlaybackViewContext.Provider>
     </PlaybackControlsContext.Provider>
   )

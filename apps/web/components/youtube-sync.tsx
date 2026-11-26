@@ -5,7 +5,11 @@ import { useSearchParams } from 'next/navigation'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { SubscriptionSyncStatus } from '@repo/schemas/subscriptions'
 import { YoutubeDisconnectResultSchema } from '@repo/schemas/youtube'
-import { Button } from '@repo/ui/components/ui/button'
+import {
+  Button,
+  mutationFeedback,
+  type ButtonFeedback,
+} from '@repo/ui/components/ui/button'
 import { KeyValues, Section } from '@repo/ui/components/ds/facts'
 import { Notice } from '@repo/ui/components/ds/feedback'
 import { Status } from '@repo/ui/components/ds/status'
@@ -18,8 +22,7 @@ import SubscriptionSyncPanel, {
 import { fetchApiData } from '@/utils/api'
 import { youtubeAuthorizationUrl } from '@/utils/youtube-authorize'
 
-export const YOUTUBE_PROVIDER_SETTINGS_HREF =
-  '/providers/youtube?tab=settings'
+export const YOUTUBE_PROVIDER_SETTINGS_HREF = '/providers/youtube?tab=settings'
 
 export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
   const { apiBaseUrl } = useConfig()
@@ -29,6 +32,13 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
     mutationFn: () => youtubeAuthorizationUrl(apiBaseUrl),
     onSuccess: (url) => window.location.assign(url),
   })
+  const connectionFeedback: ButtonFeedback | undefined = authorize.isSuccess
+    ? { phase: 'waiting', label: 'Waiting for authorization' }
+    : mutationFeedback(authorize, {
+        pending: 'Opening Google…',
+        success: 'Connected',
+        error: 'Could not open sign-in',
+      })
   const disconnect = useMutation({
     mutationFn: () =>
       fetchApiData(
@@ -75,9 +85,10 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
             size="md"
             variant="primary"
             disabled={authorize.isPending}
+            feedback={connectionFeedback}
             onClick={() => authorize.mutate()}
           >
-            {authorize.isPending ? 'Opening Google...' : 'Connect YouTube'}
+            Connect YouTube
           </Button>
           <span className="ds-help">
             Requests read-only access to your subscriptions.
@@ -89,9 +100,15 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
           <Button
             size="md"
             disabled={authorize.isPending || disconnect.isPending}
+            feedback={
+              connectionFeedback ??
+              (outcome === 'connected'
+                ? { phase: 'done', label: 'YouTube connected' }
+                : undefined)
+            }
             onClick={() => authorize.mutate()}
           >
-            {authorize.isPending ? 'Opening Google...' : 'Reconnect'}
+            Reconnect
           </Button>
           <ConfirmAction
             size="md"
@@ -100,11 +117,19 @@ export function YoutubeAccount({ status }: { status: SubscriptionSyncStatus }) {
             details="Stored channels and videos are kept."
             confirmLabel="Disconnect"
             disabled={authorize.isPending || disconnect.isPending}
+            feedback={mutationFeedback(disconnect, {
+              pending: 'Disconnecting…',
+              success: 'Disconnected',
+              error: 'Disconnect unconfirmed',
+            })}
             onConfirm={() => disconnect.mutate()}
           >
-            {disconnect.isPending ? 'Disconnecting...' : 'Disconnect'}
+            Disconnect
           </ConfirmAction>
         </span>
+      )}
+      {!account.connected && disconnect.isSuccess && (
+        <Notice>Disconnected from YouTube.</Notice>
       )}
       {account.configured && account.redirectUri && !account.connected && (
         <p className="ds-help">

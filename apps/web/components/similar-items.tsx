@@ -1,5 +1,6 @@
 'use client'
 
+import { ReadButton } from '@/components/read-button'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   useMutation,
@@ -23,9 +24,18 @@ import { Section } from '@repo/ui/components/ds/facts'
 import { Card, CardGrid, CardTitle } from '@repo/ui/components/ds/card'
 import { Notice, State } from '@repo/ui/components/ds/feedback'
 import { LibraryAction } from '@repo/ui/components/ds/library-action'
+import {
+  libraryAdditionUnavailable,
+  saveLibraryAddition,
+  useLibraryAddition,
+} from '@/hooks/use-library-addition'
 import { List, RowTitle } from '@repo/ui/components/ds/list-row'
 import { Pill, Pills } from '@repo/ui/components/ds/pill'
 import { PlayPair } from '@repo/ui/components/ds/play'
+import {
+  playbackItemFeedbackKey,
+  usePlaybackPair,
+} from './playback-button-feedback'
 import { Status } from '@repo/ui/components/ds/status'
 import {
   SuggestionLink,
@@ -34,7 +44,7 @@ import {
   suggestionPlaceLabels,
 } from '@repo/ui/components/ds/suggestion'
 import { FilterLine, ToolbarCount } from '@repo/ui/components/ds/toolbar'
-import { Button } from '@repo/ui/components/ui/button'
+import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
 import {
   Table,
   TableBody,
@@ -183,6 +193,7 @@ function SpotifyPlayButton({
 }) {
   const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
+  const pair = usePlaybackPair(playbackItemFeedbackKey(item))
   if (!view.enabled)
     return (
       <PlayPair
@@ -196,13 +207,19 @@ function SpotifyPlayButton({
     )
   const { snapshot } = view
   const current = view.current?.uri === item.uri
+  const playing = current && snapshot !== null && !snapshot.paused
   return (
     <PlayPair
       place={place}
       title={item.title}
-      playing={current && snapshot !== null && !snapshot.paused}
-      onPlay={() => playFromView(controls, view, item, current)}
-      onQueue={() => controls.enqueue(item)}
+      playing={playing}
+      {...pair.buttons}
+      onPlay={() =>
+        pair.start(item, playing, () =>
+          playFromView(controls, view, item, current),
+        )
+      }
+      onQueue={() => pair.enqueue(item, () => controls.enqueue(item))}
     />
   )
 }
@@ -541,6 +558,15 @@ export function SimilarRow({
   const { apiBaseUrl } = useConfig()
   const announceAddition = useAnnounceLibraryAddition()
   const title = similarItemTitle(item)
+  const target = {
+    kind,
+    catalogId: similarItemId(item),
+    externalId: item.spotify?.spotifyId ?? `tidal:${item.tidalId}`,
+  }
+  const receipt = useLibraryAddition(
+    target,
+    awaitingSave ? undefined : Boolean(item.track?.inLibrary || item.library),
+  )
   const mutationKey = ['add-similar', kind, itemId, item.tidalId]
   // Switching layouts remounts the row while an addition can still be running.
   const latestAdd = useMutationState({
@@ -551,19 +577,28 @@ export function SimilarRow({
     mutationKey,
     retry: false,
     mutationFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        `${similarPath(kind, itemId)}/${encodeURIComponent(item.tidalId)}/library`,
-        TidalSimilarAddResultSchema,
-        { method: 'POST' },
+      saveLibraryAddition(
+        client,
+        target,
+        async () =>
+          (
+            await fetchApiData(
+              apiBaseUrl,
+              `${similarPath(kind, itemId)}/${encodeURIComponent(item.tidalId)}/library`,
+              TidalSimilarAddResultSchema,
+              { method: 'POST' },
+            )
+          ).id,
       ),
     onSuccess: () => {
       announceAddition(kind, title)
       return invalidateManualMediaAddition(client, kind)
     },
   })
-  const detailId = add.data?.id ?? similarItemId(item)
-  const inLibrary = Boolean(add.data || item.track?.inLibrary || item.library)
+  const detailId = receipt?.committedId ?? similarItemId(item)
+  const inLibrary = Boolean(
+    receipt?.committedId || item.track?.inLibrary || item.library,
+  )
   const place = inLibrary
     ? 'library'
     : item.state === 'library'
@@ -588,10 +623,13 @@ export function SimilarRow({
       <LibraryAction
         kind={kind}
         name={title}
+        short
         saved={inLibrary || item.hiddenLibraryMatch}
-        pending={latestAdd?.status === 'pending'}
+        feedback={receipt?.feedback}
         disabled={awaitingSave}
-        onAdd={() => add.mutate()}
+        onAdd={() => {
+          if (!libraryAdditionUnavailable(client, target)) add.mutate()
+        }}
       />
       {latestAdd?.status === 'error' && (
         <Notice tone="danger">
@@ -727,17 +765,24 @@ function SimilarSource({ source }: { source: TidalSimilarSource }) {
 function UnmatchedState({
   similar,
   requesting,
+  feedback,
   onRequest,
   onReview,
 }: {
   similar: TidalSimilar
   requesting: boolean
+  feedback?: ButtonFeedback
   onRequest: () => void
   onReview?: () => void
 }) {
   const { kind, matchJob, unmatched } = similar
   const match = (
-    <Button size="xs" disabled={requesting} onClick={onRequest}>
+    <Button
+      size="xs"
+      disabled={requesting}
+      feedback={feedback}
+      onClick={onRequest}
+    >
       Match on TIDAL
     </Button>
   )
@@ -794,6 +839,7 @@ export function SimilarBody({
   similar,
   requesting,
   requestFailed = false,
+  requestCompleted = false,
   onRequest,
   onReview,
 }: {
@@ -802,6 +848,7 @@ export function SimilarBody({
   requesting: boolean
   /** The request failed: an unread item stops showing Loading. */
   requestFailed?: boolean
+  requestCompleted?: boolean
   onRequest: () => void
   /** Opens the review of the TIDAL tracks a match left; none until it can. */
   onReview?: () => void
@@ -817,16 +864,73 @@ export function SimilarBody({
   // A track's read also maps its similar tracks through Sonovault.
   const reading =
     kind === 'track' ? 'Reading from TIDAL and Sonovault' : 'Reading from TIDAL'
-  if (isActiveSimilarJob(matchJob) || (requesting && !matched))
-    return <SimilarLoading label="Matching on TIDAL" />
   const readingList = requesting || isActiveSimilarJob(job)
+  const matching = isActiveSimilarJob(matchJob) || (requesting && !matched)
+  const feedback: ButtonFeedback | undefined = matching
+    ? { phase: 'running', label: 'Matching on TIDAL…' }
+    : readingList
+      ? {
+          phase: 'running',
+          label:
+            items.length && !readAt
+              ? 'Updating library matches…'
+              : 'Reading from TIDAL…',
+        }
+      : isActiveSimilarJob(lookupJob)
+        ? {
+            phase: lookupJob?.status === 'queued' ? 'queued' : 'running',
+            label: 'Finding on Spotify…',
+          }
+        : requestFailed || job?.status === 'failed'
+          ? { phase: 'failed', label: 'Read failed · retry' }
+          : job?.status === 'cancelled'
+            ? { phase: 'cancelled', label: 'Read cancelled' }
+            : lookupJob?.status === 'failed'
+              ? { phase: 'partial', label: 'Read · Spotify lookup failed' }
+              : requestCompleted && (readAt || !matched)
+                ? {
+                    phase: 'done',
+                    label: !matched
+                      ? 'No match'
+                      : items.length
+                        ? `${items.length} loaded`
+                        : 'None found',
+                  }
+                : undefined
+  if (matching)
+    return (
+      <>
+        <Button size="xs" disabled feedback={feedback}>
+          Match on TIDAL
+        </Button>
+        <SimilarLoading label="Matching on TIDAL" />
+      </>
+    )
   if (
     !items.length &&
     (readingList || (matched && !job && !readAt && !requestFailed))
   )
-    return <SimilarLoading label={reading} />
+    return (
+      <>
+        <Button
+          size="xs"
+          disabled
+          feedback={
+            feedback ?? { phase: 'pending', label: 'Reading from TIDAL…' }
+          }
+        >
+          Read again
+        </Button>
+        <SimilarLoading label={reading} />
+      </>
+    )
   const readAgain = (
-    <Button size="xs" disabled={requesting} onClick={onRequest}>
+    <Button
+      size="xs"
+      disabled={requesting}
+      feedback={feedback}
+      onClick={onRequest}
+    >
       <RefreshCw className="ds-i" data-size="sm" aria-hidden />
       Read again
     </Button>
@@ -836,6 +940,7 @@ export function SimilarBody({
       <UnmatchedState
         similar={similar}
         requesting={requesting}
+        feedback={feedback}
         onRequest={onRequest}
         {...(onReview ? { onReview } : {})}
       />
@@ -928,6 +1033,7 @@ export function SimilarBody({
               : 'Read again from TIDAL'
           }
           disabled={readingList}
+          feedback={feedback}
           onClick={onRequest}
         >
           <RefreshCw className="ds-i" data-size="sm" aria-hidden />
@@ -1030,10 +1136,10 @@ export function SimilarItems({
           title={`Could not load similar ${plural[kind]}`}
           error
           action={
-            <Button size="xs" onClick={() => similar.refetch()}>
+            <ReadButton size="xs" read={() => similar.refetch()}>
               <RefreshCw className="ds-i" data-size="sm" aria-hidden />
               Retry
-            </Button>
+            </ReadButton>
           }
         >
           The request failed.
@@ -1047,6 +1153,7 @@ export function SimilarItems({
         similar={data}
         requesting={refresh.isPending}
         requestFailed={refresh.isError}
+        requestCompleted={refresh.isSuccess}
         onRequest={() => refresh.mutate()}
         {...(track ? { onReview: () => setReviewing(true) } : {})}
       />
