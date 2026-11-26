@@ -39,7 +39,7 @@ export type AlbumTracklistPosition = z.infer<typeof PositionSchema>
 
 const PatchSchema = z.object({
   before: PositionSchema.nullable(),
-  after: PositionSchema,
+  after: PositionSchema.nullable(),
 })
 export type AlbumTracklistPatch = z.infer<typeof PatchSchema>
 
@@ -72,39 +72,57 @@ const unique = (ids: string[]) => [...new Set(ids)]
 const ordered = (positions: AlbumTracklistPosition[]) =>
   [...positions].sort((a, b) => a.position - b.position)
 
-function changed({ patches }: Correction) {
-  return patches.filter(
-    ({ before, after }) => before?.trackMediaItemId !== after.trackMediaItemId,
-  )
+function positionsOn({ patches }: Correction, side: 'before' | 'after') {
+  return patches.flatMap((patch) => {
+    const row = patch[side]
+    return row ? [row] : []
+  })
+}
+
+function byRowId(positions: AlbumTracklistPosition[]) {
+  return new Map(positions.map((row) => [row.id, row]))
+}
+
+function changedRows(
+  positions: AlbumTracklistPosition[],
+  other: Map<string, AlbumTracklistPosition>,
+) {
+  return positions.filter((row) => !isDeepStrictEqual(row, other.get(row.id)))
+}
+
+function recordingIds(positions: AlbumTracklistPosition[]) {
+  return unique(positions.map((row) => row.trackMediaItemId))
+}
+
+function recordingDifference(ids: string[], other: string[]) {
+  const present = new Set(other)
+  return ids.filter((id) => !present.has(id))
 }
 
 function affectedTracks(correction: Correction) {
-  return unique(
-    changed(correction).flatMap(({ before, after }) =>
-      before
-        ? [before.trackMediaItemId, after.trackMediaItemId]
-        : [after.trackMediaItemId],
-    ),
-  )
+  const before = positionsOn(correction, 'before')
+  const after = positionsOn(correction, 'after')
+  return recordingIds([
+    ...changedRows(before, byRowId(after)),
+    ...changedRows(after, byRowId(before)),
+  ])
 }
 
 function validateCorrection(correction: Correction) {
   const { albumId, patches, expectedCount, afterCount } = correction
-  const after = patches.map((patch) => patch.after)
+  const before = positionsOn(correction, 'before')
+  const after = positionsOn(correction, 'after')
+  const validList = (positions: AlbumTracklistPosition[]) =>
+    new Set(positions.map((row) => row.position)).size === positions.length &&
+    byRowId(positions).size === positions.length &&
+    positions.every((row) => row.albumMediaItemId === albumId)
   if (
     afterCount !== after.length ||
-    new Set(after.map((row) => row.position)).size !== afterCount ||
-    new Set(after.map((row) => row.id)).size !== afterCount ||
-    after.some((row) => row.albumMediaItemId !== albumId) ||
-    patches.some(
-      ({ before, after }) =>
-        before &&
-        !isDeepStrictEqual(
-          { ...before, trackMediaItemId: after.trackMediaItemId },
-          after,
-        ),
-    ) ||
-    (expectedCount === afterCount && !changed(correction).length)
+    !validList(before) ||
+    !validList(after) ||
+    patches.some(({ before, after }) => !before && !after) ||
+    (expectedCount === afterCount &&
+      isDeepStrictEqual(ordered(before), ordered(after)))
   )
     throw new ServerError({
       statusCode: 409,
@@ -153,51 +171,100 @@ async function checkCorrection(
 ): Promise<
   { blocker: string } | { beforeMemberIds: string[]; afterMemberIds: string[] }
 > {
-  const { albumId, patches, expectedCount, afterCount } = correction
+  const { albumId, expectedCount, afterCount } = correction
   const album = await readAlbum(reader, albumId)
   if (!album) return { blocker: ALBUM_GONE }
 
-  const before = patches.flatMap(({ before }) => (before ? [before] : []))
-  const after = patches.map((patch) => patch.after)
-  const expected = direction === 'undo' ? after : before
+  const before = positionsOn(correction, 'before')
+  const after = positionsOn(correction, 'after')
+  const [expected, destination] =
+    direction === 'undo' ? [after, before] : [before, after]
   if (
     album.track_count !== (direction === 'undo' ? afterCount : expectedCount) ||
     !isDeepStrictEqual(album.positions, ordered(expected))
   )
     return { blocker: TRACKLIST_CHANGED }
 
-  const recordings = await readRecordings(
-    reader,
-    unique([...before, ...after].map((row) => row.trackMediaItemId)),
-  )
+  const beforeIds = recordingIds(before)
+  const afterIds = recordingIds(after)
+  const ids = unique([...beforeIds, ...afterIds])
+  const recordings = await readRecordings(reader, ids)
   const byId = new Map(recordings.map((recording) => [recording.id, recording]))
-  if ([...before, ...after].some((row) => !byId.has(row.trackMediaItemId)))
+  if (recordings.length !== ids.length) return { blocker: RECORDING_GONE }
+  const addedIds = recordingDifference(afterIds, beforeIds)
+  if (direction === 'redo' && addedIds.some((id) => byId.get(id)?.hidden))
     return { blocker: RECORDING_GONE }
-  const changes = changed(correction)
-  const targetIds = unique(changes.map(({ after }) => after.trackMediaItemId))
-  if (direction === 'redo') {
-    if (targetIds.some((id) => byId.get(id)?.hidden))
-      return { blocker: RECORDING_GONE }
-    const insertedIds = changes.flatMap(({ before, after }) =>
-      before ? [] : [after.id],
-    )
-    if (insertedIds.length) {
-      const occupied = await reader.execute(sql`
+
+  const currentRows = byRowId(expected)
+  const insertedIds = destination
+    .filter(({ id }) => !currentRows.has(id))
+    .map(({ id }) => id)
+  if (insertedIds.length) {
+    const occupied = await reader.execute(sql`
         select id from track where id = any(${sql.param(insertedIds)}::text[])
         limit 1`)
-      if (occupied.rows.length) return { blocker: TRACKLIST_CHANGED }
-    }
+    if (occupied.rows.length) return { blocker: TRACKLIST_CHANGED }
   }
 
-  const sourceIds = unique(
-    changes.flatMap(({ before }) => (before ? [before.trackMediaItemId] : [])),
-  )
   return {
     beforeMemberIds: album.saved
-      ? sourceIds.filter((id) => byId.get(id)?.saved)
+      ? recordingDifference(beforeIds, afterIds).filter(
+          (id) => byId.get(id)?.saved,
+        )
       : [],
-    afterMemberIds: album.saved ? targetIds : [],
+    afterMemberIds: album.saved ? addedIds : [],
   }
+}
+
+async function replacePositions(
+  tx: ChangeTransaction,
+  albumId: string,
+  current: AlbumTracklistPosition[],
+  replacement: AlbumTracklistPosition[],
+) {
+  const currentRows = byRowId(current)
+  const nextRows = byRowId(replacement)
+  const removed = current.filter(
+    ({ id, position }) => nextRows.get(id)?.position !== position,
+  )
+  // Free their slots first, including when two retained rows trade positions.
+  const timestamps = removed.length
+    ? await tx
+        .delete(track)
+        .where(
+          and(
+            eq(track.albumMediaItemId, albumId),
+            inArray(
+              track.id,
+              removed.map(({ id }) => id),
+            ),
+          ),
+        )
+        .returning({
+          id: track.id,
+          createdAt: track.createdAt,
+          updatedAt: track.updatedAt,
+        })
+    : []
+  const previousTimestamps = new Map(
+    timestamps.map(({ id, ...times }) => [id, times]),
+  )
+  const additions: (typeof track.$inferInsert)[] = []
+  const updates: AlbumTracklistPosition[] = []
+  for (const row of changedRows(replacement, currentRows)) {
+    if (currentRows.get(row.id)?.position === row.position) updates.push(row)
+    else additions.push({ ...row, ...previousTimestamps.get(row.id) })
+  }
+  if (updates.length)
+    await tx.execute(sql`
+      update track t set track_media_item_id = r."trackMediaItemId",
+        title = r.title, duration_sec = r."durationSec",
+        external_id = r."externalId", metadata = r.metadata
+      from jsonb_to_recordset(${JSON.stringify(updates)}::jsonb)
+        as r(id text, "trackMediaItemId" text, title text,
+          "durationSec" integer, "externalId" text, metadata jsonb)
+      where t.album_media_item_id = ${albumId} and t.id = r.id`)
+  if (additions.length) await tx.insert(track).values(additions)
 }
 
 async function writeCorrection(
@@ -212,33 +279,11 @@ async function writeCorrection(
     beforeMemberIds,
     afterMemberIds,
   } = effect
-  const changes = changed(effect)
-  const additions = changes.flatMap(({ before, after }) =>
-    before ? [] : [after],
-  )
-  const moved = changes.flatMap(({ before, after }) =>
-    before ? [direction === 'undo' ? before : after] : [],
-  )
-  if (moved.length) {
-    await tx.execute(sql`
-      update track t set track_media_item_id = r."trackMediaItemId"
-      from jsonb_to_recordset(${JSON.stringify(moved.map(({ id, trackMediaItemId }) => ({ id, trackMediaItemId })))}::jsonb)
-        as r(id text, "trackMediaItemId" text)
-      where t.album_media_item_id = ${albumId} and t.id = r.id`)
-  }
-  if (additions.length) {
-    if (direction === 'undo')
-      await tx.delete(track).where(
-        and(
-          eq(track.albumMediaItemId, albumId),
-          inArray(
-            track.id,
-            additions.map(({ id }) => id),
-          ),
-        ),
-      )
-    else await tx.insert(track).values(additions)
-  }
+  const before = positionsOn(effect, 'before')
+  const after = positionsOn(effect, 'after')
+  const [current, replacement] =
+    direction === 'undo' ? [after, before] : [before, after]
+  await replacePositions(tx, albumId, current, replacement)
   if (expectedCount !== afterCount)
     await tx
       .update(album)
@@ -252,7 +297,14 @@ async function writeCorrection(
   await withdrawAlbumTrackAdmission(tx, leaving)
   if (joining.length) await admitAlbumTrackMembers(tx, albumId, joining)
 
-  const touched = affectedTracks(effect)
+  const currentIds = recordingIds(current)
+  const replacementIds = recordingIds(replacement)
+  const touched = unique([
+    ...leaving,
+    ...joining,
+    ...recordingDifference(currentIds, replacementIds),
+    ...recordingDifference(replacementIds, currentIds),
+  ])
   if (touched.length) {
     // The Added-date writer reaches the journal, which imports this effect.
     const { refreshTrackAddedDates } = await import('./spotify-playlists')
@@ -275,9 +327,8 @@ const albumTracklistCorrection = defineChangeEffect({
 })
 
 /**
- * Corrects pointers and fills missing positions without replacing the stored list.
- * Pass the whole reviewed list, including unchanged positions, and record the
- * returned effect in the same transaction.
+ * Applies a reviewed edition. Include the whole list on both sides, including
+ * unchanged positions, and record the returned effect in the same transaction.
  */
 export async function applyAlbumTracklistCorrection(
   tx: ChangeTransaction,

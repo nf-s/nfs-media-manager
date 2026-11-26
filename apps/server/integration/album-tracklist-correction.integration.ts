@@ -20,6 +20,7 @@ import {
   LibraryChangeSchema,
 } from '@repo/schemas/library-changes'
 import { AlbumDetailSchema } from '@repo/schemas/media'
+import { TrackPartsSchema } from '@repo/schemas/track-versions'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import { removeOrphanTracks } from '@/services/album-library-tracks'
@@ -122,14 +123,18 @@ async function request(path: string, init?: RequestInit) {
   })
 }
 
-async function correct() {
+async function correct(
+  reviewedPatches: AlbumTracklistPatch[] = patches,
+  afterCount = 3,
+  expectedCount = 5,
+) {
   return fixture.transaction(async (tx) => {
     const effect = await applyAlbumTracklistCorrection(
       tx,
       albumId,
-      patches,
-      5,
-      3,
+      reviewedPatches,
+      expectedCount,
+      afterCount,
     )
     const id = await recordChange(
       tx,
@@ -203,6 +208,12 @@ async function membership(id: string) {
   return row
 }
 
+async function trackParts(id: string) {
+  const response = await request(`/api/v1/tracks/${id}/parts`)
+  expect(response.status).toBe(200)
+  return z.object({ data: TrackPartsSchema }).parse(await response.json()).data
+}
+
 async function duplicateIds() {
   const rows = await fixture
     .select({ id: schema.trackDuplicateMember.trackId })
@@ -246,6 +257,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await fixture.delete(schema.libraryChange)
+  await fixture.delete(schema.lastfmScrobble)
   await fixture.delete(schema.track)
   await fixture.delete(schema.mediaItem)
   await fixture.delete(schema.artist)
@@ -474,4 +486,174 @@ it('refuses Redo after a destination recording is deleted', async () => {
   })
   expect(response.status).toBe(409)
   await expectAlbum(5, baseline)
+})
+
+it('replaces an edition with fewer rows and reverses reordered positions and provider fields', async () => {
+  const repeat = position(2, unchangedTrack)
+  const removedRepeat = position(4, unchangedTrack)
+  await fixture.insert(schema.track).values([repeat, removedRepeat])
+  const replacement = position(1, correctedTrack, { id: 'edition-position-1' })
+  const reordered = {
+    ...unchangedPosition,
+    position: 2,
+    title: 'Title on the fixture edition',
+    durationSec: 93,
+    externalId: 'fixture-edition-recording',
+    metadata: { disc: 2, artists: ['Fixture Artist', 'Fixture Guest'] },
+  }
+  const movedRepeat = { ...repeat, position: 3 }
+  const before = [oldPosition, repeat, unchangedPosition, removedRepeat]
+  const after = [replacement, reordered, movedRepeat]
+  const id = await correct([
+    { before: oldPosition, after: null },
+    { before: repeat, after: movedRepeat },
+    { before: unchangedPosition, after: reordered },
+    { before: removedRepeat, after: null },
+    { before: null, after: replacement },
+  ])
+  await expectAlbum(3, after)
+  expect(await membership(oldTrack)).toEqual({ saved: false, date: null })
+  expect(await membership(unchangedTrack)).toEqual({
+    saved: true,
+    date: dateAdded,
+  })
+  expect(await membership(correctedTrack)).toEqual({
+    saved: true,
+    date: dateAdded,
+  })
+
+  await toggle(id, 'undo')
+  await expectAlbum(5, before)
+  expect(await membership(oldTrack)).toEqual({ saved: true, date: dateAdded })
+  expect(await membership(correctedTrack)).toEqual({ saved: false, date: null })
+
+  await toggle(id, 'redo')
+  await expectAlbum(3, after)
+})
+
+it('leaves membership as it was when position changes keep a recording on the album', async () => {
+  await fixture
+    .update(schema.mediaItem)
+    .set({ inLibrary: false })
+    .where(eq(schema.mediaItem.id, unchangedTrack))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ dateAdded: null })
+    .where(eq(schema.libraryTrack.mediaItemId, unchangedTrack))
+  const repeat = position(4, unchangedTrack)
+  const id = await correct([
+    { before: oldPosition, after: oldPosition },
+    { before: unchangedPosition, after: unchangedPosition },
+    { before: null, after: repeat },
+  ])
+  await expectAlbum(3, [...baseline, repeat])
+  expect(await membership(unchangedTrack)).toEqual({ saved: false, date: null })
+  await toggle(id, 'undo')
+  expect(await membership(unchangedTrack)).toEqual({ saved: false, date: null })
+  await toggle(id, 'redo')
+  expect(await membership(unchangedTrack)).toEqual({ saved: false, date: null })
+})
+
+it('reverses provider field corrections on a retained row without a count change', async () => {
+  await fixture
+    .update(schema.album)
+    .set({ trackCount: baseline.length })
+    .where(eq(schema.album.mediaItemId, albumId))
+  const revised = {
+    ...oldPosition,
+    title: 'Fixture listing',
+    durationSec: null,
+    externalId: null,
+    metadata: null,
+  }
+  const id = await correct(
+    [
+      { before: oldPosition, after: revised },
+      { before: unchangedPosition, after: unchangedPosition },
+    ],
+    baseline.length,
+    baseline.length,
+  )
+  await expectAlbum(2, [revised, unchangedPosition])
+  await toggle(id, 'undo')
+  await expectAlbum(2, baseline)
+  await toggle(id, 'redo')
+  await expectAlbum(2, [revised, unchangedPosition])
+})
+
+it('keeps scrobbles on the recording that owns them across corrections', async () => {
+  const name = {
+    username: 'fixture-listener',
+    artistKey: 'fixture artist',
+    trackKey: 'fixture live recording',
+  }
+  await fixture.insert(schema.lastfmTrackSource).values({
+    ...name,
+    trackMediaItemId: oldTrack,
+    manuallyMatched: true,
+  })
+  await fixture.insert(schema.lastfmTrackLink).values({
+    ...name,
+    trackMediaItemId: oldTrack,
+    strategy: 'manual',
+  })
+  await fixture.insert(schema.lastfmScrobble).values({
+    ...name,
+    id: 'fixture-scrobble',
+    artistName: 'Fixture Artist',
+    trackName: 'Fixture Live Recording',
+    albumMediaItemId: albumId,
+    listenedAt: earlier,
+  })
+  const displacedListening = {
+    shownId: oldTrack,
+    scrobbles: 1,
+    names: [{ trackId: oldTrack, scrobbles: 1, manuallyMatched: true }],
+  }
+  const replacementListening = {
+    shownId: correctedTrack,
+    scrobbles: 0,
+    names: [],
+  }
+  expect(await trackParts(oldTrack)).toMatchObject(displacedListening)
+  const id = await correct()
+  await expectAlbum(3, corrected)
+  expect(await membership(oldTrack)).toEqual({ saved: true, date: earlier })
+  expect(await trackParts(oldTrack)).toMatchObject(displacedListening)
+  expect(await trackParts(correctedTrack)).toMatchObject(replacementListening)
+  await toggle(id, 'undo')
+  expect(await trackParts(oldTrack)).toMatchObject(displacedListening)
+  await toggle(id, 'redo')
+  expect(await trackParts(oldTrack)).toMatchObject(displacedListening)
+  expect(await trackParts(correctedTrack)).toMatchObject(replacementListening)
+})
+
+it('blocks Undo when a removed position ID is now used on a different album', async () => {
+  const id = await correct(
+    [
+      { before: oldPosition, after: null },
+      { before: unchangedPosition, after: unchangedPosition },
+    ],
+    1,
+  )
+  const otherAlbum = 'fixture-other-album'
+  await fixture.insert(schema.mediaItem).values({
+    id: otherAlbum,
+    slug: otherAlbum,
+    mediaType: 'album',
+    title: 'Fixture Other Album',
+  })
+  await fixture.insert(schema.album).values({ mediaItemId: otherAlbum })
+  await fixture.insert(schema.track).values({
+    ...oldPosition,
+    albumMediaItemId: otherAlbum,
+  })
+  expect((await history()).items).toMatchObject([
+    { id, canUndo: false, blocked: expect.any(String) },
+  ])
+  const response = await request(`${historyPath}/${id}/undo`, {
+    method: 'POST',
+  })
+  expect(response.status).toBe(409)
+  await expectAlbum(1, [unchangedPosition])
 })
