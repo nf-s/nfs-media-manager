@@ -421,6 +421,51 @@ it('records a relink as one change per track and restores an archived Last.fm tr
     referenceType: 'recording',
     externalId: 'fixture-recording',
   })
+  await fixture.insert(schema.scrapeJob).values([
+    { id: 'retained-job', provider: 'sonovault', scope: {}, options: {} },
+    { id: 'deleted-job', provider: 'sonovault', scope: {}, options: {} },
+  ])
+  await fixture.insert(schema.providerResponse).values(
+    ['retained-job', 'deleted-job'].map((jobId) => ({
+      id: `${jobId}-response`,
+      jobId,
+      provider: 'sonovault',
+      attempt: 1,
+      ordinal: 1,
+      phase: 'task',
+      method: 'GET',
+      bodyState: 'unavailable',
+      retainedBytes: 0,
+      body: { state: 'unavailable' },
+    })),
+  )
+  const checkedAt = new Date('2026-01-01T00:00:00Z')
+  await fixture.insert(schema.sonovaultTrackCandidate).values({
+    mediaItemId: night.standaloneId,
+    sonovaultTrackId: 'fixture-candidate',
+    status: 'accepted',
+    acceptedBy: 'owner',
+    input: 'Night Drive',
+    result: { title: 'Night Drive' },
+    scrapeJobId: 'retained-job',
+    responseId: 'retained-job-response',
+    spotifyJobId: 'deleted-job',
+    foundAt: checkedAt,
+    decidedAt: checkedAt,
+  })
+  await fixture.insert(schema.sonovaultTrackLookup).values({
+    mediaItemId: night.standaloneId,
+    inputType: 'isrc',
+    input: 'ZZABC2600001',
+    status: 'matched',
+    sonovaultTrackId: 'fixture-candidate',
+    verified: true,
+    primaryIsrc: 'ZZABC2600001',
+    scrapeJobId: 'deleted-job',
+    responseId: 'deleted-job-response',
+    record: { title: 'Night Drive' },
+    lookedUpAt: checkedAt,
+  })
   const archived = async () => ({
     track: await trackRow(night.standaloneId),
     tags: await fixture
@@ -435,6 +480,16 @@ it('records a relink as one change per track and restores an archived Last.fm tr
       .select()
       .from(schema.mediaCredit)
       .where(eq(schema.mediaCredit.mediaItemId, night.standaloneId)),
+    candidates: await fixture
+      .select()
+      .from(schema.sonovaultTrackCandidate)
+      .where(
+        eq(schema.sonovaultTrackCandidate.mediaItemId, night.standaloneId),
+      ),
+    lookups: await fixture
+      .select()
+      .from(schema.sonovaultTrackLookup)
+      .where(eq(schema.sonovaultTrackLookup.mediaItemId, night.standaloneId)),
   })
   const before = await archived()
 
@@ -478,8 +533,23 @@ it('records a relink as one change per track and restores an archived Last.fm tr
   )
   if (!nightChange) throw new Error('Expected the Night Drive change')
 
+  expect(await archived()).toMatchObject({ candidates: [], lookups: [] })
+  await fixture
+    .delete(schema.scrapeJob)
+    .where(eq(schema.scrapeJob.id, 'deleted-job'))
   await undoLibraryChange(nightChange.id)
-  expect(await archived()).toEqual(before)
+  expect(await archived()).toEqual({
+    ...before,
+    candidates: before.candidates.map((row) => ({
+      ...row,
+      spotifyJobId: null,
+    })),
+    lookups: before.lookups.map((row) => ({
+      ...row,
+      scrapeJobId: null,
+      responseId: null,
+    })),
+  })
   expect(await ownerOf(night)).toEqual({
     trackId: night.standaloneId,
     manual: false,
@@ -493,6 +563,25 @@ it('records a relink as one change per track and restores an archived Last.fm tr
   expect(await trackRow(night.standaloneId)).toBeUndefined()
   expect(await ownerOf(night)).toEqual({
     trackId: 'spotify-night',
+    manual: false,
+  })
+
+  const morningChange = page.items.find(
+    (change) => change.target?.id === 'spotify-morning',
+  )
+  if (!morningChange) throw new Error('Expected the Morning change')
+  const removals = schema.libraryChangeRemoval
+  await fixture
+    .update(removals)
+    .set({
+      snapshot: sql`${removals.snapshot}
+        #- '{attached,sonovault_track_candidate}'
+        #- '{attached,sonovault_track_lookup}'`,
+    })
+    .where(eq(removals.changeId, morningChange.id))
+  await undoLibraryChange(morningChange.id)
+  expect(await ownerOf(morning)).toEqual({
+    trackId: morning.standaloneId,
     manual: false,
   })
 })

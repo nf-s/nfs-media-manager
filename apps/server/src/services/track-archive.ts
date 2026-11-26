@@ -53,6 +53,14 @@ const createdBy: AttachedColumn = {
   name: 'created_by_user_id',
   value: sql`(select u.id from "user" u where u.id = x.created_by_user_id)`,
 }
+const scrapeJobId: AttachedColumn = {
+  name: 'scrape_job_id',
+  value: sql`(select j.id from scrape_job j where j.id = x.scrape_job_id)`,
+}
+const responseId: AttachedColumn = {
+  name: 'response_id',
+  value: sql`(select r.id from provider_response r where r.id = x.response_id)`,
+}
 const stamps = ['created_at', 'updated_at']
 
 /**
@@ -139,6 +147,43 @@ const ATTACHED: {
       'external_id',
       'note',
       createdBy,
+      ...stamps,
+    ],
+  },
+  {
+    table: 'sonovault_track_candidate',
+    columns: [
+      'media_item_id',
+      'sonovault_track_id',
+      'status',
+      'accepted_by',
+      'input',
+      'result',
+      scrapeJobId,
+      responseId,
+      {
+        name: 'spotify_job_id',
+        value: sql`(select j.id from scrape_job j where j.id = x.spotify_job_id)`,
+      },
+      'found_at',
+      'decided_at',
+      ...stamps,
+    ],
+  },
+  {
+    table: 'sonovault_track_lookup',
+    columns: [
+      'media_item_id',
+      'input_type',
+      'input',
+      'status',
+      'sonovault_track_id',
+      'verified',
+      'primary_isrc',
+      scrapeJobId,
+      responseId,
+      'record',
+      'looked_up_at',
       ...stamps,
     ],
   },
