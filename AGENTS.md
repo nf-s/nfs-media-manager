@@ -28,11 +28,11 @@ Keep installation-specific notes and records out of this repository. Do not publ
 
 ## Interface
 
-The [design system](docs/design-system/README.md) is the only source of interface design. Read it before any interface work, and open its pages in a browser to see each component and screen.
+The prototype governs the screen and its behaviour. Use shared [design-system components and tokens](docs/design-system/README.md) to implement it. If a component is missing, use the prototype as its approved design, then build and document it. Read the design system before any interface work, and open its pages in a browser to see each component and screen.
 
 - Build screens from the shared components in `packages/ui/src/components/ds` and `packages/ui/src/components/ui`. Style only with the `--ds-*` tokens in `packages/ui/src/design-system/tokens.css`. No literal colours, sizes, radii, shadows or fonts, no component styles written for one page, and no second style of table, card, list row, pill, tab, status or chart.
 - The stylesheets in `packages/ui/src/styles` hold page layout only. Formats for dates, times, counts and durations come from `packages/ui/src/lib/format.ts`.
-- Putting existing components together into a new screen needs no approval. A new visual element, a variant with its own look, or a change to how an existing component looks does. When the work needs one, stop that part of the work and:
+- Putting existing components together into a new screen needs no approval. When a new visual element or a change to an existing one needs a design decision beyond the supplied prototype, or has no prototype, stop that part of the work and:
   1. Draw two or three concepts as static pages copied from `docs/design-system/concept-template.html`, built from the existing tokens and components, with invented data.
   2. Show them to the owner with the trade-off of each and a recommendation, and wait for the owner to accept one. Do not choose for the owner and do not ship a temporary version in the meantime.
   3. Add the accepted concept to the design system: tokens if it needs them, its styles in `components.css`, its React component, and its section with rules on the components page. Delete the concept pages.
@@ -40,6 +40,7 @@ The [design system](docs/design-system/README.md) is the only source of interfac
 - Before building a new list, table or Browse page, name the shared components it will use.
 - Before rebuilding or moving a screen, list the old screen's controls and links. Check each one in a browser afterwards.
 - Check interface changes in a browser at desktop and phone widths against the design library page for that screen, on a disposable database with synthetic data.
+- Before release, have the implementer and independent reviewer perform the same tasks in the original prototype and the app at desktop and phone widths. Record approved differences and any flows deferred to an agreed later stage.
 
 ## Done and reporting
 
