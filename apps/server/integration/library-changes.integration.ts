@@ -20,7 +20,8 @@ const connection = {
 }
 const admin = new pg.Client({ ...connection, database: env.DATABASE_NAME })
 const pool = new pg.Pool({ ...connection, database })
-const fixture = drizzle(pool, { schema })
+const logQuery = vi.fn<(query: string, params: unknown[]) => void>()
+const fixture = drizzle(pool, { schema, logger: { logQuery } })
 
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -227,10 +228,21 @@ it('plans a merge into the track with its own identity', async () => {
 
 it('merges at once, then undoes and makes the change again', async () => {
   const before = await trackRow(spotifyTrack)
+  logQuery.mockClear()
   const merged = await mergeTracks({
     trackIds: [misspelt.id, spotifyTrack],
     reviewed: false,
   })
+  // A Last.fm-only name move with no memberships needs no playlist write or
+  // library-wide recording search. Include begin and commit in the budget.
+  expect(logQuery.mock.calls.length).toBeLessThanOrEqual(59)
+  expect(
+    logQuery.mock.calls.some(
+      ([query]) =>
+        query.includes('insert into playlist_item') ||
+        query.includes('as listed_album_ids'),
+    ),
+  ).toBe(false)
   expect(merged).toMatchObject({
     kind: 'track',
     action: 'merge',
@@ -351,6 +363,41 @@ it('lets an interactive merge retry after the library writer releases its lock',
   expect(await sourceOf(misspelt)).toEqual([
     { trackId: spotifyTrack, manual: true },
   ])
+})
+
+it('keeps the source catalog alias through merge, undo and redo', async () => {
+  const alias = { aliasId: 'fixture-source-alias', mediaItemId: misspelt.id }
+  await fixture.insert(schema.catalogMediaAlias).values(alias)
+  const checkAlias = async () =>
+    expect(
+      await fixture
+        .select()
+        .from(schema.catalogMediaAlias)
+        .where(eq(schema.catalogMediaAlias.aliasId, alias.aliasId)),
+    ).toEqual([alias])
+
+  const merged = await mergeTracks({
+    trackIds: [spotifyTrack, misspelt.id],
+    targetId: spotifyTrack,
+    reviewed: false,
+  })
+  expect(merged).toMatchObject({
+    target: { id: spotifyTrack },
+    canUndo: true,
+  })
+  await checkAlias()
+
+  await undoLibraryChange(merged.id)
+  expect(await sourceOf(misspelt)).toEqual([
+    { trackId: misspelt.id, manual: false },
+  ])
+  await checkAlias()
+
+  await redoLibraryChange(merged.id)
+  expect(await sourceOf(misspelt)).toEqual([
+    { trackId: spotifyTrack, manual: true },
+  ])
+  await checkAlias()
 })
 
 it('returns a removed track with its provider data, links and edits', async () => {

@@ -177,6 +177,9 @@ const AlbumLinkRowsSchema = z.array(
     strategy: z.string().nullable(),
   }),
 )
+const ChangedAlbumLinkRowsSchema = z.array(
+  z.object({ before: AlbumLinkSchema, after: AlbumLinkSchema }),
+)
 const PositionRowsSchema = z.array(
   z.object({ id: z.string(), track_id: z.string() }),
 )
@@ -233,16 +236,18 @@ const positionMove = defineChangeEffect({
     { sourceId, targetId, positionIds, targetAlbum },
     direction,
   ) {
-    const rows = PositionRowsSchema.parse(
-      (
-        await reader.execute(sql`
-          select id, track_media_item_id as track_id from track
-          where id in (${idList(positionIds)})`)
-      ).rows,
-    )
-    if (rows.length < positionIds.length) return POSITIONS_GONE
-    const holder = direction === 'undo' ? targetId : sourceId
-    if (rows.some((row) => row.track_id !== holder)) return POSITIONS_MOVED
+    if (positionIds.length) {
+      const rows = PositionRowsSchema.parse(
+        (
+          await reader.execute(sql`
+            select id, track_media_item_id as track_id from track
+            where id in (${idList(positionIds)})`)
+        ).rows,
+      )
+      if (rows.length < positionIds.length) return POSITIONS_GONE
+      const holder = direction === 'undo' ? targetId : sourceId
+      if (rows.some((row) => row.track_id !== holder)) return POSITIONS_MOVED
+    }
     if (targetAlbum) {
       const link = await readAlbumLink(reader, targetId)
       if (!link) return TRACK_GONE
@@ -257,11 +262,13 @@ const positionMove = defineChangeEffect({
     return null
   },
   async apply(tx, { sourceId, targetId, positionIds, targetAlbum }, direction) {
-    const [from, to] =
-      direction === 'undo' ? [targetId, sourceId] : [sourceId, targetId]
-    await tx.execute(sql`
-      update track set track_media_item_id = ${to}
-      where id in (${idList(positionIds)}) and track_media_item_id = ${from}`)
+    if (positionIds.length) {
+      const [from, to] =
+        direction === 'undo' ? [targetId, sourceId] : [sourceId, targetId]
+      await tx.execute(sql`
+        update track set track_media_item_id = ${to}
+        where id in (${idList(positionIds)}) and track_media_item_id = ${from}`)
+    }
     if (targetAlbum)
       await writeAlbumLink(
         tx,
@@ -439,22 +446,14 @@ const playlistEntryMove = defineChangeEffect({
   },
 })
 
-/**
- * Moves a track's playlist entries, and its album positions when asked, to
- * another track, keeping what an undo needs. A playlist that has both keeps
- * the earlier position and Added date, as imports do. Returns the effects to
- * record with the change.
- */
-export async function moveTrackMemberships(
+async function movePlaylistMemberships(
   tx: ChangeTransaction,
   sourceId: string,
   targetId: string,
-  moveAlbumPositions: boolean,
-): Promise<ChangeEffectEntry[]> {
-  const effects: ChangeEffectEntry[] = []
-  const records = [sourceId, targetId]
+) {
   const sourceEntries = await readEntries(tx, sourceId)
   const playlistIds = [...sourceEntries.keys()]
+  if (!playlistIds.length) return null
   const targetBefore = await readEntries(tx, targetId, playlistIds)
   await tx.execute(sql`
     insert into playlist_item (playlist_id, media_item_id, position, added_at, admits_to_library)
@@ -484,46 +483,72 @@ export async function moveTrackMemberships(
         ]
       : []
   })
-  if (entries.length)
-    effects.push(
-      playlistEntryMove.entry({ sourceId, targetId, entries }, records),
-    )
+  return entries.length
+    ? playlistEntryMove.entry({ sourceId, targetId, entries }, [
+        sourceId,
+        targetId,
+      ])
+    : null
+}
 
-  if (moveAlbumPositions) {
-    const before = await readAlbumLink(tx, targetId)
-    const moved = IdRowsSchema.parse(
-      (
-        await tx.execute(sql`
-          update track set track_media_item_id = ${targetId}
-          where track_media_item_id = ${sourceId} returning id`)
-      ).rows,
+/**
+ * Moves a track's playlist entries, and its album positions when asked, to
+ * another track, keeping what an undo needs. A playlist that has both keeps
+ * the earlier position and Added date, as imports do. Returns the effects to
+ * record with the change.
+ */
+export async function moveTrackMemberships(
+  tx: ChangeTransaction,
+  sourceId: string,
+  targetId: string,
+  moveAlbumPositions: boolean,
+): Promise<ChangeEffectEntry[]> {
+  const playlist = await movePlaylistMemberships(tx, sourceId, targetId)
+  const effects = playlist ? [playlist] : []
+  if (!moveAlbumPositions) return effects
+  const moved = IdRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        update track set track_media_item_id = ${targetId}
+        where track_media_item_id = ${sourceId} returning id`)
+    ).rows,
+  )
+  const [album] = ChangedAlbumLinkRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        with previous as materialized (
+          select album_media_item_id, album_link_strategy
+          from library_track where media_item_id = ${targetId}
+        )
+        update library_track target
+        set album_media_item_id = source.album_media_item_id,
+          album_link_strategy = 'album-track-list'
+        from library_track source, previous
+        where target.media_item_id = ${targetId} and source.media_item_id = ${sourceId}
+          and (target.album_media_item_id is null or target.album_media_item_id = source.album_media_item_id)
+          and exists (
+            select 1 from track t where t.track_media_item_id = target.media_item_id
+              and t.album_media_item_id = source.album_media_item_id)
+        returning jsonb_build_object('albumId', previous.album_media_item_id,
+            'strategy', previous.album_link_strategy) as before,
+          jsonb_build_object('albumId', target.album_media_item_id,
+            'strategy', target.album_link_strategy) as after`)
+    ).rows,
+  )
+  const targetAlbum =
+    album && !sameLink(album.before, album.after) ? album : null
+  if (moved.length || targetAlbum)
+    effects.push(
+      positionMove.entry(
+        {
+          sourceId,
+          targetId,
+          positionIds: moved.map((row) => row.id),
+          targetAlbum,
+        },
+        [sourceId, targetId],
+      ),
     )
-    await tx.execute(sql`
-      update library_track target
-      set album_media_item_id = source.album_media_item_id,
-        album_link_strategy = 'album-track-list'
-      from library_track source
-      where target.media_item_id = ${targetId} and source.media_item_id = ${sourceId}
-        and (target.album_media_item_id is null or target.album_media_item_id = source.album_media_item_id) and exists (
-          select 1 from track t where t.track_media_item_id = target.media_item_id
-            and t.album_media_item_id = source.album_media_item_id)`)
-    const after = await readAlbumLink(tx, targetId)
-    if (moved.length)
-      effects.push(
-        positionMove.entry(
-          {
-            sourceId,
-            targetId,
-            positionIds: moved.map((row) => row.id),
-            targetAlbum:
-              before && after && !sameLink(before, after)
-                ? { before, after }
-                : null,
-          },
-          records,
-        ),
-      )
-  }
   return effects
 }
 

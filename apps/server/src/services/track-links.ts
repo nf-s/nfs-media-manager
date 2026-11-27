@@ -223,7 +223,27 @@ export async function writeScrobbleTrackLinks(
         sql`, `,
       )})`
     : sql``
-  const tracks = await libraryTracks(tx)
+  // Manual names use their recorded owner and versions without searching the library.
+  const sources = LinkRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        select artist_key, track_key, track_media_item_id as track_id,
+          case when manually_matched then 'manual' else 'exact' end as strategy
+        from lastfm_track_source where username = ${account} ${nameFilter}`)
+    ).rows,
+  )
+  const manualNames = new Set(
+    sources
+      .filter((source) => source.strategy === 'manual')
+      .map((source) => JSON.stringify([source.artist_key, source.track_key])),
+  )
+  const needsAutomaticMatching =
+    !names ||
+    names.some(
+      ({ artistKey, trackKey }) =>
+        !manualNames.has(JSON.stringify([artistKey, trackKey])),
+    )
+  const tracks = needsAutomaticMatching ? await libraryTracks(tx) : []
   const scrobbled = tracks.length
     ? ScrobbledRowsSchema.parse(
         (
@@ -255,25 +275,11 @@ export async function writeScrobbleTrackLinks(
         ),
       ),
   )
-  // Manual choices are exclusive for their stored names, even if the chosen
-  // Spotify recording's artist, title or album differs from the scrobble.
-  const sources = LinkRowsSchema.parse(
-    (
-      await tx.execute(sql`
-    select artist_key, track_key, track_media_item_id as track_id,
-      case when manually_matched then 'manual' else 'exact' end as strategy
-    from lastfm_track_source where username = ${account} ${nameFilter}`)
-    ).rows,
-  )
-  const manualNames = new Set(
-    sources
-      .filter((source) => source.strategy === 'manual')
-      .map((source) => JSON.stringify([source.artist_key, source.track_key])),
-  )
   // A match the owner undid or separated credits no plays.
   const rejected = await readRejectionTest(tx, account)
   const wanted = new Map(
     scrobbled.flatMap((row) => {
+      // A manual choice stays exclusive even when the scrobble differs.
       if (manualNames.has(JSON.stringify([row.artist_key, row.track_key])))
         return []
       const result = match({

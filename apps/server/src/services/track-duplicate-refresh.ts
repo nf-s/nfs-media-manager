@@ -165,10 +165,8 @@ async function readCandidates(
  * the owner is already hidden behind the track it links to.
  */
 async function readLinkEdges(tx: ChangeTransaction, ids?: string[]) {
-  return LinkRowsSchema.parse(
-    (
-      await tx.execute(sql`
-        select distinct s.track_media_item_id as owner_id,
+  const edges = (scope = sql``) => sql`
+        select s.track_media_item_id as owner_id,
           l.track_media_item_id as linked_id
         from lastfm_track_source s
         join lastfm_track_link l on l.username = s.username
@@ -179,12 +177,18 @@ async function readLinkEdges(tx: ChangeTransaction, ids?: string[]) {
               select count(*) from lastfm_track_link x
               where x.username = l.username and x.artist_key = l.artist_key
                 and x.track_key = l.track_key and x.strategy = 'exact') > 1))
-          ${
-            ids
-              ? sql`and (s.track_media_item_id = any(${idsParam(ids)})
-                  or l.track_media_item_id = any(${idsParam(ids)}))`
-              : sql``
-          }`)
+          ${scope}`
+  // Each side of a local refresh can start from its track ID index.
+  const scopedEdges = ids
+    ? sql`
+        ${edges(sql`and s.track_media_item_id = any(${idsParam(ids)})`)}
+        union all
+        ${edges(sql`and l.track_media_item_id = any(${idsParam(ids)})`)}`
+    : edges()
+  return LinkRowsSchema.parse(
+    (
+      await tx.execute(sql`
+        select distinct owner_id, linked_id from (${scopedEdges}) edges`)
     ).rows,
   )
 }

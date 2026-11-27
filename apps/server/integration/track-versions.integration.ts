@@ -499,6 +499,39 @@ it('moves a merged track’s album position and playlist entry and puts them bac
   expect(await memberships()).toEqual(after)
 })
 
+it('undoes a changed album link when the kept track already held the position', async () => {
+  await fixture
+    .update(schema.track)
+    .set({ trackMediaItemId: first })
+    .where(eq(schema.track.id, 'versions-position'))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ albumMediaItemId: albumId, albumLinkStrategy: 'lastfm' })
+    .where(eq(schema.libraryTrack.mediaItemId, lastfmTrack))
+  await fixture
+    .update(schema.libraryTrack)
+    .set({ albumMediaItemId: albumId, albumLinkStrategy: 'spotify-album' })
+    .where(eq(schema.libraryTrack.mediaItemId, first))
+
+  const before = await memberships()
+  const merged = await mergeTracks({
+    trackIds: [lastfmTrack, first],
+    reviewed: true,
+  })
+  expect(merged).toMatchObject({ target: { id: first }, canUndo: true })
+  const after = await memberships()
+  expect(after.positions).toEqual(before.positions)
+  expect(after.tracks.find((row) => row.mediaItemId === first)).toMatchObject({
+    albumMediaItemId: albumId,
+    albumLinkStrategy: 'album-track-list',
+  })
+
+  await undoLibraryChange(merged.id)
+  expect(await memberships()).toEqual(before)
+  await redoLibraryChange(merged.id)
+  expect(await memberships()).toEqual(after)
+})
+
 it('separates a version, then undoes and makes it again', async () => {
   const joined = await mergeTracks({
     trackIds: [first, reissue],
