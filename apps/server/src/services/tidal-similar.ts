@@ -93,6 +93,7 @@ import {
 import { reconcileSimilarArtistCredits } from './catalog-artist-reconciliation'
 import { reconcileTidalJobArtists } from './tidal-artist-reconciliation'
 import { matchTarget } from './tidal-track-match'
+import { tryLockLibraryTrackWrites } from './album-library-tracks'
 
 type Reader = Pick<typeof db, 'select' | 'execute'>
 
@@ -1048,6 +1049,9 @@ async function presentSimilarItems(
       observedAt: target.readAt,
     }
     await db.transaction(async (tx) => {
+      // The library mapping is already available. If another writer holds the
+      // lock, show the rows now and let the next read retry the evidence write.
+      if (!(await tryLockLibraryTrackWrites(tx))) return
       await observeTidalSimilarLibraryMatches(
         tx,
         newlyLinked,

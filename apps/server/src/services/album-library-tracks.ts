@@ -45,7 +45,9 @@ import { moveTrackMemberships } from './track-version-effects'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 const WRITE_BATCH = 500
+const libraryTrackWriteLock = sql`614106`
 
+const LibraryTrackWriteLockRowSchema = z.object({ acquired: z.boolean() })
 const ResolvedTracksSchema = z.array(
   z.object({ entry_id: z.string(), recording_id: z.string() }),
 )
@@ -99,8 +101,19 @@ export type AlbumFallbackArtistCreditCorrection = z.infer<
 export async function lockLibraryTrackWrites(database: Transaction) {
   // The worker holds 614105 for its entire session on a separate connection.
   await measureCatalogWriteLock(() =>
-    database.execute(sql`select pg_advisory_xact_lock(614106)`),
+    database.execute(
+      sql`select pg_advisory_xact_lock(${libraryTrackWriteLock})`,
+    ),
   )
+}
+
+export async function tryLockLibraryTrackWrites(database: Transaction) {
+  const result = await measureCatalogWriteLock(() =>
+    database.execute(
+      sql`select pg_try_advisory_xact_lock(${libraryTrackWriteLock}) as acquired`,
+    ),
+  )
+  return LibraryTrackWriteLockRowSchema.parse(result.rows[0]).acquired
 }
 
 /**

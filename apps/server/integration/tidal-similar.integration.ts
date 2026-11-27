@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import pg from 'pg'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -511,6 +512,51 @@ describe('TIDAL similar items in the request, with offline HTTP', () => {
       .where(eq(schema.providerReference.id, 'r3'))
     expect((await getTidalSimilar(input)).items).toEqual([])
     expect(tidalPaths()).toHaveLength(1)
+  })
+
+  it('presents saved results while a writer prevents linking a library match', async () => {
+    const input = { kind: 'tracks', id: trackId } satisfies Parameters<
+      typeof getTidalSimilar
+    >[0]
+    const saved = await refreshTidalSimilar(input, userId)
+    const first = saved.items[0]
+    if (!first) throw new Error('Missing fixture track')
+    await databaseClient
+      .delete(schema.providerReference)
+      .where(
+        and(
+          eq(schema.providerReference.mediaItemId, 'track-library'),
+          eq(schema.providerReference.provider, 'tidal'),
+        ),
+      )
+    const providerCalls = request.mock.calls.length
+    const writer = await pool.connect()
+    await writer.query('begin')
+    await writer.query('select pg_advisory_xact_lock(614106)')
+    const pending = getTidalSimilar(input)
+    const deadline = new AbortController()
+    try {
+      const busy = await Promise.race([
+        pending,
+        delay(3_000, null, { signal: deadline.signal }),
+      ])
+      expect(busy?.readAt).toBe(saved.readAt)
+      expect(busy?.items.map(({ tidalId }) => tidalId)).toEqual(
+        saved.items.map(({ tidalId }) => tidalId),
+      )
+      expect(busy?.items[0]?.library?.id).toBe('track-library')
+      expect((await getTidalTrackMatch('track-library')).match).toBeNull()
+    } finally {
+      deadline.abort()
+      await writer.query('rollback')
+      writer.release()
+      await pending
+    }
+    await getTidalSimilar(input)
+    expect((await getTidalTrackMatch('track-library')).match).toMatchObject({
+      tidalTrackId: first.tidalId,
+    })
+    expect(request.mock.calls).toHaveLength(providerCalls)
   })
 
   it('recovers earlier lists without replacing choices or choosing between editions', async () => {
