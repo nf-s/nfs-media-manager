@@ -172,6 +172,12 @@ const catalogRoutes = new Set([
   '/api/v1/catalog/spotify-album-reference',
   '/api/v1/playback/catalog',
 ])
+const catalogLockRoutes = new Set([
+  ...catalogRoutes,
+  '/api/v1/library-changes/track-merges',
+  '/api/v1/tracks/:id/merge',
+  '/api/v1/tidal/similar/:kind/:id',
+])
 
 export function recordCatalogRequestFailure(error: unknown) {
   const current = context.getStore()
@@ -196,7 +202,7 @@ export function recordCatalogRequestFailure(error: unknown) {
 
 export function measureCatalogWriteLock<T>(acquire: () => Promise<T>) {
   const current = context.getStore()
-  return current && catalogRoutes.has(current.details.route)
+  return current && catalogLockRoutes.has(current.details.route)
     ? measureRequestPhase('catalogWriteLock', async () => acquire())
     : acquire()
 }

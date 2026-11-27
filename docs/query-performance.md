@@ -52,6 +52,8 @@ The API emits one `api.request` access event per completed handler invocation. I
 
 For `POST /api/v1/playback/catalog` and `POST /api/v1/catalog/spotify-album-reference`, compare the shared catalog write lock phase (`phases.catalogWriteLock.durationMs`) with the total duration. Group 5xx responses by `catalogFailure` to distinguish lock timeouts, query cancellation, transaction conflicts, other database failures, provider evidence failures and validation failures. A query cancellation can also come from a statement deadline. Report requests without a failure category separately.
 
+Track merge requests and TIDAL Similar requests also record `phases.catalogWriteLock` when they attempt the shared writer lock. The phase sums the acquisition calls and their database round trips. The enclosing request also includes access checks and the work done while holding the lock. When another writer already holds it, a saved Similar GET can present the mapped rows and retry saving newly discovered matches on a later read.
+
 | Interactive read     | Starting p95 threshold |
 | -------------------- | ---------------------: |
 | Browse page          |                 750 ms |

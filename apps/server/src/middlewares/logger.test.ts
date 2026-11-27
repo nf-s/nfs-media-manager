@@ -10,8 +10,10 @@ import { db as cloudDb, withCloudDatabase } from '@/cloudflare/db'
 import { db as nodeDb } from '@/lib/db'
 import {
   logApiRequest,
+  measureCatalogWriteLock,
   measureRequestPhase,
   recordRecordingOrderLookup,
+  requestQueryLogger,
   setPlaybackLogRole,
   setRequestBrowseProfile,
   setRequestLogRoute,
@@ -131,6 +133,32 @@ it('logs the registered route that handled a request with multiple matches', asy
     ['/api/v1/tracks/:id', 204],
   ])
   expect(JSON.stringify(info.mock.calls)).not.toContain('fixture-secret')
+})
+
+it.each([
+  ['/api/v1/library-changes/track-merges', 'POST'],
+  ['/api/v1/tracks/:id/merge', 'POST'],
+  ['/api/v1/tidal/similar/:kind/:id', 'GET'],
+])('measures the catalog lock separately on %s', async (route, method) => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const request = new Request('https://example.test', { method })
+  await logApiRequest(request, async () => {
+    setRequestLogRoute(route, request.headers)
+    await measureCatalogWriteLock(async () =>
+      requestQueryLogger.logQuery('select 1', []),
+    )
+    requestQueryLogger.logQuery('select 2', [])
+    return new Response(null, { status: 200 })
+  })
+  expect(
+    info.mock.calls.map(([line]) => RecordSchema.parse(JSON.parse(line))),
+  ).toMatchObject([
+    {
+      route,
+      drizzleStatementCount: 2,
+      phases: { catalogWriteLock: { drizzleStatementCount: 1 } },
+    },
+  ])
 })
 
 it('counts Drizzle executions and phases separately across concurrent requests', async () => {
