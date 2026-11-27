@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef } from 'react'
 import {
+  slowBrowseDocumentMs,
   slowTracksChangeMs,
   type BrowserBrowseTiming,
 } from '@repo/schemas/performance'
@@ -100,6 +101,74 @@ export function tracksChangePhases(
     commitMs: commit - ready,
     paintMs,
   }
+}
+
+export function browseDocumentPhases(
+  { measurement, committedAt, pageTiming }: CommittedOutcome,
+  durationMs: number,
+  responseStart: number,
+  firstContentfulPaint?: number,
+): BrowserBrowseTiming['documentPhases'] {
+  if (!pageTiming || durationMs < slowBrowseDocumentMs) return
+
+  const elapsed = (at: number) => Math.round(at - measurement.startedAt)
+  const { requestedAt, readyAt } = pageTiming
+  // Report a breakdown only if the visible page was loaded during this document.
+  if (
+    !(
+      measurement.startedAt < responseStart &&
+      responseStart <= requestedAt &&
+      requestedAt <= readyAt &&
+      readyAt <= committedAt &&
+      elapsed(committedAt) <= durationMs
+    )
+  )
+    return
+
+  const firstByteMs = elapsed(responseStart)
+  const requestStartMs = elapsed(requestedAt)
+  const readyMs = elapsed(readyAt)
+  const committedMs = elapsed(committedAt)
+  const firstContentfulPaintMs =
+    firstContentfulPaint === undefined
+      ? undefined
+      : elapsed(firstContentfulPaint)
+  return {
+    firstByteMs,
+    beforePageRequestMs: requestStartMs - firstByteMs,
+    pageLoadMs: readyMs - requestStartMs,
+    commitMs: committedMs - readyMs,
+    paintMs: durationMs - committedMs,
+    firstContentfulPaintMs:
+      firstContentfulPaintMs !== undefined &&
+      firstContentfulPaintMs >= firstByteMs &&
+      firstContentfulPaintMs <= durationMs
+        ? firstContentfulPaintMs
+        : undefined,
+  }
+}
+
+function readBrowseDocumentPhases(
+  settled: CommittedOutcome,
+  durationMs: number,
+) {
+  if (!settled.pageTiming || durationMs < slowBrowseDocumentMs) return
+  const navigation = navigationStartedHere()
+  if (
+    typeof PerformanceNavigationTiming === 'undefined' ||
+    !(navigation instanceof PerformanceNavigationTiming)
+  )
+    return
+  const firstContentfulPaint = performance.getEntriesByName(
+    'first-contentful-paint',
+    'paint',
+  )[0]?.startTime
+  return browseDocumentPhases(
+    settled,
+    durationMs,
+    navigation.responseStart,
+    firstContentfulPaint,
+  )
 }
 
 export class BrowsePerformanceTracker {
@@ -236,6 +305,10 @@ export function useBrowsePerformance(
           outcome === 'rows'
             ? tracksChangePhases(settled, sample.durationMs)
             : undefined
+        const documentPhases =
+          sample.action === 'document' && outcome === 'rows'
+            ? readBrowseDocumentPhases(settled, sample.durationMs)
+            : undefined
         void fetch('/api/v1/performance/browse', {
           method: 'POST',
           credentials: 'same-origin',
@@ -243,7 +316,13 @@ export function useBrowsePerformance(
           redirect: 'error',
           headers: { 'Content-Type': 'application/json' },
           keepalive: true,
-          body: JSON.stringify({ screen, outcome, ...sample, phases }),
+          body: JSON.stringify({
+            screen,
+            outcome,
+            ...sample,
+            phases,
+            documentPhases,
+          }),
         }).catch(() => {})
       })
     })

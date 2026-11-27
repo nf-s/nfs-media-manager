@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   BrowsePerformanceTracker,
+  browseDocumentPhases,
   navigationMatchesPath,
   tracksChangePhases,
 } from './useBrowsePerformance'
@@ -181,6 +182,45 @@ test('the document candidate is matched by origin and pathname only', () => {
   assert.equal(
     navigationMatchesPath('https://other.test/tracks', location),
     false,
+  )
+})
+
+test('splits the visible rows duration at document and page-loading milestones', () => {
+  const tracker = new BrowsePerformanceTracker()
+  tracker.observe(initial, 4_000, 0)
+  const committedAt = 6_060.1
+  const measurement = tracker.observe(
+    { ...initial, enabled: true, outcome: 'rows' },
+    committedAt,
+  )
+  assert.ok(measurement)
+  const settled = {
+    measurement,
+    committedAt,
+    pageTiming: { requestedAt: 5_400.4, readyAt: 5_950.1 },
+  }
+  const phases = {
+    firstByteMs: 1_900,
+    beforePageRequestMs: 3_500,
+    pageLoadMs: 550,
+    commitMs: 110,
+    paintMs: 30,
+    firstContentfulPaintMs: 3_250,
+  }
+  assert.deepEqual(
+    browseDocumentPhases(settled, 6_090, 1_899.5, 3_250.2),
+    phases,
+  )
+  assert.deepEqual(browseDocumentPhases(settled, 6_090, 1_899.5, 6_600), {
+    ...phases,
+    firstContentfulPaintMs: undefined,
+  })
+  assert.equal(browseDocumentPhases(settled, 6_090, 0), undefined)
+  assert.equal(browseDocumentPhases(settled, 6_090, 5_500), undefined)
+  assert.equal(browseDocumentPhases(settled, 2_499, 1_899.5), undefined)
+  assert.equal(
+    browseDocumentPhases({ ...settled, pageTiming: undefined }, 6_090, 1_899.5),
+    undefined,
   )
 })
 

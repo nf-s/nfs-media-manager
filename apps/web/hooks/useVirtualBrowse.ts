@@ -88,8 +88,7 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     const query = new URLSearchParams(params)
     query.set('page', String(page))
     query.set('size', String(size))
-    const requestedAt =
-      performanceScreen === 'tracks' ? performance.now() : undefined
+    const requestedAt = performanceScreen ? performance.now() : undefined
     const result = await fetchApiData(
       apiBaseUrl,
       `/api/v1/${endpoint}/browse-page?${query}`,
