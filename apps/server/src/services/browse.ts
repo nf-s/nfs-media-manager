@@ -2968,12 +2968,14 @@ function trackMusicFacetSources(
     ]
   return [
     ...sources,
-    sql`browse_track_own_facet_rows as materialized (
-      select tt.media_item_id as id, label_id from track_tag tt
+    // Keep the narrow membership keys with the deduplicated own tags. The
+    // overlap query can join label arrays without sorting them by track ID.
+    sql`browse_track_own_facet_rows as (
+      select t.album_id, t.artist_group, label_id from track_tag tt
       join browse_release_facet_keys labels on labels.tag_id = tt.tag_id
       join browse_track_facet_labels using (value)
       join browse_track_facet_tracks t on t.id = tt.media_item_id
-      where tt.in_browse group by tt.media_item_id, label_id
+      where tt.in_browse group by tt.media_item_id, label_id, t.album_id, t.artist_group
     )`,
     // Each own tag value with how many of those tracks lack it at the album
     // or artist level of their group. Also count overlap with inherited
@@ -2986,10 +2988,9 @@ function trackMusicFacetSources(
         count(*) filter (where (matched.album_tag or (matched.artist_tag and dense.media_item_id is null))
           and own.label_id not in (select label_id from browse_track_sonovault_values)) as inherited_overlap
       from browse_track_own_facet_rows own
-      join browse_track_facet_tracks t on t.id = own.id
       left join browse_track_facet_album_values album using (album_id)
       left join browse_track_facet_artist_values artist using (artist_group)
-      left join browse_track_dense_albums dense on dense.media_item_id = t.album_id
+      left join browse_track_dense_albums dense on dense.media_item_id = own.album_id
       cross join lateral (select coalesce(own.label_id = any(album.tag_values), false) as album_tag,
         coalesce(own.label_id = any(artist.tag_values), false) as artist_tag) matched
       group by own.label_id
