@@ -319,13 +319,18 @@
 }
 /* On artwork that carries a badge the group sits above the badge, in the
    same corner: the badge's inset and height, then a gap. On short artwork
-   the gap closes, to no less than --ds-1, so that the group (its buttons
-   and padding) stays --ds-1 clear of the artwork's top edge. */
+   the gap closes to --ds-1 so that the group (its buttons and padding)
+   stays --ds-1 clear of the artwork's top edge; on the shortest artwork
+   the clearance and then the gap give way, and the group never passes the
+   top edge. */
 .ds-art[data-badge] .ds-play[data-place='tile'] {
-  bottom: clamp(
-    calc(var(--ds-3) + var(--ds-h-badge) + var(--ds-1)),
-    calc(100% - var(--ds-h-tile) - 2 * var(--ds-1) - var(--ds-1)),
-    calc(var(--ds-3) + var(--ds-h-badge) + var(--ds-4))
+  bottom: min(
+    clamp(
+      calc(var(--ds-3) + var(--ds-h-badge) + var(--ds-1)),
+      calc(100% - var(--ds-h-tile) - 2 * var(--ds-1) - var(--ds-1)),
+      calc(var(--ds-3) + var(--ds-h-badge) + var(--ds-4))
+    ),
+    calc(100% - var(--ds-h-tile) - 2 * var(--ds-1))
   );
 }
 .ds-card:hover .ds-play[data-place='tile'],
