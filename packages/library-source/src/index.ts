@@ -1,6 +1,10 @@
 export type { SqlValue, SqliteDriver, SqliteExecutor } from './driver'
 export type * from './source'
 export { applyRows } from './apply'
+export {
+  createDeviceLibrarySource,
+  type DeviceSourceOptions,
+} from './device/source'
 export { foldText, globContains } from './fold'
 export {
   ITEM_ENTITIES,

@@ -8,13 +8,16 @@ import {
   DeviceSnapshotPageSchema,
   type DeviceEntity,
 } from '@repo/schemas/device'
+import { trackBrowseFields } from '@repo/schemas/browse'
+import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { applyRows } from '../src/apply'
+import { createDeviceLibrarySource } from '../src/device/source'
 import type { SqlValue, SqliteDriver } from '../src/driver'
 import { openBetterSqliteDriver } from '../src/drivers/better-sqlite3'
 import { openWasmMemoryDriver } from '../src/drivers/sqlite-wasm'
 import { globContains } from '../src/fold'
 import { openStore } from '../src/store'
-import { albumPayload, artistPayload, trackPayload } from './fixtures'
+import { albumPayload, artistPayload, tagPayload, trackRow } from './fixtures'
 
 /**
  * Store size and speed on a synthetic library (run with `pnpm measure`).
@@ -24,6 +27,11 @@ import { albumPayload, artistPayload, trackPayload } from './fixtures'
 const TRACKS = 30_000
 const ALBUMS = 5_000
 const ARTISTS = 3_000
+const TAGS = 300
+/** Tags 1 to 20 sit beneath tag 0, so a filter on tag 0 reads 21 tags. */
+const SUBTAGS = 20
+/** A quarter of the tracks share a recording key with about three others. */
+const RECORDING_KEYS = 2_000
 const PAGE = 500
 
 const WORDS = [
@@ -83,27 +91,64 @@ function buildPages(): { pages: Page[]; plays: number } {
 
   let seq = 0
   const rows: Record<string, unknown[]> = {
+    tag: [],
+    tag_key: [],
     track: [],
     album: [],
     artist: [],
     scrobble_name: [],
+    meta: [],
+  }
+  for (let index = 0; index < TAGS; index += 1) {
+    seq += 1
+    rows.tag?.push({
+      entity: 'tag',
+      id: `tag-${index}`,
+      seq,
+      deleted: false,
+      payload: tagPayload({ name: `Genre ${index}` }),
+    })
+  }
+  for (let index = 1; index <= SUBTAGS; index += 1) {
+    seq += 1
+    rows.tag_key?.push({
+      entity: 'tag_key',
+      id: `album:genre ${index}`,
+      seq,
+      deleted: false,
+      payload: {
+        mediaType: 'album',
+        key: `genre ${index}`,
+        ancestorKeys: ['genre 0'],
+      },
+    })
   }
   let plays = 0
   for (let index = 0; index < TRACKS; index += 1) {
     const id = `track-${index}`
-    const payload = trackPayload(id, {
-      title: `${phrase(3)} ${index}`,
-      artist: pick(artists),
-      album: next() < 0.1 ? null : pick(albums),
-      dateAddedDay: Math.floor(next() * 3_000),
-      durationSec: 60 + Math.floor(next() * 480),
-      scrobbles: Math.floor(next() * 40),
-      tagIds: [
-        `tag-${Math.floor(next() * 300)}`,
-        `tag-${Math.floor(next() * 300)}`,
-      ],
-      nameIds: [`name-${index}`],
-    })
+    const payload = trackRow(
+      id,
+      {
+        extra: {
+          recording: {
+            key: index % 4 === 0 ? `rec-${index % RECORDING_KEYS}` : null,
+          },
+        },
+      },
+      {
+        title: `${phrase(3)} ${index}`,
+        artist: pick(artists),
+        album: next() < 0.1 ? null : pick(albums),
+        dateAddedDay: Math.floor(next() * 3_000),
+        durationSec: 60 + Math.floor(next() * 480),
+        scrobbles: Math.floor(next() * 40),
+        tagIds: [
+          `tag-${Math.floor(next() * TAGS)}`,
+          `tag-${Math.floor(next() * TAGS)}`,
+        ],
+        nameIds: [`name-${index}`],
+      },
+    )
     seq += 1
     rows.track?.push({ entity: 'track', id, seq, deleted: false, payload })
     const count = Math.floor(next() * 20)
@@ -142,12 +187,28 @@ function buildPages(): { pages: Page[]; plays: number } {
       payload: artistPayload(`artist-${index}`, { name: artists[index] }),
     })
   }
+  seq += 1
+  rows.meta?.push({
+    entity: 'meta',
+    id: 'fields:track',
+    seq,
+    deleted: false,
+    payload: { kind: 'fields', library: 'track', fields: trackBrowseFields },
+  })
   const pages: Page[] = []
   for (const [entity, list] of Object.entries(rows)) {
     for (let start = 0; start < list.length; start += PAGE) {
       pages.push({
         entity: z
-          .enum(['track', 'album', 'artist', 'scrobble_name'])
+          .enum([
+            'tag',
+            'tag_key',
+            'track',
+            'album',
+            'artist',
+            'scrobble_name',
+            'meta',
+          ])
           .parse(entity),
         rows: list.slice(start, start + PAGE),
       })
@@ -273,6 +334,44 @@ describe('store measurements', () => {
     return result
   }
 
+  /** Reads through the device source, as a page asks for them. */
+  async function measureSource(driver: SqliteDriver) {
+    await driver.run(
+      `UPDATE sync_state SET phase = 'ready', epoch = 'measure', row_version = 1,
+         cursor = 0, filled_at = 0, synced_at = 0 WHERE id = 1`,
+    )
+    const source = createDeviceLibrarySource(driver, {
+      now: () => new Date('2024-06-15T12:00:00.000Z'),
+    })
+    const queries: Record<string, Record<string, unknown>> = {
+      'first page, dateAdded desc': {},
+      'three-word search': { q: 'night river ember' },
+      'tag filter with 20 subtags': {
+        filters: [{ field: 'genre', value: 'Genre 0' }],
+      },
+      'listening sort, rolling year': { sortBy: 'listeningScrobbles' },
+      'grouped first page': { groupRecordings: true },
+      'grouped, listening sort': {
+        groupRecordings: true,
+        sortBy: 'listeningScrobbles',
+      },
+    }
+    const result: Record<string, { page: number; count: number }> = {}
+    for (const [name, input] of Object.entries(queries)) {
+      const query = TrackQuerySchema.parse(input)
+      const page = await source.trackPage(query)
+      const count = await source.trackCount(query)
+      if (!page.served || !count.served)
+        throw new Error(`${name} was not served`)
+      expect(page.data.items.length).toBeGreaterThan(0)
+      result[`${name} (ms)`] = {
+        page: await time(() => source.trackPage(query)),
+        count: await time(() => source.trackCount(query)),
+      }
+    }
+    return result
+  }
+
   async function sizeOf(driver: SqliteDriver) {
     const tables = await driver.all(
       `SELECT name, sum(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY bytes DESC LIMIT 12`,
@@ -296,6 +395,7 @@ describe('store measurements', () => {
       )
       console.table(perEntity)
       console.table(await measureReads(driver))
+      console.table(await measureSource(driver))
       console.table(await sizeOf(driver))
     } finally {
       await driver.close()
@@ -325,6 +425,7 @@ describe('store measurements', () => {
       )
       console.table(perEntity)
       console.table(await measureReads(driver))
+      console.table(await measureSource(driver))
     } finally {
       await driver.close()
     }

@@ -162,6 +162,73 @@ export function trackPayload(
   return devicePayloadSchemas.track.parse(payload)
 }
 
+type TrackSort = DeviceTrackRow['sort']
+type TrackExtra = DeviceTrackRow['extra']
+
+/** Changes to the default track row, section by section. */
+export type TrackRowPatch = {
+  item?: Partial<DeviceTrackRow['item']>
+  text?: Partial<DeviceTrackRow['text']>
+  search?: Partial<DeviceTrackRow['search']>
+  num?: Partial<DeviceTrackRow['num']>
+  sort?: Partial<Omit<TrackSort, 'natural' | 'genre'>> & {
+    natural?: Partial<TrackSort['natural']>
+    genre?: Partial<TrackSort['genre']>
+  }
+  extra?: Partial<Omit<TrackExtra, 'recording'>> & {
+    recording?: Partial<TrackExtra['recording']>
+  }
+}
+
+/** The track row of `trackPayload` with the patch applied, validated. */
+export function trackRow(
+  id: string,
+  patch: TrackRowPatch = {},
+  options: TrackOptions = {},
+): DeviceTrackRow {
+  const base = trackPayload(id, options)
+  const { natural, genre, ...sort } = patch.sort ?? {}
+  const { recording, ...extra } = patch.extra ?? {}
+  return devicePayloadSchemas.track.parse({
+    item: { ...base.item, ...patch.item },
+    text: { ...base.text, ...patch.text },
+    search: { ...base.search, ...patch.search },
+    num: { ...base.num, ...patch.num },
+    sort: {
+      ...base.sort,
+      ...sort,
+      natural: { ...base.sort.natural, ...natural },
+      genre: { ...base.sort.genre, ...genre },
+    },
+    extra: {
+      ...base.extra,
+      ...extra,
+      recording: { ...base.extra.recording, ...recording },
+    },
+  })
+}
+
+export type TagOptions = {
+  name: string
+  key?: string
+  hidden?: boolean
+  aliasTargetId?: string | null
+  identityKeys?: string[]
+}
+
+/** An album-library tag; the key defaults to the lower-cased name. */
+export function tagPayload(options: TagOptions) {
+  return devicePayloadSchemas.tag.parse({
+    mediaType: 'album',
+    name: options.name,
+    key: options.key ?? options.name.toLowerCase(),
+    kind: 'genre',
+    hidden: options.hidden ?? false,
+    aliasTargetId: options.aliasTargetId ?? null,
+    identityKeys: options.identityKeys ?? [],
+  })
+}
+
 const mediaBase = {
   slug: 'example',
   originalTitle: null,
