@@ -18,7 +18,11 @@ import {
 import { generateJsonResponse } from '@/lib/response'
 import { recordCatalogRequestFailure } from '@/lib/request-log'
 import { logger } from '@/middlewares/logger'
-import { authMiddleware, mutationOriginMiddleware } from '@/middlewares/auth'
+import {
+  authMiddleware,
+  isDevicePairingExchange,
+  mutationOriginMiddleware,
+} from '@/middlewares/auth'
 import albums from '@/routes/albums'
 import catalog from '@/routes/catalog'
 import spotifyAlbumReference from '@/routes/spotify-album-reference'
@@ -58,6 +62,7 @@ import manualAdd from '@/routes/manual-add'
 import findMatch from '@/routes/find-match'
 import ai from '@/routes/ai'
 import user from '@/routes/user'
+import device from '@/routes/device'
 
 const app = createOpenAPIApp({
   strict: false,
@@ -74,21 +79,36 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'no-referrer')
   await next()
 })
-app.use(
-  cors({
-    origin: env.TRUSTED_ORIGINS,
-    allowHeaders: [
-      'Content-Type',
-      'Authorization',
-      SONOS_PAGE_HEADER,
-      SONOS_REASON_HEADER,
-      SONOS_PLAYBACK_CLIENT_HEADER,
-    ],
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    credentials: true,
-    exposeHeaders: ['Content-Type', 'Authorization', 'Retry-After'],
-  }),
-)
+const trustedCors = cors({
+  origin: env.TRUSTED_ORIGINS,
+  allowHeaders: [
+    'Content-Type',
+    'Authorization',
+    SONOS_PAGE_HEADER,
+    SONOS_REASON_HEADER,
+    SONOS_PLAYBACK_CLIENT_HEADER,
+  ],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  credentials: true,
+  exposeHeaders: ['Content-Type', 'Authorization', 'Retry-After'],
+})
+// Device clients send a device key, never cookies, so no credentials.
+const deviceCors = cors({
+  origin: (origin) => origin,
+  allowHeaders: ['Authorization', 'Content-Type'],
+  allowMethods: ['GET', 'HEAD', 'POST'],
+  exposeHeaders: ['Retry-After'],
+})
+app.use((c, next) => {
+  const origin = c.req.header('origin')
+  return (c.req.path === '/api/v1/device' ||
+    c.req.path.startsWith('/api/v1/device/')) &&
+    origin !== undefined &&
+    !env.TRUSTED_ORIGINS.includes(origin) &&
+    env.DEVICE_ALLOWED_ORIGINS.includes(origin)
+    ? deviceCors(c, next)
+    : trustedCors(c, next)
+})
 app.use('*', secureHeaders())
 
 app.use('*', mutationOriginMiddleware())
@@ -103,6 +123,7 @@ const requireOwner = authMiddleware()
 app.use('*', (c, next) => {
   // Health probes and the OAuth relays carry no library/account data. The
   // completion endpoints still require the owner session and validate state.
+  if (isDevicePairingExchange(c.req.method, c.req.path)) return next()
   if (
     ['GET', 'HEAD'].includes(c.req.method) &&
     [
@@ -163,6 +184,7 @@ v1ApiBase.route('/manual-add', manualAdd)
 v1ApiBase.route('/find-match', findMatch)
 v1ApiBase.route('/ai', ai)
 v1ApiBase.route('/user', user)
+v1ApiBase.route('/device', device)
 
 v1ApiBase.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
   type: 'http',

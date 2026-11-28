@@ -7,6 +7,7 @@ import {
   CreatedApiKeySchema,
   CreateApiKeySchema,
   DEFAULT_API_KEY_RATE_LIMIT,
+  type ApiKeyKind,
   type ApiKeyRateLimit,
   type CreateApiKey,
   type UpdateApiKeyRateLimit,
@@ -16,6 +17,8 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { isOwnerUser } from '@/lib/owner'
 import { apikey, user } from '@/schemas/db'
+
+type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 const configId = 'media-manager'
 const rateLimitColumns = {
@@ -27,6 +30,7 @@ const rateLimitColumns = {
 }
 const metadataColumns = {
   id: apikey.id,
+  kind: apikey.kind,
   name: apikey.name,
   start: apikey.start,
   createdAt: apikey.createdAt,
@@ -94,6 +98,7 @@ function metadata(row: KeyMetadata, now: Date) {
   const limit = rateLimit(row)
   return ApiKeySchema.parse({
     id: row.id,
+    kind: row.kind,
     name: row.name ?? '',
     start: row.start ?? '',
     createdAt: row.createdAt.toISOString(),
@@ -115,16 +120,22 @@ export async function listApiKeys(userId: string) {
   return ApiKeysSchema.parse(rows.map((row) => metadata(row, now)))
 }
 
-export async function createApiKey(userId: string, input: CreateApiKey) {
+async function insertApiKey(
+  executor: Database,
+  userId: string,
+  input: CreateApiKey,
+  kind: ApiKeyKind,
+) {
   const options = CreateApiKeySchema.parse(input)
   const now = new Date()
   const key = `mm_${randomBytes(32).toString('base64url')}`
-  const [row] = await db
+  const [row] = await executor
     .insert(apikey)
     .values({
       id: nanoid(),
       configId,
       referenceId: userId,
+      kind,
       name: options.name,
       start: key.slice(0, 11),
       prefix: 'mm_',
@@ -142,6 +153,24 @@ export async function createApiKey(userId: string, input: CreateApiKey) {
     .returning(metadataColumns)
   if (!row) throw new ServerError({ message: 'API key creation failed' })
   return CreatedApiKeySchema.parse({ apiKey: metadata(row, now), key })
+}
+
+export function createApiKey(userId: string, input: CreateApiKey) {
+  return insertApiKey(db, userId, input, 'api')
+}
+
+/** A device key is an API key named after its device, without an expiry. */
+export function createDeviceApiKey(
+  executor: Database,
+  userId: string,
+  deviceName: string,
+) {
+  return insertApiKey(
+    executor,
+    userId,
+    { name: deviceName, expiresIn: null },
+    'device',
+  )
 }
 
 export function createAgentAccess(userId: string) {

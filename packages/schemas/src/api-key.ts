@@ -28,8 +28,13 @@ export const DEFAULT_API_KEY_RATE_LIMIT = {
   windowSeconds: 3600,
 } satisfies ApiKeyRateLimit
 
+/** `device` keys come from device pairing; every other key is `api`. */
+export const ApiKeyKindSchema = z.enum(['api', 'device'])
+export type ApiKeyKind = z.infer<typeof ApiKeyKindSchema>
+
 export const ApiKeySchema = z.object({
   id: z.string().min(1),
+  kind: ApiKeyKindSchema.default('api'),
   name: z.string(),
   start: z.string(),
   createdAt: z.string().datetime(),

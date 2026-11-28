@@ -85,6 +85,24 @@ export function authMiddleware({ sessionOnly = false } = {}) {
   })
 }
 
+/** The one unauthenticated device request: the pairing code is its credential. */
+export function isDevicePairingExchange(method: string, path: string) {
+  return (
+    method === 'POST' &&
+    (path === '/api/v1/device/pairings/exchange' ||
+      path === '/api/v1/device/pairings/exchange/')
+  )
+}
+
+function hasBrowserOriginHeaders(headers: Headers) {
+  return (
+    headers.has('origin') ||
+    headers.has('referer') ||
+    headers.has('sec-fetch-site') ||
+    headers.has('sec-fetch-mode')
+  )
+}
+
 export function mutationOriginMiddleware() {
   return createMiddleware(async (c, next) => {
     const headers = c.req.raw.headers
@@ -92,15 +110,21 @@ export function mutationOriginMiddleware() {
       !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) &&
       !isMutationOriginAllowed(headers, env) &&
       !(
+        // A pairing exchange sends no cookie or key. It comes from a device
+        // origin or, from a native client, without browser origin headers.
+        (
+          isDevicePairingExchange(c.req.method, c.req.path) &&
+          (env.DEVICE_ALLOWED_ORIGINS.includes(headers.get('origin') ?? '') ||
+            !hasBrowserOriginHeaders(headers))
+        )
+      ) &&
+      !(
         // Versioned API middleware must verify the explicit bearer credential.
         // Never use a session if this request supplies an Authorization header.
         (
           c.req.path.startsWith('/api/v1/') &&
           readBearerKey(headers) &&
-          !headers.has('origin') &&
-          !headers.has('referer') &&
-          !headers.has('sec-fetch-site') &&
-          !headers.has('sec-fetch-mode')
+          !hasBrowserOriginHeaders(headers)
         )
       )
     ) {

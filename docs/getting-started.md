@@ -58,13 +58,14 @@ The example supplies the local defaults below. Change the account details and bo
 
 ### Optional settings
 
-| Variable                 | Purpose                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `SCAN_DIR`               | Absolute server-side folder to scan for film NFO files. Leave empty if you only import CSVs.                                    |
-| `SCAN_EXCLUDE`           | Comma-separated folder names to skip during NFO scans.                                                                          |
-| `MEDIA_PLUGIN_PATHS`     | Comma-separated local provider entry-file paths. Leave empty for the built-in providers. See [local plugins](local-plugins.md). |
-| `LEGACY_SERVER_DATA_DIR` | Legacy raw JSON directory; defaults to `apps/server/data`.                                                                      |
-| Provider variables       | Optional alternatives to saving credentials in Providers; see the table below.                                                  |
+| Variable                 | Purpose                                                                                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEVICE_ALLOWED_ORIGINS` | Comma-separated origins of device apps that run in a web view, without spaces. Empty by default. See [devices](api-access.md#devices). |
+| `SCAN_DIR`               | Absolute server-side folder to scan for film NFO files. Leave empty if you only import CSVs.                                           |
+| `SCAN_EXCLUDE`           | Comma-separated folder names to skip during NFO scans.                                                                                 |
+| `MEDIA_PLUGIN_PATHS`     | Comma-separated local provider entry-file paths. Leave empty for the built-in providers. See [local plugins](local-plugins.md).        |
+| `LEGACY_SERVER_DATA_DIR` | Legacy raw JSON directory; defaults to `apps/server/data`.                                                                             |
+| Provider variables       | Optional alternatives to saving credentials in Providers; see the table below.                                                         |
 
 ## 3. Start PostgreSQL
 

@@ -16,8 +16,20 @@ The server checks expiry, revocation and the current owner account on each key-a
 
 By default a key allows 10,000 requests per hour. Set a different allowance from 1 to 1,000,000 requests and a window from 1 second to 24 hours, or select **Unlimited** for that key. A window starts with its first counted request. A new allowance applies immediately to requests already counted in the current window. A limited key at its allowance returns HTTP 429 with a `Retry-After` header. Editing a key's settings preserves its expiry and revocation status.
 
-`POST /api/v1/user/api-keys` accepts an optional `rateLimit`. Submit the same object as `rateLimit` in `PATCH /api/v1/user/api-keys/{id}` to change a key's limit. Use `{"enabled":true,"maxRequests":500,"windowSeconds":3600}` for a limited key or `{"enabled":false}` for an unlimited key. Key metadata includes `rateLimit` and `requestsUsed`, the count in its current window. `requestsUsed` is `null` for unlimited keys.
+`POST /api/v1/user/api-keys` accepts an optional `rateLimit`. Submit the same object as `rateLimit` in `PATCH /api/v1/user/api-keys/{id}` to change a key's limit. Use `{"enabled":true,"maxRequests":500,"windowSeconds":3600}` for a limited key or `{"enabled":false}` for an unlimited key. Key metadata includes `rateLimit` and `requestsUsed`, the count in its current window. `requestsUsed` is `null` for unlimited keys. It also includes `kind`: `device` for a key issued by device pairing, otherwise `api`.
+
+## Devices
+
+A phone or desktop app signs in by pairing instead of copying a key.
+
+1. In a signed-in browser, `POST /api/v1/device/pairings` returns a one-time `code` and its `expiresAt`, ten minutes later. It requires an owner browser session; an API key, including a device key, receives HTTP 403. Only a SHA-256 hash of the code is stored.
+2. The device sends `POST /api/v1/device/pairings/exchange` with `{"code":"<code>","deviceName":"Phone"}`. It needs no session or key. The response contains `apiKey` (kind `device`, named after the device, with no expiry) and `key`, which is shown only once. A used, expired or unknown code receives HTTP 401. Each client address may make three exchange attempts per ten seconds in production; further attempts receive HTTP 429 with `Retry-After`.
+3. The device sends the key as `Authorization: Bearer <key>`. A device key has the same access and rate limit as any API key: library reads and writes as the owner, and none of the routes that require a browser session.
+
+Device keys appear in the User page key list and are revoked there or with `DELETE /api/v1/user/api-keys/{id}`, like any key. Revocation stops the device's requests immediately; pair again to restore access.
+
+A native client that sends no `Origin`, `Referer` or `Sec-Fetch-*` header needs no further configuration. An app that runs in a web view on its own origin needs that origin in `DEVICE_ALLOWED_ORIGINS`, a comma-separated list without spaces (empty by default). For those origins only, routes under `/api/v1/device` answer CORS preflights for `GET`, `HEAD` and `POST`, allow the `Authorization` and `Content-Type` headers, and do not allow credentials, so cookies are never sent. The exchange accepts a request from those origins; every other mutation keeps the usual origin check, so other key-authenticated writes must come from a trusted origin or omit browser origin headers. With the setting empty, responses are unchanged.
 
 ## Implementation
 
-API keys reuse the existing `apikey` table. Only a SHA-256 hash of each randomly generated key is stored, with a short display prefix. No additional deployment flag or database migration is required. Browser mutations retain their origin checks; authenticated non-browser requests may omit Origin. An explicit untrusted browser origin remains rejected.
+API keys reuse the existing `apikey` table. Only a SHA-256 hash of each randomly generated key is stored, with a short display prefix. Migration `0079_device_pairing` adds the key `kind` (existing keys are `api`) and the `device_pairing` table of code hashes. Browser mutations retain their origin checks; authenticated non-browser requests may omit Origin. An explicit untrusted browser origin remains rejected.

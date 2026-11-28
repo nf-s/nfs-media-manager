@@ -1,5 +1,6 @@
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 import {
+  check,
   pgTable,
   text,
   timestamp,
@@ -130,11 +131,36 @@ export const apikey = pgTable(
     updatedAt: timestamp('updated_at').notNull(),
     permissions: text('permissions'),
     metadata: text('metadata'),
+    // Keys issued by device pairing are `device`; the default keeps older
+    // writers and existing keys on `api`.
+    kind: text('kind', { enum: ['api', 'device'] })
+      .default('api')
+      .notNull(),
   },
   (table) => [
     index('apikey_configId_idx').on(table.configId),
     index('apikey_referenceId_idx').on(table.referenceId),
     index('apikey_key_idx').on(table.key),
+    check('apikey_kind_check', sql`${table.kind} in ('api', 'device')`),
+  ],
+)
+
+/** One-time device pairing codes. Only the SHA-256 digest of a code is kept. */
+export const devicePairing = pgTable(
+  'device_pairing',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    consumedAt: timestamp('consumed_at'),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('device_pairing_code_hash_idx').on(table.codeHash),
+    index('device_pairing_user_id_idx').on(table.userId),
   ],
 )
 

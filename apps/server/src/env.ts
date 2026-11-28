@@ -47,6 +47,22 @@ export const env = createEnv({
       .string()
       .default('http://localhost:3000,http://localhost:4000')
       .transform((val) => val.split(',')),
+    // Origins of device clients (such as an app web view) that may call
+    // /api/v1/device/* across origins with a device key and no cookies.
+    DEVICE_ALLOWED_ORIGINS: z
+      .string()
+      .default('')
+      .transform((val) => (val === '' ? [] : val.split(',')))
+      .pipe(
+        z.array(
+          z
+            .string()
+            .regex(
+              /^[a-z][a-z0-9+.-]*:\/\/[^/\s?#,]+$/i,
+              'DEVICE_ALLOWED_ORIGINS must list origins such as https://app.example, separated by commas without spaces',
+            ),
+        ),
+      ),
     PORT: z.coerce.number().default(4000),
     BETTER_AUTH_SECRET: z
       .string()
@@ -87,6 +103,7 @@ export const env = createEnv({
     DATABASE_PASSWORD: process.env.DATABASE_PASSWORD,
     DATABASE_NAME: process.env.DATABASE_NAME,
     TRUSTED_ORIGINS: process.env.TRUSTED_ORIGINS,
+    DEVICE_ALLOWED_ORIGINS: process.env.DEVICE_ALLOWED_ORIGINS,
     PORT: process.env.PORT,
     NODE_ENV: process.env.NODE_ENV,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
