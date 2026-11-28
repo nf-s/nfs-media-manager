@@ -418,8 +418,8 @@ describe('ranges', () => {
 })
 
 describe('tags', () => {
-  const tags = () => [
-    tag('tag-amb', { name: 'Ambient', identityKeys: ['ambience'] }),
+  const tags = (sonovault: boolean) => [
+    tag('tag-amb', { name: 'Ambient', identityKeys: ['ambience'], sonovault }),
     tag('tag-dark', { name: 'Dark Ambient' }),
     tag('tag-secret', { name: 'Secret Ambient', hidden: true }),
     tag('tag-chill', { name: 'Chill', aliasTargetId: 'tag-amb' }),
@@ -473,7 +473,7 @@ describe('tags', () => {
     sonovault = false,
   ) =>
     sorted(
-      await pageIds(await open([...tags(), ...tracks(sonovault)]), {
+      await pageIds(await open([...tags(sonovault), ...tracks(sonovault)]), {
         filters,
         ...input,
       }),
@@ -490,27 +490,25 @@ describe('tags', () => {
     expect(await ids(genre('rock'), {}, true)).toEqual(['g5', 'g8'])
   })
 
-  it('falls through at Auto when only a track outside the library can decide inheritance', async () => {
-    // No library track holds Ambient from Sonovault, and g8 has tags of its
-    // own and inherits Ambient: a track outside the library may hold it.
-    const device = await open([...tags(), ...tracks(false)])
-    for (const value of ['ambient', 'Ambience', 'chill'])
+  it('stops inheriting a tag only a track outside the library holds from Sonovault', async () => {
+    // No published track holds Ambient from Sonovault; its tag row says a
+    // library track does, so g8 does not inherit it from its album.
+    const device = await open([...tags(true), ...tracks(false)])
+    for (const value of ['ambient', 'Ambience'])
       expect(
-        reason(
-          await device.source.trackPage(trackQuery({ filters: genre(value) })),
-        ),
+        sorted(await pageIds(device, { filters: genre(value) })),
         value,
-      ).toBe('sonovault-tags')
-    // No track with tags of its own inherits Rock without carrying it.
-    expect(await ids(genre('rock'))).toEqual(['g5', 'g8'])
+      ).toEqual(['g1', 'g2', 'g4'])
     expect(
       reason(
         await device.source.trackCount(
-          trackQuery({ filters: genre('ambient'), tagLevels: 'album' }),
+          trackQuery({ filters: genre('ambient') }),
         ),
       ),
     ).toBe(null)
     await device.close()
+    // When no track holds it from Sonovault, g8 inherits it.
+    expect(await ids(genre('ambient'))).toEqual(['g1', 'g2', 'g4', 'g8'])
   })
 
   it('resolves identity keys and aliases, hidden targets included', async () => {

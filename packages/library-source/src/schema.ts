@@ -301,7 +301,8 @@ CREATE TABLE tag (
   key TEXT NOT NULL,
   kind TEXT NOT NULL,
   hidden INTEGER NOT NULL,
-  alias_target_id TEXT
+  alias_target_id TEXT,
+  sonovault INTEGER NOT NULL
 ) WITHOUT ROWID`,
   `CREATE INDEX tag_key_index ON tag (media_type, key)`,
   `CREATE INDEX tag_alias_target ON tag (alias_target_id)`,

@@ -21,12 +21,6 @@ export type DataFacts = {
   archivedOnlyArtistTags: boolean
   /** Plugin text keys for which some library item holds a JSON number. */
   numericPluginText: { album: ReadonlySet<string>; film: ReadonlySet<string> }
-  /**
-   * For each Tags filter value of the matrix: no published track holds the
-   * tag set from Sonovault, and a visible library track with tags of its
-   * own would inherit the tag at Auto without carrying it.
-   */
-  sonovaultUndecided: ReadonlyMap<string, boolean>
 }
 
 type Observed = {
@@ -70,25 +64,6 @@ function activeImport(data: unknown) {
   )
 }
 
-function undecided(facts: DataFacts, value: string) {
-  const known = facts.sonovaultUndecided.get(value)
-  if (known === undefined)
-    throw new Error(`The suite has no Sonovault facts for the tag ${value}`)
-  return known
-}
-
-/**
- * A fall-through the table allows beside serving, where its condition
- * depends on more data than the suite reproduces: Tags suggestions on
- * Tracks at Auto may fall through with `sonovault-tags`. The suite asserts
- * each outcome on chosen texts.
- */
-export function allowedHole(read: LibraryRead): UnsupportedReason | undefined {
-  return read.method === 'trackFacets' && read.query.tagLevels === undefined
-    ? 'sonovault-tags'
-    : undefined
-}
-
 /** The reason the device must give for this read, or undefined when it must serve it. */
 export function expectedHole(
   read: LibraryRead,
@@ -125,14 +100,6 @@ export function expectedHole(
         (query.creatorId !== undefined || recordings)
       )
         return 'creator-tag-sort'
-      if (
-        query.tagLevels === undefined &&
-        query.filters.some(
-          (filter) =>
-            filter.field === 'genre' && undecided(observed.facts, filter.value),
-        )
-      )
-        return 'sonovault-tags'
       return undefined
     }
     case 'trackFacets':

@@ -214,6 +214,8 @@ export type TagOptions = {
   hidden?: boolean
   aliasTargetId?: string | null
   identityKeys?: string[]
+  /** Some library track holds the tag in Browse from Sonovault. */
+  sonovault?: boolean
 }
 
 /** An album-library tag; the key defaults to the lower-cased name. */
@@ -226,6 +228,7 @@ export function tagPayload(options: TagOptions) {
     hidden: options.hidden ?? false,
     aliasTargetId: options.aliasTargetId ?? null,
     identityKeys: options.identityKeys ?? [],
+    sonovault: options.sonovault ?? false,
   })
 }
 
@@ -533,6 +536,7 @@ export const sharedPayloads = {
     hidden: false,
     aliasTargetId: null,
     identityKeys: ['ambient music', 'ambience'],
+    sonovault: true,
   },
   tag_key: {
     mediaType: 'album',

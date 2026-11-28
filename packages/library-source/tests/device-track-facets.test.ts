@@ -371,13 +371,23 @@ describe('tag facets', () => {
    * Album tags: rock, with indie rock and post-rock beneath it, and jazz.
    * Artist tags: drone, beneath electronic (a key with no tag row). Track
    * d's own indie rock tag is from Sonovault, so indie rock and rock are not
-   * inherited by tracks with tags of their own (track e).
+   * inherited by tracks with tags of their own (track e). The tag rows say
+   * which tags a track holds from Sonovault, published or not.
    */
-  const tagRows = () => [
+  const tagRows = (sonovault = ['tag-indie', 'tag-post', 'tag-jazz']) => [
     tag('tag-rock', { name: 'Rock' }),
-    tag('tag-indie', { name: 'Indie Rock' }),
-    tag('tag-post', { name: 'Post-Rock' }),
-    tag('tag-jazz', { name: 'Jazz' }),
+    tag('tag-indie', {
+      name: 'Indie Rock',
+      sonovault: sonovault.includes('tag-indie'),
+    }),
+    tag('tag-post', {
+      name: 'Post-Rock',
+      sonovault: sonovault.includes('tag-post'),
+    }),
+    tag('tag-jazz', {
+      name: 'Jazz',
+      sonovault: sonovault.includes('tag-jazz'),
+    }),
     tagKey('indie rock', ['rock']),
     tagKey('post-rock', ['rock']),
     tagKey('drone', ['electronic']),
@@ -438,8 +448,7 @@ describe('tag facets', () => {
     track('archived', {
       extra: { albumTagIds: ['tag-rock'], archived: true },
     }),
-    // Not counted, but its Sonovault tags stop tracks with tags of their
-    // own inheriting post-rock and jazz, so every Auto count is decided.
+    // Not counted, but it holds post-rock and jazz from Sonovault.
     track('archived-sonovault', {
       extra: {
         archived: true,
@@ -501,23 +510,26 @@ describe('tag facets', () => {
     })
   })
 
-  it('falls through at Auto when only a track outside the library can decide inheritance', async () => {
-    // Without the archived track's Sonovault tags, d (tags of its own)
-    // inherits post-rock, which a track outside the library may hold.
-    const device = await open(
-      [
-        ...tagRows(),
-        ...tracks().filter((row) => row.id !== 'archived-sonovault'),
-      ],
-      { trackFields: fields },
-    )
-    const read = (input: Record<string, unknown>) =>
-      device.source.trackFacets(BrowseFacetQuerySchema.parse(input))
-    expect(reason(await read({}))).toBe('sonovault-tags')
-    expect(reason(await read({ q: 'post' }))).toBe('sonovault-tags')
-    // Other locations, and keys with no tag row (drone), are decided.
-    expect(reason(await read({ tagLevels: 'track,album,artist' }))).toBe(null)
-    expect(reason(await read({ q: 'drone' }))).toBe(null)
+  it('stops inheriting a tag only a track outside the library holds from Sonovault', async () => {
+    // Without the archived track, no published track holds post-rock or jazz
+    // from Sonovault; the tag rows still say a track does.
+    const published = tracks().filter((row) => row.id !== 'archived-sonovault')
+    const genre = async (sonovault?: string[]) => {
+      const device = await open([...tagRows(sonovault), ...published], {
+        trackFields: fields,
+      })
+      const rows = await facets(device, {})
+      await device.close()
+      store = undefined
+      return Object.fromEntries(counts(rows, 'genre'))
+    }
+    const decided = (await byField()).genre
+    expect(await genre()).toEqual(decided)
+    // When no track holds post-rock from Sonovault, d inherits it.
+    expect(await genre(['tag-indie', 'tag-jazz'])).toEqual({
+      ...decided,
+      'post-rock': 3,
+    })
   })
 
   it('counts Tags at each location', async () => {

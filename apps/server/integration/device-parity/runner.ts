@@ -37,12 +37,11 @@ export class ParityRunner {
 
   /** Re-reads the data the holes depend on, after the library changed. */
   async refreshFacts() {
-    this.facts = await readDataFacts(pluginTextKeys, tagValues.music)
+    this.facts = await readDataFacts(pluginTextKeys)
   }
 
   async read(path: string) {
-    const facts =
-      this.facts ?? (await readDataFacts(pluginTextKeys, tagValues.music))
+    const facts = this.facts ?? (await readDataFacts(pluginTextKeys))
     this.facts = facts
     return compareRead(this.store, facts, this.report, path)
   }

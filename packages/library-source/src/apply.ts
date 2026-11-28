@@ -123,12 +123,12 @@ async function applyLiveRow(
     case 'tag':
       if (!(await isNewer(tx, 'tag', row.id, row.seq))) return
       await tx.run(
-        `INSERT INTO tag (id, seq, media_type, name, key, kind, hidden, alias_target_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO tag (id, seq, media_type, name, key, kind, hidden, alias_target_id, sonovault)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET seq = excluded.seq,
            media_type = excluded.media_type, name = excluded.name,
            key = excluded.key, kind = excluded.kind, hidden = excluded.hidden,
-           alias_target_id = excluded.alias_target_id`,
+           alias_target_id = excluded.alias_target_id, sonovault = excluded.sonovault`,
         [
           row.id,
           row.seq,
@@ -138,6 +138,7 @@ async function applyLiveRow(
           row.payload.kind,
           flag(row.payload.hidden),
           row.payload.aliasTargetId,
+          flag(row.payload.sonovault),
         ],
       )
       await tx.run('DELETE FROM tag_identity WHERE tag_id = ?', [row.id])

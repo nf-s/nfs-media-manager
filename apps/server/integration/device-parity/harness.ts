@@ -24,7 +24,7 @@ import { DeviceFeedStateSchema } from '@repo/schemas/device'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import { seedParityLibrary } from '../fixtures/device-parity-library'
-import { allowedHole, expectedHole, type DataFacts } from './holes'
+import { expectedHole, type DataFacts } from './holes'
 
 /**
  * The parity suite's set-up (DEVICE-32): a disposable database ordered by
@@ -393,10 +393,7 @@ export async function compareRead(
     return { outcome: { kind: 'served' }, data: apiData }
   }
   report.count(read.method, result.reason)
-  if (
-    result.reason !== expected &&
-    !(expected === undefined && result.reason === allowedHole(read))
-  )
+  if (result.reason !== expected)
     report.fail(
       path,
       `fell through with ${result.reason}; the Known holes say ${expected ?? 'served'}`,

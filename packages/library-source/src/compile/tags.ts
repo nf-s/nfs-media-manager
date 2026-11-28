@@ -108,9 +108,10 @@ export async function artistTagRawKeys(
 }
 
 /**
- * Whether any library track has an in-Browse Sonovault tag among the IDs:
- * the uncorrelated test trackIdsWithTag, music-tags.ts, makes before a track
- * with tags of its own inherits album and artist tags.
+ * Whether any track has an in-Browse Sonovault tag among the IDs: the
+ * uncorrelated test trackIdsWithTag, music-tags.ts, makes before a track
+ * with tags of its own inherits album and artist tags. The tag rows carry
+ * it for every library track, published or not.
  */
 export async function anyTrackHasSonovaultTag(
   tx: SqliteExecutor,
@@ -119,8 +120,8 @@ export async function anyTrackHasSonovaultTag(
   if (tagIds.length === 0) return false
   const rows = await readRows(
     tx,
-    sql`SELECT 1 AS found FROM item_tag
-      WHERE tag_id IN ${values(tagIds)} AND entity = 'track' AND level = 'ownSonovaultTagIds'
+    sql`SELECT 1 AS found FROM tag
+      WHERE id IN ${values(tagIds)} AND sonovault = 1
       LIMIT 1`,
   )
   return rows.length > 0

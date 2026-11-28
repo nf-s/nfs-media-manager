@@ -226,10 +226,16 @@ describe.each(drivers)('store on $name', ({ open }) => {
 
     expect(
       await driver.all(
-        'SELECT media_type, key, hidden, alias_target_id FROM tag',
+        'SELECT media_type, key, hidden, alias_target_id, sonovault FROM tag',
       ),
     ).toEqual([
-      { media_type: 'album', key: 'ambient', hidden: 0, alias_target_id: null },
+      {
+        media_type: 'album',
+        key: 'ambient',
+        hidden: 0,
+        alias_target_id: null,
+        sonovault: 1,
+      },
     ])
     expect(
       await column(driver, 'SELECT key FROM tag_identity ORDER BY key'),

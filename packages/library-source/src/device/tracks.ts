@@ -62,7 +62,6 @@ import {
   FALSE,
   TRUE,
   and,
-  not,
   or,
   readRows,
   sql,
@@ -106,12 +105,8 @@ function tagLocation(levels: TagLevels | undefined): string {
  * trackIdsWithTag(name, levels), music-tags.ts. Auto: the track's own tags;
  * its album's and its artists' (the artists' only when the album has fewer
  * than two release tags) when it has no tags of its own or no track uses the
- * tag set as an in-Browse Sonovault tag.
- *
- * The service asks that of every track, in the library or not; the store
- * holds library tracks only. When no library track uses the set from
- * Sonovault and a track with tags of its own would inherit the tag, a track
- * outside the library may decide the answer, so the read falls through.
+ * tag set as an in-Browse Sonovault tag. The service asks that of every
+ * library track, published or not: the tag rows' `sonovault` answers it.
  */
 async function tagMatch(
   value: string,
@@ -132,18 +127,9 @@ async function tagMatch(
     const sparseAlbum = sql`(t.album_id IS NULL
       OR coalesce(t.album_release_tag_count, 0) < ${artistTagFallbackThreshold})`
     const inherited = or([albums, and([await artists(), sparseAlbum])])
-    const sonovault = await anyTrackHasSonovaultTag(context.tx, ids)
-    if (!sonovault && ids.length > 0) {
-      const undecided = await readRows(
-        context.tx,
-        sql`SELECT 1 AS found FROM track t
-          WHERE t.archived = 0 AND t.has_own_tags = 1
-            AND ${not(own)} AND ${inherited}
-          LIMIT 1`,
-      )
-      if (undecided.length > 0) unsupported('sonovault-tags')
-    }
-    const inherits = sonovault ? sql`t.has_own_tags = 0` : TRUE
+    const inherits = (await anyTrackHasSonovaultTag(context.tx, ids))
+      ? sql`t.has_own_tags = 0`
+      : TRUE
     return or([own, and([inherits, inherited])])
   }
   const sets: Sql[] = []

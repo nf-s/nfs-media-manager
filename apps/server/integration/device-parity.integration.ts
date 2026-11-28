@@ -531,32 +531,40 @@ describe('device parity', () => {
       extraValues,
     })
     await trackSpecifics(run, false)
+    const ids = (params: Params) => trackIds(run, params)
     // The fixture holds a redundant Last.fm placeholder: hidden by default,
     // listed under the Last.fm source.
-    const ids = async (params: Params) =>
-      z
-        .object({ items: z.array(z.object({ id: z.string() })) })
-        .parse(
-          (
-            await run.read(
-              apiPath('tracks/browse-page', { ...params, size: 50 }),
-            )
-          )?.data,
-        )
-        .items.map((item) => item.id)
     expect(await ids({ q: 'hum' })).not.toContain('track-hum-lastfm')
     expect(
       await ids({ filters: [{ field: 'source', value: 'Last.fm' }] }),
     ).toContain('track-hum-lastfm')
-    // Tags suggestions at Auto: Shoegaze is undecided (a track outside the
-    // library holds it from Sonovault), Drone has no tag row and is decided.
-    expect((await run.read(apiPath('tracks/facets', {})))?.outcome).toEqual({
-      kind: 'fell-through',
-      reason: 'sonovault-tags',
-    })
-    expect(
-      (await run.read(apiPath('tracks/facets', { q: 'drone' })))?.outcome,
-    ).toEqual({ kind: 'served' })
+    // Only a track outside the library holds Shoegaze from Sonovault, so
+    // Drift C, with a tag of its own, does not inherit it from its artist
+    // at Auto. The device serves that from the tag row.
+    const holders =
+      await parityPool.query(`select tt.media_item_id, mi.in_library
+      from track_tag tt join media_item mi on mi.id = tt.media_item_id
+      where tt.tag_id = 'tag-shoegaze' and tt.in_browse and tt.sonovault`)
+    expect(holders.rows).toEqual([
+      { media_item_id: 'track-outside', in_library: false },
+    ])
+    const shoegaze = [{ field: 'genre', value: 'Shoegaze' }]
+    expect(await ids({ filters: shoegaze })).not.toContain('track-drift-c')
+    expect(await ids({ filters: shoegaze, tagLevels: ['artist'] })).toContain(
+      'track-drift-c',
+    )
+    for (const params of [
+      { filters: shoegaze },
+      { filters: shoegaze, tagLevels: ['artist'] },
+    ])
+      expect(
+        (await run.read(apiPath('tracks/browse-count', params)))?.outcome,
+      ).toEqual({ kind: 'served' })
+    for (const q of [undefined, 'shoegaze', 'rock', 'drone'])
+      expect(
+        (await run.read(apiPath('tracks/facets', { q })))?.outcome,
+        q,
+      ).toEqual({ kind: 'served' })
     expectParity(run, 'Tracks')
   })
 
@@ -643,10 +651,36 @@ describe('device parity', () => {
       await playlistMatrix(run, true)
       for (const period of listeningPeriods.slice(0, 4))
         await run.read(apiPath('artists/listening-histogram', { period }))
+      // Only Liked One, now outside the library, holds Dream Pop from
+      // Sonovault: Orbit Song, with tags of its own, no longer inherits it
+      // from its album at Auto.
+      const dreamPop = [{ field: 'genre', value: 'Dream Pop' }]
+      expect(await trackIds(run, { filters: dreamPop })).not.toContain(
+        'track-orbit-a',
+      )
+      expect(
+        await trackIds(run, { filters: dreamPop, tagLevels: ['album'] }),
+      ).toContain('track-orbit-a')
+      for (const q of [undefined, 'dream', 'shoegaze'])
+        expect(
+          (await run.read(apiPath('tracks/facets', { q })))?.outcome,
+          q,
+        ).toEqual({ kind: 'served' })
       expectParity(run, 'after edits')
     },
   )
 })
+
+/** The IDs of the first 50 tracks of a Browse query, read through the runner. */
+async function trackIds(run: ParityRunner, params: Params) {
+  const result = await run.read(
+    apiPath('tracks/browse-page', { ...params, size: 50 }),
+  )
+  return z
+    .object({ items: z.array(z.object({ id: z.string() })) })
+    .parse(result?.data)
+    .items.map((item) => item.id)
+}
 
 async function apiFieldKeys(route: string): Promise<unknown> {
   const response = await apiRequest(apiPath(route))
@@ -700,4 +734,10 @@ async function applyEdits() {
     delete from track where track_media_item_id = 'track-hum-b';
     delete from media_item where id in ('track-hum-b', 'film-moth');
     commit`)
+  // A track leaves the library and gains a Sonovault tag.
+  await query(
+    "update media_item set in_library = false where id = 'track-liked'",
+  )
+  await query(`insert into track_tag (media_item_id, tag_id, owner, sonovault, verified)
+    values ('track-liked', 'tag-dream', null, true, true)`)
 }
