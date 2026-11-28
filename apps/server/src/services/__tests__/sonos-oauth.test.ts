@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
@@ -139,10 +140,17 @@ function mockCompletion(
     )
 }
 
-function storedTokens(values: Record<string, unknown> = {}) {
+const ownerNamespace = `sonos-account-${createHash('sha256').update('user-1').digest('hex')}`
+
+function storedTokens(
+  values: Record<string, unknown> = {},
+  accounts?: Record<string, unknown>,
+) {
   return query([
     {
       id: 'tokens',
+      provider: ownerNamespace,
+      key: 'tokens',
       encryptedValue: encryptSecretValue(
         JSON.stringify({
           accessToken: 'fake-access-token',
@@ -154,16 +162,17 @@ function storedTokens(values: Record<string, unknown> = {}) {
         }),
       ),
     },
+    ...(accounts ? [spotifyAccountRow(accounts)] : []),
   ])
 }
 
-function storedSpotify(accounts: Record<string, unknown>) {
-  return query([
-    {
-      id: 'spotify',
-      encryptedValue: encryptSecretValue(JSON.stringify(accounts)),
-    },
-  ])
+function spotifyAccountRow(accounts: Record<string, unknown>) {
+  return {
+    id: 'spotify',
+    provider: ownerNamespace,
+    key: 'spotify',
+    encryptedValue: encryptSecretValue(JSON.stringify(accounts)),
+  }
 }
 
 const API = 'https://api.ws.sonos.com/control/api/v1'
@@ -359,10 +368,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
   })
 
   it('lists rooms with a current token and asks for a new sign-in when Sonos rejects it', async () => {
-    mocks.database.select
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+    mocks.database.select.mockReturnValueOnce(storedTokens())
     mocks.request.mockResolvedValueOnce(Response.json({ households: [] }))
     expect(await getSonosRooms('user-1')).toEqual({ households: [] })
     expect(mocks.request.mock.calls[0]?.[0]).toBe(
@@ -374,10 +380,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
     expect(mocks.success).not.toHaveBeenCalled()
     expect(mocks.transaction).not.toHaveBeenCalled()
 
-    mocks.database.select
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+    mocks.database.select.mockReturnValueOnce(storedTokens())
     mocks.request.mockRejectedValueOnce(
       new ProviderRequestError(
         'Provider request failed (HTTP 401)',
@@ -393,8 +396,6 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
 
   it('refreshes an expiring token before listing rooms', async () => {
     mocks.database.select
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(storedTokens({ expiresAt: Date.now() + 1000 }))
       .mockReturnValueOnce(storedTokens({ expiresAt: Date.now() + 1000 }))
     mocks.request
@@ -417,9 +418,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
   })
 
   it('reports a command Sonos refuses without asking for a new sign-in', async () => {
-    mocks.database.select
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+    mocks.database.select.mockReturnValueOnce(storedTokens())
     mocks.request.mockRejectedValueOnce(
       new ProviderRequestError(
         'Provider request failed (HTTP 400)',
@@ -432,9 +431,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
       sendSonosCommand('user-1', 'RINCON_A:1', { action: 'next' }),
     ).rejects.toThrow('Sonos did not accept that.')
 
-    mocks.database.select
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+    mocks.database.select.mockReturnValueOnce(storedTokens())
     mocks.request.mockResolvedValueOnce(Response.json({}))
     expect(
       await sendSonosCommand('user-1', 'RINCON_A:1', { action: 'pause' }),
@@ -446,10 +443,7 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
 
   it('remembers a household Spotify account only when it is new or changed', async () => {
     respondWithSpotifyRoom('sn_1')
-    mocks.database.select
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+    mocks.database.select.mockReturnValueOnce(storedTokens())
     const rooms = await getSonosRooms('user-1')
     expect(rooms.households[0]?.rooms[0]?.playable).toBe(true)
     expect(mocks.values).toHaveBeenCalledTimes(1)
@@ -459,25 +453,22 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
       home: { serviceId: '12', accountId: 'sn_1' },
     })
 
-    mocks.database.select
-      .mockReturnValueOnce(
-        storedSpotify({ home: { serviceId: '12', accountId: 'sn_1' } }),
-      )
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+    mocks.database.select.mockReturnValueOnce(
+      storedTokens({}, { home: { serviceId: '12', accountId: 'sn_1' } }),
+    )
     await getSonosRooms('user-1')
     expect(mocks.values).toHaveBeenCalledTimes(1)
 
     respondWithSpotifyRoom('sn_2')
-    mocks.database.select
-      .mockReturnValueOnce(
-        storedSpotify({
+    mocks.database.select.mockReturnValueOnce(
+      storedTokens(
+        {},
+        {
           home: { serviceId: '12', accountId: 'sn_1' },
           other: { serviceId: '12', accountId: 'sn_9' },
-        }),
-      )
-      .mockReturnValueOnce(query([]))
-      .mockReturnValueOnce(storedTokens())
+        },
+      ),
+    )
     await getSonosRooms('user-1')
     expect(mocks.values).toHaveBeenCalledTimes(2)
     const changed = secretSchema.parse(mocks.values.mock.calls[1]?.[0])
@@ -490,9 +481,10 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
   it('loads Spotify content with the household Spotify account', async () => {
     mocks.database.select
       .mockReturnValueOnce(
-        storedSpotify({ home: { serviceId: '12', accountId: 'sn_1' } }),
+        query([
+          spotifyAccountRow({ home: { serviceId: '12', accountId: 'sn_1' } }),
+        ]),
       )
-      .mockReturnValueOnce(query([]))
       .mockReturnValueOnce(storedTokens())
     mocks.request.mockResolvedValueOnce(Response.json({}))
     expect(
@@ -520,7 +512,9 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
 
   it('refuses to load content before the household Spotify account is known', async () => {
     mocks.database.select.mockReturnValueOnce(
-      storedSpotify({ other: { serviceId: '12', accountId: 'sn_1' } }),
+      query([
+        spotifyAccountRow({ other: { serviceId: '12', accountId: 'sn_1' } }),
+      ]),
     )
     await expect(
       loadSonosContent('user-1', 'RINCON_A:1', {
@@ -544,6 +538,13 @@ describe('Sonos owner/session-bound OAuth (mock database and gate)', () => {
       'Connect Sonos in the player, under Play on, first.',
     )
     expect(mocks.request).not.toHaveBeenCalled()
+  })
+
+  it('keeps unreadable local room data out of the provider failure count', async () => {
+    mocks.database.select.mockReturnValueOnce(storedTokens({}, { home: null }))
+    await expect(getSonosRooms('user-1')).rejects.toThrow()
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.failure).not.toHaveBeenCalled()
   })
 
   it('deletes only this owner’s Sonos secrets on disconnect', async () => {

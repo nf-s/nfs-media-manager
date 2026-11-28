@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray, or } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import { ProviderRequestError } from '@repo/media-plugin-sdk'
@@ -76,6 +76,7 @@ const REFRESH_MARGIN_MS = 60000
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const namespace = (userId: string) => `sonos-account-${hash(userId)}`
 type SecretDatabase = Pick<typeof db, 'insert' | 'select' | 'delete' | 'update'>
+type SecretRow = typeof providerSecret.$inferSelect
 
 function unavailable(message: string) {
   return new ServerError({ statusCode: 422, message })
@@ -118,11 +119,7 @@ const accountSecret = (userId: string, key: string) =>
     eq(providerSecret.lastUpdatedByUserId, userId),
   )
 
-async function settings() {
-  const rows = await db
-    .select()
-    .from(providerSecret)
-    .where(eq(providerSecret.provider, 'sonos'))
+function readSettings(rows: SecretRow[]) {
   const secrets = resolveProviderSecrets(
     'sonos',
     rows,
@@ -137,6 +134,15 @@ async function settings() {
   } catch {
     return null
   }
+}
+
+async function settings() {
+  return readSettings(
+    await db
+      .select()
+      .from(providerSecret)
+      .where(eq(providerSecret.provider, 'sonos')),
+  )
 }
 
 /**
@@ -174,6 +180,10 @@ async function storedAccount(userId: string) {
     .select()
     .from(providerSecret)
     .where(accountSecret(userId, 'tokens'))
+  return readAccount(row)
+}
+
+function readAccount(row: SecretRow | undefined) {
   return row
     ? AccountSchema.parse(JSON.parse(decryptSecretValue(row.encryptedValue)))
     : null
@@ -187,6 +197,12 @@ async function storedSpotifyAccounts(
     .select()
     .from(providerSecret)
     .where(accountSecret(userId, 'spotify'))
+  return readSpotifyAccounts(row)
+}
+
+function readSpotifyAccounts(
+  row: SecretRow | undefined,
+): Map<string, SonosSpotifyAccount> {
   if (!row) return new Map()
   return new Map(
     Object.entries(
@@ -195,6 +211,34 @@ async function storedSpotifyAccounts(
       ),
     ),
   )
+}
+
+/** Read the integration settings and this owner's requested connection rows together. */
+async function selectSonosConnection(
+  userId: string,
+  includeSpotifyAccounts: boolean,
+) {
+  const ownerNamespace = namespace(userId)
+  const keys = includeSpotifyAccounts ? ['tokens', 'spotify'] : ['tokens']
+  const rows = await db
+    .select()
+    .from(providerSecret)
+    .where(
+      or(
+        eq(providerSecret.provider, 'sonos'),
+        and(
+          eq(providerSecret.provider, ownerNamespace),
+          eq(providerSecret.lastUpdatedByUserId, userId),
+          inArray(providerSecret.key, keys),
+        ),
+      ),
+    )
+  const ownerRows = rows.filter((row) => row.provider === ownerNamespace)
+  return {
+    settingsRows: rows.filter((row) => row.provider === 'sonos'),
+    tokenRow: ownerRows.find((row) => row.key === 'tokens'),
+    spotifyRow: ownerRows.find((row) => row.key === 'spotify'),
+  }
 }
 
 /**
@@ -416,8 +460,13 @@ export async function finishSonosAuthorization(
  * A current access token for the account, refreshed with the given request
  * when it is about to expire.
  */
-async function sonosAccessToken(userId: string, request: SonosRequest) {
-  const [config, saved] = await Promise.all([settings(), storedAccount(userId)])
+async function sonosAccessToken(
+  userId: string,
+  request: SonosRequest,
+  { settingsRows, tokenRow }: Awaited<ReturnType<typeof selectSonosConnection>>,
+) {
+  const config = readSettings(settingsRows)
+  const saved = readAccount(tokenRow)
   if (!config)
     throw unavailable(
       'Sonos is not configured. Add the integration in Providers and connect Sonos in the player.',
@@ -478,15 +527,28 @@ async function sonosAccessToken(userId: string, request: SonosRequest) {
 }
 
 /** Runs Control API calls with a current token; a rejected token asks for a new sign-in. */
-function withSonos<T>(
+async function withSonos<T>(
   userId: string,
-  execute: (request: SonosRequest, token: string) => Promise<T>,
-  refused?: string,
+  execute: (
+    request: SonosRequest,
+    token: string,
+    spotify: Map<string, SonosSpotifyAccount>,
+  ) => Promise<T>,
+  {
+    refused,
+    includeSpotifyAccounts = false,
+  }: { refused?: string; includeSpotifyAccounts?: boolean } = {},
 ) {
+  const discovery = includeSpotifyAccounts
+    ? await selectSonosConnection(userId, true)
+    : undefined
+  // Unreadable local room data must not affect Sonos provider backoff.
+  const spotify = readSpotifyAccounts(discovery?.spotifyRow)
   return sonosOperation(async (request) => {
-    const token = await sonosAccessToken(userId, request)
+    const connection = discovery ?? (await selectSonosConnection(userId, false))
+    const token = await sonosAccessToken(userId, request, connection)
     try {
-      return await execute(request, token)
+      return await execute(request, token, spotify)
     } catch (error) {
       if (error instanceof ProviderRequestError) {
         if (error.code === 'access-denied') throw unavailable(REJECTED)
@@ -500,9 +562,13 @@ function withSonos<T>(
 
 /** The account's rooms and what they play, read from the Sonos cloud. */
 export async function getSonosRooms(userId: string): Promise<SonosRooms> {
-  const stored = await storedSpotifyAccounts(userId)
-  const { result, accounts } = await withSonos(userId, (request, token) =>
-    sonosRooms(request, token, new Set(stored.keys())),
+  const { result, accounts, stored } = await withSonos(
+    userId,
+    async (request, token, stored) => ({
+      ...(await sonosRooms(request, token, new Set(stored.keys()))),
+      stored,
+    }),
+    { includeSpotifyAccounts: true },
   )
   await rememberSpotifyAccounts(userId, stored, accounts)
   return result
@@ -513,9 +579,13 @@ export async function findSonosPlayback(
   userId: string,
   playing: { trackUri: string; device: string },
 ) {
-  const stored = await storedSpotifyAccounts(userId)
-  const { result, accounts } = await withSonos(userId, (request, token) =>
-    sonosPlaying(request, token, playing, new Set(stored.keys())),
+  const { result, accounts, stored } = await withSonos(
+    userId,
+    async (request, token, stored) => ({
+      ...(await sonosPlaying(request, token, playing, new Set(stored.keys()))),
+      stored,
+    }),
+    { includeSpotifyAccounts: true },
   )
   await rememberSpotifyAccounts(userId, stored, accounts)
   return result
@@ -544,7 +614,7 @@ export async function loadSonosContent(
   await withSonos(
     userId,
     (request, token) => sonosContent(request, token, groupId, account, input),
-    REFUSED,
+    { refused: REFUSED },
   )
   return { done: true as const }
 }
@@ -557,7 +627,7 @@ export async function sendSonosCommand(
   await withSonos(
     userId,
     (request, token) => sonosCommand(request, token, groupId, command),
-    REFUSED,
+    { refused: REFUSED },
   )
   return { done: true as const }
 }
