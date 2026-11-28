@@ -3,7 +3,8 @@
 import { ReadButton } from '@/components/read-button'
 import { useQuery } from '@tanstack/react-query'
 import { AlbumPlaylistsSchema } from '@repo/schemas/tracks'
-import { Notice } from '@repo/ui/components/ds/feedback'
+import { Notice, State } from '@repo/ui/components/ds/feedback'
+import { List } from '@repo/ui/components/ds/list-row'
 import { Section } from '@repo/ui/components/ds/facts'
 import { formatCount } from '@repo/ui/lib/format'
 import { useConfig } from './providers'
@@ -15,8 +16,16 @@ import {
   useAddToPlaylist,
   usePlaylistAdditions,
 } from './playlist-addition-controls'
+import {
+  LibraryPlaylistMembershipRows,
+  MembershipsError,
+  useLibraryPlaylistMemberships,
+} from './item-playlists'
 
-/** The album's playlists, with the control that adds it to another. */
+/**
+ * The album's playlists: imported playlists, then the library playlists that
+ * hold it, with the control that adds it to a Spotify playlist.
+ */
 export default function AlbumPlaylists({ albumId }: { albumId: string }) {
   const { apiBaseUrl } = useConfig()
   const { additionList, playlists, following } = usePlaylistAdditions(
@@ -38,6 +47,9 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
     (playlists.data ?? []).map((playlist) => [playlist.id, playlist.name]),
   )
   const memberships = query.data?.playlists ?? []
+  const library = useLibraryPlaylistMemberships('albums', albumId)
+  const libraryPlaylists = library.data ?? []
+  const count = memberships.length + libraryPlaylists.length
   const adding = useAddToPlaylist(
     'album',
     albumId,
@@ -47,7 +59,7 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
   return (
     <Section
       title="Playlists"
-      note={memberships.length ? formatCount(memberships.length) : undefined}
+      note={count ? formatCount(count) : undefined}
       aside={adding.action}
     >
       {query.isError && (
@@ -62,7 +74,7 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
           Playlists unavailable.
         </Notice>
       )}
-      {query.data && (
+      {memberships.length > 0 && (
         <PlaylistPills
           playlists={memberships.map((playlist) => ({
             ...playlist,
@@ -72,6 +84,15 @@ export default function AlbumPlaylists({ albumId }: { albumId: string }) {
                 : playlist.name,
           }))}
         />
+      )}
+      {library.isError && <MembershipsError retry={() => library.refetch()} />}
+      {libraryPlaylists.length > 0 && (
+        <List compact>
+          <LibraryPlaylistMembershipRows playlists={libraryPlaylists} />
+        </List>
+      )}
+      {query.isSuccess && library.isSuccess && count === 0 && (
+        <State size="sm" title="In no playlist" />
       )}
       {adding.notice}
       {additionList.length > 0 && (

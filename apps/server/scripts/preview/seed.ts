@@ -3082,6 +3082,7 @@ async function main() {
   const libraryPlaylists = [
     { library: 'albums', name: 'Rainy Sundays', ids: albumIds.slice(0, 9) },
     { library: 'albums', name: 'Desert Island', ids: albumIds.slice(9, 14) },
+    { library: 'albums', name: 'Empty Shelf', ids: [] },
     {
       library: 'tracks',
       name: 'Late Shift',
@@ -3092,6 +3093,7 @@ async function main() {
       name: 'Road Trip',
       ids: visibleTrackIds.slice(24, 42),
     },
+    { library: 'tracks', name: 'Empty Crate', ids: [] },
     { library: 'films', name: 'Double Bills', ids: filmIds.slice(0, 6) },
     { library: 'films', name: 'Watch Next', ids: filmIds.slice(6, 10) },
     {
@@ -3149,7 +3151,7 @@ async function main() {
       type: 'playlist',
       library: playlist.library,
       name: playlist.name,
-      selection: { ids: playlist.ids },
+      ...(playlist.ids.length ? { selection: { ids: playlist.ids } } : {}),
     })),
     ...smartPlaylists.map((playlist) => ({ type: 'smart', ...playlist })),
   ].entries()) {
@@ -3162,22 +3164,27 @@ async function main() {
         updated_at = now() - make_interval(days => ${index + between(1, 20)}::int)
       where id = ${playlist.id}`)
   }
-  // Late Shift holds three tracks a second time.
-  const [lateShift] = await db
-    .select({ id: schema.libraryPlaylist.id })
-    .from(schema.libraryPlaylist)
-    .where(
-      and(
-        eq(schema.libraryPlaylist.library, 'tracks'),
-        eq(schema.libraryPlaylist.name, 'Late Shift'),
-      ),
-    )
-  if (lateShift)
-    await addLibraryPlaylistEntries(
-      lateShift.id,
-      { ids: visibleTrackIds.slice(3, 6) },
-      'again',
-    )
+  // Late Shift holds three tracks a second time and Rainy Sundays two albums.
+  const repeats: {
+    library: 'tracks' | 'albums'
+    name: string
+    ids: string[]
+  }[] = [
+    { library: 'tracks', name: 'Late Shift', ids: visibleTrackIds.slice(3, 6) },
+    { library: 'albums', name: 'Rainy Sundays', ids: albumIds.slice(1, 3) },
+  ]
+  for (const { library, name, ids } of repeats) {
+    const [playlist] = await db
+      .select({ id: schema.libraryPlaylist.id })
+      .from(schema.libraryPlaylist)
+      .where(
+        and(
+          eq(schema.libraryPlaylist.library, library),
+          eq(schema.libraryPlaylist.name, name),
+        ),
+      )
+    if (playlist) await addLibraryPlaylistEntries(playlist.id, { ids }, 'again')
+  }
   await db.execute(sql`update library_playlist_entry
     set added_at = now() - ((position * 7 + length(id)) % 300 || ' hours')::interval`)
 

@@ -607,7 +607,7 @@ function PlaylistPicker({
         aria-expanded={open}
         aria-controls={id}
         aria-label={
-          destination ? `Add to playlist · ${destination}` : undefined
+          destination ? `Add to Spotify playlist · ${destination}` : undefined
         }
         title={destination}
         feedback={
@@ -620,7 +620,7 @@ function PlaylistPicker({
           )
         }
       >
-        Add to playlist
+        Add to Spotify playlist
       </Button>
       <div
         id={id}
@@ -640,7 +640,7 @@ function PlaylistPicker({
       >
         <div className="dtl-pop-head">
           <h2 className="ds-pop-head" id={titleId}>
-            Add to playlist
+            Add to Spotify playlist
           </h2>
           <Button variant="ghost" size="xs" onClick={close}>
             Close

@@ -1,10 +1,16 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import {
+  albumBrowseFields,
+  filmBrowseFields,
   formatBrowseFilterValue,
   isTagBrowseField,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  trackBrowseFields,
+  type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
+import { subscriptionBrowseFieldsFor } from '@repo/schemas/subscriptions'
 import {
   CreateLibraryPlaylistSchema,
   LibraryPlaylistAdditionUndoneSchema,
@@ -18,7 +24,9 @@ import {
   LibraryPlaylistEntryRemovalSchema,
   LibraryPlaylistEntryRestoreInputSchema,
   LibraryPlaylistEntryRestoreSchema,
+  LibraryPlaylistEntriesPageSchema,
   LibraryPlaylistListQuerySchema,
+  LibraryPlaylistMembershipsSchema,
   LibraryPlaylistNameSchema,
   LibraryPlaylistPageSchema,
   type CreateLibraryPlaylist,
@@ -29,9 +37,11 @@ import {
   type LibraryPlaylistLibrary,
   type LibraryPlaylistListQuery,
   type LibraryPlaylistSelection,
+  type LibraryPlaylistView,
 } from '@repo/schemas/library-playlists'
-import { formatCount, formatItemCount } from '@repo/ui/lib/format'
+import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
+import type { Library } from './media-scope'
 
 type Noun = { one: string; other: string }
 
@@ -413,4 +423,233 @@ export function restoreLibraryPlaylistEntries(
       ),
     },
   )
+}
+
+/** PL-12: the playlist with its entry and repeat counts. */
+export function libraryPlaylistKey(id: string) {
+  return [...libraryPlaylistsKey, 'detail', id]
+}
+
+export function fetchLibraryPlaylist(
+  apiBaseUrl: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  return fetchApiData(apiBaseUrl, path(id), LibraryPlaylistDetailSchema, {
+    signal,
+  })
+}
+
+/** PL-12: a page of entries in position order. */
+export function libraryPlaylistEntriesKey(id: string) {
+  return [...libraryPlaylistsKey, 'entries', id]
+}
+
+export function fetchLibraryPlaylistEntries(
+  apiBaseUrl: string,
+  id: string,
+  page: number,
+  size: number,
+  signal?: AbortSignal,
+) {
+  return fetchApiData(
+    apiBaseUrl,
+    path(
+      id,
+      `/entries?${new URLSearchParams({ page: String(page), size: String(size) })}`,
+    ),
+    LibraryPlaylistEntriesPageSchema,
+    { signal },
+  )
+}
+
+/** PL-16: the playlists that hold one item. */
+export function libraryPlaylistMembershipsKey(
+  library: LibraryPlaylistLibrary,
+  itemId: string,
+) {
+  return [...libraryPlaylistsKey, 'memberships', library, itemId]
+}
+
+export function fetchLibraryPlaylistMemberships(
+  apiBaseUrl: string,
+  library: LibraryPlaylistLibrary,
+  itemId: string,
+  signal?: AbortSignal,
+) {
+  return fetchApiData(
+    apiBaseUrl,
+    `${base}/memberships?${new URLSearchParams({ library, itemId })}`,
+    LibraryPlaylistMembershipsSchema,
+    { signal },
+  )
+}
+
+/** PL-11: renames a playlist or smart playlist. */
+export function renameLibraryPlaylist(
+  apiBaseUrl: string,
+  id: string,
+  name: string,
+) {
+  return fetchApiData(apiBaseUrl, path(id), LibraryPlaylistDetailSchema, {
+    method: 'PATCH',
+    body: JSON.stringify({ name: LibraryPlaylistNameSchema.parse(name) }),
+  })
+}
+
+const NotFoundErrorSchema = z.object({ statusCode: z.literal(404) })
+
+/** Whether a read failed because the playlist no longer exists. */
+export function playlistNotFound(error: unknown) {
+  return NotFoundErrorSchema.safeParse(error).success
+}
+
+/** "Created “Name”." after New playlist on the Playlists page. */
+export function createdPlaylistText(playlistName: string) {
+  return `Created ${quote(playlistName)}.`
+}
+
+/** "Deleted “Name”." after Delete playlist. */
+export function deletedPlaylistText(playlistName: string) {
+  return `Deleted ${quote(playlistName)}.`
+}
+
+/** "3 tracks are in this playlist more than once." */
+export function repeatsNoticeText(
+  library: LibraryPlaylistLibrary,
+  repeats: number,
+) {
+  return `${libraryItemCount(library, repeats)} ${repeats === 1 ? 'is' : 'are'} in this playlist more than once.`
+}
+
+/** "Removed 3 repeats from “Name”." after Remove repeats. */
+export function removedRepeatsText(removed: number, playlistName: string) {
+  return `Removed ${formatItemCount(removed, { one: 'repeat', other: 'repeats' })} from ${quote(playlistName)}.`
+}
+
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
+
+/** The library's items as a heading: "Tracks". */
+export function libraryItemsTitle(library: LibraryPlaylistLibrary) {
+  return capital(libraryPlaylistNouns[library].other)
+}
+
+/** The action that filters Browse by a playlist: "Filter tracks". */
+export function filterItemsLabel(library: LibraryPlaylistLibrary) {
+  return `Filter ${libraryPlaylistNouns[library].other}`
+}
+
+/** A playlist's header facts: "52 tracks · Updated 2026-11-28 · Library". */
+export function libraryPlaylistFacts(playlist: {
+  library: LibraryPlaylistLibrary
+  entryCount: number | null
+  updatedAt: string
+}) {
+  return [
+    libraryItemCount(playlist.library, playlist.entryCount ?? 0),
+    `Updated ${formatDate(playlist.updatedAt)}`,
+    'Library',
+  ]
+}
+
+const fieldLabel = (fields: readonly BrowseField[], key: string) =>
+  fields.find((field) => field.key === key)?.label ?? key
+
+/** The creator column of a library's entries, named as its Browse names it. */
+export const libraryCreatorLabels: Record<LibraryPlaylistLibrary, string> = {
+  albums: fieldLabel(albumBrowseFields, 'artist'),
+  tracks: fieldLabel(trackBrowseFields, 'artist'),
+  films: fieldLabel(filmBrowseFields, 'director'),
+  subscriptions: fieldLabel(
+    subscriptionBrowseFieldsFor('subscriptions'),
+    'source',
+  ),
+  mixes: fieldLabel(subscriptionBrowseFieldsFor('mixes'), 'source'),
+}
+
+/** The libraries whose items the player can play. */
+export type PlayableLibrary = Extract<
+  LibraryPlaylistLibrary,
+  'albums' | 'tracks'
+>
+
+export function playableLibrary(
+  library: LibraryPlaylistLibrary,
+): PlayableLibrary | null {
+  return library === 'albums' || library === 'tracks' ? library : null
+}
+
+/** The playlist library of the library a page is scoped to; Artists has none. */
+export function playlistLibraryForView(
+  view: Library,
+): LibraryPlaylistLibrary | null {
+  switch (view) {
+    case 'album':
+      return 'albums'
+    case 'track':
+      return 'tracks'
+    case 'film':
+      return 'films'
+    case 'subscription':
+      return 'subscriptions'
+    case 'mix':
+      return 'mixes'
+    case 'artist':
+      return null
+  }
+}
+
+/** Each library's Browse page. */
+export const libraryBrowsePaths: Record<LibraryPlaylistLibrary, string> = {
+  albums: '/albums',
+  tracks: '/tracks',
+  films: '/films',
+  subscriptions: '/subscriptions',
+  mixes: '/mixes',
+}
+
+/** PL-18: the Browse filter on one library playlist. */
+export function libraryPlaylistFilter(
+  id: string,
+  mode: BrowseFilter['mode'] = 'required',
+): BrowseFilter {
+  return { field: LIBRARY_PLAYLIST_FILTER_FIELD, value: id, mode }
+}
+
+/** Filter tracks: the library's Browse with only this playlist's filter. */
+export function libraryPlaylistFilterHref(
+  library: LibraryPlaylistLibrary,
+  id: string,
+) {
+  return `${libraryBrowsePaths[library]}?${new URLSearchParams({
+    filters: JSON.stringify([libraryPlaylistFilter(id)]),
+  })}`
+}
+
+/** The URL parameter that names the smart playlist a Browse view came from. */
+export const SMART_PLAYLIST_PARAM = 'smartPlaylist'
+
+/** A smart playlist opened: its library's Browse with its view and its ID. */
+export function smartPlaylistHref(
+  library: LibraryPlaylistLibrary,
+  id: string,
+  view: LibraryPlaylistView,
+) {
+  const params = new URLSearchParams(view)
+  params.set(SMART_PLAYLIST_PARAM, id)
+  return `${libraryBrowsePaths[library]}?${params}`
+}
+
+/** The Browse chip of a playlist filter: "Playlist: Name", or "Playlist: removed". */
+export function libraryPlaylistChipValue(name: string | null) {
+  return name ?? 'removed'
+}
+
+/** The library a page is scoped to for each playlist library. */
+export const playlistLibraryViews: Record<LibraryPlaylistLibrary, Library> = {
+  albums: 'album',
+  tracks: 'track',
+  films: 'film',
+  subscriptions: 'subscription',
+  mixes: 'mix',
 }

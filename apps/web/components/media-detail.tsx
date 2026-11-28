@@ -90,6 +90,7 @@ import { FieldProvenance } from './field-provenance'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { AlbumHeaderPlay } from './detail-play'
 import { DetailMore } from './detail-more'
+import { useItemAddToPlaylist } from './item-playlists'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { WatchedToggle } from './watched-button'
 import { SimilarItems } from './similar-items'
@@ -650,6 +651,10 @@ export default function MediaDetail({
       : EMPTY_VALUE
   }
   useDetailPerformance(mediaType === 'album' ? 'albums' : undefined, id, detail)
+  const addToPlaylist = useItemAddToPlaylist('albums', {
+    id,
+    title: detail.data?.title ?? '',
+  })
   const subject = mediaType === 'album' ? 'album' : 'film'
   if (!detail.data)
     return (
@@ -697,6 +702,7 @@ export default function MediaDetail({
         : []
   }
   const [country] = textValues('country')
+  const playlistActions = item.mediaType === 'album' && item.inLibrary !== false
 
   const header = (
     <DetailHeader
@@ -812,10 +818,12 @@ export default function MediaDetail({
               Identify film
             </Button>
           )}
+          {playlistActions && addToPlaylist.action}
           <DetailActionsSpacer />
           <DetailMore
             crumb={{ title: item.title }}
             items={[
+              ...(playlistActions ? [addToPlaylist.menuItem] : []),
               {
                 label: 'Edit',
                 workspaceHref: tabHref('edit'),

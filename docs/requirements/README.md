@@ -7,6 +7,7 @@ These requirements describe supported behavior for film and album libraries, inc
 - [Browsing and navigation](browsing.md)
 - [Search, filtering and sorting](search.md)
 - [Albums, music and playlists](music.md)
+- [Library playlists and smart playlists](playlists.md)
 - [ISRC and TIDAL matching](isrc-and-tidal.md)
 - [Sonovault identifiers and track facts](sonovault.md)
 - [Track tags](track-tags.md)

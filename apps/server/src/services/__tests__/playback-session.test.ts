@@ -182,6 +182,61 @@ describe('syncPlaybackSession', () => {
     })
   })
 
+  it('saves and returns a session playing a library playlist', () => {
+    const state = SavedPlaybackSchema.parse({
+      ...savedPlayback('From a playlist'),
+      currentFromSource: true,
+      source: {
+        descriptor: {
+          type: 'library-playlist',
+          id: 'fixture-playlist',
+          library: 'tracks',
+        },
+        label: 'Late Shift',
+        href: '/playlists/library/fixture-playlist',
+        length: 52,
+        startIndex: 3,
+        kind: 'list',
+        remaining: [[4, 52]],
+        played: ['3:0'],
+        skipped: [],
+        exhausted: [3],
+        upcoming: [],
+        history: [],
+      },
+    })
+    const { stored } = syncPlaybackSession(
+      held(first, 5000),
+      input(first, { revision: 3, state }),
+      4000,
+    )
+    expect(PlaybackSessionRecordSchema.parse(stored)).toEqual(stored)
+    const { result } = syncPlaybackSession(
+      stored,
+      input(second, { revision: 0 }),
+      4500,
+    )
+    expect(result.state?.source?.descriptor).toEqual({
+      type: 'library-playlist',
+      id: 'fixture-playlist',
+      library: 'tracks',
+    })
+    // Only playable libraries can be a source.
+    expect(
+      SavedPlaybackSchema.safeParse({
+        ...state,
+        source: {
+          ...state.source,
+          descriptor: {
+            type: 'library-playlist',
+            id: 'fixture-playlist',
+            library: 'films',
+          },
+        },
+      }).success,
+    ).toBe(false)
+  })
+
   it('rejects a stale write and returns the current state', () => {
     const before = held(first, 5000)
     const { stored, result } = syncPlaybackSession(

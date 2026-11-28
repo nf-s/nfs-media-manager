@@ -5,6 +5,7 @@ import {
   TagLevelsParamSchema,
   type BrowseField,
   type BrowseFilter,
+  type BrowseRange,
   type BrowseValues,
   type TagLevel,
   type TagLevels,
@@ -231,6 +232,37 @@ export function formatFieldValue(
   if (field.format === undefined || field.format === 'number')
     return formatCount(value)
   return formatBrowseValue(field, value)
+}
+
+function rangeText(
+  range: BrowseRange,
+  fields: readonly BrowseField[],
+  bound: (field: BrowseField | undefined, value: number) => string,
+) {
+  const field = fields.find((field) => field.key === range.field)
+  const side = (value: number | undefined) =>
+    value === undefined ? '*' : bound(field, value)
+  return `${field?.label ?? range.field}: ${side(range.min)} to ${side(range.max)}${range.includeMissing ? ' + missing' : ''}`
+}
+
+/** A Tracks range as its chip reads: "Duration: 3:00 to *". */
+export function trackRangeLabel(
+  range: BrowseRange,
+  fields: readonly BrowseField[],
+) {
+  return rangeText(range, fields, (field, value) =>
+    field ? formatFieldValue(field, value) : String(value),
+  )
+}
+
+/** An Albums or Films range as its chip reads: dates in ISO form, other values as entered. */
+export function mediaRangeLabel(
+  range: BrowseRange,
+  fields: readonly BrowseField[],
+) {
+  return rangeText(range, fields, (field, value) =>
+    field?.type === 'date' ? formatBrowseValue(field, value) : String(value),
+  )
 }
 
 /** The sorted field's value for a card's meta line, such as `Added 2026-11-16`. */

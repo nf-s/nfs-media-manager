@@ -141,13 +141,16 @@ async function render(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  client.setQueryData(['playlists', 'browse', '', [], 'name', 'asc', 1], {
-    items: [summary],
-    page: 1,
-    size: 100,
-    hasMore: false,
-    totalCount: 1,
-  })
+  client.setQueryData(
+    ['playlists', 'browse', 'tracks', '', [], 'name', 'asc', 1],
+    {
+      items: [summary],
+      page: 1,
+      size: 100,
+      hasMore: false,
+      totalCount: 1,
+    },
+  )
   client.setQueryData(['playlist', playlist.id], playlist)
   const view = playlistEntryView(
     new URLSearchParams(
@@ -479,20 +482,26 @@ test('the Tracks browser opens the same drawer and filters itself by the playlis
 
 test('playlist data columns share sortable headers and column controls', async () => {
   const html = await render('')
+  for (const label of ['Playlist', 'Type', 'Source', 'Tracks', 'Updated'])
+    assert.match(
+      html,
+      new RegExp(`<button[^>]*title="Sort by ${label}"[^>]*>${label}`),
+    )
+  assert.match(html, /> Columns</)
+  // Every column the page had stays available under Columns.
   for (const label of [
-    'Playlist',
     'Owner',
-    'Tracks',
     'In album library',
     'Albums',
     'Duration',
     'Imported',
     'Schedule',
     'Last checked',
+    'Added to library',
+    'Description',
+    'Next import',
   ])
-    assert.match(html, new RegExp(`<button[^>]*>[^<]*${label}`))
-  assert.match(html, /> Columns</)
-  assert.match(html, />Source<\/label>/)
+    assert.match(html, new RegExp(`/>${label}</label>`))
 })
 
 test('playlist entries expose sorting for every data column', async () => {

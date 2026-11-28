@@ -19,6 +19,7 @@ const DetailTargetSchema = z.object({
     'film',
     'track',
     'playlist',
+    'library-playlist',
     'subscription',
     'mix',
     'collection',
@@ -143,6 +144,7 @@ function legacyDetail(pathname: string, params: URLSearchParams) {
       'playlistGaps',
       'coverage',
     ],
+    'library-playlist': [],
     collection: ['collection', 'tab'],
     artist: [],
     person: [],
@@ -214,6 +216,7 @@ export const detailKindNames: Record<DetailTarget['kind'], string> = {
   film: 'Film',
   track: 'Track',
   playlist: 'Playlist',
+  'library-playlist': 'Playlist',
   subscription: 'Subscription',
   mix: 'Mix',
   collection: 'Collection',
@@ -257,6 +260,7 @@ const kindLibraries: Record<DetailTarget['kind'], LibraryPage> = {
   film: libraries.films,
   track: libraries.tracks,
   playlist: libraries.playlists,
+  'library-playlist': libraries.playlists,
   subscription: libraries.subscriptions,
   mix: libraries.mixes,
   collection: libraries.collections,
@@ -355,6 +359,8 @@ export function detailPageHref(target: DetailTarget, view?: URLSearchParams) {
     return detailLocation('/tags', params)
   }
   const id = encodeURIComponent(target.id)
+  if (target.kind === 'library-playlist')
+    return detailLocation(`/playlists/library/${id}`, new URLSearchParams(view))
   if (target.kind === 'collection') {
     const params = new URLSearchParams(view)
     if (target.mediaType === 'album') params.set('mediaType', 'album')

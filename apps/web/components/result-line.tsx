@@ -18,6 +18,7 @@ import {
   TableSelectionResult,
 } from '@repo/ui/components/ui/table'
 import { undoneResultText } from '@/utils/library-playlists'
+import { useDetailInspector } from './detail-inspector-context'
 
 /** A library playlist an action changed, for **Open playlist**. */
 export type ResultPlaylist = { id: string; library: LibraryPlaylistLibrary }
@@ -64,8 +65,8 @@ export const useReportResult = () => useContext(ReportContext)
  * Holds the latest result line for the whole shell, so any surface can
  * report: Browse bars, row menus inside details, the player. The line is
  * drawn by the open drawer's or inspector's slot, else the page's.
- * `onOpenPlaylist` opens a library playlist; without it Open playlist is
- * left out.
+ * `onOpenPlaylist` opens a library playlist; without it Open playlist opens
+ * the playlist in the detail inspector, and is left out where there is none.
  */
 export function ResultLineProvider({
   children,
@@ -76,6 +77,17 @@ export function ResultLineProvider({
 }) {
   const [line, setLine] = useState<Line | null>(null)
   const [hosts, setHosts] = useState<Host[]>([])
+  const inspector = useDetailInspector()
+  const openInInspector = inspector?.open
+  const openPlaylist = useMemo(
+    () =>
+      onOpenPlaylist ??
+      (openInInspector
+        ? (playlist: ResultPlaylist) =>
+            openInInspector({ kind: 'library-playlist', id: playlist.id })
+        : undefined),
+    [onOpenPlaylist, openInInspector],
+  )
   const report = useCallback(
     (next: ResultReport) =>
       setLine((current) => ({
@@ -111,9 +123,9 @@ export function ResultLineProvider({
       register,
       update,
       dismiss,
-      openPlaylist: onOpenPlaylist,
+      openPlaylist,
     }),
-    [line, active, register, update, dismiss, onOpenPlaylist],
+    [line, active, register, update, dismiss, openPlaylist],
   )
   return (
     <ReportContext.Provider value={report}>

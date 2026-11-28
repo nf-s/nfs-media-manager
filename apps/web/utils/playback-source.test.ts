@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { AlbumDetailSchema } from '@repo/schemas/media'
+import { AlbumDetailSchema, AlbumListItemSchema } from '@repo/schemas/media'
 import { SavedSourceSchema } from '@repo/schemas/playback'
 import { TIDAL_SIMILAR_LIMIT } from '@repo/schemas/tidal'
 import {
@@ -12,6 +12,7 @@ import {
   albumTrackView,
   createAlbumPlaybackSource,
   createBrowsePlaybackSource,
+  createLibraryPlaylistPlaybackSource,
   createPendingTrackBrowseSource,
   createPlaylistPlaybackSource,
   createSimilarTracksPlaybackSource,
@@ -609,4 +610,103 @@ test('source page caches stay bounded while concurrent reads share a request', a
   assert.equal(network.mock.callCount(), 5)
   await source.load(0)
   assert.equal(network.mock.callCount(), 6)
+})
+
+test('a library playlist plays its entries in position order and restores from its descriptor', async (t) => {
+  const calls: URL[] = []
+  const albumRow = AlbumListItemSchema.parse(album)
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    calls.push(url)
+    if (url.pathname === '/api/v1/library-playlists/tracks-pl/entries')
+      return response({
+        library: 'tracks',
+        page: Number(url.searchParams.get('page')),
+        size: browsePageSize,
+        hasMore: false,
+        items: [
+          {
+            id: 'entry-101',
+            position: 101,
+            addedAt: '2026-11-01T00:00:00.000Z',
+            item: track,
+          },
+        ],
+      })
+    if (url.pathname === '/api/v1/library-playlists/albums-pl/entries')
+      return response({
+        library: 'albums',
+        page: 1,
+        size: browsePageSize,
+        hasMore: false,
+        items: [
+          {
+            id: 'entry-1',
+            position: 1,
+            addedAt: '2026-11-01T00:00:00.000Z',
+            item: albumRow,
+          },
+        ],
+      })
+    return response(album)
+  })
+  const tracks = createLibraryPlaylistPlaybackSource({
+    apiBaseUrl: options.apiBaseUrl,
+    id: 'tracks-pl',
+    library: 'tracks',
+    href: '/playlists/library/tracks-pl',
+    label: 'Late Shift',
+    total: 101,
+    startIndex: 0,
+  })
+  assert.deepEqual(tracks.descriptor, {
+    type: 'library-playlist',
+    id: 'tracks-pl',
+    library: 'tracks',
+  })
+  assert.equal(tracks.kind, 'list')
+  assert.deepEqual(
+    (await tracks.load(100)).map((item) => item.title),
+    ['Fixture track'],
+  )
+  assert.equal(calls[0]?.searchParams.get('page'), '2')
+  assert.equal(calls[0]?.searchParams.get('size'), String(browsePageSize))
+  assert.deepEqual(await tracks.load(101), [])
+
+  const albums = createLibraryPlaylistPlaybackSource({
+    apiBaseUrl: options.apiBaseUrl,
+    id: 'albums-pl',
+    library: 'albums',
+    href: '/playlists/library/albums-pl',
+    label: 'Rainy Sundays',
+    total: 1,
+    startIndex: 0,
+  })
+  assert.equal(albums.kind, 'album')
+  // An album entry plays the album's stored tracks.
+  assert.ok((await albums.load(0)).length > 0)
+  assert.ok(
+    calls.some((url) => url.pathname === '/api/v1/albums/fixture-album'),
+  )
+
+  // A saved session with the source reads back and resumes from it.
+  assert.ok(tracks.descriptor)
+  const saved = SavedSourceSchema.parse({
+    descriptor: tracks.descriptor,
+    label: tracks.label,
+    href: tracks.href,
+    length: tracks.length,
+    startIndex: 100,
+    kind: tracks.kind,
+    remaining: [],
+    played: [],
+    skipped: [],
+    exhausted: [],
+    upcoming: [],
+    history: [],
+  })
+  const restored = restorePlaybackSource(options.apiBaseUrl, saved)
+  assert.deepEqual(restored.descriptor, tracks.descriptor)
+  assert.equal(restored.startIndex, 100)
+  assert.equal((await restored.load(100))[0]?.title, 'Fixture track')
 })

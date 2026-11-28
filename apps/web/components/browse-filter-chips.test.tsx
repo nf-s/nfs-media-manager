@@ -2,12 +2,18 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { albumBrowseFields, trackBrowseFields } from '@repo/schemas/browse'
+import {
+  albumBrowseFields,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  trackBrowseFields,
+} from '@repo/schemas/browse'
 import {
   subscriptionBrowseFields,
   mixBrowseFields,
 } from '@repo/schemas/subscriptions'
 import { BrowseFilterChips } from './browse-controls'
+import { ConfigContext } from './providers'
+import { libraryPlaylistKey } from '@/utils/library-playlists'
 
 // Only the fields the catalog lookup reads; the rest of a summary is unused.
 const catalog = [{ id: 'fixture-ratings', displayName: 'Fixture Ratings' }]
@@ -79,4 +85,73 @@ test('chips for the Edition, Has track tags, Live state and Has recording fields
     chips([{ field: 'hasRecording', value: 'No' }], mixBrowseFields),
     /Any · Has recording: No/,
   )
+})
+
+function playlistChips(
+  filters: Parameters<typeof BrowseFilterChips>[0]['filters'],
+  setup: (client: QueryClient) => void,
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  setup(client)
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ConfigContext.Provider
+          value={{
+            appUrl: 'http://localhost:3001',
+            apiBaseUrl: 'http://localhost:4001',
+          }}
+        >
+          <BrowseFilterChips
+            filters={filters}
+            fields={trackBrowseFields}
+            onChange={() => {}}
+          />
+        </ConfigContext.Provider>
+      </QueryClientProvider>,
+    )
+  } finally {
+    client.clear()
+  }
+}
+
+test('a library playlist filter is the chip Playlist: Name, in its mode', () => {
+  const html = playlistChips(
+    [{ field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'pl-1', mode: 'required' }],
+    (client) =>
+      client.setQueryData(libraryPlaylistKey('pl-1'), {
+        id: 'pl-1',
+        library: 'tracks',
+        type: 'playlist',
+        name: 'Late Shift',
+        entryCount: 3,
+        view: null,
+        updatedAt: '2026-11-28T00:00:00.000Z',
+        createdAt: '2026-11-01T00:00:00.000Z',
+        repeatCount: 0,
+      }),
+  )
+  assert.match(html, /Required · Playlist: Late Shift/)
+  assert.match(html, /title="Cycle Any \/ Required \/ Excluded"/)
+  assert.match(html, /aria-label="Remove playlist filter"/)
+  assert.doesNotMatch(html, /pl-1|libraryPlaylist/)
+})
+
+test('a filter on a deleted playlist reads Playlist: removed', () => {
+  const html = playlistChips(
+    [{ field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'pl-gone', mode: 'any' }],
+    (client) =>
+      client
+        .getQueryCache()
+        .build(client, { queryKey: libraryPlaylistKey('pl-gone') })
+        .setState({
+          status: 'error',
+          error: Object.assign(new Error('Playlist not found'), {
+            statusCode: 404,
+          }),
+        }),
+  )
+  assert.match(html, /Any · Playlist: removed/)
 })

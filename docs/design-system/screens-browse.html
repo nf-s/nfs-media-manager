@@ -322,7 +322,7 @@
                     [
                       'Playlists',
                       'Playlist · three timestamp columns',
-                      'Playlist · Source · Tracks · Length · Updated · Sync',
+                      'Playlist · Type · Source · Tracks · Saved view · Updated',
                     ],
                   ],
                 ),
@@ -453,19 +453,38 @@
                   `<div class="ds-table-wrap">${table(
                     [
                       { h: 'Playlist', sort: '', c: (r) => D.idCell(r) },
-                      { h: 'Source', c: (r) => D.provider('spotify') },
+                      {
+                        h: 'Type',
+                        sort: '',
+                        c: (r, i) => (i === 2 ? 'Smart playlist' : 'Playlist'),
+                      },
+                      {
+                        h: 'Source',
+                        sort: '',
+                        c: (r, i) =>
+                          i === 0 ? D.provider('spotify') : 'Library',
+                      },
                       { h: 'Tracks', sort: '', end: true, c: (r) => r.tracks },
                       {
-                        h: 'Length',
-                        sort: '',
-                        end: true,
-                        c: (r) => r.duration,
+                        h: 'Saved view',
+                        c: (r, i) =>
+                          i === 2
+                            ? '<span title="Tags: Ambient · Added, newest first">Tags: Ambient · Added, newest first</span>'
+                            : D.EMPTY,
                       },
                       { h: 'Updated', sort: 'descending', c: (r) => r.updated },
                       {
-                        h: 'Sync',
+                        h: '',
+                        w: 44,
                         c: (r, i) =>
-                          i === 2 ? status('failed') : status('done'),
+                          i === 0
+                            ? ''
+                            : btn('', {
+                                icon: 'more',
+                                variant: 'ghost',
+                                size: 'xs',
+                                aria: `More actions for ${r.title}`,
+                              }),
                       },
                     ],
                     PL,
@@ -473,7 +492,8 @@
               )}</div>` +
               g.rules([
                 '<b>Playlists, Tags, People, Channels and Collections</b> use the same toolbar and the same table. Their items open in the shared drawer, including tags, which use a separate dialog today.',
-                '<b>One Updated date and one Sync status</b> replace the three timestamp columns in Playlists.',
+                '<b>One Updated date</b> replaces the three timestamp columns in Playlists. Imported playlists, playlists made in the app and smart playlists share one table: Type says which, Source says where it came from, and Saved view writes out a smart playlist’s view. The other imported-playlist columns are under Columns.',
+                '<b>New playlist</b> is in the page head. A row made in the app has a three-dot menu: Open in Browse for a smart playlist, Rename and Delete.',
               ]),
           },
           {

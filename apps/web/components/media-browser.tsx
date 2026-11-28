@@ -176,6 +176,7 @@ import {
   browseSearchHref,
   columnOrderParam,
   hasCustomColumnOrder,
+  mediaRangeLabel,
   orderColumns,
   orderFields,
   parseColumnOrder,
@@ -1310,14 +1311,7 @@ function MediaBrowse({
         filterHref={(filter) => browseFilterHref(browseHref, [filter])}
       />
       {ranges.map((range) => {
-        const field = fields.find((field) => field.key === range.field)
-        const bound = (value: number | undefined) =>
-          value === undefined
-            ? '*'
-            : field?.type === 'date'
-              ? formatBrowseValue(field, value)
-              : value
-        const label = `${field?.label ?? range.field}: ${bound(range.min)} to ${bound(range.max)}${range.includeMissing ? ' + missing' : ''}`
+        const label = mediaRangeLabel(range, fields)
         return (
           <BrowseFilterPill
             key={range.field}

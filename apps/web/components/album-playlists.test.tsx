@@ -157,15 +157,64 @@ test('album playlists list memberships without a duplicate track library section
   assert.doesNotMatch(html, /href="\/tracks\/track-1"/)
 })
 
-test('add to playlist offers only playlists that accept albums, even with no memberships', () => {
+test('library playlists join the album’s playlists with their counts', () => {
+  const html = render([
+    [['spotify-account'], account],
+    [['playlist-additions', 'album-1'], noAdditions],
+    [
+      ['album-playlists', 'album-1'],
+      AlbumPlaylistsSchema.parse({
+        playlists: [{ id: 'p1', name: 'Synthetic mix', trackCount: 2 }],
+        tracks: [],
+      }),
+    ],
+    [
+      ['library-playlists', 'memberships', 'albums', 'album-1'],
+      [
+        {
+          id: 'lp-1',
+          library: 'albums',
+          type: 'playlist',
+          name: 'Rainy Sundays',
+          entryCount: 18,
+          view: null,
+          updatedAt: '2026-11-20T00:00:00.000Z',
+        },
+      ],
+    ],
+  ])
+  assert.match(html, /<h3>Playlists<\/h3><span class="ds-muted">2<\/span>/)
+  assert.match(
+    html,
+    /href="[^"]*inspect=[^"]*library-playlist[^"]*lp-1[^"]*"[^>]*>Rainy Sundays<\/a>|href="\/playlists\/library\/lp-1"[^>]*>Rainy Sundays<\/a>/,
+  )
+  assert.match(html, /<span class="ds-row-by">Library · 18 albums<\/span>/)
+  assert.ok(html.indexOf('Synthetic mix') < html.indexOf('Rainy Sundays'))
+  assert.equal((html.match(/<h3>/g) ?? []).length, 1)
+  assert.doesNotMatch(html, /In no playlist/)
+})
+
+test('Add to Spotify playlist offers only playlists that accept albums, even with no memberships', () => {
   const html = render([
     [['spotify-account'], account],
     [pickerKey, pickerPage()],
     [['playlist-additions', 'album-1'], noAdditions],
     [['album-playlists', 'album-1'], empty],
+    [['library-playlists', 'memberships', 'albums', 'album-1'], []],
   ])
-  assert.match(html, /No playlist memberships\./)
-  assert.match(html, /popoverTarget="[^"]+"[^>]*>.*Add to playlist</)
+  assert.match(
+    html,
+    /<div class="ds-state" data-size="sm" role="status"><strong>In no playlist<\/strong><\/div>/,
+  )
+  assert.doesNotMatch(html, /No playlist memberships/)
+  assert.match(
+    html,
+    /popoverTarget="[^"]+" aria-expanded="false" aria-controls="[^"]+">Add to Spotify playlist</,
+  )
+  assert.match(
+    html,
+    /<h2 class="ds-pop-head" id="[^"]+">Add to Spotify playlist</,
+  )
   assert.match(html, /popover="auto" role="region"[^>]*class="ds-pop dtl-pop"/)
   assert.match(
     html,
@@ -229,7 +278,7 @@ test('a connection without playlist changes offers to allow them instead', () =>
   ])
   assert.match(html, /The Spotify connection does not allow playlist changes\./)
   assert.match(html, />Allow playlist changes</)
-  assert.doesNotMatch(html, /Add to playlist/)
+  assert.doesNotMatch(html, /Add to Spotify playlist/)
 })
 
 test('without a Spotify connection the control links to the playlist import page', () => {
@@ -242,7 +291,7 @@ test('without a Spotify connection the control links to the playlist import page
     html,
     /href="\/imports\/spotify-playlists\?mediaType=album">Connect Spotify/,
   )
-  assert.doesNotMatch(html, /Add to playlist|Allow playlist changes/)
+  assert.doesNotMatch(html, /Add to Spotify playlist|Allow playlist changes/)
 })
 
 test('additions show queued, adding with progress, added and failed states', () => {

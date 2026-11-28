@@ -53,6 +53,7 @@ import { ListeningTrend } from './listening-trend'
 import { canMergeLastfmTrack, TrackMergePanel } from './track-merge'
 import { TrackDuplicateNotice } from './track-duplicate-group'
 import { DetailMore } from './detail-more'
+import { useItemAddToPlaylist } from './item-playlists'
 import { LibraryRecordChanges } from './library-changes'
 import {
   TrackAlbumNotices,
@@ -619,6 +620,8 @@ function TrackDetailContent({
   })
   const [merging, setMerging] = useState(false)
   const albumAddition = useTrackAlbumAddition(item)
+  const addToPlaylist = useItemAddToPlaylist('tracks', item)
+  const inLibrary = item.inLibrary !== false
   function openResolvedTrack(targetId: string, tab?: 'sources') {
     if (onMerged) onMerged(targetId, tab)
     else
@@ -663,19 +666,21 @@ function TrackDetailContent({
               title={item.title}
               inLibrary={item.inLibrary ?? true}
             />
+            {inLibrary && addToPlaylist.action}
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: item.title }}
-              items={
-                canMergeLastfmTrack(item)
+              items={[
+                ...(inLibrary ? [addToPlaylist.menuItem] : []),
+                ...(canMergeLastfmTrack(item)
                   ? [
                       {
                         label: 'Merge with Spotify track',
                         onSelect: () => setMerging(true),
                       },
                     ]
-                  : []
-              }
+                  : []),
+              ]}
             />
           </>
         }

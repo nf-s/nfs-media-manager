@@ -172,6 +172,12 @@ export const SourceDescriptorSchema = z.discriminatedUnion('type', [
     id: z.string().min(1).max(200),
     params: LinkSchema,
   }),
+  /** A playlist made in the app, played from its entries in position order. */
+  z.object({
+    type: z.literal('library-playlist'),
+    id: z.string().min(1).max(200),
+    library: z.enum(['albums', 'tracks']),
+  }),
   /** An opened album, or the chosen rows of its track table. */
   z.object({
     type: z.literal('album'),

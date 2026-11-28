@@ -10,7 +10,7 @@ import {
 } from '@repo/schemas/browse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
-import { formatFieldValue, type BrowseFilterHref } from '@/utils/browse-items'
+import { trackRangeLabel, type BrowseFilterHref } from '@/utils/browse-items'
 import { matchingTitleFilters } from '@/utils/browse-suggestions'
 import {
   clearCreatorScope,
@@ -209,14 +209,7 @@ export function TrackBrowseFilterChips({
         }
       />
       {ranges.map((range) => {
-        const field = fields.find((field) => field.key === range.field)
-        const bound = (value: number | undefined) =>
-          value === undefined
-            ? '*'
-            : field
-              ? formatFieldValue(field, value)
-              : String(value)
-        const label = `${field?.label ?? range.field}: ${bound(range.min)} to ${bound(range.max)}${range.includeMissing ? ' + missing' : ''}`
+        const label = trackRangeLabel(range, fields)
         return (
           <BrowseFilterPill
             key={range.field}

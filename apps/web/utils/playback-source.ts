@@ -16,9 +16,11 @@ import {
   type PlaylistEntry,
   type TrackListItem,
 } from '@repo/schemas/tracks'
+import { LibraryPlaylistEntriesPageSchema } from '@repo/schemas/library-playlists'
 import type { SavedSource } from '@repo/schemas/playback'
 import { fetchApiData } from './api'
 import { detailPageHref } from './detail-inspector'
+import type { PlayableLibrary } from './library-playlists'
 import {
   albumPlayable,
   libraryTrackPlayable,
@@ -334,6 +336,60 @@ export function createPlaylistPlaybackSource({
   }
 }
 
+/**
+ * Reads a library playlist's entries in position order: a track playlist's
+ * tracks, or an album playlist's albums with each album's stored tracks.
+ */
+export function createLibraryPlaylistPlaybackSource({
+  apiBaseUrl,
+  id,
+  library,
+  href,
+  label,
+  total,
+  startIndex,
+  initialItem,
+}: Omit<SourceOptions, 'params'> & {
+  id: string
+  library: PlayableLibrary
+  initialItem?: AlbumListItem | TrackListItem
+}): PlaybackSource {
+  const albums = albumLoader(apiBaseUrl)
+  const pages = cached(PAGE_CACHE_SIZE, async (page: number) => {
+    const result = await fetchApiData(
+      apiBaseUrl,
+      `/api/v1/library-playlists/${encodeURIComponent(id)}/entries?${new URLSearchParams(
+        { page: String(page), size: String(browsePageSize) },
+      )}`,
+      LibraryPlaylistEntriesPageSchema,
+    )
+    if (result.library === 'albums' || result.library === 'tracks')
+      return result.items.map(({ item }) => item)
+    return []
+  })
+  return {
+    label,
+    href,
+    length: total,
+    startIndex,
+    kind: library === 'albums' ? 'album' : 'list',
+    descriptor: { type: 'library-playlist', id, library },
+    async load(index) {
+      if (!validIndex(index, total)) return []
+      const item =
+        index === startIndex && initialItem
+          ? initialItem
+          : (await pages(Math.floor(index / browsePageSize) + 1))[
+              index % browsePageSize
+            ]
+      if (!item) return []
+      if (item.mediaType === 'album') return albums(item.id)
+      const playable = libraryTrackPlayable(item)
+      return playable ? [playable] : []
+    },
+  }
+}
+
 /** An opened album already has its stored tracks, so needs no further reads. */
 export function createAlbumPlaybackSource(
   album: AlbumDetail,
@@ -403,6 +459,16 @@ export function restorePlaybackSource(
       descriptor.tracks,
       saved.startIndex,
     )
+  if (descriptor.type === 'library-playlist')
+    return createLibraryPlaylistPlaybackSource({
+      apiBaseUrl,
+      id: descriptor.id,
+      library: descriptor.library,
+      href,
+      label,
+      total: saved.length,
+      startIndex: saved.startIndex,
+    })
   const options = {
     apiBaseUrl,
     params: new URLSearchParams(descriptor.params),

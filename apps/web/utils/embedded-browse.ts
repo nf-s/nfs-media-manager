@@ -42,6 +42,8 @@ export const browseStateKeys: readonly string[] = [
   'discoverySourceScope',
   'sortBy',
   'direction',
+  // The smart playlist the view was opened from (PL-43).
+  'smartPlaylist',
   'view',
   'density',
   'overlays',

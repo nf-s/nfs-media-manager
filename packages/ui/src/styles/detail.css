@@ -318,6 +318,12 @@
 .dtl-back {
   justify-self: start;
 }
+/* A standalone page's result line stays in view at the foot of the page. */
+.dtl-page > .sec-selectbar {
+  position: sticky;
+  bottom: 0;
+  min-width: 0;
+}
 @media (max-width: 700px) {
   .dtl-page {
     padding: var(--ds-5) var(--ds-6) var(--ds-8);

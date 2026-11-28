@@ -185,7 +185,7 @@
         }) +
         albumTags +
         section('Playlists', pills(['Late shift', 'Kitchen'], md), {
-          aside: linkBtn('Add to playlist'),
+          aside: linkBtn('Add to Spotify playlist'),
         }) +
         section('Details', facts(albumDetails), {
           aside: linkBtn('All fields'),
@@ -348,7 +348,7 @@
           ['4.4', 'Discogs'],
         ]),
         { flush: true },
-      )}${albumTags}${section('Playlists', pills(['Late shift', 'Kitchen'], md), { aside: linkBtn('Add to playlist') })}${section('Details', kv(albumDetails))}${section('Sources', sourceSummary, { aside: linkBtn('Manage') })}</div></div></div>`
+      )}${albumTags}${section('Playlists', pills(['Late shift', 'Kitchen'], md), { aside: linkBtn('Add to Spotify playlist') })}${section('Details', kv(albumDetails))}${section('Sources', sourceSummary, { aside: linkBtn('Manage') })}</div></div></div>`
 
       /* Track, artist, film */
       const trackOverview =
@@ -646,6 +646,46 @@
         ),
       })
 
+      /* A playlist made in the app: its entries in position order */
+      const libraryPlaylist = D.inspector({
+        crumbs: ['Playlists', 'Night bus'],
+        head: D.detailHead({
+          item: { kind: 'playlist', art: null, title: 'Night bus' },
+          kind: 'Playlist',
+          facts: ['52 tracks', 'Updated 2026-11-28', 'Library'],
+          play: D.play('header'),
+          actions: D.headActions({
+            lead: btn('Filter tracks', { size: 'md' }),
+          }),
+        }),
+        body:
+          D.notice('3 tracks are in this playlist more than once.', {
+            action: `<span class="ds-actions">${btn('Remove repeats', { size: 'xs' })}</span>`,
+          }) +
+          section(
+            'Tracks',
+            `<div class="ds-table-wrap">${table(
+              [
+                {
+                  h: '#',
+                  w: 40,
+                  end: true,
+                  c: (r, i) => `<span class="ds-muted">${i + 1}</span>`,
+                },
+                { h: 'Title', c: (r) => D.idCell(r) },
+                { h: 'Artists', c: (r) => D.link(r.by) },
+                {
+                  h: 'Added to playlist',
+                  w: 110,
+                  c: (r, i) => `2026-11-${String(27 - i).padStart(2, '0')}`,
+                },
+              ],
+              D.data.TRACKS.slice(0, 6),
+            )}</div>`,
+            { flush: true },
+          ),
+      })
+
       D.page({
         title: 'Detail screens',
         lede: 'The drawer and the standalone page for each resource. Every one uses the same header, the same tab order and the same section components.',
@@ -835,11 +875,12 @@
             title: 'Lists inside a detail',
             body:
               `<p>An artist's Albums and Tracks tabs, a person's Films and a channel's or show's items are the Browse list for that item, with the Browse toolbar and the filter line under it. A playlist's tracks have the same toolbar with the count at its end.</p>` +
-              `<div class="g-inspectors">${inspectorFrame(artistAlbums, 640)}${inspectorFrame(artistTracks, 640)}${inspectorFrame(playlistTracks, 640)}</div>` +
+              `<div class="g-inspectors">${inspectorFrame(artistAlbums, 640)}${inspectorFrame(artistTracks, 640)}${inspectorFrame(playlistTracks, 640)}${inspectorFrame(libraryPlaylist, 640)}</div>` +
               g.rules([
                 '<b>The same toolbar as Browse:</b> search, sort picker, direction, view switch and the Filters button, in that order. The Filters button is short: the icon and the number of filters that are on.',
                 '<b>The filter line</b> holds the active filters and Clear all, then the count and Show in Albums, Show in Tracks or the like, which opens the same result on the Browse page. The count and the link are on this line, not in the toolbar, and the line is there with no filter on.',
                 '<b>Lists with only a count,</b> such as a playlist’s tracks, keep the count at the end of the toolbar and have no filter line.',
+                '<b>A playlist made in the app</b> lists its entries in position order in one table: position, the title with Play, Add to queue and More, the creator and Added to playlist. Filter tracks is in the header, Rename and Delete playlist under More, and a notice offers Remove repeats when an item is in it more than once.',
                 '<b>Grid size and columns</b> are in the Filters drawer, as on Browse pages.',
               ]),
           },

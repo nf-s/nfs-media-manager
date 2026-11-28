@@ -105,7 +105,8 @@ function render(
 
 test('a matched track offers only writable imported playlists', () => {
   const html = render()
-  assert.match(html, /Add to playlist/)
+  assert.match(html, />Add to Spotify playlist</)
+  assert.doesNotMatch(html, />Add to playlist</)
   assert.match(html, /Synthetic mix/)
   assert.doesNotMatch(html, /Followed list/)
 })
@@ -123,7 +124,7 @@ test('track permission and connection controls retain Tracks context', () => {
   )
   assert.doesNotMatch(
     render({ ...account, playlistChanges: false }),
-    /Add to playlist/,
+    /Add to Spotify playlist/,
   )
   assert.match(
     render({ ...account, connected: false }),

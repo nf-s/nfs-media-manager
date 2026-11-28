@@ -20,6 +20,7 @@ import {
 } from '@/utils/provider-ratings'
 import { useDetailView } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
+import { ResultLineSlot } from './result-line'
 
 /** Artwork for a detail header; the fallback icon stands in when there is none. */
 export function DetailArt({
@@ -174,6 +175,7 @@ export function DetailPage({
         </Link>
       </Button>
       {children}
+      <ResultLineSlot place="content" />
     </div>
   )
 }

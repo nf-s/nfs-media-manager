@@ -24,6 +24,7 @@ import {
 import MediaDetail from './media-detail'
 import TrackDetail from './track-detail'
 import PlaylistDetail from './playlist-detail'
+import { LibraryPlaylistDetail } from './library-playlist-detail'
 import { CollectionEntries } from './collection-detail'
 import { SubscriptionItemDetails } from './subscription-item-details'
 import {
@@ -69,6 +70,7 @@ const labels = {
   film: 'Film details',
   track: 'Track details',
   playlist: 'Playlist details',
+  'library-playlist': 'Playlist details',
   subscription: 'Subscription details',
   mix: 'Mix details',
   collection: 'Film collection details',
@@ -359,6 +361,8 @@ function InspectorContent({
         tag && <TagDetail id={tag.id} mediaType={tag.mediaType} />
       ) : target.kind === 'playlist' ? (
         <PlaylistInspectorContent id={target.id} {...options.playlist} />
+      ) : target.kind === 'library-playlist' ? (
+        <LibraryPlaylistDetail id={target.id} />
       ) : target.kind === 'collection' ? (
         <CollectionEntries
           id={target.id}

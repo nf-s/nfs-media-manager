@@ -5,6 +5,8 @@ import {
   parseLibraryBrowseView,
   savedViewParams,
 } from '../src/library-playlists'
+import { SourceDescriptorSchema } from '../src/playback'
+import { PlaybackDiagnosticInputSchema } from '../src/playback-diagnostics'
 
 describe('library playlist views', () => {
   it('writes a legacy saved view as the Albums Browse parameters', () => {
@@ -77,5 +79,31 @@ describe('library playlist views', () => {
     expect(LibraryPlaylistSelectionSchema.safeParse({ ids: [] }).success).toBe(
       false,
     )
+  })
+})
+
+describe('library playlist playback', () => {
+  it('is a source a saved session and a diagnostic can name', () => {
+    expect(
+      SourceDescriptorSchema.parse({
+        type: 'library-playlist',
+        id: 'fixture-playlist',
+        library: 'albums',
+      }),
+    ).toEqual({
+      type: 'library-playlist',
+      id: 'fixture-playlist',
+      library: 'albums',
+    })
+    expect(
+      SourceDescriptorSchema.safeParse({
+        type: 'library-playlist',
+        id: 'fixture-playlist',
+        library: 'mixes',
+      }).success,
+    ).toBe(false)
+    expect(
+      PlaybackDiagnosticInputSchema.shape.source.parse('library-playlist'),
+    ).toBe('library-playlist')
   })
 })

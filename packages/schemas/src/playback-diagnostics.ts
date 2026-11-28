@@ -37,7 +37,15 @@ export const PlaybackDiagnosticInputSchema = z
       .optional(),
     target: z.enum(['local', 'spotify', 'sonos']).optional(),
     source: z
-      .enum(['none', 'similar-tracks', 'browse', 'playlist', 'album', 'other'])
+      .enum([
+        'none',
+        'similar-tracks',
+        'browse',
+        'playlist',
+        'library-playlist',
+        'album',
+        'other',
+      ])
       .optional(),
     spotifyTrackId: z.string().regex(spotifyIdPattern).optional(),
     sourceItemId: z

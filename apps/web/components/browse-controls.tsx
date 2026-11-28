@@ -25,11 +25,14 @@ import { Select } from '@repo/ui/components/ds/toolbar'
 import {
   BrowseRangeSchema,
   formatBrowseFilterValue,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
   type BrowseField,
   type BrowseRange,
   type BrowseFilter,
 } from '@repo/schemas/browse'
 import { FilterPanelSection } from './browse-filter-panel'
+import { useLibraryPlaylistNames } from './library-playlist-name'
+import { libraryPlaylistChipValue } from '@/utils/library-playlists'
 import {
   gridDensities,
   type BrowseView,
@@ -330,20 +333,27 @@ export function BrowseFilterChips({
         : filter.mode === 'exclude'
           ? 'any'
           : 'required'
-    const fieldLabel =
-      fields.find((field) => field.key === filter.field)?.label ?? filter.field
-    const value = storedTagNames
-      ? filter.value
-      : filter.field === 'provider'
-        ? providerName(filter.value)
-        : formatBrowseFilterValue(filter.field, filter.value)
+    const playlist = filter.field === LIBRARY_PLAYLIST_FILTER_FIELD
+    const fieldLabel = playlist
+      ? 'Playlist'
+      : (fields.find((field) => field.key === filter.field)?.label ??
+        filter.field)
+    const value = playlist
+      ? 'playlist'
+      : storedTagNames
+        ? filter.value
+        : filter.field === 'provider'
+          ? providerName(filter.value)
+          : formatBrowseFilterValue(filter.field, filter.value)
     return (
       <BrowseFilterPill
         key={`${filter.field}:${filter.value}`}
         mode={filterPillMode(filter.mode)}
         title="Cycle Any / Required / Excluded"
         destination={
-          filterHref ? { href: filterHref(filter), label: value } : undefined
+          filterHref && !playlist
+            ? { href: filterHref(filter), label: value }
+            : undefined
         }
         onActivate={() =>
           onChange(
@@ -355,10 +365,25 @@ export function BrowseFilterChips({
         onRemove={() => onChange(filters.filter((_, i) => i !== index))}
         removeLabel={`Remove ${value} filter`}
       >
-        {label} · {fieldLabel}: {value}
+        {playlist ? (
+          <>
+            {label} · {fieldLabel}:{' '}
+            <LibraryPlaylistChipName id={filter.value} />
+          </>
+        ) : (
+          <>
+            {label} · {fieldLabel}: {value}
+          </>
+        )}
       </BrowseFilterPill>
     )
   })
+}
+
+/** A playlist filter's value: the playlist's name, or "removed". */
+function LibraryPlaylistChipName({ id }: { id: string }) {
+  const name = useLibraryPlaylistNames([id])(id)
+  return name === undefined ? '…' : libraryPlaylistChipValue(name)
 }
 
 export function RangeEditor({

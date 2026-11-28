@@ -16,6 +16,11 @@ import {
   type useTrackAlbumAddition,
 } from './track-album-notices'
 import TrackAppearanceSection from './track-playlist-additions'
+import {
+  LibraryPlaylistMembershipRows,
+  MembershipsError,
+  useLibraryPlaylistMemberships,
+} from './item-playlists'
 
 const relationships = {
   album: { label: 'Album', icon: Disc3 },
@@ -44,6 +49,9 @@ export default function TrackAppearances({
       ),
   })
   const rows = query.data?.items ?? []
+  // Library playlists join the playlists the track appears in.
+  const memberships = useLibraryPlaylistMemberships('tracks', item.id)
+  const playlists = memberships.data ?? []
   const primary = rows.find(
     (row) =>
       row.kind === 'album' &&
@@ -77,7 +85,7 @@ export default function TrackAppearances({
     <>
       <TrackAppearanceSection track={item} onResolved={onResolved}>
         {albumAddition.exactId && recordedRelease}
-        {rows.length > 0 && (
+        {(rows.length > 0 || playlists.length > 0) && (
           <List compact>
             {rows.map((row) => {
               const { label, icon: Icon } = relationships[row.relationship]
@@ -115,11 +123,17 @@ export default function TrackAppearances({
                 />
               )
             })}
+            <LibraryPlaylistMembershipRows playlists={playlists} />
           </List>
         )}
-        {query.isPending && <Skeleton />}
+        {(query.isPending || memberships.isPending) && <Skeleton />}
+        {memberships.isError && (
+          <MembershipsError retry={() => memberships.refetch()} />
+        )}
         {query.isSuccess &&
+          memberships.isSuccess &&
           rows.length === 0 &&
+          playlists.length === 0 &&
           !(recordedRelease && albumAddition.exactId) && (
             <p className="ds-help">No known appearances.</p>
           )}

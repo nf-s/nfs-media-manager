@@ -2,6 +2,21 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   additionResultText,
+  createdPlaylistText,
+  deletedPlaylistText,
+  filterItemsLabel,
+  libraryCreatorLabels,
+  libraryItemsTitle,
+  libraryPlaylistChipValue,
+  libraryPlaylistFacts,
+  libraryPlaylistFilterHref,
+  playableLibrary,
+  playlistLibraryForView,
+  playlistNotFound,
+  removedRepeatsText,
+  removedResultText,
+  repeatsNoticeText,
+  smartPlaylistHref,
   allPresent,
   createButtonLabel,
   createdResultText,
@@ -168,4 +183,107 @@ test('a taken name is the 409 the API sends', () => {
   )
   assert.equal(playlistNameTaken({ statusCode: 422 }), false)
   assert.equal(playlistNameTaken(new Error('Request failed')), false)
+})
+
+test('a playlist’s header facts, Filter action and section are in its library’s noun', () => {
+  assert.deepEqual(
+    libraryPlaylistFacts({
+      library: 'tracks',
+      entryCount: 52,
+      updatedAt: '2026-11-28T09:30:00.000Z',
+    }),
+    ['52 tracks', 'Updated 2026-11-28', 'Library'],
+  )
+  assert.equal(
+    libraryPlaylistFacts({
+      library: 'albums',
+      entryCount: 1,
+      updatedAt: '2026-11-28T09:30:00.000Z',
+    })[0],
+    '1 album',
+  )
+  assert.equal(filterItemsLabel('tracks'), 'Filter tracks')
+  assert.equal(filterItemsLabel('mixes'), 'Filter mixes')
+  assert.equal(libraryItemsTitle('subscriptions'), 'Items')
+  assert.deepEqual(libraryCreatorLabels, {
+    albums: 'Artists',
+    tracks: 'Artists',
+    films: 'Directors',
+    subscriptions: 'Channel',
+    mixes: 'Show',
+  })
+})
+
+test('repeats, removals, creation and deletion are reported in PL-53 and PL-51 words', () => {
+  assert.equal(
+    repeatsNoticeText('tracks', 3),
+    '3 tracks are in this playlist more than once.',
+  )
+  assert.equal(
+    repeatsNoticeText('albums', 1),
+    '1 album is in this playlist more than once.',
+  )
+  assert.equal(
+    removedRepeatsText(3, 'Late shift'),
+    'Removed 3 repeats from “Late shift”.',
+  )
+  assert.equal(
+    removedRepeatsText(1, 'Late shift'),
+    'Removed 1 repeat from “Late shift”.',
+  )
+  assert.equal(
+    removedResultText('Harbour Lights', 'Late shift'),
+    'Removed “Harbour Lights” from “Late shift”.',
+  )
+  assert.equal(createdPlaylistText('Late shift'), 'Created “Late shift”.')
+  assert.equal(deletedPlaylistText('Late shift'), 'Deleted “Late shift”.')
+})
+
+test('Filter tracks opens Browse with only the playlist, required', () => {
+  const url = new URL(libraryPlaylistFilterHref('tracks', 'pl-1'), 'http://x')
+  assert.equal(url.pathname, '/tracks')
+  assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? ''), [
+    { field: 'libraryPlaylist', value: 'pl-1', mode: 'required' },
+  ])
+  assert.deepEqual([...url.searchParams.keys()], ['filters'])
+  assert.equal(
+    new URL(libraryPlaylistFilterHref('mixes', 'pl-2'), 'http://x').pathname,
+    '/mixes',
+  )
+})
+
+test('a smart playlist opens its library’s Browse with its view and its ID', () => {
+  const url = new URL(
+    smartPlaylistHref('albums', 'smart-1', {
+      q: 'rain',
+      sortBy: 'title',
+      direction: 'asc',
+    }),
+    'http://x',
+  )
+  assert.equal(url.pathname, '/albums')
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    q: 'rain',
+    sortBy: 'title',
+    direction: 'asc',
+    smartPlaylist: 'smart-1',
+  })
+})
+
+test('the playlist chip names the playlist or says it was removed', () => {
+  assert.equal(libraryPlaylistChipValue('Late shift'), 'Late shift')
+  assert.equal(libraryPlaylistChipValue(null), 'removed')
+  assert.equal(playlistNotFound({ statusCode: 404 }), true)
+  assert.equal(playlistNotFound({ statusCode: 500 }), false)
+})
+
+test('the Playlists page takes its library from the page scope', () => {
+  assert.equal(playlistLibraryForView('track'), 'tracks')
+  assert.equal(playlistLibraryForView('album'), 'albums')
+  assert.equal(playlistLibraryForView('film'), 'films')
+  assert.equal(playlistLibraryForView('subscription'), 'subscriptions')
+  assert.equal(playlistLibraryForView('mix'), 'mixes')
+  assert.equal(playlistLibraryForView('artist'), null)
+  assert.equal(playableLibrary('albums'), 'albums')
+  assert.equal(playableLibrary('films'), null)
 })
