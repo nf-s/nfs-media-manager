@@ -45,6 +45,13 @@ beforeAll(async () => {
     select 'list-' || n, 'Fixture playlist ' || n, 'playlist' from generate_series(1, 100) n;
     insert into playlist_item (playlist_id, media_item_id, position)
     select 'list-' || (1 + n % 100), 'track-' || n, n from generate_series(1, 20000) n;
+    -- Two library playlists for bulk member writes: one empty, one holding
+    -- eight thousand tracks, each linked to an album.
+    insert into playlist (id, name, kind) values
+      ('list-bulk', 'Fixture bulk playlist', 'playlist'),
+      ('list-full', 'Fixture full playlist', 'playlist');
+    insert into playlist_item (playlist_id, media_item_id, position)
+    select 'list-full', 'track-' || n, n from generate_series(1, 8000) n;
     insert into tag (id, media_type, name, kind)
     select 'tag-' || n, 'album', 'Fixture tag ' || n, 'genre' from generate_series(1, 200) n;
     insert into tag_identity (media_type, normalized_name, kind, tag_id)
@@ -332,6 +339,29 @@ const writes: { table: string; one: string; many: string }[] = [
     one: "insert into playlist_item (playlist_id, media_item_id) values ('list-1', 'album-1')",
     many: `delete from playlist_item where playlist_id in (select 'list-' || n from (${bulk(10)}) s)`,
   },
+  // A library playlist's visibility to its artists is decided once per
+  // playlist, so a bulk write of its members is linear in them.
+  {
+    table: 'playlist_item',
+    one: "insert into playlist_item (playlist_id, media_item_id) values ('list-bulk', 'track-1')",
+    many: `insert into playlist_item (playlist_id, media_item_id, position)
+      select 'list-bulk', 'track-' || n, n from (${bulk(8000)}) s`,
+  },
+  {
+    table: 'playlist_item',
+    one: "delete from playlist_item where playlist_id = 'list-full' and media_item_id = 'track-1'",
+    many: "delete from playlist_item where playlist_id = 'list-full'",
+  },
+  {
+    table: 'library_track',
+    one: "update library_track set album_media_item_id = null where media_item_id = 'track-2'",
+    many: `update library_track set album_media_item_id = null where media_item_id in (select 'track-' || n from (${bulk(8000)}) s)`,
+  },
+  {
+    table: 'track',
+    one: "delete from track where id = 'entry-2'",
+    many: `delete from track where id in (select 'entry-' || n from (${bulk(8000)}) s)`,
+  },
   {
     table: 'provider_reference',
     one: "insert into provider_reference (id, media_item_id, provider, reference_type, external_id) values ('reference-new', 'album-1', 'spotify', 'album', 'fixture-new')",
@@ -447,4 +477,41 @@ it('bounds the device triggers of a one-row and a bulk write on each table', asy
   } finally {
     await session.end()
   }
+})
+
+it('drains a thousand track marks through changes calls that each answer within the budget', async () => {
+  const { readDeviceChanges } = await import('@/services/device-feed')
+  const SeqSchema = z.object({ seq: z.coerce.number() })
+  const { seq } = SeqSchema.parse(
+    (await pool.query('select max(seq) as seq from device_row')).rows[0],
+  )
+  await pool.query(`delete from device_dirty;
+    insert into device_dirty (entity, id)
+    select 'track', 'track-' || n from generate_series(1, 1000) n`)
+  let since = seq
+  let pending = true
+  let calls = 0
+  const times: number[] = []
+  const started = performance.now()
+  while (pending) {
+    calls += 1
+    expect(calls).toBeLessThanOrEqual(20)
+    const call = performance.now()
+    const page = await readDeviceChanges({
+      epoch: 'fixture-epoch',
+      since,
+      limit: 2000,
+    })
+    const ms = performance.now() - call
+    times.push(Math.round(ms))
+    if (page.reset) throw new Error('The changes were reset')
+    // The 2 second render budget, and one small batch past it.
+    expect(ms, `call ${calls}`).toBeLessThanOrEqual(2_500)
+    since = page.seq
+    pending = page.pending
+  }
+  process.stdout.write(
+    `device changes, 1000 track marks drained by ${calls} calls (${times.join(', ')} ms) in ${Math.round(performance.now() - started)} ms\n`,
+  )
+  await pool.query("delete from device_row where entity = 'track'")
 })

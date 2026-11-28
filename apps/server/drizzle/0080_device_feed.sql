@@ -60,9 +60,11 @@ CREATE INDEX "lastfm_track_link_device_name_idx" ON "lastfm_track_link" USING bt
 -- row differs (in `o` and `n`, the old and new rows as jsonb), and the rows
 -- it marks, read from `c`, the old and new versions of the differing rows as
 -- `c.r`. Every statement runs through EXECUTE so it is planned for the rows
--- of this write.
+-- of this write. The planner overestimates the rules' rows many times over,
+-- so a bulk write would spend about a second compiling the statement: JIT is
+-- off.
 CREATE FUNCTION mark_device_dirty() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
   key_list text;
@@ -118,16 +120,30 @@ DECLARE
   -- The artists of every member of a playlist without a source that no
   -- unchanged member keeps visible: its visibility may have changed with the
   -- members `changed(playlist_id, media_item_id)` selected by %s. Followed by
-  -- member_artists and the subquery's alias.
+  -- member_artists and the subquery's alias. Each playlist is decided once:
+  -- its members are read until one outside `changed` keeps it visible. The
+  -- changed members are looked up in one jsonb object, built once, whose
+  -- keys are searched by bisection, so the cost is linear in the members
+  -- read. A join or NOT IN against `changed`, whose size the planner cannot
+  -- see, can be planned as a scan of it for every member: their square.
   playlist_visibility constant text := $r$SELECT * FROM (WITH changed AS MATERIALIZED (%s),
+      playlists AS MATERIALIZED (
+        SELECT p.id FROM (SELECT DISTINCT playlist_id FROM changed) f
+        JOIN {s}.playlist p ON p.id = f.playlist_id AND p.kind = 'playlist' AND p.source IS NULL),
+      changed_keys AS MATERIALIZED (
+        SELECT coalesce(jsonb_object_agg(length(playlist_id) || ':' || playlist_id || media_item_id, true), '{}') AS keys
+        FROM changed),
+      kept AS MATERIALIZED (
+        SELECT playlists.id FROM playlists CROSS JOIN changed_keys CROSS JOIN LATERAL (
+          SELECT 1 FROM {s}.playlist_item other
+          WHERE other.playlist_id = playlists.id
+            AND NOT changed_keys.keys ? (length(other.playlist_id) || ':' || other.playlist_id || other.media_item_id)
+            AND $r$ || format(shows_playlist, 'other.media_item_id') || $r$
+          LIMIT 1) found),
       members AS MATERIALIZED (
-        SELECT member.media_item_id FROM (SELECT DISTINCT playlist_id FROM changed) f
-        JOIN {s}.playlist p ON p.id = f.playlist_id AND p.kind = 'playlist' AND p.source IS NULL
-        JOIN {s}.playlist_item member ON member.playlist_id = p.id
-        WHERE NOT EXISTS (
-          SELECT 1 FROM {s}.playlist_item other WHERE other.playlist_id = p.id
-            AND other.media_item_id NOT IN (SELECT changed.media_item_id FROM changed WHERE changed.playlist_id = p.id)
-            AND $r$ || format(shows_playlist, 'other.media_item_id') || $r$))
+        SELECT member.media_item_id FROM playlists
+        JOIN {s}.playlist_item member ON member.playlist_id = playlists.id
+        WHERE NOT EXISTS (SELECT 1 FROM kept WHERE kept.id = playlists.id))
     $r$;
   -- The memberships of the item in column %L of `c.r`, as `changed`.
   holding_playlists constant text := $r$SELECT pi.playlist_id, pi.media_item_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>%L$r$;
@@ -439,7 +455,9 @@ BEGIN
     END LOOP;
   END LOOP;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'media_runtime') THEN
-    GRANT SELECT, DELETE ON device_dirty TO media_runtime;
+    -- The render marks again the rows a deadline left unresolved.
+    GRANT SELECT, INSERT, DELETE ON device_dirty TO media_runtime;
+    GRANT USAGE ON SEQUENCE device_dirty_key_seq TO media_runtime;
     GRANT SELECT, INSERT, UPDATE, DELETE ON device_row TO media_runtime;
     GRANT SELECT, UPDATE ON device_feed_state TO media_runtime;
     GRANT USAGE ON SEQUENCE device_row_seq TO media_runtime;

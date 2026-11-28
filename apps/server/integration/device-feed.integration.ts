@@ -103,12 +103,12 @@ let deviceKey = ''
  */
 function stubRenderer() {
   const rows = new Map<DeviceEntity, Map<string, JsonValue>>()
-  const hooks: { beforeRender?: () => Promise<void> } = {}
+  const hooks: { beforeRender?: (ids: readonly string[]) => Promise<void> } = {}
   // IDs whose render throws, as a payload its schema rejects does.
   const failing = new Set<string>()
   const renderer: DeviceFeedRenderer = {
     async render(entity, ids) {
-      await hooks.beforeRender?.()
+      await hooks.beforeRender?.(ids)
       if (ids.some((id) => failing.has(id)))
         throw new Error('A fixture row cannot be rendered')
       const published = rows.get(entity) ?? new Map<string, JsonValue>()
@@ -702,6 +702,89 @@ describe('device feed', () => {
     ).toEqual({ written: 1, complete: true, failed: {} })
   })
 
+  it('renders the marks after a failing row the deadline left unresolved', async () => {
+    const stub = stubRenderer()
+    const ids = [1, 2, 3, 4, 5].map(fixtureId)
+    for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+    await sweepAll(stub.renderer)
+    const stored = await storedSeq('album_plays', fixtureId(1))
+
+    // Every row changes; the first one marked cannot be rendered now.
+    for (const [n, id] of ids.entries())
+      stub.set('album_plays', id, plays(n, 100))
+    stub.failing.add(fixtureId(1))
+    await mark('album_plays', ...ids)
+    // Each render ends past the deadline, so a failing pair is not split.
+    stub.hooks.beforeRender = () =>
+      new Promise((resolve) => setTimeout(resolve, 150))
+    const results: Awaited<ReturnType<typeof renderDirtyDeviceRows>>[] = []
+    for (let run = 0; run < 5; run += 1)
+      results.push(
+        await renderDirtyDeviceRows(stub.renderer, {
+          wait: true,
+          deadline: Date.now() + 100,
+          limit: 2,
+        }),
+      )
+    // A failing pair is marked again behind the others, which render next;
+    // a failing row read alone is set aside and counted.
+    expect(results).toEqual([
+      { written: 0, busy: false, failed: {} },
+      { written: 2, busy: false, failed: {} },
+      { written: 0, busy: false, failed: {} },
+      { written: 2, busy: false, failed: {} },
+      { written: 0, busy: false, failed: { album_plays: 1 } },
+    ])
+    expect(await markCount()).toBe(0)
+    expect(await storedSeq('album_plays', fixtureId(1))).toEqual(stored)
+    stub.hooks.beforeRender = undefined
+    stub.failing.clear()
+    expect(
+      await sweepDeviceFeed(stub.renderer, { wait: true, deadline: later() }),
+    ).toEqual({ written: 1, complete: true, failed: {} })
+  })
+
+  it('keeps the marks of a failing part the deadline left unresolved, and answers changes', async () => {
+    const stub = stubRenderer()
+    setDeviceFeedRenderer(stub.renderer)
+    const ids = [1, 2, 3].map(fixtureId)
+    for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+    await sweepAll(stub.renderer)
+    const { epoch, seq } = await feedState()
+    const before = await storedRows()
+
+    for (const [n, id] of ids.entries())
+      stub.set('album_plays', id, plays(n, 100))
+    stub.failing.add(fixtureId(2))
+    await mark('album_plays', ...ids)
+    // The first render fails after the two seconds `changes` renders for.
+    stub.hooks.beforeRender = async () => {
+      stub.hooks.beforeRender = undefined
+      await new Promise((resolve) => setTimeout(resolve, 2_100))
+    }
+    const page = await changesPage({ epoch, since: seq })
+    expect(page).toMatchObject({ reset: false, rows: [], pending: true })
+    expect(await storedRows()).toEqual(before)
+    expect(await markCount()).toBe(3)
+
+    // A run with time to split the part renders the others, and sets aside
+    // and counts only the failing row.
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toEqual({
+      published: true,
+      renderFailures: { album_plays: 1 },
+    })
+    expect(await markCount()).toBe(0)
+    expect(await storedSeq('album_plays', fixtureId(2))).toEqual(
+      before.find((row) => row.id === fixtureId(2)),
+    )
+    const after = await changesPage({ epoch, since: seq })
+    if (after.reset) throw new Error('The changes were reset')
+    expect(after.rows.map((row) => row.id).sort()).toEqual([
+      fixtureId(1),
+      fixtureId(3),
+    ])
+  })
+
   it('starts a new epoch when the row version changes', async () => {
     const stub = stubRenderer()
     stub.set('album_plays', 'album-1', plays(1))
@@ -712,6 +795,8 @@ describe('device feed', () => {
     await pool.query('update device_feed_state set row_version = $1', [
       DEVICE_ROW_VERSION + 1,
     ])
+    // Marks made before the restart, which the sweep after it covers.
+    await mark('album_plays', 'album-1', 'album-2')
     expect(await feedState()).toMatchObject({
       ready: false,
       epoch: before.epoch,
@@ -730,9 +815,55 @@ describe('device feed', () => {
     expect(after.epoch).not.toBe(before.epoch)
     expect(after.minSeq).toBeGreaterThanOrEqual(before.seq)
     expect(after.seq).toBeGreaterThan(before.seq)
+    expect(await markCount()).toBe(0)
     expect(
       await changesPage({ epoch: before.epoch, since: before.seq }),
     ).toEqual({ reset: true })
+  })
+
+  it('drains a backlog of marks through changes calls that each answer within the budget', async () => {
+    const stub = stubRenderer()
+    setDeviceFeedRenderer(stub.renderer)
+    const count = 1000
+    const ids = Array.from({ length: count }, (_, n) => fixtureId(n + 1))
+    for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+    await sweepAll(stub.renderer)
+    const { epoch, seq } = await feedState()
+    for (const [n, id] of ids.entries())
+      stub.set('album_plays', id, plays(n, 100))
+    await pool.query(
+      `insert into device_dirty (entity, id) select 'album_plays', id from unnest($1::text[]) id`,
+      [ids],
+    )
+    // 15 ms a row: a batch of 200 renders for 3 seconds, past the 2 second
+    // budget of `changes`.
+    stub.hooks.beforeRender = (renderIds) =>
+      new Promise((resolve) => setTimeout(resolve, 15 * renderIds.length))
+    const seen = new Set<string>()
+    let since = seq
+    let pending = true
+    let calls = 0
+    while (pending) {
+      calls += 1
+      expect(calls).toBeLessThanOrEqual(15)
+      const started = Date.now()
+      const page = await changesPage({ epoch, since, limit: 2000 })
+      const elapsed = Date.now() - started
+      if (page.reset) throw new Error('The changes were reset')
+      expect(elapsed, `call ${calls}`).toBeLessThanOrEqual(2_400)
+      expect(
+        page.rows.length,
+        `call ${calls} renders some marks`,
+      ).toBeGreaterThan(0)
+      for (const row of page.rows) seen.add(row.id)
+      since = page.seq
+      pending = page.pending
+    }
+    expect(seen.size).toBe(count)
+    expect(await markCount()).toBe(0)
+    process.stdout.write(
+      `device feed, ${count} marks drained by ${calls} changes calls\n`,
+    )
   })
 
   it('rests a day after a completed sweep and continues one under way in every run', async () => {

@@ -793,4 +793,88 @@ describe('the device feed against real edits', () => {
     })
     expect(await playRows()).toEqual(before)
   })
+
+  it('renders the rows rendered with a failing row in a later run when the deadline left them unresolved', async () => {
+    const { renderDirtyDeviceRows, sweepDeviceFeed } =
+      await import('@/services/device-feed')
+    const device = await renderer()
+    const ids = ['track-bright', 'track-cold', 'track-echo']
+    const TitlesSchema = z.array(
+      z.object({ id: z.string(), title: z.string() }),
+    )
+    const storedTitles = async () =>
+      TitlesSchema.parse(
+        (
+          await pool.query(
+            `select id, payload->'item'->>'title' as title from device_row
+              where entity = 'track' and id = any($1) order by id`,
+            [ids],
+          )
+        ).rows,
+      )
+    const before = await storedTitles()
+    await query(
+      "update media_item set title = title || ' (edit)' where id = any($1)",
+      [ids],
+    )
+    // A slow track render that fails for any part holding one of the tracks.
+    const failing = (delayMs: number) => ({
+      ...device,
+      async render(entity: DeviceEntity, renderIds: readonly string[]) {
+        const rendered = await device.render(entity, renderIds)
+        if (entity !== 'track') return rendered
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        if (renderIds.includes('track-cold'))
+          throw new Error('A fixture row cannot be rendered')
+        return rendered
+      },
+    })
+    const trackMarks = async () =>
+      z
+        .array(z.object({ id: z.string() }))
+        .parse(
+          (
+            await pool.query(
+              "select distinct id from device_dirty where entity = 'track' order by id",
+            )
+          ).rows,
+        )
+        .map((row) => row.id)
+
+    // The track render fails past the deadline: no track is set aside or
+    // written, and each keeps its mark.
+    const first = await renderDirtyDeviceRows(failing(300), {
+      wait: false,
+      deadline: Date.now() + 200,
+      limit: 200,
+    })
+    expect(first).toMatchObject({ busy: false, failed: {} })
+    expect(await storedTitles()).toEqual(before)
+    expect(await trackMarks()).toEqual(expect.arrayContaining(ids))
+
+    // A later run, without a sweep, renders the other tracks and sets aside
+    // only the failing one.
+    const run = await renderDirtyDeviceRows(failing(0), {
+      wait: true,
+      deadline: later(),
+    })
+    expect(run.failed).toEqual({ track: 1 })
+    expect(await markCount()).toBe(0)
+    expect(await storedTitles()).toEqual(
+      before.map(({ id, title }) => ({
+        id,
+        title: id === 'track-cold' ? title : `${title} (edit)`,
+      })),
+    )
+    // The sweep renders it; the titles are then restored.
+    expect(
+      await sweepDeviceFeed(device, { wait: true, deadline: later() }),
+    ).toMatchObject({ complete: true, failed: {} })
+    await step('titles restored', () =>
+      query(
+        "update media_item set title = replace(title, ' (edit)', '') where id = any($1)",
+        [ids],
+      ),
+    )
+  })
 })

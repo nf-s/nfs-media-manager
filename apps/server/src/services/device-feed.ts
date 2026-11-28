@@ -46,9 +46,14 @@ type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 const tombstoneRetentionDays = 90
 /** A page stops before this many payload bytes, after its first row. */
 const pageByteBudget = 4 * 1024 * 1024
-/** Marks read per render batch, before de-duplication. */
+/**
+ * Marks read per render batch, before de-duplication: the most for
+ * maintenance and for `changes`, and the first batch of `changes`, small so
+ * that a slow render answers close to the budget.
+ */
 const maintenanceMarkBatch = 1000
 const requestMarkBatch = 200
+const requestFirstMarkBatch = 20
 /** IDs listed per sweep batch, and at most per maintenance run. */
 const sweepBatch = 500
 const sweepRowsPerRun = 20_000
@@ -276,25 +281,40 @@ function isDatabaseError(error: unknown) {
   )
 }
 
+type SettingAside = {
+  rendered: Map<string, JsonValue>
+  /** IDs isolated alone whose render failed: set aside. */
+  failed: string[]
+  /** IDs of a failing part that the deadline left unsplit: marked again. */
+  unresolved: string[]
+}
+
 /**
  * Renders `ids`, setting aside the rows that cannot be rendered (DEVICE-04).
  * When a render throws anything but a database error, the IDs are halved
- * until each failing ID is alone; past `deadline`, a failing part is set
- * aside whole. A set-aside row keeps its stored row; the sweep renders it
- * again.
+ * until each failing ID is alone, and that ID is set aside: it keeps its
+ * stored row and the sweep renders it again. A failing part of more than one
+ * ID that fails past `deadline` is not split further: its IDs are unresolved,
+ * neither rendered nor set aside.
  */
 async function renderSettingAside(
   renderer: DeviceRowRenderer,
   entity: DeviceEntity,
   ids: readonly string[],
   deadline: number,
-): Promise<{ rendered: Map<string, JsonValue>; failed: string[] }> {
+): Promise<SettingAside> {
   try {
-    return { rendered: await renderer.render(entity, ids), failed: [] }
+    return {
+      rendered: await renderer.render(entity, ids),
+      failed: [],
+      unresolved: [],
+    }
   } catch (error) {
     if (isDatabaseError(error)) throw error
-    if (ids.length === 1 || Date.now() >= deadline)
-      return { rendered: new Map(), failed: [...ids] }
+    if (ids.length === 1)
+      return { rendered: new Map(), failed: [...ids], unresolved: [] }
+    if (Date.now() >= deadline)
+      return { rendered: new Map(), failed: [], unresolved: [...ids] }
     const middle = Math.ceil(ids.length / 2)
     const first = await renderSettingAside(
       renderer,
@@ -311,13 +331,17 @@ async function renderSettingAside(
     return {
       rendered: new Map([...first.rendered, ...second.rendered]),
       failed: [...first.failed, ...second.failed],
+      unresolved: [...first.unresolved, ...second.unresolved],
     }
   }
 }
 
 /**
  * Renders `ids` and writes what changed: a stored row whose ID rendered
- * nothing becomes a tombstone, and a row set aside stays as it is.
+ * nothing becomes a tombstone, and a row set aside stays as it is. An
+ * unresolved row also stays as it is and is marked again, behind every mark
+ * already queued, so the marks after it are rendered first and a later run
+ * splits it further.
  */
 async function renderAndWrite(
   tx: Transaction,
@@ -326,19 +350,22 @@ async function renderAndWrite(
   ids: readonly string[],
   deadline: number,
 ) {
-  const { rendered, failed } = await renderSettingAside(
+  const { rendered, failed, unresolved } = await renderSettingAside(
     renderer,
     entity,
     ids,
     deadline,
   )
-  const setAside = new Set(failed)
+  const notWritten = new Set([...failed, ...unresolved])
   const written = await writeRenderedRows(
     tx,
     entity,
-    ids.filter((id) => !setAside.has(id)),
+    ids.filter((id) => !notWritten.has(id)),
     rendered,
   )
+  if (unresolved.length > 0)
+    await tx.execute(sql`insert into device_dirty (entity, id)
+      select ${entity}, id from unnest(${sql.param(unresolved)}::text[]) id`)
   const failures: DeviceRenderFailures = failed.length
     ? { [entity]: failed.length }
     : {}
@@ -346,9 +373,11 @@ async function renderAndWrite(
 }
 
 /**
- * One render batch (DEVICE-04): reads up to `limit` marks, renders their
- * rows, writes what changed and deletes only the marks it read, so a mark
- * made while it renders stays. Undefined when another writer holds the lock.
+ * One render batch (DEVICE-04): reads up to `limit` marks, oldest first,
+ * renders their rows, writes what changed and deletes only the marks it
+ * read, so a mark made while it renders stays. A row the deadline left
+ * unresolved is marked again behind the others. Undefined when another
+ * writer holds the lock.
  */
 async function renderDirtyBatch(
   renderer: DeviceFeedRenderer,
@@ -389,22 +418,34 @@ async function renderDirtyBatch(
 
 /**
  * Renders marked rows in batches until none remain or `deadline` passes.
+ * The first batch reads `first` marks (`limit` by default); each later one
+ * reads as many as the time per mark so far fits in the time left, up to
+ * twice the last batch and at most `limit`, and none is started when not one
+ * mark fits. With a small first batch, a slow render overruns the deadline
+ * by about one small batch, and a run that finds marks always renders some.
  * `busy` says another writer held the lock; `failed` counts the rows set
  * aside.
  */
 export async function renderDirtyDeviceRows(
   renderer: DeviceFeedRenderer,
-  options: { wait: boolean; deadline: number; limit?: number },
+  options: { wait: boolean; deadline: number; limit?: number; first?: number },
 ) {
   const limit = options.limit ?? maintenanceMarkBatch
+  let size = Math.min(limit, options.first ?? limit)
+  let read = 0
+  const started = Date.now()
   let written = 0
   const failed: DeviceRenderFailures = {}
-  while (Date.now() < options.deadline) {
-    const batch = await renderDirtyBatch(renderer, { ...options, limit })
+  while (size > 0 && Date.now() < options.deadline) {
+    const batch = await renderDirtyBatch(renderer, { ...options, limit: size })
     if (!batch) return { written, busy: true, failed }
     written += batch.written
     addFailures(failed, batch.failed)
-    if (batch.read < limit) break
+    if (batch.read < size) break
+    read += batch.read
+    const msPerMark = Math.max(1, Date.now() - started) / read
+    const fits = Math.floor((options.deadline - Date.now()) / msPerMark)
+    size = Math.min(limit, 2 * size, fits)
   }
   return { written, busy: false, failed }
 }
@@ -501,14 +542,16 @@ export async function sweepDeviceFeed(
 /**
  * Starts the feed again from nothing when the stored row version differs
  * from DEVICE_ROW_VERSION: a new epoch, no rows, not ready, a new sweep.
- * Devices holding the old epoch are told to reset.
+ * Devices holding the old epoch are told to reset. The marks made before it
+ * are removed: the sweep renders every row after them.
  */
 export async function startCurrentDeviceFeed(deadline: number) {
   if (isCurrent(await readStoredState())) return false
   const restarted = await withFeedLock({ wait: true, deadline }, async (tx) => {
     if (isCurrent(await readStoredState(tx))) return false
     await tx.execute(sql`
-      with removed as (delete from device_row returning seq)
+      with removed as (delete from device_row returning seq),
+        marks as (delete from device_dirty)
       update device_feed_state set epoch = gen_random_uuid()::text,
         row_version = ${DEVICE_ROW_VERSION}, ready = false,
         sweep_entity = null, sweep_after = null, swept_at = null,
@@ -680,6 +723,7 @@ export async function readDeviceChanges(
         wait: false,
         deadline: Date.now() + changesRenderBudgetMs,
         limit: requestMarkBatch,
+        first: requestFirstMarkBatch,
       })
       recordDeviceRenderFailures(render.failed)
     } catch (error) {

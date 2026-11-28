@@ -1059,6 +1059,10 @@ async function wipe() {
       `truncate table ${tables.map((name) => `"${name.replaceAll('"', '""')}"`).join(', ')}`,
     ),
   )
+  // The device feed's state row, as migration 0079 inserts it: the first
+  // maintenance run starts the feed and builds it from the seeded library.
+  await db.execute(sql`insert into device_feed_state (epoch, row_version)
+    values (gen_random_uuid()::text, 0)`)
   return tables.length
 }
 
