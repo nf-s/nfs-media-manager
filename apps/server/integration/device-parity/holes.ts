@@ -1,6 +1,10 @@
 import type { LibraryRead, UnsupportedReason } from '@repo/library-source'
 import { isSpotifyAudioFeatureKey } from '@repo/schemas/audio-features'
-import { albumBrowseFields, filmBrowseFields } from '@repo/schemas/browse'
+import {
+  albumBrowseFields,
+  filmBrowseFields,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+} from '@repo/schemas/browse'
 import { memberScope } from '@repo/schemas/catalog'
 import { tagDisplayName } from '@repo/schemas/tags'
 import { PlaylistBrowsePageSchema } from '@repo/schemas/tracks'
@@ -142,6 +146,10 @@ type Observed = {
 
 type Filter = { field: string; value: string; mode?: string }
 
+/** Known holes, `library-playlist`: a libraryPlaylist filter in any mode (PL-18). */
+const libraryPlaylistFilter = (filters: readonly Filter[]) =>
+  filters.some((filter) => filter.field === LIBRARY_PLAYLIST_FILTER_FIELD)
+
 const nonExcludeProvider = (filters: readonly Filter[]) =>
   filters.some(
     (filter) => filter.field === 'provider' && filter.mode !== 'exclude',
@@ -191,6 +199,7 @@ export function expectedHole(
         read.method === 'trackRecordings' ? read.query.query : read.query
       const recordings = read.method === 'trackRecordings'
       if (!memberScope(query, 'track')) return 'catalog-scope'
+      if (libraryPlaylistFilter(query.filters)) return 'library-playlist'
       if (
         (recordings || query.groupRecordings === true) &&
         query.creatorId !== undefined
@@ -243,6 +252,7 @@ export function expectedHole(
     case 'albumList':
     case 'albumHistogram':
       if (!memberScope(read.query)) return 'catalog-scope'
+      if (libraryPlaylistFilter(read.query.filters)) return 'library-playlist'
       if (unsettledFilter('album', read.query, observed.facts))
         return 'server-lower-case'
       return read.method !== 'albumHistogram' &&
@@ -253,6 +263,7 @@ export function expectedHole(
     case 'filmCount':
     case 'filmList':
       if (!memberScope(read.query)) return 'catalog-scope'
+      if (libraryPlaylistFilter(read.query.filters)) return 'library-playlist'
       if (read.query.creatorId !== undefined) return 'creator-films'
       if (unsettledFilter('film', read.query, observed.facts))
         return 'server-lower-case'
@@ -273,9 +284,12 @@ export function expectedHole(
         : undefined
     case 'playlistPage':
       if (!memberScope(read.query)) return 'catalog-scope'
+      // PL-17: `library` adds that library's playlists, which the feed does not publish.
+      if (read.query.library !== undefined) return 'library-playlist'
       return activeImport(observed.data) ? 'active-import' : undefined
     case 'playlistCount':
-      return memberScope(read.query) ? undefined : 'catalog-scope'
+      if (!memberScope(read.query)) return 'catalog-scope'
+      return read.query.library === undefined ? undefined : 'library-playlist'
     case 'fields':
       return undefined
   }

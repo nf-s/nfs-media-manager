@@ -2,6 +2,10 @@ import '@hono/zod-openapi'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  LibraryPlaylistLibrarySchema,
+} from '@repo/schemas/browse'
+import {
   apiRequest,
   apiSend,
   buildFeed,
@@ -253,6 +257,12 @@ const recordingTrackIds = [
   'track-missing',
 ]
 
+/** The Tracks library playlist with entries (PL-18), as a Browse filter. */
+const nightDrive = {
+  field: LIBRARY_PLAYLIST_FILTER_FIELD,
+  value: 'library-playlist-night',
+}
+
 /** Grouped Tracks, recordings lists, positions and creator scopes. */
 async function trackSpecifics(run: ParityRunner, reduced: boolean) {
   const routes = routesOf('track')
@@ -296,6 +306,7 @@ async function trackSpecifics(run: ParityRunner, reduced: boolean) {
     },
     { filters: [{ field: 'genre', value: 'Rock' }], tagLevels: ['track'] },
     { limitResults: 3 },
+    { filters: [nightDrive] },
   ]
   for (const params of groupedFilters) {
     await run.query(routes, { ...params, groupRecordings: true })
@@ -320,6 +331,8 @@ async function trackSpecifics(run: ParityRunner, reduced: boolean) {
     { creatorId: 'artist-kite' },
     { creatorId: 'artist-kite', groupRecordings: true },
     { filters: [{ field: 'provider', value: 'musicbrainz' }] },
+    { filters: [nightDrive] },
+    { filters: [{ ...nightDrive, mode: 'exclude' }], groupRecordings: true },
   ]
   for (const params of reduced ? positionQueries.slice(0, 3) : positionQueries)
     for (const positions of ['0', '0,1,2', '9,3,0,3', '5,100,1000', '19,18,17'])
@@ -335,6 +348,7 @@ async function trackSpecifics(run: ParityRunner, reduced: boolean) {
     { q: 'live' },
     { filters: [{ field: 'provider', value: 'discogs' }] },
     { creatorId: 'artist-kite' },
+    { filters: [{ ...nightDrive, mode: 'required' }] },
   ]
   for (const id of recordingTrackIds)
     for (const params of reduced
@@ -354,6 +368,7 @@ async function trackSpecifics(run: ParityRunner, reduced: boolean) {
     })
     await run.query(routes, { creatorId, groupRecordings: true })
     await run.query(routes, { creatorId, q: 'drift' })
+    await run.query(routes, { creatorId, filters: [nightDrive] })
     await run.read(
       apiPath('tracks/listening-histogram', {
         creatorId,
@@ -460,6 +475,9 @@ const playlistSorts = [
   'added',
   'description',
   'nextSync',
+  'type',
+  'count',
+  'updated',
 ]
 
 async function playlistMatrix(run: ParityRunner, reduced: boolean) {
@@ -502,6 +520,26 @@ async function playlistMatrix(run: ParityRunner, reduced: boolean) {
   for (const params of filters) {
     await run.read(apiPath('playlists/browse-page', params))
     await run.read(apiPath('playlists/browse-count', params))
+  }
+  // PL-17: the directory of one library, with its library playlists, which
+  // the device leaves to the API (`library-playlist`), in every form.
+  for (const library of LibraryPlaylistLibrarySchema.options) {
+    for (const sortBy of reduced ? ['name', 'type'] : playlistSorts)
+      for (const direction of reduced ? ['asc' as const] : directions)
+        await run.pages(
+          'playlists/browse-page',
+          { library, sortBy, direction },
+          2,
+          3,
+        )
+    for (const params of reduced ? filters.slice(0, 2) : filters) {
+      await run.read(apiPath('playlists/browse-page', { ...params, library }))
+      await run.read(apiPath('playlists/browse-count', { ...params, library }))
+    }
+    for (const sources of sourceSets) {
+      await run.read(apiPath('playlists/browse-page', { library, sources }))
+      await run.read(apiPath('playlists/browse-count', { library, sources }))
+    }
   }
 }
 
@@ -627,6 +665,21 @@ describe('device parity', () => {
         (await run.read(apiPath('tracks/facets', { q })))?.outcome,
         q,
       ).toEqual({ kind: 'served' })
+    // The API lists Night Drive's entries; the device leaves the read to it.
+    const night = await run.read(
+      apiPath('tracks/browse-page', { filters: [nightDrive], size: 50 }),
+    )
+    expect(night?.outcome).toEqual({
+      kind: 'fell-through',
+      reason: 'library-playlist',
+    })
+    expect(
+      z
+        .object({ items: z.array(z.object({ id: z.string() })) })
+        .parse(night?.data)
+        .items.map((item) => item.id)
+        .sort(),
+    ).toEqual(['track-aurora', 'track-hum-a'])
     expectParity(run, 'Tracks')
   })
 
@@ -657,6 +710,20 @@ describe('device parity', () => {
     })
     await artistSpecifics(run)
     await playlistMatrix(run, false)
+    // The API lists Night Drive in the Tracks directory; the device leaves it.
+    const directory = await run.read(
+      apiPath('playlists/browse-page', { library: 'tracks', q: 'night' }),
+    )
+    expect(directory?.outcome).toEqual({
+      kind: 'fell-through',
+      reason: 'library-playlist',
+    })
+    expect(
+      z
+        .object({ items: z.array(z.object({ id: z.string() })) })
+        .parse(directory?.data)
+        .items.map((item) => item.id),
+    ).toContain('library-playlist-night')
     expectParity(run, 'Artists and Playlists')
   })
 

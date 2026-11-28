@@ -69,10 +69,13 @@ const nameFields = { text: [], search: ['name'] }
 /**
  * playlistDirectoryFilter, playlist-directory.ts, without the visibility and
  * library conditions the feed applies. `q` and `name` are each one
- * `ILIKE '%value%'` pattern, not split into words.
+ * `ILIKE '%value%'` pattern, not split into words. A read with `library` is
+ * listDirectoryPage or countDirectory, which the device leaves to the API.
  */
 function playlistConditions(query: PlaylistBrowseQuery, fold: TextFold): Sql {
   if (!isMemberScope(query)) unsupported('catalog-scope')
+  // PL-17: `library` adds that library's playlists, which the store does not hold.
+  if (query.library !== undefined) unsupported('library-playlist')
   const conditions: Sql[] = []
   if (query.q)
     conditions.push(...searchConditions('playlist', [query.q], qFields, fold))

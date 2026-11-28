@@ -335,6 +335,25 @@ export const tagValues: Record<'music' | 'film', string[]> = {
   film: ['Drama', 'Noir', 'Neo-Noir', 'neo noir', 'Thriller', 'Hidden Film'],
 }
 
+/**
+ * Values of the `libraryPlaylist` filter (PL-18) per library: a playlist of
+ * the library with entries, one of another library, a smart playlist, a
+ * deleted one and an unknown ID. The device leaves every such read to the
+ * API (`library-playlist`).
+ */
+export const libraryPlaylistValues: Record<ParityLibrary, string[]> = {
+  track: [
+    'library-playlist-night',
+    'library-playlist-calm',
+    'library-playlist-shelf',
+    'library-playlist-gone',
+    absentValue,
+  ],
+  album: ['library-playlist-shelf', 'library-playlist-night', absentValue],
+  film: ['library-playlist-screen', 'library-playlist-night', absentValue],
+  artist: ['library-playlist-night'],
+}
+
 /** A small deterministic generator (mulberry32), so samples repeat. */
 export function seededRandom(seed: number) {
   let state = seed >>> 0

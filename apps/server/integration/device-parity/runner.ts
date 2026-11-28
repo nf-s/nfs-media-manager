@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import { resolveLibraryRead } from '@repo/library-source'
-import { BrowseFieldSchema, type BrowseField } from '@repo/schemas/browse'
+import {
+  BrowseFieldSchema,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  type BrowseField,
+} from '@repo/schemas/browse'
 import { compareRead, ParityReport, type ParityStore } from './harness'
 import { readDataFacts } from './facts'
 import type { DataFacts } from './holes'
@@ -14,6 +18,7 @@ import {
   filterModes,
   filterValues,
   isTagField,
+  libraryPlaylistValues,
   listeningPeriods,
   listeningRuleCases,
   rangeCases,
@@ -289,6 +294,35 @@ export async function runLibraryMatrix(
           }),
         )
       }
+    }
+
+  // PL-18: the libraryPlaylist filter in every mode, alone, beside another
+  // filter, under a sort and in a histogram. The device holds no library
+  // playlists and leaves each read to the API.
+  const playlistValues = libraryPlaylistValues[routes.library]
+  for (const value of options.reduced
+    ? playlistValues.slice(0, 1)
+    : playlistValues)
+    for (const mode of [undefined, ...modes]) {
+      const filter = { field: LIBRARY_PLAYLIST_FILTER_FIELD, value, mode }
+      await run.query(routes, { filters: [filter] })
+      if (filtered !== undefined)
+        await run.query(routes, { filters: [filtered, filter] })
+      await run.read(
+        apiPath(routes.page, {
+          filters: [filter],
+          sortBy: 'dateAdded',
+          direction: 'desc',
+          size: 4,
+        }),
+      )
+      if (routes.histogram !== undefined)
+        await run.read(
+          apiPath(routes.histogram, {
+            period: { kind: 'all' },
+            filters: [filter],
+          }),
+        )
     }
 
   // Catalog scopes other than the library, and queries the API rejects.

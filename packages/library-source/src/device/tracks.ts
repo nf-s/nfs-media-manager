@@ -54,6 +54,7 @@ import {
 } from '../compile/listening'
 import {
   capCount,
+  holdsLibraryPlaylistFilter,
   isMemberScope,
   listWindow,
   orderBy,
@@ -379,6 +380,7 @@ async function planTracks(
   options: PlanOptions,
 ): Promise<TrackPlan> {
   if (!isMemberScope(query, 'track')) unsupported('catalog-scope')
+  if (holdsLibraryPlaylistFilter(query.filters)) unsupported('library-playlist')
   const grouped = options.versions === true || query.groupRecordings === true
   if (grouped && query.creatorId !== undefined)
     unsupported('grouped-creator-scope')

@@ -95,6 +95,11 @@ export type UnsupportedReason =
   /** A Playlists page holding a playlist whose import is queued or running: the API has its progress. */
   | 'active-import'
   /**
+   * A Browse read with a `libraryPlaylist` filter, or a Playlists directory
+   * read with `library`: the store holds no library playlists.
+   */
+  | 'library-playlist'
+  /**
    * The service lower-cases a value of the query in TypeScript, and the
    * server's fold cannot tell what its engine gives (see `lowerCaseAsServer`).
    */

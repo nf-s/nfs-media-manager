@@ -280,6 +280,26 @@ export const parityLibrarySql = `
     ('job-weekly', 'spotify', 'succeeded', '{}', '{"task": "spotify-playlist-import", "groupKey": "spotify:fixturePlaylistId0002"}', '2026-03-28'),
     ('job-hourly', 'spotify', 'cancelled', '{}', '{"task": "spotify-playlist-import", "groupKey": "spotify:fixturePlaylistId0003"}', '2026-03-29'),
     ('job-queued', 'spotify', 'queued', '{}', '{"task": "spotify-playlist-import", "groupKey": "spotify:fixturePlaylistId0004"}', '2026-03-30');
+
+  -- Library playlists (PL-17, PL-18), which the feed does not publish: a
+  -- playlist and a smart playlist of Tracks, one of Albums and Films, a
+  -- deleted one, and entries listed twice, outside the library and removed.
+  insert into library_playlist (id, library, type, name, view, deleted_at, created_at, updated_at) values
+    ('library-playlist-night', 'tracks', 'playlist', 'Night Drive', null, null, '2025-06-01', '2026-02-01 08:00:00'),
+    ('library-playlist-calm', 'tracks', 'smart', 'Calm Picks', '{"q": "drift"}', null, '2025-07-01', '2025-07-01'),
+    ('library-playlist-shelf', 'albums', 'playlist', 'Shelf Picks', null, null, '2025-08-01', '2026-01-15'),
+    ('library-playlist-screen', 'films', 'playlist', 'Screen Night', null, null, '2025-09-01', '2025-09-01'),
+    ('library-playlist-gone', 'tracks', 'playlist', 'Gone Mix', null, '2025-02-01', '2025-01-01', '2025-01-01');
+  insert into library_playlist_entry (id, playlist_id, position, media_item_id, batch_id, removed_batch_id, removed_at) values
+    ('entry-night-1', 'library-playlist-night', 0, 'track-aurora', 'batch-1', null, null),
+    ('entry-night-2', 'library-playlist-night', 1, 'track-hum-a', 'batch-1', null, null),
+    ('entry-night-3', 'library-playlist-night', 2, 'track-aurora', 'batch-2', null, null),
+    ('entry-night-4', 'library-playlist-night', 3, 'track-outside', 'batch-2', null, null),
+    ('entry-night-5', 'library-playlist-night', 4, 'track-drift-a', 'batch-2', 'batch-3', '2026-02-01 08:00:00'),
+    ('entry-shelf-1', 'library-playlist-shelf', 0, 'album-orbit', 'batch-4', null, null),
+    ('entry-shelf-2', 'library-playlist-shelf', 1, 'album-vault', 'batch-4', null, null),
+    ('entry-screen-1', 'library-playlist-screen', 0, 'film-kestrel', 'batch-5', null, null),
+    ('entry-gone-1', 'library-playlist-gone', 0, 'track-hum-a', 'batch-6', null, null);
 `
 
 /**

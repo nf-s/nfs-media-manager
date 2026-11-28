@@ -43,6 +43,7 @@ import {
 import { checkPluginTextSort, withPluginFields } from '../compile/plugin-fields'
 import {
   capCount,
+  holdsLibraryPlaylistFilter,
   isMemberScope,
   listWindow,
   orderBy,
@@ -275,6 +276,7 @@ async function planAlbums(
   query: AlbumQuery,
 ): Promise<AlbumPlan> {
   if (!isMemberScope(query)) unsupported('catalog-scope')
+  if (holdsLibraryPlaylistFilter(query.filters)) unsupported('library-playlist')
   const fields: BrowseField[] = await readBrowseFields(read.tx, 'album')
   const table = withPluginFields(albumFields, fields, albumBrowseFields)
   const sortPeriod: ListeningPeriod | undefined =

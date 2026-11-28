@@ -307,6 +307,29 @@ describe('directory sorting', () => {
     ])
   })
 
+  it('orders Type and Count without `library` by name and ID, and Updated by the import date', async () => {
+    const device = await open(
+      rowsWith([20, null, 3, 20].map((imported) => ({ num: { imported } }))),
+    )
+    for (const sortBy of ['type', 'count'])
+      for (const direction of ['asc', 'desc'])
+        expect(await ids(device, { sortBy, direction }), sortBy).toEqual([
+          'k2',
+          'k1',
+          'k4',
+          'k3',
+        ])
+    expect(await ids(device, { sortBy: 'updated' })).toEqual([
+      'k3',
+      'k1',
+      'k4',
+      'k2',
+    ])
+    expect(await ids(device, { sortBy: 'updated', direction: 'desc' })).toEqual(
+      ['k1', 'k4', 'k3', 'k2'],
+    )
+  })
+
   it('puts the next sync last when the latest job has not succeeded', async () => {
     const device = await open([
       own('k1', 'First', { sort: { nextSync: 10 } }),
@@ -357,6 +380,43 @@ describe('directory paging and fall-throughs', () => {
         reason(await device.source.playlistCount(playlistQuery(scope))),
       ).toBe('catalog-scope')
     }
+  })
+
+  it('leaves a directory read with library playlists to the API', async () => {
+    const device = await open(rows())
+    for (const library of [
+      'albums',
+      'tracks',
+      'films',
+      'subscriptions',
+      'mixes',
+    ])
+      for (const input of [
+        { library },
+        { library, sortBy: 'type', direction: 'desc' },
+        { library, q: 'Playlist', sources: ['library'] },
+        { library, acceptsAdditions: 'true' },
+        { library, ids: ['a'] },
+      ]) {
+        expect(
+          reason(await device.source.playlistPage(playlistQuery(input))),
+          library,
+        ).toBe('library-playlist')
+        expect(
+          reason(await device.source.playlistCount(playlistQuery(input))),
+          library,
+        ).toBe('library-playlist')
+      }
+    expect(
+      reason(
+        await device.source.playlistPage(
+          playlistQuery({ library: 'tracks', libraryScope: 'all' }),
+        ),
+      ),
+    ).toBe('catalog-scope')
+    expect(await total(device, { sources: ['library'] })).toEqual({
+      totalCount: 0,
+    })
   })
 
   it('answers not-ready before the first fill', async () => {

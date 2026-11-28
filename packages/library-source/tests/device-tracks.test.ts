@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { trackBrowseFields } from '@repo/schemas/browse'
+import {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  trackBrowseFields,
+} from '@repo/schemas/browse'
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import { foldText } from '../src/fold'
 import {
@@ -1280,6 +1283,53 @@ describe('reads the device does not serve', () => {
       }),
     ).toBeNull()
     expect(await scope({ discoverySources: 'spotify-search' })).toBeNull()
+  })
+
+  it('leaves a libraryPlaylist filter in any mode to the API', async () => {
+    const device = await open([track('a'), track('b')])
+    for (const mode of [undefined, 'required', 'any', 'exclude']) {
+      const filters = [
+        { field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'list-1', mode },
+      ]
+      const query = trackQuery({ filters })
+      const grouped = trackQuery({ filters, groupRecordings: 'true' })
+      for (const outcome of [
+        reason(await device.source.trackPage(query)),
+        reason(await device.source.trackPage(grouped)),
+        reason(await device.source.trackCount(query)),
+        reason(await device.source.trackList(query)),
+        reason(
+          await device.source.trackPositions(
+            positionsQuery({ filters, positions: '0,1' }),
+          ),
+        ),
+        reason(await device.source.trackRecordings({ id: 'a', query })),
+      ])
+        expect(outcome, mode).toBe('library-playlist')
+      // Beside another filter, and with the library playlist filter second.
+      expect(
+        reason(
+          await device.source.trackCount(
+            trackQuery({
+              filters: [{ field: 'title', value: 'a' }, ...filters],
+            }),
+          ),
+        ),
+      ).toBe('library-playlist')
+    }
+    expect(
+      reason(
+        await device.source.trackPage(
+          trackQuery({
+            libraryScope: 'all',
+            filters: [{ field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'x' }],
+          }),
+        ),
+      ),
+    ).toBe('catalog-scope')
+    expect(
+      served(await device.source.trackCount(trackQuery())).totalCount,
+    ).toBe(2)
   })
 
   it('leaves grouped Tracks in a creator scope to the API', async () => {

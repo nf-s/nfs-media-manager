@@ -1,3 +1,7 @@
+import {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  type BrowseFilter,
+} from '@repo/schemas/browse'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import { isTrackDiscoverySource } from '@repo/schemas/catalog'
 import { join, sql, type Sql } from './sql'
@@ -22,6 +26,18 @@ export function isMemberScope(
   return (
     (query.libraryScope === undefined || query.libraryScope === 'library') &&
     !(query.discoverySourceScope === 'selection' && counted.length > 0)
+  )
+}
+
+/**
+ * PL-18: a filter on a library playlist, in any mode. The store holds no
+ * library playlist or entry, so the read is `library-playlist`.
+ */
+export function holdsLibraryPlaylistFilter(
+  filters: readonly BrowseFilter[],
+): boolean {
+  return filters.some(
+    (filter) => filter.field === LIBRARY_PLAYLIST_FILTER_FIELD,
   )
 }
 
