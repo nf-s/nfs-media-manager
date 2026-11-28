@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { artistScrobbles, scopedArtists } from '../artist-browse'
-import { anyId, type JsonObject } from './projection'
+import { anyId, idAfter, type JsonObject } from './projection'
 
 /**
  * Play times for listening rules, sorts and histograms on the device: each
@@ -31,8 +31,14 @@ const publishedTrackLinks = sql`lastfm_track_link l
   join media_item m on m.id = l.track_media_item_id and m.media_type = 'track' and m.in_library
   join library_track lt on lt.media_item_id = m.id`
 
+const linkNameId = scrobbleNameId(
+  sql`l.username`,
+  sql`l.artist_key`,
+  sql`l.track_key`,
+)
+
 const linkedNames = sql`select distinct l.username, l.artist_key, l.track_key,
-    ${scrobbleNameId(sql`l.username`, sql`l.artist_key`, sql`l.track_key`)} as id
+    ${linkNameId} as id
   from ${publishedTrackLinks}`
 
 const publishedAlbums = sql`select m.id from media_item m
@@ -40,27 +46,38 @@ const publishedAlbums = sql`select m.id from media_item m
   where m.media_type = 'album' and m.in_library
     and exists (select 1 from lastfm_scrobble s where s.album_media_item_id = m.id)`
 
-const publishedArtists = sql`select a.id from artist a
-  where ${scopedArtists(defaultScope)} and exists (
-    select 1 from (${artistScrobbles(sql`c.artist_id = a.id`)}) plays)`
-
-const publishedIds: Record<PlaysEntity, SQL> = {
-  scrobble_name: sql`select id from (${linkedNames}) names`,
-  album_plays: publishedAlbums,
-  artist_plays: publishedArtists,
-}
+// Every artist in scope, whether or not it has a scrobble: testing each
+// artist for a scrobble costs more than rendering the page, which leaves
+// out those without one.
+const listedArtists = sql`select a.id from artist a
+  where ${scopedArtists(defaultScope)}`
 
 const IdRowsSchema = z.array(z.object({ id: z.string() }))
+
+/**
+ * A page of IDs in the database's default collation. Scrobbled names are
+ * read in the order of the index on their ID (migration 0079), so a page
+ * hashes the names it returns, not every linked name.
+ */
+function publishedIdPage(
+  entity: PlaysEntity,
+  afterId: string | null,
+  limit: number,
+): SQL {
+  if (entity === 'scrobble_name')
+    return sql`select distinct ${linkNameId} as id from ${publishedTrackLinks}
+      where ${idAfter(linkNameId, afterId)} order by id limit ${limit}`
+  const published = entity === 'album_plays' ? publishedAlbums : listedArtists
+  return sql`select id from (${published}) published
+    where ${idAfter(sql`id`, afterId)} order by id limit ${limit}`
+}
 
 export async function listPlaysIds(
   entity: PlaysEntity,
   afterId: string | null,
   limit: number,
 ) {
-  const result =
-    await db.execute(sql`select id from (${publishedIds[entity]}) published
-    ${afterId === null ? sql`` : sql`where id collate "C" > ${afterId}`}
-    order by id collate "C" limit ${limit}`)
+  const result = await db.execute(publishedIdPage(entity, afterId, limit))
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
 }
 

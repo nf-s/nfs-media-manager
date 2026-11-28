@@ -17,6 +17,7 @@ import {
 import { artistPlaylistCredits, visiblePlaylist } from '../artist-library'
 import {
   anyId,
+  idAfter,
   microseconds,
   readProjection,
   textValues,
@@ -35,8 +36,8 @@ const IdRowsSchema = z.array(z.object({ id: z.string() }))
 
 export async function listArtistIds(afterId: string | null, limit: number) {
   const result = await db.execute(sql`select a.id from artist a
-    where ${published} ${afterId === null ? sql`` : sql`and a.id collate "C" > ${afterId}`}
-    order by a.id collate "C" limit ${limit}`)
+    where ${published} and ${idAfter(sql`a.id`, afterId)}
+    order by a.id limit ${limit}`)
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
 }
 

@@ -12,6 +12,10 @@ vi.mock('@/lib/db', () => ({
     return database
   },
 }))
+vi.mock('@/plugins/registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/plugins/registry')>()),
+  listLoadedScrapePlugins: async () => [],
+}))
 
 const TriggerExplainSchema = z.tuple([
   z.object({
@@ -107,6 +111,8 @@ beforeAll(async () => {
     'track',
     'playlist_item',
     'track_tag',
+    // Track tags set `has_own_tags` on every track.
+    'library_track',
     'media_item_tag',
     'tag',
     'tag_identity',
@@ -158,6 +164,45 @@ it('bounds the device state after many marks were rendered, before a vacuum', as
   await checkBudget('device state after rendered marks', 800, 1, async () => {
     expect(await readDeviceFeedState()).toMatchObject({ ready: true })
   })
+})
+
+it('bounds a maintenance run with nothing to do and one rendering 200 marks', async () => {
+  const { refreshDeviceFeedForMaintenance } =
+    await import('@/services/device-feed')
+  // A built feed whose last sweep completed an hour ago.
+  await pool.query(`delete from device_dirty;
+    update device_feed_state set ready = true, sweep_entity = null,
+      sweep_after = null, swept_at = now() - interval '1 hour'`)
+  await pool.query('vacuum analyze device_dirty')
+  // It runs every five minutes, so it is one statement on a few pages.
+  await checkBudget('device maintenance run, idle', 20, 1, async () => {
+    expect(await refreshDeviceFeedForMaintenance()).toBe(false)
+  })
+
+  // Two hundred tracks; each shares its title with another track, which
+  // renders with it. The feed holds none of them yet.
+  await pool.query(`insert into device_dirty (entity, id)
+    select 'track', 'track-' || n from generate_series(1, 200) n`)
+  // About 220 blocks a rendered track, as a render batch of tracks costs.
+  await checkBudget(
+    'device maintenance run, 200 track marks',
+    100_000,
+    12,
+    async () => {
+      expect(await refreshDeviceFeedForMaintenance()).toBe(true)
+    },
+  )
+  const rendered = z
+    .object({ count: z.number() })
+    .parse(
+      (
+        await pool.query(
+          "select count(*)::int as count from device_row where entity = 'track'",
+        )
+      ).rows[0],
+    ).count
+  expect(rendered).toBe(400)
+  await pool.query("delete from device_row where entity = 'track'")
 })
 
 const bulk = (count: number) => `select n from generate_series(1, ${count}) n`

@@ -21,6 +21,7 @@ import {
   withExpandedIds,
 } from '@/services/device-feed-batch'
 import type { DeviceRowRenderer } from '@/services/device-renderer'
+import { deviceRowRenderer } from '@/services/device-rows'
 
 /**
  * The server side of the device feed (docs/requirements/device-store.md,
@@ -30,9 +31,10 @@ import type { DeviceRowRenderer } from '@/services/device-renderer'
  */
 export interface DeviceFeedRenderer extends DeviceRowRenderer {
   /**
-   * Other IDs of the same entity to render with `ids`. A track mark also
-   * renders the visible tracks that share its title key, because recording
-   * groups depend on them. Their own marks, if any, stay for a later batch.
+   * Other IDs of the same entity to render with `ids`, read before any of
+   * them is written, so the stored rows still hold what was published. A
+   * track mark also renders the tracks whose recording group can change with
+   * it. Their own marks, if any, stay for a later batch.
    */
   expand?(entity: DeviceEntity, ids: readonly string[]): Promise<string[]>
 }
@@ -49,6 +51,12 @@ const requestMarkBatch = 200
 /** IDs listed per sweep batch, and at most per maintenance run. */
 const sweepBatch = 500
 const sweepRowsPerRun = 20_000
+/**
+ * A completed sweep rests this long before the next one starts (DEVICE-05).
+ * The first sweep, and one after a row-version change, runs in every
+ * maintenance run until it completes.
+ */
+export const SWEEP_REST_HOURS = 24
 /** Rendering before `changes` answers; the device is told when marks remain. */
 const changesRenderBudgetMs = 2_000
 /** Within the five-minute maintenance invocation. */
@@ -56,11 +64,14 @@ const maintenanceRenderBudgetMs = 15_000
 const maintenanceBudgetMs = 30_000
 const tombstonesPrunedPerRun = 10_000
 
-let configuredRenderer: DeviceFeedRenderer | undefined
+let configuredRenderer: DeviceFeedRenderer = deviceRowRenderer
 
-/** The renderer the routes and maintenance use; none leaves the feed unbuilt. */
+/**
+ * The renderer the routes and maintenance use: the device row renderer
+ * unless a test replaces it. No argument restores it.
+ */
 export function setDeviceFeedRenderer(
-  renderer: DeviceFeedRenderer | undefined,
+  renderer: DeviceFeedRenderer = deviceRowRenderer,
 ) {
   configuredRenderer = renderer
 }
@@ -74,8 +85,13 @@ const StoredStateSchema = z.object({
   pending: z.boolean(),
   sweep_entity: DeviceEntitySchema.nullable(),
   sweep_after: z.string().nullable(),
+  sweep_due: z.boolean(),
 })
 type StoredState = z.infer<typeof StoredStateSchema>
+
+const MaintenanceStateSchema = StoredStateSchema.extend({
+  prunable: z.boolean(),
+})
 
 const LockRowSchema = z.object({ locked: z.boolean() })
 const SeqRowsSchema = z.array(z.object({ seq: z.coerce.number().int() }))
@@ -100,16 +116,29 @@ const PendingRowSchema = z.object({ pending: z.boolean() })
 
 const pendingMarks = sql`exists (select 1 from device_dirty)`
 
+// A sweep is due while the feed is being built or a sweep is under way, and
+// once the last completed sweep has rested.
 const stateColumns = sql`s.epoch, s.row_version, s.min_seq, s.ready,
   s.sweep_entity, s.sweep_after,
   greatest(s.min_seq, coalesce((select max(seq) from device_row), 0)) as seq,
-  ${pendingMarks} as pending`
+  ${pendingMarks} as pending,
+  (not s.ready or s.sweep_entity is not null or s.swept_at is null
+    or s.swept_at <= now() - make_interval(hours => ${SWEEP_REST_HOURS})) as sweep_due`
 
 async function readStoredState(reader: Pick<typeof db, 'execute'> = db) {
   const result = await reader.execute(
     sql`select ${stateColumns} from device_feed_state s where s.singleton`,
   )
   return StoredStateSchema.parse(result.rows[0])
+}
+
+/** The state, and whether tombstones are old enough to prune, in one read. */
+async function readMaintenanceState() {
+  const result = await db.execute(sql`select ${stateColumns},
+      exists (select 1 from device_row where deleted
+        and rendered_at < now() - make_interval(days => ${tombstoneRetentionDays})) as prunable
+    from device_feed_state s where s.singleton`)
+  return MaintenanceStateSchema.parse(result.rows[0])
 }
 
 const isCurrent = (state: StoredState) =>
@@ -290,21 +319,30 @@ function sweptAfter(entity: DeviceEntity | null): DeviceEntity | undefined {
   return order[entity === null ? 0 : order.indexOf(entity) + 1]
 }
 
+type SweepOptions = {
+  wait: boolean
+  deadline: number
+  /** Start a sweep only when one is due: not within the rest after the last. */
+  onlyWhenDue?: boolean
+}
+
 /**
  * One sweep batch (DEVICE-05): lists the next IDs of the entity at the
  * cursor, renders them, writes rows whose hash differs and tombstones stored
- * rows in the listed range that were not listed. Completing the last entity
- * marks the feed ready and starts the next sweep.
+ * rows in the listed range that were not listed. Every ID comparison happens
+ * here in SQL, in the collation `listIds` orders by. Completing the last
+ * entity marks the feed ready.
  */
 async function sweepBatchUnderLock(
   renderer: DeviceFeedRenderer,
-  options: { wait: boolean; deadline: number; limit: number },
+  options: SweepOptions & { limit: number },
 ) {
   return withFeedLock(options, async (tx) => {
     const state = await readStoredState(tx)
     // A feed of another row version is restarted before it is swept.
     const entity = state.sweep_entity ?? sweptAfter(null)
     if (!isCurrent(state) || !entity) return undefined
+    if (options.onlyWhenDue && !state.sweep_due) return undefined
     const after = state.sweep_entity ? state.sweep_after : null
     const listed = await renderer.listIds(entity, after, options.limit)
     const rendered =
@@ -336,12 +374,7 @@ async function sweepBatchUnderLock(
 /** Sweeps up to `maxRows` IDs before `deadline`; `complete` when a sweep finished. */
 export async function sweepDeviceFeed(
   renderer: DeviceFeedRenderer,
-  options: {
-    wait: boolean
-    deadline: number
-    maxRows?: number
-    limit?: number
-  },
+  options: SweepOptions & { maxRows?: number; limit?: number },
 ) {
   const maxRows = options.maxRows ?? sweepRowsPerRun
   const limit = options.limit ?? sweepBatch
@@ -407,26 +440,36 @@ export async function pruneDeviceTombstones(deadline: number) {
 
 /**
  * The five-minute maintenance task: restarts the feed for a new row
- * version, renders marked rows, continues the sweep and prunes old
- * tombstones. Returns whether it changed the feed. Without a renderer it does
- * nothing.
+ * version, renders marked rows, continues a due sweep and prunes old
+ * tombstones. One read decides which of them has work, so a run with none
+ * is one statement. Returns whether it changed the feed.
  */
 export async function refreshDeviceFeedForMaintenance(
-  renderer: DeviceFeedRenderer | undefined = configuredRenderer,
+  renderer: DeviceFeedRenderer = configuredRenderer,
 ): Promise<boolean> {
-  if (!renderer) return false
   const start = Date.now()
   try {
-    const restarted = await startCurrentDeviceFeed(start + maintenanceBudgetMs)
-    const render = await renderDirtyDeviceRows(renderer, {
-      wait: true,
-      deadline: start + maintenanceRenderBudgetMs,
-    })
-    const sweep = await sweepDeviceFeed(renderer, {
-      wait: true,
-      deadline: start + maintenanceBudgetMs,
-    })
-    const pruned = await pruneDeviceTombstones(start + maintenanceBudgetMs)
+    const state = await readMaintenanceState()
+    const restarted =
+      !isCurrent(state) &&
+      (await startCurrentDeviceFeed(start + maintenanceBudgetMs))
+    const render = state.pending
+      ? await renderDirtyDeviceRows(renderer, {
+          wait: true,
+          deadline: start + maintenanceRenderBudgetMs,
+        })
+      : { written: 0 }
+    const sweep =
+      restarted || state.sweep_due
+        ? await sweepDeviceFeed(renderer, {
+            wait: true,
+            deadline: start + maintenanceBudgetMs,
+            onlyWhenDue: true,
+          })
+        : { written: 0 }
+    const pruned = state.prunable
+      ? await pruneDeviceTombstones(start + maintenanceBudgetMs)
+      : 0
     return restarted || render.written + sweep.written + pruned > 0
   } catch (error) {
     // Lock waits, timeouts and tables not yet migrated leave the work to the
@@ -495,13 +538,13 @@ export async function readDeviceSnapshot(
  */
 export async function readDeviceChanges(
   query: DeviceChangesQuery,
-  renderer: DeviceFeedRenderer | undefined = configuredRenderer,
+  renderer: DeviceFeedRenderer = configuredRenderer,
 ): Promise<DeviceChangesResponse> {
   const state = await readStoredState()
   if (needsReset(state, query.epoch) || query.since < state.min_seq)
     return { reset: true }
   let pending = state.pending
-  if (pending && renderer) {
+  if (pending) {
     try {
       await renderDirtyDeviceRows(renderer, {
         wait: false,

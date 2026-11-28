@@ -412,8 +412,8 @@ export const deviceRowSeq = pgSequence('device_row_seq')
 
 /**
  * One published row of the device feed (docs/requirements/device-store.md).
- * The migration gives `id` the "C" collation, which Drizzle cannot express,
- * so ID ranges compare by code point as the renderer lists them.
+ * `id` has the database's default collation, the order the renderer lists
+ * IDs in, so the sweep's ID ranges compare in that order on the key.
  */
 export const deviceRow = pgTable(
   'device_row',
@@ -438,6 +438,13 @@ export const deviceRow = pgTable(
     index('device_row_tombstone_rendered_idx')
       .on(table.renderedAt)
       .where(sql`${table.deleted}`),
+    // The tracks published in one recording group, found from a member's
+    // stored row when its group changes.
+    index('device_row_track_recording_key_idx')
+      .on(sql`(${table.payload}->'extra'->'recording'->>'key')`)
+      .where(
+        sql`${table.entity} = 'track' and (${table.payload}->'extra'->'recording'->>'key') is not null`,
+      ),
   ],
 )
 
@@ -1956,6 +1963,11 @@ export const lastfmTrackLink = pgTable(
       ],
     }),
     index('lastfm_track_link_track_idx').on(table.trackMediaItemId),
+    // The device feed sweeps scrobbled names in the order of their ID
+    // (`device_scrobble_name_id`, migration 0079).
+    index('lastfm_track_link_device_name_idx').on(
+      sql`device_scrobble_name_id(${table.username}, ${table.artistKey}, ${table.trackKey})`,
+    ),
   ],
 )
 

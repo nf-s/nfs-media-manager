@@ -14,6 +14,7 @@ import { providerDisplayNames } from '../provider-names'
 import {
   anyId,
   compareCodePoints,
+  idAfter,
   isJsonObject,
   toJson,
   type JsonObject,
@@ -29,8 +30,8 @@ const tagMediaTypes = sql`('album', 'film')`
 
 async function readIds(source: SQL, afterId: string | null, limit: number) {
   const result = await db.execute(sql`select id from (${source}) published
-    ${afterId === null ? sql`` : sql`where id collate "C" > ${afterId}`}
-    order by id collate "C" limit ${limit}`)
+    where ${idAfter(sql`id`, afterId)}
+    order by id limit ${limit}`)
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
 }
 
@@ -114,12 +115,14 @@ const metaIds = [
   ...DeviceBrowseLibrarySchema.options.map((library) => `fields:${library}`),
   'listening',
   'providers',
-].sort(compareCodePoints)
+]
 
 export function listMetaIds(afterId: string | null, limit: number) {
-  return metaIds
-    .filter((id) => afterId === null || compareCodePoints(id, afterId) > 0)
-    .slice(0, limit)
+  return readIds(
+    sql`select unnest(${sql.param(metaIds)}::text[]) as id`,
+    afterId,
+    limit,
+  )
 }
 
 async function libraryFields(library: DeviceBrowseLibrary) {

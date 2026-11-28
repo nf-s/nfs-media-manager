@@ -80,7 +80,7 @@ function listPublishedIds(
     case 'artist_plays':
       return listPlaysIds(entity, afterId, limit)
     case 'meta':
-      return Promise.resolve(listMetaIds(afterId, limit))
+      return listMetaIds(afterId, limit)
   }
 }
 
@@ -101,7 +101,8 @@ export const deviceRowRenderer: DeviceFeedRenderer = {
   listIds(entity, afterId, limit) {
     return listPublishedIds(entity, afterId, limit)
   },
-  // DEVICE-04: a track's recording group depends on its title-key peers.
+  // DEVICE-04: a track's recording group depends on its title-key peers and
+  // on the group it was published in.
   async expand(entity, ids) {
     return entity === 'track' ? listTrackPeerIds(ids) : []
   },

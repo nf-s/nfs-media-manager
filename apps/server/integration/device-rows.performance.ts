@@ -122,3 +122,53 @@ it('bounds a render batch of each entity', async () => {
     )
   }
 })
+
+/**
+ * Shared blocks of one sweep batch, as the sweep reads it: 500 IDs listed
+ * after a cursor, then rendered (one statement more than the render). The
+ * listing reads each source table's key index from the cursor, so it costs
+ * the same at any position; the render is most of a batch. Entities with
+ * fewer than 750 IDs on this fixture are measured from the start, and
+ * Playlists (200 here) cost about 680 blocks a row in the list loader.
+ */
+const sweepBudgets: Record<
+  DeviceEntity,
+  { listing: number; batch: number; statements: number }
+> = {
+  track: { listing: 2_000, batch: 55_000, statements: 3 },
+  album: { listing: 100, batch: 40_000, statements: 9 },
+  film: { listing: 100, batch: 38_000, statements: 4 },
+  artist: { listing: 1_300, batch: 45_000, statements: 4 },
+  playlist: { listing: 100, batch: 170_000, statements: 3 },
+  playlist_job: { listing: 50, batch: 50, statements: 2 },
+  tag: { listing: 50, batch: 1_000, statements: 2 },
+  tag_key: { listing: 50, batch: 50, statements: 2 },
+  scrobble_name: { listing: 3_600, batch: 7_000, statements: 2 },
+  album_plays: { listing: 250, batch: 3_000, statements: 2 },
+  artist_plays: { listing: 1_300, batch: 4_000, statements: 2 },
+  meta: { listing: 50, batch: 50, statements: 2 },
+}
+
+it('bounds a sweep batch of each entity', async () => {
+  const { deviceRowRenderer } = await import('@/services/device-rows')
+  for (const entity of DeviceEntitySchema.options) {
+    const budget = sweepBudgets[entity]
+    // The second batch position of an entity with more IDs than that.
+    const head = await deviceRowRenderer.listIds(entity, null, 250)
+    const after = head.length === 250 ? (head.at(-1) ?? null) : null
+    await checkBudget(`device ${entity} sweep listing`, budget.listing, 1, () =>
+      deviceRowRenderer.listIds(entity, after, 500),
+    )
+    await checkBudget(
+      `device ${entity} sweep batch`,
+      budget.batch,
+      budget.statements,
+      async () => {
+        const ids = await deviceRowRenderer.listIds(entity, after, 500)
+        expect(ids.length, entity).toBeGreaterThan(0)
+        const rows = await deviceRowRenderer.render(entity, ids)
+        expect(rows.size, entity).toBeGreaterThan(0)
+      },
+    )
+  }
+})

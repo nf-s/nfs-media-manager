@@ -46,6 +46,7 @@ import { redundantLastfmTrackIds } from '../track-values'
 import {
   anyId,
   epochMicroseconds,
+  idAfter,
   microseconds,
   readProjection,
   textValues,
@@ -103,18 +104,30 @@ export async function listMediaIds(
   limit: number,
 ) {
   const result = await db.execute(sql`select ${mediaItem.id} as id ${mediaFrom}
-    where ${published(entity)}
-      ${afterId === null ? sql`` : sql`and ${mediaItem.id} collate "C" > ${afterId}`}
-    order by ${mediaItem.id} collate "C" limit ${limit}`)
+    where ${published(entity)} and ${idAfter(sql`${mediaItem.id}`, afterId)}
+    order by ${mediaItem.id} limit ${limit}`)
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
 }
 
-/** Other visible tracks whose recording group can change with these tracks. */
+const publishedRecordingKey = sql`(r.payload->'extra'->'recording'->>'key')`
+
+/**
+ * Other tracks whose recording group can change with these tracks: the
+ * visible tracks they would group with now (recordingPeerIds), and the
+ * tracks published in the group each of them is published in, which a
+ * title change, archive or delete leaves. The published group is read from
+ * the stored rows, before the feed writes the new ones.
+ */
 export async function listTrackPeerIds(ids: readonly string[]) {
   if (!ids.length) return []
-  const result = await db.execute(
-    sql`select id from (${recordingPeerIds(anyId(ids))}) peers`,
-  )
+  const result =
+    await db.execute(sql`select id from (${recordingPeerIds(anyId(ids))}) peers
+    union
+    select r.id from device_row r
+    where r.entity = 'track' and ${publishedRecordingKey} is not null
+      and ${publishedRecordingKey} = any(array(
+        select ${publishedRecordingKey} from device_row r
+        where r.entity = 'track' and r.id = ${anyId(ids)}))`)
   const requested = new Set(ids)
   return IdRowsSchema.parse(result.rows)
     .map((row) => row.id)
@@ -154,11 +167,18 @@ function artistTagKeys(ids: SQL): SQL {
   )
 }
 
-/** Each key of `metadata.browse` that is not a built-in field, per section. */
+/** The plugin fields of a library by type: dates are stored in milliseconds. */
+type PluginFieldKeys = { dates: readonly string[]; texts: readonly string[] }
+
+/**
+ * Each key of `metadata.browse` that is not a built-in field, per section.
+ * A text field sorts by `lower(firstText(value))` as browseSortExpression
+ * does, so a number stored under it sorts by the number's text.
+ */
 function storedBrowseParts(
   entity: MediaEntity,
   ids: SQL,
-  dateKeys: readonly string[],
+  pluginKeys: PluginFieldKeys,
 ): ProjectionPart[] {
   const builtin = builtinFields[entity].map((field) => field.key)
   const entries = (value: SQL) => sql`select m.id, ${value} as value
@@ -181,14 +201,16 @@ function storedBrowseParts(
     {
       path: 'num.*',
       rows: entries(sql`jsonb_object_agg(e.key, case
-          when e.key = any(${sql.param([...dateKeys])}::text[]) then ${microseconds(number)}
+          when e.key = any(${sql.param([...pluginKeys.dates])}::text[]) then ${microseconds(number)}
           else ${number} end) filter (where jsonb_typeof(e.value) = 'number')`),
       keep,
     },
     {
       path: 'sort.*',
       rows: entries(
-        sql`jsonb_object_agg(e.key, lower(${firstText(sql`e.value`)})) filter (where jsonb_typeof(e.value) <> 'number')`,
+        sql`jsonb_object_agg(e.key, lower(${firstText(sql`e.value`)})) filter (
+          where jsonb_typeof(e.value) <> 'number'
+            or e.key = any(${sql.param([...pluginKeys.texts])}::text[]))`,
       ),
       keep,
     },
@@ -198,7 +220,7 @@ function storedBrowseParts(
 function mediaProjection(
   entity: MediaEntity,
   batch: readonly string[],
-  pluginDateKeys: readonly string[],
+  pluginKeys: PluginFieldKeys,
 ): Projection {
   const ids = anyId(batch)
   const fields = builtinFields[entity]
@@ -318,7 +340,7 @@ function mediaProjection(
     )
   }
   if (entity !== 'track')
-    parts.push(...storedBrowseParts(entity, ids, pluginDateKeys))
+    parts.push(...storedBrowseParts(entity, ids, pluginKeys))
   return {
     with: music
       ? sql`device_artist_tags as materialized (${artistTagLabels(creditedArtistProfiles(ids))})`
@@ -513,14 +535,12 @@ export async function renderMedia(
   entity: MediaEntity,
   ids: string[],
 ): Promise<Map<string, JsonObject>> {
-  const pluginDateKeys =
-    entity === 'track'
-      ? []
-      : (await listBrowseFields(entity))
-          .filter((field) => field.type === 'date')
-          .map((field) => field.key)
+  const fields = entity === 'track' ? [] : await listBrowseFields(entity)
+  const keysOf = (type: BrowseField['type']) =>
+    fields.filter((field) => field.type === type).map((field) => field.key)
+  const pluginKeys = { dates: keysOf('date'), texts: keysOf('text') }
   const [projections, items] = await Promise.all([
-    readProjection(mediaProjection(entity, ids, pluginDateKeys), () =>
+    readProjection(mediaProjection(entity, ids, pluginKeys), () =>
       mediaDefaults(entity),
     ),
     loadItems(entity, ids),

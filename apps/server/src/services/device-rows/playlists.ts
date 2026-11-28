@@ -14,6 +14,7 @@ import { latestSpotifyJobs } from '../spotify-playlist-state'
 import {
   anyId,
   epochMicroseconds,
+  idAfter,
   isJsonObject,
   readProjection,
   toJson,
@@ -31,8 +32,8 @@ const publishedPlaylist = sql`${visiblePlaylists} and ${playlistMember}`
 
 export async function listPlaylistIds(afterId: string | null, limit: number) {
   const result = await db.execute(sql`select p.id from playlist p
-    where ${publishedPlaylist} ${afterId === null ? sql`` : sql`and p.id collate "C" > ${afterId}`}
-    order by p.id collate "C" limit ${limit}`)
+    where ${publishedPlaylist} and ${idAfter(sql`p.id`, afterId)}
+    order by p.id limit ${limit}`)
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
 }
 
@@ -96,8 +97,8 @@ export async function listPlaylistJobIds(
 ) {
   const result = await db.execute(sql`select id from (
       select distinct j.options->>'groupKey' as id from ${playlistImportJobs}
-    ) groups ${afterId === null ? sql`` : sql`where id collate "C" > ${afterId}`}
-    order by id collate "C" limit ${limit}`)
+    ) groups where ${idAfter(sql`id`, afterId)}
+    order by id limit ${limit}`)
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
 }
 

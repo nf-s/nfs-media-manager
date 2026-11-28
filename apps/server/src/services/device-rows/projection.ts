@@ -11,6 +11,14 @@ import { db } from '@/lib/db'
 
 export type JsonObject = { [key: string]: JsonValue }
 
+/**
+ * IDs after `afterId` for a sweep page (DEVICE-05), in the database's default
+ * collation: the order `listIds` returns and `device_row.id` compares in.
+ */
+export function idAfter(id: SQL, afterId: string | null): SQL {
+  return afterId === null ? sql`true` : sql`${id} > ${afterId}`
+}
+
 /** The batch's IDs, compared as `= any(...)`. */
 export function anyId(ids: readonly string[]): SQL {
   return sql`any(${sql.param([...ids])}::text[])`

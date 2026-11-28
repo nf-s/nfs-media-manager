@@ -1399,6 +1399,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "device_row_track_recording_key_idx": {
+          "name": "device_row_track_recording_key_idx",
+          "columns": [
+            {
+              "expression": "(\"payload\"->'extra'->'recording'->>'key')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"device_row\".\"entity\" = 'track' and (\"device_row\".\"payload\"->'extra'->'recording'->>'key') is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {},
@@ -2588,6 +2604,21 @@
               "expression": "track_media_item_id",
               "isExpression": false,
               "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lastfm_track_link_device_name_idx": {
+          "name": "lastfm_track_link_device_name_idx",
+          "columns": [
+            {
+              "expression": "device_scrobble_name_id(\"username\", \"artist_key\", \"track_key\")",
+              "asc": true,
+              "isExpression": true,
               "nulls": "last"
             }
           ],

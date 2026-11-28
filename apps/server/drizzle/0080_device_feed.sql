@@ -20,7 +20,7 @@ CREATE TABLE "device_feed_state" (
 --> statement-breakpoint
 CREATE TABLE "device_row" (
 	"entity" text NOT NULL,
-	"id" text COLLATE "C" NOT NULL,
+	"id" text NOT NULL,
 	"payload" jsonb,
 	"hash" text,
 	"seq" bigint NOT NULL,
@@ -33,6 +33,9 @@ CREATE TABLE "device_row" (
 CREATE UNIQUE INDEX "device_row_seq_uidx" ON "device_row" USING btree ("seq");--> statement-breakpoint
 CREATE INDEX "device_row_live_entity_seq_idx" ON "device_row" USING btree ("entity","seq") WHERE not "device_row"."deleted";--> statement-breakpoint
 CREATE INDEX "device_row_tombstone_rendered_idx" ON "device_row" USING btree ("rendered_at") WHERE "device_row"."deleted";--> statement-breakpoint
+-- The published members of a recording group, found from the stored row of a
+-- marked track, so the members of its old group are rendered with it.
+CREATE INDEX "device_row_track_recording_key_idx" ON "device_row" USING btree (("payload"->'extra'->'recording'->>'key')) WHERE "device_row"."entity" = 'track' and ("device_row"."payload"->'extra'->'recording'->>'key') is not null;--> statement-breakpoint
 -- Row version 0 is older than any build, so the first maintenance run starts
 -- the feed with a new epoch and sweeps it.
 INSERT INTO "device_feed_state" ("epoch", "row_version") VALUES (gen_random_uuid()::text, 0);--> statement-breakpoint
@@ -42,6 +45,8 @@ CREATE FUNCTION device_scrobble_name_id(username text, artist_key text, track_ke
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   SELECT md5(length(username) || ':' || username || length(artist_key) || ':' || artist_key || track_key)
 $$;--> statement-breakpoint
+-- The sweep lists scrobbled names in the order of their ID.
+CREATE INDEX "lastfm_track_link_device_name_idx" ON "lastfm_track_link" USING btree (device_scrobble_name_id("username", "artist_key", "track_key"));--> statement-breakpoint
 -- DEVICE-03: each statement on a contributing table appends one mark per
 -- distinct (entity, id) whose row it may change. Over-marking is safe: the
 -- render keeps a row whose hash is unchanged. The sweep corrects anything

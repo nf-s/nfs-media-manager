@@ -494,6 +494,7 @@ describe('device feed', () => {
 
   it('pages changes, renders marks first and says when marks remain', async () => {
     const stub = stubRenderer()
+    setDeviceFeedRenderer(stub.renderer)
     for (let n = 1; n <= 10; n += 1)
       stub.set('album_plays', fixtureId(n), plays(n))
     await sweepAll(stub.renderer)
@@ -517,16 +518,9 @@ describe('device feed', () => {
       pending: false,
     })
 
-    // Without a renderer the marks wait for maintenance.
+    // While another writer holds the lock the request does not wait for it.
     stub.set('album_plays', fixtureId(3), plays(3, 30))
     await mark('album_plays', fixtureId(3))
-    expect(await changesPage({ epoch, since: rest.seq })).toMatchObject({
-      rows: [],
-      pending: true,
-    })
-
-    // While another writer holds the lock the request does not wait for it.
-    setDeviceFeedRenderer(stub.renderer)
     const holder = await pool.connect()
     try {
       await holder.query('begin')
@@ -557,7 +551,10 @@ describe('device feed', () => {
       stub.set('album_plays', fixtureId(n), plays(...times))
     await sweepAll(stub.renderer)
     const { epoch } = await feedState()
-    const page = await readDeviceChanges({ epoch, since: 0, limit: 8 })
+    const page = await readDeviceChanges(
+      { epoch, since: 0, limit: 8 },
+      stub.renderer,
+    )
     if (page.reset) throw new Error('The changes were reset')
     // Each payload is about 0.7 MB; a page stops before 4 MB.
     expect(page.rows.length).toBeGreaterThan(1)
@@ -634,6 +631,50 @@ describe('device feed', () => {
     ).toEqual({ reset: true })
   })
 
+  it('rests a day after a completed sweep and continues one under way in every run', async () => {
+    const stub = stubRenderer()
+    for (const n of [1, 2, 3]) stub.set('album_plays', fixtureId(n), plays(n))
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect((await feedState()).ready).toBe(true)
+
+    // A change no trigger marked waits for the next sweep.
+    stub.set('album_plays', fixtureId(1), plays(1, 10))
+    const before = await storedSeq('album_plays', fixtureId(1))
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(false)
+    expect(await storedSeq('album_plays', fixtureId(1))).toEqual(before)
+
+    // A sweep under way continues, though the last one completed just now.
+    await pool.query(
+      `update device_feed_state set sweep_entity = 'album_plays',
+      sweep_after = $1, swept_at = now()`,
+      [fixtureId(1)],
+    )
+    stub.set('album_plays', fixtureId(3), plays(3, 30))
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect((await storedSeq('album_plays', fixtureId(3)))?.seq).toBeGreaterThan(
+      before?.seq ?? Infinity,
+    )
+    expect(await storedSeq('album_plays', fixtureId(1))).toEqual(before)
+
+    // The next sweep starts once the last one has rested a day.
+    await pool.query(
+      `update device_feed_state set swept_at = now() - interval '23 hours'`,
+    )
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(false)
+    await pool.query(
+      `update device_feed_state set swept_at = now() - interval '24 hours'`,
+    )
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect((await storedSeq('album_plays', fixtureId(1)))?.seq).toBeGreaterThan(
+      before?.seq ?? Infinity,
+    )
+    // Marks are rendered in every run, resting or not.
+    stub.set('album_plays', fixtureId(2), plays(2, 20))
+    await mark('album_plays', fixtureId(2))
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(await markCount()).toBe(0)
+  })
+
   it('keeps a mark made while its row renders', async () => {
     const stub = stubRenderer()
     stub.set('album_plays', 'album-1', plays(1))
@@ -686,7 +727,10 @@ describe('device feed', () => {
 
     async function reader() {
       while (writing) {
-        const page = await readDeviceChanges({ epoch, since, limit: 50 })
+        const page = await readDeviceChanges(
+          { epoch, since, limit: 50 },
+          stub.renderer,
+        )
         if (page.reset) throw new Error('The changes were reset')
         apply(copy, page.rows)
         since = page.seq
@@ -718,7 +762,10 @@ describe('device feed', () => {
     writing = false
     await reading
     for (;;) {
-      const page = await readDeviceChanges({ epoch, since, limit: 500 })
+      const page = await readDeviceChanges(
+        { epoch, since, limit: 500 },
+        stub.renderer,
+      )
       if (page.reset) throw new Error('The changes were reset')
       apply(copy, page.rows)
       since = page.seq
