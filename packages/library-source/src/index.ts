@@ -11,7 +11,14 @@ export {
   type LibraryReadReport,
 } from './fallback'
 export { foldText, globContains } from './fold'
-export { LIBRARY_API_PREFIX, libraryReadPath } from './paths'
+export {
+  isLibraryReadRoute,
+  LIBRARY_API_PREFIX,
+  LIBRARY_READ_ROUTES,
+  libraryReadPath,
+  mayBeLibraryRead,
+  type LibraryReadRoute,
+} from './paths'
 export {
   libraryResponseSchemas,
   librarySourceFrom,

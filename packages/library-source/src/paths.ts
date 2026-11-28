@@ -5,6 +5,65 @@ import type { LibraryMethod } from './source'
 /** Every library read is under this prefix, as the web client requests it. */
 export const LIBRARY_API_PREFIX = '/api/v1/'
 
+/**
+ * The static `GET` routes under the prefix that `resolveLibraryRead`
+ * resolves; it also resolves `tracks/:id/recordings`. Its route table is
+ * keyed by this list, so the two cannot drift apart.
+ */
+export const LIBRARY_READ_ROUTES = [
+  'tracks',
+  'tracks/browse-page',
+  'tracks/browse-count',
+  'tracks/positions',
+  'tracks/facets',
+  'tracks/listening-histogram',
+  'tracks/fields',
+  'albums',
+  'albums/browse-page',
+  'albums/browse-count',
+  'albums/facets',
+  'albums/listening-histogram',
+  'albums/fields',
+  'films',
+  'films/browse-page',
+  'films/browse-count',
+  'films/facets',
+  'films/fields',
+  'artists/browse-page',
+  'artists/browse-count',
+  'artists/facets',
+  'artists/listening-histogram',
+  'artists/fields',
+  'playlists/browse-page',
+  'playlists/browse-count',
+] as const
+export type LibraryReadRoute = (typeof LIBRARY_READ_ROUTES)[number]
+
+const libraryReadRoutes = new Set<string>(LIBRARY_READ_ROUTES)
+
+export function isLibraryReadRoute(route: string): route is LibraryReadRoute {
+  return libraryReadRoutes.has(route)
+}
+
+/**
+ * Whether `resolveLibraryRead` may resolve the path, without parsing its
+ * query or loading the query schemas: false means it never does. Only the
+ * path is read; a path with an escape in it counts as a possible read.
+ */
+export function mayBeLibraryRead(path: string): boolean {
+  const [target = ''] = path.split('#', 1)
+  const [pathname = ''] = target.split('?', 1)
+  if (!pathname.startsWith(LIBRARY_API_PREFIX)) return false
+  const rest = pathname.slice(LIBRARY_API_PREFIX.length)
+  if (rest.includes('%')) return true
+  const route = rest.endsWith('/') ? rest.slice(0, -1) : rest
+  const [collection, , child, ...more] = route.split('/')
+  return (
+    isLibraryReadRoute(route) ||
+    (collection === 'tracks' && child === 'recordings' && more.length === 0)
+  )
+}
+
 /** The API collection of each library's `fields` read. */
 export const fieldCollections = {
   track: 'tracks',

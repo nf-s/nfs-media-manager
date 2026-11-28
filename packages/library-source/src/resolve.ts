@@ -19,7 +19,11 @@ import {
   TrackPositionsQuerySchema,
   TrackQuerySchema,
 } from '@repo/schemas/tracks'
-import { LIBRARY_API_PREFIX } from './paths'
+import {
+  isLibraryReadRoute,
+  LIBRARY_API_PREFIX,
+  type LibraryReadRoute,
+} from './paths'
 import type { LibraryRead } from './source'
 
 /** Query parameters as the API's validator receives them: one string, or every value of a repeated name. */
@@ -74,181 +78,119 @@ type RouteRead = (input: QueryInput | undefined) => LibraryRead | undefined
 /**
  * Static GET routes under `/api/v1/`, with the query schema each route
  * validates with (`apps/server/src/routes/`). `fields` routes take no query.
+ * Keyed by `LIBRARY_READ_ROUTES`, which `mayBeLibraryRead` tests against.
  */
-const staticRoutes = new Map<string, RouteRead>([
-  [
-    'tracks',
-    (input) =>
-      parsed(TrackQuerySchema, input, (query) => ({
-        method: 'trackList',
-        query,
-      })),
-  ],
-  [
-    'tracks/browse-page',
-    (input) =>
-      parsed(TrackQuerySchema, input, (query) => ({
-        method: 'trackPage',
-        query,
-      })),
-  ],
-  [
-    'tracks/browse-count',
-    (input) =>
-      parsed(TrackQuerySchema, input, (query) => ({
-        method: 'trackCount',
-        query,
-      })),
-  ],
-  [
-    'tracks/positions',
-    (input) =>
-      parsed(TrackPositionsQuerySchema, input, (query) => ({
-        method: 'trackPositions',
-        query,
-      })),
-  ],
-  [
-    'tracks/facets',
-    (input) =>
-      parsed(BrowseFacetQuerySchema, input, (query) => ({
-        method: 'trackFacets',
-        query,
-      })),
-  ],
-  [
-    'tracks/listening-histogram',
-    (input) =>
-      parsed(TrackListeningHistogramQuerySchema, input, (query) => ({
-        method: 'trackHistogram',
-        query,
-      })),
-  ],
-  ['tracks/fields', () => ({ method: 'fields', query: 'track' })],
-  [
-    'albums',
-    (input) =>
-      parsed(AlbumQuerySchema, input, (query) => ({
-        method: 'albumList',
-        query,
-      })),
-  ],
-  [
-    'albums/browse-page',
-    (input) =>
-      parsed(AlbumQuerySchema, input, (query) => ({
-        method: 'albumPage',
-        query,
-      })),
-  ],
-  [
-    'albums/browse-count',
-    (input) =>
-      parsed(AlbumQuerySchema, input, (query) => ({
-        method: 'albumCount',
-        query,
-      })),
-  ],
-  [
-    'albums/facets',
-    (input) =>
-      parsed(ArchivableBrowseFacetQuerySchema, input, (query) => ({
-        method: 'albumFacets',
-        query,
-      })),
-  ],
-  [
-    'albums/listening-histogram',
-    (input) =>
-      parsed(AlbumListeningHistogramQuerySchema, input, (query) => ({
-        method: 'albumHistogram',
-        query,
-      })),
-  ],
-  ['albums/fields', () => ({ method: 'fields', query: 'album' })],
-  [
-    'films',
-    (input) =>
-      parsed(FilmQuerySchema, input, (query) => ({
-        method: 'filmList',
-        query,
-      })),
-  ],
-  [
-    'films/browse-page',
-    (input) =>
-      parsed(FilmQuerySchema, input, (query) => ({
-        method: 'filmPage',
-        query,
-      })),
-  ],
-  [
-    'films/browse-count',
-    (input) =>
-      parsed(FilmQuerySchema, input, (query) => ({
-        method: 'filmCount',
-        query,
-      })),
-  ],
-  [
-    'films/facets',
-    (input) =>
-      parsed(ArchivableBrowseFacetQuerySchema, input, (query) => ({
-        method: 'filmFacets',
-        query,
-      })),
-  ],
-  ['films/fields', () => ({ method: 'fields', query: 'film' })],
-  [
-    'artists/browse-page',
-    (input) =>
-      parsed(ArtistQuerySchema, input, (query) => ({
-        method: 'artistPage',
-        query,
-      })),
-  ],
-  [
-    'artists/browse-count',
-    (input) =>
-      parsed(ArtistQuerySchema, input, (query) => ({
-        method: 'artistCount',
-        query,
-      })),
-  ],
-  [
-    'artists/facets',
-    (input) =>
-      parsed(BrowseFacetQuerySchema, input, (query) => ({
-        method: 'artistFacets',
-        query,
-      })),
-  ],
-  [
-    'artists/listening-histogram',
-    (input) =>
-      parsed(ArtistListeningHistogramQuerySchema, input, (query) => ({
-        method: 'artistHistogram',
-        query,
-      })),
-  ],
-  ['artists/fields', () => ({ method: 'fields', query: 'artist' })],
-  [
-    'playlists/browse-page',
-    (input) =>
-      parsed(PlaylistBrowseQuerySchema, input, (query) => ({
-        method: 'playlistPage',
-        query,
-      })),
-  ],
-  [
-    'playlists/browse-count',
-    (input) =>
-      parsed(PlaylistBrowseQuerySchema, input, (query) => ({
-        method: 'playlistCount',
-        query,
-      })),
-  ],
-])
+const staticRoutes: Record<LibraryReadRoute, RouteRead> = {
+  tracks: (input) =>
+    parsed(TrackQuerySchema, input, (query) => ({
+      method: 'trackList',
+      query,
+    })),
+  'tracks/browse-page': (input) =>
+    parsed(TrackQuerySchema, input, (query) => ({
+      method: 'trackPage',
+      query,
+    })),
+  'tracks/browse-count': (input) =>
+    parsed(TrackQuerySchema, input, (query) => ({
+      method: 'trackCount',
+      query,
+    })),
+  'tracks/positions': (input) =>
+    parsed(TrackPositionsQuerySchema, input, (query) => ({
+      method: 'trackPositions',
+      query,
+    })),
+  'tracks/facets': (input) =>
+    parsed(BrowseFacetQuerySchema, input, (query) => ({
+      method: 'trackFacets',
+      query,
+    })),
+  'tracks/listening-histogram': (input) =>
+    parsed(TrackListeningHistogramQuerySchema, input, (query) => ({
+      method: 'trackHistogram',
+      query,
+    })),
+  'tracks/fields': () => ({ method: 'fields', query: 'track' }),
+  albums: (input) =>
+    parsed(AlbumQuerySchema, input, (query) => ({
+      method: 'albumList',
+      query,
+    })),
+  'albums/browse-page': (input) =>
+    parsed(AlbumQuerySchema, input, (query) => ({
+      method: 'albumPage',
+      query,
+    })),
+  'albums/browse-count': (input) =>
+    parsed(AlbumQuerySchema, input, (query) => ({
+      method: 'albumCount',
+      query,
+    })),
+  'albums/facets': (input) =>
+    parsed(ArchivableBrowseFacetQuerySchema, input, (query) => ({
+      method: 'albumFacets',
+      query,
+    })),
+  'albums/listening-histogram': (input) =>
+    parsed(AlbumListeningHistogramQuerySchema, input, (query) => ({
+      method: 'albumHistogram',
+      query,
+    })),
+  'albums/fields': () => ({ method: 'fields', query: 'album' }),
+  films: (input) =>
+    parsed(FilmQuerySchema, input, (query) => ({
+      method: 'filmList',
+      query,
+    })),
+  'films/browse-page': (input) =>
+    parsed(FilmQuerySchema, input, (query) => ({
+      method: 'filmPage',
+      query,
+    })),
+  'films/browse-count': (input) =>
+    parsed(FilmQuerySchema, input, (query) => ({
+      method: 'filmCount',
+      query,
+    })),
+  'films/facets': (input) =>
+    parsed(ArchivableBrowseFacetQuerySchema, input, (query) => ({
+      method: 'filmFacets',
+      query,
+    })),
+  'films/fields': () => ({ method: 'fields', query: 'film' }),
+  'artists/browse-page': (input) =>
+    parsed(ArtistQuerySchema, input, (query) => ({
+      method: 'artistPage',
+      query,
+    })),
+  'artists/browse-count': (input) =>
+    parsed(ArtistQuerySchema, input, (query) => ({
+      method: 'artistCount',
+      query,
+    })),
+  'artists/facets': (input) =>
+    parsed(BrowseFacetQuerySchema, input, (query) => ({
+      method: 'artistFacets',
+      query,
+    })),
+  'artists/listening-histogram': (input) =>
+    parsed(ArtistListeningHistogramQuerySchema, input, (query) => ({
+      method: 'artistHistogram',
+      query,
+    })),
+  'artists/fields': () => ({ method: 'fields', query: 'artist' }),
+  'playlists/browse-page': (input) =>
+    parsed(PlaylistBrowseQuerySchema, input, (query) => ({
+      method: 'playlistPage',
+      query,
+    })),
+  'playlists/browse-count': (input) =>
+    parsed(PlaylistBrowseQuerySchema, input, (query) => ({
+      method: 'playlistCount',
+      query,
+    })),
+}
 
 /**
  * `/tracks/:id/recordings`. The route's `id` schema (`z.string().min(1).max(200)`,
@@ -319,5 +261,6 @@ export function resolveLibraryRead(path: string): LibraryRead | undefined {
     return recordingsRead(id, input)
   // A decoded `/` is part of a segment, which no static route matches.
   if (segments.some((segment) => segment.includes('/'))) return undefined
-  return staticRoutes.get(segments.join('/'))?.(input)
+  const route = segments.join('/')
+  return isLibraryReadRoute(route) ? staticRoutes[route](input) : undefined
 }

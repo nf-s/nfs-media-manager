@@ -21,7 +21,9 @@ import {
   TrackQuerySchema,
 } from '@repo/schemas/tracks'
 import {
+  LIBRARY_READ_ROUTES,
   libraryReadPath,
+  mayBeLibraryRead,
   resolveLibraryRead,
   type LibraryMethod,
   type LibraryQueries,
@@ -771,6 +773,42 @@ describe('resolveLibraryRead leaves other paths to the API', () => {
     '/api/v1/tracks/browse-page?%E0%A4%A=1',
     '/api/v1/tracks/%E0%A4%A/recordings',
   ])('malformed escape: %s', (path) => {
+    expect(resolveLibraryRead(path)).toBeUndefined()
+  })
+})
+
+describe('mayBeLibraryRead', () => {
+  it('is true for every path resolveLibraryRead resolves', () => {
+    for (const [, path] of webPaths)
+      expect(mayBeLibraryRead(path), path).toBe(true)
+    for (const { method, schema, options, required } of queryCases)
+      for (const input of rawQueries(options, 5, 20, required)) {
+        const path = `${libraryReadPath(method, schema.parse(input))}#x`
+        expect(mayBeLibraryRead(path), path).toBe(true)
+      }
+    for (const route of LIBRARY_READ_ROUTES)
+      expect(mayBeLibraryRead(`/api/v1/${route}/?q=a`), route).toBe(true)
+    expect(mayBeLibraryRead('/api/v1/tracks/browse%2Dpage')).toBe(true)
+    expect(mayBeLibraryRead('/api/v1/tracks/track%207/recordings?q=a')).toBe(
+      true,
+    )
+  })
+
+  it.each([
+    '/api/v1/jobs/activity',
+    '/api/v1/providers/overview',
+    '/api/v1/ai/status',
+    '/api/v1/spotify/status',
+    '/api/v1/device/state',
+    '/api/v1/tracks/track-1',
+    '/api/v1/tracks/track-1/listening/series',
+    '/api/v1/albums/selection?page=1&size=24',
+    '/api/v1/artists?page=1',
+    '/api/v2/tracks/browse-page',
+    '/api/auth/get-session',
+    '/api/v1/Tracks/browse-page',
+  ])('is false for %s, which resolveLibraryRead never resolves', (path) => {
+    expect(mayBeLibraryRead(path)).toBe(false)
     expect(resolveLibraryRead(path)).toBeUndefined()
   })
 })
