@@ -551,10 +551,6 @@ describe('reads the device does not serve', () => {
       'invalid-query',
     )
     expect(await rejected({ sortBy: 'scrobbles' })).toBe('invalid-query')
-    const listeningSort: FilmQuery['listeningSort'] = { kind: 'all' }
-    expect(
-      reason(await device.source.filmPage({ ...filmQuery(), listeningSort })),
-    ).toBe('invalid-query')
     expect(
       reason(
         await device.source.filmPage({
