@@ -3,8 +3,8 @@
  * the trigram tokenizer and the JSON functions, nothing host-specific.
  *
  * Conventions:
- * - Each item table (`track`, `album`, `film`, `artist`, `playlist`) has an
- *   integer `rid` and the feed `id`. Derived tables refer to an item by
+ * - Each item table (`track`, `album`, `film`, `artist`, `playlist`,
+ *   `library_playlist`) has an integer `rid` and the feed `id`. Derived tables refer to an item by
  *   `(entity, rid)`, which keeps them and their indexes small.
  * - The list item a page returns is in `item_json`, apart from the item
  *   tables, so scans for filters, sorts and counts read narrow rows.
@@ -25,7 +25,7 @@
  * A change to any statement bumps `STORE_SCHEMA_VERSION`; a store with
  * another version is dropped and refilled, never migrated.
  */
-export const STORE_SCHEMA_VERSION = 2
+export const STORE_SCHEMA_VERSION = 3
 
 export const ITEM_ENTITIES = [
   'track',
@@ -33,6 +33,7 @@ export const ITEM_ENTITIES = [
   'film',
   'artist',
   'playlist',
+  'library_playlist',
 ] as const
 export type ItemEntity = (typeof ITEM_ENTITIES)[number]
 
@@ -162,6 +163,37 @@ CREATE TABLE playlist (
 )`,
   `CREATE INDEX playlist_sort_name ON playlist (sort_name)`,
   `CREATE INDEX playlist_sync_group_key ON playlist (sync_group_key)`,
+]
+
+/**
+ * Library playlists and smart playlists of every library (PL-17, PL-18).
+ * `item_json` holds the directory row (`PlaylistSummary`), `summary` the row
+ * of the library playlist list; `library_playlist_item` holds the distinct
+ * items of the listed entries, for the `libraryPlaylist` Browse filter and
+ * `containsItem`.
+ */
+const libraryPlaylist = [
+  `
+CREATE TABLE library_playlist (
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  seq INTEGER NOT NULL,
+  library TEXT NOT NULL,
+  type TEXT NOT NULL,
+  has_view INTEGER NOT NULL,
+  sort_name TEXT,
+  entry_count INTEGER,
+  updated NUMERIC,
+  added NUMERIC,
+  summary TEXT NOT NULL
+)`,
+  `CREATE INDEX library_playlist_library ON library_playlist (library, sort_name)`,
+  `
+CREATE TABLE library_playlist_item (
+  rid INTEGER NOT NULL,
+  item_id TEXT NOT NULL,
+  PRIMARY KEY (rid, item_id)
+) WITHOUT ROWID`,
 ]
 
 const itemJson = [
@@ -396,6 +428,7 @@ export const STORE_SCHEMA: readonly string[] = [
   ...film,
   ...artist,
   ...playlist,
+  ...libraryPlaylist,
   ...itemJson,
   ...itemText,
   ...itemSearch,

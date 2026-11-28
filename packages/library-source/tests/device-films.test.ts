@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  filmBrowseFields,
-  LIBRARY_PLAYLIST_FILTER_FIELD,
-} from '@repo/schemas/browse'
+import { filmBrowseFields } from '@repo/schemas/browse'
 import type { FilmQuery } from '@repo/schemas/media'
 import {
   openDeviceStore,
@@ -538,28 +535,6 @@ describe('reads the device does not serve', () => {
         discoverySourceScope: 'selection',
       }),
     ).toBe('catalog-scope')
-  })
-
-  it('leaves a libraryPlaylist filter in any mode to the API', async () => {
-    const device = await open([film('a')])
-    for (const mode of [undefined, 'required', 'any', 'exclude']) {
-      const filters = [
-        { field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'list-1', mode },
-      ]
-      for (const outcome of [
-        reason(await device.source.filmPage(filmQuery({ filters }))),
-        reason(
-          await device.source.filmCount(
-            filmQuery({ filters, creatorId: 'person-1' }),
-          ),
-        ),
-        reason(await device.source.filmList(filmQuery({ filters }))),
-      ])
-        expect(outcome, mode).toBe('library-playlist')
-    }
-    expect(served(await device.source.filmCount(filmQuery())).totalCount).toBe(
-      1,
-    )
   })
 
   it('leaves queries the API rejects to it', async () => {

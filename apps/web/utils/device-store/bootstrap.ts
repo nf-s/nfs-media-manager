@@ -23,6 +23,7 @@ const libraryQueryPrefixes = [
   'films',
   'artists',
   'playlists',
+  'library-playlists',
   'listening-histogram',
 ]
 /** Sign-out waits at most this long for the copy to be deleted. */

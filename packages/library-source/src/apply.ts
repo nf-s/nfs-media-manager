@@ -4,6 +4,7 @@ import type {
   DeviceArtistRow,
   DeviceEntity,
   DeviceFilmRow,
+  DeviceLibraryPlaylistRow,
   DeviceLiveRow,
   DevicePlaylistRow,
   DeviceRow,
@@ -93,6 +94,7 @@ const DERIVED_TABLES: Record<ItemEntity, readonly string[]> = {
     'item_playlist',
   ],
   playlist: ['item_json', 'item_search', 'item_num', 'item_sort'],
+  library_playlist: ['item_json', 'item_search'],
 }
 
 const PLAY_TABLES = {
@@ -118,6 +120,14 @@ async function applyLiveRow(
       return writeArtist(tx, await folds(), row.id, row.seq, row.payload)
     case 'playlist':
       return writePlaylist(tx, await folds(), row.id, row.seq, row.payload)
+    case 'library_playlist':
+      return writeLibraryPlaylist(
+        tx,
+        await folds(),
+        row.id,
+        row.seq,
+        row.payload,
+      )
     case 'playlist_job':
       if (!(await isNewer(tx, 'playlist_job', row.id, row.seq))) return
       await tx.run(
@@ -199,7 +209,8 @@ async function removeRow(
     case 'album':
     case 'film':
     case 'artist':
-    case 'playlist': {
+    case 'playlist':
+    case 'library_playlist': {
       const existing = await readItemKey(tx, entity, id)
       if (existing === null || existing.seq > seq) return
       await removeDerived(tx, entity, existing.rid)
@@ -409,6 +420,40 @@ async function writePlaylist(
   })
 }
 
+async function writeLibraryPlaylist(
+  tx: SqliteExecutor,
+  fold: TextFold,
+  id: string,
+  seq: number,
+  row: DeviceLibraryPlaylistRow,
+): Promise<void> {
+  const { extra, sort, num } = row
+  const rid = await writeItem(tx, 'library_playlist', id, seq, row.item, {
+    library: extra.library,
+    type: extra.type,
+    has_view: flag(extra.hasView),
+    sort_name: sort.name,
+    entry_count: num.count,
+    updated: num.updated,
+    added: num.added,
+    summary: JSON.stringify(row.summary),
+  })
+  if (rid === null) return
+  await writeValues(tx, fold, 'library_playlist', rid, {
+    text: row.text,
+    search: row.search,
+    num: {},
+    sort: {},
+  })
+  await insertJson(
+    tx,
+    `INSERT INTO library_playlist_item (rid, item_id)
+     SELECT ?, value FROM json_each(?)`,
+    [rid],
+    distinct(extra.members),
+  )
+}
+
 /**
  * Inserts or replaces one item row. Returns its `rid` with its derived rows
  * removed, or null when the stored row is newer.
@@ -567,6 +612,9 @@ async function removeDerived(
   }
   if (entity === 'track') {
     await tx.run('DELETE FROM track_name WHERE rid = ?', [rid])
+  }
+  if (entity === 'library_playlist') {
+    await tx.run('DELETE FROM library_playlist_item WHERE rid = ?', [rid])
   }
 }
 

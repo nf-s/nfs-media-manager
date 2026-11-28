@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  albumBrowseFields,
-  LIBRARY_PLAYLIST_FILTER_FIELD,
-} from '@repo/schemas/browse'
-import { AlbumListeningHistogramQuerySchema } from '@repo/schemas/media'
+import { albumBrowseFields } from '@repo/schemas/browse'
 import {
   openDeviceStore,
   reason,
@@ -848,34 +844,6 @@ describe('reads the device does not serve', () => {
     ).toBe('catalog-scope')
     expect(await scope({ discoverySources: 'spotify-search' })).toBeNull()
     expect(await scope({ libraryScope: 'library' })).toBeNull()
-  })
-
-  it('leaves a libraryPlaylist filter in any mode to the API', async () => {
-    const device = await open([album('a')])
-    for (const mode of [undefined, 'required', 'any', 'exclude']) {
-      const filters = [
-        { field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'list-1', mode },
-      ]
-      for (const outcome of [
-        reason(await device.source.albumPage(albumQuery({ filters }))),
-        reason(
-          await device.source.albumCount(albumQuery({ filters, tag: 'Rock' })),
-        ),
-        reason(await device.source.albumList(albumQuery({ filters }))),
-        reason(
-          await device.source.albumHistogram(
-            AlbumListeningHistogramQuerySchema.parse({
-              filters: JSON.stringify(filters),
-              period: JSON.stringify({ kind: 'all' }),
-            }),
-          ),
-        ),
-      ])
-        expect(outcome, mode).toBe('library-playlist')
-    }
-    expect(
-      served(await device.source.albumCount(albumQuery())).totalCount,
-    ).toBe(1)
   })
 
   it('leaves queries the API rejects to it', async () => {

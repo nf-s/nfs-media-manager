@@ -44,7 +44,6 @@ import { checkPluginTextSort, withPluginFields } from '../compile/plugin-fields'
 import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
-  holdsLibraryPlaylistFilter,
   isMemberScope,
   listWindow,
   orderBy,
@@ -145,6 +144,7 @@ async function tagMatch(
 const albumFields: FieldTable<AlbumContext> = {
   entity: 'album',
   library: 'album',
+  playlistLibrary: 'albums',
   filters: {
     title: textMatch('album', 'title'),
     artist: textMatch('album', 'artist'),
@@ -308,7 +308,6 @@ async function planAlbums(
   query: AlbumQuery,
 ): Promise<AlbumPlan> {
   if (!isMemberScope(query)) unsupported('catalog-scope')
-  if (holdsLibraryPlaylistFilter(query.filters)) unsupported('library-playlist')
   const fields: BrowseField[] = await readBrowseFields(read.tx, 'album')
   const table = withPluginFields(albumFields, fields, albumBrowseFields)
   const sortPeriod: ListeningPeriod | undefined =

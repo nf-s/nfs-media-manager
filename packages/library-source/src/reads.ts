@@ -6,6 +6,7 @@ import {
 } from '@repo/schemas/browse'
 import { PaginatedDataSchema } from '@repo/schemas/common'
 import { ArtistSummarySchema } from '@repo/schemas/creators'
+import { LibraryPlaylistPageSchema } from '@repo/schemas/library-playlists'
 import { ListeningHistogramSchema } from '@repo/schemas/listening'
 import {
   AlbumFilterOptionSchema,
@@ -69,6 +70,7 @@ export const libraryResponseSchemas: {
   artistHistogram: ListeningHistogramSchema,
   playlistPage: PlaylistBrowsePageSchema,
   playlistCount: BrowseCountSchema,
+  libraryPlaylistList: LibraryPlaylistPageSchema,
   fields: z.array(BrowseFieldSchema),
 }
 
@@ -97,6 +99,7 @@ export function librarySourceFrom(read: LibraryReader): LibrarySource {
     artistHistogram: (query) => read('artistHistogram', query),
     playlistPage: (query) => read('playlistPage', query),
     playlistCount: (query) => read('playlistCount', query),
+    libraryPlaylistList: (query) => read('libraryPlaylistList', query),
     fields: (library) => read('fields', library),
   }
 }

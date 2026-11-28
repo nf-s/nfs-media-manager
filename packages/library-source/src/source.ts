@@ -27,6 +27,7 @@
  * | `artistHistogram` | `ArtistListeningHistogramQuerySchema`            | `ListeningHistogramSchema`                      |
  * | `playlistPage`    | `PlaylistBrowseQuerySchema`                      | `PlaylistBrowsePageSchema`                      |
  * | `playlistCount`   | `PlaylistBrowseQuerySchema`                      | `BrowseCountSchema`, without `unfilteredCount`  |
+ * | `libraryPlaylistList` | `LibraryPlaylistListQuerySchema`             | `LibraryPlaylistPageSchema`                     |
  * | `fields`          | `DeviceBrowseLibrarySchema`                      | `BrowseFieldSchema[]`                           |
  *
  * Arguments are the schemas' parsed output, as a route handler receives them.
@@ -46,6 +47,10 @@ import type {
   ArtistSummarySchema,
 } from '@repo/schemas/creators'
 import type { DeviceBrowseLibrary } from '@repo/schemas/device'
+import type {
+  LibraryPlaylistListQuery,
+  LibraryPlaylistPage,
+} from '@repo/schemas/library-playlists'
 import type { ListeningHistogram } from '@repo/schemas/listening'
 import type {
   AlbumFilterOptionSchema,
@@ -95,10 +100,16 @@ export type UnsupportedReason =
   /** A Playlists page holding a playlist whose import is queued or running: the API has its progress. */
   | 'active-import'
   /**
-   * A Browse read with a `libraryPlaylist` filter, or a Playlists directory
-   * read with `library`: the store holds no library playlists.
+   * A Playlists directory date range in a time zone other than `UTC` or an
+   * `Area/Location` name, which PostgreSQL may read differently from the
+   * device's time zone database.
    */
-  | 'library-playlist'
+  | 'time-zone'
+  /**
+   * A Playlists directory count range with `library` while the live count of
+   * a smart playlist of the library cannot be read on the device.
+   */
+  | 'smart-count'
   /**
    * The service lower-cases a value of the query in TypeScript, and the
    * server's fold cannot tell what its engine gives (see `lowerCaseAsServer`).
@@ -121,8 +132,8 @@ export type UnsupportedReason =
   | 'nul-text'
   /**
    * The query holds a value for a key the device does not implement: one
-   * its reader's table marks `api` (DEVICE-34), such as a Playlists column
-   * filter. Checked after `nul-text` and before every other reason.
+   * its reader's table marks `api` (DEVICE-34), such as a parameter added to
+   * a schema since. Checked after `nul-text` and before every other reason.
    */
   | 'unimplemented-field'
 
@@ -201,6 +212,9 @@ export interface LibrarySource {
     query: PlaylistBrowseQuery,
   ): Promise<SourceResult<PlaylistBrowsePage>>
   playlistCount(query: PlaylistBrowseQuery): Promise<SourceResult<BrowseCount>>
+  libraryPlaylistList(
+    query: LibraryPlaylistListQuery,
+  ): Promise<SourceResult<LibraryPlaylistPage>>
 
   fields(library: DeviceBrowseLibrary): Promise<SourceResult<BrowseField[]>>
 }
