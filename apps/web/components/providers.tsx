@@ -13,7 +13,10 @@ import type { LibraryActionKind } from '@repo/ui/components/ds/library-action'
 import { observeDocumentBrowsePath } from '@/hooks/useBrowsePerformance'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { initializeKeyNotation } from '@/utils/key-notation'
-import { startDeviceStore } from '@/utils/device-store/bootstrap'
+import {
+  enterSignedInPage,
+  startDeviceStore,
+} from '@/utils/device-store/bootstrap'
 
 initializeKeyNotation()
 
@@ -152,6 +155,16 @@ function BrowseDocumentTiming() {
   useLayoutEffect(() => {
     if (pathname) observeDocumentBrowsePath()
   }, [pathname])
+  return null
+}
+
+/**
+ * Marks the page as signed in, so the device store may start. Rendered only
+ * behind the session check, before the page's own components, so the store
+ * starts before their queries subscribe.
+ */
+export function SignedInSession() {
+  useLayoutEffect(() => enterSignedInPage(), [])
   return null
 }
 

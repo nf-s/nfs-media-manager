@@ -5,6 +5,7 @@ import { Section } from '@repo/ui/components/ds/facts'
 import { Segmented } from '@repo/ui/components/ds/segmented'
 import { formatCount, formatDateTime } from '@repo/ui/lib/format'
 import { retryDeviceStore } from '@/utils/device-store/bootstrap'
+import type { StoreError } from '@/utils/device-store/protocol'
 import {
   setDeviceStoreSetting,
   useDeviceStoreSetting,
@@ -19,6 +20,19 @@ const options: { value: Setting; label: string }[] = [
   { value: 'off', label: 'Off' },
   { value: 'on', label: 'On' },
 ]
+
+/** One fixed sentence per failure; exception text is never shown. */
+export const storeErrorText: Record<StoreError, string> = {
+  'newer-version':
+    "The server's library rows are newer than this page understands. Reload the page.",
+  'not-loaded': "The copy's code could not be loaded.",
+  'storage-unavailable': 'This browser cannot store the copy.',
+  'storage-full': 'Storage in this browser is full.',
+  unreadable:
+    'The copy could not be read. Retry deletes it and fills it again.',
+  unreachable: 'The server could not be reached.',
+  failed: 'The copy could not be updated.',
+}
 
 /** The state line under the setting (DEVICE-42). */
 export function deviceStoreStatusText(
@@ -42,9 +56,9 @@ export function deviceStoreStatusText(
     case 'ready':
       return status.failed === undefined
         ? `Ready. Last synced ${formatDateTime(status.syncedAt)}.`
-        : `Ready. Last synced ${formatDateTime(status.syncedAt)}. The last sync failed: ${status.failed}`
+        : `Ready. Last synced ${formatDateTime(status.syncedAt)}. The last sync failed. ${storeErrorText[status.failed]}`
     case 'error':
-      return `Could not use the copy: ${status.message}`
+      return `${storeErrorText[status.error]} Browse pages read from the server.`
     case 'signed-out':
       return 'The copy was deleted at sign-out.'
   }

@@ -11,14 +11,20 @@ import {
   type LibraryQueries,
   type LibrarySource,
 } from '@repo/library-source'
-import { openOpfsStore, type OpfsStore } from '@repo/library-source/sqlite-wasm'
+import {
+  loadSqliteWasm,
+  openOpfsStore,
+  type OpfsStore,
+} from '@repo/library-source/sqlite-wasm'
 import {
   HostMessageSchema,
   STORE_DIRECTORY,
   STORE_FILENAME,
+  type StoreError,
   type SyncOutcome,
   type WorkerMessage,
 } from './protocol'
+import { FeedStatusError, FeedUnreachableError, storeErrorOf } from './errors'
 
 /**
  * The store's dedicated Worker (DEVICE-41). It owns the SQLite pool on OPFS,
@@ -30,12 +36,6 @@ const EnvelopeSchema = z.object({ data: z.unknown() })
 /** Retries while a previous Worker of this origin still releases the pool's files. */
 const OPEN_RETRY_MS = [250, 1_000, 2_000]
 
-class FeedStatusError extends Error {
-  constructor(readonly status: number) {
-    super(`The feed answered ${status}.`)
-  }
-}
-
 let apiBaseUrl = ''
 let store: OpfsStore | undefined
 let source: LibrarySource | undefined
@@ -44,10 +44,6 @@ let lastPending = false
 
 function post(message: WorkerMessage) {
   postMessage(message)
-}
-
-function messageOf(error: unknown) {
-  return error instanceof Error ? error.message : 'Unknown error'
 }
 
 function hasStoreSupport() {
@@ -83,18 +79,39 @@ async function open(baseUrl: string) {
     post({
       type: 'open-failed',
       unavailable: true,
-      message: 'This browser has no OPFS access handles.',
+      error: 'storage-unavailable',
     })
     return
   }
+  const fail = (error: unknown, otherwise: StoreError) =>
+    post({
+      type: 'open-failed',
+      unavailable: false,
+      error: storeErrorOf(error, otherwise),
+    })
   try {
-    store = await openPool()
-    await openStore(store.driver)
-    const status = await readStoreStatus(store.driver)
-    source = createDeviceLibrarySource(store.driver, { now: () => new Date() })
+    await loadSqliteWasm()
+  } catch (error) {
+    fail(error, 'not-loaded')
+    return
+  }
+  let opened: OpfsStore
+  try {
+    opened = await openPool()
+  } catch (error) {
+    fail(error, 'storage-unavailable')
+    return
+  }
+  store = opened
+  try {
+    await openStore(opened.driver)
+    const status = await readStoreStatus(opened.driver)
+    source = createDeviceLibrarySource(opened.driver, {
+      now: () => new Date(),
+    })
     post({ type: 'opened', ready: status.ready, syncedAt: status.syncedAt })
   } catch (error) {
-    post({ type: 'open-failed', unavailable: false, message: messageOf(error) })
+    fail(error, 'unreadable')
   }
 }
 
@@ -128,10 +145,15 @@ async function read(id: number, path: string) {
 
 /** A feed `GET` with the session cookie; the store never sees credentials (DEVICE-31). */
 async function transport(path: string): Promise<unknown> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    credentials: 'include',
-    headers: { Accept: 'application/json' },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+  } catch {
+    throw new FeedUnreachableError()
+  }
   if (!response.ok) throw new FeedStatusError(response.status)
   const { data } = EnvelopeSchema.parse(await response.json())
   if (!verified) {
@@ -151,7 +173,7 @@ async function sync(id: number) {
 }
 
 async function runSync(): Promise<SyncOutcome> {
-  if (!store) return { outcome: 'failed', message: 'The copy is not open.' }
+  if (!store) return { outcome: 'failed', error: 'failed' }
   lastPending = false
   try {
     const result = await syncStore(store.driver, transport, {
@@ -164,7 +186,7 @@ async function runSync(): Promise<SyncOutcome> {
     })
     if (result.status === 'feed-not-ready') return { outcome: 'feed-not-ready' }
     if (result.status === 'cleared')
-      return { outcome: 'failed', message: 'The copy was deleted.' }
+      return { outcome: 'failed', error: 'failed' }
     return {
       outcome: 'synced',
       rowsApplied: result.rowsApplied,
@@ -177,7 +199,7 @@ async function runSync(): Promise<SyncOutcome> {
       (error.status === 401 || error.status === 403)
     )
       return { outcome: 'unauthorized' }
-    return { outcome: 'failed', message: messageOf(error) }
+    return { outcome: 'failed', error: storeErrorOf(error, 'failed') }
   }
 }
 

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import type { StoreError } from './protocol'
 
 /** What the setting shows about the copy in this tab (DEVICE-42). */
 export type DeviceStoreStatus =
@@ -12,8 +13,8 @@ export type DeviceStoreStatus =
   /** The server has not finished building its feed. */
   | { state: 'waiting-for-feed' }
   | { state: 'filling'; rows: number }
-  | { state: 'ready'; syncedAt: number | null; failed?: string }
-  | { state: 'error'; message: string }
+  | { state: 'ready'; syncedAt: number | null; failed?: StoreError }
+  | { state: 'error'; error: StoreError }
   /** The session ended and the copy was deleted. */
   | { state: 'signed-out' }
 

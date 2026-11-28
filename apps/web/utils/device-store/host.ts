@@ -11,6 +11,7 @@ import {
   STORE_LOCK,
   WorkerMessageSchema,
   type HostMessage,
+  type StoreError,
 } from './protocol'
 
 /**
@@ -73,15 +74,14 @@ export function createWorkerHost(apiBaseUrl: string): DeviceStoreHost {
     target.postMessage(message)
   }
 
-  function failPending(message: string) {
+  function failPending(error: StoreError) {
     for (const resolve of reads.values()) resolve({ kind: 'failed' })
     reads.clear()
-    for (const resolve of syncs.values())
-      resolve({ outcome: 'failed', message })
+    for (const resolve of syncs.values()) resolve({ outcome: 'failed', error })
     syncs.clear()
     for (const resolve of destroys.values()) resolve()
     destroys.clear()
-    opening?.({ kind: 'failed', message })
+    opening?.({ kind: 'failed', error })
     opening = undefined
   }
 
@@ -102,7 +102,7 @@ export function createWorkerHost(apiBaseUrl: string): DeviceStoreHost {
         opening?.(
           message.unavailable
             ? { kind: 'unavailable' }
-            : { kind: 'failed', message: message.message },
+            : { kind: 'failed', error: message.error },
         )
         opening = undefined
         return
@@ -188,8 +188,9 @@ export function createWorkerHost(apiBaseUrl: string): DeviceStoreHost {
       }
       worker = started
       started.addEventListener('message', onMessage)
+      // Before the copy opens, an error means the Worker's code did not load.
       started.addEventListener('error', () =>
-        failPending('The store Worker stopped.'),
+        failPending(opening ? 'not-loaded' : 'failed'),
       )
       const result = new Promise<HostOpenResult>((resolve) => {
         opening = resolve
@@ -212,10 +213,7 @@ export function createWorkerHost(apiBaseUrl: string): DeviceStoreHost {
     sync() {
       const current = worker
       if (!current)
-        return Promise.resolve({
-          outcome: 'failed',
-          message: 'The copy is not open.',
-        })
+        return Promise.resolve({ outcome: 'failed', error: 'failed' })
       const id = nextId++
       return new Promise((resolve) => {
         syncs.set(id, resolve)
@@ -236,7 +234,7 @@ export function createWorkerHost(apiBaseUrl: string): DeviceStoreHost {
           wait(DESTROY_TIMEOUT_MS),
         ])
         current.terminate()
-        failPending('The copy was deleted.')
+        failPending('failed')
         await removeStoreDirectory().catch(() => undefined)
       }
       freeLock()

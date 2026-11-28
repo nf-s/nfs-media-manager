@@ -8,6 +8,26 @@ import { z } from 'zod'
 
 const RequestId = z.number().int().nonnegative()
 
+/**
+ * Why the store could not open or sync, as the setting states it. The Worker
+ * sends a category, never an exception's text.
+ */
+export const StoreErrorSchema = z.enum([
+  /** The feed's rows or pages do not match this page's schemas. */
+  'newer-version',
+  /** The SQLite WebAssembly or the Worker's code did not load. */
+  'not-loaded',
+  /** The browser refused the store's OPFS pool. */
+  'storage-unavailable',
+  'storage-full',
+  /** The copy's file could not be read. */
+  'unreadable',
+  /** The feed request failed or the server answered with an error. */
+  'unreachable',
+  'failed',
+])
+export type StoreError = z.infer<typeof StoreErrorSchema>
+
 export const HostMessageSchema = z.discriminatedUnion('type', [
   /** Opens the copy on OPFS. `apiBaseUrl` prefixes the feed paths. */
   z.object({ type: z.literal('open'), apiBaseUrl: z.string() }),
@@ -30,7 +50,7 @@ const SyncOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('feed-not-ready') }),
   /** The feed answered 401 or 403. */
   z.object({ outcome: z.literal('unauthorized') }),
-  z.object({ outcome: z.literal('failed'), message: z.string() }),
+  z.object({ outcome: z.literal('failed'), error: StoreErrorSchema }),
 ])
 export type SyncOutcome = z.infer<typeof SyncOutcomeSchema>
 
@@ -44,7 +64,7 @@ export const WorkerMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('open-failed'),
     /** True when this browser lacks what the store needs, rather than a fault. */
     unavailable: z.boolean(),
-    message: z.string(),
+    error: StoreErrorSchema,
   }),
   z.object({
     type: z.literal('read'),

@@ -1,3 +1,5 @@
+import { mayBeLibraryRead } from '@repo/library-source/paths'
+import type { StoreError } from './protocol'
 import type { DeviceAnswer, DeviceSeam } from './seam'
 import type { DeviceStoreStatus } from './status'
 
@@ -27,7 +29,7 @@ export type SyncReason =
 export type HostOpenResult =
   | { kind: 'opened'; ready: boolean; syncedAt: number | null }
   | { kind: 'unavailable' }
-  | { kind: 'failed'; message: string }
+  | { kind: 'failed'; error: StoreError }
   | { kind: 'stopped' }
 
 export type HostReadAnswer =
@@ -44,7 +46,7 @@ export type HostSyncOutcome =
     }
   | { outcome: 'feed-not-ready' }
   | { outcome: 'unauthorized' }
-  | { outcome: 'failed'; message: string }
+  | { outcome: 'failed'; error: StoreError }
 
 export type HostEvents = {
   /** Another tab holds the copy; `open` resolves once this tab takes it over. */
@@ -155,7 +157,9 @@ export function createDeviceController(
   let filling = false
   let verified = false
   let syncedAt: number | null = null
-  let lastFailure: string | undefined
+  let lastFailure: StoreError | undefined
+  /** The feed's rows are newer than this page: no sync until Retry or a reload. */
+  let incompatible = false
   let pendingWrites = 0
   let writeGeneration = 0
   let caughtUpGeneration = 0
@@ -215,7 +219,7 @@ export function createDeviceController(
 
   async function runSync(reasons: Set<SyncReason>): Promise<boolean> {
     const current = host
-    if (!current || stopped || !opened) return false
+    if (!current || stopped || !opened || incompatible) return false
     clearTimeout(retryTimer)
     const generation = writeGeneration
     const wasServing = serving()
@@ -263,12 +267,17 @@ export function createDeviceController(
         return false
       case 'failed':
         failures += 1
-        lastFailure = outcome.message
+        lastFailure = outcome.error
         filling = false
+        if (outcome.error === 'newer-version') {
+          // The copy cannot apply these rows; refilling in this page load would fail again.
+          incompatible = true
+          ready = false
+        }
         if (ready) publishReady()
-        else publish({ state: 'error', message: outcome.message })
+        else publish({ state: 'error', error: outcome.error })
         openGate()
-        scheduleRetry(failureDelay())
+        if (!incompatible) scheduleRetry(failureDelay())
         return false
     }
   }
@@ -287,7 +296,7 @@ export function createDeviceController(
   }
 
   function requestSync(reason: SyncReason): Promise<boolean> {
-    if (stopped || !opened) return Promise.resolve(false)
+    if (stopped || !opened || incompatible) return Promise.resolve(false)
     if (running) {
       again ??= { ...deferred<boolean>(), reasons: new Set() }
       again.reasons.add(reason)
@@ -350,7 +359,7 @@ export function createDeviceController(
         openGate()
         return
       case 'failed':
-        publish({ state: 'error', message: result.message })
+        publish({ state: 'error', error: result.error })
         openGate()
         return
       case 'stopped':
@@ -377,7 +386,8 @@ export function createDeviceController(
 
   return {
     async read(path, signal): Promise<DeviceAnswer> {
-      if (stopped) return undefined
+      // Other reads go to the API at once, without waiting for the copy to open.
+      if (stopped || !mayBeLibraryRead(path)) return undefined
       if (signal?.aborted) throw signal.reason
       await abortable(gate.promise, signal)
       const current = host
@@ -424,6 +434,7 @@ export function createDeviceController(
       if (stopped) return
       if (opened) {
         failures = 0
+        incompatible = false
         void requestSync('retry')
       } else if (status.state === 'error' && host) {
         const current = host

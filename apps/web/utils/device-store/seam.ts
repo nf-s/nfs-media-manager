@@ -32,7 +32,8 @@ export function installDeviceSeam(seam: DeviceSeam | undefined) {
  * Requests that send a body but change no library row: player state, Sonos
  * commands, AI search and ratings reports. Every other non-`GET` request
  * holds reads on the API until the copy has caught up, so a player's
- * heartbeat does not keep the copy behind.
+ * heartbeat does not keep the copy behind. A prefix belongs here only if
+ * no request under it changes a row the feed publishes.
  */
 const nonLibraryWrites = [
   '/api/v1/playback/session',
