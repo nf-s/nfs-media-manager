@@ -3080,8 +3080,13 @@ function isBroadFacetQuery(query: BrowseFacetQuery) {
   return (query.q ?? '').split(/\s+/).every((word) => word.length < 3)
 }
 
-function redundantTrackFacetSource(query: BrowseFacetQuery) {
-  const denseSets = isBroadFacetQuery(query)
+function redundantTrackFacetSource(
+  query: BrowseFacetQuery,
+  standardScope: boolean,
+) {
+  // Standard autocomplete can consume the full visibility set even when the
+  // search is selective. Leave field-specific reads on their selective path.
+  const denseSets = standardScope || isBroadFacetQuery(query)
   return sql`redundant_lastfm_tracks as materialized (${redundantLastfmTrackIds(undefined, { denseSets })})`
 }
 export async function listBrowseFacets(
@@ -3188,7 +3193,11 @@ function browseFacetQuery(
   mediaType: MediaType,
   fields: BrowseField[],
   query: BrowseFacetQuery,
-  options: { includeLastfmSourceRows?: boolean; includeArchived?: boolean },
+  options: {
+    includeLastfmSourceRows?: boolean
+    includeArchived?: boolean
+    fields?: BrowseField[]
+  },
   completeVocabulary = false,
   providerNames?: ReadonlyMap<string, string>,
 ) {
@@ -3197,8 +3206,11 @@ function browseFacetQuery(
     : facetFieldLimit(query, fields.length)
   const music = mediaType === 'album' || mediaType === 'track'
   const sources: SQL[] = []
-  if (mediaType === 'track' && !options.includeLastfmSourceRows)
-    sources.push(redundantTrackFacetSource(query))
+  if (mediaType === 'track' && !options.includeLastfmSourceRows) {
+    const standardScope =
+      !options.fields && !options.includeArchived && memberScope(query, 'track')
+    sources.push(redundantTrackFacetSource(query, standardScope))
+  }
   const musicFields = music
     ? fields.filter((field) => musicTagFacetFields.includes(field.key))
     : []
