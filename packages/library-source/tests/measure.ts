@@ -8,7 +8,15 @@ import {
   DeviceSnapshotPageSchema,
   type DeviceEntity,
 } from '@repo/schemas/device'
-import { BrowseFacetQuerySchema, trackBrowseFields } from '@repo/schemas/browse'
+import { artistBrowseFields } from '@repo/schemas/artist-browse'
+import {
+  ArchivableBrowseFacetQuerySchema,
+  BrowseFacetQuerySchema,
+  albumBrowseFields,
+  trackBrowseFields,
+} from '@repo/schemas/browse'
+import { ArtistListeningHistogramQuerySchema } from '@repo/schemas/creators'
+import { AlbumListeningHistogramQuerySchema } from '@repo/schemas/media'
 import {
   TrackListeningHistogramQuerySchema,
   TrackQuerySchema,
@@ -100,7 +108,15 @@ function buildPages(): { pages: Page[]; plays: number } {
     album: [],
     artist: [],
     scrobble_name: [],
+    album_plays: [],
+    artist_plays: [],
     meta: [],
+  }
+  /** Up to 40 plays a day apart, from a random start. */
+  const playTimes = () => {
+    const count = Math.floor(next() * 40)
+    const start = 1_500_000_000 + Math.floor(next() * 200_000_000)
+    return Array.from({ length: count }, (_, n) => start + n * 86_400)
   }
   for (let index = 0; index < TAGS; index += 1) {
     seq += 1
@@ -179,6 +195,14 @@ function buildPages(): { pages: Page[]; plays: number } {
         dateAddedDay: Math.floor(next() * 3_000),
       }),
     })
+    seq += 1
+    rows.album_plays?.push({
+      entity: 'album_plays',
+      id: `album-${index}`,
+      seq,
+      deleted: false,
+      payload: { plays: playTimes() },
+    })
   }
   for (let index = 0; index < ARTISTS; index += 1) {
     seq += 1
@@ -189,6 +213,14 @@ function buildPages(): { pages: Page[]; plays: number } {
       deleted: false,
       payload: artistPayload(`artist-${index}`, { name: artists[index] }),
     })
+    seq += 1
+    rows.artist_plays?.push({
+      entity: 'artist_plays',
+      id: `artist-${index}`,
+      seq,
+      deleted: false,
+      payload: { plays: playTimes() },
+    })
   }
   seq += 1
   rows.meta?.push({
@@ -197,6 +229,22 @@ function buildPages(): { pages: Page[]; plays: number } {
     seq,
     deleted: false,
     payload: { kind: 'fields', library: 'track', fields: trackBrowseFields },
+  })
+  seq += 1
+  rows.meta?.push({
+    entity: 'meta',
+    id: 'fields:album',
+    seq,
+    deleted: false,
+    payload: { kind: 'fields', library: 'album', fields: albumBrowseFields },
+  })
+  seq += 1
+  rows.meta?.push({
+    entity: 'meta',
+    id: 'fields:artist',
+    seq,
+    deleted: false,
+    payload: { kind: 'fields', library: 'artist', fields: artistBrowseFields },
   })
   seq += 1
   rows.meta?.push({
@@ -221,6 +269,8 @@ function buildPages(): { pages: Page[]; plays: number } {
             'album',
             'artist',
             'scrobble_name',
+            'album_plays',
+            'artist_plays',
             'meta',
           ])
           .parse(entity),
@@ -421,6 +471,44 @@ describe('store measurements', () => {
     return result
   }
 
+  /** Albums and Artists suggestions and histograms, through the device source. */
+  async function measureLibraries(driver: SqliteDriver) {
+    const source = createDeviceLibrarySource(driver, {
+      now: () => new Date('2024-06-15T12:00:00.000Z'),
+    })
+    const year = JSON.stringify({ kind: 'rolling', amount: 1, unit: 'years' })
+    const reads: Record<string, () => Promise<{ served: boolean }>> = {
+      'album facets, no typed text': () =>
+        source.albumFacets(ArchivableBrowseFacetQuerySchema.parse({})),
+      'album facets, one typed word': () =>
+        source.albumFacets(
+          ArchivableBrowseFacetQuerySchema.parse({ q: 'river' }),
+        ),
+      'album facets, Tags at track and album': () =>
+        source.albumFacets(
+          ArchivableBrowseFacetQuerySchema.parse({ tagLevels: 'track,album' }),
+        ),
+      'album histogram, rolling year': () =>
+        source.albumHistogram(
+          AlbumListeningHistogramQuerySchema.parse({ period: year }),
+        ),
+      'artist facets, no typed text': () =>
+        source.artistFacets(BrowseFacetQuerySchema.parse({})),
+      'artist facets, one typed word': () =>
+        source.artistFacets(BrowseFacetQuerySchema.parse({ q: 'river' })),
+      'artist histogram, rolling year': () =>
+        source.artistHistogram(
+          ArtistListeningHistogramQuerySchema.parse({ period: year }),
+        ),
+    }
+    const result: Record<string, number> = {}
+    for (const [name, read] of Object.entries(reads)) {
+      if (!(await read()).served) throw new Error(`${name} was not served`)
+      result[`${name} (ms)`] = await time(read)
+    }
+    return result
+  }
+
   async function sizeOf(driver: SqliteDriver) {
     const tables = await driver.all(
       `SELECT name, sum(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY bytes DESC LIMIT 12`,
@@ -446,6 +534,7 @@ describe('store measurements', () => {
       console.table(await measureReads(driver))
       console.table(await measureSource(driver))
       console.table(await measureSuggestions(driver))
+      console.table(await measureLibraries(driver))
       console.table(await sizeOf(driver))
     } finally {
       await driver.close()
@@ -477,6 +566,7 @@ describe('store measurements', () => {
       console.table(await measureReads(driver))
       console.table(await measureSource(driver))
       console.table(await measureSuggestions(driver))
+      console.table(await measureLibraries(driver))
     } finally {
       await driver.close()
     }

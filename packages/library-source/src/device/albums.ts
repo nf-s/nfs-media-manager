@@ -9,10 +9,13 @@ import {
 import { DeviceAlbumItemSchema } from '@repo/schemas/device'
 import {
   defaultListeningPeriod,
+  listeningHistogramEdges,
+  type ListeningHistogram,
   type ListeningPeriod,
 } from '@repo/schemas/listening'
 import {
   AlbumListItemSchema,
+  type AlbumListeningHistogramQuery,
   type AlbumListItem,
   type AlbumQuery,
 } from '@repo/schemas/media'
@@ -31,6 +34,7 @@ import {
   type ValueSource,
 } from '../compile/fields'
 import {
+  listeningHistogram,
   listeningRules,
   periodCount,
   type PlaySource,
@@ -463,6 +467,42 @@ export async function albumCount(
       ? total
       : await readTotal(read, await planAlbums(read, unfiltered))
   return { totalCount: capCount(total, query.limitResults), unfilteredCount }
+}
+
+const HistogramRowSchema = z.object({
+  listening: z.number().int().nonnegative(),
+  count: z.number().int().positive(),
+})
+
+/**
+ * `GET /albums/listening-histogram`: queryListeningHistogram('album'),
+ * browse.ts. The query without its listening rules and result cap, with
+ * the period as its sort period; how many albums fall in each bar of
+ * their scrobble count in the period. A bar holds the counts from its edge
+ * up to the next edge; bars without albums count zero.
+ */
+export async function albumHistogram(
+  read: DeviceRead,
+  { period, ...query }: AlbumListeningHistogramQuery,
+): Promise<ListeningHistogram> {
+  const plan = await planAlbums(read, {
+    ...query,
+    listening: undefined,
+    listeningSort: period,
+    sortBy: 'listeningScrobbles',
+    limitResults: undefined,
+    page: 1,
+  })
+  const listening = plan.listening ?? unsupported('invalid-query')
+  const rows = await readRows(
+    read.tx,
+    sql`SELECT ${listening} AS listening, count(*) AS count
+      FROM album t WHERE ${plan.where} GROUP BY 1`,
+  )
+  return listeningHistogram(
+    listeningHistogramEdges.album,
+    rows.map((row) => HistogramRowSchema.parse(row)),
+  )
 }
 
 /** `GET /albums/`: queryBrowseIds and listAlbums. */

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isSpotifyAudioFeatureKey } from '@repo/schemas/audio-features'
 import {
   compareBrowseFacets,
   type BrowseFacetQuery,
@@ -18,8 +19,9 @@ import { unsupported } from './unsupported'
  * Filter suggestions (DEVICE-25) as listBrowseFacets and queryBrowseFacets,
  * browse.ts, give them: for each text field the API filters on, the values
  * of the whole library in scope with how many items carry each. Only `q`,
- * `limitPerField` and `tagLevels` change the answer; the page's filters,
- * search and sort never narrow the counts. A library supplies a facet table
+ * `limitPerField`, `tagLevels` and, on Albums and Films, `includeArchived`
+ * change the answer; the page's filters, search and sort never narrow the
+ * counts. A library supplies a facet table
  * (one source per field) and the core does the rest: matching the typed
  * words, the order and limit of each field, labels, subtags and the
  * response order.
@@ -40,7 +42,7 @@ export type FacetRow = {
 
 /** One typed word, as facetValueMatches, browse.ts, matches it. */
 export type FacetWord = {
-  /** The word as the service has it: split from `q.toLowerCase()`. */
+  /** The word as the service binds it to `ILIKE`: see FacetWordRule. */
   word: string
   /** Provider fields: the IDs whose display name contains the word. */
   ids: readonly string[]
@@ -58,11 +60,20 @@ export type FacetMatch =
 /** Where one field's counts come from. */
 export type FacetSource<Context> =
   /**
-   * The field's `item_text` values, grouped by exact value (case-sensitive,
-   * as the service groups them) and counted once per item. `from` names the
-   * item table as `t`; `visible` is the condition an item must meet.
+   * The field's `item_text` values, counted once per item. `from` names the
+   * item table as `t`; `visible` is the condition an item must meet. By
+   * default values are grouped by exact value (case-sensitive, as
+   * browse.ts groups them); `folded` groups them by `lower(value)` and
+   * lists the code-point-least value of each group, as
+   * listArtistBrowseFacets, artist-browse.ts, does.
    */
-  | { kind: 'text'; field: string; from: Sql; visible: Sql }
+  | {
+      kind: 'text'
+      field: string
+      from: Sql
+      visible: Sql
+      grouping?: 'value' | 'folded'
+    }
   /**
    * Counts the library computes itself, every value in one list; the core
    * matches, orders and limits them. `match` lets the read skip values
@@ -83,6 +94,32 @@ export type FacetTable<Context> = {
   subtagMediaType: TagMediaType
   /** The per-field limit; facetFieldLimit, browse.ts, by default. */
   fieldLimit?: (limitPerField: number, fieldCount: number) => number
+  /** The fields suggested; filterable text fields, as listBrowseFacets takes them, by default. */
+  suggests?: (field: BrowseField) => boolean
+  /** How `q` is split into words; browseWordRule by default. */
+  wordRule?: FacetWordRule
+}
+
+/** How a library's service turns `q` into the words each value must contain. */
+export type FacetWordRule = {
+  /** browse.ts splits `q.toLowerCase()`; artist-browse.ts splits `q` as typed. */
+  lowerCaseQuery: boolean
+  /** The field whose label words still count as words: Title, or the artist Name. */
+  labelWordsKept: string
+  /** On Key, a `q` that parses as a musical key asks for that key (browse.ts only). */
+  parsesMusicalKey: boolean
+}
+
+/** facetValueMatches, browse.ts. */
+export const browseWordRule: FacetWordRule = {
+  lowerCaseQuery: true,
+  labelWordsKept: 'title',
+  parsesMusicalKey: true,
+}
+
+/** The filterable text fields, as listBrowseFacets, browse.ts, suggests them. */
+export function suggestsFilterableText(field: BrowseField): boolean {
+  return field.type === 'text' && field.filterable
 }
 
 /** tagFacetFields, browse.ts: the fields of Tracks, Albums and Films whose values are tag keys. */
@@ -111,20 +148,30 @@ export function facetFieldLimit(
  * a word found in the field's label with a colon (`artists:`) is dropped
  * for that field, except on Title; each other word must be in the value.
  * On Provider a word also matches the IDs whose display name contains it.
+ * Another `rule` changes the case of the words, the field that keeps label
+ * words and the Key rule.
  */
 export function facetMatch(
   field: BrowseField,
   q: string | undefined,
   providerNames: ReadonlyMap<string, string> = new Map(),
+  rule: FacetWordRule = browseWordRule,
 ): FacetMatch {
-  const key = field.key === 'musicalKey' ? parseMusicalKey(q ?? '') : null
+  const key =
+    rule.parsesMusicalKey && field.key === 'musicalKey'
+      ? parseMusicalKey(q ?? '')
+      : null
   if (key !== null) return { kind: 'equals', value: key }
   const label = `${field.label}:`.toLowerCase()
-  const words = (q ?? '')
-    .toLowerCase()
+  const query = q ?? ''
+  const words = (rule.lowerCaseQuery ? query.toLowerCase() : query)
     .split(/\s+/)
     .filter(Boolean)
-    .filter((word) => field.key === 'title' || !label.includes(word))
+    .filter(
+      (word) =>
+        field.key === rule.labelWordsKept ||
+        !label.includes(word.toLowerCase()),
+    )
     .map((word) => ({
       word,
       ids:
@@ -231,28 +278,143 @@ const CountRowSchema = z.object({
   count: z.number().int().positive(),
 })
 
-/** browseFacetRows, browse.ts, on `item_text`: grouped by value, ordered and limited in SQL. */
+/**
+ * browseFacetRows, browse.ts, on `item_text`: grouped by value, ordered and
+ * limited in SQL. A value is stored once per item, so `count(*)` counts
+ * items; a folded group can hold several values of one item.
+ */
 async function readTextFacet(
   tx: SqliteExecutor,
   entity: ItemEntity,
-  source: { field: string; from: Sql; visible: Sql },
+  source: {
+    field: string
+    from: Sql
+    visible: Sql
+    grouping?: 'value' | 'folded'
+  },
   match: FacetMatch,
   q: string | undefined,
   limit: number,
 ): Promise<FacetCount[]> {
+  const folded = source.grouping === 'folded'
+  const value = folded ? sql`min(v.value)` : sql`v.value`
+  const count = folded ? sql`count(DISTINCT v.rid)` : sql`count(*)`
   const rows = await readRows(
     tx,
-    sql`SELECT v.value AS value, count(*) AS count
+    sql`SELECT ${value} AS value, ${count} AS count
       FROM item_text v JOIN ${source.from} ON t.rid = v.rid
       WHERE v.entity = ${entity} AND v.field = ${source.field} AND v.value <> ''
         AND ${source.visible}
         AND ${facetMatchCondition(match, sql`v.value`, sql`v.folded`)}
-      GROUP BY v.value
+      GROUP BY ${folded ? sql`v.folded` : sql`v.value`}
       ORDER BY CASE WHEN min(v.folded) = ${exactFacetText(q)} THEN 0 ELSE 1 END,
-        count(*) DESC, v.value
+        ${count} DESC, ${value}
       LIMIT ${limit}`,
   )
   return rows.map((row) => CountRowSchema.parse(row))
+}
+
+/**
+ * Keys textRows, browse-expressions.ts, reads from somewhere other than
+ * `metadata.browse` on Albums or Films. A plugin field with such a key is
+ * counted from those rows, which a row does not carry for it.
+ */
+const keysWithOwnTextRows: ReadonlySet<string> = new Set([
+  'title',
+  'summary',
+  'artist',
+  'director',
+  'actor',
+  'writer',
+  'genre',
+  'artistTag',
+  'albumTag',
+  'keyword',
+  'playlist',
+  'collection',
+  'provider',
+  'source',
+  'watched',
+  'identification',
+  'edition',
+  'country',
+])
+
+/**
+ * The table with a source for each plugin text field of Albums or Films:
+ * the fields of `fields` beyond `builtin`. textRows' default branch counts
+ * each element of `metadata.browse->key` as text, the values
+ * storedBrowseParts, device-rows/media.ts, writes to the row. A key with
+ * rows of its own, or a Spotify audio feature the row leaves out, gets no
+ * source and falls through as `unknown-field`.
+ */
+export function withPluginFacetSources<Context>(
+  table: FacetTable<Context>,
+  fields: readonly BrowseField[],
+  builtin: readonly BrowseField[],
+  source: (field: string) => FacetSource<Context>,
+): FacetTable<Context> {
+  const builtinKeys = new Set(builtin.map((field) => field.key))
+  const sources = { ...table.sources }
+  for (const field of fields) {
+    const { key } = field
+    if (
+      field.type !== 'text' ||
+      builtinKeys.has(key) ||
+      keysWithOwnTextRows.has(key) ||
+      isSpotifyAudioFeatureKey(key)
+    )
+      continue
+    sources[key] = source(key)
+  }
+  return { ...table, sources }
+}
+
+/**
+ * A tag facet's values as browse_release_facet_keys, browse.ts, and the
+ * rolled-up tag rows of textRows, browse-expressions.ts, read them: each
+ * visible tag row of the library as `(tag_id, value)` with its key, and
+ * again with each visible key above it (tagAncestorRows, tag-hierarchy.ts).
+ * `keep` limits the values, as the service limits them to those a typed
+ * word can match.
+ */
+export function tagFacetValues(
+  mediaType: TagMediaType,
+  keep: (value: Sql) => Sql,
+): Sql {
+  return sql`SELECT tag_id, value FROM (
+      SELECT id AS tag_id, key AS value FROM tag
+        WHERE media_type = ${mediaType} AND hidden = 0
+      UNION ALL
+      SELECT g.id, a.ancestor_key FROM tag g
+        JOIN tag_ancestor a ON a.media_type = g.media_type AND a.key = g.key
+        WHERE g.media_type = ${mediaType} AND g.hidden = 0
+          AND a.ancestor_key NOT IN (SELECT key FROM tag
+            WHERE media_type = ${mediaType} AND hidden = 1)
+    ) k WHERE ${keep(sql`k.value`)}`
+}
+
+/**
+ * The values any of the tag fields' matches accepts, read from `labels`
+ * (a superset of the values), or null when one of them takes every value.
+ */
+export async function wantedFacetValues(
+  matches: readonly FacetMatch[],
+  labels: () => Promise<string[]>,
+): Promise<string[] | null> {
+  if (matches.length === 0 || matches.some((match) => match.kind === 'any'))
+    return null
+  return (await labels()).filter((label) =>
+    matches.some((match) => facetValueMatches(match, label)),
+  )
+}
+
+/** A condition keeping the wanted values; true when every value is wanted. */
+export function keepValues(
+  wanted: readonly string[] | null,
+): (value: Sql) => Sql {
+  return (value) =>
+    wanted === null ? and([]) : sql`${value} IN ${values(wanted)}`
 }
 
 const SubtagRowSchema = z.object({
@@ -302,8 +464,8 @@ export async function readProviderNames(
 
 /**
  * listBrowseFacets, browse.ts, over a library's facet table. `fields` is
- * the API's field list; every text field it filters on is suggested, and
- * one the table has no source for is `unknown-field`.
+ * the API's field list; every field the table suggests (by default each
+ * text field it filters on) needs a source, or the read is `unknown-field`.
  */
 export async function readFacets<Context>(
   tx: SqliteExecutor,
@@ -312,9 +474,7 @@ export async function readFacets<Context>(
   query: BrowseFacetQuery,
   context: Context,
 ): Promise<FacetRow[]> {
-  const suggested = fields.filter(
-    (field) => field.type === 'text' && field.filterable,
-  )
+  const suggested = fields.filter(table.suggests ?? suggestsFilterableText)
   if (suggested.length === 0) return []
   const planned = suggested.map((field) => {
     const source = table.sources[field.key]
@@ -333,7 +493,7 @@ export async function readFacets<Context>(
   // union, which the final sort keeps for labels that compare equal.
   const counted: { field: string; value: string; count: number }[] = []
   for (const { field, source } of planned) {
-    const match = facetMatch(field, query.q, providerNames)
+    const match = facetMatch(field, query.q, providerNames, table.wordRule)
     const counts =
       source.kind === 'text'
         ? await readTextFacet(tx, table.entity, source, match, query.q, limit)

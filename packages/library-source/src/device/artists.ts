@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { BrowseField } from '@repo/schemas/browse'
 import {
   ArtistSummarySchema,
+  type ArtistListeningHistogramQuery,
   type ArtistQuery,
   type ArtistSummary,
 } from '@repo/schemas/creators'
@@ -11,7 +12,9 @@ import {
 } from '@repo/schemas/device'
 import {
   defaultListeningPeriod,
+  listeningHistogramEdges,
   monthKeys,
+  type ListeningHistogram,
   type ListeningPeriod,
 } from '@repo/schemas/listening'
 import type { SqliteExecutor } from '../driver'
@@ -28,6 +31,7 @@ import {
   type ValueSource,
 } from '../compile/fields'
 import {
+  listeningHistogram,
   listeningRules,
   periodCount,
   type PlaySource,
@@ -359,6 +363,44 @@ export async function artistPage(
     size: query.size,
     hasMore: rows.length > query.size,
   }
+}
+
+const HistogramRowSchema = z.object({
+  listening: z.number().int().nonnegative(),
+  count: z.number().int().positive(),
+})
+
+/**
+ * `GET /artists/listening-histogram`: artistListeningHistogram,
+ * artist-browse.ts. The artists matching the query without its listening
+ * rules (the result cap and sort do not apply), counted per bar of their
+ * scrobbles in the period. Provider filters are served: no links are read.
+ */
+export async function artistHistogram(
+  read: DeviceRead,
+  { period, ...query }: ArtistListeningHistogramQuery,
+): Promise<ListeningHistogram> {
+  const plan = await planArtists(
+    read,
+    {
+      ...query,
+      listening: undefined,
+      listeningSort: period,
+      sortBy: 'listeningScrobbles',
+      limitResults: undefined,
+    },
+    { returnsItems: false },
+  )
+  const listening = plan.listening ?? unsupported('invalid-query')
+  const rows = await readRows(
+    read.tx,
+    sql`SELECT ${listening} AS listening, count(*) AS count
+      FROM artist t WHERE ${plan.where} GROUP BY 1`,
+  )
+  return listeningHistogram(
+    listeningHistogramEdges.artist,
+    rows.map((row) => HistogramRowSchema.parse(row)),
+  )
 }
 
 /**

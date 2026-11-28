@@ -1,10 +1,13 @@
 import type { DeviceBrowseLibrary } from '@repo/schemas/device'
 import type { BrowseField } from '@repo/schemas/browse'
 import type { SqliteDriver } from '../driver'
-import type { LibrarySource, SourceResult } from '../source'
+import type { LibrarySource } from '../source'
 import { readBrowseFields } from '../compile/fields'
-import { albumCount, albumList, albumPage } from './albums'
-import { artistCount, artistPage } from './artists'
+import { albumFacets } from './album-facets'
+import { albumCount, albumHistogram, albumList, albumPage } from './albums'
+import { artistFacets } from './artist-facets'
+import { artistCount, artistHistogram, artistPage } from './artists'
+import { filmFacets } from './film-facets'
 import { filmCount, filmList, filmPage } from './films'
 import { playlistCount, playlistPage } from './playlists'
 import { serveRead } from './read'
@@ -21,14 +24,6 @@ import {
 export type DeviceSourceOptions = {
   /** The clock, read once per call for listening periods; the system clock by default. */
   now?: () => Date
-}
-
-/**
- * A read the device does not answer yet; another library's compiler
- * replaces it. Until then the read goes to the API.
- */
-function notServedYet<T>(): Promise<SourceResult<T>> {
-  return Promise.resolve({ served: false, reason: 'not-ready' })
 }
 
 /**
@@ -63,8 +58,10 @@ export function createDeviceLibrarySource(
       serveRead(driver, now, (read) => albumCount(read, query)),
     albumList: (query) =>
       serveRead(driver, now, (read) => albumList(read, query)),
-    albumFacets: notServedYet,
-    albumHistogram: notServedYet,
+    albumFacets: (query) =>
+      serveRead(driver, now, (read) => albumFacets(read, query)),
+    albumHistogram: (query) =>
+      serveRead(driver, now, (read) => albumHistogram(read, query)),
 
     filmPage: (query) =>
       serveRead(driver, now, (read) => filmPage(read, query)),
@@ -72,14 +69,17 @@ export function createDeviceLibrarySource(
       serveRead(driver, now, (read) => filmCount(read, query)),
     filmList: (query) =>
       serveRead(driver, now, (read) => filmList(read, query)),
-    filmFacets: notServedYet,
+    filmFacets: (query) =>
+      serveRead(driver, now, (read) => filmFacets(read, query)),
 
     artistPage: (query) =>
       serveRead(driver, now, (read) => artistPage(read, query)),
     artistCount: (query) =>
       serveRead(driver, now, (read) => artistCount(read, query)),
-    artistFacets: notServedYet,
-    artistHistogram: notServedYet,
+    artistFacets: (query) =>
+      serveRead(driver, now, (read) => artistFacets(read, query)),
+    artistHistogram: (query) =>
+      serveRead(driver, now, (read) => artistHistogram(read, query)),
 
     playlistPage: (query) =>
       serveRead(driver, now, (read) => playlistPage(read, query)),
