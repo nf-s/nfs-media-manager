@@ -31,6 +31,10 @@ import {
   type DeviceEntity,
   type DeviceRow,
 } from '@repo/schemas/device'
+import {
+  CreateLibraryPlaylistSchema,
+  LibraryPlaylistSelectionSchema,
+} from '@repo/schemas/library-playlists'
 import { SPOTIFY_PLAYLIST_IMPORT_TASK } from '@repo/schemas/tracks'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
@@ -571,6 +575,80 @@ describe('the device feed against real edits', () => {
       ),
     )
     expect(renamed.get('playlist:playlist-morning')).toBe(false)
+  })
+
+  // Library playlists are not in the feed yet (Known holes): their reads go
+  // to the API, and no published row reads their tables, so their writes
+  // mark nothing and change no row.
+  it('a library playlist created, edited and deleted', async () => {
+    const {
+      addLibraryPlaylistEntries,
+      createLibraryPlaylist,
+      deleteLibraryPlaylist,
+      listLibraryPlaylistEntries,
+      removeLibraryPlaylistEntries,
+      updateLibraryPlaylist,
+    } = await import('@/services/library-playlists')
+    const unmarked = (write: () => Promise<unknown>) => async () => {
+      await write()
+      expect(await markCount()).toBe(0)
+    }
+    let playlistId = ''
+    const steps: Array<[string, () => Promise<unknown>]> = [
+      [
+        'library playlist created',
+        async () => {
+          playlistId = (
+            await createLibraryPlaylist(
+              CreateLibraryPlaylistSchema.parse({
+                type: 'playlist',
+                library: 'tracks',
+                name: 'Evening',
+                selection: { ids: ['track-bright'] },
+              }),
+              ownerId,
+            )
+          ).playlist.id
+          await createLibraryPlaylist(
+            CreateLibraryPlaylistSchema.parse({
+              type: 'playlist',
+              library: 'albums',
+              name: 'Evening albums',
+              selection: { ids: ['album-quiet'] },
+            }),
+            ownerId,
+          )
+        },
+      ],
+      [
+        'library playlist entry added',
+        () =>
+          addLibraryPlaylistEntries(
+            playlistId,
+            LibraryPlaylistSelectionSchema.parse({ ids: ['track-echo'] }),
+            'skip',
+          ),
+      ],
+      [
+        'library playlist entry removed',
+        async () => {
+          const entries = await listLibraryPlaylistEntries(playlistId, {
+            page: 1,
+            size: 10,
+          })
+          await removeLibraryPlaylistEntries(playlistId, {
+            entryIds: entries.items.map((entry) => entry.id).slice(0, 1),
+          })
+        },
+      ],
+      [
+        'library playlist renamed',
+        () => updateLibraryPlaylist(playlistId, { name: 'Late Evening' }),
+      ],
+      ['library playlist deleted', () => deleteLibraryPlaylist(playlistId)],
+    ]
+    for (const [label, write] of steps)
+      expect((await step(label, unmarked(write))).size, label).toBe(0)
   })
 
   it('a Spotify playlist import queued, running with progress and finished', async () => {

@@ -32,6 +32,7 @@ import {
   DeviceTrackRowSchema,
   DeviceEntitySchema,
   type DeviceEntity,
+  type DevicePlaylistRow,
   type DeviceTagLocation,
   type DeviceTrackRow,
 } from '@repo/schemas/device'
@@ -756,6 +757,28 @@ describe('ordering by the projected sort values gives the service order', () => 
               ),
             descending: direction === 'desc',
           },
+          { value: row.sort.name },
+          { value: id },
+        ])
+        expect(
+          page.items.map((item) => item.id),
+          `playlist ${sortBy} ${direction}`,
+        ).toEqual(expected)
+      }
+    // PL-17 sorts without `library`, read from the row as device-store.md says.
+    const derivedSorts: [string, (row: DevicePlaylistRow) => number | null][] =
+      [
+        ['type', () => null],
+        ['count', () => null],
+        ['updated', (row) => row.num.imported],
+      ]
+    for (const [sortBy, value] of derivedSorts)
+      for (const direction of directions) {
+        const page = await listPlaylistBrowsePage(
+          PlaylistBrowseQuerySchema.parse({ sortBy, direction }),
+        )
+        const expected = deviceOrder(playlists, (row, id) => [
+          { value: value(row), descending: direction === 'desc' },
           { value: row.sort.name },
           { value: id },
         ])
