@@ -401,6 +401,89 @@ const playlistJob = {
   finishedAt: '2024-05-06T07:08:09.000Z',
 }
 
+const libraryPlaylistItem = {
+  id: 'library-playlist-1',
+  inLibrary: true,
+  name: 'Example Library Playlist',
+  source: null,
+  ownerName: null,
+  description: null,
+  artworkUrl: null,
+  spotifyUrl: null,
+  importedAt: null,
+  createdAt: '2024-05-06T07:08:09.000Z',
+  trackCount: 0,
+  linkedTrackCount: 0,
+  albumCount: 0,
+  presentation: 'tracks',
+  presentationOverride: null,
+  durationSec: 0,
+  acceptsAdditions: false,
+  sync: {
+    syncable: false,
+    schedule: 'off',
+    lastCheckedAt: null,
+    nextScheduledAt: null,
+    job: null,
+  },
+  origin: 'library',
+  type: 'playlist',
+  library: 'tracks',
+  view: null,
+  updatedAt: '2024-06-01T10:00:00.000Z',
+  itemCount: 2,
+}
+
+const libraryPlaylist = {
+  item: libraryPlaylistItem,
+  summary: {
+    id: 'library-playlist-1',
+    library: 'tracks',
+    type: 'playlist',
+    name: 'Example Library Playlist',
+    entryCount: 2,
+    view: null,
+    updatedAt: '2024-06-01T10:00:00.000Z',
+  },
+  text: {},
+  search: { name: ['Example Library Playlist'] },
+  num: { count: 2, updated: 1717236000000000, added: 1714979289000000 },
+  sort: { name: 'example library playlist' },
+  extra: {
+    library: 'tracks',
+    type: 'playlist',
+    hasView: false,
+    members: ['track-1', 'track-2'],
+  },
+}
+
+const smartView = { tags: 'Ambient', sort: 'title' }
+
+const smartLibraryPlaylist = {
+  item: {
+    ...libraryPlaylistItem,
+    id: 'library-playlist-2',
+    name: 'Example Smart Playlist',
+    type: 'smart',
+    view: smartView,
+    itemCount: null,
+  },
+  summary: {
+    id: 'library-playlist-2',
+    library: 'tracks',
+    type: 'smart',
+    name: 'Example Smart Playlist',
+    entryCount: null,
+    view: smartView,
+    updatedAt: '2024-06-01T10:00:00.000Z',
+  },
+  text: {},
+  search: { name: ['Example Smart Playlist'] },
+  num: { count: null, updated: 1717236000000000, added: 1714979289000000 },
+  sort: { name: 'example smart playlist' },
+  extra: { library: 'tracks', type: 'smart', hasView: true, members: [] },
+}
+
 const payloads = {
   track,
   album,
@@ -427,6 +510,7 @@ const payloads = {
   album_plays: { plays: [1717236000] },
   artist_plays: { plays: [1717236000, 1717322400] },
   meta: { kind: 'listening', historyStart: '2010-01-01' },
+  library_playlist: libraryPlaylist,
 }
 
 describe('device rows', () => {
@@ -444,6 +528,18 @@ describe('device rows', () => {
     expect(Object.keys(payloads).sort()).toEqual(
       Object.keys(devicePayloadSchemas).sort(),
     )
+  })
+
+  it('reads a playlist with members and a smart playlist with a view', () => {
+    expect(
+      devicePayloadSchemas.library_playlist.parse(libraryPlaylist).extra
+        .members,
+    ).toEqual(['track-1', 'track-2'])
+    const smart =
+      devicePayloadSchemas.library_playlist.parse(smartLibraryPlaylist)
+    expect(smart.summary.view).toEqual(smartView)
+    expect(smart.item.itemCount).toBeNull()
+    expect(smart.num.count).toBeNull()
   })
 
   it('keeps plugin fields of albums and rejects unknown projection keys', () => {
