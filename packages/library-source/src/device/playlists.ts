@@ -14,6 +14,7 @@ import type { TextFold } from '../fold'
 import type { BrowseCount } from '../source'
 import { valueExpression, type ValueSource } from '../compile/fields'
 import { isMemberScope, orderBy, orderTerm, pageWindow } from '../compile/query'
+import type { QueryKeys } from '../compile/query-keys'
 import { searchConditions } from '../compile/search'
 import { and, readRows, sql, values, type Sql } from '../compile/sql'
 import { unsupported } from '../compile/unsupported'
@@ -60,6 +61,41 @@ const playlistSorts: Record<PlaylistBrowseSort, Sql> = {
   type: sql`'playlist'`,
   count: sql`NULL`,
   updated: sortValue(numeric('imported')),
+}
+
+/**
+ * DEVICE-34: the keys of a Playlists directory query. The scope keys are
+ * read by isMemberScope, and `library` is `library-playlist`. The column
+ * filters are not implemented: without `library`, playlistDirectoryFilter
+ * applies `owner`, `description`, `schedules` and `columnRanges` (`timeZone`
+ * sets the calendar of its date ranges), answers nothing for `savedViewText`,
+ * `savedView: 'present'` and `types` without `playlist`, and reads
+ * `keyNotation` only with `library`.
+ */
+export const playlistQueryKeys: QueryKeys<PlaylistBrowseQuery> = {
+  page: 'served',
+  size: 'served',
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  q: 'served',
+  name: 'served',
+  owner: 'api',
+  description: 'api',
+  savedViewText: 'api',
+  savedView: 'api',
+  sortBy: 'served',
+  direction: 'served',
+  sources: 'served',
+  types: 'api',
+  schedules: 'api',
+  columnRanges: 'api',
+  timeZone: 'api',
+  keyNotation: 'api',
+  ids: 'served',
+  acceptsAdditions: 'served',
+  library: 'served',
 }
 
 /** The fields `q` and `name` read, as playlistDirectoryFilter matches them. */

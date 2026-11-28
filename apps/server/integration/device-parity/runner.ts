@@ -270,12 +270,15 @@ export async function runLibraryMatrix(
         await run.read(
           apiPath(routes.facets, { q, limitPerField, includeArchived }),
         )
-  if (routes.tagLevels)
-    for (const tagLevels of tagLocations)
-      for (const q of [undefined, 'pop', 'rock'])
-        await run.read(
-          apiPath(routes.facets, { q, tagLevels, limitPerField: 10 }),
-        )
+  // Films and Artists suggestions do not read `tagLevels`, which their
+  // routes accept: served as without it.
+  for (const tagLevels of routes.tagLevels
+    ? tagLocations
+    : tagLocations.slice(1, 3))
+    for (const q of [undefined, 'pop', 'rock'])
+      await run.read(
+        apiPath(routes.facets, { q, tagLevels, limitPerField: 10 }),
+      )
 
   // Histograms for each period, alone and under filters and rules.
   if (routes.histogram !== undefined)

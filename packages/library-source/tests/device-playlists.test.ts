@@ -419,6 +419,46 @@ describe('directory paging and fall-throughs', () => {
     })
   })
 
+  it('leaves the column filters, which it does not implement, to the API', async () => {
+    const device = await open([
+      own('a', 'Playlist a', { search: { owner: ['Example Owner'] } }),
+      own('b', 'Playlist b'),
+    ])
+    for (const input of [
+      { owner: 'Example' },
+      { description: 'slow' },
+      { savedViewText: 'tracks' },
+      { savedViewText: '' },
+      { savedView: 'present' },
+      { savedView: 'absent' },
+      { types: '["smart"]' },
+      { types: '[]' },
+      { schedules: '["daily"]' },
+      { columnRanges: '{"tracks":{"min":2}}' },
+      { columnRanges: '{}' },
+      { timeZone: 'Australia/Sydney' },
+      { keyNotation: 'camelot' },
+    ])
+      for (const extra of [{}, { q: 'playlist' }, { library: 'tracks' }]) {
+        const query = playlistQuery({ ...input, ...extra })
+        const label = JSON.stringify({ ...input, ...extra })
+        expect(reason(await device.source.playlistPage(query)), label).toBe(
+          'unimplemented-field',
+        )
+        expect(reason(await device.source.playlistCount(query)), label).toBe(
+          'unimplemented-field',
+        )
+      }
+    // The web client's reads without `library` are still served.
+    expect(await ids(device, { name: 'playlist', sortBy: 'name' })).toEqual([
+      'a',
+      'b',
+    ])
+    expect(await total(device, { acceptsAdditions: 'false' })).toEqual({
+      totalCount: 2,
+    })
+  })
+
   it('answers not-ready before the first fill', async () => {
     const device = await open(rows(), { ready: false })
     expect(reason(await device.source.playlistPage(playlistQuery()))).toBe(

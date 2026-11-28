@@ -1,4 +1,9 @@
-import type { LibraryRead, UnsupportedReason } from '@repo/library-source'
+import {
+  deviceQueryKeys,
+  type LibraryRead,
+  type QueryKeyUse,
+  type UnsupportedReason,
+} from '@repo/library-source'
 import { isSpotifyAudioFeatureKey } from '@repo/schemas/audio-features'
 import {
   albumBrowseFields,
@@ -190,6 +195,25 @@ function activeImport(data: unknown) {
   )
 }
 
+/**
+ * Known holes, `unimplemented-field` (DEVICE-34): a key of the read's query
+ * that holds a value (anything but undefined) and that the device's table
+ * for the read marks `api`. For a recordings list, a key of its `query`.
+ */
+function unimplementedKey(read: LibraryRead): string | undefined {
+  const query =
+    read.method === 'trackRecordings'
+      ? read.query.query
+      : read.method === 'fields'
+        ? {}
+        : read.query
+  const keys: Readonly<Record<string, QueryKeyUse>> =
+    deviceQueryKeys[read.method]
+  return Object.entries(query).find(
+    ([key, value]) => value !== undefined && keys[key] === 'api',
+  )?.[0]
+}
+
 /** The reason the device must give for this read, or undefined when it must serve it. */
 export function expectedHole(
   read: LibraryRead,
@@ -197,6 +221,8 @@ export function expectedHole(
 ): UnsupportedReason | undefined {
   // Text holding U+0000 is left to the API, whatever it answers.
   if (holdsNul(read.query)) return 'nul-text'
+  // A query key the device does not implement, before every other reason.
+  if (unimplementedKey(read) !== undefined) return 'unimplemented-field'
   // A query the API rejects is left to the API.
   if (observed.status !== 200) return 'invalid-query'
   switch (read.method) {

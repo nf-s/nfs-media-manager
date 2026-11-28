@@ -1,8 +1,10 @@
 export type { SqlValue, SqliteDriver, SqliteExecutor } from './driver'
 export type * from './source'
 export { applyRows } from './apply'
+export type { QueryKeyUse } from './compile/query-keys'
 export {
   createDeviceLibrarySource,
+  deviceQueryKeys,
   type DeviceSourceOptions,
 } from './device/source'
 export {

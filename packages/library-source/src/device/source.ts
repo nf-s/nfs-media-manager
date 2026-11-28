@@ -1,29 +1,83 @@
 import type { DeviceBrowseLibrary } from '@repo/schemas/device'
 import type { BrowseField } from '@repo/schemas/browse'
 import type { SqliteDriver } from '../driver'
-import type { LibrarySource } from '../source'
+import type { LibraryMethod, LibrarySource, SourceResult } from '../source'
 import { readBrowseFields } from '../compile/fields'
-import { albumFacets } from './album-facets'
-import { albumCount, albumHistogram, albumList, albumPage } from './albums'
-import { artistFacets } from './artist-facets'
-import { artistCount, artistHistogram, artistPage } from './artists'
-import { filmFacets } from './film-facets'
-import { filmCount, filmList, filmPage } from './films'
-import { playlistCount, playlistPage } from './playlists'
-import { serveRead } from './read'
-import { trackFacets } from './track-facets'
+import {
+  queryKeyCheck,
+  type QueryKeys,
+  type QueryKeyUse,
+} from '../compile/query-keys'
+import { albumFacetQueryKeys, albumFacets } from './album-facets'
+import {
+  albumCount,
+  albumHistogram,
+  albumHistogramQueryKeys,
+  albumList,
+  albumPage,
+  albumQueryKeys,
+} from './albums'
+import { artistFacetQueryKeys, artistFacets } from './artist-facets'
+import {
+  artistCount,
+  artistHistogram,
+  artistHistogramQueryKeys,
+  artistPage,
+  artistQueryKeys,
+} from './artists'
+import { filmFacetQueryKeys, filmFacets } from './film-facets'
+import { filmCount, filmList, filmPage, filmQueryKeys } from './films'
+import { playlistCount, playlistPage, playlistQueryKeys } from './playlists'
+import { serveRead, type DeviceRead } from './read'
+import { trackFacetQueryKeys, trackFacets } from './track-facets'
 import {
   trackCount,
   trackHistogram,
+  trackHistogramQueryKeys,
   trackList,
   trackPage,
   trackPositions,
+  trackPositionsQueryKeys,
+  trackQueryKeys,
   trackRecordings,
 } from './tracks'
 
 export type DeviceSourceOptions = {
   /** The clock, read once per call for listening periods; the system clock by default. */
   now?: () => Date
+}
+
+/**
+ * DEVICE-34: the key table of each read's parsed query, kept beside its
+ * reader; for `trackRecordings`, of its `query` (its `id` is read). `fields`
+ * takes a library name, which has no keys.
+ */
+export const deviceQueryKeys = {
+  trackPage: trackQueryKeys,
+  trackCount: trackQueryKeys,
+  trackList: trackQueryKeys,
+  trackPositions: trackPositionsQueryKeys,
+  trackRecordings: trackQueryKeys,
+  trackFacets: trackFacetQueryKeys,
+  trackHistogram: trackHistogramQueryKeys,
+  albumPage: albumQueryKeys,
+  albumCount: albumQueryKeys,
+  albumList: albumQueryKeys,
+  albumFacets: albumFacetQueryKeys,
+  albumHistogram: albumHistogramQueryKeys,
+  filmPage: filmQueryKeys,
+  filmCount: filmQueryKeys,
+  filmList: filmQueryKeys,
+  filmFacets: filmFacetQueryKeys,
+  artistPage: artistQueryKeys,
+  artistCount: artistQueryKeys,
+  artistFacets: artistFacetQueryKeys,
+  artistHistogram: artistHistogramQueryKeys,
+  playlistPage: playlistQueryKeys,
+  playlistCount: playlistQueryKeys,
+  fields: {},
+} satisfies {
+  readonly [Method in LibraryMethod]: Readonly<Record<string, QueryKeyUse>>
 }
 
 /**
@@ -36,58 +90,75 @@ export function createDeviceLibrarySource(
   options: DeviceSourceOptions = {},
 ): LibrarySource {
   const now = options.now ?? (() => new Date())
+  const keys = deviceQueryKeys
+  /** One read of a query checked against the table of its type. */
+  const serve = <Query extends Readonly<Record<string, unknown>>, T>(
+    query: Query,
+    table: QueryKeys<NoInfer<Query>>,
+    work: (read: DeviceRead) => Promise<T>,
+  ): Promise<SourceResult<T>> =>
+    serveRead(driver, now, query, [queryKeyCheck(query, table)], work)
   return {
     trackPage: (query) =>
-      serveRead(driver, now, query, (read) => trackPage(read, query)),
+      serve(query, keys.trackPage, (read) => trackPage(read, query)),
     trackCount: (query) =>
-      serveRead(driver, now, query, (read) => trackCount(read, query)),
+      serve(query, keys.trackCount, (read) => trackCount(read, query)),
     trackList: (query) =>
-      serveRead(driver, now, query, (read) => trackList(read, query)),
+      serve(query, keys.trackList, (read) => trackList(read, query)),
     trackPositions: (query) =>
-      serveRead(driver, now, query, (read) => trackPositions(read, query)),
+      serve(query, keys.trackPositions, (read) => trackPositions(read, query)),
     trackRecordings: (query) =>
-      serveRead(driver, now, query, (read) => trackRecordings(read, query)),
+      serveRead(
+        driver,
+        now,
+        query,
+        [queryKeyCheck(query.query, keys.trackRecordings)],
+        (read) => trackRecordings(read, query),
+      ),
     trackFacets: (query) =>
-      serveRead(driver, now, query, (read) => trackFacets(read, query)),
+      serve(query, keys.trackFacets, (read) => trackFacets(read, query)),
     trackHistogram: (query) =>
-      serveRead(driver, now, query, (read) => trackHistogram(read, query)),
+      serve(query, keys.trackHistogram, (read) => trackHistogram(read, query)),
 
     albumPage: (query) =>
-      serveRead(driver, now, query, (read) => albumPage(read, query)),
+      serve(query, keys.albumPage, (read) => albumPage(read, query)),
     albumCount: (query) =>
-      serveRead(driver, now, query, (read) => albumCount(read, query)),
+      serve(query, keys.albumCount, (read) => albumCount(read, query)),
     albumList: (query) =>
-      serveRead(driver, now, query, (read) => albumList(read, query)),
+      serve(query, keys.albumList, (read) => albumList(read, query)),
     albumFacets: (query) =>
-      serveRead(driver, now, query, (read) => albumFacets(read, query)),
+      serve(query, keys.albumFacets, (read) => albumFacets(read, query)),
     albumHistogram: (query) =>
-      serveRead(driver, now, query, (read) => albumHistogram(read, query)),
+      serve(query, keys.albumHistogram, (read) => albumHistogram(read, query)),
 
     filmPage: (query) =>
-      serveRead(driver, now, query, (read) => filmPage(read, query)),
+      serve(query, keys.filmPage, (read) => filmPage(read, query)),
     filmCount: (query) =>
-      serveRead(driver, now, query, (read) => filmCount(read, query)),
+      serve(query, keys.filmCount, (read) => filmCount(read, query)),
     filmList: (query) =>
-      serveRead(driver, now, query, (read) => filmList(read, query)),
+      serve(query, keys.filmList, (read) => filmList(read, query)),
     filmFacets: (query) =>
-      serveRead(driver, now, query, (read) => filmFacets(read, query)),
+      serve(query, keys.filmFacets, (read) => filmFacets(read, query)),
 
     artistPage: (query) =>
-      serveRead(driver, now, query, (read) => artistPage(read, query)),
+      serve(query, keys.artistPage, (read) => artistPage(read, query)),
     artistCount: (query) =>
-      serveRead(driver, now, query, (read) => artistCount(read, query)),
+      serve(query, keys.artistCount, (read) => artistCount(read, query)),
     artistFacets: (query) =>
-      serveRead(driver, now, query, (read) => artistFacets(read, query)),
+      serve(query, keys.artistFacets, (read) => artistFacets(read, query)),
     artistHistogram: (query) =>
-      serveRead(driver, now, query, (read) => artistHistogram(read, query)),
+      serve(query, keys.artistHistogram, (read) =>
+        artistHistogram(read, query),
+      ),
 
     playlistPage: (query) =>
-      serveRead(driver, now, query, (read) => playlistPage(read, query)),
+      serve(query, keys.playlistPage, (read) => playlistPage(read, query)),
     playlistCount: (query) =>
-      serveRead(driver, now, query, (read) => playlistCount(read, query)),
+      serve(query, keys.playlistCount, (read) => playlistCount(read, query)),
 
+    // A library name has no keys.
     fields: (library: DeviceBrowseLibrary) =>
-      serveRead<BrowseField[]>(driver, now, library, (read) =>
+      serveRead<BrowseField[]>(driver, now, library, [], (read) =>
         readBrowseFields(read.tx, library),
       ),
   }

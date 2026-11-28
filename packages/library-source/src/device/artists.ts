@@ -37,6 +37,7 @@ import {
   periodCount,
   type PlaySource,
 } from '../compile/listening'
+import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
   isMemberScope,
@@ -154,6 +155,33 @@ type ArtistPlan = {
   primary: Sql
   direction: ArtistQuery['direction']
 }
+
+/**
+ * DEVICE-34: the keys of an Artists query. The scope keys are read by
+ * isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API.
+ */
+export const artistQueryKeys: QueryKeys<ArtistQuery> = {
+  page: 'served',
+  size: 'served',
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  q: 'served',
+  direction: 'served',
+  sortBy: 'served',
+  filters: 'served',
+  ranges: 'served',
+  limitResults: 'served',
+  playlistIds: 'served',
+  listening: 'served',
+  listeningSort: 'served',
+}
+
+/** DEVICE-34: an Artists query and the period of its listening histogram. */
+export const artistHistogramQueryKeys: QueryKeys<ArtistListeningHistogramQuery> =
+  { ...artistQueryKeys, period: 'served' }
 
 /** listeningSortPeriod, artist-browse.ts. */
 function sortPeriodOf(query: ArtistQuery): ListeningPeriod | undefined {

@@ -1,10 +1,28 @@
 import '@hono/zod-openapi'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { deviceQueryKeys, type LibraryMethod } from '@repo/library-source'
 import {
+  ArchivableBrowseFacetQuerySchema,
+  BrowseFacetQuerySchema,
   LIBRARY_PLAYLIST_FILTER_FIELD,
   LibraryPlaylistLibrarySchema,
 } from '@repo/schemas/browse'
+import {
+  ArtistListeningHistogramQuerySchema,
+  ArtistQuerySchema,
+} from '@repo/schemas/creators'
+import {
+  AlbumListeningHistogramQuerySchema,
+  AlbumQuerySchema,
+  FilmQuerySchema,
+} from '@repo/schemas/media'
+import {
+  PlaylistBrowseQuerySchema,
+  TrackListeningHistogramQuerySchema,
+  TrackPositionsQuerySchema,
+  TrackQuerySchema,
+} from '@repo/schemas/tracks'
 import {
   apiRequest,
   apiSend,
@@ -20,6 +38,7 @@ import {
   type ParityStore,
 } from './device-parity/harness'
 import {
+  absentValue,
   apiPath,
   directions,
   libraries,
@@ -480,6 +499,73 @@ const playlistSorts = [
   'updated',
 ]
 
+/**
+ * DEVICE-34: each read's query schema, as the route parses it; for
+ * `trackRecordings`, the schema of its `query`. `fields` takes a library
+ * name, which has no keys.
+ */
+const queryKeySchemas: Record<LibraryMethod, { shape: object } | null> = {
+  trackPage: TrackQuerySchema,
+  trackCount: TrackQuerySchema,
+  trackList: TrackQuerySchema,
+  trackPositions: TrackPositionsQuerySchema,
+  trackRecordings: TrackQuerySchema,
+  trackFacets: BrowseFacetQuerySchema,
+  trackHistogram: TrackListeningHistogramQuerySchema,
+  albumPage: AlbumQuerySchema,
+  albumCount: AlbumQuerySchema,
+  albumList: AlbumQuerySchema,
+  albumFacets: ArchivableBrowseFacetQuerySchema,
+  albumHistogram: AlbumListeningHistogramQuerySchema,
+  filmPage: FilmQuerySchema,
+  filmCount: FilmQuerySchema,
+  filmList: FilmQuerySchema,
+  filmFacets: ArchivableBrowseFacetQuerySchema,
+  artistPage: ArtistQuerySchema,
+  artistCount: ArtistQuerySchema,
+  artistFacets: BrowseFacetQuerySchema,
+  artistHistogram: ArtistListeningHistogramQuerySchema,
+  playlistPage: PlaylistBrowseQuerySchema,
+  playlistCount: PlaylistBrowseQuerySchema,
+  fields: null,
+}
+
+/** Every column filter of the Playlists directory, each with values that match some, all and none. */
+const playlistColumnFilters: Params[] = [
+  { owner: 'owner' },
+  { owner: 'Fixture' },
+  { owner: absentValue },
+  { description: 'weekly' },
+  { description: 'nothing' },
+  { savedViewText: 'mix' },
+  { savedViewText: '' },
+  { savedView: 'present' },
+  { savedView: 'absent' },
+  { types: ['playlist'] },
+  { types: ['smart'] },
+  { types: ['playlist', 'smart'] },
+  { types: [] },
+  { schedules: ['daily'] },
+  { schedules: ['weekly', '1h'] },
+  { schedules: ['off'] },
+  { columnRanges: { tracks: { min: 2 } } },
+  { columnRanges: { linkedTracks: { max: 1 } } },
+  { columnRanges: { albums: { min: 1 } } },
+  { columnRanges: { duration: { max: 5 } } },
+  { columnRanges: { count: { min: 1 } } },
+  { columnRanges: { imported: { min: '2022-09-01' } } },
+  { columnRanges: { checked: { max: '2026-03-29' } } },
+  { columnRanges: { updated: { min: '2022-09-01', max: '2022-10-01' } } },
+  { columnRanges: { added: { max: '2022-10-01' } } },
+  { columnRanges: { nextSync: { min: '2026-03-31' } } },
+  {
+    columnRanges: { checked: { min: '2026-03-30' } },
+    timeZone: 'Pacific/Kiritimati',
+  },
+  { timeZone: 'Australia/Sydney' },
+  { keyNotation: 'camelot' },
+]
+
 async function playlistMatrix(run: ParityRunner, reduced: boolean) {
   const sourceSets = [
     undefined,
@@ -521,6 +607,15 @@ async function playlistMatrix(run: ParityRunner, reduced: boolean) {
     await run.read(apiPath('playlists/browse-page', params))
     await run.read(apiPath('playlists/browse-count', params))
   }
+  // The directory's column filters without `library`, alone and with `q`:
+  // the device implements none of them and leaves each read to the API.
+  for (const params of reduced
+    ? playlistColumnFilters.slice(0, 4)
+    : playlistColumnFilters)
+    for (const q of [undefined, 'mix']) {
+      await run.read(apiPath('playlists/browse-page', { ...params, q }))
+      await run.read(apiPath('playlists/browse-count', { ...params, q }))
+    }
   // PL-17: the directory of one library, with its library playlists, which
   // the device leaves to the API (`library-playlist`), in every form.
   for (const library of LibraryPlaylistLibrarySchema.options) {
@@ -547,6 +642,20 @@ describe('device parity', () => {
   it('maps no read for paths outside LibrarySource', () => {
     for (const path of unresolvedPaths)
       expect(unresolved(path), path).toBe(true)
+  })
+
+  it("names every key of each read's query schema in the device's tables", () => {
+    const methods = Object.keys(deviceQueryKeys).filter(
+      (key): key is LibraryMethod => key in queryKeySchemas,
+    )
+    expect(methods.sort()).toEqual(Object.keys(queryKeySchemas).sort())
+    for (const method of methods) {
+      const schema = queryKeySchemas[method]
+      expect(
+        Object.keys(deviceQueryKeys[method]).sort(),
+        `${method}: the table and the schema name different keys`,
+      ).toEqual(schema === null ? [] : Object.keys(schema.shape).sort())
+    }
   })
 
   it('serves the field lists as the API lists them', async () => {
@@ -724,6 +833,16 @@ describe('device parity', () => {
         .parse(directory?.data)
         .items.map((item) => item.id),
     ).toContain('library-playlist-night')
+    // The API counts the playlists whose owner holds the text; the device,
+    // which does not implement the filter, leaves the read to it.
+    const owner = await run.read(
+      apiPath('playlists/browse-count', { owner: 'owner' }),
+    )
+    expect(owner?.outcome).toEqual({
+      kind: 'fell-through',
+      reason: 'unimplemented-field',
+    })
+    expect(owner?.data).toEqual({ totalCount: 3 })
     expectParity(run, 'Artists and Playlists')
   })
 

@@ -52,6 +52,7 @@ import {
   periodCount,
   type PlaySource,
 } from '../compile/listening'
+import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
   holdsLibraryPlaylistFilter,
@@ -360,6 +361,41 @@ type GroupPlan = {
   /** The sort period count of group `t`. */
   listening: Sql | undefined
 }
+
+/**
+ * DEVICE-34: the keys of a Tracks query (pages, counts, lists and the
+ * recordings list's query). The scope keys are read by isMemberScope;
+ * `discoverySourceMode` changes only a scope the device leaves to the API.
+ */
+export const trackQueryKeys: QueryKeys<TrackQuery> = {
+  page: 'served',
+  size: 'served',
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  creatorId: 'served',
+  groupRecordings: 'served',
+  limitResults: 'served',
+  q: 'served',
+  filters: 'served',
+  ranges: 'served',
+  tagLevels: 'served',
+  listening: 'served',
+  listeningSort: 'served',
+  sortBy: 'served',
+  direction: 'served',
+}
+
+/** DEVICE-34: a Tracks query and the positions of `GET /tracks/positions`. */
+export const trackPositionsQueryKeys: QueryKeys<TrackPositionsQuery> = {
+  ...trackQueryKeys,
+  positions: 'served',
+}
+
+/** DEVICE-34: a Tracks query and the period of its listening histogram. */
+export const trackHistogramQueryKeys: QueryKeys<TrackListeningHistogramQuery> =
+  { ...trackQueryKeys, period: 'served' }
 
 function requestsLastfmSource(query: TrackQuery, fold: TextFold): boolean {
   return query.filters.some(

@@ -10,6 +10,7 @@ import {
   type FacetWordRule,
 } from '../compile/facets'
 import { isMemberScope } from '../compile/query'
+import type { QueryKeys } from '../compile/query-keys'
 import { TRUE, readRows, sql } from '../compile/sql'
 import { unsupported } from '../compile/unsupported'
 import type { DeviceRead } from './read'
@@ -97,6 +98,21 @@ async function readTagCounts(read: DeviceRead): Promise<FacetCount[]> {
       WHERE value <> '' GROUP BY value`,
   )
   return rows.map((row) => CountRowSchema.parse(row))
+}
+
+/**
+ * DEVICE-34: the keys of an Artists facets query. The scope keys are read
+ * by isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API. listArtistBrowseFacets does not read `tagLevels`.
+ */
+export const artistFacetQueryKeys: QueryKeys<BrowseFacetQuery> = {
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  q: 'served',
+  limitPerField: 'served',
+  tagLevels: 'served',
 }
 
 /** `GET /artists/facets`, in the film suggestion shape the route uses. */

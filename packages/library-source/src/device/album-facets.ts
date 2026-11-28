@@ -22,6 +22,7 @@ import {
   type FacetTable,
 } from '../compile/facets'
 import { isMemberScope } from '../compile/query'
+import type { QueryKeys } from '../compile/query-keys'
 import { TRUE, or, readRows, sql, type Sql } from '../compile/sql'
 import { unsupported } from '../compile/unsupported'
 import type { DeviceRead } from './read'
@@ -243,6 +244,22 @@ async function readTagCounts(
       ]
     }),
   )
+}
+
+/**
+ * DEVICE-34: the keys of an Albums facets query. The scope keys are read
+ * by isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API.
+ */
+export const albumFacetQueryKeys: QueryKeys<ArchivableBrowseFacetQuery> = {
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  q: 'served',
+  limitPerField: 'served',
+  tagLevels: 'served',
+  includeArchived: 'served',
 }
 
 /** `GET /albums/facets`. */

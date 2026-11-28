@@ -41,6 +41,7 @@ import {
   type PlaySource,
 } from '../compile/listening'
 import { checkPluginTextSort, withPluginFields } from '../compile/plugin-fields'
+import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
   holdsLibraryPlaylistFilter,
@@ -255,6 +256,37 @@ const albumPlays: PlaySource = {
   sets: () => sql`FROM play_set ps
     WHERE ps.entity = 'album_plays' AND ps.id = t.id`,
 }
+
+/**
+ * DEVICE-34: the keys of an Albums query. The scope keys are read by
+ * isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API.
+ */
+export const albumQueryKeys: QueryKeys<AlbumQuery> = {
+  page: 'served',
+  size: 'served',
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  creatorId: 'served',
+  includeArchived: 'served',
+  editions: 'served',
+  limitResults: 'served',
+  q: 'served',
+  tag: 'served',
+  filters: 'served',
+  ranges: 'served',
+  tagLevels: 'served',
+  listening: 'served',
+  listeningSort: 'served',
+  sortBy: 'served',
+  direction: 'served',
+}
+
+/** DEVICE-34: an Albums query and the period of its listening histogram. */
+export const albumHistogramQueryKeys: QueryKeys<AlbumListeningHistogramQuery> =
+  { ...albumQueryKeys, period: 'served' }
 
 type AlbumPlan = {
   /** Every condition on the album rows, listening rules included. */

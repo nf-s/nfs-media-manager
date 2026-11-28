@@ -21,6 +21,7 @@ import {
   type FacetTable,
 } from '../compile/facets'
 import { isMemberScope } from '../compile/query'
+import type { QueryKeys } from '../compile/query-keys'
 import { TRUE, readRows, sql, type Sql } from '../compile/sql'
 import { unsupported } from '../compile/unsupported'
 import type { DeviceRead } from './read'
@@ -120,6 +121,23 @@ async function readTagCounts(
       GROUP BY k.value`,
   )
   return rows.map((row) => CountRowSchema.parse(row))
+}
+
+/**
+ * DEVICE-34: the keys of a Films facets query. The scope keys are read by
+ * isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API. The service reads `tagLevels` for Albums and Tracks
+ * only, so it does not change Films suggestions.
+ */
+export const filmFacetQueryKeys: QueryKeys<ArchivableBrowseFacetQuery> = {
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  q: 'served',
+  limitPerField: 'served',
+  tagLevels: 'served',
+  includeArchived: 'served',
 }
 
 /** `GET /films/facets`. */

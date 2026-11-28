@@ -26,6 +26,7 @@ import {
   type ValueSource,
 } from '../compile/fields'
 import { checkPluginTextSort, withPluginFields } from '../compile/plugin-fields'
+import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
   holdsLibraryPlaylistFilter,
@@ -200,6 +201,34 @@ const filmFields: FieldTable<FilmContext> = {
     },
     unsearched: [],
   },
+}
+
+/**
+ * DEVICE-34: the keys of a Films query. The scope keys are read by
+ * isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API, and `creatorRole` only a creator scope, which is
+ * `creator-films`.
+ */
+export const filmQueryKeys: QueryKeys<FilmQuery> = {
+  page: 'served',
+  size: 'served',
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  creatorId: 'served',
+  creatorRole: 'served',
+  includeArchived: 'served',
+  limitResults: 'served',
+  q: 'served',
+  tag: 'served',
+  sourceKind: 'served',
+  filters: 'served',
+  ranges: 'served',
+  listening: 'served',
+  listeningSort: 'served',
+  sortBy: 'served',
+  direction: 'served',
 }
 
 type FilmPlan = {

@@ -119,6 +119,12 @@ export type UnsupportedReason =
    * to the API.
    */
   | 'nul-text'
+  /**
+   * The query holds a value for a key the device does not implement: one
+   * its reader's table marks `api` (DEVICE-34), such as a Playlists column
+   * filter. Checked after `nul-text` and before every other reason.
+   */
+  | 'unimplemented-field'
 
 export type SourceResult<T> =
   | { served: true; data: T }

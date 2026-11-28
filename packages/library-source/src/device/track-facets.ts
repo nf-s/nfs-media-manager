@@ -19,6 +19,7 @@ import {
   type FacetTable,
 } from '../compile/facets'
 import { isMemberScope } from '../compile/query'
+import type { QueryKeys } from '../compile/query-keys'
 import { TRUE, readRows, sql, values, type Sql } from '../compile/sql'
 import { unsupported } from '../compile/unsupported'
 import type { DeviceRead } from './read'
@@ -291,6 +292,21 @@ async function wantedTagLabels(
   return labels.filter((label) =>
     matches.some((match) => facetValueMatches(match, label, fold)),
   )
+}
+
+/**
+ * DEVICE-34: the keys of a Tracks facets query. The scope keys are read by
+ * isMemberScope; `discoverySourceMode` changes only a scope the device
+ * leaves to the API.
+ */
+export const trackFacetQueryKeys: QueryKeys<BrowseFacetQuery> = {
+  libraryScope: 'served',
+  discoverySources: 'served',
+  discoverySourceMode: 'served',
+  discoverySourceScope: 'served',
+  q: 'served',
+  limitPerField: 'served',
+  tagLevels: 'served',
 }
 
 /** `GET /tracks/facets`. */

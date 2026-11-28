@@ -5,6 +5,7 @@ import { parseTextFold, type TextFold } from '../fold'
 import { STORE_SCHEMA_VERSION, type ItemEntity } from '../schema'
 import { readSyncState } from '../store'
 import type { SourceResult } from '../source'
+import { unservedQueryKey, type QueryKeyCheck } from '../compile/query-keys'
 import { readRows, sql, values } from '../compile/sql'
 import { UnsupportedQuery, unsupported } from '../compile/unsupported'
 
@@ -67,7 +68,9 @@ function holdsNul(value: unknown): boolean {
 
 /**
  * Runs one read in a transaction, so it sees one complete sync state. A
- * query holding U+0000 is `nul-text`, whatever the API answers. The store
+ * query holding U+0000 is `nul-text`, whatever the API answers; then a
+ * query holding a value for a key its table does not mark `served` is
+ * `unimplemented-field` (DEVICE-34), before the store is read. The store
  * must have completed a fill for this package's row and schema versions
  * and hold the fold, or the read is `not-ready`; a query the device does
  * not serve exactly answers its reason; any other failure is `store-error`.
@@ -76,9 +79,12 @@ export async function serveRead<T>(
   driver: SqliteDriver,
   now: () => Date,
   query: unknown,
+  checks: readonly QueryKeyCheck[],
   work: (read: DeviceRead) => Promise<T>,
 ): Promise<SourceResult<T>> {
   if (holdsNul(query)) return { served: false, reason: 'nul-text' }
+  if (unservedQueryKey(checks) !== undefined)
+    return { served: false, reason: 'unimplemented-field' }
   try {
     const data = await driver.transaction(async (tx) => {
       const fold = await readReadyFold(driver, tx)
