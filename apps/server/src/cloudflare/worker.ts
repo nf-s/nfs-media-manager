@@ -317,15 +317,18 @@ export default {
     }
   },
   async scheduled(event, bindings, ctx) {
-    ctx.waitUntil(
-      run(bindings, () => runDatabaseMaintenance(event.scheduledTime)),
+    // Awaited with the dispatch below rather than left to `waitUntil`, so the
+    // cron's 15 minutes bound a long device feed run. Each runs to its end
+    // when the other fails, and a failure still fails the invocation.
+    const maintenance = run(bindings, () =>
+      runDatabaseMaintenance(event.scheduledTime),
     )
     ctx.waitUntil(
       run(bindings, flushDueLastfmPlays).catch(() => {
         console.error('Last.fm scrobble flush failed.')
       }),
     )
-    await run(bindings, async () => {
+    const dispatch = run(bindings, async () => {
       await dispatchQueuedImports()
       if (env.SCRAPING_ENABLED) {
         await queueDueLastfmSync()
@@ -340,5 +343,11 @@ export default {
         }
       }
     })
+    const [maintained, dispatched] = await Promise.allSettled([
+      maintenance,
+      dispatch,
+    ])
+    if (dispatched.status === 'rejected') throw dispatched.reason
+    if (maintained.status === 'rejected') throw maintained.reason
   },
 } satisfies ExportedHandler<CloudflareBindings>

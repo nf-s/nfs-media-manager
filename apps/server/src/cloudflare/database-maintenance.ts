@@ -6,7 +6,10 @@ import {
   refreshRecordingBrowseOrderForMaintenance,
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
-import { refreshDeviceFeedForMaintenance } from '@/services/device-feed'
+import {
+  runDeviceFeedMaintenance,
+  type DeviceFeedRunCounts,
+} from '@/services/device-feed'
 import type { RecordingOrderMaintenanceSource } from '@/services/recording-groups'
 import { refreshTrackDuplicatesForMaintenance } from '@/services/track-duplicates'
 
@@ -38,15 +41,23 @@ async function refreshCache(
       },
   refresh: () => Promise<
     | boolean
-    | { published: boolean; renderFailures: Partial<Record<string, number>> }
+    | {
+        published: boolean
+        renderFailures: Partial<Record<string, number>>
+        run?: DeviceFeedRunCounts
+      }
   >,
 ) {
   const refreshStart = performance.now()
   let outcome: 'skipped' | 'published' | 'failed' = 'failed'
   let renderFailures: Partial<Record<string, number>> = {}
+  let run: DeviceFeedRunCounts | undefined
   try {
     const result = await refresh()
-    if (typeof result === 'object') renderFailures = result.renderFailures
+    if (typeof result === 'object') {
+      renderFailures = result.renderFailures
+      run = result.run
+    }
     const published = typeof result === 'object' ? result.published : result
     outcome = published ? 'published' : 'skipped'
   } finally {
@@ -55,6 +66,7 @@ async function refreshCache(
       outcome,
       durationMs: performance.now() - refreshStart,
       ...(Object.keys(renderFailures).length > 0 && { renderFailures }),
+      ...run,
     })
   }
 }
@@ -92,7 +104,7 @@ export async function runDatabaseMaintenance(scheduledTime: number) {
       ),
     () =>
       refreshCache({ event: 'database.device-feed-maintenance' }, () =>
-        refreshDeviceFeedForMaintenance(),
+        runDeviceFeedMaintenance({ scheduledTime }),
       ),
   ]
   let firstFailure: { reason: unknown } | undefined
