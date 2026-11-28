@@ -1,7 +1,8 @@
-ALTER TABLE "device_feed_state" ADD COLUMN "built_entities" integer DEFAULT 12 NOT NULL;--> statement-breakpoint
--- The triggers lock existing tables: fail rather than queue behind a long
--- write while blocking the writes behind this migration.
+-- The column and the triggers lock existing tables: fail rather than queue
+-- behind a long write, such as a device feed batch holding the state row,
+-- while blocking the writes and feed reads behind this migration.
 SET LOCAL lock_timeout = '5s';--> statement-breakpoint
+ALTER TABLE "device_feed_state" ADD COLUMN "built_entities" integer DEFAULT 12 NOT NULL;--> statement-breakpoint
 -- DEVICE-03: mark_device_dirty() of 0080_device_feed.sql with the rules of
 -- library playlists and their entries; every other rule is unchanged. An
 -- entry deleted by a cascade from its media item, subscription item or
