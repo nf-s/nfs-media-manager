@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SONOS_PAGE_HEADER } from '@repo/schemas/sonos'
 import { playerClientId } from './player-client'
+import { changesLibraryRows, deviceSeam } from './device-store/seam'
 
 let sonosPage: string | undefined
 
@@ -18,6 +19,14 @@ function sonosPageHeaders(path: string): Record<string, string> {
 
 type ApiRequestInit = RequestInit & {
   errorData?: { status: number; schema: z.ZodType }
+  /** Called once the data is in: from the copy in this browser or from the API (DEVICE-46). */
+  onAnswer?: (source: ApiAnswerSource) => void
+}
+
+export type ApiAnswerSource = 'device' | 'api'
+
+function methodOf(init: RequestInit) {
+  return (init.method ?? 'GET').toUpperCase()
 }
 
 function createEnvelopeSchema<TSchema extends z.ZodTypeAny>(
@@ -34,7 +43,43 @@ export async function fetchApiData<TSchema extends z.ZodTypeAny>(
   apiBaseUrl: string,
   path: string,
   dataSchema: TSchema,
-  { errorData, ...init }: ApiRequestInit = {},
+  { errorData, onAnswer, ...init }: ApiRequestInit = {},
+): Promise<z.infer<TSchema>> {
+  const device = deviceSeam()
+  const method = methodOf(init)
+  if (device && method === 'GET' && init.body == null) {
+    const local = await device.read(path, init.signal)
+    // An answer the caller's schema rejects is a store fault: the API answers.
+    const parsed = local ? dataSchema.safeParse(local.data) : undefined
+    if (parsed?.success) {
+      onAnswer?.('device')
+      return parsed.data
+    }
+  }
+  const settle =
+    device && method !== 'GET' && method !== 'HEAD' && changesLibraryRows(path)
+      ? device.beginWrite(path)
+      : undefined
+  try {
+    return await requestApiData(apiBaseUrl, path, dataSchema, errorData, init, {
+      onAnswer,
+      unauthorized: device ? () => device.unauthorized() : undefined,
+    })
+  } finally {
+    settle?.()
+  }
+}
+
+async function requestApiData<TSchema extends z.ZodTypeAny>(
+  apiBaseUrl: string,
+  path: string,
+  dataSchema: TSchema,
+  errorData: ApiRequestInit['errorData'],
+  init: RequestInit,
+  {
+    onAnswer,
+    unauthorized,
+  }: { onAnswer?: ApiRequestInit['onAnswer']; unauthorized?: () => void },
 ): Promise<z.infer<TSchema>> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -45,6 +90,8 @@ export async function fetchApiData<TSchema extends z.ZodTypeAny>(
       ...(init?.headers ?? {}),
     },
   })
+
+  if (response.status === 401) unauthorized?.()
 
   const json = await response.json()
 
@@ -72,5 +119,7 @@ export async function fetchApiData<TSchema extends z.ZodTypeAny>(
 
   const envelope = createEnvelopeSchema(dataSchema).parse(json)
 
-  return dataSchema.parse(envelope.data)
+  const data = dataSchema.parse(envelope.data)
+  onAnswer?.('api')
+  return data
 }

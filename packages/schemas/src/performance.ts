@@ -39,6 +39,8 @@ export const BrowserBrowseTimingSchema = z
     durationMs,
     phases: tracksChangePhases.optional(),
     documentPhases: documentPhases.optional(),
+    /** Where the visible page's rows came from: the device store in the browser or the API. */
+    rowSource: z.enum(['device', 'api']).optional(),
   })
   .refine(
     ({ phases, screen, action, outcome, durationMs }) => {

@@ -42,3 +42,12 @@ Devices keep a copy of the library and read it through the [device feed](api-acc
 - `device_feed_state` is a single row: the `epoch`, the row version it was built for, `min_seq`, `ready` and the sweep's position.
 - `apps/server/src/services/device-feed.ts` renders marked rows in batches and deletes only the marks it read, sweeps every entity in ID order to correct anything a trigger missed, and removes tombstones after 90 days. It runs in the five-minute maintenance task and, within two seconds, before `changes` answers. The first sweep runs in every maintenance run until the feed is built; after that a sweep starts at most once a day. A new row version starts the feed again with a new epoch.
 - The rows come from `apps/server/src/services/device-rows/` (`deviceRowRenderer`), which both runtimes use without configuration: list items from the list endpoints' loaders and projections from the Browse expressions.
+
+### Device store in the web client
+
+With the User page's Library copy setting on, the web client keeps the feed in SQLite in the browser and answers Browse reads from it (DEVICE-40 to 47).
+
+- `apps/web/utils/device-store/` holds it. `seam.ts` is what `fetchApiData` (`utils/api.ts`) asks; nothing is installed while the setting is off. `bootstrap.ts` follows the setting, sign-out and Refresh. `controller.ts` decides when reads may use the copy and schedules syncs. These three load with the app; `host.ts` (Web Lock, Worker, `resolveLibraryRead`) and `worker.ts` (`@repo/library-source` and its OPFS driver) load only when the setting is on.
+- One tab holds the Web Lock `media-device-store` and runs a dedicated Worker that owns the SQLite pool in the OPFS directory `media-device-store`. Other tabs read from the API until the lock frees. The Worker fetches the feed with the session cookie; messages in both directions are parsed with the schemas in `protocol.ts`.
+- A write through `fetchApiData` keeps reads on the API until a sync after it reports no pending marks. Sign-out, a 401 and turning the setting off delete the OPFS directory.
+- The web app reads `@repo/library-source` from its source through `tsconfig.json` paths and `transpilePackages`, as it reads `@repo/schemas`. Webpack emits the Worker as `_next/static/chunks/device-store.<hash>.js` and `sqlite3.wasm` as `_next/static/media/sqlite3.<hash>.wasm`; no COOP or COEP header is needed.

@@ -82,6 +82,26 @@ corepack pnpm preview
 
 The preview uses its own Next.js process in the checkout, so stop `corepack pnpm dev` in the same checkout first, or run the preview from a worktree.
 
+### Device store in the preview
+
+The preview API runs no maintenance, so the device feed is not built and the Library copy setting waits for it. Build it once after the preview is ready, from `apps/server`, with the settings file in the preview's Logs folder:
+
+```sh
+MEDIA_MANAGER_ENV_FILE=<Logs folder>/preview.env node_modules/.bin/tsx -e "
+const { sql } = require('drizzle-orm')
+const { db } = require('@/lib/db')
+const feed = require('@/services/device-feed')
+;(async () => {
+  await db.execute(sql\`insert into device_feed_state (epoch, row_version)
+    select gen_random_uuid()::text, 0 where not exists (select 1 from device_feed_state)\`)
+  await feed.refreshDeviceFeedForMaintenance()
+  console.info(await feed.readDeviceFeedState())
+  process.exit(0)
+})()"
+```
+
+The insert restores the feed's state row, which the preview seed removes with the rest of the data. Run the command again after edits to render marks that the `changes` route has not rendered. Then turn on Library copy on the User page. The Worker's requests do not appear in the page's network log; `rowSource` in the `browser.browse` events of the API log says which source answered each Browse sample.
+
 ## Replaying catalog discoveries
 
 Run `corepack pnpm --filter @repo/server repair:catalog-artists --dry-run` to check stored artist identities and shadow track details. Use `--apply` to retain the repairs. To run one check, append `exactProfiles`, `librarySpotifyArtists`, `scopedCredits`, `matchedRecordings`, `similarArtists` or `shadowTracks`.

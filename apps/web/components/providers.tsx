@@ -13,6 +13,7 @@ import type { LibraryActionKind } from '@repo/ui/components/ds/library-action'
 import { observeDocumentBrowsePath } from '@/hooks/useBrowsePerformance'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { initializeKeyNotation } from '@/utils/key-notation'
+import { startDeviceStore } from '@/utils/device-store/bootstrap'
 
 initializeKeyNotation()
 
@@ -154,10 +155,20 @@ function BrowseDocumentTiming() {
   return null
 }
 
+/** Layout effects run before any query subscribes, so the first Browse read can use the copy. */
+function DeviceStore({ apiBaseUrl }: { apiBaseUrl: string }) {
+  useLayoutEffect(
+    () => startDeviceStore({ apiBaseUrl, client: queryClient }),
+    [apiBaseUrl],
+  )
+  return null
+}
+
 const Providers: React.FC<Props> = ({ children, appUrl, apiBaseUrl }) => {
   return (
     <ConfigContext.Provider value={{ appUrl, apiBaseUrl }}>
       <QueryClientProvider client={queryClient}>
+        <DeviceStore apiBaseUrl={apiBaseUrl} />
         <BrowseDocumentTiming />
         <LibraryAnnouncementContext.Provider
           value={(kind, title, receiptId) => {

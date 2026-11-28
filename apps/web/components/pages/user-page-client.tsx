@@ -34,6 +34,7 @@ import {
 } from '../api-key-rate-limit-fields'
 import { ConfirmAction } from '../confirm-action'
 import { KeyNotationSetting } from '../key-notation-setting'
+import { DeviceStoreSetting } from '../device-store-setting'
 import { fetchApiData } from '@/utils/api'
 import { apiKeyStatus, createAgentInstructions } from '@/utils/agent-access'
 
@@ -275,6 +276,7 @@ export default function UserPageClient() {
       />
       <div className="ds-panelpad sec-stack">
         <KeyNotationSetting />
+        <DeviceStoreSetting />
         <Section title="Agent access">
           <p className="ds-help">
             API keys allow reads and writes as your user. Key management

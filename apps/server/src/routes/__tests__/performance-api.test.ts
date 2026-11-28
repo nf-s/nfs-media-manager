@@ -65,6 +65,22 @@ describe('browser Browse timings', () => {
     })
   })
 
+  it('logs which source answered the visible rows', async () => {
+    writeRequestLog.mockClear()
+    getSession.mockResolvedValue(ownerSession)
+    for (const rowSource of ['local', 'cache', 1])
+      expect((await submit({ ...report, rowSource })).status).toBe(422)
+    expect(writeRequestLog).not.toHaveBeenCalled()
+    for (const rowSource of ['device', 'api']) {
+      expect((await submit({ ...report, rowSource })).status).toBe(204)
+      expect(writeRequestLog).toHaveBeenLastCalledWith({
+        event: 'browser.browse',
+        ...report,
+        rowSource,
+      })
+    }
+  })
+
   it('logs only consistent phase timings for slow Tracks filter changes with rows', async () => {
     writeRequestLog.mockClear()
     getSession.mockResolvedValue(ownerSession)

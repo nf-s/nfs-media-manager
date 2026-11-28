@@ -193,6 +193,9 @@ importers:
       '@opennextjs/cloudflare':
         specifier: 1.20.14
         version: 1.20.14(next@15.5.29(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@22.19.15)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(wrangler@4.156.0(@types/node@22.19.15))
+      '@repo/library-source':
+        specifier: workspace:*
+        version: link:../../packages/library-source
       '@repo/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas

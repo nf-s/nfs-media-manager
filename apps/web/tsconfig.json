@@ -10,6 +10,11 @@
     ],
     "paths": {
       "@repo/schemas/*": ["../../packages/schemas/src/*"],
+      "@repo/library-source": ["../../packages/library-source/src/index.ts"],
+      "@repo/library-source/sqlite-wasm": [
+        "../../packages/library-source/src/drivers/sqlite-wasm.ts"
+      ],
+      "@repo/library-source/*": ["../../packages/library-source/src/*"],
       "@repo/ui/*": ["../../packages/ui/src/*"],
       "@/*": ["./*"],
       "~/*": ["./*"]

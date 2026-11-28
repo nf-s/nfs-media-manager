@@ -72,6 +72,8 @@ type Measurement = {
 export type BrowsePageTiming = {
   requestedAt: number
   readyAt: number
+  /** Where the page's rows came from: the copy in this browser or the API (DEVICE-46). */
+  source?: BrowserBrowseTiming['rowSource']
 }
 
 type CommittedOutcome = {
@@ -322,6 +324,7 @@ export function useBrowsePerformance(
             ...sample,
             phases,
             documentPhases,
+            rowSource: settled.pageTiming?.source,
           }),
         }).catch(() => {})
       })

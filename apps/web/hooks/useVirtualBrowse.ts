@@ -13,7 +13,7 @@ import { useEffect, useRef } from 'react'
 import { z } from 'zod'
 import { BrowseCountSchema, BrowsePageSliceSchema } from '@repo/schemas/browse'
 import { AlbumListItemSchema, FilmListItemSchema } from '@repo/schemas/media'
-import { fetchApiData } from '@/utils/api'
+import { fetchApiData, type ApiAnswerSource } from '@/utils/api'
 import {
   browsePageSize,
   browseWindow,
@@ -155,18 +155,24 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
     query.set('page', String(page))
     query.set('size', String(size))
     const requestedAt = performanceScreen ? performance.now() : undefined
+    let source: ApiAnswerSource | undefined
     const result = await fetchApiData(
       apiBaseUrl,
       `/api/v1/${endpoint}/browse-page?${query}`,
       PageSchema,
-      { signal },
+      {
+        signal,
+        onAnswer: (answeredBy) => {
+          source = answeredBy
+        },
+      },
     )
     return {
       ...result,
       pageTiming:
         requestedAt === undefined
           ? undefined
-          : { requestedAt, readyAt: performance.now() },
+          : { requestedAt, readyAt: performance.now(), source },
       totalCount:
         page === 1 && !result.hasMore ? result.items.length : undefined,
     }

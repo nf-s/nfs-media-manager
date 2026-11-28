@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
+import { syncDeviceStoreBeforeRefresh } from './device-store/bootstrap'
 import { invalidatePlaylists } from './playlist-sync'
 
 export const clientCacheStaleTime = 4 * 60 * 60 * 1000
@@ -10,12 +11,15 @@ export const clientQueryDefaults = {
   gcTime: typeof window === 'undefined' ? Infinity : clientCacheGcTime,
 }
 
-/** Keep cached results visible; reload mounted reads and expire inactive ones. */
+/**
+ * Keep cached results visible; reload mounted reads and expire inactive ones.
+ * With the device store on, the copy syncs first so the reloads read current rows.
+ */
 export function refreshClientQueries(client: QueryClient) {
-  return client.invalidateQueries(
-    { refetchType: 'active' },
-    { throwOnError: true },
-  )
+  const invalidate = () =>
+    client.invalidateQueries({ refetchType: 'active' }, { throwOnError: true })
+  const sync = syncDeviceStoreBeforeRefresh()
+  return sync ? sync.then(invalidate) : invalidate()
 }
 
 export function invalidateMediaItem(

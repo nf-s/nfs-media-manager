@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@opennextjs/cloudflare": "1.20.14",
+    "@repo/library-source": "workspace:*",
     "@repo/schemas": "workspace:*",
     "@repo/server": "workspace:*",
     "@repo/ui": "workspace:*",

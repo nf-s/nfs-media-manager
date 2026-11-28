@@ -16,7 +16,7 @@ if (process.env.WEB_RUNTIME === 'cloudflare') {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ['@repo/ui', '@repo/schemas'],
+  transpilePackages: ['@repo/ui', '@repo/schemas', '@repo/library-source'],
   output: 'standalone',
   productionBrowserSourceMaps: false,
 }
