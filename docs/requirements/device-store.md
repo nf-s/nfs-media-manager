@@ -10,18 +10,22 @@ The contract is `packages/schemas/src/device.ts` (row shapes, feed requests and 
 
 ### Entities
 
-| Entity          | Key                  | Holds                                                                                        |
-| --------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| `track`         | media item ID        | `TrackListItem` and its projection                                                           |
-| `album`         | media item ID        | `AlbumListItem` and its projection                                                           |
-| `film`          | media item ID        | `FilmListItem` and its projection                                                            |
-| `artist`        | artist ID            | `ArtistSummary` without `listeningMonths` and `links`, and its projection                    |
-| `playlist`      | playlist ID          | `PlaylistSummary` without `sync.job`, and its projection                                     |
-| `tag`           | tag ID               | name, key, library, hidden, alias target, identity keys and ancestor keys                    |
-| `scrobble_name` | hash of the name key | play times of one scrobbled name (listener, artist key, track key), as epoch seconds         |
-| `album_plays`   | album ID             | play times of scrobbles linked to the album                                                  |
-| `artist_plays`  | artist ID            | play times of scrobbles attributed to the artist, each scrobble once                         |
-| `meta`          | name                 | `fields:album`, `fields:film`, `fields:track`, `fields:artist`, and the listening start date |
+| Entity          | Key                  | Holds                                                                                                         |
+| --------------- | -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `track`         | media item ID        | `TrackListItem` and its projection                                                                            |
+| `album`         | media item ID        | `AlbumListItem` and its projection                                                                            |
+| `film`          | media item ID        | `FilmListItem` and its projection                                                                             |
+| `artist`        | artist ID            | `ArtistSummary` without `listeningScrobbles`, `listeningMonths` and `links`, and its projection               |
+| `playlist`      | playlist ID          | `PlaylistSummary` without `sync.job`, with `sync.nextScheduledAt` as it is with no job, and its projection    |
+| `playlist_job`  | sync group key       | the latest Spotify import job of the group (`SpotifyPlaylistJob`)                                             |
+| `tag`           | tag ID               | name, key, library, kind, hidden, alias target and identity keys                                              |
+| `tag_key`       | `<library>:<key>`    | the ancestor keys of one normalised name, from `tag_ancestor`; a key without ancestors has no row             |
+| `scrobble_name` | hash of the name key | play times of one scrobbled name (listener, artist key, track key), as epoch seconds                          |
+| `album_plays`   | album ID             | play times of scrobbles linked to the album                                                                   |
+| `artist_plays`  | artist ID            | play times of scrobbles attributed to the artist, each scrobble once                                          |
+| `meta`          | name                 | `fields:album`, `fields:film`, `fields:track`, `fields:artist`, `listening` (start date), `providers` (names) |
+
+The tag hierarchy lives only in `tag_key`: a re-parent changes `tag_key` rows and no item row. A key is hidden when any tag with that key is hidden. The device sets a playlist's `sync.job` from its `playlist_job` row, and `sync.nextScheduledAt` to null when that job has not succeeded.
 
 Only rows in the default scope are published: in the library, not merged away, and for tracks, albums and films including archived rows with a flag (Albums and Films can show them). A row leaves the feed as a tombstone when it is deleted, merged away or removed from the library.
 
@@ -30,13 +34,14 @@ Only rows in the default scope are published: in the library, not merged away, a
 Every item row (`track`, `album`, `film`, `artist`, `playlist`) is `{ item, text, search, num, sort, extra }`:
 
 - `item`: the list item exactly as the API returns it for an unfiltered request, without request-dependent fields (`listeningScrobbles`, `recordingGroup`, `links`).
-- `text`: for each text field, the values a filter on that field compares with, as the Browse service reads them.
-- `search`: for each field that `q` searches, the values a word may match, where they differ from `text`.
-- `num`: for each range field, the number the range compares with; dates as epoch milliseconds.
-- `sort`: for each sort key, the value the service orders by where it is not the `text` or `num` value, and the tie-break tuple.
-- `extra`: per entity. Tracks: redundant Last.fm placeholder flag, archived flag, tag IDs per level (own, own from Sonovault, album), artist tag keys, album release-tag count, first tag name per level, library-wide recording group key and the representative ordering values, scrobbled name IDs, credited artist IDs. Albums: archived flag, edition flag, release tag IDs, artist tag keys, release-tag count, credited artist IDs. Films: archived flag, tag IDs, credited person IDs by role. Artists: raw tag keys, playlist IDs.
+- `text`: for each text field matched by value, the raw values a filter on that field compares with, distinct, as the Browse service reads them. Tag fields are matched through `extra`.
+- `search`: for each field that `q` searches, the values a word may match, where they differ from `text` or `text` has none.
+- `num`: for each range field, the number the range compares with; dates as epoch milliseconds, with a fraction when the stored timestamp has one.
+- `sort`: for each sort key, the value the service orders by where it is not the `num` value, already lower-cased by PostgreSQL; the Tags sort at each location (Auto and every `tagLevels` combination); for Tracks the natural-order values.
+- `extra`: per entity. Tracks: archived flag, redundant Last.fm placeholder flag, linked album ID, credited artist IDs, `has_own_tags`, tag IDs per level (own, own from Sonovault, album), album release-tag count, raw artist tag keys, projected artist tag keys, library-wide recording group key and the representative ordering values, scrobbled name IDs. Albums: archived flag, edition flag, credited artist IDs, release tag IDs, release-tag count, raw and projected artist tag keys, own tag IDs of the album's library tracks. Films: archived flag, source kind, tag IDs, credited person IDs by role. Artists: raw tag keys, playlist IDs. Playlists: source, sync group key.
+- Albums and Films: `text`, `num` and `sort` also hold every other key of `metadata.browse`, so a plugin field is read from the row. A field missing from the device's `fields:<library>` row falls through.
 
-The server fills `text`, `search`, `num`, `sort` and `extra` with the same SQL expressions the Browse service filters, searches and orders by, so the two cannot drift. The device never recomputes them.
+The server fills `text`, `search`, `num`, `sort` and `extra` with the same SQL expressions the Browse service filters, searches and orders by, so the two cannot drift. The device never recomputes them. Each field in `device.ts` names its expression.
 
 ### `LibrarySource`
 
@@ -49,7 +54,7 @@ One method per read. Each returns `{ served: true, data }` or `{ served: false, 
 - Playlists: `playlistPage`, `playlistCount`
 - `fields(library)`
 
-Arguments and results are the existing shared schemas (`TrackQuerySchema`, `AlbumQuerySchema`, `FilmQuerySchema`, `ArtistQuerySchema`, `PlaylistBrowseQuerySchema`, `BrowseFacetQuerySchema`, the page, count, facet and histogram schemas). `resolveLibraryRead(method, path)` maps an API request to a method and its parsed query, or to nothing. Implementations: `RemoteLibrarySource` (the API), `DeviceLibrarySource` (SQLite) and `FallbackLibrarySource` (device first, then remote).
+Arguments and results are the existing shared schemas, parsed (`TrackQuerySchema`, `TrackPositionsQuerySchema`, the histogram query schemas, `AlbumQuerySchema`, `FilmQuerySchema`, `ArtistQuerySchema`, `PlaylistBrowseQuerySchema`, `BrowseFacetQuerySchema`, `ArchivableBrowseFacetQuerySchema`, the page, count, facet and histogram schemas); `source.ts` lists them per method. `trackRecordings` takes the track ID with its query. `artistFacets` answers in the shape the route uses, `FilmFilterOptionSchema`. `playlistCount` has no `unfilteredCount`. `resolveLibraryRead(method, path)` maps an API request to a `LibraryRead` (a method and its parsed query), or to nothing. Implementations: `RemoteLibrarySource` (the API), `DeviceLibrarySource` (SQLite) and `FallbackLibrarySource` (device first, then remote).
 
 ### `SqliteDriver`
 
@@ -71,7 +76,7 @@ interface SqliteDriver extends SqliteExecutor {
 }
 ```
 
-The store uses nothing else from a host: no custom SQL functions, collations or extensions beyond FTS5 with the trigram tokenizer. Case folding and normalisation happen in TypeScript before a value is stored or bound.
+The store uses nothing else from a host: no custom SQL functions, collations or extensions beyond FTS5 with the trigram tokenizer. Case folding and normalisation happen in TypeScript before a value is stored or bound. The fold must give what PostgreSQL `lower()` gives, code point by code point (no context rules such as a final sigma); where a service folds a filter value in TypeScript (`toLowerCase`, `normalizeTagName`), the device does the same. Tag keys come from the rows, never from a TypeScript normalisation of stored names. Code-point order means comparing UTF-8 bytes or code points, not UTF-16 units.
 
 ## Stage 1: server feed
 
@@ -81,7 +86,7 @@ The store uses nothing else from a host: no custom SQL functions, collations or 
 - DEVICE-04: A render task takes dirty marks in bounded batches, renders them, writes changed rows and tombstones, and deletes only the marks it read. A track mark also re-renders the visible tracks that share its title key, because recording groups depend on them. It runs in the five-minute maintenance task and before `changes` answers, within a time budget.
 - DEVICE-05: A sweep re-renders every entity in ID order, a bounded number of rows per run, and writes only rows whose hash differs or that no longer exist. It repeats continuously, so a missed trigger is corrected within one sweep. The first sweep builds the feed; until it completes the feed reports `ready: false`.
 - DEVICE-06: `GET /api/v1/device/state` returns `{ ready, epoch, seq, minSeq, rowVersion }`. `epoch` changes when the feed is rebuilt from nothing, `rowVersion` when the row shape changes, `minSeq` is the oldest sequence from which tombstones are still held.
-- DEVICE-07: `GET /api/v1/device/snapshot?entity=&after=&limit=` returns live rows of one entity in `seq` order, without tombstones. `GET /api/v1/device/changes?since=&limit=` returns rows and tombstones of every entity in `seq` order with `{ rows, seq, hasMore, pending }`; `pending` says dirty marks remain. A `since` below `minSeq`, or another `epoch`, answers `{ reset: true }`. Pages are bounded by row count and by payload bytes.
+- DEVICE-07: `GET /api/v1/device/snapshot?epoch=&entity=&after=&limit=` returns live rows of one entity in `seq` order, without tombstones, with `{ rows, seq, hasMore }`. `GET /api/v1/device/changes?epoch=&since=&limit=` returns rows and tombstones of every entity in `seq` order with `{ rows, seq, hasMore, pending }`; `pending` says dirty marks remain. Another `epoch` on either route, or a `since` below `minSeq`, answers `{ reset: true }`. Pages are bounded by row count and by payload bytes.
 - DEVICE-08: A device applies a snapshot by reading the state, paging every entity, then reading changes from the sequence in that first state. Rows are upserts keyed by `(entity, id)`, so a row seen twice is harmless.
 - DEVICE-09: Tombstones are kept for 90 days. Spotify-sourced values in a row are a cache: they are replaced by sync and never the only copy.
 - DEVICE-10: Device sign-in follows local-worker pairing. A signed-in owner creates a one-time pairing code; a device exchanges it for a device token; the server stores only hashes. The token is an API key of kind `device`, sent as `Authorization: Bearer`: it has an API key's access and no more, is listed and revoked with the other keys, and reads the device routes. Routes that accept it answer CORS preflights for the origins in `DEVICE_ALLOWED_ORIGINS` (none by default) without credentials.
@@ -130,7 +135,8 @@ These reads go to the API. Each is asserted by DEVICE-33.
 | Any catalog scope other than the library (`libraryScope`, discovery)                                                              | The device holds library rows only.                                                      |
 | Subscriptions and Mixes                                                                                                           | Search uses PostgreSQL full-text ranking and stemming; the largest table; not requested. |
 | Grouped Tracks inside a creator scope                                                                                             | Groups are formed from that artist's tracks only, not the library-wide key.              |
-| A Provider filter on Tracks or Artists                                                                                            | The rows then carry provider links chosen per request.                                   |
+| A Provider filter on Tracks or Artists, other than an exclude filter                                                              | The rows then carry provider links chosen per request.                                   |
+| A query the API rejects: an unknown filter, range or sort field, or a range on a text field                                       | The API returns the error.                                                               |
 | Detail pages and the lists owned by a detail (playlist entries, collection entries, album track lists, People, Collections, Tags) | Not in this version.                                                                     |
 | Metadata selection, Matches, Jobs, Providers, Imports                                                                             | Server state and evidence.                                                               |
 | Fields added by a private plugin whose values are not in the row                                                                  | Checked per query: an unknown field falls through.                                       |
