@@ -73,6 +73,15 @@ export function createTrackPerformanceFixture() {
     await admin.query('create database ' + name)
     created = true
     await migrate(database, { migrationsFolder: './drizzle' })
+    // A database read cache entry ends when any transaction commits in the
+    // server, so autovacuum must find no work here while a file runs: an
+    // analyze it commits between a read and its cached repeat fails the
+    // repeat's statement budget. Library writes add device marks, which the
+    // device feed files vacuum themselves, and the migrations leave the
+    // catalogs to be analyzed, which the end of this set-up does.
+    await pool.query(
+      'alter table device_dirty set (autovacuum_enabled = false)',
+    )
     // One thousand recordings have a second release. Ten selective titles are
     // placed at the end of the library and each has a distinct artist credit.
     await pool.query(`
@@ -109,6 +118,22 @@ export function createTrackPerformanceFixture() {
     ]) {
       await pool.query(`vacuum analyze ${table}`)
     }
+    // Each connection reports the changes it made first, so that the analyze
+    // counts them all.
+    for (const client of await Promise.all([pool.connect(), pool.connect()])) {
+      await client.query('select pg_stat_force_next_flush()')
+      client.release()
+    }
+    await pool.query(`do $$
+      declare catalog regclass;
+      begin
+        for catalog in select c.oid::regclass from pg_class c
+          join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname in ('pg_catalog', 'drizzle') and c.relkind = 'r'
+        loop
+          execute format('analyze %s', catalog);
+        end loop;
+      end $$`)
   })
 
   afterAll(async () => {
