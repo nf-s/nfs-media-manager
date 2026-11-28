@@ -3,6 +3,8 @@ import type { BrowseField, BrowseRange, TagLevels } from '@repo/schemas/browse'
 import { DeviceTrackItemSchema } from '@repo/schemas/device'
 import {
   defaultListeningPeriod,
+  listeningHistogramEdges,
+  type ListeningHistogram,
   type ListeningPeriod,
 } from '@repo/schemas/listening'
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
@@ -11,6 +13,7 @@ import {
   TrackListItemSchema,
   trackSourceLabels,
   type TrackListItem,
+  type TrackListeningHistogramQuery,
   type TrackPositionsQuery,
   type TrackQuery,
 } from '@repo/schemas/tracks'
@@ -39,6 +42,7 @@ import {
   type ValueSource,
 } from '../compile/fields'
 import {
+  listeningHistogram,
   listeningRules,
   periodCount,
   type PlaySource,
@@ -77,7 +81,7 @@ import { unsupported } from '../compile/unsupported'
 import { formatTimestamp, readItems, type DeviceRead } from './read'
 
 /**
- * The Tracks library on the device: the field table and the five reads
+ * The Tracks library on the device: the field table and the six reads
  * (DEVICE-22 to 24, 26, 27). The server's `browseQueries` and
  * `groupedTrackBrowse`, browse.ts, define every rule; comments name the
  * part of the service each piece reproduces.
@@ -384,7 +388,7 @@ async function planTracks(
     query.tagLevels === undefined &&
     (query.creatorId !== undefined || options.versions === true)
   )
-    unsupported('unknown-field')
+    unsupported('creator-tag-sort')
   const words = searchWords(query.q)
   const searched =
     words.length > 0 ? searchFields(trackFields, fields) : undefined
@@ -817,6 +821,48 @@ export async function trackPositions(
       return item === undefined ? [] : [{ position: row.position, item }]
     }),
   }
+}
+
+const HistogramRowSchema = z.object({
+  listening: z.number().int().nonnegative(),
+  count: z.number().int().positive(),
+})
+
+/**
+ * `GET /tracks/listening-histogram`: queryListeningHistogram('track'),
+ * browse.ts. The query without its listening rules and result cap, with
+ * the period as its sort period; how many tracks (grouped: recording
+ * groups) fall in each bar of the period's count. A bar holds the counts
+ * from its edge up to the next edge; bars without items count zero.
+ */
+export async function trackHistogram(
+  read: DeviceRead,
+  { period, ...query }: TrackListeningHistogramQuery,
+): Promise<ListeningHistogram> {
+  const plan = await planTracks(
+    read,
+    {
+      ...query,
+      listening: undefined,
+      listeningSort: period,
+      sortBy: 'listeningScrobbles',
+      limitResults: undefined,
+      page: 1,
+    },
+    { returnsItems: false },
+  )
+  const group = plan.grouped
+  const statement =
+    group === undefined
+      ? sql`SELECT t.listening AS listening, count(*) AS count
+          FROM ${matchingTracks(plan)} GROUP BY t.listening`
+      : sql`WITH ${groupStatements(plan)}
+          SELECT t.listening AS listening, count(*) AS count
+          FROM ${matchingGroups(group)} GROUP BY t.listening`
+  const rows = (await readRows(read.tx, statement)).map((row) =>
+    HistogramRowSchema.parse(row),
+  )
+  return listeningHistogram(listeningHistogramEdges.track, rows)
 }
 
 /**

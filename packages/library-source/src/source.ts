@@ -84,6 +84,8 @@ export type UnsupportedReason =
   | 'subscriptions'
   /** Grouped Tracks inside a creator scope: groups differ from the library-wide key. */
   | 'grouped-creator-scope'
+  /** The Tags sort at Auto on Tracks in a creator scope or a recordings list: the service orders by another first-tag expression. */
+  | 'creator-tag-sort'
   /** A non-exclude Provider filter on Tracks or Artists: rows carry per-request links. */
   | 'provider-filter'
   /** A Playlists page holding a playlist whose import is queued or running: the API has its progress. */

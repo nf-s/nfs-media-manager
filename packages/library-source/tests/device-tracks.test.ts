@@ -1350,7 +1350,7 @@ describe('reads the device does not serve', () => {
     const device = await open([track('a')])
     const creator = { creatorId: 'artist-Example Artist', sortBy: 'genre' }
     expect(reason(await device.source.trackPage(trackQuery(creator)))).toBe(
-      'unknown-field',
+      'creator-tag-sort',
     )
     expect(
       reason(
@@ -1366,7 +1366,7 @@ describe('reads the device does not serve', () => {
           query: trackQuery({ sortBy: 'genre' }),
         }),
       ),
-    ).toBe('unknown-field')
+    ).toBe('creator-tag-sort')
   })
 
   it('answers other libraries as not ready until they are compiled', async () => {

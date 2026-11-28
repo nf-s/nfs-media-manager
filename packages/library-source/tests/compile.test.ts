@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { ListeningPeriodSchema } from '@repo/schemas/listening'
+import {
+  ListeningPeriodSchema,
+  listeningPeriodBounds,
+} from '@repo/schemas/listening'
 import { millisecondsToMicroseconds } from '../src/compile/fields'
-import { listeningPeriodBounds, playTimeBounds } from '../src/compile/listening'
+import { playTimeBounds } from '../src/compile/listening'
 import {
   capCount,
   isMemberScope,
@@ -15,7 +18,8 @@ import { and, join, not, or, sql, values } from '../src/compile/sql'
 describe('listeningPeriodBounds', () => {
   /**
    * The server's listeningPeriodBounds, browse-listening.ts, gave these for
-   * the same inputs (run on 2026-11-28); the device copy must agree.
+   * the same inputs (run on 2026-11-28); the shared function the device
+   * calls must agree.
    */
   const server = [
     {

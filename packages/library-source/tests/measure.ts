@@ -8,8 +8,11 @@ import {
   DeviceSnapshotPageSchema,
   type DeviceEntity,
 } from '@repo/schemas/device'
-import { trackBrowseFields } from '@repo/schemas/browse'
-import { TrackQuerySchema } from '@repo/schemas/tracks'
+import { BrowseFacetQuerySchema, trackBrowseFields } from '@repo/schemas/browse'
+import {
+  TrackListeningHistogramQuerySchema,
+  TrackQuerySchema,
+} from '@repo/schemas/tracks'
 import { applyRows } from '../src/apply'
 import { createDeviceLibrarySource } from '../src/device/source'
 import type { SqlValue, SqliteDriver } from '../src/driver'
@@ -195,6 +198,17 @@ function buildPages(): { pages: Page[]; plays: number } {
     deleted: false,
     payload: { kind: 'fields', library: 'track', fields: trackBrowseFields },
   })
+  seq += 1
+  rows.meta?.push({
+    entity: 'meta',
+    id: 'providers',
+    seq,
+    deleted: false,
+    payload: {
+      kind: 'providers',
+      names: [{ id: 'example-provider', displayName: 'Example Provider' }],
+    },
+  })
   const pages: Page[] = []
   for (const [entity, list] of Object.entries(rows)) {
     for (let start = 0; start < list.length; start += PAGE) {
@@ -372,6 +386,41 @@ describe('store measurements', () => {
     return result
   }
 
+  /** Tracks suggestions and the listening histogram, through the device source. */
+  async function measureSuggestions(driver: SqliteDriver) {
+    const source = createDeviceLibrarySource(driver, {
+      now: () => new Date('2024-06-15T12:00:00.000Z'),
+    })
+    const result: Record<string, number> = {}
+    const facetQueries: Record<string, Record<string, unknown>> = {
+      'facets, no typed text': {},
+      'facets, one typed word': { q: 'river' },
+    }
+    for (const [name, input] of Object.entries(facetQueries)) {
+      const query = BrowseFacetQuerySchema.parse(input)
+      const facets = await source.trackFacets(query)
+      if (!facets.served) throw new Error(`${name} was not served`)
+      expect(facets.data.length).toBeGreaterThan(0)
+      result[`${name} (ms)`] = await time(() => source.trackFacets(query))
+    }
+    const histogramQueries: Record<string, Record<string, unknown>> = {
+      'histogram, rolling year': {
+        period: JSON.stringify({ kind: 'rolling', amount: 1, unit: 'years' }),
+      },
+      'histogram, grouped, all time': {
+        groupRecordings: true,
+        period: JSON.stringify({ kind: 'all' }),
+      },
+    }
+    for (const [name, input] of Object.entries(histogramQueries)) {
+      const query = TrackListeningHistogramQuerySchema.parse(input)
+      const histogram = await source.trackHistogram(query)
+      if (!histogram.served) throw new Error(`${name} was not served`)
+      result[`${name} (ms)`] = await time(() => source.trackHistogram(query))
+    }
+    return result
+  }
+
   async function sizeOf(driver: SqliteDriver) {
     const tables = await driver.all(
       `SELECT name, sum(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY bytes DESC LIMIT 12`,
@@ -396,6 +445,7 @@ describe('store measurements', () => {
       console.table(perEntity)
       console.table(await measureReads(driver))
       console.table(await measureSource(driver))
+      console.table(await measureSuggestions(driver))
       console.table(await sizeOf(driver))
     } finally {
       await driver.close()
@@ -426,6 +476,7 @@ describe('store measurements', () => {
       console.table(perEntity)
       console.table(await measureReads(driver))
       console.table(await measureSource(driver))
+      console.table(await measureSuggestions(driver))
     } finally {
       await driver.close()
     }

@@ -8,8 +8,10 @@ import { artistCount, artistPage } from './artists'
 import { filmCount, filmList, filmPage } from './films'
 import { playlistCount, playlistPage } from './playlists'
 import { serveRead } from './read'
+import { trackFacets } from './track-facets'
 import {
   trackCount,
+  trackHistogram,
   trackList,
   trackPage,
   trackPositions,
@@ -50,8 +52,10 @@ export function createDeviceLibrarySource(
       serveRead(driver, now, (read) => trackPositions(read, query)),
     trackRecordings: (query) =>
       serveRead(driver, now, (read) => trackRecordings(read, query)),
-    trackFacets: notServedYet,
-    trackHistogram: notServedYet,
+    trackFacets: (query) =>
+      serveRead(driver, now, (read) => trackFacets(read, query)),
+    trackHistogram: (query) =>
+      serveRead(driver, now, (read) => trackHistogram(read, query)),
 
     albumPage: (query) =>
       serveRead(driver, now, (read) => albumPage(read, query)),

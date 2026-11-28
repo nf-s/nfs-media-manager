@@ -97,13 +97,8 @@ describe.each(drivers)('$name driver', ({ open }) => {
   })
 
   it('rejects use of a transaction executor after it ends', async () => {
-    let leaked: { run: (sql: string) => Promise<void> } | null = null
-    await driver.transaction(async (tx) => {
-      leaked = tx
-    })
-    await expect(
-      leaked === null ? Promise.resolve() : leaked.run('SELECT 1'),
-    ).rejects.toThrow('already ended')
+    const leaked = await driver.transaction(async (tx) => tx)
+    await expect(leaked.run('SELECT 1')).rejects.toThrow('already ended')
   })
 
   it('reports a closed database', async () => {

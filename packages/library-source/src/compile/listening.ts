@@ -1,50 +1,15 @@
-import type { ListeningFilter, ListeningPeriod } from '@repo/schemas/listening'
+import {
+  listeningPeriodBounds,
+  type ListeningFilter,
+  type ListeningHistogram,
+  type ListeningPeriod,
+} from '@repo/schemas/listening'
 import { and, or, sql, type Sql } from './sql'
 
 /**
- * Listening rules and sort periods (DEVICE-23). The period arithmetic is a
- * copy of listeningPeriodBounds, apps/server/src/services/browse-listening.ts,
- * which `packages/schemas` does not export; tests pin the two together.
+ * Listening rules and sort periods (DEVICE-23), on the period arithmetic
+ * the server also calls: listeningPeriodBounds, `@repo/schemas/listening`.
  */
-
-export type ListeningBounds = {
-  from?: Date
-  to?: Date
-  inclusiveTo?: boolean
-}
-
-/** Calendar subtraction in UTC that keeps the time of day and clamps month ends. */
-export function listeningPeriodBounds(
-  period: ListeningPeriod,
-  now: Date,
-): ListeningBounds {
-  if (period.kind === 'all') return {}
-  if (period.kind === 'dates') {
-    return {
-      from: period.from ? new Date(`${period.from}T00:00:00.000Z`) : undefined,
-      to: period.to
-        ? new Date(Date.parse(`${period.to}T00:00:00.000Z`) + 86_400_000)
-        : undefined,
-      inclusiveTo: false,
-    }
-  }
-  const from = new Date(now)
-  if (period.unit === 'days' || period.unit === 'weeks') {
-    from.setUTCDate(
-      from.getUTCDate() - period.amount * (period.unit === 'weeks' ? 7 : 1),
-    )
-  } else {
-    const day = from.getUTCDate()
-    from.setUTCDate(1)
-    from.setUTCMonth(
-      from.getUTCMonth() - period.amount * (period.unit === 'years' ? 12 : 1),
-    )
-    const monthEnd = new Date(from)
-    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1, 0)
-    from.setUTCDate(Math.min(day, monthEnd.getUTCDate()))
-  }
-  return { from, to: now, inclusiveTo: true }
-}
 
 /**
  * A period as inclusive bounds on whole epoch seconds, the precision of
@@ -111,4 +76,26 @@ export function listeningRules(
     return and(bounds)
   })
   return filter.match === 'any' ? or(rules) : and(rules)
+}
+
+/**
+ * listeningHistogramCounts and listeningBar, browse.ts: items per bar from
+ * rows of (period count, items with that count). A count is in the bar of
+ * the last edge at or below it, as `width_bucket` places it; bars without
+ * items count zero.
+ */
+export function listeningHistogram(
+  edges: readonly number[],
+  rows: readonly { listening: number; count: number }[],
+): ListeningHistogram {
+  const bar = (listening: number) =>
+    edges.filter((edge) => edge <= listening).length
+  return {
+    edges: [...edges],
+    counts: edges.map((_, index) =>
+      rows
+        .filter((row) => bar(row.listening) === index + 1)
+        .reduce((total, row) => total + row.count, 0),
+    ),
+  }
 }
