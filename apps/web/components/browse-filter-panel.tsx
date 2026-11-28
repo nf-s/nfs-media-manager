@@ -18,6 +18,7 @@ import {
   type ButtonFeedback,
 } from '@repo/ui/components/ui/button'
 import { Count } from '@repo/ui/components/ds/pill'
+import { ResultLineSlot } from './result-line'
 
 const FilterPanelVisibility = createContext(true)
 
@@ -147,6 +148,7 @@ function FilterDialog({
             {children}
           </FilterPanelVisibility.Provider>
         </div>
+        {open && <ResultLineSlot place="panel" />}
       </div>
     </dialog>,
     document.body,

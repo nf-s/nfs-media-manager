@@ -43,6 +43,8 @@ import {
 import { DetailLink } from './detail-link'
 import { SpotifyAlbumReferenceLink } from './spotify-album-reference-link'
 import { MediaInspector } from './media-inspector'
+import { ItemMore } from './item-more'
+import { ResultLineSlot } from './result-line'
 import ServiceIconLinks from './service-icon-links'
 import MediaArtwork from './media-artwork'
 import {
@@ -349,6 +351,14 @@ function NowPlaying({
   const release = playing.track ? playing.album : null
   const hasArtists = artists.length > 0 || Boolean(artistLabel)
   const LibraryControl = inQueue ? QueueLibrarySlot : PlayerLibraryAction
+  // More is for a library track: one the player finds saved in the library.
+  const libraryTrackId =
+    !inQueue &&
+    playing.track &&
+    track.detail?.kind === 'track' &&
+    !playerItemIdentity(playing.track, membership).add
+      ? track.detail.id
+      : null
   return (
     <span className="player-text">
       <span className="player-identity-line">
@@ -363,6 +373,13 @@ function NowPlaying({
             item={titleItem}
             membership={membership}
             touch={touch}
+          />
+        )}
+        {libraryTrackId && (
+          <ItemMore
+            library="tracks"
+            item={{ id: libraryTrackId, title: track.label }}
+            variant="ghost"
           />
         )}
       </span>
@@ -1751,9 +1768,13 @@ function NowPlayingSheet({
     }
   }, [])
   useEffect(() => {
-    // Heard first, so Escape closes the player before a drawer beneath it.
+    // Heard first, so Escape closes the player before a drawer beneath it,
+    // but after a menu or picker opened inside it.
     function onEscape(event: KeyboardEvent) {
-      if (event.key !== 'Escape' || document.querySelector('dialog[open]'))
+      if (
+        event.key !== 'Escape' ||
+        document.querySelector('dialog[open], [popover]:popover-open')
+      )
         return
       event.preventDefault()
       event.stopPropagation()
@@ -1843,6 +1864,7 @@ function NowPlayingSheet({
             <QueueContents view={view} playing={playing} onNavigate={onClose} />
           </div>
         </div>
+        <ResultLineSlot place="panel" />
       </MediaInspector>
     </>
   )

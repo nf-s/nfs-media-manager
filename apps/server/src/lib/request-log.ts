@@ -6,6 +6,7 @@ import { ZodError } from 'zod'
 import {
   albumBrowseFields,
   filmBrowseFields,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
   trackBrowseFields,
 } from '@repo/schemas/browse'
 import type { BrowserBrowseTiming } from '@repo/schemas/performance'
@@ -261,6 +262,7 @@ const publicBrowseFields = new Set([
     (field) => field.key,
   ),
   'listeningScrobbles',
+  LIBRARY_PLAYLIST_FILTER_FIELD,
 ])
 
 function logBrowseField(key: string) {

@@ -7,6 +7,9 @@ import {
   BrowseKeySchema,
   BrowsePageSliceSchema,
   BrowseRangesParamSchema,
+  LibraryPlaylistLibrarySchema,
+  LibraryPlaylistTypeSchema,
+  LibraryPlaylistViewSchema,
   TagLevelsParamSchema,
   type BrowseValues,
 } from './browse'
@@ -579,6 +582,27 @@ export const PlaylistSummarySchema = z.object({
     nextScheduledAt: null,
     job: null,
   }),
+  /**
+   * PL-17, set on every row of a directory read with `library`: an imported
+   * playlist, or a playlist or smart playlist made in that library. A
+   * library row's source is null (Library) and its imported-playlist counts
+   * are 0.
+   */
+  origin: z.enum(['imported', 'library']).optional(),
+  /** `smart` for a smart playlist; an imported playlist is a `playlist`. */
+  type: LibraryPlaylistTypeSchema.optional(),
+  /** A library row's library; null for an imported playlist. */
+  library: LibraryPlaylistLibrarySchema.nullable().optional(),
+  /** A smart playlist's view; null otherwise. */
+  view: LibraryPlaylistViewSchema.nullable().optional(),
+  /** When a library row's name, view or entries changed; an imported playlist's `importedAt`. */
+  updatedAt: z.string().datetime().nullable().optional(),
+  /**
+   * The count in the library's noun: a playlist's listed entries, an
+   * imported playlist's tracks in Tracks and albums in Albums. Null for a
+   * smart playlist, whose count is the Browse count of its view.
+   */
+  itemCount: z.number().int().nonnegative().nullable().optional(),
 })
 export type PlaylistSummary = z.infer<typeof PlaylistSummarySchema>
 
@@ -596,6 +620,10 @@ export const PlaylistBrowseSortSchema = z.enum([
   'added',
   'description',
   'nextSync',
+  // PL-17: Playlist or Smart playlist, the item count and the updated date.
+  'type',
+  'count',
+  'updated',
 ])
 export type PlaylistBrowseSort = z.infer<typeof PlaylistBrowseSortSchema>
 
@@ -627,6 +655,12 @@ export const PlaylistBrowseQuerySchema = PaginationQuerySchema.extend({
     z.array(z.string().min(1).max(500)).min(1).max(100).optional(),
   ),
   acceptsAdditions: z.enum(['true', 'false']).optional(),
+  /**
+   * PL-17: lists that library's playlists and smart playlists too, with the
+   * imported playlists in Albums and Tracks and without them otherwise.
+   * Rows without a value a sort reads are ordered last.
+   */
+  library: LibraryPlaylistLibrarySchema.optional(),
 })
 export type PlaylistBrowseQuery = z.infer<typeof PlaylistBrowseQuerySchema>
 

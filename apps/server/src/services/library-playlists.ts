@@ -34,6 +34,11 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { libraryPlaylist, libraryPlaylistEntry } from '@/schemas/db'
+import {
+  listedEntry,
+  listedEntryOf,
+  usesMediaItems,
+} from './library-playlist-entries'
 import { ensureLegacySavedViews } from './library-playlist-legacy-views'
 import {
   isLibraryPlaylistNameTaken,
@@ -64,13 +69,6 @@ const DAY_INTERVAL = sql`interval '24 hours'`
 const notFound = () =>
   new ServerError({ statusCode: 404, message: 'Playlist not found' })
 
-const usesMediaItems = (library: LibraryPlaylistLibrary) =>
-  library === 'albums' || library === 'tracks' || library === 'films'
-
-/** The entry column that holds the library's items, on `e`. */
-const entryItem = (library: LibraryPlaylistLibrary) =>
-  usesMediaItems(library) ? sql`e.media_item_id` : sql`e.subscription_item_id`
-
 /** PL-02: the item is in the playlist's library. */
 function libraryItemExists(library: LibraryPlaylistLibrary, id: SQL) {
   switch (library) {
@@ -87,18 +85,9 @@ function libraryItemExists(library: LibraryPlaylistLibrary, id: SQL) {
   }
 }
 
-/** A listed entry of playlist `playlistId` holding item `id`. */
-const listedEntryOf = (
-  library: LibraryPlaylistLibrary,
-  playlistId: SQL | string,
-  id: SQL | string,
-) => sql`exists (select 1 from library_playlist_entry e
-  where e.playlist_id = ${playlistId} and e.removed_batch_id is null
-    and ${entryItem(library)} = ${id})`
-
 const playlistIdColumn = sql`${libraryPlaylist.id}`
 const entryCount = sql<number>`(select count(*)::int from library_playlist_entry e
-  where e.playlist_id = ${playlistIdColumn} and e.removed_batch_id is null)`
+  where ${listedEntry(playlistIdColumn)})`
 
 const summaryColumns = {
   id: libraryPlaylist.id,
@@ -210,8 +199,7 @@ async function readDetail(
       ...summaryColumns,
       createdAt: libraryPlaylist.createdAt,
       repeatCount: sql<number>`(select (count(*) - count(distinct coalesce(e.media_item_id, e.subscription_item_id)))::int
-        from library_playlist_entry e
-        where e.playlist_id = ${playlistIdColumn} and e.removed_batch_id is null)`,
+        from library_playlist_entry e where ${listedEntry(playlistIdColumn)})`,
     })
     .from(libraryPlaylist)
     .where(

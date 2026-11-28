@@ -3,6 +3,7 @@
 import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
+import { libraryItemMore } from './item-more'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
@@ -377,6 +378,7 @@ export default function LastfmLinkPanel({
               <AlbumReferencePlayButton
                 id={group.album.id}
                 title={group.album.title}
+                more={libraryItemMore('albums', group.album)}
               />
             </p>
           )}
@@ -454,6 +456,7 @@ export default function LastfmLinkPanel({
                             <AlbumReferencePlayButton
                               id={album.id}
                               title={album.title}
+                              more={libraryItemMore('albums', album)}
                             />
                           </li>
                         ))}

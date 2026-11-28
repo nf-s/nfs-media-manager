@@ -1,7 +1,10 @@
 import { and, sql, type SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
-import { type BrowseFilter } from '@repo/schemas/browse'
+import {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  type BrowseFilter,
+} from '@repo/schemas/browse'
 import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 import type { ArtistMixQuery } from '@repo/schemas/creators'
 import {
@@ -47,6 +50,7 @@ import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { ServerError } from '@/lib/error'
 import { catalogScopeCondition } from './catalog-scope'
 import { visibleArtist } from './entity-relationships'
+import { inLibraryPlaylist } from './library-playlist-entries'
 import { matchingTagNames } from './music-tags'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 
@@ -405,6 +409,9 @@ const textArrays: Partial<
  * the visible tags beneath it in the album tag hierarchy, by normalized name.
  */
 function filterMatch(filter: BrowseFilter, library: SubscriptionLibrary) {
+  // PL-18: one hashed set of the playlist's items, as in the other libraries.
+  if (filter.field === LIBRARY_PLAYLIST_FILTER_FIELD)
+    return inLibraryPlaylist(library, filter.value, sql`i.id`)
   const field = SubscriptionTextFieldSchema.safeParse(filter.field)
   if (!field.success || !subscriptionLibraryHasTextFilter(library, field.data))
     throw new ServerError({ statusCode: 422, message: 'Unknown text filter' })

@@ -14,6 +14,7 @@ import {
 import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react'
 import { Button } from '@repo/ui/components/ui/button'
 import { MediaInspector } from './media-inspector'
+import { ResultLineSlot } from './result-line'
 import {
   InspectorEntryContext,
   InspectorPageContext,
@@ -332,6 +333,7 @@ export function DetailInspector(options: InspectorOptions) {
             />
           </InspectorPageContext.Provider>
         </InspectorEntryContext.Provider>
+        <ResultLineSlot place="panel" />
       </MediaInspector>
     </>
   )

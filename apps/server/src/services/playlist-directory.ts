@@ -1,12 +1,19 @@
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  LibraryPlaylistLibrarySchema,
+  LibraryPlaylistTypeSchema,
+  LibraryPlaylistViewSchema,
+  type LibraryPlaylistLibrary,
+} from '@repo/schemas/browse'
+import {
   PlaylistBrowsePageSchema,
   PlaylistBrowseQuerySchema,
   PlaylistPresentationSchema,
   PlaylistSummarySchema,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   type PlaylistBrowseQuery,
+  type PlaylistBrowseSort,
   type PlaylistPresentation,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
@@ -14,6 +21,9 @@ import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { playlistScheduleMinutes } from '@/lib/playlist-sync'
 import { catalogScopeCondition } from './catalog-scope'
+import { listedEntry } from './library-playlist-entries'
+import { ensureLegacySavedViews } from './library-playlist-legacy-views'
+import { listsImportedPlaylists } from './library-playlist-names'
 import {
   latestSpotifyJobs,
   LIKED_SONGS_KEY,
@@ -177,10 +187,16 @@ const scheduleDelay = sql`case p.sync_schedule ${sql.join(
   sql` `,
 )} end`
 
+// Sort by the labels used in the table: Library, Liked Songs, Spotify.
+const sourceOrder = (source: SQL) =>
+  sql`array_position(array['library', 'spotify-liked', 'spotify'], ${source})`
+// Playlist, then Smart playlist.
+const typeOrder = (type: SQL) =>
+  sql`array_position(array['playlist', 'smart'], ${type})`
+
 const playlistSortColumns = {
   name: sql`lower(p.name)`,
-  // Sort by the labels used in the table: Library, Liked Songs, Spotify.
-  source: sql`array_position(array['library', 'spotify-liked', 'spotify'], coalesce(p.source, 'library'))`,
+  source: sourceOrder(sql`coalesce(p.source, 'library')`),
   owner: sql`lower(p.owner_name)`,
   tracks: sql`(select stats.track_count from (${playlistTrackStats}) stats)`,
   linkedTracks: sql`(select stats.linked_track_count from (${playlistTrackStats}) stats)`,
@@ -196,6 +212,28 @@ const playlistSortColumns = {
   description: sql`lower(p.description)`,
   nextSync: sql`case when (${playlistGroup}) is not null and coalesce(job.status, 'succeeded') = 'succeeded'
     then ${playlistLastCheck} + make_interval(mins => ${scheduleDelay}) end`,
+}
+
+/**
+ * An imported playlist's value for a sort. PL-17: its type is Playlist, its
+ * count is its tracks in Tracks and its albums in Albums (none without a
+ * library) and it was updated when its contents were last stored.
+ */
+function importedSortColumn(query: PlaylistBrowseQuery): SQL {
+  switch (query.sortBy) {
+    case 'type':
+      return typeOrder(sql`'playlist'`)
+    case 'count':
+      return query.library === 'tracks'
+        ? playlistSortColumns.tracks
+        : query.library === 'albums'
+          ? playlistSortColumns.albums
+          : sql`null::int`
+    case 'updated':
+      return sql`p.imported_at`
+    default:
+      return playlistSortColumns[query.sortBy]
+  }
 }
 
 function playlistDirectoryFilter(query: PlaylistBrowseQuery) {
@@ -317,7 +355,8 @@ export async function loadPlaylistSummaries(
 }
 
 export async function listPlaylistBrowsePage(query: PlaylistBrowseQuery) {
-  const sort = playlistSortColumns[query.sortBy]
+  if (query.library) return listDirectoryPage(query, query.library)
+  const sort = importedSortColumn(query)
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
   const rows = z.array(z.object({ id: z.string() })).parse(
     (
@@ -343,11 +382,213 @@ export async function listPlaylistBrowsePage(query: PlaylistBrowseQuery) {
 }
 
 export async function countPlaylists(query: PlaylistBrowseQuery) {
+  if (query.library) return countDirectory(query, query.library)
   const [matching] = CountRowsSchema.parse(
     (
       await db.execute(sql`
     select count(*) as count from playlist p where ${playlistDirectoryFilter(query)}
   `)
+    ).rows,
+  )
+  return { totalCount: matching?.count ?? 0 }
+}
+
+// PL-17: the Playlists directory of one library. In SQL, `lp` is a
+// library_playlist of the library that is not deleted.
+
+const libraryEntryCount = sql`(select count(*)::int from library_playlist_entry e
+  where ${listedEntry(sql`lp.id`)})`
+
+/** A library row's value for a sort; null, ordered last, for an imported-playlist field. */
+function librarySortColumn(sortBy: PlaylistBrowseSort): SQL {
+  switch (sortBy) {
+    case 'name':
+      return sql`lower(lp.name)`
+    case 'type':
+      return typeOrder(sql`lp.type`)
+    case 'source':
+      return sourceOrder(sql`'library'`)
+    case 'count':
+      return sql`case when lp.type = 'playlist' then ${libraryEntryCount} end`
+    case 'updated':
+      return sql`lp.updated_at`
+    case 'added':
+      return sql`lp.created_at`
+    default:
+      return sql`null`
+  }
+}
+
+/**
+ * Library rows the query lists: a library row's source is Library, it is
+ * always in the library and it accepts no Spotify additions.
+ */
+function libraryDirectoryFilter(
+  query: PlaylistBrowseQuery,
+  library: LibraryPlaylistLibrary,
+) {
+  const conditions = [
+    sql`lp.library = ${library}`,
+    sql`lp.deleted_at is null`,
+    catalogScopeCondition(sql`lp.id`, sql`true`, query, 'playlist'),
+  ]
+  for (const text of [query.q, query.name])
+    if (text)
+      conditions.push(
+        sql`lp.name ilike ${`%${text.replace(/[\\%_]/g, '\\$&')}%`}`,
+      )
+  if (query.sources?.length && !query.sources.includes('library'))
+    conditions.push(sql`false`)
+  if (query.ids?.length)
+    conditions.push(
+      sql`lp.id in (${sql.join(
+        query.ids.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    )
+  if (query.acceptsAdditions === 'true') conditions.push(sql`false`)
+  return sql.join(conditions, sql` and `)
+}
+
+const DirectoryRowsSchema = z.array(
+  z.object({
+    origin: z.enum(['imported', 'library']),
+    id: z.string(),
+    name: z.string(),
+    library: LibraryPlaylistLibrarySchema.nullable(),
+    type: LibraryPlaylistTypeSchema,
+    view: LibraryPlaylistViewSchema.nullable(),
+    created_at: z.string().nullable(),
+    updated_at: z.string().nullable(),
+    entry_count: z.number().int().nullable(),
+  }),
+)
+type DirectoryRow = z.infer<typeof DirectoryRowsSchema>[number]
+
+function librarySummary(
+  row: DirectoryRow,
+  library: LibraryPlaylistLibrary,
+): PlaylistSummary {
+  return PlaylistSummarySchema.parse({
+    id: row.id,
+    inLibrary: true,
+    name: row.name,
+    source: null,
+    ownerName: null,
+    description: null,
+    artworkUrl: null,
+    spotifyUrl: null,
+    importedAt: null,
+    createdAt: row.created_at,
+    trackCount: 0,
+    linkedTrackCount: 0,
+    albumCount: 0,
+    presentation: library === 'albums' ? 'albums' : 'tracks',
+    durationSec: 0,
+    origin: 'library',
+    type: row.type,
+    library,
+    view: row.view,
+    updatedAt: row.updated_at,
+    itemCount: row.entry_count,
+  })
+}
+
+/**
+ * PL-17: imported playlists, in Albums and Tracks, and the library's
+ * playlists and smart playlists as one list, searched, sorted and paged in
+ * one statement. Imported rows are hydrated as on the imported-only page.
+ */
+async function listDirectoryPage(
+  query: PlaylistBrowseQuery,
+  library: LibraryPlaylistLibrary,
+) {
+  if (library === 'albums') await ensureLegacySavedViews()
+  const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
+  const imported = listsImportedPlaylists(library)
+    ? sql`select 'imported' as origin, p.id, p.name, null as library,
+        'playlist' as type, null::jsonb as view, null::timestamp as created_at,
+        null::timestamp as updated_at, ${importedSortColumn(query)} as sort_value
+      from playlist p
+      ${query.sortBy === 'nextSync' ? playlistImportJobs : sql``}
+      where ${playlistDirectoryFilter(query)}
+      union all`
+    : sql``
+  const order = sql`order by sort_value ${direction} nulls last, lower(name), id`
+  const rows = DirectoryRowsSchema.parse(
+    (
+      await db.execute(sql`
+    select origin, id, name, library, type, view,
+      ${isoTimestamp(sql`created_at`)} as created_at,
+      ${isoTimestamp(sql`updated_at`)} as updated_at,
+      case when origin = 'library' and type = 'playlist' then (
+        select count(*)::int from library_playlist_entry e where ${listedEntry(sql`page.id`)}
+      ) end as entry_count
+    from (
+      select * from (
+        ${imported}
+        select 'library' as origin, lp.id, lp.name, lp.library, lp.type,
+          lp.view, lp.created_at, lp.updated_at,
+          ${librarySortColumn(query.sortBy)} as sort_value
+        from library_playlist lp
+        where ${libraryDirectoryFilter(query, library)}
+      ) directory
+      ${order}
+      limit ${query.size + 1} offset ${(query.page - 1) * query.size}
+    ) page
+    ${order}
+  `)
+    ).rows,
+  )
+  const page = rows.slice(0, query.size)
+  const summaries = new Map(
+    (
+      await loadPlaylistSummaries(
+        page.flatMap((row) => (row.origin === 'imported' ? [row.id] : [])),
+      )
+    ).map((summary) => [summary.id, summary]),
+  )
+  const items = page.flatMap((row): PlaylistSummary[] => {
+    if (row.origin === 'library') return [librarySummary(row, library)]
+    const summary = summaries.get(row.id)
+    return summary
+      ? [
+          {
+            ...summary,
+            origin: 'imported',
+            type: 'playlist',
+            library: null,
+            view: null,
+            updatedAt: summary.importedAt,
+            itemCount:
+              library === 'albums' ? summary.albumCount : summary.trackCount,
+          },
+        ]
+      : []
+  })
+  return PlaylistBrowsePageSchema.parse({
+    items,
+    page: query.page,
+    size: query.size,
+    hasMore: rows.length > query.size,
+  })
+}
+
+/** PL-17: the count of the combined directory, in one statement. */
+async function countDirectory(
+  query: PlaylistBrowseQuery,
+  library: LibraryPlaylistLibrary,
+) {
+  if (library === 'albums') await ensureLegacySavedViews()
+  const imported = listsImportedPlaylists(library)
+    ? sql`(select count(*) from playlist p where ${playlistDirectoryFilter(query)})`
+    : sql`0`
+  const [matching] = CountRowsSchema.parse(
+    (
+      await db.execute(sql`select ${imported} + (
+        select count(*) from library_playlist lp
+        where ${libraryDirectoryFilter(query, library)}
+      ) as count`)
     ).rows,
   )
   return { totalCount: matching?.count ?? 0 }

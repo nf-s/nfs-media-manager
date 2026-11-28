@@ -39,6 +39,8 @@ type MoreButtonProps = Omit<
   title: string
   /** Whether its menu, or a popover opened from it, is showing. */
   expanded?: boolean
+  /** `ghost` outside a play group, as after the player's title. */
+  variant?: 'ghost'
 }
 
 /**

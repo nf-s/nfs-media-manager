@@ -31,6 +31,7 @@ import { CreatorLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import { MediaThumb } from './media-artwork'
 import { AlbumInlinePlayButton } from './play-controls'
+import { libraryItemMore } from './item-more'
 import { useConfig } from './providers'
 import { ReadButton } from './read-button'
 import { RatingsCalculation, nativeScore } from './ratings-explorer-calculation'
@@ -299,6 +300,7 @@ function RatingCell({
             artworkUrl: row.artworkUrl,
             ...row.album,
           }}
+          more={libraryItemMore('albums', row)}
         />
       ) : (
         <EmptyValue />

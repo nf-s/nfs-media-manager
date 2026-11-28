@@ -987,3 +987,14 @@ test('a list inside a detail leaves the page drawer and its selected row to the 
   assert.match(page, /aria-selected="true"/)
   assert.match(page, /inspector-backdrop/)
 })
+
+test('subscription items have no More actions yet', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  for (const view of ['grid', 'list', 'table']) {
+    const search = `view=${view}`
+    const html = render(<SubscriptionBrowser />, browseData(search, 2), search)
+    assert.match(html, /Bread basics/)
+    assert.doesNotMatch(html, /More actions/)
+  }
+})

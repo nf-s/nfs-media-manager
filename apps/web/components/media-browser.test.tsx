@@ -227,3 +227,17 @@ test('inside a detail the Albums list and its Merge bar share one frame', async 
   assert.doesNotMatch(films, /dtl-browse-frame|ds-selectbar/)
   assert.match(films, /class="browse-scroller dtl-browse-entries"/)
 })
+
+test('Albums tiles, list rows and table rows end the play group with More; Films have none', async () => {
+  for (const view of ['grid', 'list', 'table']) {
+    const html = await render('album', `view=${view}`, [album])
+    assert.match(
+      html,
+      /aria-label="Add Harbour Lights to queue[^"]*"[^>]*>.*?<\/button><button[^>]*aria-label="More actions for Harbour Lights"/,
+    )
+    assert.match(html, />Add to playlist…<\/button>.*?Open details</)
+    const films = await render('film', `view=${view}`, [film])
+    assert.match(films, /Harbour Film/)
+    assert.doesNotMatch(films, /More actions/)
+  }
+})

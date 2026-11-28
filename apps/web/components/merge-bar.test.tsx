@@ -20,6 +20,7 @@ import {
 } from './merge-bar'
 import { ConfigContext } from './providers'
 import { TrackMergeBar } from './track-merge-bar'
+import { AddToPlaylistButton } from './library-playlist-picker'
 import { trackMergeAdapter } from './track-merge-review'
 
 const apiBaseUrl = 'http://localhost:4001'
@@ -476,4 +477,43 @@ test('the Merge bar says how many selections are still to go', () => {
     html,
     /^<span role="status">Merging 3 selections…<\/span><span class="ds-selectbar-result" role="status">.*<button class="ds-btn">Undo<\/button>/,
   )
+})
+
+test('the Tracks bar offers Add to playlist, then Merge, then Clear selection', (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Network forbidden in UI tests')
+  })
+  const client = new QueryClient()
+  const ids = ['track-1', 'track-2']
+  try {
+    const html = renderToStaticMarkup(
+      <Providers client={client}>
+        <TrackMergeBar
+          selection={selectionOf(ids)}
+          total={250}
+          actions={
+            <AddToPlaylistButton
+              subject={{
+                library: 'tracks',
+                selection: { ids },
+                count: 2,
+                title: null,
+              }}
+            />
+          }
+        />
+      </Providers>,
+    )
+    assert.match(html, /<b>2 selected<\/b>/)
+    assert.deepEqual(
+      [...html.matchAll(/<button\b[^>]*>(.*?)<\/button>/g)].map(
+        (match) => match[1]?.replace(/<[^>]+>/g, '') || 'icon',
+      ),
+      ['Add to playlist', 'Merge', 'icon'],
+    )
+    assert.match(html, /aria-label="Clear selection"/)
+    assert.equal(network.mock.callCount(), 0)
+  } finally {
+    client.clear()
+  }
 })

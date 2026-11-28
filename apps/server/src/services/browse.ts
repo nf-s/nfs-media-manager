@@ -20,6 +20,7 @@ import {
   BrowseCountSchema,
   BrowseFieldSchema,
   BrowseFacetQuerySchema,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
   type BrowseFacetQuery,
   type BrowseField,
   type BrowseFilter,
@@ -68,6 +69,7 @@ import { albumMatchRejectionField } from './album-match-rejections'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
 import { tagAncestorRows, visibleSubtagCounts } from './tag-hierarchy'
 import { albumAddedDateExpression } from './album-added-dates'
+import { inLibraryPlaylist } from './library-playlist-entries'
 import {
   createBrowseListening,
   listeningRuleProfile,
@@ -129,6 +131,21 @@ import {
 } from './recording-groups'
 
 type MediaType = 'album' | 'film' | 'track'
+
+const playlistLibraries = {
+  album: 'albums',
+  film: 'films',
+  track: 'tracks',
+} as const
+
+/**
+ * PL-18: the item has a listed entry in the library playlist, as one hashed
+ * set of IDs tested on `id`. For Tracks that is the table the sort order
+ * walks, as for the Provider filter (see trackTagMatch).
+ */
+function libraryPlaylistMatch(mediaType: MediaType, value: string, id: SQL) {
+  return inLibraryPlaylist(playlistLibraries[mediaType], value, id)
+}
 
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
@@ -526,6 +543,14 @@ export function matchesValue(
   tagLevels?: TagLevels,
 ): SQL {
   const match = sql`lower(${value}::text)`
+  if (key === LIBRARY_PLAYLIST_FILTER_FIELD)
+    return libraryPlaylistMatch(
+      mediaType,
+      value,
+      mediaType === 'track'
+        ? sql`${libraryTrack.mediaItemId}`
+        : sql`${mediaItem.id}`,
+    )
   if (key === 'title') return sql`lower(${mediaItem.title}) = ${match}`
   if (mediaType === 'track' && key === 'source') {
     const source = TrackSourceSchema.options.find(
@@ -625,7 +650,10 @@ function browseFieldConditions(
   const conditions: SQL[] = []
   const any: SQL[] = []
   for (const filter of filters) {
-    if (fields.get(filter.field)?.type !== 'text')
+    if (
+      filter.field !== LIBRARY_PLAYLIST_FILTER_FIELD &&
+      fields.get(filter.field)?.type !== 'text'
+    )
       throw new ServerError({ statusCode: 422, message: 'Unknown text filter' })
     const match =
       extraMatch?.(filter) ??
@@ -800,7 +828,10 @@ function playlistOnlyTrackQuery(query: TrackQuery) {
     !query.q &&
     !query.ranges.length &&
     query.filters.length > 0 &&
-    query.filters.every(({ field }) => field === 'playlist')
+    query.filters.every(
+      ({ field }) =>
+        field === 'playlist' || field === LIBRARY_PLAYLIST_FILTER_FIELD,
+    )
   )
 }
 
@@ -1748,6 +1779,12 @@ async function browseQueries(
         where p.kind = 'playlist' and lower(p.name) = lower(${filter.value}::text)
       ), false)`
     // A Title page walks media_item in title order; see trackTagMatch.
+    if (
+      filter.field === LIBRARY_PLAYLIST_FILTER_FIELD &&
+      mediaType === 'track' &&
+      (groupedPlaylistOnly || sortField.key === 'title')
+    )
+      return libraryPlaylistMatch(mediaType, filter.value, sql`${mediaItem.id}`)
     if (mediaType !== 'track' || sortField.key !== 'title') return
     if (filter.field === 'trackTag')
       return trackTagMatch(filter.value, sql`${mediaItem.id}`)
@@ -2050,6 +2087,7 @@ async function browseQueries(
           chip.field === 'genre' ||
           chip.field === 'albumTag' ||
           chip.field === 'provider' ||
+          chip.field === LIBRARY_PLAYLIST_FILTER_FIELD ||
           (chip.field === 'artistTag' && chip.mode !== 'exclude'),
       )
     const firstArtistTagWhere = firstArtistTagPage

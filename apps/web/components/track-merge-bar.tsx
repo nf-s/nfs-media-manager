@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { MergeBar, type RowSelection } from './merge-bar'
 import { interactiveTrackMergeAdapter } from './track-merge-review'
 
@@ -11,16 +12,20 @@ import { interactiveTrackMergeAdapter } from './track-merge-review'
 export function TrackMergeBar({
   selection,
   total,
+  actions,
 }: {
   selection: RowSelection
   /** How many tracks the table lists. */
   total?: number
+  /** Other actions on the selection, before Merge. */
+  actions?: ReactNode
 }) {
   return (
     <MergeBar
       selection={selection}
       total={total}
       adapter={interactiveTrackMergeAdapter}
+      actions={actions}
     />
   )
 }

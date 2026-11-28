@@ -348,3 +348,8 @@ test('an empty library says so without offering to clear filters', async () => {
   assert.match(html, /<strong>No artists yet<\/strong>/)
   assert.doesNotMatch(html, /Clear filters/)
 })
+
+test('Artists have no More actions in any view', async () => {
+  for (const view of ['grid', 'list', 'table'])
+    assert.doesNotMatch(await render(`view=${view}`), /More actions/)
+})

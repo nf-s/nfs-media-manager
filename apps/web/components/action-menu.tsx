@@ -74,9 +74,16 @@ export function useAnchoredPopover(
       }px`
     }
     position()
+    // A popover whose content changes, such as a picker's steps, moves too.
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(position)
+    if (panel.current) observer?.observe(panel.current)
     window.addEventListener('resize', position)
     window.addEventListener('scroll', position, true)
     return () => {
+      observer?.disconnect()
       window.removeEventListener('resize', position)
       window.removeEventListener('scroll', position, true)
     }
@@ -313,6 +320,7 @@ export function RowMoreMenu({
   items,
   place,
   expanded = false,
+  variant,
 }: {
   /** The item's name, used in the button's and the menu's accessible names. */
   title: string
@@ -324,6 +332,8 @@ export function RowMoreMenu({
    * from the menu, such as a playlist picker, is showing.
    */
   expanded?: boolean
+  /** `ghost` for a button outside a play group, as in the player. */
+  variant?: 'ghost'
 }) {
   const menu = (
     <ActionMenu
@@ -331,7 +341,12 @@ export function RowMoreMenu({
       label={`More actions for ${title}`}
       sheet
       trigger={({ 'aria-expanded': open, ...props }) => (
-        <MoreButton {...props} title={title} expanded={open || expanded} />
+        <MoreButton
+          {...props}
+          title={title}
+          expanded={open || expanded}
+          variant={variant}
+        />
       )}
     />
   )

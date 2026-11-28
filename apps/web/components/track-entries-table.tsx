@@ -33,6 +33,7 @@ import { TrackArtistLinks } from './creator-links'
 import { DetailLink } from './detail-link'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
 import { AlbumReferencePlayButton } from './play-controls'
+import { libraryItemMore, type ItemMorePlaylist } from './item-more'
 import { TrackAlbumTableValue } from './track-browse-cells'
 import { TrackSpotifyMatchAction } from './track-spotify-match-action'
 import {
@@ -49,6 +50,9 @@ import {
   NestedMediaCards,
   type NestedMediaWindow,
 } from './nested-media-view'
+
+/** An imported playlist's entries offer Add to another playlist…, not Remove. */
+const imported: ItemMorePlaylist = { kind: 'imported' }
 
 export type TrackEntryColumn = PlaylistEntrySort | 'externalId'
 type EntryKind = PlaylistEntry['kind']
@@ -248,12 +252,17 @@ function TrackEntryCard({
       }
       actions={
         entry.kind === 'track' ? (
-          <TrackRowPlay track={entry.track} source={source} />
+          <TrackRowPlay
+            track={entry.track}
+            source={source}
+            more={libraryItemMore('tracks', entry.track, imported)}
+          />
         ) : (
           groupedAlbums && (
             <AlbumReferencePlayButton
               id={entry.album.id}
               title={entry.album.title}
+              more={libraryItemMore('albums', entry.album, imported)}
             />
           )
         )
@@ -289,7 +298,11 @@ function TrackEntryCell({
           {track.inLibrary === false && (
             <span className="ds-muted">Outside library</span>
           )}
-          <TrackRowPlay track={track} source={source} />
+          <TrackRowPlay
+            track={track}
+            source={source}
+            more={libraryItemMore('tracks', track, imported)}
+          />
         </span>
       ) : album ? (
         <span className="ds-cell-id">
@@ -297,7 +310,11 @@ function TrackEntryCell({
             {album.title}
           </DetailLink>
           {groupedAlbums && (
-            <AlbumReferencePlayButton id={album.id} title={album.title} />
+            <AlbumReferencePlayButton
+              id={album.id}
+              title={album.title}
+              more={libraryItemMore('albums', album, imported)}
+            />
           )}
         </span>
       ) : null

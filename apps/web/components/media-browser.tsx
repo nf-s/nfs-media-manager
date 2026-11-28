@@ -190,6 +190,10 @@ import {
   useRowSelection,
 } from './merge-bar'
 import { albumMergeAdapter } from './album-merge-review'
+import { libraryItemMore } from './item-more'
+import { AddToPlaylistButton } from './library-playlist-picker'
+import { ResultLineSlot } from './result-line'
+import { suggestedPlaylistName } from '@/utils/library-playlists'
 
 type MediaItem = AlbumListItem | FilmListItem
 
@@ -1148,6 +1152,7 @@ function MediaBrowse({
       <Controls
         album={item}
         source={() => albumPlaybackSource(item, index)}
+        more={libraryItemMore('albums', item)}
         afterQueue={providerLinks}
       />
     )
@@ -2072,11 +2077,34 @@ function MediaBrowse({
               </table>
             )}
           </div>
+          {!embedded && (
+            <ResultLineSlot
+              place="content"
+              hidden={view === 'table' && selection.count > 0}
+            />
+          )}
           {selectable && view === 'table' && (
             <MergeBar
               selection={selection}
               total={query.hasTotal ? total : undefined}
               adapter={albumMergeAdapter}
+              actions={
+                <AddToPlaylistButton
+                  subject={{
+                    library: 'albums',
+                    selection: { ids: selection.ids },
+                    count: selection.count,
+                    title:
+                      selection.count === 1
+                        ? (slots.find(
+                            ({ item }) => item?.id === selection.ids[0],
+                          )?.item?.title ?? null)
+                        : null,
+                  }}
+                  suggestedName={suggestedPlaylistName(filters, q)}
+                  onAdded={selection.clear}
+                />
+              }
             />
           )}
         </DetailListFrame>

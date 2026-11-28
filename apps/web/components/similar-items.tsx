@@ -86,6 +86,7 @@ import {
   playFromView,
   unavailableReason,
 } from './play-controls'
+import { ItemMore } from './item-more'
 import {
   usePlaybackControls,
   usePlaybackForPlayButton,
@@ -232,13 +233,20 @@ function suggestedAlbumPlay(
   item: TidalSimilarItem,
   title: string,
   place: 'row' | 'tile',
+  more?: ReactNode,
 ) {
   const library = item.library
   const playable = library?.spotifyId ? null : spotifyAlbumPlayable(item)
-  if (playable) return <SpotifyPlayButton item={playable} place={place} />
+  if (playable)
+    return <SpotifyPlayButton item={playable} place={place} more={more} />
   if (item.state === 'library' && library)
     return (
-      <AlbumReferencePlayButton id={library.id} title={title} place={place} />
+      <AlbumReferencePlayButton
+        id={library.id}
+        title={title}
+        place={place}
+        more={more}
+      />
     )
   return undefined
 }
@@ -437,6 +445,7 @@ function SimilarTrack({
   detailId,
   libraryAction,
   matchEvidence,
+  more,
   createPlaybackSource,
 }: {
   view: BrowseView
@@ -444,6 +453,8 @@ function SimilarTrack({
   detailId: string | undefined
   libraryAction: ReactNode
   matchEvidence: ReactNode
+  /** More actions, for a suggestion in the library. */
+  more?: ReactNode
   createPlaybackSource?: (selected: PlayableItem) => PlaybackSource
 }) {
   const stored = item.track
@@ -509,6 +520,7 @@ function SimilarTrack({
             track={track}
             place={view === 'grid' ? 'tile' : 'row'}
             source={playbackSource}
+            more={more}
           />
         }
         actions={
@@ -645,6 +657,14 @@ export function SimilarRow({
       )}
     </>
   )
+  // Only a suggestion in the library can be added to a library playlist.
+  const more =
+    inLibrary && detailId ? (
+      <ItemMore
+        library={kind === 'track' ? 'tracks' : 'albums'}
+        item={{ id: detailId, title }}
+      />
+    ) : undefined
   if (kind === 'track')
     return (
       <SimilarTrack
@@ -653,13 +673,19 @@ export function SimilarRow({
         detailId={detailId}
         libraryAction={libraryAction}
         matchEvidence={matchEvidence}
+        more={more}
         createPlaybackSource={createPlaybackSource}
       />
     )
   const artworkUrl =
     item.library?.artworkUrl ?? item.spotify?.artworkUrl ?? null
   const genres = <SimilarGenres item={item} title={title} />
-  const play = suggestedAlbumPlay(item, title, view === 'grid' ? 'tile' : 'row')
+  const play = suggestedAlbumPlay(
+    item,
+    title,
+    view === 'grid' ? 'tile' : 'row',
+    more,
+  )
   const actions = (
     <span className="ds-actions">
       {!inLibrary &&

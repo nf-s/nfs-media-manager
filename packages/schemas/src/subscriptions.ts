@@ -3,6 +3,7 @@ import {
   BrowseFacetQuerySchema,
   BrowseFilterSchema,
   BrowseRangesParamSchema,
+  LIBRARY_PLAYLIST_FILTER_FIELD,
   type BrowseField,
   type BrowseValues,
 } from './browse'
@@ -499,6 +500,7 @@ export const SubscriptionDaySchema = z
   .refine((value) => Number.isFinite(Date.parse(`${value}T00:00:00.000Z`)))
 
 const textField = (field: string) =>
+  field === LIBRARY_PLAYLIST_FILTER_FIELD ||
   SubscriptionTextFieldSchema.safeParse(field).success
 const rangeField = (field: string) =>
   SubscriptionRangeFieldSchema.safeParse(field).success
@@ -534,7 +536,8 @@ export const SubscriptionItemQuerySchema = PaginationQuerySchema.extend({
   /**
    * JSON `BrowseFilter[]` over title, source, type, genre, watched (`Yes` or
    * `No`), for Subscriptions only live (`Live`, `Upcoming` or `Not live`) and,
-   * for Mixes only, artist and hasRecording (`Yes` or `No`).
+   * for Mixes only, artist and hasRecording (`Yes` or `No`), and
+   * libraryPlaylist (a library playlist's ID) in both.
    */
   filters: SubscriptionFiltersParamSchema,
   /**
@@ -550,7 +553,10 @@ export const SubscriptionItemQuerySchema = PaginationQuerySchema.extend({
   direction: DirectionSchema.default('desc'),
 }).superRefine((query, context) => {
   for (const [index, filter] of query.filters.entries())
-    if (!subscriptionLibraryHasTextFilter(query.library, filter.field))
+    if (
+      filter.field !== LIBRARY_PLAYLIST_FILTER_FIELD &&
+      !subscriptionLibraryHasTextFilter(query.library, filter.field)
+    )
       context.addIssue({
         code: 'custom',
         message: 'Text filter is not part of this library',

@@ -95,6 +95,7 @@ import {
 } from './detail-inspector-context'
 import { DetailLink } from './detail-link'
 import { LibraryTrackPlayButton } from './play-controls'
+import { libraryItemMore } from './item-more'
 import { useConfig } from './providers'
 import {
   SecondaryCell,
@@ -976,7 +977,18 @@ export default function MatchDiagnosticsWorkspace({
               {item.name}
             </DetailLink>
             {playable && (
-              <LibraryTrackPlayButton track={playable} place="row" />
+              <LibraryTrackPlayButton
+                track={playable}
+                place="row"
+                more={
+                  library === 'track'
+                    ? libraryItemMore('tracks', {
+                        id: item.id,
+                        title: item.name,
+                      })
+                    : undefined
+                }
+              />
             )}
           </span>
         </SecondaryCell>

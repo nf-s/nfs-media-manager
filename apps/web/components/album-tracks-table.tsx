@@ -35,6 +35,7 @@ import { useTableWidths } from './secondary-table'
 import { DetailLink } from './detail-link'
 import { TrackArtistLinks } from './creator-links'
 import { TrackRowPlay, useTrackPlayback } from './detail-play'
+import { libraryItemMore } from './item-more'
 import {
   RowSelectAll,
   RowSelectRow,
@@ -124,7 +125,11 @@ function AlbumTrackRow({
               {track.inLibrary === false && (
                 <span className="ds-muted">Outside library</span>
               )}
-              <TrackRowPlay track={track} source={source} />
+              <TrackRowPlay
+                track={track}
+                source={source}
+                more={libraryItemMore('tracks', track)}
+              />
             </span>
           ) : column.key === 'artists' ? (
             <TrackArtistLinks track={track} />

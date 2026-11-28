@@ -3,6 +3,7 @@
 import { ReadButton } from '@/components/read-button'
 import { DetailLink } from './detail-link'
 import { AlbumReferencePlayButton } from './play-controls'
+import { libraryItemMore } from './item-more'
 import { useEffect, useRef, useState } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { detailLocation } from '@/utils/detail-inspector'
@@ -193,6 +194,7 @@ function LinkRow({
                 <AlbumReferencePlayButton
                   id={group.album.id}
                   title={group.album.title}
+                  more={libraryItemMore('albums', group.album)}
                 />
               </span>
             ) : (

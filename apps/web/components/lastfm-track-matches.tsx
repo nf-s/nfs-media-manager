@@ -6,6 +6,7 @@ import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
 import { DetailLink } from './detail-link'
 import { LibraryTrackInlinePlayButtons } from './play-controls'
+import { libraryItemMore } from './item-more'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BrowseFilter } from '@repo/schemas/browse'
@@ -430,7 +431,10 @@ export function LastfmTrackMatchList() {
                         </TableCell>
                         <TableCell sticky={CHECK_WIDTH} stickyEdge>
                           <div className="secondary-cell-actions">
-                            <LibraryTrackInlinePlayButtons track={playable} />
+                            <LibraryTrackInlinePlayButtons
+                              track={playable}
+                              more={libraryItemMore('tracks', track)}
+                            />
                             <SecondaryCell text={track.title}>
                               <DetailLink kind="track" id={track.id}>
                                 {track.title}

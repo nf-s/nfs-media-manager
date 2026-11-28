@@ -1,5 +1,13 @@
 import { z } from 'zod'
-import { BrowsePageSliceSchema, formatTagLevelsParam } from './browse'
+import {
+  BrowsePageSliceSchema,
+  formatTagLevelsParam,
+  LibraryPlaylistLibrarySchema,
+  LibraryPlaylistTypeSchema,
+  LibraryPlaylistViewSchema,
+  type LibraryPlaylistLibrary,
+  type LibraryPlaylistView,
+} from './browse'
 import type { SavedView } from './imports'
 import {
   AlbumListItemSchema,
@@ -20,21 +28,15 @@ import {
   type TrackQuery,
 } from './tracks'
 
-/** The libraries that have playlists made in the app. Artists have none. */
-export const LibraryPlaylistLibrarySchema = z.enum([
-  'albums',
-  'tracks',
-  'films',
-  'subscriptions',
-  'mixes',
-])
-export type LibraryPlaylistLibrary = z.infer<
-  typeof LibraryPlaylistLibrarySchema
->
-
-/** A playlist holds entries; a smart playlist lists what its view matches. */
-export const LibraryPlaylistTypeSchema = z.enum(['playlist', 'smart'])
-export type LibraryPlaylistType = z.infer<typeof LibraryPlaylistTypeSchema>
+export {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  LibraryPlaylistLibrarySchema,
+  LibraryPlaylistTypeSchema,
+  LibraryPlaylistViewSchema,
+  type LibraryPlaylistLibrary,
+  type LibraryPlaylistType,
+  type LibraryPlaylistView,
+} from './browse'
 
 /** The most items one selection can add. */
 export const LIBRARY_PLAYLIST_SELECTION_MAX = 10_000
@@ -75,15 +77,6 @@ export const libraryBrowseParams: Record<
   subscriptions: subscriptionParams,
   mixes: subscriptionParams,
 }
-
-/**
- * A saved view: Browse URL parameter names and their URL values, such as
- * `filters` as its JSON string. Validated against the library's Browse query.
- */
-export const LibraryPlaylistViewSchema = z
-  .record(z.string().min(1).max(64), z.string().max(20_000))
-  .refine((view) => Object.keys(view).length <= 40, 'Too many parameters')
-export type LibraryPlaylistView = z.infer<typeof LibraryPlaylistViewSchema>
 
 /** A library's Browse query, parsed from a view. */
 export type LibraryBrowseQuery =

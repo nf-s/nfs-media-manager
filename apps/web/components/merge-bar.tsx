@@ -994,11 +994,14 @@ export function MergeBar<Plan>({
   selection,
   total,
   adapter,
+  actions,
 }: {
   selection: RowSelection
   /** How many rows the table lists. */
   total?: number
   adapter: MergeAdapter<Plan>
+  /** Other actions on the selection, such as Add to playlist, before Merge. */
+  actions?: ReactNode
 }) {
   const client = useQueryClient()
   const [changes, setChanges] = useState<LibraryChange[]>([])
@@ -1041,6 +1044,7 @@ export function MergeBar<Plan>({
             {progress && <span role="status">{progress}</span>}
             {error && <span role="alert">{error}</span>}
             <span className="ds-actions ds-toolbar-end">
+              {actions}
               <Button
                 variant="primary"
                 disabled={selection.count < 2}

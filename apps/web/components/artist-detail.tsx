@@ -78,6 +78,7 @@ import {
   type DetailTabItem,
 } from './detail-frame'
 import { AlbumPlay, TrackRowPlay } from './detail-play'
+import { libraryItemMore } from './item-more'
 import { ScrobbleStats } from './listening-stats'
 import { EmbeddedTrackBrowser } from './track-browser'
 import { ListeningTrend } from './listening-trend'
@@ -322,7 +323,15 @@ function ArtistOverview({
                 <Card
                   key={album.id}
                   art={
-                    <Art overlay={<AlbumPlay album={album} place="tile" />}>
+                    <Art
+                      overlay={
+                        <AlbumPlay
+                          album={album}
+                          place="tile"
+                          more={libraryItemMore('albums', album)}
+                        />
+                      }
+                    >
                       <DetailLink
                         kind="album"
                         id={album.id}
@@ -424,7 +433,10 @@ function ArtistOverview({
                         play={
                           <>
                             <TrackSpotifyMatchAction track={track} />
-                            <TrackRowPlay track={track} />
+                            <TrackRowPlay
+                              track={track}
+                              more={libraryItemMore('tracks', track)}
+                            />
                           </>
                         }
                       />

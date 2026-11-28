@@ -143,6 +143,10 @@ import {
   useRowSelection,
 } from './merge-bar'
 import { TrackMergeBar } from './track-merge-bar'
+import { libraryItemMore } from './item-more'
+import { AddToPlaylistButton } from './library-playlist-picker'
+import { ResultLineSlot } from './result-line'
+import { suggestedPlaylistName } from '@/utils/library-playlists'
 import { providerLogoUrl } from '@/utils/provider-logos'
 import {
   createBrowsePlaybackSource,
@@ -257,6 +261,7 @@ export function TrackVersionTitle({
       <TrackBrowseLibraryAction track={track} />
       <LibraryTrackPlayButton
         track={track}
+        more={libraryItemMore('tracks', track)}
         afterQueue={trackBrowseProviderLinks(track, providers)}
       />
     </span>
@@ -606,6 +611,12 @@ function TrackBrowse({
     ),
   ]
   const selection = useRowSelection(loadedIds)
+  const selectedTitle =
+    selection.count === 1
+      ? ([...slots.map(({ item }) => item), ...versions.items].find(
+          (item) => item?.id === selection.ids[0],
+        )?.title ?? null)
+      : null
   // Another search, filter, sort, scope or view lists other tracks.
   const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
   if (selectionIdentity !== scrollIdentity) {
@@ -677,6 +688,7 @@ function TrackBrowse({
       <LibraryTrackPlayButton
         track={item}
         place={place}
+        more={libraryItemMore('tracks', item)}
         afterQueue={trackBrowseProviderLinks(item, providers)}
         source={() =>
           query.hasTotal && query.conflictingPage === undefined
@@ -884,6 +896,7 @@ function TrackBrowse({
           child ? (
             <LibraryTrackPlayButton
               track={item}
+              more={libraryItemMore('tracks', item)}
               afterQueue={trackBrowseProviderLinks(item, providers)}
             />
           ) : (
@@ -1369,10 +1382,28 @@ function TrackBrowse({
               </table>
             )}
           </TableScroll>
+          {!embedded && (
+            <ResultLineSlot
+              place="content"
+              hidden={view === 'table' && selection.count > 0}
+            />
+          )}
           {view === 'table' && (
             <TrackMergeBar
               selection={selection}
               total={query.hasTotal ? total : undefined}
+              actions={
+                <AddToPlaylistButton
+                  subject={{
+                    library: 'tracks',
+                    selection: { ids: selection.ids },
+                    count: selection.count,
+                    title: selectedTitle,
+                  }}
+                  suggestedName={suggestedPlaylistName(filters, q)}
+                  onAdded={selection.clear}
+                />
+              }
             />
           )}
         </DetailListFrame>

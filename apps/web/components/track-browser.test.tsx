@@ -603,7 +603,7 @@ test('Tracks show only the included provider links beside Queue in every Browse 
     const html = await renderTracks(params.toString(), { grouped: true, items })
     assert.match(
       html,
-      /aria-label="Add Example Song to queue[^>]*>.*?<\/button><a href="https:\/\/tidal\.com\/browse\/track\/1000001" target="_blank"[^>]*aria-label="Open on TIDAL: Example Song/,
+      /aria-label="Add Example Song to queue[^>]*>.*?<\/button><button[^>]*aria-label="More actions for Example Song"[^>]*>.*?<\/button><div [^>]*role="menu"[^>]*>.*?<\/div><a href="https:\/\/tidal\.com\/browse\/track\/1000001" target="_blank"[^>]*aria-label="Open on TIDAL: Example Song/,
     )
     assert.doesNotMatch(html, /Open on Spotify: Example Song/)
     params.delete('filters')
@@ -680,7 +680,7 @@ test('a version row shows its provider mark, its title and Shown on the version 
   assert.match(other, /lastfm\.png/)
   assert.match(
     other,
-    /aria-label="Add Example Song to queue[^>]*>.*?<\/button><a href="https:\/\/tidal\.com\/browse\/track\/1000001"/,
+    /aria-label="Add Example Song to queue[^>]*>.*?<\/button><button[^>]*aria-label="More actions for Example Song"[^>]*>.*?<\/button><div [^>]*role="menu"[^>]*>.*?<\/div><a href="https:\/\/tidal\.com\/browse\/track\/1000001"/,
   )
   assert.doesNotMatch(other, /Shown/)
   assert.doesNotMatch(other, /ds-thumb/)
@@ -700,4 +700,28 @@ test('in grouped Tracks a row with no versions keeps the chevron space so titles
     html,
     /<span class="ds-cell-id"><span class="ds-part-slot" aria-hidden="true"><\/span><a[^>]* class="bi-thumb-link"[^>]*>.*?>Harbour Lights<\/a>/,
   )
+})
+
+test('Tracks rows, list rows and cards end the play group with More; a track outside the library has none', async () => {
+  const outside = TrackListItemSchema.parse({
+    ...track,
+    id: 'track-outside',
+    title: 'Paper Moons',
+    inLibrary: false,
+  })
+  for (const view of ['table', 'list', 'grid']) {
+    const html = await renderTracks(`view=${view}`, {
+      items: [track, outside],
+    })
+    assert.match(
+      html,
+      /aria-label="Add Example Song to queue[^"]*"[^>]*>.*?<\/button><button[^>]*aria-label="More actions for Example Song"/,
+    )
+    assert.match(
+      html,
+      /<div [^>]*role="menu" aria-label="More actions for Example Song"[^>]*data-sheet=""[^>]*><button type="button" role="menuitem" class="ds-menu-item"><svg[^>]*lucide-list-music[^>]*>.*?<\/svg>Add to playlist…<\/button>.*?Open details</,
+    )
+    assert.match(html, /Add Paper Moons to queue/)
+    assert.doesNotMatch(html, /More actions for Paper Moons/)
+  }
 })

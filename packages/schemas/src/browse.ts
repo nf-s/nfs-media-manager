@@ -334,6 +334,39 @@ export const BrowseFilterSchema = z.object({
   mode: z.enum(['any', 'required', 'exclude']).optional(),
 })
 export type BrowseFilter = z.infer<typeof BrowseFilterSchema>
+
+/** The libraries that have playlists made in the app. Artists have none. */
+export const LibraryPlaylistLibrarySchema = z.enum([
+  'albums',
+  'tracks',
+  'films',
+  'subscriptions',
+  'mixes',
+])
+export type LibraryPlaylistLibrary = z.infer<
+  typeof LibraryPlaylistLibrarySchema
+>
+
+/** A playlist holds entries; a smart playlist lists what its view matches. */
+export const LibraryPlaylistTypeSchema = z.enum(['playlist', 'smart'])
+export type LibraryPlaylistType = z.infer<typeof LibraryPlaylistTypeSchema>
+
+/**
+ * A saved view: Browse URL parameter names and their URL values, such as
+ * `filters` as its JSON string. Validated against the library's Browse query.
+ */
+export const LibraryPlaylistViewSchema = z
+  .record(z.string().min(1).max(64), z.string().max(20_000))
+  .refine((view) => Object.keys(view).length <= 40, 'Too many parameters')
+export type LibraryPlaylistView = z.infer<typeof LibraryPlaylistViewSchema>
+
+/**
+ * PL-18: the Browse filter on a library playlist of the library, by its ID.
+ * Every library accepts it; it is not a field, so it has no column,
+ * suggestions or search, and AI search does not offer it.
+ */
+export const LIBRARY_PLAYLIST_FILTER_FIELD = 'libraryPlaylist'
+
 /** Providers explicitly included in the current Browse selection, in chip order. */
 export function selectedBrowseProviders(filters: readonly BrowseFilter[]) {
   return [
