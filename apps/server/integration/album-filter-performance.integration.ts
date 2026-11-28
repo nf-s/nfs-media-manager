@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { MediaProviderPlugin } from '@repo/media-plugin-sdk'
 import { AlbumSelectionQuerySchema } from '@repo/schemas/album-selection'
+import { AlbumMergeRequestSchema } from '@repo/schemas/album-merges'
 import { AlbumQuerySchema } from '@repo/schemas/media'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
 import { env } from '@/env'
@@ -331,15 +332,23 @@ it('keeps Album suggestions exact and bounded across playlist fan-out, editions 
     analyze album;
     analyze track;
   `)
-  const { listAlbumFilterOptions } = await import('@/services/media')
+  const { listAlbumFilterOptions, patchAlbum } =
+    await import('@/services/media')
   const {
     listBrowseFacets,
     listBrowseFields,
     queryBrowseCount,
     refreshAlbumFacetVocabularyForMaintenance,
   } = await import('@/services/browse')
+  const { mergeAlbums } = await import('@/services/album-merges')
   const fields = await listBrowseFields('album')
+  logQuery.mockClear()
   await listAlbumFilterOptions({ q: '', limitPerField: 25 })
+  expect(
+    logQuery.mock.calls.some(([sql]) =>
+      sql.includes('insert into album_facet_value'),
+    ),
+  ).toBe(true)
   const queries = [
     { q: '' },
     { q: 'a' },
@@ -455,14 +464,36 @@ it('keeps Album suggestions exact and bounded across playlist fan-out, editions 
   expect(await listAlbumFilterOptions(located)).toEqual(
     await listBrowseFacets('album', located, { fields }),
   )
+  await pool.query('update album_facet_state set maintenance_only = true')
+  await patchAlbum('facet-edition', { title: 'Facet revised release' }, null)
   await pool.query(`
-    update media_item set title = 'Facet revised release' where id = 'facet-edition';
     update album set edition_of_id = null where media_item_id = 'facet-edition';
     update playlist set name = 'Facet revised playlist' where id = 'facet-playlist';
     update artist_provider_snapshot set normalized_data = '{"tags":[]}'
     where artist_id = 'artist-500';
   `)
   const renamed = { q: 'Facet revised', limitPerField: 25 }
+  const broad = { q: 'a', limitPerField: 25 }
+  logQuery.mockClear()
+  const stale = await listAlbumFilterOptions(broad)
+  const statements = logQuery.mock.calls.map(([sql]) => sql)
+  expect(
+    statements.filter((sql) => sql.includes('ready_album_facet_vocabulary')),
+  ).toHaveLength(1)
+  expect(
+    statements.filter((sql) => sql.includes('values_for_field')),
+  ).toHaveLength(1)
+  expect(statements).toContain('set local jit = off')
+  expect(
+    statements.some((sql) => sql.includes('insert into album_facet_state')),
+  ).toBe(false)
+  expect(statements.length).toBeLessThanOrEqual(8)
+  expect(stale).not.toContainEqual(
+    expect.objectContaining({
+      field: 'edition',
+      value: 'Edition of another album',
+    }),
+  )
   const fresh = await listAlbumFilterOptions(renamed)
   expect(fresh).toEqual(
     expect.arrayContaining([
@@ -498,6 +529,7 @@ it('keeps Album suggestions exact and bounded across playlist fan-out, editions 
     "update album_facet_state set retry_after = now() - interval '1 second'",
   )
   expect(await refreshAlbumFacetVocabularyForMaintenance()).toBe(true)
+  expect(await listAlbumFilterOptions(broad)).toEqual(stale)
   await pool.query(
     "update media_item set title = title where id = 'facet-edition'",
   )
@@ -511,4 +543,24 @@ it('keeps Album suggestions exact and bounded across playlist fan-out, editions 
   expect(
     logQuery.mock.calls.some(([sql]) => sql.includes('values_for_field')),
   ).toBe(false)
+
+  await mergeAlbums(
+    AlbumMergeRequestSchema.parse({
+      albumIds: ['facet-primary', 'facet-edition'],
+      targetId: 'facet-primary',
+      reviewed: true,
+    }),
+  )
+  logQuery.mockClear()
+  expect(await listAlbumFilterOptions(broad)).toContainEqual(
+    expect.objectContaining({
+      field: 'edition',
+      value: 'Edition of another album',
+      count: 1,
+    }),
+  )
+  expect(
+    logQuery.mock.calls.some(([sql]) => sql.includes('set local jit = off')),
+  ).toBe(true)
+  expect(await listAlbumFilterOptions(renamed)).toEqual(fresh)
 }, 120000)

@@ -2767,6 +2767,7 @@ type FacetRow = z.infer<typeof FacetRowSchema> & { subtags?: number }
 const CachedFacetsSchema = z.object({
   ready: z.boolean(),
   rows: z.array(FacetRowSchema),
+  skip_foreground_refresh: z.boolean().optional(),
 })
 const musicTagFacetFields = ['genre', 'albumTag', 'artistTag']
 const tagFacetFields = [...musicTagFacetFields, 'trackTag', 'keyword']
@@ -3370,6 +3371,15 @@ function readFacetVocabularyQuery(
 ) {
   const { state, value, dirty, ready, builder } = vocabulary
   const limit = facetFieldLimit(query, fields.length)
+  // A request that already sees an active lease or a maintenance-only state
+  // can skip the foreground claim. The live query still reads current rows.
+  const skipForegroundRefresh =
+    vocabulary.library === 'album' && isBroadFacetQuery(query)
+      ? sql`, case when ready then false else exists (
+        select 1 from ${state} where singleton
+        and (maintenance_only or retry_after > statement_timestamp())
+      ) end as skip_foreground_refresh`
+      : sql``
   const facets = fields.map((field) => {
     // Album tag locations change only Tags. Count that one field live when
     // a location is selected, using the limit of the full suggestion list.
@@ -3406,7 +3416,7 @@ function readFacetVocabularyQuery(
     )
     select ready, case when ready
       then coalesce((select jsonb_agg(facet) from (${sql.join(facets, sql` union all `)}) facet), '[]'::jsonb)
-      else '[]'::jsonb end as rows
+      else '[]'::jsonb end as rows ${skipForegroundRefresh}
     from ${ready}`
 }
 
@@ -3567,6 +3577,7 @@ async function readFacetsFromVocabulary(
     // Selective queries can use indexed live rows until a broad query builds the vocabulary.
     if (
       broad &&
+      !result.skip_foreground_refresh &&
       (await measureRequestPhase('facetBuild', () =>
         refreshFacetVocabulary(vocabulary),
       ))
@@ -3604,26 +3615,31 @@ async function queryBrowseFacets(
   const cached = vocabulary
     ? await readFacetsFromVocabulary(vocabulary, fields, query, providerNames)
     : undefined
-  const rows: FacetRow[] =
+  const rows =
     cached ??
-    z
-      .array(FacetRowSchema)
-      .parse(
-        (
-          await measureRequestPhase('facetLive', async () =>
-            db.execute(
-              browseFacetQuery(
-                mediaType,
-                fields,
-                query,
-                options,
-                false,
-                providerNames,
-              ),
-            ),
-          )
-        ).rows,
+    (await measureRequestPhase('facetLive', async () => {
+      const statement = browseFacetQuery(
+        mediaType,
+        fields,
+        query,
+        options,
+        false,
+        providerNames,
       )
+      // Broad Album counts compile many short aggregate branches. As in the
+      // vocabulary rebuild, the compilation costs more than it saves.
+      const result =
+        mediaType === 'album' && isBroadFacetQuery(query)
+          ? await db.transaction(
+              async (tx) => {
+                await tx.execute(sql`set local jit = off`)
+                return tx.execute(statement)
+              },
+              { accessMode: 'read only' },
+            )
+          : await db.execute(statement)
+      return z.array(FacetRowSchema).parse(result.rows)
+    }))
   // A tag with subtags is counted over all of them; say how many there are.
   const subtags = await visibleSubtagCounts(
     mediaType === 'track' ? 'album' : mediaType,
