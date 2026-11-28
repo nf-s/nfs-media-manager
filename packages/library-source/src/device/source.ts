@@ -3,6 +3,8 @@ import type { BrowseField } from '@repo/schemas/browse'
 import type { SqliteDriver } from '../driver'
 import type { LibrarySource, SourceResult } from '../source'
 import { readBrowseFields } from '../compile/fields'
+import { artistCount, artistPage } from './artists'
+import { playlistCount, playlistPage } from './playlists'
 import { serveRead } from './read'
 import {
   trackCount,
@@ -60,13 +62,17 @@ export function createDeviceLibrarySource(
     filmList: notServedYet,
     filmFacets: notServedYet,
 
-    artistPage: notServedYet,
-    artistCount: notServedYet,
+    artistPage: (query) =>
+      serveRead(driver, now, (read) => artistPage(read, query)),
+    artistCount: (query) =>
+      serveRead(driver, now, (read) => artistCount(read, query)),
     artistFacets: notServedYet,
     artistHistogram: notServedYet,
 
-    playlistPage: notServedYet,
-    playlistCount: notServedYet,
+    playlistPage: (query) =>
+      serveRead(driver, now, (read) => playlistPage(read, query)),
+    playlistCount: (query) =>
+      serveRead(driver, now, (read) => playlistCount(read, query)),
 
     fields: (library: DeviceBrowseLibrary) =>
       serveRead<BrowseField[]>(driver, now, (read) =>
