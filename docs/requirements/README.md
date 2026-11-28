@@ -15,6 +15,7 @@ These requirements describe supported behavior for film and album libraries, inc
 - [Ratings explorer for films and albums](ratings-explorer.md)
 - [Details, overrides and history](details.md)
 - [Imports, providers and safety](imports-and-plugins.md)
+- [Device store](device-store.md)
 - [Verification criteria](verification.md)
 
 Use [synthetic fixtures and mocked providers](verification.md) to verify parity. Keep installation records and account data out of public documentation.
