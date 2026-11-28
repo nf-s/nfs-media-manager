@@ -147,6 +147,34 @@ function libraryPlaylistMatch(mediaType: MediaType, value: string, id: SQL) {
   return inLibraryPlaylist(playlistLibraries[mediaType], value, id)
 }
 
+/** The current track row is not a Last.fm row that another listed row repeats. */
+const nonredundantTrack = sql`not exists (
+  ${redundantLastfmTrackIds(sql`${mediaItem.id}`)})`
+const nonredundantTrackRow = sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or ${nonredundantTrack})`
+
+/**
+ * PL-02: Browse of the library at the In library scope can list `id`: the
+ * scope's membership test and, for Tracks, the library track row Browse joins
+ * and the rule that hides repeated Last.fm rows. The archived and edition
+ * switches list the rest.
+ */
+export function listedInLibraryBrowse(mediaType: MediaType, id: SQL) {
+  const scope = catalogScopeCondition(
+    sql`${mediaItem.id}`,
+    sql`${mediaItem.inLibrary}`,
+    { libraryScope: 'library' },
+    mediaType === 'track' ? 'track' : undefined,
+  )
+  return mediaType === 'track'
+    ? sql`exists (select 1 from ${mediaItem}
+        join ${libraryTrack} on ${libraryTrack.mediaItemId} = ${mediaItem.id}
+        where ${mediaItem.id} = ${id} and ${mediaItem.mediaType} = ${mediaType}
+          and ${scope} and ${nonredundantTrackRow})`
+    : sql`exists (select 1 from ${mediaItem}
+        where ${mediaItem.id} = ${id} and ${mediaItem.mediaType} = ${mediaType}
+          and ${scope})`
+}
+
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
   maxValueBytes: 64,
@@ -1848,14 +1876,12 @@ async function browseQueries(
   // the cheap indexed credit test before probes of redundant Last.fm rows.
   // PostgreSQL can otherwise test those probes before joining artist credits.
   const creatorTrackScope = mediaType === 'track' && !!creatorCredit
-  const nonredundantTrack = sql`not exists (
-    ${redundantLastfmTrackIds(sql`${mediaItem.id}`)})`
   const scopedTrackVisibility = hideRedundant
     ? creatorTrackScope
       ? sql`case when ${mediaItem.sourceLabel} is distinct from 'lastfm' then true
           when ${creatorCredit} then ${nonredundantTrack}
           else false end`
-      : sql`(${mediaItem.sourceLabel} is distinct from 'lastfm' or ${nonredundantTrack})`
+      : nonredundantTrackRow
     : undefined
   const addedTrackVisibility =
     query.sortBy === 'dateAdded' && query.direction === 'desc'

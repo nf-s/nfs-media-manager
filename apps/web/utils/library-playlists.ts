@@ -93,6 +93,67 @@ export function itemSubject(
   return { library, selection: { ids: [item.id] }, count: 1, title: item.title }
 }
 
+type SelectionRow = { id: string; title: string; inLibrary?: boolean }
+
+/**
+ * PL-02: the selection bar's subject, the ticked rows in the library in
+ * selection order. A ticked row the table has loaded as outside the library
+ * is left out; with none left the count is 0.
+ */
+export function selectionSubject(
+  library: LibraryPlaylistLibrary,
+  ids: readonly string[],
+  rows: readonly (SelectionRow | null | undefined)[],
+): PlaylistSubject {
+  const loaded = new Map(
+    rows.flatMap((row): [string, SelectionRow][] =>
+      row ? [[row.id, row]] : [],
+    ),
+  )
+  const inLibrary = ids.filter((id) => loaded.get(id)?.inLibrary !== false)
+  const [first] = inLibrary
+  return {
+    library,
+    selection: { ids: inLibrary },
+    count: inLibrary.length,
+    title:
+      inLibrary.length === 1 && first !== undefined
+        ? (loaded.get(first)?.title ?? null)
+        : null,
+  }
+}
+
+/**
+ * PL-02, as far as a track's details tell: Tracks Browse at the In library
+ * scope lists it. Browse hides a Last.fm row with no Spotify ID, album,
+ * album name, track list or imported playlist when its recorded names are
+ * counted on another listed track; its details show that as Last.fm names,
+ * none matched by hand, with no listening of their own. The server rejects
+ * what this cannot tell.
+ */
+export function trackDetailListed(track: {
+  inLibrary?: boolean
+  spotifyTrackId: string | null
+  album: unknown
+  albumName: string | null
+  playlists: readonly unknown[]
+  sources: readonly string[]
+  lastfmSources: readonly { manuallyMatched: boolean }[]
+  listening: { total: number }
+}) {
+  if (track.inLibrary === false) return false
+  const repeatedLastfmRow =
+    track.spotifyTrackId === null &&
+    track.album === null &&
+    !track.albumName?.trim() &&
+    track.playlists.length === 0 &&
+    !track.sources.includes('album') &&
+    track.lastfmSources.length > 0 &&
+    track.lastfmSources.every((source) => !source.manuallyMatched) &&
+    track.listening.total === 0
+  return !repeatedLastfmRow
+}
+
 /** The one item's title, when the subject is a single named item. */
 export function singleTitle(subject: PlaylistSubject) {
   return subject.count === 1 ? subject.title : null
@@ -234,6 +295,20 @@ const NameTakenErrorSchema = z.object({ statusCode: z.literal(409) })
 /** Whether a create or rename failed because the name is taken. */
 export function playlistNameTaken(error: unknown) {
   return NameTakenErrorSchema.safeParse(error).success
+}
+
+const RejectedSelectionSchema = z.object({
+  statusCode: z.literal(422),
+  message: z.string(),
+})
+
+/**
+ * The server's reason a selection cannot be added, such as "Only items in
+ * the library can be added to a playlist." (PL-02), or null.
+ */
+export function selectionRejection(error: unknown) {
+  const parsed = RejectedSelectionSchema.safeParse(error)
+  return parsed.success ? parsed.data.message : null
 }
 
 /** Every library playlist read starts with this key. */

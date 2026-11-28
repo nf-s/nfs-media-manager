@@ -2236,6 +2236,77 @@ a:focus-visible > .ds-logo[data-none] {
     height: var(--ds-h-touch);
   }
 }
+/* A dialog popover on the button that opened it: its heading, then a list
+   of choices under a search field (the playlist picker) or a short form (a
+   name, or what to do with duplicates). Opened from a row (data-sheet) it is
+   the sheet above on a phone. */
+.ds-pop-dialog {
+  position: fixed;
+  inset: auto;
+  width: calc(var(--ds-inspector) / 2);
+  max-width: calc(100vw - var(--ds-gutter) * 2);
+  margin: 0;
+  border: 0;
+}
+.ds-pop-dialog > .ds-search {
+  flex: none;
+  margin: 0 var(--ds-3) var(--ds-3);
+}
+/* Its list of choices, each with its count or state as the hint */
+.ds-pop-list {
+  max-height: calc(var(--ds-h-sm) * 8);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ds-pop-list .ds-menu-item > :is(.ds-i, .ds-muted) {
+  flex: none;
+}
+.ds-pop-list .ds-menu-item > .ds-truncate {
+  min-width: 0;
+}
+/* A choice's hint, or the phase of the request it started, on one line */
+.ds-pop-list .ds-menu-item > .ds-muted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-2);
+  white-space: nowrap;
+}
+/* The place of a choice not loaded yet */
+.ds-pop-slot {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--ds-4);
+}
+/* Its form: the field or the line, help lines, the error line, then the
+   buttons at the end with the primary one last */
+.ds-pop-form {
+  display: grid;
+  gap: var(--ds-4);
+  min-width: 0;
+  padding: var(--ds-3) var(--ds-4) var(--ds-4);
+}
+.ds-pop-form > .ds-actions {
+  justify-content: flex-end;
+}
+/* The items a line is about, at most five, then "+1 more" */
+.ds-pop-evidence {
+  display: grid;
+  gap: var(--ds-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  color: var(--ds-ink-3);
+  font-size: var(--ds-text-sm);
+  list-style: none;
+}
+@media (max-width: 700px) {
+  .ds-pop-dialog[data-sheet] {
+    max-width: none;
+  }
+  .ds-pop-dialog[data-sheet] .ds-pop-list {
+    max-height: calc(var(--ds-h-touch) * 7);
+  }
+}
 .ds-notice {
   display: flex;
   align-items: center;

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { BrowseFilter } from '@repo/schemas/browse'
-import { describeSavedView, directionWords } from './saved-view-sentence'
+import {
+  describeSavedView,
+  directionWords,
+  singularFieldLabel,
+} from './saved-view-sentence'
 
 const names = (id: string) =>
   id === 'late' ? 'Late shift' : id === 'gone' ? null : undefined
@@ -23,7 +27,7 @@ test('filters, then the search, the playlist and the order, joined with dots', (
       },
       playlistName: names,
     }),
-    'Tags: Ambient or Jazz · Search: “rain” · In playlist: Late shift · Added, newest first',
+    'Tag: Ambient or Jazz · Search: “rain” · In playlist: Late shift · Added, newest first',
   )
 })
 
@@ -59,7 +63,7 @@ test('Any joins with or, Required with and, Exclude reads Not', () => {
       },
       playlistName: names,
     }),
-    'Artists: Mara Quill and Fen Static · Tags: Not Rock or Metal · Album: Night Index · Title, Z to A',
+    'Artist: Mara Quill and Fen Static · Tag: Not Rock or Metal · Album: Night Index · Title, Z to A',
   )
 })
 
@@ -207,7 +211,7 @@ test('Subscriptions and Mixes use their own sort names and stored tag values', (
       },
       playlistName: names,
     }),
-    'Artist: Odd Weather · Tags: dub · Show, A to Z',
+    'Artist: Odd Weather · Tag: dub · Show, A to Z',
   )
 })
 
@@ -219,5 +223,40 @@ test('a view the library cannot read is written as all of it', () => {
       playlistName: names,
     }),
     'All films',
+  )
+})
+
+test('the sentence names each plural field in the singular; others as labelled', () => {
+  const labels: Array<[string, string]> = [
+    ['Tags', 'Tag'],
+    ['Artists', 'Artist'],
+    ['Countries', 'Country'],
+    ['Album tags', 'Album tag'],
+    ['Artist tags', 'Artist tag'],
+    ['Track tags', 'Track tag'],
+    ['Playlists', 'Playlist'],
+    ['Collections', 'Collection'],
+    ['Directors', 'Director'],
+    ['Actors', 'Actor'],
+    ['Writers', 'Writer'],
+    ['Languages', 'Language'],
+    ['Production companies', 'Production company'],
+    ['Album', 'Album'],
+    ['Has track tags', 'Has track tags'],
+  ]
+  for (const [label, singular] of labels)
+    assert.equal(singularFieldLabel(label), singular)
+  assert.equal(
+    describeSavedView({
+      library: 'films',
+      view: {
+        filters: filters([
+          { field: 'country', value: 'France', mode: 'any' },
+          { field: 'director', value: 'Ada Lune', mode: 'required' },
+        ]),
+      },
+      playlistName: names,
+    }),
+    'Country: France · Director: Ada Lune · Released, newest first',
   )
 })

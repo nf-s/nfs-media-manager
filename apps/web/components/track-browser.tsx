@@ -146,7 +146,10 @@ import { TrackMergeBar } from './track-merge-bar'
 import { libraryItemMore } from './item-more'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { ResultLineSlot } from './result-line'
-import { suggestedPlaylistName } from '@/utils/library-playlists'
+import {
+  selectionSubject,
+  suggestedPlaylistName,
+} from '@/utils/library-playlists'
 import { providerLogoUrl } from '@/utils/provider-logos'
 import {
   createBrowsePlaybackSource,
@@ -611,12 +614,10 @@ function TrackBrowse({
     ),
   ]
   const selection = useRowSelection(loadedIds)
-  const selectedTitle =
-    selection.count === 1
-      ? ([...slots.map(({ item }) => item), ...versions.items].find(
-          (item) => item?.id === selection.ids[0],
-        )?.title ?? null)
-      : null
+  const playlistSubject = selectionSubject('tracks', selection.ids, [
+    ...slots.map(({ item }) => item),
+    ...versions.items,
+  ])
   // Another search, filter, sort, scope or view lists other tracks.
   const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
   if (selectionIdentity !== scrollIdentity) {
@@ -1394,12 +1395,7 @@ function TrackBrowse({
               total={query.hasTotal ? total : undefined}
               actions={
                 <AddToPlaylistButton
-                  subject={{
-                    library: 'tracks',
-                    selection: { ids: selection.ids },
-                    count: selection.count,
-                    title: selectedTitle,
-                  }}
+                  subject={playlistSubject}
                   suggestedName={suggestedPlaylistName(filters, q)}
                   onAdded={selection.clear}
                 />

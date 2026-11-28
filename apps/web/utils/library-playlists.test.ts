@@ -16,6 +16,9 @@ import {
   removedRepeatsText,
   removedResultText,
   repeatsNoticeText,
+  selectionRejection,
+  selectionSubject,
+  trackDetailListed,
   smartPlaylistHref,
   allPresent,
   createButtonLabel,
@@ -286,4 +289,72 @@ test('the Playlists page takes its library from the page scope', () => {
   assert.equal(playlistLibraryForView('artist'), null)
   assert.equal(playableLibrary('albums'), 'albums')
   assert.equal(playableLibrary('films'), null)
+})
+
+test('the bar adds only the ticked rows in the library, in selection order', () => {
+  const rows = [
+    { id: 'track-1', title: 'Harbour Lights' },
+    { id: 'track-2', title: 'Paper Moons', inLibrary: false },
+    { id: 'track-3', title: 'Slow Weather', inLibrary: true },
+    null,
+  ]
+  assert.deepEqual(
+    selectionSubject('tracks', ['track-3', 'track-2', 'track-1'], rows),
+    {
+      library: 'tracks',
+      selection: { ids: ['track-3', 'track-1'] },
+      count: 2,
+      title: null,
+    },
+  )
+  assert.deepEqual(selectionSubject('tracks', ['track-2', 'track-3'], rows), {
+    library: 'tracks',
+    selection: { ids: ['track-3'] },
+    count: 1,
+    title: 'Slow Weather',
+  })
+  assert.equal(selectionSubject('albums', ['track-2'], rows).count, 0)
+})
+
+test('a track’s details offer Add to playlist only for a track Browse lists', () => {
+  const track = {
+    inLibrary: true,
+    spotifyTrackId: null,
+    album: null,
+    albumName: null,
+    playlists: [],
+    sources: ['lastfm'],
+    lastfmSources: [{ manuallyMatched: false }],
+    listening: { total: 0 },
+  }
+  // A Last.fm row whose recorded names are counted on another track.
+  assert.equal(trackDetailListed(track), false)
+  assert.equal(trackDetailListed({ ...track, inLibrary: false }), false)
+  assert.equal(trackDetailListed({ ...track, listening: { total: 4 } }), true)
+  assert.equal(
+    trackDetailListed({ ...track, spotifyTrackId: 'spotify1' }),
+    true,
+  )
+  assert.equal(trackDetailListed({ ...track, albumName: 'Tidewater' }), true)
+  assert.equal(
+    trackDetailListed({ ...track, lastfmSources: [{ manuallyMatched: true }] }),
+    true,
+  )
+  assert.equal(trackDetailListed({ ...track, lastfmSources: [] }), true)
+  assert.equal(
+    trackDetailListed({ ...track, sources: ['album', 'lastfm'] }),
+    true,
+  )
+})
+
+test('a rejected selection reads the server’s reason', () => {
+  assert.equal(
+    selectionRejection({
+      statusCode: 422,
+      message: 'Only items in the library can be added to a playlist.',
+    }),
+    'Only items in the library can be added to a playlist.',
+  )
+  assert.equal(selectionRejection({ statusCode: 500, message: 'Failed' }), null)
+  assert.equal(selectionRejection(new Error('Request failed')), null)
 })

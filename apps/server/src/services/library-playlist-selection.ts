@@ -25,17 +25,22 @@ export function parseLibraryPlaylistView(
   return parsed.data
 }
 
+/**
+ * PL-02: a query selection resolves at the In library scope whatever scope
+ * the query carries, so it holds only items that can be added.
+ */
 function readBrowseIds({ library, query }: LibraryBrowseQuery, limit: number) {
+  const libraryScope = 'library'
   switch (library) {
     case 'albums':
-      return queryBrowseSelectionIds('album', query, limit)
+      return queryBrowseSelectionIds('album', { ...query, libraryScope }, limit)
     case 'tracks':
-      return queryBrowseSelectionIds('track', query, limit)
+      return queryBrowseSelectionIds('track', { ...query, libraryScope }, limit)
     case 'films':
-      return queryBrowseSelectionIds('film', query, limit)
+      return queryBrowseSelectionIds('film', { ...query, libraryScope }, limit)
     case 'subscriptions':
     case 'mixes':
-      return querySubscriptionSelectionIds(query, limit)
+      return querySubscriptionSelectionIds({ ...query, libraryScope }, limit)
   }
 }
 

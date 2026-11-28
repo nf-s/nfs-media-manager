@@ -50,6 +50,7 @@ import {
   libraryPlaylistPickerKey,
   pickerHeading,
   playlistNameTaken,
+  selectionRejection,
   singleItemId,
   singleTitle,
   undoLibraryPlaylistAddition,
@@ -140,7 +141,7 @@ export function LibraryPlaylistPicker({
       popover="auto"
       role="dialog"
       aria-labelledby={headingId}
-      className="ds-pop sec-picker"
+      className="ds-pop ds-pop-dialog"
       data-sheet={sheet ? '' : undefined}
       onToggle={(event) => {
         const next = event.newState === 'open'
@@ -170,7 +171,8 @@ export function LibraryPlaylistPicker({
 
 /**
  * The selection bar's Add to playlist, which opens the picker for the
- * selection. `primary` where the bar has no Merge.
+ * selection. `primary` where the bar has no Merge. With none of the ticked
+ * rows in the library (PL-02), it is disabled and its title says why.
  */
 export function AddToPlaylistButton({
   subject,
@@ -186,11 +188,18 @@ export function AddToPlaylistButton({
   const id = useId()
   const button = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
+  const none = subject.count === 0
   return (
     <>
       <Button
         ref={button}
         variant={primary ? 'primary' : 'default'}
+        disabled={none}
+        title={
+          none
+            ? 'Items outside the library cannot be added to a playlist.'
+            : undefined
+        }
         popoverTarget={id}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -353,12 +362,18 @@ function PickerContent({
     if (check.variables?.id === id) {
       if (check.isPending) return { phase: 'pending', label: 'Checking…' }
       if (check.isError)
-        return { phase: 'failed', label: 'Could not check · retry' }
+        return {
+          phase: 'failed',
+          label: selectionRejection(check.error) ?? 'Could not check · retry',
+        }
     }
     if (step.kind === 'list' && add.variables?.playlist.id === id) {
       if (add.isPending) return { phase: 'pending', label: 'Adding…' }
       if (add.isError)
-        return { phase: 'failed', label: 'Could not add · retry' }
+        return {
+          phase: 'failed',
+          label: selectionRejection(add.error) ?? 'Could not add · retry',
+        }
     }
     return undefined
   }
@@ -383,7 +398,9 @@ function PickerContent({
             : mutationFeedback(create, {
                 pending: 'Creating…',
                 success: 'Created',
-                error: 'Could not create · retry',
+                error:
+                  selectionRejection(create.error) ??
+                  'Could not create · retry',
               })
         }
         onName={setName}
@@ -410,7 +427,7 @@ function PickerContent({
             ? mutationFeedback(add, {
                 pending: 'Adding…',
                 success: 'Added',
-                error: 'Could not add · retry',
+                error: selectionRejection(add.error) ?? 'Could not add · retry',
               })
             : undefined
         }
@@ -445,7 +462,7 @@ function PickerContent({
         </Notice>
       ) : null}
       <div
-        className="sec-picker-list"
+        className="ds-pop-list"
         ref={choices.scroller}
         onScroll={choices.onScroll}
         aria-busy={!choices.hasTotal || choices.isFetching}
@@ -476,7 +493,7 @@ function PickerContent({
           ) : (
             <div
               key={`slot-${index}`}
-              className="sec-picker-slot"
+              className="ds-pop-slot"
               aria-hidden="true"
               style={{ height: choices.rowHeight }}
             >
@@ -625,7 +642,7 @@ export function PickerNewStep({
         New playlist
       </div>
       <form
-        className="sec-picker-form"
+        className="ds-pop-form"
         onSubmit={(event) => {
           event.preventDefault()
           onSubmit()
@@ -708,10 +725,10 @@ export function PickerDuplicatesStep({
       >
         {playlistName}
       </div>
-      <div className="sec-picker-form">
+      <div className="ds-pop-form">
         <b>{duplicatesLine(subject, check)}</b>
         {singleTitle(subject) === null && check && check.sample.length > 0 && (
-          <ul className="sec-picker-evidence ds-help">
+          <ul className="ds-pop-evidence">
             {check.sample.map((item) => (
               <li key={item.id} className="ds-truncate">
                 {duplicateEvidence(item)}

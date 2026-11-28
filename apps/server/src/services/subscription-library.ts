@@ -719,6 +719,22 @@ export async function querySubscriptionSelectionIds(
   return readIds(limit)
 }
 
+/** PL-02: Browse of `library` at the In library scope can list item `id`. */
+export function listedInSubscriptionLibrary(
+  library: SubscriptionLibrary,
+  id: SQL,
+) {
+  return sql`exists (select 1 from subscription_item i
+    join subscription_source s on s.id = i.source_id
+    where i.id = ${id} and ${inSubscriptionLibrary(sql`i.type`, library)}
+      and ${catalogScopeCondition(
+        sql`i.id`,
+        subscriptionItemMembership,
+        { libraryScope: 'library' },
+        'subscription-item',
+      )})`
+}
+
 /** Browse rows of stored items of either library, in the order of `ids`. */
 export async function loadSubscriptionItems(ids: string[]) {
   if (!ids.length) return []

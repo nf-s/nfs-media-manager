@@ -194,7 +194,10 @@ import { albumMergeAdapter } from './album-merge-review'
 import { libraryItemMore } from './item-more'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { ResultLineSlot } from './result-line'
-import { suggestedPlaylistName } from '@/utils/library-playlists'
+import {
+  selectionSubject,
+  suggestedPlaylistName,
+} from '@/utils/library-playlists'
 
 type MediaItem = AlbumListItem | FilmListItem
 
@@ -2084,17 +2087,11 @@ function MediaBrowse({
               adapter={albumMergeAdapter}
               actions={
                 <AddToPlaylistButton
-                  subject={{
-                    library: 'albums',
-                    selection: { ids: selection.ids },
-                    count: selection.count,
-                    title:
-                      selection.count === 1
-                        ? (slots.find(
-                            ({ item }) => item?.id === selection.ids[0],
-                          )?.item?.title ?? null)
-                        : null,
-                  }}
+                  subject={selectionSubject(
+                    'albums',
+                    selection.ids,
+                    slots.map(({ item }) => item),
+                  )}
                   suggestedName={suggestedPlaylistName(filters, q)}
                   onAdded={selection.clear}
                 />

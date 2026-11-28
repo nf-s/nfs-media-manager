@@ -221,9 +221,9 @@ test('Type, Source, count and Saved view for each kind of row', () => {
   const [, smartType, smartSource, smartTotal, smartText] = cellsOf(smart)
   assert.deepEqual(
     [smartType, smartSource, smartTotal, smartText],
-    ['Smart playlist', 'Library', '7', 'Tags: Ambient · Added, newest first'],
+    ['Smart playlist', 'Library', '7', 'Tag: Ambient · Added, newest first'],
   )
-  assert.match(smart, /title="Tags: Ambient · Added, newest first"/)
+  assert.match(smart, /title="Tag: Ambient · Added, newest first"/)
 })
 
 test('a library playlist opens in the inspector and a smart playlist opens Browse with its view', () => {

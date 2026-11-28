@@ -698,4 +698,97 @@ describe('library playlists', () => {
       updateLibraryPlaylist(playlist.id, { view: { columns: 'title' } }),
     ).rejects.toEqual(status(422))
   })
+
+  it('adds only items Browse lists at the In library scope', async () => {
+    // A listed track, one outside the library and a Last.fm row that Browse
+    // hides because its listened history is on a playable listed track.
+    await pool.query(`
+      insert into media_item (id, slug, media_type, title, in_library, source_label) values
+        ('borrowed-in', 'borrowed-in', 'track', 'Borrowed tune one', true, null),
+        ('borrowed-peer', 'borrowed-peer', 'track', 'Borrowed tune two', true, null),
+        ('borrowed-out', 'borrowed-out', 'track', 'Borrowed tune three', false, null),
+        ('borrowed-hidden', 'borrowed-hidden', 'track', 'Borrowed tune two', true, 'lastfm'),
+        ('outside-album', 'outside-album', 'album', 'Outside album', false, null),
+        ('outside-film', 'outside-film', 'film', 'Outside film', false, null);
+      insert into library_track (media_item_id, spotify_track_id, duration_sec) values
+        ('borrowed-in', null, 200), ('borrowed-peer', 'borrowedpeer0000000001', 200),
+        ('borrowed-out', null, 200), ('borrowed-hidden', null, null);
+      insert into album (media_item_id) values ('outside-album');
+      insert into film (media_item_id) values ('outside-film');
+      insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id) values
+        ('listener', 'borrowed artist', 'borrowed tune two', 'borrowed-hidden');
+      insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+        ('listener', 'borrowed artist', 'borrowed tune two', 'borrowed-peer', 'exact');
+      insert into subscription_source (id, type, title, subscribed) values
+        ('UC${'unsubscribed'.padEnd(22, '0')}', 'youtube', 'Unsubscribed channel', false);
+      insert into subscription_item (id, source_id, type, title, published_at, search) values
+        ('outsidevid1', 'UC${'unsubscribed'.padEnd(22, '0')}', 'youtube', 'Outside video',
+          '2026-03-01', to_tsvector('simple', 'Outside video'));
+    `)
+    const { checkLibraryPlaylistEntries, getLibraryPlaylist } = await service()
+    const onlyInLibrary =
+      'Only items in the library can be added to a playlist.'
+    const playlist = (await create('tracks', 'Borrowed')).playlist
+    for (const id of ['borrowed-out', 'borrowed-hidden']) {
+      await expect(add(playlist.id, ids('borrowed-in', id))).rejects.toThrow(
+        onlyInLibrary,
+      )
+      await expect(add(playlist.id, ids(id), 'again')).rejects.toEqual(
+        status(422),
+      )
+      await expect(
+        checkLibraryPlaylistEntries(playlist.id, ids('borrowed-in', id)),
+      ).rejects.toThrow(onlyInLibrary)
+      await expect(
+        create('tracks', `Borrowed ${id}`, ids('borrowed-in', id)),
+      ).rejects.toThrow(onlyInLibrary)
+    }
+    // Another library's item keeps its own message.
+    await expect(add(playlist.id, ids('album-1'))).rejects.toThrow(
+      'An item is not in this playlist’s library.',
+    )
+    const outside: Array<[LibraryPlaylistLibrary, string]> = [
+      ['albums', 'outside-album'],
+      ['films', 'outside-film'],
+      ['subscriptions', 'outsidevid1'],
+    ]
+    for (const [library, id] of outside) {
+      const other = (await create(library, `Outside ${library}`)).playlist
+      await expect(add(other.id, ids(id))).rejects.toThrow(onlyInLibrary)
+    }
+    expect((await getLibraryPlaylist(playlist.id)).entryCount).toBe(0)
+
+    // A query at the All scope resolves at the In library scope.
+    const query = { libraryScope: 'all', q: 'Borrowed tune' }
+    expect(
+      await checkLibraryPlaylistEntries(playlist.id, matching(query)),
+    ).toMatchObject({ total: 2, present: 0 })
+    expect((await add(playlist.id, matching(query))).added).toBe(2)
+    expect((await add(playlist.id, ids('borrowed-in'), 'again')).added).toBe(1)
+    expect((await entryIds(playlist.id)).sort()).toEqual([
+      'borrowed-in',
+      'borrowed-in',
+      'borrowed-peer',
+    ])
+    expect(
+      await checkLibraryPlaylistEntries(
+        playlist.id,
+        matching({ ...query, libraryScope: 'outside' }),
+      ),
+    ).toMatchObject({ total: 2, present: 2 })
+
+    // Filter tracks lists every distinct item the playlist holds.
+    const { queryBrowseCount } = await import('@/services/browse')
+    const detail = await getLibraryPlaylist(playlist.id)
+    const { totalCount } = await queryBrowseCount(
+      'track',
+      TrackQuerySchema.parse({
+        filters: JSON.stringify([
+          { field: 'libraryPlaylist', value: playlist.id, mode: 'any' },
+        ]),
+      }),
+    )
+    expect(totalCount).toBe(detail.entryCount - detail.repeatCount)
+    expect(totalCount).toBe(2)
+  })
 })

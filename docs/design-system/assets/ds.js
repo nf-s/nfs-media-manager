@@ -714,6 +714,35 @@
       )
       .join('')}</div>`
 
+  /* Dialog popover (ds-pop-dialog): its heading, then a list of choices or a
+     short form. Drawn in place here; in the app it opens on the button that
+     opened it. o.truncate cuts a long heading, such as a playlist's name. */
+  const popDialog = (head, body, o = {}) =>
+    `<div class="ds-pop ds-pop-dialog" role="dialog" aria-label="${esc(head)}" style="position:static"><div class="${o.truncate ? 'ds-pop-head ds-truncate' : 'ds-pop-head'}"${attrs({ title: o.truncate ? head : undefined })}>${esc(head)}</div>${body}</div>`
+
+  /* The picker's list under Find a playlist: New playlist… first, then each
+     choice as [label, hint, icon]; o.slots draws rows not loaded yet. */
+  const popChoice = (ic, label, hint) =>
+    `<button type="button" class="ds-menu-item" title="${esc(label)}">${icon(ic, { size: 'sm' })}<span class="ds-truncate">${esc(label)}</span>${hint ? `<span class="ds-muted">${esc(hint)}</span>` : ''}</button>`
+  const popList = (choices, o = {}) =>
+    `<label class="ds-search">${icon('search', { size: 'sm' })}<input type="search" placeholder="Find a playlist" aria-label="Find a playlist"${attrs({ value: o.query })} /></label><div class="ds-pop-list">${popChoice('plus', 'New playlist…')}${choices
+      .map(([label, hint, ic]) => popChoice(ic || 'listMusic', label, hint))
+      .join(
+        '',
+      )}${Array.from({ length: o.slots || 0 }, () => '<div class="ds-pop-slot" aria-hidden="true" style="height:var(--ds-h-sm)"><div class="ds-skel" style="height:12px;width:70%"></div></div>').join('')}</div>`
+
+  /* A dialog's form: o.line (a sentence in bold) or the Name field, o.help
+     lines, o.evidence (at most five lines and o.more), the error line when
+     o.taken, then o.actions, the primary button last. */
+  const popForm = (o) =>
+    `<${o.line ? 'div' : 'form'} class="ds-pop-form">${o.line ? `<b>${esc(o.line)}</b>` : `<div class="ds-field"><label class="ds-label">Name</label><input class="ds-input" data-size="md" autocomplete="off"${attrs({ value: o.name, 'aria-invalid': o.taken ? 'true' : undefined })} /></div>`}${(
+      o.help || []
+    )
+      .map((line) => `<span class="ds-help">${esc(line)}</span>`)
+      .join(
+        '',
+      )}${o.evidence ? `<ul class="ds-pop-evidence">${o.evidence.map((line) => `<li class="ds-truncate">${esc(line)}</li>`).join('')}${o.more ? `<li class="ds-muted">${esc(o.more)}</li>` : ''}</ul>` : ''}${o.taken ? '<span class="ds-help" role="alert">A playlist with this name exists.</span>' : ''}<span class="ds-actions">${o.actions}</span></${o.line ? 'div' : 'form'}>`
+
   /* Detail header and inspector */
 
   /* o.play is the play pair: under the artwork and as wide as it, or first
@@ -1843,6 +1872,9 @@
     notice,
     state,
     menu,
+    popDialog,
+    popList,
+    popForm,
     detailHead,
     headActions,
     inspector,

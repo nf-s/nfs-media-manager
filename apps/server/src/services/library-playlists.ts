@@ -34,6 +34,7 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { libraryPlaylist, libraryPlaylistEntry } from '@/schemas/db'
+import { listedInLibraryBrowse } from './browse'
 import {
   listedEntry,
   listedEntryOf,
@@ -53,6 +54,7 @@ import {
 import { loadAlbums, loadFilms } from './media'
 import {
   inSubscriptionLibrary,
+  listedInSubscriptionLibrary,
   loadSubscriptionItems,
 } from './subscription-library'
 import { loadTracks } from './tracks'
@@ -82,6 +84,21 @@ function libraryItemExists(library: LibraryPlaylistLibrary, id: SQL) {
     case 'mixes':
       return sql`exists (select 1 from subscription_item si
         where si.id = ${id} and ${inSubscriptionLibrary(sql`si.type`, library)})`
+  }
+}
+
+/** PL-02: the library's Browse at the In library scope can list the item. */
+function libraryItemListed(library: LibraryPlaylistLibrary, id: SQL) {
+  switch (library) {
+    case 'albums':
+      return listedInLibraryBrowse('album', id)
+    case 'tracks':
+      return listedInLibraryBrowse('track', id)
+    case 'films':
+      return listedInLibraryBrowse('film', id)
+    case 'subscriptions':
+    case 'mixes':
+      return listedInSubscriptionLibrary(library, id)
   }
 }
 
@@ -265,16 +282,28 @@ export function getLibraryPlaylist(id: string) {
 const AdditionRowsSchema = z.array(
   z.object({
     outside: z.coerce.number(),
+    unlisted: z.coerce.number(),
     present: z.coerce.number(),
     added: z.coerce.number(),
   }),
 )
 
-const outsideLibrary = () =>
-  new ServerError({
-    statusCode: 422,
-    message: 'An item is not in this playlist’s library.',
-  })
+/**
+ * PL-02: an item of another library, or one the library's Browse at the In
+ * library scope does not list, rejects the whole selection.
+ */
+function requireListedItems(row: { outside: number; unlisted: number }) {
+  if (row.outside > 0)
+    throw new ServerError({
+      statusCode: 422,
+      message: 'An item is not in this playlist’s library.',
+    })
+  if (row.unlisted > 0)
+    throw new ServerError({
+      statusCode: 422,
+      message: 'Only items in the library can be added to a playlist.',
+    })
+}
 
 /**
  * Appends items in order in one statement. With `skip`, items already listed
@@ -293,10 +322,12 @@ async function appendEntries(
   const result = await tx.execute(sql`with selected as (
       select u.id, u.ord,
         ${libraryItemExists(playlist.library, sql`u.id`)} as belongs,
+        ${libraryItemListed(playlist.library, sql`u.id`)} as listed,
         ${listedEntryOf(playlist.library, playlist.id, sql`u.id`)} as present
       from unnest(${sql.param(ids)}::text[]) with ordinality u(id, ord)
     ), counts as (
       select count(*) filter (where not belongs) as outside,
+        count(*) filter (where belongs and not listed) as unlisted,
         count(*) filter (where present) as present
       from selected
     ), last_position as (
@@ -307,15 +338,16 @@ async function appendEntries(
       select ${batchId} || '-' || s.ord, ${playlist.id},
         l.position + row_number() over (order by s.ord), s.id, ${batchId}
       from selected s cross join last_position l
-      where (select outside from counts) = 0
+      where (select outside + unlisted from counts) = 0
         and (${duplicates === 'again'}::boolean or not s.present)
       returning 1
     )
-    select counts.outside, counts.present, (select count(*) from inserted) as added
+    select counts.outside, counts.unlisted, counts.present,
+      (select count(*) from inserted) as added
     from counts`)
   const [row] = AdditionRowsSchema.parse(result.rows)
   if (!row) throw new Error('The addition returned no counts')
-  if (row.outside > 0) throw outsideLibrary()
+  requireListedItems(row)
   if (row.added > 0) await touchPlaylist(tx, playlist.id)
   return {
     added: row.added,
@@ -427,6 +459,7 @@ export function restoreLibraryPlaylist(id: string) {
 const CheckRowsSchema = z.array(
   z.object({
     outside: z.coerce.number(),
+    unlisted: z.coerce.number(),
     total: z.coerce.number(),
     present: z.coerce.number(),
     sample: z.array(
@@ -483,10 +516,12 @@ export async function checkLibraryPlaylistEntries(
   const result = await db.execute(sql`with selected as (
       select u.id, u.ord,
         ${libraryItemExists(playlist.library, sql`u.id`)} as belongs,
+        ${libraryItemListed(playlist.library, sql`u.id`)} as listed,
         ${listedEntryOf(playlist.library, playlist.id, sql`u.id`)} as present
       from unnest(${sql.param(ids)}::text[]) with ordinality u(id, ord)
     )
-    select count(*) filter (where not belongs) as outside, count(*) as total,
+    select count(*) filter (where not belongs) as outside,
+      count(*) filter (where belongs and not listed) as unlisted, count(*) as total,
       count(*) filter (where present) as present,
       coalesce((select json_agg(json_build_object(
           'id', sample.id, 'title', sample.title, 'creator', sample.creator
@@ -499,7 +534,7 @@ export async function checkLibraryPlaylistEntries(
     from selected`)
   const [row] = CheckRowsSchema.parse(result.rows)
   if (!row) throw new Error('The check returned no counts')
-  if (row.outside > 0) throw outsideLibrary()
+  requireListedItems(row)
   return { total: row.total, present: row.present, sample: row.sample }
 }
 

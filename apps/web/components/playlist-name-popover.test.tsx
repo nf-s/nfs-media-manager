@@ -37,7 +37,7 @@ test('Rename and New playlist share the name step with their own heading and but
   const rename = form('rename', 'Late shift')
   assert.match(
     rename,
-    /<div class="ds-pop-head" id="name-heading">Rename<\/div>/,
+    /<div class="ds-pop-head" id="name-heading">Rename<\/div><form class="ds-pop-form">/,
   )
   assert.match(rename, /<label[^>]*>Name<\/label><input[^>]*value="Late shift"/)
   assert.deepEqual(buttons(rename), ['Cancel', 'Rename'])

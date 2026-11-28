@@ -95,6 +95,31 @@ function orderText(
 }
 
 /**
+ * PL-41: the sentence names a field in the singular, "Tag: Ambient or Jazz",
+ * where the Browse field's label, which the chips keep, is plural.
+ */
+const singularFieldLabels: Readonly<Record<string, string>> = {
+  Actors: 'Actor',
+  'Album tags': 'Album tag',
+  Artists: 'Artist',
+  'Artist tags': 'Artist tag',
+  Collections: 'Collection',
+  Countries: 'Country',
+  Directors: 'Director',
+  Languages: 'Language',
+  Playlists: 'Playlist',
+  'Production companies': 'Production company',
+  Tags: 'Tag',
+  'Track tags': 'Track tag',
+  Writers: 'Writer',
+}
+
+/** A Browse field's label as the sentence names it. */
+export function singularFieldLabel(label: string) {
+  return singularFieldLabels[label] ?? label
+}
+
+/**
  * Field filters, grouped by field and mode in the order they were added:
  * Any values joined with "or", Required with "and", Exclude read "Not".
  */
@@ -128,10 +153,11 @@ function filterParts(
 
 /**
  * PL-41: a saved view written out, its filters and then its order, joined
- * with " · ": "Tags: Ambient or Jazz · Search: “rain” · In playlist: Late
+ * with " · ": "Tag: Ambient or Jazz · Search: “rain” · In playlist: Late
  * shift · Added, newest first". Without a filter it starts "All tracks".
- * Field names, values and range and listening labels are the ones the Browse
- * chips show; `fields` are the library's Browse fields when they are loaded.
+ * Values and range and listening labels are the ones the Browse chips show,
+ * and field names their labels in the singular; `fields` are the library's
+ * Browse fields when they are loaded.
  */
 export function describeSavedView({
   library,
@@ -168,7 +194,7 @@ export function describeSavedView({
   const named = [...fields, listeningScrobblesField(listeningSort)]
   const subscriptions = library === 'subscriptions' || library === 'mixes'
   const fieldLabel = (key: string) =>
-    named.find((field) => field.key === key)?.label ?? key
+    singularFieldLabel(named.find((field) => field.key === key)?.label ?? key)
   const playlistFilters = query.filters.filter(
     (filter) => filter.field === LIBRARY_PLAYLIST_FILTER_FIELD,
   )

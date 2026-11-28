@@ -167,68 +167,6 @@
   margin-top: var(--ds-5);
 }
 
-/* Add to playlist: the picker beside the button that opened it */
-.sec-picker {
-  position: fixed;
-  inset: auto;
-  width: calc(var(--ds-inspector) / 2);
-  max-width: calc(100vw - var(--ds-gutter) * 2);
-  margin: 0;
-  border: 0;
-}
-.sec-picker > .ds-search {
-  flex: none;
-  margin: 0 var(--ds-3) var(--ds-3);
-}
-.sec-picker-list {
-  max-height: calc(var(--ds-h-sm) * 8);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.sec-picker-list .ds-menu-item > :is(.ds-i, .ds-muted) {
-  flex: none;
-}
-.sec-picker-list .ds-menu-item > .ds-truncate {
-  min-width: 0;
-}
-/* A row's count, or the phase of the request it started, on one line */
-.sec-picker-list .ds-menu-item > .ds-muted {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-2);
-  white-space: nowrap;
-}
-.sec-picker-slot {
-  display: flex;
-  align-items: center;
-  padding: 0 var(--ds-4);
-}
-.sec-picker-form {
-  display: grid;
-  gap: var(--ds-4);
-  min-width: 0;
-  padding: var(--ds-3) var(--ds-4) var(--ds-4);
-}
-.sec-picker-form > .ds-actions {
-  justify-content: flex-end;
-}
-.sec-picker-evidence {
-  display: grid;
-  gap: var(--ds-1);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-@media (max-width: 700px) {
-  .sec-picker[data-sheet] {
-    max-width: none;
-  }
-  .sec-picker[data-sheet] .sec-picker-list {
-    max-height: calc(var(--ds-h-touch) * 7);
-  }
-}
-
 /* A modal side panel built from the inspector parts */
 .sec-drawer {
   position: fixed;

@@ -3045,22 +3045,20 @@ async function main() {
     await import('@/services/library-playlists')
   const { CreateLibraryPlaylistSchema } =
     await import('@repo/schemas/library-playlists')
+  // PL-02: only items each library's Browse lists at the In library scope.
+  const { queryBrowseSelectionIds } = await import('@/services/browse')
+  const { AlbumQuerySchema, FilmQuerySchema } =
+    await import('@repo/schemas/media')
+  const { TrackQuerySchema } = await import('@repo/schemas/tracks')
   const visibleTrackIds = shuffle(
-    (
-      await db
-        .select({ id: schema.libraryTrack.mediaItemId })
-        .from(schema.libraryTrack)
-        .innerJoin(
-          schema.mediaItem,
-          eq(schema.mediaItem.id, schema.libraryTrack.mediaItemId),
-        )
-        .where(
-          sql`${schema.mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
-        )
-    ).map((row) => row.id),
+    await queryBrowseSelectionIds('track', TrackQuerySchema.parse({}), 1000),
   )
-  const albumIds = shuffle([...visibleAlbumIds])
-  const filmIds = shuffle(films.map((film) => film.id))
+  const albumIds = shuffle(
+    await queryBrowseSelectionIds('album', AlbumQuerySchema.parse({}), 1000),
+  )
+  const filmIds = shuffle(
+    await queryBrowseSelectionIds('film', FilmQuerySchema.parse({}), 1000),
+  )
   const itemIds = async (type: string) =>
     z
       .array(z.object({ id: z.string() }))

@@ -83,7 +83,7 @@ export function PlaylistNameForm({
         {wording.heading}
       </div>
       <form
-        className="sec-picker-form"
+        className="ds-pop-form"
         onSubmit={(event) => {
           event.preventDefault()
           onSubmit()
@@ -191,7 +191,7 @@ export function PlaylistNamePopover({
       popover="auto"
       role="dialog"
       aria-labelledby={headingId}
-      className="ds-pop sec-picker"
+      className="ds-pop ds-pop-dialog"
       data-sheet={sheet ? '' : undefined}
       onToggle={(event) => {
         const next = event.newState === 'open'

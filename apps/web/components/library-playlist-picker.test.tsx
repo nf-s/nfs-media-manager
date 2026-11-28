@@ -129,7 +129,7 @@ test('New playlist asks for a name with Back and Create and add', () => {
   )
   assert.match(
     many,
-    /^<div class="ds-pop-head" id="h">New playlist<\/div><form/,
+    /^<div class="ds-pop-head" id="h">New playlist<\/div><form class="ds-pop-form">/,
   )
   assert.match(
     many,
@@ -174,7 +174,11 @@ test('duplicates: some present offers Skip duplicates; all present and one item 
       />,
     )
   const some = render(forty, { total: 40, present: 6, sample })
-  assert.match(some, />Late shift<\/div>/)
+  assert.match(
+    some,
+    /^<div class="ds-pop-head ds-truncate" id="h" title="Late shift">Late shift<\/div><div class="ds-pop-form">/,
+  )
+  assert.match(some, /<ul class="ds-pop-evidence"><li class="ds-truncate">/)
   assert.match(some, /<b>6 of 40 tracks are already in this playlist.<\/b>/)
   assert.deepEqual(
     [...some.matchAll(/<li[^>]*>(.*?)<\/li>/g)].map((match) => match[1]),
@@ -211,5 +215,21 @@ test('the bar button is Add to playlist with a chevron, opening a dialog', () =>
   assert.match(
     renderToStaticMarkup(<AddToPlaylistButton subject={forty} primary />),
     /data-variant="primary"/,
+  )
+})
+
+test('the bar button is disabled when no ticked row is in the library', () => {
+  const html = renderToStaticMarkup(
+    <AddToPlaylistButton
+      subject={{ ...forty, selection: { ids: [] }, count: 0 }}
+    />,
+  )
+  assert.match(
+    html,
+    /^<button class="ds-btn" disabled="" title="Items outside the library cannot be added to a playlist\." popoverTarget=/,
+  )
+  assert.doesNotMatch(
+    renderToStaticMarkup(<AddToPlaylistButton subject={forty} />),
+    /disabled|title=/,
   )
 })

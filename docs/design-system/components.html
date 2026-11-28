@@ -1877,13 +1877,106 @@
                 '<b>A notice holds two controls</b> in two cases only, in one <code>ds-actions</code> group. A suggestion the owner takes or declines has its action, then the other as a ghost button: Merge and Keep separate on a possible duplicate. The result of a change has Undo, or Redo once it is undone, then a Dismiss icon button where the notice can be closed.',
                 '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
                 '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
-                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button. A menu or picker opened from a row or card (<code>data-sheet</code>) is a sheet on a phone; see the play group.',
+                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button. A menu or picker opened from a row or card (<code>data-sheet</code>) is a sheet on a phone; see the play group. The playlist picker and the name popover are dialog popovers; see <a href="#pop-dialog">Picker and name popover</a>.',
                 '<b>A choice group</b> holds a setting inside a menu, such as Playlist type in a playlist’s More: its name, then the choices, the current one ticked, set apart by a hairline above and below. Choosing one saves it and closes the menu.',
               ]) +
               g.note(
                 'Replaces',
                 'seven popover shells, six overlay mechanisms, five confirmation patterns and empty-state wording that varies by page.',
               ),
+          },
+          {
+            id: 'pop-dialog',
+            title: 'Picker and name popover',
+            body:
+              g.sub('Add to playlist: the list, a new playlist, duplicates') +
+              `<div class="g-cols">${g.spec(
+                D.popDialog(
+                  'Add 40 tracks to a playlist',
+                  D.popList(
+                    [
+                      ['Late shift', '52 tracks'],
+                      ['Road trip', '18 tracks'],
+                      ['Sunday rain, slow and quiet', '9 tracks'],
+                    ],
+                    { slots: 1 },
+                  ),
+                ),
+              )}${g.spec(
+                D.popDialog(
+                  'Add “Harbour Lights” to a playlist',
+                  D.popList([
+                    ['Late shift', 'Already added', 'check'],
+                    ['Road trip', '18 tracks'],
+                  ]),
+                ),
+              )}${g.spec(
+                D.popDialog(
+                  'New playlist',
+                  D.popForm({
+                    name: 'Ambient · rain',
+                    actions: `${btn('Back', { variant: 'ghost' })}${btn('Create and add 40', { variant: 'primary' })}`,
+                  }),
+                ),
+              )}${g.spec(
+                D.popDialog(
+                  'Late shift',
+                  D.popForm({
+                    line: '6 of 40 tracks are already in this playlist.',
+                    evidence: [
+                      'Harbour Lights · Mira Kestrel',
+                      'Paper Moons · Mira Kestrel',
+                      'Slow Weather · Ada Lune',
+                      'Copper Wire · Ada Lune',
+                      'Salt Station · Juno Vale',
+                    ],
+                    more: '+1 more',
+                    actions: `${btn('Cancel', { variant: 'ghost' })}${btn('Add again')}${btn('Skip duplicates', { variant: 'primary' })}`,
+                  }),
+                  { truncate: true },
+                ),
+              )}</div>` +
+              g.sub('Name popover: New playlist, Rename, Save smart playlist') +
+              `<div class="g-cols">${g.spec(
+                D.popDialog(
+                  'New playlist',
+                  D.popForm({
+                    name: 'Late shift',
+                    taken: true,
+                    actions: `${btn('Cancel', { variant: 'ghost' })}${btn('Create', { variant: 'primary', disabled: true })}`,
+                  }),
+                ),
+              )}${g.spec(
+                D.popDialog(
+                  'Rename',
+                  D.popForm({
+                    name: 'Road trip',
+                    actions: `${btn('Cancel', { variant: 'ghost' })}${btn('Rename', { variant: 'primary' })}`,
+                  }),
+                ),
+              )}${g.spec(
+                D.popDialog(
+                  'Save smart playlist',
+                  D.popForm({
+                    name: 'Ambient',
+                    help: [
+                      'Tag: Ambient · Added, newest first',
+                      'Lists what matches each time it is opened.',
+                    ],
+                    actions: `${btn('Cancel', { variant: 'ghost' })}${btn('Save', { variant: 'primary' })}`,
+                  }),
+                ),
+              )}</div>` +
+              g.rules([
+                '<b>A dialog popover</b> (<code>ds-pop-dialog</code>) is the popover shell with a heading, then a list of choices under a search field or a short form (<code>ds-pop-form</code>). It opens on the button that opened it, 300px wide and within the screen.',
+                '<b>The heading</b> (<code>ds-pop-head</code>) says what the popover does: what is added (“Add 40 tracks to a playlist”, or “Add “Title” to a playlist” for one item), the step (“New playlist”, “Rename”, “Save smart playlist”), or the playlist a choice is about, cut with an ellipsis.',
+                '<b>The list</b> (<code>ds-pop-list</code>) puts <b>New playlist…</b> first, then each playlist with its count as the hint, or a tick and “Already added” for one item it holds. A row not loaded yet holds its place (<code>ds-pop-slot</code>). It scrolls inside the popover after eight rows. A request a row starts shows its phase in place of the hint.',
+                '<b>The form</b> has the Name field or a line in bold, then its help lines, such as a smart playlist’s view written out and “Lists what matches each time it is opened.”, then the error line, then the buttons.',
+                '<b>One primary button, last.</b> Cancel, or Back to the list, is a ghost button first; the primary action ends the row. Enter presses the primary button.',
+                '<b>The error line</b> (<code>ds-help</code> with <code>role="alert"</code>) under the field says what is wrong, such as “A playlist with this name exists.”, and the primary button stays disabled until it is fixed. A request that fails says so on the button or row that started it, with the server’s reason when it gives one.',
+                '<b>Evidence</b> (<code>ds-pop-evidence</code>): up to five items as “Title · Artist”, each on one line, then “+1 more”.',
+                '<b>On a phone</b>, opened from a row or card (<code>data-sheet</code>), it is the sheet at the bottom edge over the scrim with 40px items; opened from a toolbar, the selection bar or a header it stays on its button.',
+              ]),
           },
           {
             id: 'detail',
