@@ -1,10 +1,12 @@
 import {
+  DeviceFoldRowSchema,
   DeviceRowSchema,
   devicePayloadSchemas,
   type DeviceAlbumRow,
   type DeviceArtistRow,
   type DeviceEntity,
   type DeviceFilmRow,
+  type DeviceFoldRow,
   type DevicePlaylistRow,
   type DeviceRow,
   type DeviceTrackRow,
@@ -12,8 +14,50 @@ import {
 import { openBetterSqliteDriver } from '../src/drivers/better-sqlite3'
 import { openWasmMemoryDriver } from '../src/drivers/sqlite-wasm'
 import type { SqliteDriver } from '../src/driver'
+import { createTextFold } from '../src/fold'
 
 /** Synthetic rows only: every name and ID below is invented. */
+
+/**
+ * A `fold` row as a server publishes it, from a small literal table: ASCII,
+ * Latin-1, Greek and Cyrillic capitals, U+0130 to a plain i, a titlecase
+ * digraph, capital sharp s, the Kelvin sign and one Deseret letter.
+ */
+function foldMapping(): DeviceFoldRow {
+  const pairs: [number, string][] = []
+  const shift = (from: number, to: number, skip: readonly number[] = []) => {
+    for (let codePoint = from; codePoint <= to; codePoint += 1)
+      if (!skip.includes(codePoint))
+        pairs.push([codePoint, String.fromCodePoint(codePoint + 32)])
+  }
+  shift(0x41, 0x5a)
+  shift(0xc0, 0xde, [0xd7])
+  shift(0x391, 0x3a1)
+  shift(0x3a3, 0x3ab)
+  shift(0x410, 0x42f)
+  pairs.push(
+    [0x130, 'i'],
+    [0x1c4, 'ǆ'],
+    [0x1c5, 'ǆ'],
+    [0x1e9e, 'ß'],
+    [0x212a, 'k'],
+    [0x10400, '\u{10428}'],
+  )
+  pairs.sort(([a], [b]) => a - b)
+  return DeviceFoldRowSchema.parse({
+    kind: 'fold',
+    codePoints: pairs.map(([codePoint]) => codePoint),
+    lower: pairs.map(([, lower]) => lower),
+  })
+}
+
+export const foldPayload = foldMapping()
+export const testFold = createTextFold(foldPayload)
+
+/** The `fold` row a fill applies before any item row. */
+export function foldRow(seq = 0): DeviceRow {
+  return live('meta', 'fold', seq, foldPayload)
+}
 
 export const drivers: { name: string; open: () => Promise<SqliteDriver> }[] = [
   {

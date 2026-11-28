@@ -1,15 +1,17 @@
 import { z } from 'zod'
 import type { DeviceTagRow } from '@repo/schemas/device'
-import { normalizeTagName } from '@repo/schemas/tags'
+import { tagDisplayName } from '@repo/schemas/tags'
 import type { SqliteExecutor } from '../driver'
+import { lowerCaseAsServer, type TextFold } from '../fold'
 import type { ItemEntity } from '../schema'
 import { readRows, sql, values, type Sql } from './sql'
+import { unsupported } from './unsupported'
 
 /**
  * Tag filter resolution as music-tags.ts and tag-hierarchy.ts do it, from
  * the `tag`, `tag_identity` and `tag_ancestor` tables. Keys always come
- * from the rows; only the filter value is normalised in TypeScript, with
- * the same `normalizeTagName` the service calls.
+ * from the rows; only the filter value is normalised in TypeScript, as the
+ * service's `normalizeTagName` does it.
  */
 
 export type TagMediaType = DeviceTagRow['mediaType']
@@ -21,9 +23,16 @@ const LabelRowSchema = z.object({
   label: z.string().nullable(),
 })
 
-/** A filter value as the service normalises it before resolving it. */
-export function tagFilterName(value: string): string {
-  return normalizeTagName(value)
+/**
+ * A filter value as the service normalises it before resolving it:
+ * normalizeTagName, `tagDisplayName(value).toLowerCase()` in the server's
+ * engine. A value the fold cannot settle is `server-lower-case`.
+ */
+export function tagFilterName(value: string, fold: TextFold): string {
+  return (
+    lowerCaseAsServer(tagDisplayName(value), fold) ??
+    unsupported('server-lower-case')
+  )
 }
 
 /**

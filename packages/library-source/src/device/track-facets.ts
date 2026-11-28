@@ -7,6 +7,7 @@ import type {
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
 import { trackSourceLabels } from '@repo/schemas/tracks'
 import type { SqliteExecutor } from '../driver'
+import type { TextFold } from '../fold'
 import type { TrackFilterOption } from '../source'
 import { readBrowseFields } from '../compile/fields'
 import {
@@ -273,6 +274,7 @@ async function readTagCounts(
  */
 async function wantedTagLabels(
   tx: SqliteExecutor,
+  fold: TextFold,
   fields: readonly BrowseField[],
   q: string | undefined,
 ): Promise<string[] | null> {
@@ -283,11 +285,11 @@ async function wantedTagLabels(
         field.filterable &&
         trackFacetTable.tagFields.includes(field.key),
     )
-    .map((field) => facetMatch(field, q))
+    .map((field) => facetMatch(field, q, fold))
   if (matches.some((match) => match.kind === 'any')) return null
   const labels = await readTagLabels(tx)
   return labels.filter((label) =>
-    matches.some((match) => facetValueMatches(match, label)),
+    matches.some((match) => facetValueMatches(match, label, fold)),
   )
 }
 
@@ -302,11 +304,11 @@ export async function trackFacets(
   const context: TrackFacetContext = {
     tagLevels: query.tagLevels,
     tagCounts: () => {
-      tagCounts ??= wantedTagLabels(read.tx, fields, query.q).then((wanted) =>
-        readTagCounts(read.tx, wanted),
+      tagCounts ??= wantedTagLabels(read.tx, read.fold, fields, query.q).then(
+        (wanted) => readTagCounts(read.tx, wanted),
       )
       return tagCounts
     },
   }
-  return readFacets(read.tx, trackFacetTable, fields, query, context)
+  return readFacets(read, trackFacetTable, fields, query, context)
 }

@@ -10,7 +10,7 @@ import type {
   DeviceTrackRow,
 } from '@repo/schemas/device'
 import type { SqlValue, SqliteExecutor } from './driver'
-import { foldText } from './fold'
+import { foldText, isFoldRow, readTextFold, type TextFold } from './fold'
 import type { ItemEntity } from './schema'
 
 /**
@@ -18,14 +18,28 @@ import type { ItemEntity } from './schema'
  * row replaces it and every row derived from it; a tombstone removes both.
  * A row older than the stored one (a lower `seq`) is ignored, so a row seen
  * twice or out of order is harmless. Run it inside the page's transaction.
+ *
+ * Item text is folded with the stored `meta` row `fold`, which a fill
+ * applies first; an item row while the store has none throws, so the page
+ * is not committed.
  */
 export async function applyRows(
   tx: SqliteExecutor,
   rows: readonly DeviceRow[],
 ): Promise<void> {
+  let fold: TextFold | undefined
+  const folds = async () => {
+    fold ??= await readTextFold(tx)
+    if (fold === undefined)
+      throw new Error(
+        'An item row arrived before the fold row; its text cannot be folded.',
+      )
+    return fold
+  }
   for (const row of rows) {
     if (row.deleted) await removeRow(tx, row.entity, row.id, row.seq)
-    else await applyLiveRow(tx, row)
+    else await applyLiveRow(tx, row, folds)
+    if (isFoldRow(row.entity, row.id)) fold = undefined
   }
 }
 
@@ -91,18 +105,19 @@ type PlayEntity = keyof typeof PLAY_TABLES
 async function applyLiveRow(
   tx: SqliteExecutor,
   row: DeviceLiveRow,
+  folds: () => Promise<TextFold>,
 ): Promise<void> {
   switch (row.entity) {
     case 'track':
-      return writeTrack(tx, row.id, row.seq, row.payload)
+      return writeTrack(tx, await folds(), row.id, row.seq, row.payload)
     case 'album':
-      return writeAlbum(tx, row.id, row.seq, row.payload)
+      return writeAlbum(tx, await folds(), row.id, row.seq, row.payload)
     case 'film':
-      return writeFilm(tx, row.id, row.seq, row.payload)
+      return writeFilm(tx, await folds(), row.id, row.seq, row.payload)
     case 'artist':
-      return writeArtist(tx, row.id, row.seq, row.payload)
+      return writeArtist(tx, await folds(), row.id, row.seq, row.payload)
     case 'playlist':
-      return writePlaylist(tx, row.id, row.seq, row.payload)
+      return writePlaylist(tx, await folds(), row.id, row.seq, row.payload)
     case 'playlist_job':
       if (!(await isNewer(tx, 'playlist_job', row.id, row.seq))) return
       await tx.run(
@@ -223,6 +238,7 @@ async function removeRow(
 
 async function writeTrack(
   tx: SqliteExecutor,
+  fold: TextFold,
   id: string,
   seq: number,
   row: DeviceTrackRow,
@@ -254,7 +270,7 @@ async function writeTrack(
     last_listened_at: num.lastListenedAt,
   })
   if (rid === null) return
-  await writeValues(tx, 'track', rid, {
+  await writeValues(tx, fold, 'track', rid, {
     text: row.text,
     search: row.search,
     num,
@@ -280,6 +296,7 @@ async function writeTrack(
 
 async function writeAlbum(
   tx: SqliteExecutor,
+  fold: TextFold,
   id: string,
   seq: number,
   row: DeviceAlbumRow,
@@ -296,7 +313,7 @@ async function writeAlbum(
     date_added: num.dateAdded,
   })
   if (rid === null) return
-  await writeValues(tx, 'album', rid, {
+  await writeValues(tx, fold, 'album', rid, {
     text: row.text,
     search: row.search,
     num,
@@ -312,6 +329,7 @@ async function writeAlbum(
 
 async function writeFilm(
   tx: SqliteExecutor,
+  fold: TextFold,
   id: string,
   seq: number,
   row: DeviceFilmRow,
@@ -325,7 +343,7 @@ async function writeFilm(
     date_added: num.dateAdded,
   })
   if (rid === null) return
-  await writeValues(tx, 'film', rid, {
+  await writeValues(tx, fold, 'film', rid, {
     text: row.text,
     search: row.search,
     num,
@@ -340,6 +358,7 @@ async function writeFilm(
 
 async function writeArtist(
   tx: SqliteExecutor,
+  fold: TextFold,
   id: string,
   seq: number,
   row: DeviceArtistRow,
@@ -351,7 +370,7 @@ async function writeArtist(
     scrobbles: num.scrobbles,
   })
   if (rid === null) return
-  await writeValues(tx, 'artist', rid, {
+  await writeValues(tx, fold, 'artist', rid, {
     text: row.text,
     search: row.search,
     num,
@@ -369,6 +388,7 @@ async function writeArtist(
 
 async function writePlaylist(
   tx: SqliteExecutor,
+  fold: TextFold,
   id: string,
   seq: number,
   row: DevicePlaylistRow,
@@ -381,7 +401,7 @@ async function writePlaylist(
     added: num.added,
   })
   if (rid === null) return
-  await writeValues(tx, 'playlist', rid, {
+  await writeValues(tx, fold, 'playlist', rid, {
     text: row.text,
     search: row.search,
     num,
@@ -444,6 +464,7 @@ type ItemValues = {
 
 async function writeValues(
   tx: SqliteExecutor,
+  fold: TextFold,
   entity: ItemEntity,
   rid: number,
   values: ItemValues,
@@ -451,7 +472,7 @@ async function writeValues(
   const text: [string, string, string][] = []
   for (const [field, list] of Object.entries(values.text)) {
     for (const value of distinct(list))
-      text.push([field, value, foldText(value)])
+      text.push([field, value, foldText(value, fold)])
   }
   await insertJson(
     tx,
@@ -463,7 +484,7 @@ async function writeValues(
 
   const search: [string, string][] = []
   for (const [field, list] of Object.entries(values.search)) {
-    const folded = distinct(list.map(foldText))
+    const folded = distinct(list.map((value) => foldText(value, fold)))
     for (const value of folded) search.push([field, value])
   }
   await insertJson(

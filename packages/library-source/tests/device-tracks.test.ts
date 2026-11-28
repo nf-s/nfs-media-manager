@@ -17,6 +17,7 @@ import {
 } from './device-store'
 import {
   tagPayload,
+  testFold,
   trackRow,
   type TagOptions,
   type TrackRowPatch,
@@ -41,7 +42,7 @@ function titled(
     ...patch,
     item: { title, ...patch.item },
     text: { title: [title], ...patch.text },
-    sort: { title: foldText(title), ...patch.sort },
+    sort: { title: foldText(title, testFold), ...patch.sort },
   })
 }
 

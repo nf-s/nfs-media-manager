@@ -10,9 +10,11 @@ import {
   artistPayload,
   drivers,
   filmPayload,
+  foldRow,
   live,
   playlistPayload,
   sharedPayloads,
+  testFold,
   tombstone,
   trackPayload,
 } from './fixtures'
@@ -43,6 +45,7 @@ describe.each(drivers)('store on $name', ({ open }) => {
   beforeEach(async () => {
     driver = await open()
     await openStore(driver)
+    await driver.transaction((tx) => applyRows(tx, [foldRow()]))
   })
 
   afterEach(async () => {
@@ -269,7 +272,7 @@ describe.each(drivers)('store on $name', ({ open }) => {
     ])
     expect(
       await column(driver, "SELECT json_extract(value, '$.kind') FROM meta"),
-    ).toEqual(['listening'])
+    ).toEqual(['fold', 'listening'])
   })
 
   it('replaces the derived rows of a changed row', async () => {
@@ -318,12 +321,12 @@ describe.each(drivers)('store on $name', ({ open }) => {
     expect(await column(driver, 'SELECT album_id FROM track')).toEqual([null])
     expect(
       await count(driver, 'item_text_fts WHERE folded GLOB ?', [
-        globContains('First'),
+        globContains('First', testFold),
       ]),
     ).toBe(0)
     expect(
       await count(driver, 'item_text_fts WHERE folded GLOB ?', [
-        globContains('Second'),
+        globContains('Second', testFold),
       ]),
     ).toBe(1)
   })
@@ -394,7 +397,7 @@ describe.each(drivers)('store on $name', ({ open }) => {
     )
     expect(
       await count(driver, 'item_search_fts WHERE folded GLOB ?', [
-        globContains('artist'),
+        globContains('artist', testFold),
       ]),
     ).toBe(0)
     for (const table of [
@@ -405,7 +408,7 @@ describe.each(drivers)('store on $name', ({ open }) => {
       'tag_ancestor',
       'play_set',
       'name_play',
-      'meta',
+      "meta WHERE id <> 'fold'",
     ]) {
       expect(await count(driver, table)).toBe(0)
     }
@@ -442,7 +445,7 @@ describe.each(drivers)('store on $name', ({ open }) => {
          JOIN track t ON t.rid = v.rid
          WHERE f.folded GLOB ? AND v.entity = 'track' AND v.field = 'title'
          ORDER BY t.id`,
-        [globContains(word)],
+        [globContains(word, testFold)],
       )
     expect(await search('TURNE')).toEqual(['track-1'])
     expect(await search('İN BL')).toEqual(['track-1'])

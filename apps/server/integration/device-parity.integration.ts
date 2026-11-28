@@ -30,7 +30,11 @@ import {
   unresolved,
   unresolvedPaths,
 } from './device-parity/runner'
-import { PARITY_NOW } from './fixtures/device-parity-library'
+import {
+  PARITY_NOW,
+  seedFoldLibrary,
+  type FoldLetters,
+} from './fixtures/device-parity-library'
 
 /**
  * Device parity (docs/requirements/device-store.md, DEVICE-32 and 33): the
@@ -100,11 +104,67 @@ const network = vi.fn(() => {
 })
 
 let store: ParityStore | undefined
+let letters: FoldLetters | undefined
 const started = performance.now()
 
 function currentStore(): ParityStore {
   if (store === undefined) throw new Error('The store is not open')
   return store
+}
+
+function foldLetters(): FoldLetters {
+  if (letters === undefined) throw new Error('No fold letters were chosen')
+  return letters
+}
+
+const FoldRowsSchema = z.array(
+  z.object({ code_point: z.number().int(), lower: z.string() }),
+)
+
+/**
+ * Letters for the fold rows, from the test database's own `lower()`, so the
+ * suite is right on any PostgreSQL version: the highest capital it maps
+ * outside Latin, Greek and Cyrillic, and a capital this engine lower-cases
+ * that it leaves alone (a newer Unicode), else a letter without case.
+ */
+async function chooseFoldLetters(): Promise<FoldLetters> {
+  const rows = FoldRowsSchema.parse(
+    (
+      await parityPool.query(`select c as code_point, lower(chr(c)) as lower
+        from (select generate_series(1, 1114111) as c) code_point
+        where (c < 55296 or c > 57343) and lower(chr(c)) <> chr(c)
+        order by c desc`)
+    ).rows,
+  )
+  const mapping = new Map(rows.map((row) => [row.code_point, row.lower]))
+  const mapped = rows.find(
+    (row) => row.code_point > 0x52f && [...row.lower].length === 1,
+  )
+  if (mapped === undefined) throw new Error('The database maps no such letter')
+  let unmapped = 0x4e00
+  for (let codePoint = 0x80; codePoint <= 0x10ffff; codePoint += 1) {
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue
+    const letter = String.fromCodePoint(codePoint)
+    const lower = letter.toLowerCase()
+    if (
+      lower !== letter &&
+      [...lower].length === 1 &&
+      !mapping.has(codePoint)
+    ) {
+      unmapped = codePoint
+      break
+    }
+  }
+  const unmappedLetter = String.fromCodePoint(unmapped)
+  process.stdout.write(
+    `device parity: fold letters U+${mapped.code_point.toString(16)} (mapped), U+${unmapped.toString(16)} (not mapped)\n`,
+  )
+  return {
+    mapped: String.fromCodePoint(mapped.code_point),
+    mappedLower: mapped.lower,
+    unmapped: unmappedLetter,
+    unmappedLower: unmappedLetter.toLowerCase(),
+  }
 }
 
 beforeAll(async () => {
@@ -114,6 +174,8 @@ beforeAll(async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(PARITY_NOW)
   await setUpParityDatabase()
+  letters = await chooseFoldLetters()
+  await seedFoldLibrary(parityPool, letters)
   await buildFeed()
   store = openParityStore()
   const synced = await syncParityStore(store)
@@ -579,6 +641,11 @@ describe('device parity', () => {
       extraValues,
     })
     await mediaSpecifics(run, false)
+    // Vault, archived, is the only album of Lumen, who has artist tags.
+    expect(
+      (await run.read(apiPath('albums/facets', { includeArchived: 'true' })))
+        ?.outcome,
+    ).toEqual({ kind: 'fell-through', reason: 'archived-artist-tags' })
     expectParity(run, 'Albums and Films')
   })
 
@@ -591,6 +658,169 @@ describe('device parity', () => {
     await artistSpecifics(run)
     await playlistMatrix(run, false)
     expectParity(run, 'Artists and Playlists')
+  })
+
+  it(
+    "folds text as the server's database does",
+    { timeout: 300_000 },
+    async () => {
+      const { mapped, mappedLower, unmapped, unmappedLower } = foldLetters()
+      const run = new ParityRunner(currentStore())
+      const tracks = routesOf('track')
+      const artists = routesOf('artist')
+      const titles = [
+        'ΟΔΟΣ ΣΑΣ',
+        'οδοσ σασ',
+        'οδος σας',
+        'İNDIGO',
+        'i̇ndigo',
+        'indigo',
+        `${mapped} Wave`,
+        `${mappedLower} WAVE`,
+        `${unmapped} Signal`,
+        `${unmappedLower} signal`,
+      ]
+      const names = [
+        'ΣΕΛΗΝΗΣ',
+        'σεληνησ',
+        'σεληνης',
+        `${mapped} Ensemble`,
+        `${mappedLower} ensemble`,
+        `${unmapped} Trio`,
+        `${unmappedLower} trio`,
+      ]
+      const tags = [
+        'Βροχής',
+        'ΒΡΟΧΗΣ',
+        'βροχησ',
+        `${mapped} Tag`,
+        `${mappedLower} tag`,
+        `${unmapped} Tag`,
+        `${unmappedLower} tag`,
+      ]
+      for (const mode of [undefined, 'required', 'exclude']) {
+        for (const value of titles)
+          await run.query(tracks, {
+            filters: [{ field: 'title', value, mode }],
+          })
+        for (const value of names) {
+          await run.query(tracks, {
+            filters: [{ field: 'artist', value, mode }],
+          })
+          await run.query(artists, {
+            filters: [{ field: 'name', value, mode }],
+          })
+        }
+        for (const value of tags) {
+          for (const field of ['genre', 'trackTag', 'artistTag'])
+            await run.query(tracks, { filters: [{ field, value, mode }] })
+          await run.query(artists, {
+            filters: [{ field: 'genre', value, mode }],
+          })
+        }
+      }
+      const words = [
+        'ΣΑΣ',
+        'σας',
+        'σασ',
+        'ΟΔΟΣ ΣΑΣ',
+        'İNDIGO',
+        'indigo',
+        mapped,
+        mappedLower,
+        `${mapped} wave`,
+        unmapped,
+        unmappedLower,
+        `${unmappedLower} signal`,
+        'βροχής',
+      ]
+      for (const q of words) {
+        await run.query(tracks, { q })
+        await run.query(artists, { q })
+        for (const routes of libraries)
+          for (const limitPerField of [3, 50])
+            await run.read(apiPath(routes.facets, { q, limitPerField }))
+      }
+      for (const [routes, sorts] of [
+        [tracks, ['title', 'artist', 'genre']],
+        [artists, ['name', 'genre']],
+      ] as const)
+        for (const sortBy of sorts)
+          for (const direction of directions)
+            await run.pages(routes.page, { sortBy, direction }, 5)
+
+      const outcome = async (path: string) => (await run.read(path))?.outcome
+      // The reviewer's case: the engine lower-cases the letter, the database
+      // does not, and both sides find nothing.
+      for (const path of [
+        apiPath('tracks/browse-count', {
+          filters: [{ field: 'title', value: `${unmappedLower} signal` }],
+        }),
+        apiPath('tracks/browse-count', { q: unmappedLower }),
+        apiPath('tracks/browse-count', { q: mappedLower }),
+        apiPath('tracks/facets', { q: mapped }),
+        apiPath('tracks/facets', { q: 'σας' }),
+        apiPath('artists/facets', { q: 'σεληνησ' }),
+      ])
+        expect(await outcome(path), path).toEqual({ kind: 'served' })
+      for (const path of [
+        apiPath('tracks/facets', { q: 'ΣΑΣ' }),
+        apiPath('artists/browse-count', {
+          filters: [{ field: 'genre', value: 'ΒΡΟΧΗΣ' }],
+        }),
+      ])
+        expect(await outcome(path), path).toEqual({
+          kind: 'fell-through',
+          reason: 'server-lower-case',
+        })
+      expectParity(run, 'fold')
+    },
+  )
+
+  it('leaves text the API rejects to it', { timeout: 300_000 }, async () => {
+    const run = new ParityRunner(currentStore())
+    const tracks = routesOf('track')
+    const histogram = { kind: 'rolling', amount: 1, unit: 'years' }
+    const controls = [0, 1, 8, 9, 10, 13, 27, 31, 127].map((code) =>
+      String.fromCharCode(code),
+    )
+    for (const control of [...controls, '\ud800', '\udc00x']) {
+      const text = `hum${control}`
+      const filters = [{ field: 'title', value: text }]
+      for (const routes of libraries) {
+        await run.query(routes, { q: text })
+        await run.read(apiPath(routes.facets, { q: text }))
+      }
+      await run.query(tracks, { filters })
+      await run.query(routesOf('artist'), {
+        filters: [{ field: 'name', value: text }],
+      })
+      await run.query(routesOf('album'), { tag: text })
+      await run.read(
+        apiPath('tracks/listening-histogram', { filters, period: histogram }),
+      )
+      await run.read(apiPath('tracks/positions', { filters, positions: '0,1' }))
+      await run.read(apiPath('tracks/track-hum-a/recordings', { q: text }))
+      for (const params of [{ q: text }, { name: text }]) {
+        await run.read(apiPath('playlists/browse-page', params))
+        await run.read(apiPath('playlists/browse-count', params))
+      }
+    }
+    // The API rejects U+0000 in any text; the device leaves it to the API.
+    const nul = apiPath('tracks/browse-count', { q: 'hum\u0000' })
+    expect((await apiRequest(nul)).status).not.toBe(200)
+    expect((await run.read(nul))?.outcome).toEqual({
+      kind: 'fell-through',
+      reason: 'invalid-query',
+    })
+    // A malformed escape maps no read, whatever the API answers.
+    for (const path of [
+      '/api/v1/tracks/browse-page?q=%E0%A4%A',
+      '/api/v1/tracks/browse-count?q=%ED%A0%80',
+      '/api/v1/albums/facets?q=%C3',
+    ])
+      expect((await run.read(path))?.outcome.kind, path).toBe('unresolved')
+    expectParity(run, 'rejected text')
   })
 
   it('facets from the stored vocabularies', { timeout: 300_000 }, async () => {
@@ -666,6 +896,17 @@ describe('device parity', () => {
           (await run.read(apiPath('tracks/facets', { q })))?.outcome,
           q,
         ).toEqual({ kind: 'served' })
+      // Lumen is now on Ridge too, so no archived album holds an artist
+      // that no listed album credits: Album facets with archived albums
+      // are served.
+      for (const tagLevels of [undefined, ['album'], ['artist']])
+        expect(
+          (
+            await run.read(
+              apiPath('albums/facets', { includeArchived: 'true', tagLevels }),
+            )
+          )?.outcome,
+        ).toEqual({ kind: 'served' })
       expectParity(run, 'after edits')
     },
   )
@@ -715,6 +956,9 @@ async function applyEdits() {
     follow: false,
     reviewed: true,
   })
+  // An artist of an archived album only is credited on a listed album.
+  await query(`insert into media_credit (media_item_id, artist_id, role, billing_order)
+    values ('album-ridge', 'artist-lumen', 'artist', 1)`)
   // A playlist change.
   await query(`insert into playlist_item (playlist_id, media_item_id, position)
     values ('playlist-morning', 'track-echo', 9)`)

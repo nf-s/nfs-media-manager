@@ -21,6 +21,7 @@ import {
 } from '@repo/schemas/media'
 import { artistTagFallbackThreshold } from '@repo/schemas/music-tags'
 import type { SqliteExecutor } from '../driver'
+import { equalsLabelAsServer, type TextFold } from '../fold'
 import type { AlbumListPage, AlbumPage, BrowseCount } from '../source'
 import {
   checkFields,
@@ -67,7 +68,11 @@ import { readItems, type DeviceRead } from './read'
  * every rule; comments name the part of the service each piece reproduces.
  */
 
-type AlbumContext = { tx: SqliteExecutor; tagLevels: TagLevels | undefined }
+type AlbumContext = {
+  tx: SqliteExecutor
+  fold: TextFold
+  tagLevels: TagLevels | undefined
+}
 
 const column = (expression: Sql): ValueSource => ({
   kind: 'column',
@@ -88,7 +93,7 @@ function tagLocation(levels: TagLevels | undefined): string {
 async function resolveTag(value: string, context: AlbumContext) {
   const names = await matchingTagNames(
     context.tx,
-    tagFilterName(value),
+    tagFilterName(value, context.fold),
     'album',
   )
   return { names, ids: await tagIdsWithKeys(context.tx, names, 'album') }
@@ -152,11 +157,12 @@ const albumFields: FieldTable<AlbumContext> = {
     source: textMatch('album', 'source'),
     provider: textMatch('album', 'provider'),
     // matchesValue('edition'): the label, matched with toLowerCase; another value matches nothing.
-    edition: (value) => {
-      const label = value.toLowerCase()
-      if (label === albumEditionLabels.edition.toLowerCase())
+    edition: (value, context) => {
+      if (equalsLabelAsServer(value, albumEditionLabels.edition, context.fold))
         return sql`t.is_edition = 1`
-      if (label === albumEditionLabels.notEdition.toLowerCase())
+      if (
+        equalsLabelAsServer(value, albumEditionLabels.notEdition, context.fold)
+      )
         return sql`t.is_edition = 0`
       return FALSE
     },
@@ -295,7 +301,11 @@ async function planAlbums(
   const words = searchWords(query.q)
   const searched = words.length > 0 ? searchFields(table, fields) : undefined
 
-  const context: AlbumContext = { tx: read.tx, tagLevels: query.tagLevels }
+  const context: AlbumContext = {
+    tx: read.tx,
+    fold: read.fold,
+    tagLevels: query.tagLevels,
+  }
   const conditions: Sql[] = []
   if (query.includeArchived !== 'true') conditions.push(sql`t.archived = 0`)
   // An edition is listed under the first album of its record unless asked
@@ -315,7 +325,7 @@ async function planAlbums(
     conditions.push(rangeCondition('album', range, spec))
   }
   if (searched !== undefined)
-    conditions.push(...searchConditions('album', words, searched))
+    conditions.push(...searchConditions('album', words, searched, read.fold))
   const rules = listeningRules(query.listening, (period) =>
     periodCount(albumPlays, period, read.now),
   )

@@ -11,6 +11,7 @@ import {
   type FilmQuery,
 } from '@repo/schemas/media'
 import type { SqliteExecutor } from '../driver'
+import type { TextFold } from '../fold'
 import type { BrowseCount, FilmListPage, FilmPage } from '../source'
 import {
   checkFields,
@@ -51,7 +52,7 @@ import { readItems, type DeviceRead } from './read'
  * Films have no listening controls: the query schema rejects them.
  */
 
-type FilmContext = { tx: SqliteExecutor }
+type FilmContext = { tx: SqliteExecutor; fold: TextFold }
 
 const column = (expression: Sql): ValueSource => ({
   kind: 'column',
@@ -72,7 +73,11 @@ const numberRange = (field: string): RangeSpec => ({
  * tag levels and no artist fallback.
  */
 async function tagMatch(value: string, context: FilmContext): Promise<Sql> {
-  const names = await matchingTagNames(context.tx, tagFilterName(value), 'film')
+  const names = await matchingTagNames(
+    context.tx,
+    tagFilterName(value, context.fold),
+    'film',
+  )
   return itemsWithTags(
     'film',
     'tagIds',
@@ -242,7 +247,7 @@ async function planFilms(
   const words = searchWords(query.q)
   const searched = words.length > 0 ? searchFields(table, fields) : undefined
 
-  const context: FilmContext = { tx: read.tx }
+  const context: FilmContext = { tx: read.tx, fold: read.fold }
   const conditions: Sql[] = []
   if (query.includeArchived !== 'true') conditions.push(sql`t.archived = 0`)
   if (query.sourceKind)
@@ -254,7 +259,7 @@ async function planFilms(
     conditions.push(rangeCondition('film', range, spec))
   }
   if (searched !== undefined)
-    conditions.push(...searchConditions('film', words, searched))
+    conditions.push(...searchConditions('film', words, searched, read.fold))
 
   const sortSpec = table.sorts[query.sortBy]
   const sortSource =

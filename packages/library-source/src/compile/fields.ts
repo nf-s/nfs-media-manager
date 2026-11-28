@@ -10,7 +10,7 @@ import {
 } from '@repo/schemas/device'
 import type { SqliteExecutor } from '../driver'
 import type { ItemEntity } from '../schema'
-import { foldText } from '../fold'
+import { foldText, type TextFold } from '../fold'
 import { and, or, not, sql, type Sql } from './sql'
 import { unsupported } from './unsupported'
 
@@ -184,12 +184,16 @@ export function textEquals(
     WHERE entity = ${entity} AND field = ${field} AND folded = ${folded})`
 }
 
-/** `lower(value) = lower(query value)`: the query value folded as PostgreSQL folds. */
+/** What every field table's context carries: the server's fold. */
+export type FoldContext = { fold: TextFold }
+
+/** `lower(value) = lower(query value)`: the query value folded as the server's database folds it. */
 export function textMatch(
   entity: ItemEntity,
   field: string,
-): (value: string) => Sql {
-  return (value) => textEquals(entity, field, foldText(value))
+): (value: string, context: FoldContext) => Sql {
+  return (value, context) =>
+    textEquals(entity, field, foldText(value, context.fold))
 }
 
 /** The value of a source for the current row of `t`; null when missing. */

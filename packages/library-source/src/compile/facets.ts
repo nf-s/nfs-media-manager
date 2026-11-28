@@ -9,11 +9,19 @@ import { DeviceMetaRowSchema } from '@repo/schemas/device'
 import { parseMusicalKey } from '@repo/schemas/musical-keys'
 import { formatTagName } from '@repo/schemas/tags'
 import type { SqliteExecutor } from '../driver'
-import { foldText, globContains } from '../fold'
+import {
+  foldText,
+  globContains,
+  lowerCaseAsServer,
+  type TextFold,
+} from '../fold'
 import type { ItemEntity } from '../schema'
 import { and, or, readRows, sql, values, type Sql } from './sql'
 import type { TagMediaType } from './tags'
 import { unsupported } from './unsupported'
+
+/** What a facets read works with: its transaction and the server's fold. */
+export type FacetRead = { tx: SqliteExecutor; fold: TextFold }
 
 /**
  * Filter suggestions (DEVICE-25) as listBrowseFacets and queryBrowseFacets,
@@ -44,6 +52,8 @@ export type FacetRow = {
 export type FacetWord = {
   /** The word as the service binds it to `ILIKE`: see FacetWordRule. */
   word: string
+  /** `word` folded, as `ILIKE` compares it. */
+  folded: string
   /** Provider fields: the IDs whose display name contains the word. */
   ids: readonly string[]
 }
@@ -149,11 +159,14 @@ export function facetFieldLimit(
  * for that field, except on Title; each other word must be in the value.
  * On Provider a word also matches the IDs whose display name contains it.
  * Another `rule` changes the case of the words, the field that keeps label
- * words and the Key rule.
+ * words and the Key rule. The service lower-cases `q`, labels and provider
+ * names in TypeScript: a text the fold cannot settle for its engine is
+ * `server-lower-case`.
  */
 export function facetMatch(
   field: BrowseField,
   q: string | undefined,
+  fold: TextFold,
   providerNames: ReadonlyMap<string, string> = new Map(),
   rule: FacetWordRule = browseWordRule,
 ): FacetMatch {
@@ -162,23 +175,29 @@ export function facetMatch(
       ? parseMusicalKey(q ?? '')
       : null
   if (key !== null) return { kind: 'equals', value: key }
-  const label = `${field.label}:`.toLowerCase()
   const query = q ?? ''
-  const words = (rule.lowerCaseQuery ? query.toLowerCase() : query)
+  const typed = (rule.lowerCaseQuery ? serverLower(query, fold) : query)
     .split(/\s+/)
     .filter(Boolean)
+  if (typed.length === 0) return { kind: 'any' }
+  // browse.ts compares the lower-cased words as they are; artist-browse.ts
+  // lower-cases each typed word.
+  const lowered = (word: string) =>
+    rule.lowerCaseQuery ? word : serverLower(word, fold)
+  const label = serverLower(`${field.label}:`, fold)
+  const words = typed
     .filter(
       (word) =>
-        field.key === rule.labelWordsKept ||
-        !label.includes(word.toLowerCase()),
+        field.key === rule.labelWordsKept || !label.includes(lowered(word)),
     )
     .map((word) => ({
       word,
+      folded: foldText(word, fold),
       ids:
         field.key === 'provider'
           ? [...providerNames]
               .filter(([, name]) =>
-                name.toLowerCase().includes(word.toLowerCase()),
+                serverLower(name, fold).includes(lowered(word)),
               )
               .map(([id]) => id)
           : [],
@@ -186,21 +205,29 @@ export function facetMatch(
   return words.length === 0 ? { kind: 'any' } : { kind: 'words', words }
 }
 
+/** `text.toLowerCase()` on the server, or `server-lower-case` when the fold cannot settle it. */
+function serverLower(text: string, fold: TextFold): string {
+  return lowerCaseAsServer(text, fold) ?? unsupported('server-lower-case')
+}
+
 /**
- * Whether a value passes the match. `ILIKE` folds both sides with
- * PostgreSQL's `lower()`, which `foldText` reproduces.
+ * Whether a value passes the match. `ILIKE` folds both sides with the
+ * database's `lower()`, which `foldText` gives.
  */
-export function facetValueMatches(match: FacetMatch, value: string): boolean {
+export function facetValueMatches(
+  match: FacetMatch,
+  value: string,
+  fold: TextFold,
+): boolean {
   switch (match.kind) {
     case 'any':
       return true
     case 'equals':
       return value === match.value
     case 'words': {
-      const folded = foldText(value)
+      const folded = foldText(value, fold)
       return match.words.every(
-        ({ word, ids }) =>
-          folded.includes(foldText(word)) || ids.includes(value),
+        (word) => folded.includes(word.folded) || word.ids.includes(value),
       )
     }
   }
@@ -211,6 +238,7 @@ export function facetMatchCondition(
   match: FacetMatch,
   value: Sql,
   folded: Sql,
+  fold: TextFold,
 ): Sql {
   switch (match.kind) {
     case 'any':
@@ -220,7 +248,7 @@ export function facetMatchCondition(
     case 'words':
       return and(
         match.words.map(({ word, ids }) => {
-          const contains = sql`${folded} GLOB ${globContains(word)}`
+          const contains = sql`${folded} GLOB ${globContains(word, fold)}`
           return ids.length === 0
             ? contains
             : or([contains, sql`${value} IN ${values(ids)}`])
@@ -233,8 +261,26 @@ export function facetMatchCondition(
  * The folded text an exact match equals: facetOrder, browse.ts, puts first
  * the value whose `lower()` is `q.toLowerCase()`.
  */
-export function exactFacetText(q: string | undefined): string {
-  return q?.toLowerCase() ?? ''
+export function exactFacetText(q: string | undefined, fold: TextFold): string {
+  return serverLower(q ?? '', fold)
+}
+
+/**
+ * The texts listBrowseFacets lower-cases in TypeScript must be settled by
+ * the fold, or the read is `server-lower-case`: `q` always (the exact
+ * match), and once `q` has a word every field label and, where the
+ * Provider field is suggested, every provider display name.
+ */
+export function checkFacetLowerCase(
+  q: string | undefined,
+  fields: readonly BrowseField[],
+  providerNames: ReadonlyMap<string, string>,
+  fold: TextFold,
+): void {
+  serverLower(q ?? '', fold)
+  if (!(q ?? '').split(/\s+/).some(Boolean)) return
+  for (const field of fields) serverLower(`${field.label}:`, fold)
+  for (const name of providerNames.values()) serverLower(name, fold)
 }
 
 /** Code-point order, as SQLite `BINARY` and PostgreSQL `C.UTF-8` compare text (DEVICE-26). */
@@ -259,11 +305,14 @@ export function selectFacetCounts(
   match: FacetMatch,
   q: string | undefined,
   limit: number,
+  fold: TextFold,
 ): FacetCount[] {
-  const exact = exactFacetText(q)
-  const rank = (value: string) => (foldText(value) === exact ? 0 : 1)
+  const exact = exactFacetText(q, fold)
+  const rank = (value: string) => (foldText(value, fold) === exact ? 0 : 1)
   return counts
-    .filter((row) => row.value !== '' && facetValueMatches(match, row.value))
+    .filter(
+      (row) => row.value !== '' && facetValueMatches(match, row.value, fold),
+    )
     .sort(
       (a, b) =>
         rank(a.value) - rank(b.value) ||
@@ -284,7 +333,7 @@ const CountRowSchema = z.object({
  * items; a folded group can hold several values of one item.
  */
 async function readTextFacet(
-  tx: SqliteExecutor,
+  { tx, fold }: FacetRead,
   entity: ItemEntity,
   source: {
     field: string
@@ -305,9 +354,9 @@ async function readTextFacet(
       FROM item_text v JOIN ${source.from} ON t.rid = v.rid
       WHERE v.entity = ${entity} AND v.field = ${source.field} AND v.value <> ''
         AND ${source.visible}
-        AND ${facetMatchCondition(match, sql`v.value`, sql`v.folded`)}
+        AND ${facetMatchCondition(match, sql`v.value`, sql`v.folded`, fold)}
       GROUP BY ${folded ? sql`v.folded` : sql`v.value`}
-      ORDER BY CASE WHEN min(v.folded) = ${exactFacetText(q)} THEN 0 ELSE 1 END,
+      ORDER BY CASE WHEN min(v.folded) = ${exactFacetText(q, fold)} THEN 0 ELSE 1 END,
         ${count} DESC, ${value}
       LIMIT ${limit}`,
   )
@@ -401,11 +450,12 @@ export function tagFacetValues(
 export async function wantedFacetValues(
   matches: readonly FacetMatch[],
   labels: () => Promise<string[]>,
+  fold: TextFold,
 ): Promise<string[] | null> {
   if (matches.length === 0 || matches.some((match) => match.kind === 'any'))
     return null
   return (await labels()).filter((label) =>
-    matches.some((match) => facetValueMatches(match, label)),
+    matches.some((match) => facetValueMatches(match, label, fold)),
   )
 }
 
@@ -468,12 +518,13 @@ export async function readProviderNames(
  * text field it filters on) needs a source, or the read is `unknown-field`.
  */
 export async function readFacets<Context>(
-  tx: SqliteExecutor,
+  read: FacetRead,
   table: FacetTable<Context>,
   fields: readonly BrowseField[],
   query: BrowseFacetQuery,
   context: Context,
 ): Promise<FacetRow[]> {
+  const { tx, fold } = read
   const suggested = fields.filter(table.suggests ?? suggestsFilterableText)
   if (suggested.length === 0) return []
   const planned = suggested.map((field) => {
@@ -485,6 +536,7 @@ export async function readFacets<Context>(
   const providerNames = suggested.some((field) => field.key === 'provider')
     ? await readProviderNames(tx)
     : new Map<string, string>()
+  checkFacetLowerCase(query.q, fields, providerNames, fold)
   const limit = (table.fieldLimit ?? facetFieldLimit)(
     query.limitPerField,
     suggested.length,
@@ -493,15 +545,22 @@ export async function readFacets<Context>(
   // union, which the final sort keeps for labels that compare equal.
   const counted: { field: string; value: string; count: number }[] = []
   for (const { field, source } of planned) {
-    const match = facetMatch(field, query.q, providerNames, table.wordRule)
+    const match = facetMatch(
+      field,
+      query.q,
+      fold,
+      providerNames,
+      table.wordRule,
+    )
     const counts =
       source.kind === 'text'
-        ? await readTextFacet(tx, table.entity, source, match, query.q, limit)
+        ? await readTextFacet(read, table.entity, source, match, query.q, limit)
         : selectFacetCounts(
             await source.read(context, match),
             match,
             query.q,
             limit,
+            fold,
           )
     for (const row of counts) counted.push({ field: field.key, ...row })
   }

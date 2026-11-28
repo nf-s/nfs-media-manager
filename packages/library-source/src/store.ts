@@ -6,6 +6,8 @@ import { STORE_SCHEMA, STORE_SCHEMA_VERSION } from './schema'
 const UserVersionSchema = z.object({ user_version: z.number().int() })
 
 const SyncStateRowSchema = z.object({
+  /** New on every schema build; see `sync_state` in schema.ts. */
+  generation: z.string().min(1),
   phase: z.enum(['empty', 'filling', 'ready']),
   epoch: z.string().nullable(),
   row_version: z.number().int().nullable(),
@@ -42,18 +44,49 @@ export type StoreStatus = {
 
 /**
  * Creates the schema on an empty database, or drops and recreates it when the
- * stored schema version differs. Call once after opening a driver.
+ * stored schema version differs or the sync state is missing or unreadable.
+ * Call once after opening a driver.
  */
 export async function openStore(driver: SqliteDriver): Promise<void> {
-  const [row] = await driver.all('PRAGMA user_version')
-  const version = UserVersionSchema.parse(row).user_version
-  if (version === STORE_SCHEMA_VERSION) return
-  await driver.transaction((tx) => rebuildSchema(tx))
+  await prepareStore(driver)
+}
+
+/** `openStore`, returning the generation of the store it leaves. */
+export function prepareStore(driver: SqliteDriver): Promise<string> {
+  return driver.transaction(async (tx) => {
+    const [row] = await tx.all('PRAGMA user_version')
+    const version = UserVersionSchema.parse(row).user_version
+    const state =
+      version === STORE_SCHEMA_VERSION ? await readUsableSyncState(tx) : null
+    if (state !== null) return state.generation
+    await rebuildSchema(tx)
+    return (await readSyncState(tx)).generation
+  })
+}
+
+/**
+ * The sync state of a store with the current schema version, or null when
+ * its row is missing or does not parse, or its table cannot be read: such a
+ * store is rebuilt empty and filled as a first fill.
+ */
+async function readUsableSyncState(
+  tx: SqliteExecutor,
+): Promise<SyncStateRow | null> {
+  let rows: Record<string, unknown>[]
+  try {
+    rows = await tx.all(SYNC_STATE_SELECT)
+  } catch {
+    return null
+  }
+  const parsed = SyncStateRowSchema.safeParse(rows[0])
+  return parsed.success ? parsed.data : null
 }
 
 /**
  * Removes every row and the cursor (DEVICE-30), then compacts the file so
- * the removed rows leave no pages behind.
+ * the removed rows leave no pages behind. The schema gets a new generation,
+ * so a sync running on this or another connection writes nothing more and
+ * ends with `cleared`.
  */
 export async function clearStore(driver: SqliteDriver): Promise<void> {
   await driver.transaction((tx) => rebuildSchema(tx))
@@ -81,17 +114,18 @@ export async function readStoreStatus(
   }
 }
 
+const SYNC_STATE_SELECT = `SELECT generation, phase, epoch, row_version,
+    snapshot_seq, fill_entity, fill_after, cursor, filled_at, synced_at
+  FROM sync_state WHERE id = 1`
+
 export async function readSyncState(
   executor: SqliteExecutor,
 ): Promise<SyncStateRow> {
-  const [row] = await executor.all(
-    `SELECT phase, epoch, row_version, snapshot_seq, fill_entity, fill_after,
-       cursor, filled_at, synced_at
-     FROM sync_state WHERE id = 1`,
-  )
+  const [row] = await executor.all(SYNC_STATE_SELECT)
   return SyncStateRowSchema.parse(row)
 }
 
+/** Writes every column but `generation`, which only a schema build sets. */
 export async function writeSyncState(
   executor: SqliteExecutor,
   state: SyncStateRow,

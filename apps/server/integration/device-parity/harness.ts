@@ -341,6 +341,27 @@ function asJson(value: unknown): unknown {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
 }
 
+/** Whether a path segment, or a name or value of the query string, is not valid percent-encoded UTF-8. */
+export function hasMalformedEscape(path: string): boolean {
+  const [target = ''] = path.split('#', 1)
+  const [pathname = '', search = ''] = target.split(/\?(.*)/su)
+  const parts = [
+    ...pathname.split('/'),
+    ...search
+      .split('&')
+      .flatMap((part) => part.split(/=(.*)/su))
+      .map((part) => part.replaceAll('+', ' ')),
+  ]
+  return parts.some((part) => {
+    try {
+      decodeURIComponent(part)
+      return false
+    } catch {
+      return true
+    }
+  })
+}
+
 /**
  * Compares one API path with the device's answer for it (DEVICE-32, 33).
  * A served answer must equal the API's after both are parsed with the read's
@@ -359,9 +380,14 @@ export async function compareRead(
   const body: unknown = await response.json()
   const read: LibraryRead | undefined = resolveLibraryRead(path)
   if (read === undefined) {
-    report.count('unresolved', `status ${response.status}`)
-    if (response.status === 200)
-      report.fail(path, 'the resolver maps no read, but the API answers 200')
+    // Known holes: a path with a malformed percent escape is left to the
+    // API, which decodes it in part and may answer it.
+    if (hasMalformedEscape(path)) report.count('unresolved', 'malformed escape')
+    else {
+      report.count('unresolved', `status ${response.status}`)
+      if (response.status === 200)
+        report.fail(path, 'the resolver maps no read, but the API answers 200')
+    }
     return {
       outcome: { kind: 'unresolved', status: response.status },
       data: undefined,

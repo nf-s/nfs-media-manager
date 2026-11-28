@@ -18,6 +18,7 @@ import {
   type ListeningPeriod,
 } from '@repo/schemas/listening'
 import type { SqliteExecutor } from '../driver'
+import type { TextFold } from '../fold'
 import type { ArtistPage, BrowseCount } from '../source'
 import {
   checkFields,
@@ -61,7 +62,7 @@ import { readItems, type DeviceRead } from './read'
  * library scope only.
  */
 
-type ArtistContext = { tx: SqliteExecutor }
+type ArtistContext = { tx: SqliteExecutor; fold: TextFold }
 
 const column = (expression: Sql): ValueSource => ({
   kind: 'column',
@@ -82,7 +83,11 @@ const artistFields: FieldTable<ArtistContext> = {
     genre: async (value, context) =>
       itemsWithArtistTagKeys(
         'artist',
-        await matchingTagNames(context.tx, tagFilterName(value), 'album'),
+        await matchingTagNames(
+          context.tx,
+          tagFilterName(value, context.fold),
+          'album',
+        ),
       ),
     country: textMatch('artist', 'country'),
     type: textMatch('artist', 'type'),
@@ -182,13 +187,13 @@ async function planArtists(
   const searched =
     words.length > 0 ? searchFields(artistFields, fields) : undefined
 
-  const context: ArtistContext = { tx: read.tx }
+  const context: ArtistContext = { tx: read.tx, fold: read.fold }
   const conditions: Sql[] = []
   if (query.playlistIds.length > 0)
     conditions.push(sql`t.rid IN (SELECT rid FROM item_playlist
       WHERE entity = 'artist' AND playlist_id IN ${values(query.playlistIds)})`)
   if (searched !== undefined)
-    conditions.push(...searchConditions('artist', words, searched))
+    conditions.push(...searchConditions('artist', words, searched, read.fold))
   conditions.push(
     ...(await filterConditions(artistFields, query.filters, context)),
   )

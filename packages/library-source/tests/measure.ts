@@ -28,7 +28,14 @@ import { openBetterSqliteDriver } from '../src/drivers/better-sqlite3'
 import { openWasmMemoryDriver } from '../src/drivers/sqlite-wasm'
 import { globContains } from '../src/fold'
 import { openStore } from '../src/store'
-import { albumPayload, artistPayload, tagPayload, trackRow } from './fixtures'
+import {
+  albumPayload,
+  artistPayload,
+  foldRow,
+  tagPayload,
+  testFold,
+  trackRow,
+} from './fixtures'
 
 /**
  * Store size and speed on a synthetic library (run with `pnpm measure`).
@@ -101,7 +108,9 @@ function buildPages(): { pages: Page[]; plays: number } {
   )
 
   let seq = 0
+  // Meta first, as a fill pages it: its fold row folds every item row.
   const rows: Record<string, unknown[]> = {
+    meta: [foldRow()],
     tag: [],
     tag_key: [],
     track: [],
@@ -110,7 +119,6 @@ function buildPages(): { pages: Page[]; plays: number } {
     scrobble_name: [],
     album_plays: [],
     artist_plays: [],
-    meta: [],
   }
   /** Up to 40 plays a day apart, from a random start. */
   const playTimes = () => {
@@ -322,7 +330,7 @@ const reads: Record<string, { sql: string; params: () => SqlValue[] }> = {
       FROM track JOIN item_json j ON j.entity = 'track' AND j.rid = track.rid
       WHERE track.rid IN hits AND ${VISIBLE}
       ORDER BY date_added DESC NULLS LAST, ${NATURAL} LIMIT 25`,
-    params: () => [globContains('ANTER')],
+    params: () => [globContains('ANTER', testFold)],
   },
   'tracks, durationSec range, page and count': {
     sql: `WITH hits AS (

@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { DEVICE_ROW_VERSION } from '@repo/schemas/device'
 import type { SqliteDriver } from '../src/driver'
+import { openBetterSqliteDriver } from '../src/drivers/better-sqlite3'
 import { clearStore, openStore, readStoreStatus } from '../src/store'
 import { FeedError, syncStore, type SyncProgress } from '../src/sync'
 import { FakeFeed } from './fake-feed'
@@ -9,6 +13,7 @@ import {
   albumPayload,
   artistPayload,
   drivers,
+  foldPayload,
   sharedPayloads,
   trackPayload,
 } from './fixtures'
@@ -52,6 +57,7 @@ function failingDriver(
 }
 
 function seedFeed(feed: FakeFeed, tracks: number) {
+  feed.put('meta', 'fold', foldPayload)
   for (let index = 1; index <= tracks; index += 1) {
     feed.put('track', `track-${index}`, trackPayload(`track-${index}`))
   }
@@ -98,7 +104,7 @@ describe.each(drivers)('sync on $name', ({ open }) => {
     expect(result).toEqual({
       status: 'synced',
       refilled: true,
-      rowsApplied: 11,
+      rowsApplied: 12,
       seq: feed.seq,
     })
     expect(
@@ -120,14 +126,14 @@ describe.each(drivers)('sync on $name', ({ open }) => {
       syncedAt: 1000,
     })
     expect(progress.filter((update) => update.entity === 'track')).toEqual([
-      { phase: 'snapshot', entity: 'track', rowsApplied: 2, done: false },
       { phase: 'snapshot', entity: 'track', rowsApplied: 4, done: false },
-      { phase: 'snapshot', entity: 'track', rowsApplied: 5, done: false },
+      { phase: 'snapshot', entity: 'track', rowsApplied: 6, done: false },
+      { phase: 'snapshot', entity: 'track', rowsApplied: 7, done: false },
     ])
     expect(progress.at(-1)).toEqual({
       phase: 'changes',
       entity: null,
-      rowsApplied: 11,
+      rowsApplied: 12,
       done: true,
     })
   })
@@ -150,7 +156,7 @@ describe.each(drivers)('sync on $name', ({ open }) => {
       if (
         !changed &&
         path.includes('entity=track') &&
-        path.includes('after=2')
+        path.includes('after=3')
       ) {
         changed = true
         feed.put(
@@ -363,5 +369,193 @@ describe.each(drivers)('sync on $name', ({ open }) => {
     }
     const result = await syncStore(driver, feed.transport)
     expect(result).toMatchObject({ status: 'synced', refilled: true })
+  })
+
+  it('stops a fill that a clear interrupts, and fills again afterwards', async () => {
+    seedFeed(feed, 120)
+    let snapshots = 0
+    let cleared: Promise<void> | undefined
+    feed.beforeRequest = (path) => {
+      if (!path.includes('/snapshot') || !path.includes('entity=track')) return
+      snapshots += 1
+      // Sign-out while the fill is between track pages.
+      if (snapshots === 2) cleared = clearStore(driver)
+    }
+    expect(await syncStore(driver, feed.transport, { pageSize: 50 })).toEqual({
+      status: 'cleared',
+    })
+    await cleared
+    expect(await readStoreStatus(driver)).toMatchObject({
+      ready: false,
+      phase: 'empty',
+    })
+    for (const table of ['track', 'album', 'meta', 'item_text'])
+      expect(await count(driver, table)).toBe(0)
+
+    feed.beforeRequest = null
+    expect(
+      await syncStore(driver, feed.transport, { pageSize: 50 }),
+    ).toMatchObject({ status: 'synced', refilled: true })
+    expect(await count(driver, 'track')).toBe(120)
+    expect((await readStoreStatus(driver)).ready).toBe(true)
+  })
+
+  it('stops a change sync that a clear interrupts', async () => {
+    seedFeed(feed, 10)
+    await syncStore(driver, feed.transport, { pageSize: 50 })
+    for (let index = 1; index <= 60; index += 1)
+      feed.put('track', `track-${index}`, trackPayload(`track-${index}`))
+    let changes = 0
+    let cleared: Promise<void> | undefined
+    feed.beforeRequest = (path) => {
+      if (!path.includes('/changes')) return
+      changes += 1
+      if (changes === 2) cleared = clearStore(driver)
+    }
+    expect(await syncStore(driver, feed.transport, { pageSize: 50 })).toEqual({
+      status: 'cleared',
+    })
+    await cleared
+    expect((await readStoreStatus(driver)).phase).toBe('empty')
+    expect(await count(driver, 'track')).toBe(0)
+    expect(await count(driver, 'meta')).toBe(0)
+  })
+
+  it('runs a sync asked for after a clear, while the cleared one ends', async () => {
+    seedFeed(feed, 120)
+    let later: Promise<unknown> | undefined
+    feed.beforeRequest = (path) => {
+      if (later !== undefined || !path.includes('entity=track')) return
+      later = clearStore(driver).then(() =>
+        syncStore(driver, feed.transport, { pageSize: 50 }),
+      )
+    }
+    expect(await syncStore(driver, feed.transport, { pageSize: 50 })).toEqual({
+      status: 'cleared',
+    })
+    feed.beforeRequest = null
+    expect(await later).toMatchObject({ status: 'synced', refilled: true })
+    expect(await count(driver, 'track')).toBe(120)
+    expect((await readStoreStatus(driver)).ready).toBe(true)
+  })
+
+  it('refills when a change page brings another fold mapping', async () => {
+    seedFeed(feed, 2)
+    feed.put(
+      'track',
+      'track-sigma',
+      trackPayload('track-sigma', { title: 'ΣΑΣ' }),
+    )
+    await syncStore(driver, feed.transport)
+    const folded = async () =>
+      (
+        await driver.all(
+          "SELECT folded FROM item_text WHERE field = 'title' AND value = 'ΣΑΣ'",
+        )
+      ).map((row) => row.folded)
+    expect(await folded()).toEqual(['σασ'])
+    // The server's database now leaves Greek capitals alone.
+    feed.put('meta', 'fold', {
+      kind: 'fold',
+      codePoints: foldPayload.codePoints.filter(
+        (codePoint) => codePoint < 0x370,
+      ),
+      lower: foldPayload.lower.filter(
+        (_, index) => (foldPayload.codePoints[index] ?? 0) < 0x370,
+      ),
+    })
+    const result = await syncStore(driver, feed.transport)
+    expect(result).toMatchObject({ status: 'synced', refilled: true })
+    expect(await folded()).toEqual(['ΣΑΣ'])
+    expect(await count(driver, 'track')).toBe(3)
+    // The same mapping again changes nothing.
+    feed.put('meta', 'fold', {
+      kind: 'fold',
+      codePoints: foldPayload.codePoints.filter(
+        (codePoint) => codePoint < 0x370,
+      ),
+      lower: foldPayload.lower.filter(
+        (_, index) => (foldPayload.codePoints[index] ?? 0) < 0x370,
+      ),
+    })
+    expect(await syncStore(driver, feed.transport)).toMatchObject({
+      status: 'synced',
+      refilled: false,
+    })
+  })
+
+  it('fails a fill whose item rows come before any fold row', async () => {
+    feed.put('track', 'track-1', trackPayload('track-1'))
+    await expect(syncStore(driver, feed.transport)).rejects.toThrow(
+      'before the fold row',
+    )
+    expect((await readStoreStatus(driver)).ready).toBe(false)
+    expect(await count(driver, 'track')).toBe(0)
+  })
+
+  it('pages the fold row before every item row', async () => {
+    seedFeed(feed, 2)
+    await syncStore(driver, feed.transport)
+    const snapshots = feed.requests.filter((path) => path.includes('/snapshot'))
+    expect(snapshots[0]).toContain('entity=meta')
+  })
+
+  it('rebuilds a store whose sync state is missing or corrupt, then fills it', async () => {
+    seedFeed(feed, 2)
+    await syncStore(driver, feed.transport)
+    await driver.run("UPDATE sync_state SET epoch = 7, cursor = 'later'")
+    expect(await syncStore(driver, feed.transport)).toMatchObject({
+      status: 'synced',
+      refilled: true,
+    })
+    expect(await count(driver, 'track')).toBe(2)
+    await driver.run('DELETE FROM sync_state')
+    expect(await syncStore(driver, feed.transport)).toMatchObject({
+      status: 'synced',
+      refilled: true,
+    })
+    expect((await readStoreStatus(driver)).ready).toBe(true)
+    await driver.run('DROP TABLE sync_state')
+    expect(await syncStore(driver, feed.transport)).toMatchObject({
+      status: 'synced',
+      refilled: true,
+    })
+    expect(await count(driver, 'track')).toBe(2)
+  })
+})
+
+describe('a clear from another connection', () => {
+  let directory: string
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'library-source-sync-'))
+  })
+
+  afterEach(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('stops a sync on this one before its next page', async () => {
+    const filename = join(directory, 'store.sqlite3')
+    const syncing = openBetterSqliteDriver({ filename })
+    const other = openBetterSqliteDriver({ filename })
+    const feed = new FakeFeed()
+    seedFeed(feed, 120)
+    let snapshots = 0
+    // The other connection (another tab, in a browser) clears between pages;
+    // here it finishes before the page returns, as one thread runs both.
+    const transport = async (path: string) => {
+      if (path.includes('entity=track')) snapshots += 1
+      if (snapshots === 2 && path.includes('entity=track'))
+        await clearStore(other)
+      return feed.transport(path)
+    }
+    expect(await syncStore(syncing, transport, { pageSize: 50 })).toEqual({
+      status: 'cleared',
+    })
+    expect((await readStoreStatus(syncing)).phase).toBe('empty')
+    expect(await count(syncing, 'track')).toBe(0)
+    await syncing.close()
+    await other.close()
   })
 })

@@ -282,6 +282,91 @@ export const parityLibrarySql = `
     ('job-queued', 'spotify', 'queued', '{}', '{"task": "spotify-playlist-import", "groupKey": "spotify:fixturePlaylistId0004"}', '2026-03-30');
 `
 
+/**
+ * Letters the fold rows use, chosen at run time from the database's own
+ * `lower()`: `mapped` is a capital the database lower-cases to `mappedLower`;
+ * `unmapped` is one it leaves alone, with the lower case this suite's engine
+ * gives it (itself for a letter without case).
+ */
+export type FoldLetters = {
+  mapped: string
+  mappedLower: string
+  unmapped: string
+  unmappedLower: string
+}
+
+/**
+ * Tracks, artists and tags whose names use code points the database folds
+ * (DEVICE-26): Greek with a final sigma, U+0130, and the two run-time
+ * letters, in both cases.
+ */
+export async function seedFoldLibrary(pool: pg.Pool, letters: FoldLetters) {
+  const { mapped, mappedLower, unmapped, unmappedLower } = letters
+  const tracks: [string, string, string][] = [
+    ['track-fold-greek', 'ΟΔΟΣ ΣΑΣ', 'artist-fold-greek'],
+    ['track-fold-greek-lower', 'οδος σας', 'artist-fold-greek'],
+    ['track-fold-dotted', 'İNDIGO', 'artist-fold-mapped'],
+    ['track-fold-mapped', `${mapped} Wave`, 'artist-fold-mapped'],
+    ['track-fold-mapped-lower', `${mappedLower} wave`, 'artist-fold-unmapped'],
+    ['track-fold-unmapped', `${unmapped} Signal`, 'artist-fold-unmapped'],
+    [
+      'track-fold-unmapped-lower',
+      `${unmappedLower} signal`,
+      'artist-fold-greek',
+    ],
+  ]
+  const artists: [string, string][] = [
+    ['artist-fold-greek', 'ΣΕΛΗΝΗΣ'],
+    ['artist-fold-mapped', `${mapped} Ensemble`],
+    ['artist-fold-unmapped', `${unmapped} Trio`],
+  ]
+  const tags: [string, string][] = [
+    ['tag-fold-greek', 'Βροχής'],
+    ['tag-fold-greek-caps', 'ΒΡΟΧΗΣ'],
+    ['tag-fold-mapped', `${mapped} Tag`],
+    ['tag-fold-unmapped', `${unmapped} Tag`],
+  ]
+  await pool.query(
+    `insert into artist (id, name, sort_name, scrobble_count, added_to_library, created_at)
+      select id, name, null, 0, true, '2022-02-01' from unnest($1::text[], $2::text[]) a(id, name)`,
+    [artists.map(([id]) => id), artists.map(([, name]) => name)],
+  )
+  await pool.query(
+    `insert into media_item (id, slug, media_type, title, release_date, in_library, metadata, created_at, updated_at)
+      select id, id, 'track', title, '2016-01-01', true, '{}', '2020-06-01', '2020-06-01'
+      from unnest($1::text[], $2::text[]) t(id, title)`,
+    [tracks.map(([id]) => id), tracks.map(([, title]) => title)],
+  )
+  await pool.query(
+    `insert into library_track (media_item_id, duration_sec, date_added, scrobble_count, version_shown)
+      select id, 200 + n, timestamp '2023-11-01' + n * interval '1 day', 0, false
+      from unnest($1::text[]) with ordinality t(id, n)`,
+    [tracks.map(([id]) => id)],
+  )
+  await pool.query(
+    `insert into media_credit (media_item_id, artist_id, role, billing_order)
+      select id, artist_id, 'artist', 0 from unnest($1::text[], $2::text[]) c(id, artist_id)`,
+    [tracks.map(([id]) => id), tracks.map(([, , artist]) => artist)],
+  )
+  await pool.query(
+    `insert into tag (id, media_type, name, kind, hidden)
+      select id, 'album', name, 'genre', false from unnest($1::text[], $2::text[]) t(id, name)`,
+    [tags.map(([id]) => id), tags.map(([, name]) => name)],
+  )
+  await pool.query(`insert into track_tag (media_item_id, tag_id, owner, sonovault, verified) values
+    ('track-fold-greek', 'tag-fold-greek', 'added', false, false),
+    ('track-fold-greek-lower', 'tag-fold-greek-caps', 'added', false, false),
+    ('track-fold-mapped', 'tag-fold-mapped', 'added', false, false),
+    ('track-fold-unmapped', 'tag-fold-unmapped', 'added', false, false)`)
+  await pool.query(
+    `insert into artist_provider_snapshot (id, artist_id, provider, payload, normalized_data)
+      values ('snapshot-fold-greek', 'artist-fold-greek', 'lastfm', '{}', $1::jsonb)`,
+    [JSON.stringify({ tags: ['Βροχής', `${mapped} Tag`] })],
+  )
+  await pool.query(`insert into artist_provider_current_state (artist_id, provider, latest_snapshot_id)
+    values ('artist-fold-greek', 'lastfm', 'snapshot-fold-greek')`)
+}
+
 /** The device library and the parity additions, in one statement. */
 export async function seedParityLibrary(pool: pg.Pool) {
   await pool.query(deviceLibrarySql)

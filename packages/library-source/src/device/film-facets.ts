@@ -139,11 +139,12 @@ export async function filmFacets(
           .filter(
             (field) => suggestsFilterableText(field) && field.key === 'genre',
           )
-          .map((field) => facetMatch(field, query.q)),
+          .map((field) => facetMatch(field, query.q, read.fold)),
         () => readTagLabels(read.tx),
+        read.fold,
       ).then((wanted) => readTagCounts(read.tx, includeArchived, wanted))
       return tagCounts
     },
   }
-  return readFacets(read.tx, table, fields, query, context)
+  return readFacets(read, table, fields, query, context)
 }

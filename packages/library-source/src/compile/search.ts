@@ -1,5 +1,5 @@
 import type { ItemEntity } from '../schema'
-import { foldText, globContains } from '../fold'
+import { foldText, globContains, type TextFold } from '../fold'
 import type { SearchFields } from './fields'
 import { FALSE, join, sql, values, type Sql } from './sql'
 
@@ -24,17 +24,19 @@ export function searchConditions(
   entity: ItemEntity,
   words: readonly string[],
   fields: SearchFields,
+  fold: TextFold,
 ): Sql[] {
-  return words.map((word) => wordCondition(entity, word, fields))
+  return words.map((word) => wordCondition(entity, word, fields, fold))
 }
 
 function wordCondition(
   entity: ItemEntity,
   word: string,
   fields: SearchFields,
+  fold: TextFold,
 ): Sql {
-  const pattern = globContains(word)
-  const indexed = [...foldText(word)].length >= TRIGRAM_LENGTH
+  const pattern = globContains(word, fold)
+  const indexed = [...foldText(word, fold)].length >= TRIGRAM_LENGTH
   const sources: Sql[] = []
   if (fields.text.length > 0) {
     sources.push(

@@ -2,7 +2,12 @@ import { isSpotifyAudioFeatureKey } from '@repo/schemas/audio-features'
 import type { BrowseField } from '@repo/schemas/browse'
 import type { SqliteExecutor } from '../driver'
 import type { ItemEntity } from '../schema'
-import { textMatch, type FieldTable, type ValueSource } from './fields'
+import {
+  textMatch,
+  type FieldTable,
+  type FoldContext,
+  type ValueSource,
+} from './fields'
 import { readRows, sql } from './sql'
 import { unsupported } from './unsupported'
 
@@ -14,7 +19,7 @@ import { unsupported } from './unsupported'
  * lower-cased in `sort`. Spotify audio features are never in a row, so a
  * field with such a key gets no entry and falls through as unknown.
  */
-export function withPluginFields<Context>(
+export function withPluginFields<Context extends FoldContext>(
   table: FieldTable<Context>,
   fields: readonly BrowseField[],
   builtin: readonly BrowseField[],

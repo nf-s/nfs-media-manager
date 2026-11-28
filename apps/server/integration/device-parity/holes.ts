@@ -2,6 +2,7 @@ import type { LibraryRead, UnsupportedReason } from '@repo/library-source'
 import { isSpotifyAudioFeatureKey } from '@repo/schemas/audio-features'
 import { albumBrowseFields, filmBrowseFields } from '@repo/schemas/browse'
 import { memberScope } from '@repo/schemas/catalog'
+import { tagDisplayName } from '@repo/schemas/tags'
 import { PlaylistBrowsePageSchema } from '@repo/schemas/tracks'
 
 /**
@@ -15,12 +16,120 @@ import { PlaylistBrowsePageSchema } from '@repo/schemas/tracks'
 /** What some holes depend on beyond the query: read from PostgreSQL. */
 export type DataFacts = {
   /**
-   * An archived library album credits an artist who is on no other
-   * non-archived library album, and the album carries artist tags.
+   * An archived library album with artist tags (some credited artist has
+   * snapshot tags) credits an artist who is on no non-archived library
+   * album.
    */
   archivedOnlyArtistTags: boolean
   /** Plugin text keys for which some library item holds a JSON number. */
   numericPluginText: { album: ReadonlySet<string>; film: ReadonlySet<string> }
+  /**
+   * The database's `lower()`: each code point it changes, with the result,
+   * and the code points the results consist of.
+   */
+  fold: FoldFacts
+  /**
+   * Texts listBrowseFacets lower-cases in TypeScript besides `q`: the field
+   * labels of each library and the provider display names.
+   */
+  facetTexts: Record<Library, readonly string[]>
+}
+
+type Library = 'track' | 'album' | 'film' | 'artist'
+
+export type FoldFacts = {
+  lower: ReadonlyMap<number, string>
+  yields: ReadonlySet<number>
+}
+
+/**
+ * Whether the published fold leaves `text.toLowerCase()` on the server
+ * unsettled (Known holes, `server-lower-case`): a capital sigma, a lone
+ * surrogate, a code point the database changes to several (other than
+ * U+0130), or a code point outside ASCII that the database neither changes
+ * nor yields, other than U+03C2.
+ */
+export function unsettledLowerCase(text: string, fold: FoldFacts): boolean {
+  return [...text].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    if (codePoint === 0x130) return false
+    if (codePoint === 0x3a3 || (codePoint >= 0xd800 && codePoint <= 0xdfff))
+      return true
+    const lower = fold.lower.get(codePoint)
+    if (lower !== undefined) return [...lower].length !== 1
+    return !(
+      codePoint < 0x80 ||
+      codePoint === 0x3c2 ||
+      fold.yields.has(codePoint)
+    )
+  })
+}
+
+/** The fields whose filter values the service normalises with normalizeTagName. */
+const tagFilterFields: Record<Library, readonly string[]> = {
+  track: ['genre', 'trackTag', 'albumTag', 'artistTag'],
+  album: ['genre', 'albumTag', 'artistTag'],
+  film: ['genre'],
+  artist: ['genre'],
+}
+
+/**
+ * A filter the service lower-cases in TypeScript with a value the fold
+ * cannot settle: a tag filter (and the `tag` parameter) in every library,
+ * and the Provider filter on Tracks.
+ */
+function unsettledFilter(
+  library: Library,
+  query: { filters: readonly Filter[]; tag?: string | undefined },
+  facts: DataFacts,
+) {
+  const values = [
+    ...query.filters
+      .filter(
+        (filter) =>
+          tagFilterFields[library].includes(filter.field) ||
+          (library === 'track' && filter.field === 'provider'),
+      )
+      .map((filter) =>
+        filter.field === 'provider'
+          ? filter.value
+          : tagDisplayName(filter.value),
+      ),
+    ...(query.tag === undefined ? [] : [tagDisplayName(query.tag)]),
+  ]
+  return values.some((value) => unsettledLowerCase(value, facts.fold))
+}
+
+/** Facets: `q` always, and once it has a word every field label and provider name. */
+function unsettledFacetText(
+  library: Library,
+  q: string | undefined,
+  facts: DataFacts,
+) {
+  if (unsettledLowerCase(q ?? '', facts.fold)) return true
+  if (!(q ?? '').split(/\s+/).some(Boolean)) return false
+  return facts.facetTexts[library].some((text) =>
+    unsettledLowerCase(text, facts.fold),
+  )
+}
+
+/** Tags at a location that reads artist tags: Auto, or a location with `artist`. */
+const readsArtistTags = (levels: readonly string[] | undefined) =>
+  levels === undefined || levels.includes('artist')
+
+/**
+ * The Album facets that read artist tags: the Artist tags field, or Tags
+ * at a location that reads them, among the suggested fields.
+ */
+function albumFacetsReadArtistTags(levels: readonly string[] | undefined) {
+  const suggested = albumBrowseFields.filter(
+    (field) => field.type === 'text' && field.filterable,
+  )
+  return suggested.some(
+    (field) =>
+      field.key === 'artistTag' ||
+      (field.key === 'genre' && readsArtistTags(levels)),
+  )
 }
 
 type Observed = {
@@ -100,23 +209,42 @@ export function expectedHole(
         (query.creatorId !== undefined || recordings)
       )
         return 'creator-tag-sort'
-      return undefined
+      return unsettledFilter('track', query, observed.facts)
+        ? 'server-lower-case'
+        : undefined
     }
     case 'trackFacets':
     case 'artistFacets':
-    case 'filmFacets':
-      return memberScope(read.query) ? undefined : 'catalog-scope'
+    case 'filmFacets': {
+      if (!memberScope(read.query)) return 'catalog-scope'
+      const library =
+        read.method === 'trackFacets'
+          ? 'track'
+          : read.method === 'artistFacets'
+            ? 'artist'
+            : 'film'
+      return unsettledFacetText(library, read.query.q, observed.facts)
+        ? 'server-lower-case'
+        : undefined
+    }
     case 'albumFacets':
       if (!memberScope(read.query)) return 'catalog-scope'
-      return read.query.includeArchived === 'true' &&
+      if (
+        read.query.includeArchived === 'true' &&
+        albumFacetsReadArtistTags(read.query.tagLevels) &&
         observed.facts.archivedOnlyArtistTags
-        ? 'archived-artist-tags'
+      )
+        return 'archived-artist-tags'
+      return unsettledFacetText('album', read.query.q, observed.facts)
+        ? 'server-lower-case'
         : undefined
     case 'albumPage':
     case 'albumCount':
     case 'albumList':
     case 'albumHistogram':
       if (!memberScope(read.query)) return 'catalog-scope'
+      if (unsettledFilter('album', read.query, observed.facts))
+        return 'server-lower-case'
       return read.method !== 'albumHistogram' &&
         isPluginTextSort('album', read.query.sortBy, observed.facts)
         ? 'unknown-field'
@@ -126,6 +254,8 @@ export function expectedHole(
     case 'filmList':
       if (!memberScope(read.query)) return 'catalog-scope'
       if (read.query.creatorId !== undefined) return 'creator-films'
+      if (unsettledFilter('film', read.query, observed.facts))
+        return 'server-lower-case'
       return isPluginTextSort('film', read.query.sortBy, observed.facts)
         ? 'unknown-field'
         : undefined
@@ -133,9 +263,13 @@ export function expectedHole(
     case 'artistCount':
     case 'artistHistogram':
       if (!memberScope(read.query)) return 'catalog-scope'
-      return read.method === 'artistPage' &&
+      if (
+        read.method === 'artistPage' &&
         nonExcludeProvider(read.query.filters)
-        ? 'provider-filter'
+      )
+        return 'provider-filter'
+      return unsettledFilter('artist', read.query, observed.facts)
+        ? 'server-lower-case'
         : undefined
     case 'playlistPage':
       if (!memberScope(read.query)) return 'catalog-scope'

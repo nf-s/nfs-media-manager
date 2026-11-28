@@ -12,7 +12,7 @@ import type { SqlValue, SqliteDriver, SqliteExecutor } from '../src/driver'
 import { openBetterSqliteDriver } from '../src/drivers/better-sqlite3'
 import type { LibrarySource, SourceResult } from '../src/source'
 import { openStore } from '../src/store'
-import { live } from './fixtures'
+import { foldRow, live } from './fixtures'
 
 /** Synthetic rows only. */
 
@@ -45,10 +45,13 @@ export async function openDeviceStore(
   const driver = openBetterSqliteDriver()
   await openStore(driver)
   let seq = 0
-  const feed: DeviceRow[] = rows.map((row) => {
-    seq += 1
-    return live(row.entity, row.id, seq, row.payload)
-  })
+  const feed: DeviceRow[] = [
+    foldRow(),
+    ...rows.map((row) => {
+      seq += 1
+      return live(row.entity, row.id, seq, row.payload)
+    }),
+  ]
   const fields =
     options.trackFields === undefined ? trackBrowseFields : options.trackFields
   if (fields !== null) {

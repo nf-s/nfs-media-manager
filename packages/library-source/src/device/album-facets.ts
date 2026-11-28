@@ -263,11 +263,12 @@ export async function albumFacets(
             (field) =>
               suggestsFilterableText(field) && tagFields.includes(field.key),
           )
-          .map((field) => facetMatch(field, query.q)),
+          .map((field) => facetMatch(field, query.q, read.fold)),
         () => readTagLabels(read.tx),
+        read.fold,
       ).then((wanted) => readTagCounts(read.tx, query, wanted))
       return tagCounts
     },
   }
-  return readFacets(read.tx, table, fields, query, context)
+  return readFacets(read, table, fields, query, context)
 }

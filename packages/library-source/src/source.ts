@@ -94,6 +94,11 @@ export type UnsupportedReason =
   | 'archived-artist-tags'
   /** A Playlists page holding a playlist whose import is queued or running: the API has its progress. */
   | 'active-import'
+  /**
+   * The service lower-cases a value of the query in TypeScript, and the
+   * server's fold cannot tell what its engine gives (see `lowerCaseAsServer`).
+   */
+  | 'server-lower-case'
   /** Detail pages and the lists owned by a detail. */
   | 'detail'
   /** Metadata selection, Matches, Jobs, Providers and Imports. */

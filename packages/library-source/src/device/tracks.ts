@@ -18,7 +18,12 @@ import {
   type TrackQuery,
 } from '@repo/schemas/tracks'
 import type { SqliteExecutor } from '../driver'
-import { foldText } from '../fold'
+import {
+  equalsLabelAsServer,
+  foldText,
+  lowerCaseAsServer,
+  type TextFold,
+} from '../fold'
 import type {
   BrowseCount,
   TrackListPage,
@@ -87,7 +92,11 @@ import { formatTimestamp, readItems, type DeviceRead } from './read'
  * part of the service each piece reproduces.
  */
 
-type TrackContext = { tx: SqliteExecutor; tagLevels: TagLevels | undefined }
+type TrackContext = {
+  tx: SqliteExecutor
+  fold: TextFold
+  tagLevels: TagLevels | undefined
+}
 
 const column = (expression: Sql): ValueSource => ({
   kind: 'column',
@@ -115,7 +124,7 @@ async function tagMatch(
 ): Promise<Sql> {
   const names = await matchingTagNames(
     context.tx,
-    tagFilterName(value),
+    tagFilterName(value, context.fold),
     'album',
   )
   const ids = await tagIdsWithKeys(context.tx, names, 'album')
@@ -145,17 +154,23 @@ const trackFields: FieldTable<TrackContext> = {
   filters: {
     title: textMatch('track', 'title'),
     // matchesValue('source'): the label, matched with toLowerCase; another value matches nothing.
-    source: (value) => {
-      const label = Object.values(trackSourceLabels).find(
-        (candidate) => candidate.toLowerCase() === value.toLowerCase(),
+    source: (value, context) => {
+      const label = Object.values(trackSourceLabels).find((candidate) =>
+        equalsLabelAsServer(value, candidate, context.fold),
       )
       return label === undefined
         ? FALSE
-        : textEquals('track', 'source', foldText(label))
+        : textEquals('track', 'source', foldText(label, context.fold))
     },
     spotifyMatch: textMatch('track', 'spotifyMatch'),
     // trackIdsWithProvider, track-values.ts: lower(provider) = value.toLowerCase().
-    provider: (value) => textEquals('track', 'provider', value.toLowerCase()),
+    provider: (value, context) =>
+      textEquals(
+        'track',
+        'provider',
+        lowerCaseAsServer(value, context.fold) ??
+          unsupported('server-lower-case'),
+      ),
     artist: textMatch('track', 'artist'),
     album: textMatch('track', 'album'),
     playlist: textMatch('track', 'playlist'),
@@ -167,24 +182,29 @@ const trackFields: FieldTable<TrackContext> = {
         'track',
         await artistTagRawKeys(
           context.tx,
-          await matchingTagNames(context.tx, tagFilterName(value), 'album'),
+          await matchingTagNames(
+            context.tx,
+            tagFilterName(value, context.fold),
+            'album',
+          ),
         ),
       ),
     albumLink: textMatch('track', 'albumLink'),
     // hasTrackTagsMatch, browse.ts.
-    hasTrackTags: (value) => {
-      const answer = value.toLowerCase()
-      if (answer === 'yes') return sql`t.has_own_tags = 1`
-      if (answer === 'no') return sql`t.has_own_tags = 0`
+    hasTrackTags: (value, context) => {
+      if (equalsLabelAsServer(value, 'yes', context.fold))
+        return sql`t.has_own_tags = 1`
+      if (equalsLabelAsServer(value, 'no', context.fold))
+        return sql`t.has_own_tags = 0`
       return FALSE
     },
     // verifiedTrackKeyIds, track-facts.ts: the parsed Camelot key, compared exactly.
-    musicalKey: (value) => {
+    musicalKey: (value, context) => {
       const key = parseMusicalKey(value)
       if (key === null) return FALSE
       return sql`t.rid IN (SELECT rid FROM item_text
         WHERE entity = 'track' AND field = 'musicalKey'
-          AND folded = ${foldText(key)} AND value = ${key})`
+          AND folded = ${foldText(key, context.fold)} AND value = ${key})`
     },
   },
   ranges: {
@@ -340,12 +360,12 @@ type GroupPlan = {
   listening: Sql | undefined
 }
 
-function requestsLastfmSource(query: TrackQuery): boolean {
+function requestsLastfmSource(query: TrackQuery, fold: TextFold): boolean {
   return query.filters.some(
     (filter) =>
       filter.field === 'source' &&
       filter.mode !== 'exclude' &&
-      filter.value.toLowerCase() === trackSourceLabels.lastfm.toLowerCase(),
+      equalsLabelAsServer(filter.value, trackSourceLabels.lastfm, fold),
   )
 }
 
@@ -392,11 +412,15 @@ async function planTracks(
   const searched =
     words.length > 0 ? searchFields(trackFields, fields) : undefined
 
-  const context: TrackContext = { tx: read.tx, tagLevels: query.tagLevels }
+  const context: TrackContext = {
+    tx: read.tx,
+    fold: read.fold,
+    tagLevels: query.tagLevels,
+  }
   const conditions: Sql[] = [sql`t.archived = 0`]
   const hideRedundant =
     options.includeLastfmSourceRows !== true &&
-    !requestsLastfmSource(query) &&
+    !requestsLastfmSource(query, read.fold) &&
     !query.filters.some(
       (filter) => filter.field === 'playlist' && filter.mode === 'required',
     )
@@ -418,7 +442,7 @@ async function planTracks(
     conditions.push(rangeCondition('track', range, spec))
   }
   if (searched !== undefined)
-    conditions.push(...searchConditions('track', words, searched))
+    conditions.push(...searchConditions('track', words, searched, read.fold))
 
   const sortSpec = trackFields.sorts[query.sortBy]
   const sortSource =
@@ -779,7 +803,7 @@ export async function trackCount(
           read,
           await planTracks(read, unfiltered, {
             returnsItems: false,
-            includeLastfmSourceRows: requestsLastfmSource(query),
+            includeLastfmSourceRows: requestsLastfmSource(query, read.fold),
           }),
         )
   return { totalCount: capCount(total, query.limitResults), unfilteredCount }

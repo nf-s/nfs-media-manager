@@ -19,6 +19,7 @@ import {
   albumPayload,
   filmPayload,
   tagPayload,
+  testFold,
   type TagOptions,
 } from './fixtures'
 
@@ -113,7 +114,7 @@ export function titled(title: string, patch: MediaRowPatch = {}) {
     ...patch,
     item: { title, ...patch.item },
     text: { title: [title], ...patch.text },
-    sort: { title: foldText(title), ...patch.sort },
+    sort: { title: foldText(title, testFold), ...patch.sort },
   }
 }
 

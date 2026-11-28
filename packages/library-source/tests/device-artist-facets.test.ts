@@ -130,10 +130,19 @@ describe('text facets', () => {
     expect(counts(await facets(device, { q: 'last.' }), 'provider')).toEqual([
       ['lastfm', 3],
     ])
-    // The word is folded as typed (σασ), not lower-cased first (σας).
-    expect(counts(await facets(device, { q: 'ΣΑΣ' }), 'name')).toEqual([
+    // The word is folded as typed: σασ matches ΣΑΣ, whose lower() is σασ.
+    expect(counts(await facets(device, { q: 'σασ' }), 'name')).toEqual([
       ['ΣΑΣ', 1],
     ])
+    // The exact match compares with q.toLowerCase() on the server, whose
+    // final-sigma rule the fold cannot tell.
+    expect(
+      reason(
+        await device.source.artistFacets(
+          BrowseFacetQuerySchema.parse({ q: 'ΣΑΣ' }),
+        ),
+      ),
+    ).toBe('server-lower-case')
   })
 
   it('puts the exact match first and lists limitPerField values per field', async () => {

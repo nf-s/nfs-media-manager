@@ -163,6 +163,8 @@ async function runSync(): Promise<SyncOutcome> {
         }),
     })
     if (result.status === 'feed-not-ready') return { outcome: 'feed-not-ready' }
+    if (result.status === 'cleared')
+      return { outcome: 'failed', message: 'The copy was deleted.' }
     return {
       outcome: 'synced',
       rowsApplied: result.rowsApplied,

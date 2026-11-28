@@ -1,33 +1,88 @@
 import { z } from 'zod'
+import { DEVICE_ROW_VERSION } from '@repo/schemas/device'
 import type { SqliteDriver, SqliteExecutor } from '../driver'
-import type { ItemEntity } from '../schema'
-import { readStoreStatus } from '../store'
+import { parseTextFold, type TextFold } from '../fold'
+import { STORE_SCHEMA_VERSION, type ItemEntity } from '../schema'
+import { readSyncState } from '../store'
 import type { SourceResult } from '../source'
 import { readRows, sql, values } from '../compile/sql'
 import { UnsupportedQuery, unsupported } from '../compile/unsupported'
 
-/** What one read of the device source works with: one transaction and one "now". */
+/** What one read of the device source works with: one transaction, one "now" and the server's fold. */
 export type DeviceRead = {
   tx: SqliteExecutor
   /** Taken once per call, so rules and sort periods agree. */
   now: Date
+  /** The `meta` row `fold`: how the server's database lower-cases text. */
+  fold: TextFold
+}
+
+const UserVersionSchema = z.object({ user_version: z.number().int() })
+const StoredFoldSchema = z.object({
+  epoch: z.string().nullable(),
+  seq: z.number().int(),
+  value: z.string(),
+})
+
+/** The parsed fold of each driver, keyed by the epoch and `seq` of its row. */
+const folds = new WeakMap<SqliteDriver, { key: string; fold: TextFold }>()
+
+/**
+ * Whether the store answers reads: a completed fill for this package's row
+ * and schema versions, holding the fold. Returns the fold, parsed once per
+ * row version for each driver; a sync that writes the row changes its `seq`.
+ */
+async function readReadyFold(
+  driver: SqliteDriver,
+  tx: SqliteExecutor,
+): Promise<TextFold> {
+  const [version] = await tx.all('PRAGMA user_version')
+  if (UserVersionSchema.parse(version).user_version !== STORE_SCHEMA_VERSION)
+    return unsupported('not-ready')
+  const state = await readSyncState(tx)
+  if (state.phase !== 'ready' || state.row_version !== DEVICE_ROW_VERSION)
+    return unsupported('not-ready')
+  const [row] = await tx.all(
+    `SELECT s.epoch, m.seq, m.value FROM meta m, sync_state s
+     WHERE m.id = 'fold' AND s.id = 1`,
+  )
+  if (row === undefined) return unsupported('not-ready')
+  const stored = StoredFoldSchema.parse(row)
+  const key = `${stored.epoch ?? ''}:${stored.seq}`
+  const cached = folds.get(driver)
+  if (cached?.key === key) return cached.fold
+  const fold = parseTextFold(stored.value)
+  folds.set(driver, { key, fold })
+  return fold
+}
+
+/** Whether a string of the parsed query holds U+0000, which the API's database rejects in any text. */
+function holdsNul(value: unknown): boolean {
+  if (typeof value === 'string') return value.includes('\u0000')
+  if (Array.isArray(value)) return value.some(holdsNul)
+  if (typeof value === 'object' && value !== null)
+    return Object.values(value).some(holdsNul)
+  return false
 }
 
 /**
- * Runs one read in a transaction, so it sees one complete sync state. The
- * store must have completed a fill; a query the device does not serve
- * exactly answers its reason; any other failure is `store-error`.
+ * Runs one read in a transaction, so it sees one complete sync state. A
+ * query holding U+0000 is `invalid-query`, as the API rejects it. The store
+ * must have completed a fill for this package's row and schema versions
+ * and hold the fold, or the read is `not-ready`; a query the device does
+ * not serve exactly answers its reason; any other failure is `store-error`.
  */
 export async function serveRead<T>(
   driver: SqliteDriver,
   now: () => Date,
+  query: unknown,
   work: (read: DeviceRead) => Promise<T>,
 ): Promise<SourceResult<T>> {
+  if (holdsNul(query)) return { served: false, reason: 'invalid-query' }
   try {
     const data = await driver.transaction(async (tx) => {
-      const status = await readStoreStatus(tx)
-      if (!status.ready) return unsupported('not-ready')
-      return work({ tx, now: now() })
+      const fold = await readReadyFold(driver, tx)
+      return work({ tx, now: now(), fold })
     })
     return { served: true, data }
   } catch (error) {

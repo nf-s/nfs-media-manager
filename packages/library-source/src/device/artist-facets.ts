@@ -113,5 +113,5 @@ export async function artistFacets(
       return tagCounts
     },
   }
-  return readFacets(read.tx, artistFacetTable, fields, query, context)
+  return readFacets(read, artistFacetTable, fields, query, context)
 }

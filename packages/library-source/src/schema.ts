@@ -9,9 +9,10 @@
  * - The list item a page returns is in `item_json`, apart from the item
  *   tables, so scans for filters, sorts and counts read narrow rows.
  * - Text is compared by code point (`BINARY`). `folded` columns hold
- *   `foldText(value)`; a query value is folded the same way before binding.
+ *   `foldText(value, fold)` with the server's `meta` row `fold`; a query
+ *   value is folded the same way before binding.
  * - The FTS tables use `detail = none`: search with
- *   `folded GLOB globContains(word)`, which the trigram index serves for
+ *   `folded GLOB globContains(word, fold)`, which the trigram index serves for
  *   three or more characters and rechecks against the value; MATCH phrase
  *   queries are not available.
  * - Booleans are 0 or 1. Dates are whole epoch microseconds, play times whole
@@ -24,7 +25,7 @@
  * A change to any statement bumps `STORE_SCHEMA_VERSION`; a store with
  * another version is dropped and refilled, never migrated.
  */
-export const STORE_SCHEMA_VERSION = 1
+export const STORE_SCHEMA_VERSION = 2
 
 export const ITEM_ENTITIES = [
   'track',
@@ -35,10 +36,16 @@ export const ITEM_ENTITIES = [
 ] as const
 export type ItemEntity = (typeof ITEM_ENTITIES)[number]
 
+/**
+ * `generation` is new each time the schema is built: a clear, or a refill.
+ * A running sync writes a page only while the generation is the one it
+ * began with or created, so a clear from any connection stops it.
+ */
 const syncState = [
   `
 CREATE TABLE sync_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
+  generation TEXT NOT NULL,
   phase TEXT NOT NULL CHECK (phase IN ('empty', 'filling', 'ready')),
   epoch TEXT,
   row_version INTEGER,
@@ -49,7 +56,8 @@ CREATE TABLE sync_state (
   filled_at INTEGER,
   synced_at INTEGER
 )`,
-  `INSERT INTO sync_state (id, phase) VALUES (1, 'empty')`,
+  `INSERT INTO sync_state (id, generation, phase)
+   VALUES (1, lower(hex(randomblob(16))), 'empty')`,
 ]
 
 const track = [

@@ -10,6 +10,7 @@ import {
   type PlaylistBrowseSort,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
+import type { TextFold } from '../fold'
 import type { BrowseCount } from '../source'
 import { valueExpression, type ValueSource } from '../compile/fields'
 import { isMemberScope, orderBy, orderTerm, pageWindow } from '../compile/query'
@@ -70,13 +71,15 @@ const nameFields = { text: [], search: ['name'] }
  * library conditions the feed applies. `q` and `name` are each one
  * `ILIKE '%value%'` pattern, not split into words.
  */
-function playlistConditions(query: PlaylistBrowseQuery): Sql {
+function playlistConditions(query: PlaylistBrowseQuery, fold: TextFold): Sql {
   if (!isMemberScope(query)) unsupported('catalog-scope')
   const conditions: Sql[] = []
   if (query.q)
-    conditions.push(...searchConditions('playlist', [query.q], qFields))
+    conditions.push(...searchConditions('playlist', [query.q], qFields, fold))
   if (query.name)
-    conditions.push(...searchConditions('playlist', [query.name], nameFields))
+    conditions.push(
+      ...searchConditions('playlist', [query.name], nameFields, fold),
+    )
   if (query.sources !== undefined && query.sources.length > 0)
     conditions.push(sql`t.source IN ${values(query.sources)}`)
   if (query.ids !== undefined && query.ids.length > 0)
@@ -158,7 +161,7 @@ export async function playlistPage(
   read: DeviceRead,
   query: PlaylistBrowseQuery,
 ): Promise<PlaylistBrowsePage> {
-  const where = playlistConditions(query)
+  const where = playlistConditions(query, read.fold)
   const window = pageWindow(query)
   const rows =
     window === null
@@ -187,7 +190,7 @@ export async function playlistCount(
   read: DeviceRead,
   query: PlaylistBrowseQuery,
 ): Promise<BrowseCount> {
-  const where = playlistConditions(query)
+  const where = playlistConditions(query, read.fold)
   const [row] = await readRows(
     read.tx,
     sql`SELECT count(*) AS total FROM playlist t WHERE ${where}`,
