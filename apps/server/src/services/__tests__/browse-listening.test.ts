@@ -1,9 +1,9 @@
 import { sql } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { PgDialect } from 'drizzle-orm/pg-core'
+import { listeningPeriodBounds } from '@repo/schemas/listening'
 import {
   createBrowseListening,
-  listeningPeriodBounds,
   type BrowseListening,
   type ListeningSubject,
 } from '../browse-listening'

@@ -294,6 +294,22 @@ export const recordingVersionMembers = sql`
       left join recording_group_members m using (id)
     )`
 
+/**
+ * The library-wide recording group of each track `ids` selects, under the
+ * default scope: `group_key` is the key Browse groups by, null when the track
+ * is in no group. Every visible track with the same title takes part, so the
+ * key does not depend on which tracks a query matched.
+ */
+export function recordingGroupKeys(ids: SQL): SQL {
+  return sql`with ${recordingMemberships(ids, {
+    includePeerMembers: true,
+    useTargetTitles: true,
+  })}
+    select matched.id, members.group_key
+    from recording_matches matched
+    left join recording_group_members members using (id)`
+}
+
 export const recordingCount = sql`
   select ((select count(*) from recording_matches)
     - (select count(*) - count(distinct group_key) from recording_group_members))::int as value`

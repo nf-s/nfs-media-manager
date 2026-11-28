@@ -13,12 +13,11 @@ import {
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { artistTagsForItems } from './music-tags'
+import { listBrowseFields, matchesValue } from './browse'
 import {
-  listBrowseFields,
-  matchesValue,
-  storedBrowseNumber,
   rejectedAlbumMetacriticIds,
-} from './browse'
+  storedBrowseNumber,
+} from './browse-expressions'
 
 export type Source = RatingsSource & {
   votesKey?: string

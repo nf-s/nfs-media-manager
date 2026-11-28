@@ -35,7 +35,7 @@ import {
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import { uniqueMusicTags } from '@repo/schemas/music-tags'
 import { TrackQuerySchema } from '@repo/schemas/tracks'
-import type { CatalogScopeQuery } from '@repo/schemas/catalog'
+import { memberScope, type CatalogScopeQuery } from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import {
@@ -53,7 +53,7 @@ import {
   listCurrentArtistProfiles,
 } from './artist-profiles'
 import { queryBrowseIds } from './browse'
-import { catalogScopeCondition, memberScope } from './catalog-scope'
+import { catalogScopeCondition } from './catalog-scope'
 import {
   artistPlaylistMembership,
   artistArtwork,

@@ -15,8 +15,9 @@ import {
  * answers Browse reads from them.
  *
  * Every projection field below names the server expression it must equal.
- * Paths are under `apps/server/src/services/` unless they say otherwise.
- * The server fills each field from that expression, never from a copy, so
+ * Paths are under `apps/server/src/services/` unless they say otherwise;
+ * the shared Browse expressions named for browse.ts are in
+ * browse-expressions.ts, which browse.ts imports. The server fills each field from that expression, never from a copy, so
  * the feed and the Browse services cannot drift.
  *
  * Conventions for projection values:

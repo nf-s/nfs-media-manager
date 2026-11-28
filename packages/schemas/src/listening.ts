@@ -114,3 +114,55 @@ export const ListeningHistogramSchema = z
     'Each bar needs a count',
   )
 export type ListeningHistogram = z.infer<typeof ListeningHistogramSchema>
+
+/**
+ * The instants a listening period covers: `from` inclusive; `to` inclusive
+ * for a rolling period, which ends `now`, and exclusive for a date period,
+ * which ends after its last UTC day. Calendar subtraction preserves UTC time
+ * and clamps month ends.
+ */
+export function listeningPeriodBounds(
+  period: ListeningPeriod,
+  now: Date,
+): { from?: Date; to?: Date; inclusiveTo?: boolean } {
+  if (period.kind === 'all') return {}
+  if (period.kind === 'dates') {
+    return {
+      from: period.from ? new Date(`${period.from}T00:00:00.000Z`) : undefined,
+      to: period.to
+        ? new Date(Date.parse(`${period.to}T00:00:00.000Z`) + 86_400_000)
+        : undefined,
+      inclusiveTo: false,
+    }
+  }
+  const from = new Date(now)
+  if (period.unit === 'days' || period.unit === 'weeks') {
+    from.setUTCDate(
+      from.getUTCDate() - period.amount * (period.unit === 'weeks' ? 7 : 1),
+    )
+  } else {
+    const day = from.getUTCDate()
+    from.setUTCDate(1)
+    from.setUTCMonth(
+      from.getUTCMonth() - period.amount * (period.unit === 'years' ? 12 : 1),
+    )
+    const monthEnd = new Date(from)
+    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1, 0)
+    from.setUTCDate(Math.min(day, monthEnd.getUTCDate()))
+  }
+  return { from, to: now, inclusiveTo: true }
+}
+
+/** UTC calendar months as `YYYY-MM`, oldest first, from `from` to the month of `now`. */
+export function monthKeys(from: string, now: Date) {
+  const [year = NaN, month = NaN] = from.split('-').map(Number)
+  const count =
+    (now.getUTCFullYear() - year) * 12 + now.getUTCMonth() - (month - 1) + 1
+  return Array.from({ length: Math.max(1, count) }, (_, index) =>
+    new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + index + 1 - count, 1),
+    )
+      .toISOString()
+      .slice(0, 7),
+  )
+}

@@ -1,40 +1,11 @@
 import { sql, type SQL } from 'drizzle-orm'
-import type {
-  ListeningFilter,
-  ListeningPeriod,
-  ListeningRule,
+import {
+  listeningPeriodBounds,
+  type ListeningFilter,
+  type ListeningPeriod,
+  type ListeningRule,
 } from '@repo/schemas/listening'
 import type { ListeningRuleProfile } from '@/lib/request-log'
-
-/** Calendar subtraction preserves UTC time and clamps month ends. */
-export function listeningPeriodBounds(period: ListeningPeriod, now: Date) {
-  if (period.kind === 'all') return {}
-  if (period.kind === 'dates') {
-    return {
-      from: period.from ? new Date(`${period.from}T00:00:00.000Z`) : undefined,
-      to: period.to
-        ? new Date(Date.parse(`${period.to}T00:00:00.000Z`) + 86_400_000)
-        : undefined,
-      inclusiveTo: false,
-    }
-  }
-  const from = new Date(now)
-  if (period.unit === 'days' || period.unit === 'weeks') {
-    from.setUTCDate(
-      from.getUTCDate() - period.amount * (period.unit === 'weeks' ? 7 : 1),
-    )
-  } else {
-    const day = from.getUTCDate()
-    from.setUTCDate(1)
-    from.setUTCMonth(
-      from.getUTCMonth() - period.amount * (period.unit === 'years' ? 12 : 1),
-    )
-    const monthEnd = new Date(from)
-    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1, 0)
-    from.setUTCDate(Math.min(day, monthEnd.getUTCDate()))
-  }
-  return { from, to: now, inclusiveTo: true }
-}
 
 /** True for scrobbles inside the period; `listenedAt` names the timestamp column. */
 export function listeningPeriodPredicate(

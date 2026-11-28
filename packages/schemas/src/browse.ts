@@ -104,6 +104,18 @@ export type ArchivableBrowseFacetQuery = z.infer<
   typeof ArchivableBrowseFacetQuerySchema
 >
 
+/** The locale facet labels are ordered in, named so the server and a device agree. */
+export const browseFacetLabelLocale = 'en-US'
+const facetLabelCollator = new Intl.Collator(browseFacetLabelLocale)
+
+/** Facet response order (DEVICE-25): higher counts first, then the label in `browseFacetLabelLocale`. */
+export function compareBrowseFacets(
+  a: { count: number; label: string },
+  b: { count: number; label: string },
+) {
+  return b.count - a.count || facetLabelCollator.compare(a.label, b.label)
+}
+
 export const BrowsePageSliceSchema = <T extends z.ZodTypeAny>(itemSchema: T) =>
   z.object({
     items: z.array(itemSchema),

@@ -1,22 +1,12 @@
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import {
-  isTrackDiscoverySource,
+  discoveryOperations,
   type CatalogNativeKind,
   type CatalogScopeQuery,
 } from '@repo/schemas/catalog'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
 import { libraryTrack, mediaItem } from '@/schemas/db'
-
-function discoveryOperations(
-  query: CatalogScopeQuery,
-  kind?: CatalogNativeKind | 'track',
-) {
-  const operations = [...new Set(query.discoverySources?.split(','))]
-  return kind === 'track'
-    ? operations.filter(isTrackDiscoverySource)
-    : operations
-}
 
 export function catalogScopeCondition(
   id: SQL,
@@ -59,16 +49,6 @@ export function catalogScopeCondition(
   return query.discoverySourceScope === 'selection'
     ? origin
     : sql`((${member}) or ${origin})`
-}
-
-export function memberScope(query: CatalogScopeQuery, kind?: 'track') {
-  return (
-    (!query.libraryScope || query.libraryScope === 'library') &&
-    !(
-      query.discoverySourceScope === 'selection' &&
-      discoveryOperations(query, kind).length
-    )
-  )
 }
 
 /** Metadata sends its scope with each batch. Individual detail actions already name the target. */

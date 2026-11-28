@@ -8,6 +8,7 @@ import { formatTagName } from '@repo/schemas/tags'
 import {
   BrowsePageSliceSchema,
   selectedBrowseProviders,
+  compareBrowseFacets,
   type BrowseFacetQuery,
 } from '@repo/schemas/browse'
 import {
@@ -44,14 +45,14 @@ import {
   createArtistBrowseListening,
   type ArtistBrowseListening,
 } from './artist-browse-listening'
-import { listeningPeriodBounds } from './browse-listening'
+import { listeningPeriodBounds, monthKeys } from '@repo/schemas/listening'
 import { listeningHistoryStart } from './listening-series'
 import { matchingTagNames } from './music-tags'
 import { tagAncestorKeys, visibleSubtagCounts } from './tag-hierarchy'
 import { normalizedTagSql, normalizeTagName } from './tag-state'
-import { catalogScopeCondition, memberScope } from './catalog-scope'
+import { catalogScopeCondition } from './catalog-scope'
+import { memberScope, type CatalogScopeQuery } from '@repo/schemas/catalog'
 import { artistFamilyAdded, artistFamilyObserved } from './artist-names'
-import type { CatalogScopeQuery } from '@repo/schemas/catalog'
 
 type Query = ArtistQuery | ArtistMetadataQuery
 const id = sql`a.id`
@@ -61,12 +62,19 @@ const musicCredits = sql`media_credit credit
   left join library_track recording on item.media_type = 'track' and recording.media_item_id = item.id`
 const visibleMusic = sql`credit.role = 'artist' and item.metadata->>'legacyHidden' is distinct from 'true'
   and (release.media_item_id is not null or recording.media_item_id is not null)`
+/** Credited albums and tracks per artist, without the in_library test the displayed counts use. */
+export const artistMusicCounts = sql`select credit.artist_id,
+      count(*) filter (where item.media_type = 'album')::int as album_count,
+      count(*) filter (where item.media_type = 'track')::int as track_count
+      from ${musicCredits}
+      where ${visibleMusic} group by credit.artist_id`
 // A merged artist is a name another artist keeps, not an artist of its own.
 const observedArtist = artistFamilyObserved(id)
 const addedArtist = artistFamilyAdded(id)
 const memberArtist = sql`(exists (select 1 from ${musicCredits}
   where credit.artist_id = a.id and ${visibleMusic} and item.in_library) or (${addedArtist} and ${observedArtist}))`
-function scopedArtists(query: CatalogScopeQuery) {
+/** The artists of a catalog scope, as a condition on `artist a`. */
+export function scopedArtists(query: CatalogScopeQuery) {
   if (memberScope(query))
     return sql`a.merged_into_id is null and ${memberArtist}`
   const known = sql`(${observedArtist} or exists (select 1 from ${musicCredits} where credit.artist_id = a.id and ${visibleMusic}))`
@@ -108,7 +116,7 @@ const facetCache = createDatabaseReadCache<Facet[]>({
  * credited to the artist, counted once: the same link as the artist's
  * listening chart and stored scrobble count. `artists` narrows `c.artist_id`.
  */
-function artistScrobbles(artists: SQL): SQL {
+export function artistScrobbles(artists: SQL): SQL {
   const credited = sql`c.role = 'artist' and ${artists}
     and m.metadata->>'legacyHidden' is distinct from 'true'`
   return sql`select c.artist_id, s.id, s.listened_at
@@ -124,27 +132,13 @@ function artistScrobbles(artists: SQL): SQL {
     where m.media_type = 'track' and ${credited}`
 }
 
-/** UTC calendar months as `YYYY-MM`, oldest first, from `from` to the month of `now`. */
-function monthKeys(from: string, now: Date) {
-  const [year = NaN, month = NaN] = from.split('-').map(Number)
-  const count =
-    (now.getUTCFullYear() - year) * 12 + now.getUTCMonth() - (month - 1) + 1
-  return Array.from({ length: Math.max(1, count) }, (_, index) =>
-    new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + index + 1 - count, 1),
-    )
-      .toISOString()
-      .slice(0, 7),
-  )
-}
-
 function pattern(value: string, substring = true) {
   const escaped = value.replace(/[\\%_]/g, '\\$&')
   return substring ? `%${escaped}%` : escaped
 }
 
 /** Field sources remain relational so selective names are matched before memberships. */
-function textRows(
+export function textRows(
   field: string,
   options: { playlistFilter?: SQL; distinctPlaylists?: boolean } = {},
 ): SQL {
@@ -194,7 +188,8 @@ function anyTextMatch(sources: SQL[]) {
   )`
 }
 
-function numericValue(field: string): SQL {
+/** A range or sort value over `artist a` joined with `music_counts` and `playlist_counts`. */
+export function numericValue(field: string): SQL {
   if (field === 'albumCount') return sql`coalesce(music_counts.album_count, 0)`
   if (field === 'trackCount') return sql`coalesce(music_counts.track_count, 0)`
   // Stored by refreshArtistListeningTotals; counting it per request is slow.
@@ -231,16 +226,11 @@ function candidates(
   return sql`artist a
     ${
       music
-        ? sql`left join (select credit.artist_id,
-      count(*) filter (where item.media_type = 'album')::int as album_count,
-      count(*) filter (where item.media_type = 'track')::int as track_count
-      from ${musicCredits}
-      where ${visibleMusic} group by credit.artist_id
-    ) music_counts on music_counts.artist_id = a.id`
+        ? sql`left join (${artistMusicCounts}) music_counts on music_counts.artist_id = a.id`
         : sql``
     }
     ${playlists ? sql`left join (${artistPlaylistCounts()}) playlist_counts on playlist_counts.artist_id = a.id` : sql``}
-    ${textSort ? sql`left join (select id, min(lower(value)) as value from (${textRows(query.sortBy)}) source group by id) sort_values on sort_values.id = a.id` : sql``}
+    ${textSort ? sql`left join (${artistTextOrderRows(query.sortBy)}) sort_values on sort_values.id = a.id` : sql``}
     ${listening?.join ?? sql``}`
 }
 
@@ -281,14 +271,21 @@ function membership(query: Query, listening?: ArtistBrowseListening): SQL {
   return and(...conditions) ?? sql`true`
 }
 
+/** The Name sort value of `artist a`. */
+export const artistNameOrder = sql`lower(coalesce(a.sort_name, a.name))`
+
+/** The value of a text sort other than Name: the least lower-cased value. */
+export function artistTextOrderRows(field: string): SQL {
+  return sql`select id, min(lower(value)) as value from (${textRows(field)}) source group by id`
+}
+
 function ordering(query: Query, listening?: ArtistBrowseListening): SQL {
   let value: SQL
   if (query.sortBy === 'lastScrapedAt' && 'provider' in query && query.provider)
     value = artistLastScrapedAt(id, query.provider)
   else if (query.sortBy === 'listeningScrobbles' && listening?.sort)
     value = listening.sort
-  else if (query.sortBy === 'name')
-    value = sql`lower(coalesce(a.sort_name, a.name))`
+  else if (query.sortBy === 'name') value = artistNameOrder
   else if (
     [
       'createdAt',
@@ -364,7 +361,7 @@ async function loadArtistListening(ids: string[], requested: SQL, now: Date) {
   return listening
 }
 
-async function loadArtists(
+export async function loadArtists(
   ids: string[],
   listeningScrobbles?: Map<string, number>,
   {
@@ -740,5 +737,5 @@ export async function listArtistBrowseFacets(query: BrowseFacetQuery) {
             : row.value
       }`,
     }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .sort(compareBrowseFacets)
 }

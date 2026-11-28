@@ -7,6 +7,7 @@ import {
   ListeningPeriodParamSchema,
   ListeningPeriodSchema,
   ListeningRuleSchema,
+  monthKeys,
 } from '../src/listening'
 import {
   AlbumListeningHistogramQuerySchema,
@@ -137,5 +138,17 @@ describe('listening controls', () => {
     expect(
       ListeningHistogramSchema.safeParse({ edges, counts: [1] }).success,
     ).toBe(false)
+  })
+
+  it('lists UTC months from the history start to the month of now', () => {
+    const now = new Date('2024-03-31T23:59:59.000Z')
+    expect(monthKeys('2023-11-15', now)).toEqual([
+      '2023-11',
+      '2023-12',
+      '2024-01',
+      '2024-02',
+      '2024-03',
+    ])
+    expect(monthKeys('2024-03-01', now)).toEqual(['2024-03'])
   })
 })

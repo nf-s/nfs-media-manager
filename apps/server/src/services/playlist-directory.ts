@@ -83,7 +83,7 @@ export const playlistAlbumMembers = sql`
 
 const playlistAlbumCount = sql`(select count(distinct album_id)::int from (${playlistAlbumMembers}) albums)`
 
-const playlistTrackStats = sql`
+export const playlistTrackStats = sql`
   select count(*)::int as track_count,
     count(album_media.id)::int as linked_track_count,
     coalesce(sum(lt.duration_sec), 0)::int as duration_sec
@@ -162,12 +162,12 @@ const automaticPlaylistPresentation = sql`case when p.source = 'spotify-liked' t
   from direct_album_stats direct
 ) end`
 
-const playlistMember = sql`(p.added_to_library or p.source is not null or exists (${playlistAlbumMembers}))`
-const visiblePlaylists = sql`p.kind = 'playlist' and (${playlistMember} or p.catalog_provider is not null)`
+export const playlistMember = sql`(p.added_to_library or p.source is not null or exists (${playlistAlbumMembers}))`
+export const visiblePlaylists = sql`p.kind = 'playlist' and (${playlistMember} or p.catalog_provider is not null)`
 /** An imported playlist the directory lists by default, as `p`. */
 export const listedImportedPlaylist = sql`(${visiblePlaylists} and ${playlistMember})`
 const playlistCanAcceptAdditions = sql`(p.source = 'spotify' and p.spotify_id is not null and p.spotify_editable)`
-const playlistGroup = sql`case
+export const playlistGroup = sql`case
   when p.source = 'spotify-liked' then ${LIKED_SONGS_KEY}
   when p.source = 'spotify' and nullif(p.spotify_id, '') is not null then ${PLAYLIST_KEY_PREFIX} || p.spotify_id
   end`
@@ -194,7 +194,7 @@ const sourceOrder = (source: SQL) =>
 const typeOrder = (type: SQL) =>
   sql`array_position(array['playlist', 'smart'], ${type})`
 
-const playlistSortColumns = {
+export const playlistSortColumns = {
   name: sql`lower(p.name)`,
   source: sourceOrder(sql`coalesce(p.source, 'library')`),
   owner: sql`lower(p.owner_name)`,

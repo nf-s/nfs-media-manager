@@ -213,13 +213,30 @@ function artistTagRows(mediaId: SQL): SQL {
   group by name_key`
 }
 
-export function artistTagLabels(): SQL {
-  return projectedArtistTags(currentArtistProfiles)
+/** Current profiles of the artists credited on the items `mediaIds` matches, as `= any(...)`. */
+export function creditedArtistProfiles(mediaIds: SQL): SQL {
+  return sql`${currentArtistProfiles} where state.artist_id in (
+    select c.artist_id from media_credit c
+    where c.media_item_id = ${mediaIds} and c.role = 'artist')`
 }
 
-export function artistTagMemberships(mediaType: 'album' | 'track'): SQL {
+/** Projected artist tags of every current profile, or of `profiles`. */
+export function artistTagLabels(profiles: SQL = currentArtistProfiles): SQL {
+  return projectedArtistTags(profiles)
+}
+
+/**
+ * Library-wide reads, or reads limited to some albums (`albums`, compared as
+ * `mt.media_item_id = albums`) and to the labels of some artists.
+ */
+export type MusicTagScope = { albums?: SQL; artistTags?: SQL }
+
+export function artistTagMemberships(
+  mediaType: 'album' | 'track',
+  labels: SQL = artistTagLabels(),
+): SQL {
   return sql`select c.media_item_id, artist_tag.name, artist_tag.name_key
-    from (${artistTagLabels()}) artist_tag
+    from (${labels}) artist_tag
     join media_credit c on c.artist_id = artist_tag.artist_id and c.role = 'artist'
     join media_item m on m.id = c.media_item_id and m.media_type = ${mediaType}`
 }
@@ -263,15 +280,16 @@ export function firstMusicTagRows(
   mediaType: 'album' | 'track',
   /** Limits Tracks to the library tracks it holds for (alias `lt`). */
   tracks: SQL = sql`true`,
+  scope: MusicTagScope = {},
 ): SQL {
   // A track's first tag is its album's first, or its artists' first when the
   // album has too few tags. Read each album's first tag once, not per track.
   if (mediaType === 'track')
     return sql`with album_firsts as materialized (
         select media_item_id, min(name) as name, count(*) as tags
-        from (${releaseTagMemberships()}) r group by media_item_id
+        from (${releaseTagMemberships(scope.albums)}) r group by media_item_id
       ), artist_firsts as (
-        select a.media_item_id, min(a.name) as name from (${artistTagMemberships('track')}) a
+        select a.media_item_id, min(a.name) as name from (${artistTagMemberships('track', scope.artistTags)}) a
         join library_track lt on lt.media_item_id = a.media_item_id
         where ${tracks} and (lt.album_media_item_id is null or lt.album_media_item_id not in (
           select media_item_id from album_firsts where tags >= ${artistTagFallbackThreshold}))
@@ -282,14 +300,14 @@ export function firstMusicTagRows(
       left join album_firsts album on album.media_item_id = lt.album_media_item_id
       left join artist_firsts artist on artist.media_item_id = lt.media_item_id
       where ${tracks} and (album.name is not null or artist.name is not null)`
-  const releaseRows = releaseTagMemberships()
+  const releaseRows = releaseTagMemberships(scope.albums)
   return sql`with item_release_tags as materialized (${releaseRows}),
     dense_items as (select media_item_id from item_release_tags group by media_item_id
       having count(*) >= ${artistTagFallbackThreshold})
     select media_item_id, min(name) as name from (
       select media_item_id, name from item_release_tags
       union all
-      select a.media_item_id, a.name from (${artistTagMemberships(mediaType)}) a
+      select a.media_item_id, a.name from (${artistTagMemberships(mediaType, scope.artistTags)}) a
       where a.media_item_id not in (select media_item_id from dense_items)
         and not exists (select 1 from item_release_tags r
           where r.media_item_id = a.media_item_id and r.name_key = a.name_key)

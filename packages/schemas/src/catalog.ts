@@ -35,6 +35,28 @@ export function isTrackDiscoverySource(operation: string) {
   return !listeningDiscoveryOperations.includes(operation)
 }
 
+/** The discovery operations a scope names; Tracks leave out listening ones. */
+export function discoveryOperations(
+  query: CatalogScopeQuery,
+  kind?: CatalogNativeKind | 'track',
+) {
+  const operations = [...new Set(query.discoverySources?.split(','))]
+  return kind === 'track'
+    ? operations.filter(isTrackDiscoverySource)
+    : operations
+}
+
+/** Whether a scope reads library members only: the default scope. */
+export function memberScope(query: CatalogScopeQuery, kind?: 'track') {
+  return (
+    (!query.libraryScope || query.libraryScope === 'library') &&
+    !(
+      query.discoverySourceScope === 'selection' &&
+      discoveryOperations(query, kind).length
+    )
+  )
+}
+
 export const CatalogObservationQuerySchema = PaginationQuerySchema
 
 export const CatalogObservationSchema = z.object({
