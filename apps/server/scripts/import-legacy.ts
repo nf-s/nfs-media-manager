@@ -43,6 +43,7 @@ import {
 } from '@/schemas/db'
 import { applyProviderResult } from '@/services/provider-state'
 import { preserveLegacyRawPlaylists } from '@/services/legacy-playlist-snapshots'
+import { insertLegacySavedViews } from '@/services/library-playlist-legacy-views'
 
 export {
   normalizeOmdbPayload,
@@ -1374,6 +1375,9 @@ export async function preserveLibraryContext(): Promise<void> {
         source: 'legacy-import:smart-playlists.json',
       })
       .onConflictDoNothing()
+    // PL-05: the views become Albums smart playlists now, so a device that
+    // answers the Albums directory itself still lists them.
+    await insertLegacySavedViews()
   }
   for (const filename of ['lib-music.json', 'lib.json']) {
     const library =
