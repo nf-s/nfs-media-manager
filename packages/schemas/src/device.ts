@@ -22,8 +22,9 @@ import {
  * Conventions for projection values:
  * - Text values are the raw strings the expression yields, distinct by exact
  *   value, in code-point order. The device folds them for comparison.
- * - Dates are epoch milliseconds, `extract(epoch from value) * 1000`, which
- *   keeps a fraction when the stored timestamp has sub-millisecond precision.
+ * - Dates are whole epoch microseconds, `extract(epoch from value) * 1000000`,
+ *   the stored precision and exact in a double. The device multiplies a
+ *   range bound, which arrives in milliseconds, by 1000 before comparing.
  * - Sort values are the finished primary value, already passed through the
  *   service's `lower()`, so the device only compares them by code point.
  * - Null means no value: ranges treat it as missing and sorts put it last.
@@ -688,7 +689,13 @@ export const DevicePlaylistRowSchema = z
   .strict()
 export type DevicePlaylistRow = z.infer<typeof DevicePlaylistRowSchema>
 
-/** latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK), spotify-playlist-state.ts; keyed by group key. */
+/**
+ * latestSpotifyJobs(SPOTIFY_PLAYLIST_IMPORT_TASK), spotify-playlist-state.ts;
+ * keyed by group key. While the job is queued or running the row carries its
+ * status with `progress` and `activity` null, so progress writes do not
+ * change it; the device does not serve a page that holds a playlist whose
+ * job is in that state.
+ */
 export const DevicePlaylistJobRowSchema = SpotifyPlaylistJobSchema
 export type DevicePlaylistJobRow = z.infer<typeof DevicePlaylistJobRowSchema>
 

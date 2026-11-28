@@ -86,6 +86,8 @@ export type UnsupportedReason =
   | 'grouped-creator-scope'
   /** A non-exclude Provider filter on Tracks or Artists: rows carry per-request links. */
   | 'provider-filter'
+  /** A Playlists page holding a playlist whose import is queued or running: the API has its progress. */
+  | 'active-import'
   /** Detail pages and the lists owned by a detail. */
   | 'detail'
   /** Metadata selection, Matches, Jobs, Providers and Imports. */
