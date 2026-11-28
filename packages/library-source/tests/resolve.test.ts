@@ -9,6 +9,7 @@ import {
   ArtistQuerySchema,
 } from '@repo/schemas/creators'
 import type { DeviceBrowseLibrary } from '@repo/schemas/device'
+import { LibraryPlaylistListQuerySchema } from '@repo/schemas/library-playlists'
 import {
   AlbumListeningHistogramQuerySchema,
   AlbumQuerySchema,
@@ -245,6 +246,26 @@ const playlistOptions: ParameterOptions = {
   ],
   ids: [json(['playlist-1']), json(['playlist-1', 'playlist/2 ü'])],
   acceptsAdditions: ['true', 'false'],
+  // PL-17: the directory of a library, with its column filters.
+  library: ['tracks', 'albums', 'films', 'subscriptions', 'mixes'],
+  owner: ['Example Owner'],
+  description: [' slow '],
+  savedViewText: ['tag: jazz'],
+  savedView: ['present', 'absent'],
+  types: [json([]), json(['smart']), json(['playlist', 'smart'])],
+  schedules: [json(['daily', 'off'])],
+  columnRanges: [
+    json({ count: { min: 2 }, updated: { max: '2024-05-31' } }),
+    json({ duration: { min: 1.5, max: 90 } }),
+  ],
+  timeZone: ['UTC', 'America/Havana'],
+  keyNotation: ['camelot'],
+}
+const libraryPlaylistOptions: ParameterOptions = {
+  ...paging,
+  type: ['playlist', 'smart'],
+  q: ['', 'late', ' Late shift '],
+  itemId: ['track-1', 'item/2 ü'],
 }
 
 /** One method's query schema and parameter options, typed by the method. */
@@ -311,6 +332,12 @@ const queryCases = [
   ),
   queryCase('playlistPage', PlaylistBrowseQuerySchema, playlistOptions),
   queryCase('playlistCount', PlaylistBrowseQuerySchema, playlistOptions),
+  queryCase(
+    'libraryPlaylistList',
+    LibraryPlaylistListQuerySchema,
+    libraryPlaylistOptions,
+    { library: ['tracks', 'albums', 'films', 'subscriptions', 'mixes'] },
+  ),
 ]
 
 /**
@@ -510,6 +537,15 @@ const webPaths: [LibraryMethod, string][] = [
     'playlistPage',
     '/api/v1/playlists/browse-page?ids=%5B%22playlist-1%22%2C%22playlist-2%22%5D&size=2',
   ],
+  [
+    'playlistPage',
+    '/api/v1/playlists/browse-page?library=albums&sortBy=count&direction=desc&types=%5B%22smart%22%5D&columnRanges=%7B%22count%22%3A%7B%22min%22%3A2%7D%2C%22updated%22%3A%7B%22min%22%3A%222024-05-01%22%7D%7D&timeZone=America%2FHavana&savedViewText=jazz&keyNotation=camelot&page=1&size=100',
+  ],
+  [
+    'libraryPlaylistList',
+    '/api/v1/library-playlists?library=tracks&type=playlist&q=late&itemId=track-1&page=1&size=25',
+  ],
+  ['libraryPlaylistList', '/api/v1/library-playlists/?library=films'],
   ['fields', '/api/v1/tracks/fields'],
   ['fields', '/api/v1/albums/fields'],
   ['fields', '/api/v1/films/fields'],
@@ -580,6 +616,8 @@ function routeRead(method: LibraryMethod, path: string): LibraryRead {
     case 'playlistPage':
     case 'playlistCount':
       return { method, query: PlaylistBrowseQuerySchema.parse(input) }
+    case 'libraryPlaylistList':
+      return { method, query: LibraryPlaylistListQuerySchema.parse(input) }
     case 'fields': {
       const library = fieldLibraries.get(pathname.split('/')[3] ?? '')
       if (!library) throw new Error(`No fields route: ${pathname}`)
@@ -594,7 +632,7 @@ describe('resolveLibraryRead on the web client’s paths', () => {
   })
 
   it('covers every LibrarySource method', () => {
-    expect(new Set(webPaths.map(([method]) => method)).size).toBe(23)
+    expect(new Set(webPaths.map(([method]) => method)).size).toBe(24)
   })
 
   it('parses values as the route does: numbers, booleans, defaults, JSON and lists', () => {
@@ -763,6 +801,10 @@ describe('resolveLibraryRead leaves other paths to the API', () => {
     '/api/v1/playlists/browse-page?sources=%5B%22tidal%22%5D',
     '/api/v1/playlists/browse-page?ids=%5B%5D',
     '/api/v1/playlists/browse-page?sortBy=position',
+    '/api/v1/playlists/browse-page?timeZone=Not%2FA_Zone',
+    '/api/v1/library-playlists',
+    '/api/v1/library-playlists?library=artists',
+    '/api/v1/library-playlists?library=tracks&size=0',
   ])('rejected query: %s', (path) => {
     expect(resolveLibraryRead(path)).toBeUndefined()
   })
@@ -807,6 +849,9 @@ describe('mayBeLibraryRead', () => {
     '/api/v2/tracks/browse-page',
     '/api/auth/get-session',
     '/api/v1/Tracks/browse-page',
+    '/api/v1/library-playlists/playlist-1',
+    '/api/v1/library-playlists/playlist-1/entries?page=1',
+    '/api/v1/library-playlists/memberships?library=tracks&itemId=track-1',
   ])('is false for %s, which resolveLibraryRead never resolves', (path) => {
     expect(mayBeLibraryRead(path)).toBe(false)
     expect(resolveLibraryRead(path)).toBeUndefined()

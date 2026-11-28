@@ -55,7 +55,6 @@ import {
 import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
-  holdsLibraryPlaylistFilter,
   isMemberScope,
   listWindow,
   orderBy,
@@ -153,6 +152,7 @@ async function tagMatch(
 const trackFields: FieldTable<TrackContext> = {
   entity: 'track',
   library: 'track',
+  playlistLibrary: 'tracks',
   filters: {
     title: textMatch('track', 'title'),
     // matchesValue('source'): the label, matched with toLowerCase; another value matches nothing.
@@ -416,7 +416,6 @@ async function planTracks(
   options: PlanOptions,
 ): Promise<TrackPlan> {
   if (!isMemberScope(query, 'track')) unsupported('catalog-scope')
-  if (holdsLibraryPlaylistFilter(query.filters)) unsupported('library-playlist')
   const grouped = options.versions === true || query.groupRecordings === true
   if (grouped && query.creatorId !== undefined)
     unsupported('grouped-creator-scope')

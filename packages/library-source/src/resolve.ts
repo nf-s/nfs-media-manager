@@ -8,6 +8,7 @@ import {
   ArtistListeningHistogramQuerySchema,
   ArtistQuerySchema,
 } from '@repo/schemas/creators'
+import { LibraryPlaylistListQuerySchema } from '@repo/schemas/library-playlists'
 import {
   AlbumListeningHistogramQuerySchema,
   AlbumQuerySchema,
@@ -188,6 +189,12 @@ const staticRoutes: Record<LibraryReadRoute, RouteRead> = {
   'playlists/browse-count': (input) =>
     parsed(PlaylistBrowseQuerySchema, input, (query) => ({
       method: 'playlistCount',
+      query,
+    })),
+  // The list only: `/library-playlists/:id`, its entries and memberships are no read.
+  'library-playlists': (input) =>
+    parsed(LibraryPlaylistListQuerySchema, input, (query) => ({
+      method: 'libraryPlaylistList',
       query,
     })),
 }

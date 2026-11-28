@@ -29,7 +29,6 @@ import { checkPluginTextSort, withPluginFields } from '../compile/plugin-fields'
 import type { QueryKeys } from '../compile/query-keys'
 import {
   capCount,
-  holdsLibraryPlaylistFilter,
   isMemberScope,
   listWindow,
   orderBy,
@@ -90,6 +89,7 @@ async function tagMatch(value: string, context: FilmContext): Promise<Sql> {
 const filmFields: FieldTable<FilmContext> = {
   entity: 'film',
   library: 'film',
+  playlistLibrary: 'films',
   filters: {
     summary: textMatch('film', 'summary'),
     title: textMatch('film', 'title'),
@@ -252,7 +252,6 @@ async function planFilms(
   // browseQueries: the API answers listening controls on Films with an error.
   if (query.listening !== undefined || query.listeningSort !== undefined)
     unsupported('invalid-query')
-  if (holdsLibraryPlaylistFilter(query.filters)) unsupported('library-playlist')
   // A creator scope also takes films whose catalog observations name the
   // person, in every scope; the device holds no catalog observations.
   if (query.creatorId !== undefined) unsupported('creator-films')

@@ -160,6 +160,8 @@ function browserGlobals(t: TestContext) {
     Reflect.deleteProperty(globalThis, 'window')
     Reflect.deleteProperty(globalThis, 'document')
   })
+  /** Where the page's `window` and `document` events are dispatched. */
+  return target
 }
 
 /** Counts the channels opened while the test runs. */
@@ -248,6 +250,45 @@ test('turning the setting on loads the host once and turning it off deletes the 
   assert.equal(host.destroyed, 1)
   assert.deepEqual(deviceStoreStatus(), { state: 'off' })
   stopFollowing()
+})
+
+test('a sync that changes rows refreshes the mounted library reads, library playlists included', async (t) => {
+  const events = browserGlobals(t)
+  t.after(enterSignedInPage())
+  mockApi(t)
+  const client = new QueryClient()
+  const library = [
+    ['tracks', 'browse-page'],
+    ['playlists', 'browse-page'],
+    ['library-playlists', 'tracks'],
+    ['listening-histogram', 'tracks'],
+  ]
+  for (const key of [...library, ['jobs']]) client.setQueryData(key, 1)
+  const host = fakeHost()
+  setDeviceStoreSetting('off')
+  const stopFollowing = startDeviceStore({
+    apiBaseUrl: '',
+    client,
+    loadHost: async () => host,
+  })
+  try {
+    setDeviceStoreSetting('on')
+    await settle()
+    host.nextSync = async () => ({ ...synced, rowsApplied: 2 })
+    events.dispatchEvent(new Event('online'))
+    await settle()
+    for (const key of library)
+      assert.equal(
+        client.getQueryState(key)?.isInvalidated,
+        true,
+        key.join('/'),
+      )
+    assert.equal(client.getQueryState(['jobs'])?.isInvalidated, false)
+  } finally {
+    setDeviceStoreSetting('off')
+    await settle()
+    stopFollowing()
+  }
 })
 
 test('a served read is parsed by the caller schema and makes no request', async (t) => {

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { LIBRARY_PLAYLIST_FILTER_FIELD } from '@repo/schemas/browse'
 import { listeningHistogramEdges } from '@repo/schemas/listening'
 import { TrackListeningHistogramQuerySchema } from '@repo/schemas/tracks'
 import {
@@ -239,20 +238,5 @@ describe('track listening histogram', () => {
         await device.source.trackHistogram(query({ libraryScope: 'all' })),
       ),
     ).toBe('catalog-scope')
-    expect(
-      reason(
-        await device.source.trackHistogram(
-          query({
-            filters: [
-              {
-                field: LIBRARY_PLAYLIST_FILTER_FIELD,
-                value: 'list-1',
-                mode: 'exclude',
-              },
-            ],
-          }),
-        ),
-      ),
-    ).toBe('library-playlist')
   })
 })

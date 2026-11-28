@@ -58,7 +58,7 @@ async function readReadyFold(
 }
 
 /** Whether a string of the parsed query holds U+0000, which PostgreSQL text cannot hold. */
-function holdsNul(value: unknown): boolean {
+export function holdsNul(value: unknown): boolean {
   if (typeof value === 'string') return value.includes('\u0000')
   if (Array.isArray(value)) return value.some(holdsNul)
   if (typeof value === 'object' && value !== null)

@@ -27,6 +27,10 @@ import {
 } from './artists'
 import { filmFacetQueryKeys, filmFacets } from './film-facets'
 import { filmCount, filmList, filmPage, filmQueryKeys } from './films'
+import {
+  libraryPlaylistList,
+  libraryPlaylistListQueryKeys,
+} from './library-playlists'
 import { playlistCount, playlistPage, playlistQueryKeys } from './playlists'
 import { serveRead, type DeviceRead } from './read'
 import { trackFacetQueryKeys, trackFacets } from './track-facets'
@@ -75,6 +79,7 @@ export const deviceQueryKeys = {
   artistHistogram: artistHistogramQueryKeys,
   playlistPage: playlistQueryKeys,
   playlistCount: playlistQueryKeys,
+  libraryPlaylistList: libraryPlaylistListQueryKeys,
   fields: {},
 } satisfies {
   readonly [Method in LibraryMethod]: Readonly<Record<string, QueryKeyUse>>
@@ -155,6 +160,10 @@ export function createDeviceLibrarySource(
       serve(query, keys.playlistPage, (read) => playlistPage(read, query)),
     playlistCount: (query) =>
       serve(query, keys.playlistCount, (read) => playlistCount(read, query)),
+    libraryPlaylistList: (query) =>
+      serve(query, keys.libraryPlaylistList, (read) =>
+        libraryPlaylistList(read, query),
+      ),
 
     // A library name has no keys.
     fields: (library: DeviceBrowseLibrary) =>

@@ -1,5 +1,9 @@
 import { artistBrowseFields } from '@repo/schemas/artist-browse'
-import type { BrowseField } from '@repo/schemas/browse'
+import type {
+  BrowseField,
+  LibraryPlaylistLibrary,
+  LibraryPlaylistView,
+} from '@repo/schemas/browse'
 import {
   devicePayloadSchemas,
   type DeviceArtistRow,
@@ -62,6 +66,75 @@ export function playlist(
     extra: { ...base.extra, ...patch.extra },
   })
   return { entity: 'playlist', id, payload }
+}
+
+export type LibraryPlaylistOptions = {
+  library?: LibraryPlaylistLibrary
+  /** A smart playlist's view; a playlist has none. */
+  view?: LibraryPlaylistView
+  /** The items of the listed entries, in entry order, repeats included. */
+  entries?: string[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+/**
+ * A library playlist row as the server renders it: the directory item
+ * (librarySummary), the list summary and the projections, validated.
+ */
+export function libraryPlaylist(
+  id: string,
+  name: string,
+  options: LibraryPlaylistOptions = {},
+): StoreRow {
+  const library = options.library ?? 'tracks'
+  const view = options.view ?? null
+  const type = view === null ? 'playlist' : 'smart'
+  const entries = options.entries ?? []
+  const entryCount = type === 'playlist' ? entries.length : null
+  const createdAt = options.createdAt ?? '2024-05-01T08:00:00.000Z'
+  const updatedAt = options.updatedAt ?? '2024-05-02T09:30:00.000Z'
+  const payload = devicePayloadSchemas.library_playlist.parse({
+    item: {
+      id,
+      inLibrary: true,
+      name,
+      source: null,
+      ownerName: null,
+      description: null,
+      artworkUrl: null,
+      spotifyUrl: null,
+      importedAt: null,
+      createdAt,
+      trackCount: 0,
+      linkedTrackCount: 0,
+      albumCount: 0,
+      presentation: library === 'albums' ? 'albums' : 'tracks',
+      durationSec: 0,
+      origin: 'library',
+      type,
+      library,
+      view,
+      updatedAt,
+      itemCount: entryCount,
+    },
+    summary: { id, library, type, name, entryCount, view, updatedAt },
+    text: {},
+    search: { name: [name] },
+    num: {
+      count: entryCount,
+      updated: microseconds(updatedAt),
+      added: microseconds(createdAt),
+    },
+    sort: { name: name.toLowerCase() },
+    extra: {
+      library,
+      type,
+      hasView: view !== null,
+      members: [...new Set(entries)].sort(),
+    },
+  })
+  return { entity: 'library_playlist', id, payload }
 }
 
 /** The latest import job of sync group `groupKey`. */

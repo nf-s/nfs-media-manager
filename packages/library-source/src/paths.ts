@@ -36,6 +36,7 @@ export const LIBRARY_READ_ROUTES = [
   'artists/fields',
   'playlists/browse-page',
   'playlists/browse-count',
+  'library-playlists',
 ] as const
 export type LibraryReadRoute = (typeof LIBRARY_READ_ROUTES)[number]
 
@@ -131,6 +132,7 @@ const libraryPaths: {
   artistHistogram: (query) => withQuery('artists/listening-histogram', query),
   playlistPage: (query) => withQuery('playlists/browse-page', query),
   playlistCount: (query) => withQuery('playlists/browse-count', query),
+  libraryPlaylistList: (query) => withQuery('library-playlists', query),
   fields: (library) =>
     `${LIBRARY_API_PREFIX}${fieldCollections[library]}/fields`,
 }

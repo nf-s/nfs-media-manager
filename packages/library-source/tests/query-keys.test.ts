@@ -8,6 +8,7 @@ import {
   ArtistListeningHistogramQuerySchema,
   ArtistQuerySchema,
 } from '@repo/schemas/creators'
+import { LibraryPlaylistListQuerySchema } from '@repo/schemas/library-playlists'
 import {
   AlbumListeningHistogramQuerySchema,
   AlbumQuerySchema,
@@ -72,6 +73,10 @@ const schemas: Record<
   },
   playlistPage: { schema: PlaylistBrowseQuerySchema, input: {} },
   playlistCount: { schema: PlaylistBrowseQuerySchema, input: {} },
+  libraryPlaylistList: {
+    schema: LibraryPlaylistListQuerySchema,
+    input: { library: 'tracks' },
+  },
   fields: null,
 }
 

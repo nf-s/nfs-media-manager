@@ -1,8 +1,10 @@
 import { z } from 'zod'
-import type {
-  BrowseField,
-  BrowseFilter,
-  BrowseRange,
+import {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
+  type BrowseField,
+  type BrowseFilter,
+  type BrowseRange,
+  type LibraryPlaylistLibrary,
 } from '@repo/schemas/browse'
 import {
   DeviceMetaRowSchema,
@@ -32,6 +34,11 @@ export type FieldTable<Context> = {
   sorts: Record<string, SortSpec<Context>>
   /** What `q` reads for each searched text field. */
   search: SearchSpec
+  /**
+   * PL-18: the library whose playlists the `libraryPlaylist` filter reads,
+   * which browseFieldConditions, browse.ts, accepts without a field.
+   */
+  playlistLibrary?: LibraryPlaylistLibrary
 }
 
 /** The condition one filter value gives, on the item table `t`. May throw `UnsupportedQuery`. */
@@ -116,6 +123,7 @@ export function checkFields<Context>(
   )
     unsupported('unknown-field')
   for (const filter of query.filters) {
+    if (isLibraryPlaylistFilter(table, filter)) continue
     if (byKey.get(filter.field)?.type !== 'text') unsupported('invalid-query')
     if (!Object.hasOwn(table.filters, filter.field))
       unsupported('unknown-field')
@@ -163,15 +171,53 @@ export async function filterConditions<Context>(
   const conditions: Sql[] = []
   const any: Sql[] = []
   for (const filter of filters) {
-    const match = table.filters[filter.field]
-    if (match === undefined) return unsupported('unknown-field')
-    const condition = await match(filter.value, context, filter)
+    // matchesValue, browse.ts: `libraryPlaylist` comes before any field.
+    const condition =
+      table.playlistLibrary !== undefined &&
+      filter.field === LIBRARY_PLAYLIST_FILTER_FIELD
+        ? inLibraryPlaylist(table.playlistLibrary, filter.value)
+        : await fieldMatch(table, filter, context)
     if (filter.mode === 'exclude') conditions.push(not(condition))
     else if (filter.mode === 'required') conditions.push(condition)
     else any.push(condition)
   }
   if (any.length > 0) conditions.push(or(any))
   return conditions
+}
+
+function isLibraryPlaylistFilter<Context>(
+  table: FieldTable<Context>,
+  filter: BrowseFilter,
+): boolean {
+  return (
+    table.playlistLibrary !== undefined &&
+    filter.field === LIBRARY_PLAYLIST_FILTER_FIELD
+  )
+}
+
+async function fieldMatch<Context>(
+  table: FieldTable<Context>,
+  filter: BrowseFilter,
+  context: Context,
+): Promise<Sql> {
+  const match = table.filters[filter.field]
+  if (match === undefined) return unsupported('unknown-field')
+  return match(filter.value, context, filter)
+}
+
+/**
+ * inLibraryPlaylist, library-playlist-entries.ts: the item is among the
+ * listed entries of the stored playlist `playlistId` of `library`. A
+ * playlist of another library, a smart playlist (it has no entries) or an
+ * unknown ID is an empty set: it matches nothing and excludes nothing.
+ */
+export function inLibraryPlaylist(
+  library: LibraryPlaylistLibrary,
+  playlistId: string,
+): Sql {
+  return sql`t.id IN (SELECT m.item_id FROM library_playlist p
+    JOIN library_playlist_item m ON m.rid = p.rid
+    WHERE p.id = ${playlistId} AND p.library = ${library})`
 }
 
 /** Items with a stored text value of `field` equal to `folded`, compared by code point. */
