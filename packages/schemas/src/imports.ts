@@ -172,14 +172,6 @@ export const LegacySavedViewSchema = z.object({
   limit: z.number().int().min(1).max(10000).optional(),
 })
 
-export function normalizeSavedView(input: unknown): SavedView {
-  return SavedViewSchema.parse(
-    savedViewInput(
-      LegacySavedViewSchema.parse(removeSpotifyAudioFeatures(input).value),
-    ),
-  )
-}
-
 /** A legacy saved view in the current form, or null when it does not convert. */
 export function convertSavedView(input: unknown): SavedView | null {
   const legacy = LegacySavedViewSchema.safeParse(

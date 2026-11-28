@@ -151,6 +151,12 @@ import { libraryItemMore } from './item-more'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { ResultLineSlot } from './result-line'
 import {
+  SmartPlaylistActions,
+  SmartPlaylistName,
+  SmartPlaylistsSection,
+  useSmartPlaylistBrowse,
+} from './smart-playlist-controls'
+import {
   matchingBlocked,
   matchingCount,
   matchingSubject,
@@ -366,6 +372,13 @@ function TrackBrowse({
     listeningScrobblesField(listeningSort),
   ]
   const sortField = fields.find((field) => field.key === sortBy)
+  const smart = useSmartPlaylistBrowse({
+    library: 'tracks',
+    host,
+    order: { sortBy, direction },
+    fields,
+    suggestedName: suggestedPlaylistName(filters, q),
+  })
   const columnKeys = [
     ...new Set([
       'title',
@@ -1081,6 +1094,7 @@ function TrackBrowse({
           }
           filters={
             <>
+              {smart && <SmartPlaylistsSection smart={smart} />}
               {view === 'table' && (
                 <BrowseColumnsSection>
                   <ColumnChoices
@@ -1182,8 +1196,23 @@ function TrackBrowse({
             )
           }
         />
-        {filterPills && !embedded && (
-          <PlacedFilters railSlot={railSlot} onClear={clearFilters}>
+        {(filterPills || smart?.open) && !embedded && (
+          <PlacedFilters
+            railSlot={railSlot}
+            onClear={clearFilters}
+            view={
+              smart
+                ? (place) => <SmartPlaylistName smart={smart} place={place} />
+                : undefined
+            }
+            actions={
+              smart
+                ? (place) => (
+                    <SmartPlaylistActions smart={smart} place={place} />
+                  )
+                : undefined
+            }
+          >
             {filterPills}
           </PlacedFilters>
         )}

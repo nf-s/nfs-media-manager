@@ -9,7 +9,6 @@ import {
   type ImportRun,
   StartImportSchema,
   convertSavedView,
-  normalizeSavedView,
 } from '@repo/schemas/imports'
 import { JsonValueSchema } from '@repo/media-plugin-sdk'
 import { db } from '@/lib/db'
@@ -569,10 +568,6 @@ async function readLegacySavedViews() {
     .limit(1)
   if (!snapshot) return []
   return z.array(JsonValueSchema).parse(snapshot.payload)
-}
-
-export async function listSavedViews() {
-  return (await readLegacySavedViews()).map(normalizeSavedView)
 }
 
 /** The newest legacy saved views that convert, leaving out any that do not. */

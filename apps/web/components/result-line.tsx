@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import Link from 'next/link'
 import { Check, History, X } from 'lucide-react'
 import type { LibraryPlaylistLibrary } from '@repo/schemas/library-playlists'
 import { Button, type ButtonFeedback } from '@repo/ui/components/ui/button'
@@ -23,13 +24,19 @@ import { useDetailInspector } from './detail-inspector-context'
 /** A library playlist an action changed, for **Open playlist**. */
 export type ResultPlaylist = { id: string; library: LibraryPlaylistLibrary }
 
+/** A way to follow a result: a button that acts, or a link to a page. */
+export type ResultFollow = { label: string } & (
+  | { onSelect: () => void }
+  | { href: string }
+)
+
 /** What an action reports on the result line. */
 export type ResultReport = {
   text: string
   /** Offers **Open playlist** for the playlist the action changed. */
   playlist?: ResultPlaylist
   /** Another way to follow the result, in place of Open playlist. */
-  action?: { label: string; onSelect: () => void }
+  action?: ResultFollow
   /** Reverses the action; the line then reads "Undone: …". */
   undo?: () => Promise<unknown>
 }
@@ -193,7 +200,7 @@ export function ResultLineBar({
 }: {
   text: string
   undone: boolean
-  follow?: { label: string; onSelect: () => void }
+  follow?: ResultFollow
   undo?: () => Promise<void>
   onDismiss: () => void
 }) {
@@ -212,7 +219,14 @@ export function ResultLineBar({
         <span title={text}>{text}</span>
       </TableSelectionResult>
       <span className="ds-actions ds-toolbar-end">
-        {follow && <Button onClick={follow.onSelect}>{follow.label}</Button>}
+        {follow &&
+          ('href' in follow ? (
+            <Button asChild>
+              <Link href={follow.href}>{follow.label}</Link>
+            </Button>
+          ) : (
+            <Button onClick={follow.onSelect}>{follow.label}</Button>
+          ))}
         {undo && (
           <Button
             feedback={feedback}

@@ -170,26 +170,49 @@ export function ActiveFilters({
   )
 }
 
-/** Active filters in the rail beside the page, or in a row above the results on phones. */
+/**
+ * Active filters in the rail beside the page, or in a row above the results
+ * on phones. `view` renders what goes before them, such as the open smart
+ * playlist's name, and `actions` what follows them, for the rail or the row.
+ */
 export function PlacedFilters({
   railSlot,
   children,
   onClear,
+  view,
+  actions,
 }: {
   railSlot: HTMLElement | null
   children: ReactNode
   onClear: () => void
+  view?: (place: 'rail' | 'row') => ReactNode
+  actions?: (place: 'rail' | 'row') => ReactNode
 }) {
   if (!railSlot)
-    return (
+    return view || actions ? (
+      // With actions on the view the row wraps, so they stay in reach.
+      <div className="ds-strip" role="group" aria-label="Active filters">
+        {view?.('row')}
+        {children && (
+          <ClearableFilters onClear={onClear}>{children}</ClearableFilters>
+        )}
+        {actions?.('row')}
+      </div>
+    ) : (
       <ActiveFilters className="bi-filter-row" onClear={onClear}>
         {children}
       </ActiveFilters>
     )
   return createPortal(
     <>
-      <h2 className="ds-rail-label">Filters</h2>
-      <ActiveFilters onClear={onClear}>{children}</ActiveFilters>
+      {view?.('rail')}
+      {children && (
+        <>
+          <h2 className="ds-rail-label">Filters</h2>
+          <ActiveFilters onClear={onClear}>{children}</ActiveFilters>
+        </>
+      )}
+      {actions?.('rail')}
     </>,
     railSlot,
   )

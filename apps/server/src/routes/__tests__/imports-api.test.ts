@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const getImportStatus = vi.fn()
 const startLibraryImport = vi.fn()
-const listSavedViews = vi.fn()
 const startFileImport = vi.fn()
 const previewFileImport = vi.fn()
 const prepareFilmImport = vi.fn()
@@ -35,7 +34,6 @@ function mockAppSession(authenticated: boolean) {
   vi.doMock('@/services/imports', () => ({
     getImportStatus,
     startLibraryImport,
-    listSavedViews,
   }))
   vi.doMock('@/services/file-imports', () => ({
     startFileImport,
@@ -55,6 +53,14 @@ describe('local imports api', () => {
     vi.resetAllMocks()
   })
 
+  it('no longer serves the legacy saved views, which are Albums smart playlists', async () => {
+    mockAppSession(true)
+    const { default: app } = await import('@/app')
+    expect(
+      (await app.request('http://localhost/api/v1/imports/saved-views')).status,
+    ).toBe(404)
+  })
+
   it('validates and forwards the requested import library', async () => {
     mockAppSession(true)
     getImportStatus.mockResolvedValue({ sources: [], runs: [] })
@@ -72,12 +78,11 @@ describe('local imports api', () => {
     expect(getImportStatus).not.toHaveBeenCalled()
   })
 
-  it('requires authentication for listing, starting imports and saved views', async () => {
+  it('requires authentication for listing and starting imports', async () => {
     mockAppSession(false)
     const { default: app } = await import('@/app')
     for (const path of [
       '/api/v1/imports',
-      '/api/v1/imports/saved-views',
       '/api/v1/imports/formats',
       '/api/v1/imports/nfo-source',
       '/api/v1/scrape/jobs/activity',

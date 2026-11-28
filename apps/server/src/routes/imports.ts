@@ -5,7 +5,6 @@ import {
   ImportRunSchema,
   ImportStatusSchema,
   ImportStatusQuerySchema,
-  SavedViewSchema,
   StartImportSchema,
   FileImportSchema,
   FileImportFormatSchema,
@@ -24,11 +23,7 @@ import {
 } from '@/lib/openapi'
 import { generateJsonResponse } from '@/lib/response'
 import { authMiddleware } from '@/middlewares/auth'
-import {
-  getImportStatus,
-  listSavedViews,
-  startLibraryImport,
-} from '@/services/imports'
+import { getImportStatus, startLibraryImport } from '@/services/imports'
 import {
   listFileImportFormats,
   previewFileImport,
@@ -270,25 +265,6 @@ const app: OpenAPIHono<AppEnv> = createOpenAPIApp()
         ),
         202,
       ),
-  )
-  .openapi(
-    createRoute({
-      method: 'get',
-      path: '/saved-views',
-      middleware: [authMiddleware()],
-      responses: {
-        200: {
-          description: 'Imported smart playlists',
-          content: {
-            'application/json': {
-              schema: createResponseSchema(z.array(SavedViewSchema)),
-            },
-          },
-        },
-        401: jsonErrorResponse('Unauthorized'),
-      },
-    }),
-    async (c) => generateJsonResponse(c, await listSavedViews(), 200),
   )
 
 export default app

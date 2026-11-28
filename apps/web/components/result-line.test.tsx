@@ -37,6 +37,22 @@ test('the result line is a tick, the text, then Open playlist, Undo and Dismiss'
   assert.match(html, /aria-label="Dismiss"/)
 })
 
+test('a follow-up page is a link in the button style, before Undo', () => {
+  const html = renderToStaticMarkup(
+    <ResultLineBar
+      text="Saved smart playlist “Ambient”."
+      undone={false}
+      follow={{ label: 'Playlists', href: '/playlists?mediaType=track' }}
+      undo={async () => undefined}
+      onDismiss={unexpected}
+    />,
+  )
+  assert.match(
+    html,
+    /<a class="ds-btn"[^>]*href="\/playlists\?mediaType=track"[^>]*>Playlists<\/a><button[^>]*>Undo<\/button>/,
+  )
+})
+
 test('after Undo the line starts Undone:, with the history mark and Dismiss only', () => {
   const html = renderToStaticMarkup(
     <ResultLineBar

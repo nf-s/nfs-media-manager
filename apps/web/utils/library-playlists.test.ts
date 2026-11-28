@@ -26,6 +26,7 @@ import {
   createButtonLabel,
   createdResultText,
   duplicateEvidence,
+  fetchAllLibraryPlaylists,
   duplicatesLine,
   duplicatesMore,
   itemSubject,
@@ -394,4 +395,55 @@ test('a whole-result selection at the Outside scope, or with a failed count, say
     'Count timed out',
   )
   assert.equal(matchingBlocked({ outside: false, error: null }), null)
+})
+
+test('every playlist of a library is read page by page until none remain', async (t) => {
+  const rows = Array.from({ length: 230 }, (_, index) => ({
+    id: `smart-${index + 1}`,
+    library: 'albums',
+    type: 'smart',
+    name: `Saved view ${String(index + 1).padStart(3, '0')}`,
+    entryCount: null,
+    view: { sortBy: 'dateAdded', direction: 'desc' },
+    updatedAt: '2026-11-28T00:00:00.000Z',
+  }))
+  const requests: URLSearchParams[] = []
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+    const params = new URL(String(input)).searchParams
+    requests.push(params)
+    const page = Number(params.get('page'))
+    const size = Number(params.get('size'))
+    const slice = rows.slice((page - 1) * size, page * size + 1)
+    return Response.json({
+      statusCode: 200,
+      message: 'OK',
+      data: {
+        items: slice.slice(0, size),
+        page,
+        size,
+        hasMore: slice.length > size,
+      },
+    })
+  })
+  const all = await fetchAllLibraryPlaylists('http://api.test', {
+    library: 'albums',
+    type: 'smart',
+  })
+  assert.deepEqual(
+    all.map((row) => row.name),
+    rows.map((row) => row.name),
+  )
+  assert.deepEqual(
+    requests.map((params) => [
+      params.get('library'),
+      params.get('type'),
+      params.get('page'),
+      params.get('size'),
+    ]),
+    [
+      ['albums', 'smart', '1', '100'],
+      ['albums', 'smart', '2', '100'],
+      ['albums', 'smart', '3', '100'],
+    ],
+  )
 })

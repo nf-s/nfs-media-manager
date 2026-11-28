@@ -167,7 +167,12 @@ export function PlaylistNamePopover({
   const panel = useRef<HTMLDivElement>(null)
   const [host, setHost] = useState<HTMLElement | null>(null)
   const [open, setOpen] = useState(false)
-  useEffect(() => setHost(document.body), [])
+  // Inside a modal drawer the popover stays in the drawer, which keeps the
+  // rest of the page inert.
+  useEffect(
+    () => setHost(anchor.current?.closest('dialog') ?? document.body),
+    [anchor],
+  )
   useEffect(() => {
     if (host && showOnMount) panel.current?.showPopover()
   }, [host, showOnMount])

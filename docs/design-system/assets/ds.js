@@ -800,6 +800,26 @@
     return `<footer class="ds-dock"><div class="ds-dock-now">${artBox(ALBUMS[0])}<div class="ds-row-main"><a class="ds-row-title" href="#">Sodium Glow</a><span class="ds-row-by">Mira Kestrel</span></div>${btn('', { icon: 'more', variant: 'ghost', aria: 'More actions for Sodium Glow', title: 'More actions', menu: true })}</div><div class="ds-dock-transport"><div class="ds-dock-buttons">${ghost('shuffle', 'Shuffle')}${ghost('prev', 'Previous')}<button type="button" class="ds-dock-toggle" aria-label="Pause">${icon('pause', { size: 'sm' })}</button>${ghost('next', 'Next')}${ghost('repeat', 'Repeat')}</div><div class="ds-dock-scrub"><span>1:24</span>${meter(34)}<span>4:10</span></div></div><div class="ds-dock-tools">${device}${ghost('queue', 'Queue')}</div></footer>`
   }
 
+  /* An open saved view's name, then "Changed" while the view differs */
+  const viewName = (name, changed) =>
+    `<span class="ds-view-name"><span title="${esc(name)}">${esc(name)}</span>${changed ? '<span class="ds-muted">Changed</span>' : ''}</span>`
+
+  /* The view in the rail: the open smart playlist (o.name, o.changed), the
+     active filters (o.chips: [label, mode]) and the actions on the view
+     (o.actions: buttons). */
+  const railView = (o = {}) => {
+    const name = o.name
+      ? `<div class="ds-rail-label">Smart playlist</div><div class="ds-rail-view">${viewName(o.name, o.changed)}</div>`
+      : ''
+    const chips = o.chips?.length
+      ? `<div class="ds-rail-label">Filters</div><div class="ds-rail-chips">${o.chips.map(([label, mode]) => pill(label, { mode, remove: true })).join('')}</div>`
+      : ''
+    const actions = o.actions
+      ? `<div class="ds-rail-actions">${o.actions}</div>`
+      : ''
+    return `${name}${chips}${actions}`
+  }
+
   function shell(o) {
     const libraries = ['Albums', 'Tracks', 'Artists', 'Films', 'Subscriptions']
     const ordered = [o.library, ...libraries.filter((l) => l !== o.library)]
@@ -819,9 +839,7 @@
         current: o.current === 'Providers',
       },
     ]
-    const chips = o.chips
-      ? `<div class="ds-rail-label">Filters</div><div class="ds-rail-chips">${o.chips.map(([label, mode]) => pill(label, { mode, remove: true })).join('')}</div>`
-      : ''
+    const chips = railView({ chips: o.chips, ...o.view })
     return `<div class="ds-shell"><aside class="ds-rail">${select(ordered, { label: 'Library' }).replace('ds-select', 'ds-select ds-library')}${o.nav.map(navItem).join('')}<div class="ds-rail-label">System</div>${system.map(navItem).join('')}${chips}<div class="ds-rail-foot">${navItem({ label: 'Account', icon: 'user' })}</div></aside><section class="ds-main">${o.main}</section>${dock(o.dock)}</div>`
   }
 
@@ -1845,6 +1863,8 @@
     filterLine,
     toolbar,
     filtersDrawer,
+    viewName,
+    railView,
     checkRow,
     tagLocation,
     table,

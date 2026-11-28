@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FilmImportPreviewSchema,
-  normalizeSavedView,
+  convertSavedView,
   StartImportSchema,
   SavedViewSchema,
 } from '../src/imports'
@@ -90,7 +90,7 @@ describe('local imports and saved views', () => {
   })
 
   it('accepts a legacy playlist without a sort and removes repeated filters', () => {
-    const view = normalizeSavedView({
+    const view = convertSavedView({
       name: 'House',
       filters: [
         { field: 'genres', value: 'house' },
@@ -100,17 +100,17 @@ describe('local imports and saved views', () => {
       ],
       limit: 100,
     })
-    expect(view.sortBy).toBe('dateAdded')
-    expect(view.direction).toBe('desc')
-    expect(view.filters).toEqual([
+    expect(view?.sortBy).toBe('dateAdded')
+    expect(view?.direction).toBe('desc')
+    expect(view?.filters).toEqual([
       { field: 'genre', value: 'house', mode: 'any' },
       { field: 'genre', value: 'classical', mode: 'exclude' },
     ])
-    expect(view.ranges).toEqual([])
+    expect(view?.ranges).toEqual([])
   })
 
   it('preserves required filters, date aliases, ranges, direction and limits', () => {
-    const view = normalizeSavedView({
+    const view = convertSavedView({
       name: 'Recent',
       filters: [
         { field: 'artists', value: 'Artist', intersection: true },

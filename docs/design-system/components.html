@@ -2060,12 +2060,57 @@
               g.spec(
                 `<div style="width:196px;background:var(--ds-page);padding:8px;border-radius:8px;display:grid;gap:2px">${D.libraryNav('Browse').map(D.navItem).join('')}${D.navItem({ label: 'Jobs', icon: 'activity', count: 3, tone: 'attention' })}${D.navItem({ label: 'Providers', icon: 'layers', count: 1, tone: 'danger' })}</div>`,
               ) +
+              g.sub('The view in the rail') +
+              `<div class="g-cols">${[
+                [
+                  'Filters: Save as smart playlist',
+                  D.railView({
+                    chips: [['Ambient', 'any']],
+                    actions: btn('Save as smart playlist', {
+                      size: 'xs',
+                      icon: 'listMusic',
+                    }),
+                  }),
+                ],
+                [
+                  'Open smart playlist',
+                  D.railView({
+                    name: 'Ambient',
+                    chips: [['Ambient', 'any']],
+                    actions: btn('Close', { size: 'xs', variant: 'ghost' }),
+                  }),
+                ],
+                [
+                  'Changed',
+                  D.railView({
+                    name: 'Ambient',
+                    changed: true,
+                    chips: [
+                      ['Ambient', 'any'],
+                      ['Indie Folk', 'any'],
+                    ],
+                    actions: `${btn('Update', { size: 'xs', variant: 'primary' })}${btn('Save as new', { size: 'xs' })}${btn('Close', { size: 'xs', variant: 'ghost' })}`,
+                  }),
+                ],
+              ]
+                .map(([cap, body]) =>
+                  g.spec(
+                    `<div style="width:196px;background:var(--ds-page);padding:0 0 12px;border-radius:8px;display:grid;gap:2px">${body}</div><div class="g-cap">${cap}</div>`,
+                  ),
+                )
+                .join('')}</div>` +
+              g.spec(
+                `<div style="width:343px;display:flex;flex-wrap:wrap;align-items:center;gap:6px">${D.viewName('Ambient', true)}${D.pill('Ambient', { mode: 'any', remove: true })}${D.pill('Indie Folk', { mode: 'any', remove: true })}${btn('Update', { size: 'xs', variant: 'primary' })}${btn('Save as new', { size: 'xs' })}${btn('Close', { size: 'xs', variant: 'ghost' })}</div><div class="g-cap">Phone: the filter row above the results</div>`,
+              ) +
               g.spec(
                 `<div style="min-width:760px"><div style="background:var(--ds-page);padding:0 8px 8px 0;border-radius:12px">${D.dock()}</div><div class="g-cap">Playing</div><div style="background:var(--ds-page);padding:0 8px 8px 0;border-radius:12px;margin-top:12px">${D.dock({ needsDevice: true })}</div><div class="g-cap">No device: the message and its action are inside the dock</div></div>`,
                 { style: 'overflow-x:auto' },
               ) +
               g.rules([
                 '<b>Rail.</b> Jobs and Providers carry a count when something is running, waiting or failed, so their state is visible from every page. On a phone the count sits on the corner of the tab, and the Jobs count opens Activity above the tab bar.',
+                '<b>The view in the rail.</b> Browse puts its active filters under <b>Filters</b>, then the actions on the view (<code>RailActions</code>, <code>ds-rail-actions</code>, extra-small buttons): <b>Save as smart playlist</b> while the view has a search or a filter, range or listening condition.',
+                '<b>An open smart playlist</b> is headed <b>Smart playlist</b> with its name above the filters (<code>RailView</code> and <code>ViewName</code>: <code>ds-rail-view</code>, <code>ds-view-name</code>), cut with an ellipsis. While the view differs from the saved one the name is followed by “Changed” in the muted colour and the actions are <b>Update</b> (primary) and <b>Save as new</b>; <b>Close</b>, a ghost button, always ends them and clears the view.',
+                '<b>On a phone</b> the name, the filters and the same buttons share the filter row above the results.',
                 '<b>Dock.</b> Messages about playback belong in the dock beside the device button. The floating banner above the dock, which covers the last row of every list, goes away.',
               ]),
           },

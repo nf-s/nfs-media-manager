@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { removeSpotifyAudioFeatures } from '../src/audio-features'
 import { albumBrowseFields, BrowseKeySchema } from '../src/browse'
-import { normalizeSavedView } from '../src/imports'
+import { convertSavedView } from '../src/imports'
 
 describe('discontinued Spotify audio features', () => {
   it('removes stored aggregates and nested feature payloads without mutating input', () => {
@@ -72,7 +72,7 @@ describe('discontinued Spotify audio features', () => {
 
   it('retires filters and sorts while preserving other definition values', () => {
     expect(
-      normalizeSavedView({
+      convertSavedView({
         name: 'Saved',
         destination: 'unchanged',
         sort: ['energy', 'ASC'],

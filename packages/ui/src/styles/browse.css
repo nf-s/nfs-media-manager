@@ -122,6 +122,10 @@
 .browse-view-options {
   justify-items: start;
 }
+/* A pair of buttons in a drawer form ends the row, as in a popover form */
+.browse-form > .ds-actions {
+  justify-content: flex-end;
+}
 .browse-form-split {
   padding-top: var(--ds-5);
   border-top: 1px solid var(--ds-line-soft);

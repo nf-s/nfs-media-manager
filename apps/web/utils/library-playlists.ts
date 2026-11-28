@@ -29,6 +29,8 @@ import {
   LibraryPlaylistMembershipsSchema,
   LibraryPlaylistNameSchema,
   LibraryPlaylistPageSchema,
+  LIBRARY_PLAYLIST_PAGE_MAX,
+  UpdateLibraryPlaylistSchema,
   type CreateLibraryPlaylist,
   type LibraryPlaylistDuplicates,
   type LibraryPlaylistEntryAddition,
@@ -36,6 +38,7 @@ import {
   type LibraryPlaylistEntryRemovalInput,
   type LibraryPlaylistLibrary,
   type LibraryPlaylistListQuery,
+  type LibraryPlaylistSummary,
   type LibraryPlaylistSelection,
   type LibraryPlaylistView,
 } from '@repo/schemas/library-playlists'
@@ -403,6 +406,28 @@ export function fetchLibraryPlaylistPage(
   )
 }
 
+/**
+ * Every playlist of one library that matches `query`, in name order: the
+ * PL-10 pages at their largest size, read until no more remain.
+ */
+export async function fetchAllLibraryPlaylists(
+  apiBaseUrl: string,
+  query: Omit<Partial<LibraryPlaylistListQuery>, 'page' | 'size' | 'itemId'> &
+    Pick<LibraryPlaylistListQuery, 'library'>,
+  signal?: AbortSignal,
+) {
+  const items: LibraryPlaylistSummary[] = []
+  for (let page = 1; ; page += 1) {
+    const result = await fetchLibraryPlaylistPage(
+      apiBaseUrl,
+      { ...query, page, size: LIBRARY_PLAYLIST_PAGE_MAX },
+      signal,
+    )
+    items.push(...result.items)
+    if (!result.hasMore) return items
+  }
+}
+
 /** PL-11: a new playlist, with what its selection added. */
 export function createLibraryPlaylist(
   apiBaseUrl: string,
@@ -590,6 +615,18 @@ export function renameLibraryPlaylist(
   return fetchApiData(apiBaseUrl, path(id), LibraryPlaylistDetailSchema, {
     method: 'PATCH',
     body: JSON.stringify({ name: LibraryPlaylistNameSchema.parse(name) }),
+  })
+}
+
+/** PL-11: replaces a smart playlist's view. */
+export function updateLibraryPlaylistView(
+  apiBaseUrl: string,
+  id: string,
+  view: LibraryPlaylistView,
+) {
+  return fetchApiData(apiBaseUrl, path(id), LibraryPlaylistDetailSchema, {
+    method: 'PATCH',
+    body: JSON.stringify(UpdateLibraryPlaylistSchema.parse({ view })),
   })
 }
 

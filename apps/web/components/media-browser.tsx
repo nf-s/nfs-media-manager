@@ -33,7 +33,6 @@ import {
 import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ListMusic } from 'lucide-react'
 import { normalizeTagName } from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
 import {
@@ -61,9 +60,7 @@ import {
   Rating,
 } from '@repo/ui/components/ds/pill'
 import { Notice, Skeleton, State } from '@repo/ui/components/ds/feedback'
-import { Select } from '@repo/ui/components/ds/toolbar'
 import { formatItemCount, formatRuntime } from '@repo/ui/lib/format'
-import { SavedViewSchema } from '@repo/schemas/imports'
 import {
   defaultListeningPeriod,
   type ListeningFilter,
@@ -140,7 +137,6 @@ import {
 import { ListeningControls, ListeningFilterPills } from './listening-controls'
 import BrowseToolbar, { BrowseColumnsSection } from './browse-toolbar'
 import { LibraryScopePills } from './library-scope-controls'
-import { FilterPanelSection } from './browse-filter-panel'
 import { TagLocationSection } from './tag-location-section'
 import {
   BrowsePlaceholderRow,
@@ -199,9 +195,16 @@ import { libraryItemMore } from './item-more'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { ResultLineSlot } from './result-line'
 import {
+  SmartPlaylistActions,
+  SmartPlaylistName,
+  SmartPlaylistsSection,
+  useSmartPlaylistBrowse,
+} from './smart-playlist-controls'
+import {
   matchingBlocked,
   matchingCount,
   matchingSubject,
+  playlistLibraryForView,
   selectionSubject,
   suggestedPlaylistName,
 } from '@/utils/library-playlists'
@@ -510,16 +513,6 @@ function MediaBrowse({
   const editions =
     mediaType === 'album' && searchParams.get('editions') === 'true'
   const limitResults = searchParams.get('limitResults')
-  const savedViews = useQuery({
-    queryKey: ['saved-views'],
-    enabled: mediaType === 'album',
-    queryFn: () =>
-      fetchApiData(
-        apiBaseUrl,
-        '/api/v1/imports/saved-views',
-        z.array(SavedViewSchema),
-      ),
-  })
   const sortBy = canonicalBrowseKey(
     searchParams.get('sortBy') ??
       (mediaType === 'album' ? 'dateAdded' : 'releaseDate'),
@@ -566,6 +559,13 @@ function MediaBrowse({
     view === 'table' && columnKeys.includes('provider'),
   )
   const sortField = fields.find((field) => field.key === sortBy)
+  const smart = useSmartPlaylistBrowse({
+    library: playlistLibraryForView(mediaType),
+    host,
+    order: { sortBy, direction },
+    fields,
+    suggestedName: suggestedPlaylistName(filters, q),
+  })
   // Description is a long text field; it is offered last, not first.
   const listedFields = [
     ...fields.filter((field) => field.key !== 'summary'),
@@ -1514,6 +1514,7 @@ function MediaBrowse({
           }
           filters={
             <>
+              {smart && <SmartPlaylistsSection smart={smart} />}
               {view === 'table' && (
                 <BrowseColumnsSection>
                   <ColumnChoices
@@ -1552,75 +1553,6 @@ function MediaBrowse({
                     setParams({ tagLevels: formatTagLevelsParam(next) })
                   }
                 />
-              )}
-              {mediaType === 'album' && (
-                <FilterPanelSection
-                  title="Smart playlists"
-                  icon={
-                    <ListMusic className="ds-i" data-size="sm" aria-hidden />
-                  }
-                >
-                  <div className="browse-form">
-                    <label className="ds-field">
-                      <span className="ds-label">Saved view</span>
-                      <Select
-                        aria-label="Smart playlist"
-                        value=""
-                        onChange={(event) => {
-                          const view = savedViews.data?.find(
-                            (view) => view.name === event.target.value,
-                          )
-                          if (view)
-                            setParams({
-                              ...(scope ? {} : clearCreatorScope),
-                              filters: JSON.stringify(view.filters),
-                              ranges: JSON.stringify(view.ranges),
-                              sortBy: view.sortBy,
-                              direction: view.direction,
-                              limitResults: view.limit
-                                ? String(view.limit)
-                                : null,
-                              q: null,
-                              listening: view.listening
-                                ? JSON.stringify(view.listening)
-                                : null,
-                              listeningSort: view.listeningSort
-                                ? JSON.stringify(view.listeningSort)
-                                : null,
-                              tagLevels: formatTagLevelsParam(view.tagLevels),
-                            })
-                        }}
-                      >
-                        <option value="">
-                          {savedViews.isPending
-                            ? 'Loading...'
-                            : 'Choose a saved view'}
-                        </option>
-                        {savedViews.data?.map((view) => (
-                          <option key={view.name} value={view.name}>
-                            {view.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </label>
-                    {savedViews.isError && (
-                      <Notice
-                        tone="danger"
-                        action={
-                          <ReadButton
-                            type="button"
-                            size="xs"
-                            read={() => savedViews.refetch()}
-                          >
-                            Retry
-                          </ReadButton>
-                        }
-                      >
-                        Saved views unavailable.
-                      </Notice>
-                    )}
-                  </div>
-                </FilterPanelSection>
               )}
               <RangeEditor
                 presentation="panel"
@@ -1708,22 +1640,30 @@ function MediaBrowse({
           compact={embedded}
           activeFilters={activeFilters}
         />
-        {railSlot && activeFilters
+        {railSlot && (activeFilters || smart?.open)
           ? createPortal(
               <>
-                <h2 className="ds-rail-label">Filters</h2>
-                <div className="ds-rail-chips">{activeFilters}</div>
+                {smart && <SmartPlaylistName smart={smart} place="rail" />}
+                {activeFilters && (
+                  <>
+                    <h2 className="ds-rail-label">Filters</h2>
+                    <div className="ds-rail-chips">{activeFilters}</div>
+                  </>
+                )}
+                {smart && <SmartPlaylistActions smart={smart} place="rail" />}
               </>,
               railSlot,
             )
-          : activeFilters &&
+          : (activeFilters || smart?.open) &&
             !embedded && (
               <div
                 className="ds-strip"
                 role="group"
                 aria-label="Active filters"
               >
+                {smart && <SmartPlaylistName smart={smart} place="row" />}
                 {activeFilters}
+                {smart && <SmartPlaylistActions smart={smart} place="row" />}
               </div>
             )}
         {beforeResults}

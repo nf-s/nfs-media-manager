@@ -2601,6 +2601,30 @@ a:focus-visible > .ds-logo[data-none] {
 .ds-rail-chips .ds-pill:not([data-mode]) {
   background: var(--ds-surface);
 }
+/* An open saved view: its name, then "Changed" while the view differs */
+.ds-view-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-3);
+  min-width: 0;
+  font-weight: 600;
+}
+.ds-view-name > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-rail-view {
+  padding: 0 var(--ds-4);
+}
+/* Actions on the view under the rail's filters: Save, Update, Close */
+.ds-rail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-2);
+  padding: var(--ds-3) var(--ds-4) 0;
+}
 .ds-rail-foot {
   display: grid;
   gap: var(--ds-1);
