@@ -5,7 +5,23 @@ export {
   createDeviceLibrarySource,
   type DeviceSourceOptions,
 } from './device/source'
+export {
+  createFallbackLibrarySource,
+  type FallbackSourceOptions,
+  type LibraryReadReport,
+} from './fallback'
 export { foldText, globContains } from './fold'
+export { LIBRARY_API_PREFIX, libraryReadPath } from './paths'
+export {
+  libraryResponseSchemas,
+  librarySourceFrom,
+  readSource,
+  type LibraryData,
+  type LibraryQueries,
+  type LibraryReader,
+} from './reads'
+export { createRemoteLibrarySource, type RemoteTransport } from './remote'
+export { resolveLibraryRead } from './resolve'
 export {
   ITEM_ENTITIES,
   STORE_SCHEMA,
