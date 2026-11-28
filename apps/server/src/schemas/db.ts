@@ -1,6 +1,7 @@
 import { relations, sql } from 'drizzle-orm'
 import {
   bigint,
+  bigserial,
   boolean,
   check,
   customType,
@@ -9,6 +10,7 @@ import {
   integer,
   jsonb,
   pgEnum,
+  pgSequence,
   pgTable,
   primaryKey,
   text,
@@ -403,6 +405,68 @@ export const albumFacetValue = pgTable(
     count: integer('count').notNull(),
   },
   (table) => [primaryKey({ columns: [table.field, table.rank] })],
+)
+
+/** Numbers the device feed; every write takes the next value under one lock. */
+export const deviceRowSeq = pgSequence('device_row_seq')
+
+/**
+ * One published row of the device feed (docs/requirements/device-store.md).
+ * The migration gives `id` the "C" collation, which Drizzle cannot express,
+ * so ID ranges compare by code point as the renderer lists them.
+ */
+export const deviceRow = pgTable(
+  'device_row',
+  {
+    entity: text('entity').notNull(),
+    id: text('id').notNull(),
+    payload: jsonb('payload').$type<JsonValue>(),
+    hash: text('hash'),
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    deleted: boolean('deleted').default(false).notNull(),
+    size: integer('size').default(0).notNull(),
+    renderedAt: timestamp('rendered_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.entity, table.id] }),
+    uniqueIndex('device_row_seq_uidx').on(table.seq),
+    index('device_row_live_entity_seq_idx')
+      .on(table.entity, table.seq)
+      .where(sql`not ${table.deleted}`),
+    index('device_row_tombstone_rendered_idx')
+      .on(table.renderedAt)
+      .where(sql`${table.deleted}`),
+  ],
+)
+
+/**
+ * Rows to render again. Triggers append marks without a uniqueness check, so
+ * writers never wait on each other; the render task removes the marks it read.
+ */
+export const deviceDirty = pgTable('device_dirty', {
+  key: bigserial('key', { mode: 'number' }).primaryKey(),
+  entity: text('entity').notNull(),
+  id: text('id').notNull(),
+})
+
+export const deviceFeedState = pgTable(
+  'device_feed_state',
+  {
+    singleton: boolean('singleton').default(true).primaryKey(),
+    epoch: text('epoch').notNull(),
+    rowVersion: integer('row_version').notNull(),
+    minSeq: bigint('min_seq', { mode: 'number' }).default(0).notNull(),
+    ready: boolean('ready').default(false).notNull(),
+    sweepEntity: text('sweep_entity'),
+    sweepAfter: text('sweep_after'),
+    sweptAt: timestamp('swept_at', { withTimezone: true }),
+    rebuiltAt: timestamp('rebuilt_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [check('device_feed_state_singleton', sql`${table.singleton}`)],
 )
 
 export const artist = pgTable(

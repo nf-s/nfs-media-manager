@@ -561,6 +561,13 @@
       "when": 1795856413805,
       "tag": "0079_device_pairing",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1795856463603,
+      "tag": "0080_device_feed",
+      "breakpoints": true
     }
   ]
 }

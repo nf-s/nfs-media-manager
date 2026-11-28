@@ -6,6 +6,7 @@ import { db } from '@/lib/db'
 import { jobActivityEnding } from '@/lib/job-stage-history'
 import { scrapeJob, scrapeJobItem, scrapeJobLog } from '@/schemas/db'
 import { processQueuedJobs } from '@/services/jobs'
+import { refreshDeviceFeedForMaintenance } from '@/services/device-feed'
 import {
   refreshAlbumFacetVocabularyForMaintenance,
   refreshRecordingBrowseOrderForMaintenance,
@@ -230,6 +231,10 @@ export async function startJobWorker({
           }),
           refreshTrackDuplicatesForMaintenance().catch(() => {
             console.error('Possible duplicates maintenance failed.')
+            return false
+          }),
+          refreshDeviceFeedForMaintenance().catch(() => {
+            console.error('Device feed maintenance failed.')
             return false
           }),
         ]).finally(() => {

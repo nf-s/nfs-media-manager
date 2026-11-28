@@ -28,8 +28,18 @@ A phone or desktop app signs in by pairing instead of copying a key.
 
 Device keys appear in the User page key list and are revoked there or with `DELETE /api/v1/user/api-keys/{id}`, like any key. Revocation stops the device's requests immediately; pair again to restore access.
 
+### Device feed
+
+A device keeps a copy of the library by reading the feed described in [device store](requirements/device-store.md). The three routes accept an owner session or any API key, including a device key, and use the request and response schemas in `packages/schemas/src/device.ts`.
+
+- `GET /api/v1/device/state` returns `ready` (false until the first complete build), `epoch`, `seq` (the highest committed sequence number), `minSeq` (the oldest sequence from which tombstones are held) and `rowVersion`.
+- `GET /api/v1/device/snapshot?epoch=&entity=&after=&limit=` returns live rows of one entity with a sequence above `after`, in sequence order, as `{ reset: false, rows, seq, hasMore }`. Pass the returned `seq` as the next `after`.
+- `GET /api/v1/device/changes?epoch=&since=&limit=` returns rows and tombstones of every entity with a sequence above `since`, in sequence order, as `{ reset: false, rows, seq, hasMore, pending }`. Marked rows are rendered first for up to two seconds; `pending` says marks remain, so more rows can follow.
+
+`limit` is 1 to 2,000 rows (500 by default), and a page also stops before 4 MB of payload. A changed row returns with a new sequence number, so a row can appear twice in one snapshot; apply rows as upserts by entity and ID. Fill a device by reading the state, paging each entity's snapshot, then reading changes from the state's `seq`. Another `epoch`, a feed being rebuilt for a new `rowVersion`, or a `since` below `minSeq` answers `{ reset: true }`: start again from the state. Tombstones are kept for 90 days.
+
 A native client that sends no `Origin`, `Referer` or `Sec-Fetch-*` header needs no further configuration. An app that runs in a web view on its own origin needs that origin in `DEVICE_ALLOWED_ORIGINS`, a comma-separated list without spaces (empty by default). For those origins only, routes under `/api/v1/device` answer CORS preflights for `GET`, `HEAD` and `POST`, allow the `Authorization` and `Content-Type` headers, and do not allow credentials, so cookies are never sent. The exchange accepts a request from those origins; every other mutation keeps the usual origin check, so other key-authenticated writes must come from a trusted origin or omit browser origin headers. With the setting empty, responses are unchanged.
 
 ## Implementation
 
-API keys reuse the existing `apikey` table. Only a SHA-256 hash of each randomly generated key is stored, with a short display prefix. Migration `0079_device_pairing` adds the key `kind` (existing keys are `api`) and the `device_pairing` table of code hashes. Browser mutations retain their origin checks; authenticated non-browser requests may omit Origin. An explicit untrusted browser origin remains rejected.
+API keys reuse the existing `apikey` table. Only a SHA-256 hash of each randomly generated key is stored, with a short display prefix. Migration `0079_device_pairing` adds the key `kind` (existing keys are `api`) and the `device_pairing` table of code hashes. Migration `0080_device_feed` adds the feed tables described in the [application architecture](handoff.md#device-feed). Browser mutations retain their origin checks; authenticated non-browser requests may omit Origin. An explicit untrusted browser origin remains rejected.

@@ -121,6 +121,7 @@ type RequestEvent =
         | 'database.album-facet-maintenance'
         | 'database.recording-order-maintenance'
         | 'database.duplicate-maintenance'
+        | 'database.device-feed-maintenance'
       source?: 'scheduled' | 'browse'
       outcome: 'published' | 'skipped' | 'failed'
       durationMs: number

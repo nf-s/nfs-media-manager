@@ -6,6 +6,7 @@ import {
   refreshRecordingBrowseOrderForMaintenance,
   refreshTrackFacetVocabularyForMaintenance,
 } from '@/services/browse'
+import { refreshDeviceFeedForMaintenance } from '@/services/device-feed'
 import type { RecordingOrderMaintenanceSource } from '@/services/recording-groups'
 import { refreshTrackDuplicatesForMaintenance } from '@/services/track-duplicates'
 
@@ -30,6 +31,7 @@ async function refreshCache(
     | { event: 'database.facet-maintenance' }
     | { event: 'database.album-facet-maintenance' }
     | { event: 'database.duplicate-maintenance' }
+    | { event: 'database.device-feed-maintenance' }
     | {
         event: 'database.recording-order-maintenance'
         source: RecordingOrderMaintenanceSource
@@ -79,6 +81,10 @@ export async function runDatabaseMaintenance(scheduledTime: number) {
       refreshCache(
         { event: 'database.duplicate-maintenance' },
         refreshTrackDuplicatesForMaintenance,
+      ),
+    () =>
+      refreshCache({ event: 'database.device-feed-maintenance' }, () =>
+        refreshDeviceFeedForMaintenance(),
       ),
   ]
   let firstFailure: { reason: unknown } | undefined
