@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlbumDetailSchema } from '@repo/schemas/media'
 import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
@@ -103,11 +104,20 @@ function UnavailablePlayButton({
 export function AlbumInlinePlayButton({
   album,
   source,
+  afterQueue,
 }: {
   album: AlbumSource
   source?: PlaybackSourceFactory
+  afterQueue?: ReactNode
 }) {
-  return <AlbumPair album={album} source={source} place="row" />
+  return (
+    <AlbumPair
+      album={album}
+      source={source}
+      place="row"
+      afterQueue={afterQueue}
+    />
+  )
 }
 
 /** Related albums expose playback without fetching each album on render. */
@@ -280,10 +290,12 @@ function AlbumPair({
   album,
   source,
   place,
+  afterQueue,
 }: {
   album: AlbumSource
   source?: PlaybackSourceFactory
   place: 'tile' | 'row'
+  afterQueue?: ReactNode
 }) {
   const view = usePlaybackForPlayButton()
   const playback = useAlbumPlayback(album)
@@ -292,6 +304,7 @@ function AlbumPair({
       <PlayPair
         place={place}
         title={album.title}
+        afterQueue={afterQueue}
         disabled
         disabledReason={unavailableReason(albumPlayable(album) !== null, view)}
         onPlay={() => undefined}
@@ -303,6 +316,7 @@ function AlbumPair({
     <PlayPair
       place={place}
       title={album.title}
+      afterQueue={afterQueue}
       playing={playing}
       {...buttons}
       onPlay={() => play(source)}
@@ -315,11 +329,20 @@ function AlbumPair({
 export function TilePlayControls({
   album,
   source,
+  afterQueue,
 }: {
   album: AlbumSource
   source?: PlaybackSourceFactory
+  afterQueue?: ReactNode
 }) {
-  return <AlbumPair album={album} source={source} place="tile" />
+  return (
+    <AlbumPair
+      album={album}
+      source={source}
+      place="tile"
+      afterQueue={afterQueue}
+    />
+  )
 }
 
 /** Play and queue in the album drawer's heading. */
@@ -441,11 +464,13 @@ export function LibraryTrackPlayButton({
   position,
   source,
   place = 'row',
+  afterQueue,
 }: {
   track: LibraryTrackSource
   position?: number
   source?: PlaybackSourceInput
   place?: 'tile' | 'row'
+  afterQueue?: ReactNode
 }) {
   const view = usePlaybackForPlayButton()
   const playback = useLibraryTrackPlayback(track)
@@ -456,6 +481,7 @@ export function LibraryTrackPlayButton({
         <PlayPair
           place={place}
           title={track.title}
+          afterQueue={afterQueue}
           disabled
           disabledReason={unavailableReason(
             libraryTrackPlayable(track) !== null,
@@ -473,6 +499,7 @@ export function LibraryTrackPlayButton({
       <PlayPair
         place={place}
         title={track.title}
+        afterQueue={afterQueue}
         playing={playing && !isDifferentPlaybackSource(view, source)}
         {...buttons}
         onPlay={() => play(source)}

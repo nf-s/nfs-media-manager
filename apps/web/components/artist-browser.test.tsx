@@ -158,6 +158,38 @@ test('Artists grid uses clean round artwork cards with a meta line and tags', as
   assert.match(sorted, /<span>Added 2026-03-0[12]<\/span>/)
 })
 
+test('Artists Browse shows the selected provider shortcut in Grid, List and Table', async () => {
+  const item = ArtistSummarySchema.parse({
+    ...artist,
+    links: [
+      {
+        provider: 'musicbrainz',
+        label: 'MusicBrainz',
+        url: 'https://musicbrainz.org/artist/00000000-0000-4000-8000-000000000001',
+      },
+      {
+        provider: 'lastfm',
+        label: 'Last.fm',
+        url: 'https://www.last.fm/music/Example+Artist',
+      },
+    ],
+  })
+  const filters = JSON.stringify([
+    { field: 'provider', value: 'MusicBrainz', mode: 'required' },
+  ])
+  for (const view of ['grid', 'list', 'table']) {
+    const search = new URLSearchParams({ view, filters }).toString()
+    const html = await render(search, 1, undefined, item)
+    assert.match(
+      html,
+      /<a href="https:\/\/musicbrainz\.org\/artist\/00000000-0000-4000-8000-000000000001" target="_blank" rel="noopener noreferrer"[^>]+aria-label="Open on MusicBrainz: Example Artist \(opens in a new tab\)"/,
+    )
+    assert.doesNotMatch(html, /https:\/\/www\.last\.fm/)
+  }
+  const unfiltered = await render('', 1, undefined, item)
+  assert.doesNotMatch(unfiltered, /Open on MusicBrainz/)
+})
+
 test('an artist without a scrobble count shows the empty value, not 0 scrobbles', async () => {
   const unknown = ArtistSummarySchema.parse({
     ...artist,

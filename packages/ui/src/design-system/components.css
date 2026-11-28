@@ -258,7 +258,7 @@
   align-items: center;
   gap: var(--ds-1);
 }
-.ds-play button {
+.ds-play :is(button, a) {
   display: inline-grid;
   place-items: center;
   width: var(--ds-h-xs);
@@ -270,7 +270,7 @@
   color: var(--ds-ink-2);
   cursor: pointer;
 }
-.ds-play button:hover {
+.ds-play :is(button, a):hover {
   background: var(--ds-chip);
   color: var(--ds-ink);
 }
@@ -285,6 +285,9 @@
   position: absolute;
   right: var(--ds-3);
   bottom: var(--ds-3);
+  max-width: calc(100% - 2 * var(--ds-3));
+  flex-wrap: wrap;
+  justify-content: flex-end;
   padding: var(--ds-1);
   border-radius: var(--ds-r-pill);
   background: var(--ds-surface);
@@ -292,11 +295,17 @@
   opacity: 0;
   transition: opacity 0.12s;
 }
-.ds-play[data-place='tile'] button {
+.ds-play[data-place='tile'] :is(button, a) {
   width: 26px;
   height: 26px;
   border-radius: 50%;
   color: var(--ds-ink);
+}
+.ds-art[data-ratio='round'] .ds-play[data-place='tile'] {
+  right: 50%;
+  transform: translateX(50%);
+  max-width: 70%;
+  justify-content: center;
 }
 .ds-card:hover .ds-play[data-place='tile'],
 .ds-play[data-place='tile']:has([data-feedback]),

@@ -329,7 +329,7 @@ export function nextPageCursor(
   return cursor || null
 }
 
-const sharingUrl = (kind: 'album' | 'track', id: string) =>
+export const tidalSharingUrl = (kind: 'album' | 'track', id: string) =>
   `https://tidal.com/browse/${kind}/${id}`
 
 /** The album's or track's own TIDAL page. */
@@ -341,7 +341,7 @@ export function tidalUrl(
     (entry) => entry.meta?.type === 'TIDAL_SHARING',
   )?.href
   const expected = new RegExp(`^https://tidal\\.com/(?:browse/)?${kind}/\\d+`)
-  return link && expected.test(link) ? link : sharingUrl(kind, resource.id)
+  return link && expected.test(link) ? link : tidalSharingUrl(kind, resource.id)
 }
 
 /** What a library track keeps from a TIDAL track. */

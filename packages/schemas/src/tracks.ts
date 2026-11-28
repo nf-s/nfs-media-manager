@@ -13,6 +13,7 @@ import {
 import {
   CreatorIdSchema,
   DirectionSchema,
+  ExternalLinkSchema,
   PaginatedDataSchema,
   PaginationQuerySchema,
 } from './common'
@@ -200,6 +201,8 @@ export const TrackListItemSchema = z.object({
   spotifyMatch: TrackSpotifyMatchSchema,
   /** Providers with an ID for the track, Spotify among them when it has one. */
   providers: z.array(z.string()).default([]),
+  /** Item destinations for the active Provider filters in Browse. */
+  links: z.array(ExternalLinkSchema).optional(),
   spotifyUrl: z.string().url().nullable(),
   isrc: z.string().nullable(),
   scrobbles: z.number().int().nonnegative(),

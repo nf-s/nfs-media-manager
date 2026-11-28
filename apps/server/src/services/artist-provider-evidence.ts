@@ -2,6 +2,7 @@ import {
   ArtistIdentifierSourcePageSchema,
   ArtistProfileProviderSchema,
   type ArtistIdentifier,
+  type ArtistProfile,
   type ArtistProfileProvider,
   type ArtistProviderId,
   type ArtistProviderSnapshot,
@@ -378,6 +379,15 @@ export function identifierUrl(provider: ArtistProfileProvider, id: string) {
     case 'lastfm':
       return id.startsWith('https://') ? id : null
   }
+}
+
+/** A destination from a stored profile or its validated native artist ID. */
+export function artistProfileUrl(provider: string, profile: ArtistProfile) {
+  if (profile.url) return profile.url
+  const builtin = ArtistProfileProviderSchema.safeParse(provider)
+  if (!builtin.success || !profile.externalId) return null
+  const id = normalizeArtistProviderId(builtin.data, profile.externalId)
+  return id ? identifierUrl(builtin.data, id) : null
 }
 
 export async function listArtistIdentifiers(

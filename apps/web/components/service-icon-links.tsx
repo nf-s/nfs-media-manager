@@ -1,7 +1,9 @@
 'use client'
 
 import React from 'react'
+import { BrowseActions } from '@repo/ui/components/ds/play'
 import { ProviderMark } from '@repo/ui/components/ds/pill'
+import type { BrowseField } from '@repo/schemas/browse'
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
 import { safeRatingHref } from '../utils/provider-ratings'
 import { providerLogoUrl } from '../utils/provider-logos'
@@ -11,10 +13,12 @@ function ServiceAnchor({
   link,
   compact = false,
   itemTitle,
+  iconUrl,
 }: {
   link: AlbumListItem['links'][number]
   compact?: boolean
   itemTitle?: string
+  iconUrl?: string
 }) {
   const label = itemTitle
     ? `Open on ${link.label}: ${itemTitle}`
@@ -35,7 +39,7 @@ function ServiceAnchor({
     >
       <ProviderMark
         name={link.label}
-        src={providerLogoUrl(link.provider)}
+        src={providerLogoUrl(link.provider, iconUrl)}
         size={compact ? 'sm' : undefined}
         hidden
       />
@@ -74,6 +78,7 @@ const serviceSites = [
   { provider: 'metacritic', label: 'Metacritic', domains: ['metacritic.com'] },
   { provider: 'discogs', label: 'Discogs', domains: ['discogs.com'] },
   { provider: 'imdb', label: 'IMDb', domains: ['imdb.com'] },
+  { provider: 'mdblist', label: 'MDBList', domains: ['mdblist.com'] },
   { provider: 'tmdb', label: 'TMDb', domains: ['themoviedb.org'] },
   { provider: 'letterboxd', label: 'Letterboxd', domains: ['letterboxd.com'] },
   { provider: 'trakt', label: 'Trakt', domains: ['trakt.tv'] },
@@ -96,25 +101,85 @@ const serviceSites = [
  */
 export function serviceLinks(
   candidates: readonly AlbumListItem['links'][number][],
-  { hideSpotify = false }: { hideSpotify?: boolean } = {},
+  {
+    hideSpotify = false,
+    providers,
+  }: { hideSpotify?: boolean; providers?: readonly string[] } = {},
 ) {
+  const selected =
+    providers && new Set(providers.map((id) => providerSites[id] ?? id))
   const unique = new Map<string, AlbumListItem['links'][number]>()
   for (const link of candidates) {
     const url = safeRatingHref(link.url)
     if (!url) continue
-    const host = new URL(url).hostname
+    const { hostname: host, pathname } = new URL(url)
+    if (selected && pathname === '/') continue
     const service = serviceSites.find((site) =>
       site.domains.some(
         (domain) => host === domain || host.endsWith(`.${domain}`),
       ),
     )
-    const provider = service?.provider ?? link.provider
+    const explicit =
+      selected?.has(link.provider) &&
+      !serviceSites.some((site) => site.provider === link.provider)
+    const provider = explicit
+      ? link.provider
+      : (service?.provider ?? link.provider)
+    if (selected && (!selected.has(provider) || (!service && !explicit)))
+      continue
     if (hideSpotify && service?.provider === 'spotify') continue
-    const label = service?.label ?? link.label
-    const key = service ? `service:${service.provider}` : `host:${host}`
+    const label = explicit ? link.label : (service?.label ?? link.label)
+    const key = selected || service ? `service:${provider}` : `host:${host}`
     if (!unique.has(key)) unique.set(key, { ...link, provider, label, url })
   }
-  return [...unique.values()]
+  return selected
+    ? [...selected].flatMap((id) => unique.get(`service:${id}`) ?? [])
+    : [...unique.values()]
+}
+
+/** Browse filters name the adapter; the shortcut opens its public destination. */
+const providerSites: Readonly<Record<string, string>> = {
+  serply: 'rym',
+  omdb: 'imdb',
+  'imdb-ratings': 'imdb',
+  'imdb-watchlist': 'imdb',
+  'youtube-trailer': 'youtube',
+  mb: 'musicbrainz',
+  mc: 'metacritic',
+}
+
+export function FilteredProviderLinks({
+  providers,
+  links,
+  itemTitle,
+  place,
+  fields,
+}: {
+  providers: readonly string[]
+  links: AlbumListItem['links']
+  itemTitle: string
+  place?: 'tile' | 'row'
+  fields?: readonly BrowseField[]
+}) {
+  if (!providers.length) return null
+  const icons = serviceLinks(links, { providers }).map((link) => (
+    <ServiceAnchor
+      key={link.url}
+      link={link}
+      compact
+      itemTitle={itemTitle}
+      iconUrl={
+        fields?.find((field) => field.rating?.provider === link.provider)
+          ?.rating?.iconUrl
+      }
+    />
+  ))
+  if (!icons.length) return null
+  return place ? (
+    <BrowseActions place={place}>{icons}</BrowseActions>
+  ) : (
+    <>{icons}</>
+  )
 }
 
 export default function ServiceIconLinks({

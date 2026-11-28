@@ -255,6 +255,99 @@ describe('the Provider field on Tracks', () => {
     })
   })
 
+  it('hydrates item links only for positively selected providers with public track destinations', async () => {
+    await fixture.insert(schema.providerReference).values([
+      {
+        id: 'link-only-wrong-tidal',
+        mediaItemId: 'track-1',
+        provider: 'tidal',
+        referenceType: 'track',
+        externalId: '1000002',
+        isPrimary: true,
+        metadata: { rejected: true },
+      },
+      {
+        id: 'link-only-unsafe-tidal',
+        mediaItemId: 'track-1',
+        provider: 'tidal',
+        referenceType: 'track',
+        externalId: 'unsafe/non-id',
+        isPrimary: true,
+        metadata: { url: 'https://example.test/track/placeholder' },
+      },
+      {
+        id: 'link-only-lastfm',
+        mediaItemId: 'track-1',
+        provider: 'lastfm',
+        referenceType: 'track-url',
+        externalId:
+          'https://www.last.fm/music/Fixture+Artist/_/Alpha+fixture?tracking=example',
+      },
+      {
+        id: 'link-only-musicbrainz',
+        mediaItemId: 'track-1',
+        provider: 'musicbrainz',
+        referenceType: 'recording',
+        externalId: '10000000-0000-0000-0000-000000000001',
+      },
+    ])
+    try {
+      const filters = JSON.stringify([
+        { field: 'provider', value: 'tidal' },
+        { field: 'provider', value: 'spotify' },
+        { field: 'provider', value: 'sonovault' },
+        { field: 'provider', value: 'lastfm' },
+        { field: 'provider', value: 'musicbrainz' },
+      ])
+      const items = (await page({ filters })).items
+      expect(items.map(({ id, links }) => [id, links])).toEqual([
+        [
+          'track-1',
+          [
+            {
+              provider: 'lastfm',
+              label: 'Last.fm',
+              url: 'https://www.last.fm/music/Fixture+Artist/_/Alpha+fixture',
+            },
+            {
+              provider: 'musicbrainz',
+              label: 'MusicBrainz',
+              url: 'https://musicbrainz.org/recording/10000000-0000-0000-0000-000000000001',
+            },
+            {
+              provider: 'tidal',
+              label: 'TIDAL',
+              url: 'https://tidal.com/browse/track/1000001',
+            },
+          ],
+        ],
+        ['track-2', undefined],
+        [
+          'track-3',
+          [
+            {
+              provider: 'spotify',
+              label: 'Spotify',
+              url: 'https://open.spotify.com/track/fixture0spotify0track0',
+            },
+          ],
+        ],
+      ])
+      expect(
+        (
+          await page({ filters: providerFilter('tidal', 'exclude') })
+        ).items.every(({ links }) => links === undefined),
+      ).toBe(true)
+      expect(
+        (await page({})).items.every(({ links }) => links === undefined),
+      ).toBe(true)
+    } finally {
+      await pool.query(
+        "delete from provider_reference where id like 'link-only-%'",
+      )
+    }
+  })
+
   it('does not match a provider’s name as search text', async () => {
     expect(ids(await page({ q: 'tidal' }))).toEqual([])
     expect(ids(await page({ q: 'sonovault' }))).toEqual([])

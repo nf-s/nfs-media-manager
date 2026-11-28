@@ -42,6 +42,7 @@ import {
   BrowseFieldSchema,
   BrowsePageSliceSchema,
   canonicalBrowseKey,
+  selectedBrowseProviders,
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
@@ -118,6 +119,7 @@ import {
 import { useGridDensity } from '@/hooks/useGridDensity'
 import { useColumnWidths } from '@/hooks/useColumnWidths'
 import { DetailLink } from './detail-link'
+import { FilteredProviderLinks } from './service-icon-links'
 import { artistMergeAdapter } from './artist-merge-review'
 import {
   MergeBar,
@@ -170,6 +172,7 @@ export default function ArtistBrowser() {
   const view = parseBrowseView(searchParams.get('view'), 'list')
   const density = useGridDensity(searchParams.get('density'))
   const filters = parseArtistFilters(searchParams.get('filters'))
+  const linkProviders = selectedBrowseProviders(filters)
   const playlistsResult = ArtistQuerySchema.shape.playlistIds.safeParse(
     searchParams.get('playlistIds') ?? undefined,
   )
@@ -217,7 +220,9 @@ export default function ArtistBrowser() {
   const columns = orderedFields.filter((field) =>
     columnKeys.includes(field.key),
   )
-  const providerName = useProviderDisplayName(columnKeys.includes('provider'))
+  const providerName = useProviderDisplayName(
+    columnKeys.includes('provider') || linkProviders.length > 0,
+  )
   const widths = useColumnWidths(collection, (field: BrowseField) =>
     field.key === 'name' ? 260 : field.type === 'text' ? 180 : 110,
   )
@@ -523,6 +528,21 @@ export default function ArtistBrowser() {
     )
   }
 
+  function providerLinks(item: ArtistSummary, place: 'tile' | 'row') {
+    if (!linkProviders.length || !item.links?.length) return undefined
+    return (
+      <FilteredProviderLinks
+        providers={linkProviders}
+        links={item.links.map((link) => {
+          const name = providerName(link.provider)
+          return name === link.provider ? link : { ...link, label: name }
+        })}
+        itemTitle={item.name}
+        place={place}
+      />
+    )
+  }
+
   function country(item: ArtistSummary) {
     return textValues(getArtistBrowseValues(item).country).join(', ')
   }
@@ -538,6 +558,7 @@ export default function ArtistBrowser() {
             target={{ kind: 'artist', id: item.id }}
           />
           {artistLink(item, 'ds-cell-title')}
+          {providerLinks(item, 'row')}
         </span>
       )
     const value = getArtistBrowseValues(item)[field.key]
@@ -861,6 +882,7 @@ export default function ArtistBrowser() {
                         src={item.artworkUrl}
                         title={item.name}
                         target={{ kind: 'artist', id: item.id }}
+                        overlay={providerLinks(item, 'tile')}
                       />
                     }
                     title={<CardTitle>{artistLink(item)}</CardTitle>}
@@ -909,6 +931,7 @@ export default function ArtistBrowser() {
                     }
                     title={<RowTitle>{artistLink(item)}</RowTitle>}
                     by={country(item)}
+                    play={<span>{providerLinks(item, 'row')}</span>}
                     tags={artistTags(item, 1)}
                     meta={
                       <>

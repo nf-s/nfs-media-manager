@@ -5,12 +5,19 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import AlbumTitle from './album-title'
 import ServiceIconLinks, {
   AlbumSpotifyLink,
+  FilteredProviderLinks,
   serviceLinks,
 } from './service-icon-links'
 import DetailProviderLinks from './detail-provider-links'
-import { albumBrowseFields, filmBrowseFields } from '@repo/schemas/browse'
+import {
+  albumBrowseFields,
+  filmBrowseFields,
+  selectedBrowseProviders,
+} from '@repo/schemas/browse'
 import { albumSpotifyDestination } from '../utils/album-links'
 import { providerLogoUrl } from '../utils/provider-logos'
+import { mediaBrowseLinkCandidates } from '../utils/media-browse-links'
+import type { FilmListItem } from '@repo/schemas/media'
 
 const album = {
   title: 'Fixture album',
@@ -54,6 +61,133 @@ test('detail service links still include Spotify by default', () => {
   const html = renderToStaticMarkup(<ServiceIconLinks links={album.links} />)
   assert.match(html, /Open Spotify/)
   assert.match(html, /Open Last.fm/)
+})
+
+test('included and required filters link once per service in selection order', () => {
+  const providers = selectedBrowseProviders([
+    { field: 'provider', value: 'Serply', mode: 'required' },
+    { field: 'provider', value: 'spotify' },
+    { field: 'provider', value: 'serply' },
+    { field: 'provider', value: 'lastfm', mode: 'exclude' },
+    { field: 'genre', value: 'discogs' },
+  ])
+  const url = 'https://rateyourmusic.com/release/album/example/record/'
+  const links = [
+    ...album.links,
+    { provider: 'serply', label: 'Rate Your Music', url },
+  ]
+  const html = renderToStaticMarkup(
+    <FilteredProviderLinks
+      providers={providers}
+      links={links}
+      itemTitle={album.title}
+    />,
+  )
+  assert.deepEqual(providers, ['serply', 'spotify'])
+  assert.match(
+    html,
+    /Open on RYM: Fixture album.*Open on Spotify: Fixture album/,
+  )
+  assert.equal(html.match(/<a /g)?.length, 2)
+  assert.doesNotMatch(html, /last\.fm/i)
+})
+
+test('a missing, unsafe or homepage-only destination leaves no shortcut', () => {
+  const links = [
+    { provider: 'discogs', label: 'Discogs', url: 'https://www.discogs.com/' },
+    {
+      provider: 'discogs',
+      label: 'Discogs',
+      url: 'https://discogs.invalid/release/1',
+    },
+    { provider: 'discogs', label: 'Discogs', url: 'javascript:void(0)' },
+  ]
+  assert.equal(
+    renderToStaticMarkup(
+      <FilteredProviderLinks
+        providers={['discogs']}
+        links={links}
+        itemTitle={album.title}
+        place="tile"
+      />,
+    ),
+    '',
+  )
+})
+
+test('the current release identifier takes precedence over a stale saved link', () => {
+  const candidates = mediaBrowseLinkCandidates({
+    mediaType: 'album',
+    spotifyUrl: null,
+    links: [
+      {
+        provider: 'discogs',
+        label: 'Discogs',
+        url: 'https://www.discogs.com/master/444',
+      },
+    ],
+    providerReferences: [
+      {
+        provider: 'discogs',
+        referenceType: 'master',
+        externalId: '555',
+        isPrimary: false,
+        metadata: null,
+      },
+      {
+        provider: 'discogs',
+        referenceType: 'release',
+        externalId: '123',
+        isPrimary: true,
+        metadata: null,
+      },
+    ],
+  })
+  assert.deepEqual(
+    serviceLinks(candidates, { providers: ['discogs'] }).map(({ url }) => url),
+    ['https://www.discogs.com/release/123'],
+  )
+})
+
+test('IMDb Watchlist uses the accepted film and skips rejected IDs even in saved links', () => {
+  const blocked = {
+    provider: 'omdb',
+    referenceType: 'imdb',
+    externalId: 'tt1000000',
+    isPrimary: true,
+    metadata: { rejected: true },
+  }
+  const film = {
+    mediaType: 'film',
+    providerReferences: [blocked],
+    links: [
+      {
+        provider: 'omdb',
+        label: 'IMDb',
+        url: 'https://imdb.com/title/tt1000000/?ref_=fixture',
+      },
+    ],
+  } satisfies Pick<FilmListItem, 'mediaType' | 'providerReferences' | 'links'>
+  const rejected = mediaBrowseLinkCandidates(film)
+  assert.deepEqual(serviceLinks(rejected, { providers: ['omdb'] }), [])
+  const accepted = mediaBrowseLinkCandidates({
+    ...film,
+    providerReferences: [
+      ...film.providerReferences,
+      {
+        ...blocked,
+        provider: 'imdb-watchlist',
+        externalId: 'tt1000001',
+        metadata: null,
+      },
+    ],
+  })
+  assert.deepEqual(
+    serviceLinks(accepted, { providers: ['imdb-watchlist'] }).map(
+      ({ url }) => url,
+    ),
+    ['https://www.imdb.com/title/tt1000001/'],
+  )
 })
 
 test('the provider group displays rated and unrated services together and omits the title Spotify icon', () => {

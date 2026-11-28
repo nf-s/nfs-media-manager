@@ -210,7 +210,7 @@ function ratingSite(provider: string): string {
   return provider
 }
 
-function referenceRatingHref(
+export function referenceRatingHref(
   ref: AlbumListItem['providerReferences'][number],
 ): string | undefined {
   const { referenceType, externalId } = ref

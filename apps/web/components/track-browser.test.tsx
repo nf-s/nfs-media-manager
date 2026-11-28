@@ -7,6 +7,7 @@ import {
   SearchParamsContext,
 } from 'next/dist/shared/lib/hooks-client-context.shared-runtime'
 import { TrackListItemSchema } from '@repo/schemas/tracks'
+import { parseTrackFilters } from '../utils/track-browse'
 import { ConfigContext } from './providers'
 
 require.extensions['.css'] = (module) => {
@@ -48,6 +49,11 @@ const groupedTrack = TrackListItemSchema.parse({
   ...track,
   recordingGroup: { versionCount: 2 },
 })
+const tidalLink = {
+  provider: 'tidal',
+  label: 'TIDAL',
+  url: 'https://tidal.com/browse/track/1000001',
+}
 
 async function render(
   search = '',
@@ -533,7 +539,7 @@ async function renderTracks(
   const params = new URLSearchParams(search)
   const identity = JSON.stringify({
     q: '',
-    filters: [],
+    filters: parseTrackFilters(params.get('filters')),
     ranges: [],
     sortBy: params.get('sortBy') ?? 'dateAdded',
     direction: params.get('direction') === 'asc' ? 'asc' : 'desc',
@@ -570,6 +576,44 @@ async function renderTracks(
   }
 }
 
+test('Tracks show only the included provider links beside Queue in every Browse view', async () => {
+  const items = [
+    TrackListItemSchema.parse({
+      ...groupedTrack,
+      links: [
+        tidalLink,
+        {
+          provider: 'spotify',
+          label: 'Spotify',
+          url: 'https://open.spotify.com/track/0000000000000000000000',
+        },
+      ],
+    }),
+  ]
+  const filters = [
+    { field: 'provider', value: 'TIDAL', mode: 'required' },
+    { field: 'provider', value: 'spotify', mode: 'exclude' },
+  ]
+  for (const view of ['table', 'list', 'grid']) {
+    const params = new URLSearchParams({
+      view,
+      sortBy: 'scrobbles',
+      filters: JSON.stringify(filters),
+    })
+    const html = await renderTracks(params.toString(), { grouped: true, items })
+    assert.match(
+      html,
+      /aria-label="Add Example Song to queue[^>]*>.*?<\/button><a href="https:\/\/tidal\.com\/browse\/track\/1000001" target="_blank"[^>]*aria-label="Open on TIDAL: Example Song/,
+    )
+    assert.doesNotMatch(html, /Open on Spotify: Example Song/)
+    params.delete('filters')
+    assert.doesNotMatch(
+      await renderTracks(params.toString(), { grouped: true, items }),
+      /Open on TIDAL: Example Song/,
+    )
+  }
+})
+
 test('Tracks has no Possible duplicates view: no toggle, and the URL parameter changes neither the view nor the request', async () => {
   // The rows are cached for the request without `duplicates`.
   const html = await renderTracks('duplicates=true&view=grid', {
@@ -603,6 +647,7 @@ test('a version row shows its provider mark, its title and Shown on the version 
     ...track,
     id: 'version-lastfm',
     sources: ['lastfm'],
+    links: [tidalLink],
   })
   function cell(version: typeof track, shown: boolean) {
     return renderToStaticMarkup(
@@ -615,7 +660,11 @@ test('a version row shows its provider mark, its title and Shown on the version 
         >
           <PathnameContext.Provider value="/tracks">
             <SearchParamsContext.Provider value={new URLSearchParams()}>
-              <TrackVersionTitle track={version} shown={shown} />
+              <TrackVersionTitle
+                track={version}
+                shown={shown}
+                providers={['tidal']}
+              />
             </SearchParamsContext.Provider>
           </PathnameContext.Provider>
         </ConfigContext.Provider>
@@ -629,6 +678,10 @@ test('a version row shows its provider mark, its title and Shown on the version 
   )
   const other = cell(lastfm, false)
   assert.match(other, /lastfm\.png/)
+  assert.match(
+    other,
+    /aria-label="Add Example Song to queue[^>]*>.*?<\/button><a href="https:\/\/tidal\.com\/browse\/track\/1000001"/,
+  )
   assert.doesNotMatch(other, /Shown/)
   assert.doesNotMatch(other, /ds-thumb/)
   client.clear()

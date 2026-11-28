@@ -87,6 +87,7 @@ import {
   canonicalBrowseKey,
   formatTagLevelsParam,
   sameBrowseFilter,
+  selectedBrowseProviders,
   type BrowseField,
   type BrowseFilter,
   type BrowseValues,
@@ -123,6 +124,8 @@ import AiSearch from './ai-search'
 import { aiSearchParams, mediaAiSearchTarget } from '@/utils/ai-search'
 import { MediaArt, MediaThumb } from './media-artwork'
 import { AlbumInlinePlayButton, TilePlayControls } from './play-controls'
+import { FilteredProviderLinks } from './service-icon-links'
+import { mediaBrowseLinkCandidates } from '@/utils/media-browse-links'
 import { createBrowsePlaybackSource } from '@/utils/playback-source'
 import ManualMediaAdd from './manual-media-add'
 import {
@@ -468,6 +471,7 @@ function MediaBrowse({
   // Inside a detail the active filters sit in a row above the results.
   const railSlot = embedded ? null : pageRail
   const filters = parseFilters(searchParams.get('filters'))
+  const filteredProviders = selectedBrowseProviders(filters)
   const creator = scope ?? parseCreatorBrowseScope(searchParams, mediaType)
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
@@ -1124,6 +1128,30 @@ function MediaBrowse({
       ? query.resolveTotal(index).then(source)
       : source(total)
   }
+  function browseActions(
+    item: MediaItem,
+    index: number,
+    place: 'row' | 'tile',
+  ) {
+    const providerLinks = filteredProviders.length ? (
+      <FilteredProviderLinks
+        providers={filteredProviders}
+        links={mediaBrowseLinkCandidates(item)}
+        itemTitle={item.title}
+        fields={fields}
+        place={item.mediaType === 'film' ? place : undefined}
+      />
+    ) : undefined
+    if (item.mediaType === 'film') return providerLinks
+    const Controls = place === 'tile' ? TilePlayControls : AlbumInlinePlayButton
+    return (
+      <Controls
+        album={item}
+        source={() => albumPlaybackSource(item, index)}
+        afterQueue={providerLinks}
+      />
+    )
+  }
   function creators(item: MediaItem) {
     const role = item.mediaType === 'album' ? 'artist' : 'director'
     const credits = item.credits.filter((credit) => credit.role === role)
@@ -1761,16 +1789,7 @@ function MediaBrowse({
                             kind={mediaType}
                             src={item.artworkUrl}
                             badge={needsId(item) ? 'Needs ID' : undefined}
-                            overlay={
-                              item.mediaType === 'album' ? (
-                                <TilePlayControls
-                                  album={item}
-                                  source={() =>
-                                    albumPlaybackSource(item, index)
-                                  }
-                                />
-                              ) : undefined
-                            }
+                            overlay={browseActions(item, index, 'tile')}
                           >
                             {(image) => (
                               <DetailLink
@@ -1872,12 +1891,7 @@ function MediaBrowse({
                             </>
                           }
                           play={
-                            item.mediaType === 'album' ? (
-                              <AlbumInlinePlayButton
-                                album={item}
-                                source={() => albumPlaybackSource(item, index)}
-                              />
-                            ) : undefined
+                            <span>{browseActions(item, index, 'row')}</span>
                           }
                           tags={
                             <BrowseTagBadges
@@ -2024,14 +2038,7 @@ function MediaBrowse({
                                 {item.mediaType === 'album' && (
                                   <AlbumRecordNote album={item} />
                                 )}
-                                {item.mediaType === 'album' && (
-                                  <AlbumInlinePlayButton
-                                    album={item}
-                                    source={() =>
-                                      albumPlaybackSource(item, index)
-                                    }
-                                  />
-                                )}
+                                {browseActions(item, index, 'row')}
                               </span>
                             </TableCell>
                           ) : (

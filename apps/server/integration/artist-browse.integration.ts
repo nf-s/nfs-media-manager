@@ -56,31 +56,34 @@ beforeAll(async () => {
     insert into playlist (id, name, kind, source) select 'playlist-' || n, 'Fixture playlist ' || n, 'playlist', 'fixture' from generate_series(1, 100) n;
     insert into playlist_item (playlist_id, media_item_id, position) select 'playlist-' || ((n-1) % 100 + 1), 'track-' || n, n from generate_series(1, 20000) n;
   `)
-  for (const { artistId, country, type, tags } of [
+  for (const { artistId, ...profile } of [
     {
       artistId: 'artist-1',
       country: 'Australia',
       type: 'Group',
       tags: ['Post Rock', 'Ambient'],
+      url: 'https://musicbrainz.org/artist/00000000-0000-4000-8000-000000000001',
     },
     {
       artistId: 'artist-2',
       country: 'Canada',
       type: 'Person',
       tags: ['ambient'],
+      externalId: '00000000-0000-4000-8000-000000000002',
     },
     {
       artistId: 'artist-5000',
       country: 'Australia',
       type: 'Person',
       tags: ['Jazz'],
+      externalId: 'invalid-id',
     },
   ]) {
     await database.insert(schema.artistProviderSnapshot).values({
       id: 'profile-' + artistId,
       artistId,
       provider: 'musicbrainz',
-      normalizedData: { country, type, tags },
+      normalizedData: profile,
       payload: {},
     })
     await database.insert(schema.artistProviderCurrentState).values({
@@ -187,6 +190,47 @@ it('searches across fields and escapes substring wildcard characters', async () 
   expect(await countArtistBrowse(ArtistQuerySchema.parse({ q: '_' }))).toEqual({
     totalCount: 0,
   })
+})
+
+it('hydrates saved artist links from selected profiles without additional reads', async () => {
+  const { listArtistBrowsePage } = await import('@/services/artist-browse')
+  const read = async (mode?: 'required' | 'exclude') =>
+    listArtistBrowsePage(
+      ArtistQuerySchema.parse({
+        size: 3,
+        filters: mode
+          ? [{ field: 'provider', value: 'MusicBrainz', mode }]
+          : [],
+      }),
+    )
+  logQuery.mockClear()
+  expect((await read()).items.every(({ links }) => links === undefined)).toBe(
+    true,
+  )
+  const unfilteredStatements = logQuery.mock.calls.length
+
+  logQuery.mockClear()
+  expect((await read('required')).items.map(({ links }) => links)).toEqual([
+    [
+      {
+        provider: 'musicbrainz',
+        label: 'MusicBrainz',
+        url: 'https://musicbrainz.org/artist/00000000-0000-4000-8000-000000000001',
+      },
+    ],
+    [
+      {
+        provider: 'musicbrainz',
+        label: 'MusicBrainz',
+        url: 'https://musicbrainz.org/artist/00000000-0000-4000-8000-000000000002',
+      },
+    ],
+    [],
+  ])
+  expect(logQuery.mock.calls).toHaveLength(unfilteredStatements)
+  expect(
+    (await read('exclude')).items.every(({ links }) => links === undefined),
+  ).toBe(true)
 })
 
 it('names providers in suggestions and finds them by display name or ID', async () => {

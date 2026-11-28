@@ -55,6 +55,7 @@ import {
   BrowseRangesParamSchema,
   canonicalBrowseKey,
   formatTagLevelsParam,
+  selectedBrowseProviders,
   type BrowseField,
   type BrowseFilter,
 } from '@repo/schemas/browse'
@@ -134,6 +135,7 @@ import {
   useTrackRecordingVersions,
 } from './track-recording-versions'
 import { LibraryTrackPlayButton } from './play-controls'
+import { FilteredProviderLinks } from './service-icon-links'
 import {
   RowSelectAll,
   RowSelectRow,
@@ -212,6 +214,19 @@ function TrackBrowseLibraryAction({ track }: { track: TrackListItem }) {
   )
 }
 
+function trackBrowseProviderLinks(
+  track: TrackListItem,
+  providers: readonly string[],
+) {
+  return track.links?.length && providers.length ? (
+    <FilteredProviderLinks
+      providers={providers}
+      links={track.links}
+      itemTitle={track.title}
+    />
+  ) : undefined
+}
+
 /**
  * The identity cell of a version's part row: the provider mark, the title,
  * Shown on the version the record's row is shown as, then the row actions.
@@ -219,9 +234,11 @@ function TrackBrowseLibraryAction({ track }: { track: TrackListItem }) {
 export function TrackVersionTitle({
   track,
   shown,
+  providers = [],
 }: {
   track: TrackListItem
   shown: boolean
+  providers?: readonly string[]
 }) {
   return (
     <span className="ds-cell-id">
@@ -238,7 +255,10 @@ export function TrackVersionTitle({
         )}
       </TablePartTitle>
       <TrackBrowseLibraryAction track={track} />
-      <LibraryTrackPlayButton track={track} />
+      <LibraryTrackPlayButton
+        track={track}
+        afterQueue={trackBrowseProviderLinks(track, providers)}
+      />
     </span>
   )
 }
@@ -307,6 +327,7 @@ function TrackBrowse({
   )
   const density = useGridDensity(searchParams.get('density'))
   const filters = parseTrackFilters(searchParams.get('filters'))
+  const providers = selectedBrowseProviders(filters)
   const creator = scope ?? parseCreatorBrowseScope(searchParams, 'track')
   const rangesResult = BrowseRangesParamSchema.safeParse(
     searchParams.get('ranges'),
@@ -656,6 +677,7 @@ function TrackBrowse({
       <LibraryTrackPlayButton
         track={item}
         place={place}
+        afterQueue={trackBrowseProviderLinks(item, providers)}
         source={() =>
           query.hasTotal && query.conflictingPage === undefined
             ? createBrowsePlaybackSource({
@@ -741,7 +763,13 @@ function TrackBrowse({
     part: boolean,
   ) {
     if (field.key === 'title' && part)
-      return <TrackVersionTitle track={item} shown={item.id === expanded?.id} />
+      return (
+        <TrackVersionTitle
+          track={item}
+          shown={item.id === expanded?.id}
+          providers={providers}
+        />
+      )
     if (field.key === 'title')
       return (
         <span className="ds-cell-id">
@@ -854,7 +882,10 @@ function TrackBrowse({
         }
         play={
           child ? (
-            <LibraryTrackPlayButton track={item} />
+            <LibraryTrackPlayButton
+              track={item}
+              afterQueue={trackBrowseProviderLinks(item, providers)}
+            />
           ) : (
             playPair(item, index)
           )

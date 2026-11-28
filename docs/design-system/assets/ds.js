@@ -201,7 +201,10 @@
       return `${btn('Play', { icon: 'play', variant: 'primary', size: 'md' })}${btn('', { icon: 'queue', size: 'md', aria: 'Add to queue', title: 'Add to queue' })}`
     }
     const controls = attrs({ disabled: o.disabled })
-    return `<span class="ds-play" data-place="${place}"><button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}"${controls}>${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue"${controls}>${icon('queue', { size: 'sm' })}</button></span>`
+    const link = o.provider
+      ? `<a href="#" aria-label="Open on ${esc(PROVIDERS[o.provider].name)} (opens in a new tab)" target="_blank" rel="noopener noreferrer">${mark(o.provider, { size: 'sm', hidden: true })}</a>`
+      : ''
+    return `<span class="ds-play" data-place="${place}"><button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}"${controls}>${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue"${controls}>${icon('queue', { size: 'sm' })}</button>${link}</span>`
   }
 
   function pill(label, o = {}) {

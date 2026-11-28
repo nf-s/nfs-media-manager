@@ -334,6 +334,19 @@ export const BrowseFilterSchema = z.object({
   mode: z.enum(['any', 'required', 'exclude']).optional(),
 })
 export type BrowseFilter = z.infer<typeof BrowseFilterSchema>
+/** Providers explicitly included in the current Browse selection, in chip order. */
+export function selectedBrowseProviders(filters: readonly BrowseFilter[]) {
+  return [
+    ...new Set(
+      filters
+        .filter(
+          (filter) => filter.field === 'provider' && filter.mode !== 'exclude',
+        )
+        .map((filter) => filter.value.toLowerCase()),
+    ),
+  ]
+}
+
 export function sameBrowseFilter(
   left: BrowseFilter,
   right: BrowseFilter,

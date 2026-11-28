@@ -1,4 +1,5 @@
 import { and, eq, or, sql } from 'drizzle-orm'
+import { isBlockedFilmReference } from '@repo/schemas/provider-identification'
 import {
   ProviderItemAmbiguousError,
   type PluginReference,
@@ -13,14 +14,7 @@ type StoredFilmIdentity = FilmIdentity & {
   metadata?: PluginReference['metadata'] | null
 }
 
-export function isBlockedFilmReference({ metadata }: StoredFilmIdentity) {
-  return (
-    metadata?.['rejected'] === true ||
-    metadata?.['rejected'] === 'true' ||
-    metadata?.['verified'] === false ||
-    metadata?.['verified'] === 'false'
-  )
-}
+export { isBlockedFilmReference }
 
 export function hasBlockedFilmReference(
   storedReferences: readonly StoredFilmIdentity[],

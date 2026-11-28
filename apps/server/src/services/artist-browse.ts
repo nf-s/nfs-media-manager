@@ -7,6 +7,7 @@ import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import { formatTagName } from '@repo/schemas/tags'
 import {
   BrowsePageSliceSchema,
+  selectedBrowseProviders,
   type BrowseFacetQuery,
 } from '@repo/schemas/browse'
 import {
@@ -24,6 +25,7 @@ import {
 import { rangeCondition } from '@/lib/browse-range'
 import { db } from '@/lib/db'
 import { createDatabaseReadCache } from '@/lib/database-read-cache'
+import { getBuiltinProviderCatalog } from '@/lib/provider-catalog'
 import { measureRequestPhase } from '@/lib/request-log'
 import {
   artistPlaylistCredits,
@@ -37,6 +39,7 @@ import {
   loadArtistMetadata,
 } from './artist-metadata'
 import { providerDisplayNames, providerWordMatch } from './provider-names'
+import { artistProfileUrl } from './artist-provider-evidence'
 import {
   createArtistBrowseListening,
   type ArtistBrowseListening,
@@ -364,7 +367,13 @@ async function loadArtistListening(ids: string[], requested: SQL, now: Date) {
 async function loadArtists(
   ids: string[],
   listeningScrobbles?: Map<string, number>,
-  { includeListeningMonths = true } = {},
+  {
+    includeListeningMonths = true,
+    linkProviders,
+  }: {
+    includeListeningMonths?: boolean
+    linkProviders?: ReadonlySet<string>
+  } = {},
 ) {
   if (!ids.length) return []
   const requested = sql`any(${sql.param(ids)}::text[])`
@@ -417,6 +426,19 @@ async function loadArtists(
             : {}),
           ...(listening
             ? { listeningMonths: listening.get(row.id) ?? [] }
+            : {}),
+          ...(linkProviders?.size
+            ? {
+                links: sources.flatMap(({ provider, profile }) => {
+                  if (!linkProviders.has(provider)) return []
+                  const url = artistProfileUrl(provider, profile)
+                  if (!url) return []
+                  const label = getBuiltinProviderCatalog().find(
+                    ({ id }) => id === provider,
+                  )?.displayName
+                  return [{ provider, label: label ?? provider, url }]
+                }),
+              }
             : {}),
           browse: {
             ...row.browse,
@@ -504,7 +526,9 @@ export async function listArtistBrowsePage(query: Query) {
   const { ids, listeningScrobbles, page } = await readArtistBrowsePage(query)
   return BrowsePageSliceSchema(ArtistSummarySchema).parse({
     ...page,
-    items: await loadArtists(ids, listeningScrobbles),
+    items: await loadArtists(ids, listeningScrobbles, {
+      linkProviders: new Set(selectedBrowseProviders(query.filters)),
+    }),
   })
 }
 

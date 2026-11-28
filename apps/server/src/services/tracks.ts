@@ -1,6 +1,9 @@
 import { eq, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import type { BrowseFacetQuery } from '@repo/schemas/browse'
+import {
+  selectedBrowseProviders,
+  type BrowseFacetQuery,
+} from '@repo/schemas/browse'
 import { spotifyIdPattern } from '@repo/schemas/playback'
 import {
   PlaylistAlbumSchema,
@@ -55,6 +58,11 @@ import {
 } from './album-library-tracks'
 import { artistTagsForItems } from './music-tags'
 import { trackIsrcsExpression } from './track-isrcs'
+import {
+  TrackBrowseLinkTargetsSchema,
+  trackBrowseLinkTargets,
+  trackBrowseLinks,
+} from './track-browse-links'
 import {
   trackFactsExpression,
   verifiedTrackBpm,
@@ -116,6 +124,7 @@ const TrackRowsSchema = z.array(
     spotify_album_id: z.string().nullable(),
     spotify_match: TrackSpotifyMatchSchema,
     providers: z.array(z.string()),
+    link_targets: TrackBrowseLinkTargetsSchema,
     spotify_url: z.string().nullable(),
     isrc: z.string().nullable(),
     scrobble_count: z.number().int(),
@@ -177,7 +186,13 @@ function observedTrackRelease() {
 async function loadTrackItems(
   pageIds: SQL,
   prefix = sql``,
-  { includeObservedRelease = false } = {},
+  {
+    includeObservedRelease = false,
+    providers = [],
+  }: {
+    includeObservedRelease?: boolean
+    providers?: readonly string[]
+  } = {},
 ) {
   const albumId = includeObservedRelease
     ? sql`coalesce(lt.album_media_item_id, ${observedTrackRelease()})`
@@ -212,6 +227,7 @@ async function loadTrackItems(
           lt.spotify_track_id, lt.spotify_album_id,
           ${trackSpotifyMatchExpression(sql`lt.spotify_track_id`, sql`mi.source_label`)} as spotify_match,
           ${trackProvidersExpression(sql`mi.id`, sql`lt.spotify_track_id`)} as providers,
+          ${trackBrowseLinkTargets(sql`mi.id`, providers)} as link_targets,
           ${isoTimestamp(sql`lt.date_added`)} as date_added,
           lt.spotify_url, lt.isrc, lt.scrobble_count,
           ${isoTimestamp(sql`lt.last_listened_at`)} as last_listened_at
@@ -225,6 +241,7 @@ async function loadTrackItems(
   )
   return rows.map((row) => {
     const spotifyTrackId = row.spotify_track_id
+    const links = trackBrowseLinks(providers, row.link_targets, spotifyTrackId)
     return TrackListItemSchema.parse({
       id: row.id,
       inLibrary: row.in_library,
@@ -259,6 +276,7 @@ async function loadTrackItems(
         : null,
       spotifyMatch: row.spotify_match,
       providers: row.providers,
+      ...(links?.length ? { links } : {}),
       spotifyUrl:
         row.spotify_url ??
         (spotifyTrackId
@@ -271,9 +289,16 @@ async function loadTrackItems(
   })
 }
 
-export async function loadTracks(ids: string[]): Promise<TrackListItem[]> {
+export async function loadTracks(
+  ids: string[],
+  providers?: readonly string[],
+): Promise<TrackListItem[]> {
   if (!ids.length) return []
-  const items = await loadTrackItems(sql`any(${sql.param(ids)}::text[])`)
+  const items = await loadTrackItems(
+    sql`any(${sql.param(ids)}::text[])`,
+    undefined,
+    { providers },
+  )
   const byId = new Map(items.map((item) => [item.id, item]))
   return ids.flatMap((id) => {
     const item = byId.get(id)
@@ -303,12 +328,13 @@ export async function listTracks(query: TrackQuery) {
   const { ids, totalCount, pageCount, recordingGroups, listeningScrobbles } =
     await queryBrowseIds('track', query)
   return {
-    items: (await loadTracks(ids)).map((track) =>
-      trackWithRecordingGroup(
-        track,
-        recordingGroups?.get(track.id),
-        listeningScrobbles?.get(track.id),
-      ),
+    items: (await loadTracks(ids, selectedBrowseProviders(query.filters))).map(
+      (track) =>
+        trackWithRecordingGroup(
+          track,
+          recordingGroups?.get(track.id),
+          listeningScrobbles?.get(track.id),
+        ),
     ),
     totalCount,
     pageCount,
@@ -319,13 +345,16 @@ export async function listTrackBrowsePage(query: TrackQuery) {
   const { ids, hasMore, recordingGroups, listeningScrobbles } =
     await measureRequestPhase('ids', () => queryBrowsePageIds('track', query))
   return {
-    items: (await measureRequestPhase('hydrate', () => loadTracks(ids))).map(
-      (track) =>
-        trackWithRecordingGroup(
-          track,
-          recordingGroups?.get(track.id),
-          listeningScrobbles?.get(track.id),
-        ),
+    items: (
+      await measureRequestPhase('hydrate', () =>
+        loadTracks(ids, selectedBrowseProviders(query.filters)),
+      )
+    ).map((track) =>
+      trackWithRecordingGroup(
+        track,
+        recordingGroups?.get(track.id),
+        listeningScrobbles?.get(track.id),
+      ),
     ),
     page: query.page,
     size: query.size,
@@ -340,12 +369,13 @@ export async function listTrackRecordingVersions(
   const { ids, hasMore, listeningScrobbles } =
     await queryTrackRecordingVersions(id, query)
   return {
-    items: (await loadTracks(ids)).map((track) =>
-      trackWithRecordingGroup(
-        track,
-        undefined,
-        listeningScrobbles?.get(track.id),
-      ),
+    items: (await loadTracks(ids, selectedBrowseProviders(query.filters))).map(
+      (track) =>
+        trackWithRecordingGroup(
+          track,
+          undefined,
+          listeningScrobbles?.get(track.id),
+        ),
     ),
     page: query.page,
     size: query.size,

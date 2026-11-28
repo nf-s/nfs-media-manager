@@ -9,6 +9,21 @@ type PlayFeedback = {
   queueDisabled?: boolean
 }
 
+/** Actions on Browse artwork or at the end of a row's identity. */
+export function BrowseActions({
+  place,
+  children,
+}: {
+  place: 'tile' | 'row'
+  children: ReactNode
+}) {
+  return (
+    <span className="ds-play" data-place={place}>
+      {children}
+    </span>
+  )
+}
+
 /**
  * The only control that plays. Order is always Play, then Queue.
  *
@@ -30,6 +45,7 @@ export function PlayPair({
   queueDisabled = false,
   onPlay,
   onQueue,
+  afterQueue,
   children,
 }: {
   place: 'tile' | 'row'
@@ -40,13 +56,14 @@ export function PlayPair({
   disabledReason?: string
   onPlay: () => void
   onQueue: () => void
+  afterQueue?: ReactNode
   /** Replaces the default icons, for example a "now playing" indicator. */
   children?: ReactNode
 } & PlayFeedback) {
   const verb = playing ? 'Pause' : 'Play'
   const suffix = disabled && disabledReason ? `: ${disabledReason}` : ''
   return (
-    <span className="ds-play" data-place={place}>
+    <BrowseActions place={place}>
       <Button
         type="button"
         size="xs"
@@ -83,7 +100,8 @@ export function PlayPair({
       >
         <ListPlus className="ds-i" data-size="sm" aria-hidden />
       </Button>
-    </span>
+      {afterQueue}
+    </BrowseActions>
   )
 }
 

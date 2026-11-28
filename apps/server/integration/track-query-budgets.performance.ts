@@ -2566,6 +2566,7 @@ it('bounds Track pages filtered, sorted and hydrated by Track tags', async () =>
 
 it('bounds Track pages filtered and sorted by provider', async () => {
   const { queryBrowsePageIds } = await import('@/services/browse')
+  const { listTrackBrowsePage } = await import('@/services/tracks')
   // An ISRC on every track, a TIDAL track ID on two in three, a Sonovault
   // match on every tenth and TIDAL and Sonovault IDs on every album: the
   // ISRC and album rows are read past, never matched.
@@ -2622,6 +2623,20 @@ it('bounds Track pages filtered and sorted by provider', async () => {
             10_000,
           )
         }
+    await checkBudget('Provider TIDAL page with links', 12_000, 2, async () => {
+      const result = await listTrackBrowsePage(
+        TrackQuerySchema.parse({ size: 100, filters: providerFilter('tidal') }),
+      )
+      expect(result.items).toHaveLength(100)
+      for (const { id, links } of result.items)
+        expect(links).toEqual([
+          {
+            provider: 'tidal',
+            label: 'TIDAL',
+            url: `https://tidal.com/browse/track/${id.slice('track-'.length)}`,
+          },
+        ])
+    })
     // A first page sorted by provider resolves every track's providers, as
     // the Duration sort resolves every track's release order.
     const durationBlocks = await sharedBlocksOf(() =>

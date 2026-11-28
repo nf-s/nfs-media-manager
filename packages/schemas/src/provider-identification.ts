@@ -1,5 +1,18 @@
 import { z } from 'zod'
 
+export function isBlockedFilmReference({
+  metadata,
+}: {
+  metadata?: Record<string, unknown> | null
+}) {
+  return (
+    metadata?.['rejected'] === true ||
+    metadata?.['rejected'] === 'true' ||
+    metadata?.['verified'] === false ||
+    metadata?.['verified'] === 'false'
+  )
+}
+
 export const AlbumHttpUrlSchema = z
   .string()
   .url()

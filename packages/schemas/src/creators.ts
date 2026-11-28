@@ -11,6 +11,7 @@ import { JobStatusSchema } from './job'
 import {
   CreatorIdSchema,
   DirectionSchema,
+  ExternalLinkSchema,
   PaginatedDataSchema,
   PaginationQuerySchema,
   PersonRoleSchema,
@@ -61,6 +62,14 @@ export const ArtistSummarySchema = CreatorIdentitySchema.extend({
    * stored scrobble of anything to the current month; in browse rows.
    */
   listeningMonths: z.array(CountSchema).optional(),
+  /** Saved artist destinations for selected Provider filters in Browse. */
+  links: z
+    .array(
+      ExternalLinkSchema.extend({
+        url: ArtistProfileSchema.shape.url.unwrap(),
+      }),
+    )
+    .optional(),
   browse: BrowseValuesSchema.default({}),
 })
 export type ArtistSummary = z.infer<typeof ArtistSummarySchema>

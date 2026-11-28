@@ -374,7 +374,7 @@
             id: 'play',
             title: 'Play control',
             body:
-              `<p>Play and Add to queue are one control. Play is always first and Queue always follows it. Artwork and titles open the item; only this control plays.</p>` +
+              `<p>Play comes first, followed by Add to queue. In Browse, selecting a provider adds its item link after Queue. Films and artists show the link on its own. Each provider link opens a new tab.</p>` +
               g.spec(
                 g.flow(
                   [
@@ -415,6 +415,10 @@
                         330,
                       ),
                       'row · at rest, playing, hover',
+                    ),
+                    g.item(
+                      `<span data-state="hover">${play('row', { provider: 'discogs' })}</span>`,
+                      'row · filtered by Discogs',
                     ),
                     g.item(
                       `<div class="ds-detail-head"><div class="ds-detail-side">${D.artBox(A[3])}<div class="ds-detail-play">${play('header')}</div></div></div>`,
