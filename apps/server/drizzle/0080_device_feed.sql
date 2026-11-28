@@ -45,6 +45,9 @@ CREATE FUNCTION device_scrobble_name_id(username text, artist_key text, track_ke
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   SELECT md5(length(username) || ':' || username || length(artist_key) || ':' || artist_key || track_key)
 $$;--> statement-breakpoint
+-- The index and the triggers lock existing tables: fail rather than queue
+-- behind a long write while blocking the writes behind this migration.
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
 -- The sweep lists scrobbled names in the order of their ID.
 CREATE INDEX "lastfm_track_link_device_name_idx" ON "lastfm_track_link" USING btree (device_scrobble_name_id("username", "artist_key", "track_key"));--> statement-breakpoint
 -- DEVICE-03: each statement on a contributing table appends one mark per
@@ -70,6 +73,10 @@ DECLARE
   rules text[];
   marks text := '';
   every_column constant text := 'o IS DISTINCT FROM n';
+  -- Only rows inserted or deleted, or whose key changed.
+  appears_or_disappears constant text := 'false';
+  archived_changed constant text := $r$(o->'metadata'->>'legacyHidden' IS NOT DISTINCT FROM 'true')
+    IS DISTINCT FROM (n->'metadata'->>'legacyHidden' IS NOT DISTINCT FROM 'true')$r$;
   -- Items credited to artists whose current profile carries one of the raw
   -- tag keys selected by %s: the items whose projected artist tags use them.
   artist_tag_items constant text := $r$SELECT mi.media_type::text, mi.id FROM {s}.media_credit mc
@@ -89,13 +96,48 @@ DECLARE
       JOIN {s}.playlist_item pi ON pi.media_item_id = lt.media_item_id
     UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'id'
     UNION ALL SELECT 'artist_plays', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'id'$r$;
+  -- The artists that list the playlists of `members.media_item_id`
+  -- (artistPlaylistCredits, artist-library.ts): those credited with the
+  -- member, and with an album that links it or lists it in its tracks.
+  member_artists constant text := $r$SELECT 'artist', mc.artist_id FROM members JOIN {s}.media_credit mc ON mc.media_item_id = members.media_item_id
+    UNION ALL SELECT 'artist', mc.artist_id FROM members JOIN {s}.library_track lt ON lt.media_item_id = members.media_item_id
+      JOIN {s}.media_credit mc ON mc.media_item_id = lt.album_media_item_id
+    UNION ALL SELECT 'artist', mc.artist_id FROM members JOIN {s}.track t ON t.track_media_item_id = members.media_item_id
+      JOIN {s}.media_credit mc ON mc.media_item_id = t.album_media_item_id$r$;
   -- The rows that show the playlist memberships of `members.media_item_id`.
   member_neighbours constant text := $r$SELECT mi.media_type::text, mi.id FROM members JOIN {s}.media_item mi ON mi.id = members.media_item_id
     UNION ALL SELECT 'album', lt.album_media_item_id FROM members JOIN {s}.library_track lt ON lt.media_item_id = members.media_item_id
     UNION ALL SELECT 'album', t.album_media_item_id FROM members JOIN {s}.track t ON t.track_media_item_id = members.media_item_id
-    UNION ALL SELECT 'artist', mc.artist_id FROM members JOIN {s}.media_credit mc ON mc.media_item_id = members.media_item_id
-    UNION ALL SELECT 'artist', mc.artist_id FROM members JOIN {s}.library_track lt ON lt.media_item_id = members.media_item_id
-      JOIN {s}.media_credit mc ON mc.media_item_id = lt.album_media_item_id$r$;
+    UNION ALL $r$ || member_artists;
+  -- A member that makes a playlist without a source visible to its artists
+  -- (visiblePlaylist, artist-library.ts): an album, a track linked to one or
+  -- a track an album lists. %1$s is the member's ID.
+  shows_playlist constant text := $r$(EXISTS (SELECT 1 FROM {s}.album a WHERE a.media_item_id = %1$s)
+    OR EXISTS (SELECT 1 FROM {s}.library_track t WHERE t.media_item_id = %1$s AND t.album_media_item_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM {s}.track e WHERE e.track_media_item_id = %1$s))$r$;
+  -- The artists of every member of a playlist without a source that no
+  -- unchanged member keeps visible: its visibility may have changed with the
+  -- members `changed(playlist_id, media_item_id)` selected by %s. Followed by
+  -- member_artists and the subquery's alias.
+  playlist_visibility constant text := $r$SELECT * FROM (WITH changed AS MATERIALIZED (%s),
+      members AS MATERIALIZED (
+        SELECT member.media_item_id FROM (SELECT DISTINCT playlist_id FROM changed) f
+        JOIN {s}.playlist p ON p.id = f.playlist_id AND p.kind = 'playlist' AND p.source IS NULL
+        JOIN {s}.playlist_item member ON member.playlist_id = p.id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM {s}.playlist_item other WHERE other.playlist_id = p.id
+            AND other.media_item_id NOT IN (SELECT changed.media_item_id FROM changed WHERE changed.playlist_id = p.id)
+            AND $r$ || format(shows_playlist, 'other.media_item_id') || $r$))
+    $r$;
+  -- The memberships of the item in column %L of `c.r`, as `changed`.
+  holding_playlists constant text := $r$SELECT pi.playlist_id, pi.media_item_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>%L$r$;
+  -- The scrobbled names linked to the track in column %L of `c.r`: each is
+  -- published while a linked track is in the library.
+  linked_names constant text := $r$SELECT 'scrobble_name', {s}.device_scrobble_name_id(l.username, l.artist_key, l.track_key) FROM c
+    JOIN {s}.lastfm_track_link l ON l.track_media_item_id = c.r->>%L$r$;
+  -- The plays of the album in column %L of `c.r`, when it has a scrobble.
+  album_plays constant text := $r$SELECT 'album_plays', c.r->>%1$L FROM c
+    WHERE EXISTS (SELECT 1 FROM {s}.lastfm_scrobble s WHERE s.album_media_item_id = c.r->>%1$L)$r$;
   -- The media item named by `c.r->>'media_item_id'`, as its own entity.
   owning_item constant text := $r$SELECT mi.media_type::text, mi.id FROM c JOIN {s}.media_item mi ON mi.id = c.r->>'media_item_id'$r$;
 BEGIN
@@ -106,9 +148,20 @@ BEGIN
         OR o->'media_type' IS DISTINCT FROM n->'media_type' OR o->'release_date' IS DISTINCT FROM n->'release_date'
         OR o->'artwork_url' IS DISTINCT FROM n->'artwork_url' OR o->'source_label' IS DISTINCT FROM n->'source_label'
         OR o->'in_library' IS DISTINCT FROM n->'in_library'
-        OR (o->'metadata'->>'legacyHidden' IS NOT DISTINCT FROM 'true')
-          IS DISTINCT FROM (n->'metadata'->>'legacyHidden' IS NOT DISTINCT FROM 'true')$r$,
-      media_neighbours]
+        OR $r$ || archived_changed,
+      media_neighbours,
+      -- Publication: names and album plays are published for items in the
+      -- library; playlists count albums in the library, including through
+      -- their track lists; artists list a playlist through a member that is
+      -- not archived, on the member's albums too.
+      $r$o->'in_library' IS DISTINCT FROM n->'in_library'
+        OR o->'media_type' IS DISTINCT FROM n->'media_type' OR $r$ || archived_changed,
+      format(linked_names, 'id') || ' UNION ALL ' || format(album_plays, 'id') || $r$
+        UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.track t ON t.album_media_item_id = c.r->>'id'
+          JOIN {s}.playlist_item pi ON pi.media_item_id = t.track_media_item_id
+        UNION ALL SELECT * FROM (WITH members AS MATERIALIZED (
+            SELECT pi.media_item_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>'id')
+          $r$ || member_artists || ') changed_members']
     WHEN 'library_track' THEN ARRAY[
       every_column, $r$SELECT 'track', c.r->>'media_item_id' FROM c$r$,
       $r$o->'media_item_id' IS DISTINCT FROM n->'media_item_id'
@@ -121,18 +174,31 @@ BEGIN
         UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>'media_item_id'
         UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'media_item_id'
         UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'album_media_item_id'
-        UNION ALL SELECT 'artist_plays', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'media_item_id'$r$]
+        UNION ALL SELECT 'artist_plays', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'media_item_id'$r$,
+      -- A name is published while a linked track is a library track.
+      appears_or_disappears, format(linked_names, 'media_item_id'),
+      $r$(o->>'album_media_item_id' IS NULL) IS DISTINCT FROM (n->>'album_media_item_id' IS NULL)$r$,
+      format(playlist_visibility, format(holding_playlists, 'media_item_id')) || member_artists || ') linked_members']
     WHEN 'album' THEN ARRAY[
       every_column, $r$SELECT 'album', c.r->>'media_item_id' FROM c
         UNION ALL SELECT 'album', c.r->>'edition_of_id' FROM c$r$,
       $r$o->'media_item_id' IS DISTINCT FROM n->'media_item_id'
         OR o->'edition_of_id' IS DISTINCT FROM n->'edition_of_id'
         OR o->'track_count' IS DISTINCT FROM n->'track_count'$r$,
+      -- A playlist's presentation reads the length of each album that lists
+      -- one of its members.
       $r$SELECT 'track', lt.media_item_id FROM c JOIN {s}.library_track lt ON lt.album_media_item_id = c.r->>'media_item_id'
         UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>'media_item_id'
         UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.library_track lt ON lt.album_media_item_id = c.r->>'media_item_id'
           JOIN {s}.playlist_item pi ON pi.media_item_id = lt.media_item_id
-        UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'media_item_id'$r$]
+        UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.track t ON t.album_media_item_id = c.r->>'media_item_id'
+          JOIN {s}.playlist_item pi ON pi.media_item_id = t.track_media_item_id
+        UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'media_item_id'$r$,
+      -- Albums count for their artists' scope and plays, and show playlists.
+      appears_or_disappears,
+      $r$SELECT 'artist_plays', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'media_item_id'
+        UNION ALL $r$ || format(album_plays, 'media_item_id') || ' UNION ALL '
+        || format(playlist_visibility, format(holding_playlists, 'media_item_id')) || member_artists || ') album_members']
     WHEN 'film' THEN ARRAY[
       every_column, $r$SELECT 'film', c.r->>'media_item_id' FROM c$r$]
     WHEN 'track' THEN ARRAY[
@@ -141,7 +207,14 @@ BEGIN
         UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>'track_media_item_id'
         UNION ALL SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.playlist_item pi ON pi.media_item_id = c.r->>'album_media_item_id'
         UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'track_media_item_id'
-        UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'album_media_item_id'$r$]
+        UNION ALL SELECT 'artist', mc.artist_id FROM c JOIN {s}.media_credit mc ON mc.media_item_id = c.r->>'album_media_item_id'$r$,
+      -- An album's length counts its listed tracks, for the playlists
+      -- holding any of them.
+      $r$o->'album_media_item_id' IS DISTINCT FROM n->'album_media_item_id'$r$,
+      $r$SELECT 'playlist', pi.playlist_id FROM c JOIN {s}.track t ON t.album_media_item_id = c.r->>'album_media_item_id'
+        JOIN {s}.playlist_item pi ON pi.media_item_id = t.track_media_item_id$r$,
+      $r$o->'track_media_item_id' IS DISTINCT FROM n->'track_media_item_id'$r$,
+      format(playlist_visibility, format(holding_playlists, 'track_media_item_id')) || member_artists || ') listed_members']
     WHEN 'media_credit' THEN ARRAY[
       every_column, owning_item || $r$
         UNION ALL SELECT 'artist', c.r->>'artist_id' FROM c
@@ -156,6 +229,10 @@ BEGIN
         UNION ALL SELECT 'track', lt.media_item_id FROM c JOIN {s}.media_credit mc ON mc.artist_id = c.r->>'id'
           JOIN {s}.library_track lt ON lt.album_media_item_id = mc.media_item_id
         UNION ALL SELECT 'artist_plays', c.r->>'id' FROM c
+        UNION ALL SELECT 'artist_plays', c.r->>'merged_into_id' FROM c$r$,
+      -- An added artist, or the artist it is merged into, is in scope.
+      $r$o->'added_to_library' IS DISTINCT FROM n->'added_to_library'$r$,
+      $r$SELECT 'artist_plays', c.r->>'id' FROM c
         UNION ALL SELECT 'artist_plays', c.r->>'merged_into_id' FROM c$r$]
     WHEN 'artist_provider_current_state' THEN ARRAY[
       every_column, $r$SELECT 'artist', c.r->>'artist_id' FROM c
@@ -226,7 +303,12 @@ BEGIN
       $r$o->'playlist_id' IS DISTINCT FROM n->'playlist_id' OR o->'media_item_id' IS DISTINCT FROM n->'media_item_id'
         OR o->'admits_to_library' IS DISTINCT FROM n->'admits_to_library'$r$,
       $r$SELECT * FROM (WITH members AS MATERIALIZED (SELECT c.r->>'media_item_id' AS media_item_id FROM c)
-        $r$ || member_neighbours || ') changed_members']
+        $r$ || member_neighbours || ') changed_members',
+      -- A member that shows its playlist can be the only one.
+      appears_or_disappears,
+      format(playlist_visibility, $r$SELECT c.r->>'playlist_id' AS playlist_id, c.r->>'media_item_id' AS media_item_id
+        FROM c WHERE $r$ || format(shows_playlist, $r$(c.r->>'media_item_id')$r$))
+        || member_artists || ') visible_members']
     WHEN 'provider_reference' THEN ARRAY[every_column, owning_item]
     WHEN 'provider_reference_override' THEN ARRAY[every_column, owning_item]
     WHEN 'external_link' THEN ARRAY[every_column, owning_item]
@@ -251,8 +333,13 @@ BEGIN
         UNION ALL SELECT 'artist_plays', mc.artist_id FROM c JOIN {s}.lastfm_track_link l
             ON (l.username, l.artist_key, l.track_key) = (c.r->>'username', c.r->>'artist_key', c.r->>'track_key')
           JOIN {s}.media_credit mc ON mc.media_item_id = l.track_media_item_id$r$]
+    -- An observed artist, or the artist it is merged into, is in scope.
     WHEN 'catalog_observation' THEN ARRAY[
-      every_column, $r$SELECT 'artist', c.r->>'target_id' FROM c WHERE c.r->>'target_kind' = 'artist'$r$]
+      every_column, $r$SELECT kind.entity, observed.id FROM c
+        CROSS JOIN LATERAL (SELECT c.r->>'target_id' AS id
+          UNION ALL SELECT a.merged_into_id FROM {s}.artist a WHERE a.id = c.r->>'target_id') observed
+        CROSS JOIN (VALUES ('artist'), ('artist_plays')) kind(entity)
+        WHERE c.r->>'target_kind' = 'artist'$r$]
     -- Progress writes of a queued or running import leave its row unchanged.
     WHEN 'scrape_job' THEN ARRAY[
       $r$o->>'status' NOT IN ('queued', 'running') OR n->>'status' NOT IN ('queued', 'running')

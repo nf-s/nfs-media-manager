@@ -325,6 +325,7 @@ async function step(label: string, change: () => Promise<void>) {
   expect(sweep, `${label}: the sweep after it`).toEqual({
     written: 0,
     complete: true,
+    failed: {},
   })
   process.stdout.write(
     `device feed end to end, ${label}: ${marks} marks, ${changes.length} rows changed\n`,
@@ -336,6 +337,15 @@ async function step(label: string, change: () => Promise<void>) {
 
 const query = (statement: string, values: unknown[] = []) =>
   pool.query(statement, values).then(() => undefined)
+
+/** The `scrobble_name` ID of a fixture listener's artist and track keys. */
+async function scrobbleName(artistKey: string, trackKey: string) {
+  const result = await pool.query(
+    "select device_scrobble_name_id('fixture-listener', $1, $2) as id",
+    [artistKey, trackKey],
+  )
+  return z.object({ id: z.string() }).parse(result.rows[0]).id
+}
 
 beforeAll(async () => {
   vi.stubGlobal('fetch', network)
@@ -368,7 +378,7 @@ describe('the device feed against real edits', () => {
       await import('@/services/device-feed')
     await query('delete from device_dirty')
     // Maintenance with the configured renderer starts and builds the feed.
-    expect(await refreshDeviceFeedForMaintenance()).toBe(true)
+    expect((await refreshDeviceFeedForMaintenance()).published).toBe(true)
     const state = await feedState()
     expect(state.ready).toBe(true)
     epoch = state.epoch
@@ -561,16 +571,114 @@ describe('the device feed against real edits', () => {
     expect(finished.get('playlist_job:spotify-liked')).toBe(false)
   })
 
+  it('a Last.fm placeholder whose exact-linked peer is archived and restored', async () => {
+    // A placeholder is redundant while a peer linked exactly to one of its
+    // names can play; the peer's own change decides its flag.
+    await step('placeholder added', () =>
+      query(`begin;
+        insert into media_item (id, slug, media_type, title, source_label, metadata, created_at, updated_at)
+        values ('track-polar', 'track-polar', 'track', 'Polar Glow', 'lastfm', '{}', '2020-02-07', '2020-02-07');
+        insert into library_track (media_item_id, date_added, scrobble_count)
+        values ('track-polar', '2023-07-01', 0);
+        insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id)
+        values ('fixture-listener', 'aster vale', 'aurora', 'track-polar');
+        commit`),
+    )
+    const placeholderFlag = async () =>
+      DeviceTrackRowSchema.parse(
+        (await (await renderer()).render('track', ['track-polar'])).get(
+          'track-polar',
+        ),
+      ).extra.redundantPlaceholder
+    expect(await placeholderFlag()).toBe(true)
+    const archived = await step('placeholder peer archived', () =>
+      query(`update media_item set metadata = metadata || '{"legacyHidden": "true"}'
+        where id = 'track-aurora'`),
+    )
+    expect(archived.get('track:track-polar')).toBe(false)
+    expect(await placeholderFlag()).toBe(false)
+    const restored = await step('placeholder peer restored', () =>
+      query(
+        "update media_item set metadata = metadata - 'legacyHidden' where id = 'track-aurora'",
+      ),
+    )
+    expect(restored.get('track:track-polar')).toBe(false)
+  })
+
+  it('a playlist holding a track listed on an album', async () => {
+    // Artist Aster is credited on Northern Lights, which lists Échelle only
+    // in its track list.
+    const added = await step('playlist of a listed track added', () =>
+      query(`begin;
+        insert into playlist (id, name, kind, added_to_library, sync_schedule, created_at)
+        values ('playlist-listed', 'Listed Picks', 'playlist', true, 'off', '2022-08-01');
+        insert into playlist_item (playlist_id, media_item_id, position)
+        values ('playlist-listed', 'track-echo', 0);
+        commit`),
+    )
+    expect(added.get('artist:artist-aster')).toBe(false)
+    const renamed = await step('playlist of a listed track renamed', () =>
+      query(
+        "update playlist set name = 'Listed Mix' where id = 'playlist-listed'",
+      ),
+    )
+    expect(renamed.get('artist:artist-aster')).toBe(false)
+    const archived = await step('listed track archived', () =>
+      query(`update media_item set metadata = metadata || '{"legacyHidden": "true"}'
+        where id = 'track-echo'`),
+    )
+    expect(archived.get('artist:artist-aster')).toBe(false)
+    await step('listed track restored', () =>
+      query(
+        "update media_item set metadata = metadata - 'legacyHidden' where id = 'track-echo'",
+      ),
+    )
+    // A loose single counts for its artists while another member shows the
+    // playlist, so removing that member hides the playlist from them.
+    await step('loose single added to the playlist', () =>
+      query(`insert into playlist_item (playlist_id, media_item_id, position)
+        values ('playlist-listed', 'track-cold', 1)`),
+    )
+    const hidden = await step('last listed member removed', () =>
+      query(
+        "delete from playlist_item where playlist_id = 'playlist-listed' and media_item_id = 'track-echo'",
+      ),
+    )
+    expect(hidden.get('artist:artist-birch')).toBe(false)
+    const shown = await step('listed member added back', () =>
+      query(`insert into playlist_item (playlist_id, media_item_id, position)
+        values ('playlist-listed', 'track-echo', 2)`),
+    )
+    expect(shown.get('artist:artist-birch')).toBe(false)
+  })
+
+  it('an album and a track with plays leave the library and return', async () => {
+    const name = await scrobbleName('cedar echo', 'echelle')
+    const albumLeft = await step('album out of the library', () =>
+      query(
+        "update media_item set in_library = false where id = 'album-north'",
+      ),
+    )
+    expect(albumLeft.get('album_plays:album-north')).toBe(true)
+    // The playlist counts the album through the album's track list.
+    expect(albumLeft.get('playlist:playlist-listed')).toBe(false)
+    const trackLeft = await step('track out of the library', () =>
+      query("update media_item set in_library = false where id = 'track-echo'"),
+    )
+    expect(trackLeft.get(`scrobble_name:${name}`)).toBe(true)
+    // Promoting the album admits the tracks its track list holds.
+    const { promoteCatalogMedia } =
+      await import('@/services/catalog-discoveries')
+    const returned = await step('album and its track promoted', async () => {
+      await promoteCatalogMedia('album-north', ownerId)
+    })
+    expect(returned.get('track:track-echo')).toBe(false)
+    expect(returned.get(`scrobble_name:${name}`)).toBe(false)
+    expect(returned.get('album_plays:album-north')).toBe(false)
+  })
+
   it('new scrobbles for a linked track and for an album', async () => {
-    const nameId = z
-      .object({ id: z.string() })
-      .parse(
-        (
-          await pool.query(
-            "select device_scrobble_name_id('fixture-listener', 'aster vale', 'aurora') as id",
-          )
-        ).rows[0],
-      ).id
+    const nameId = await scrobbleName('aster vale', 'aurora')
     // As a sync stores them: the scrobbles, then the links and the
     // listening fields of tracks and artists recounted from them.
     const { refreshTrackLinks } = await import('@/services/track-links')
@@ -637,5 +745,52 @@ describe('the device feed against real edits', () => {
       query("delete from media_item where id = 'film-juniper'"),
     )
     expect(deleted.get('film:film-juniper')).toBe(true)
+  })
+
+  it('sets aside play rows with a fractional play time and renders the rest', async () => {
+    const { refreshDeviceFeedForMaintenance } =
+      await import('@/services/device-feed')
+    const StoredSchema = z.array(
+      z.object({ entity: z.string(), id: z.string(), seq: z.string() }),
+    )
+    const playRows = async () =>
+      StoredSchema.parse(
+        (
+          await pool.query(`select entity, id, seq from device_row
+            where not deleted and entity in ('album_plays', 'artist_plays')
+            order by entity, id`)
+        ).rows,
+      )
+    const before = await playRows()
+    const { seq: since } = await feedState()
+    // Last.fm reports whole seconds; this play time cannot be published.
+    await query(`insert into lastfm_scrobble (id, username, listened_at, artist_name, track_name, artist_key, track_key, album_media_item_id)
+      values ('scrobble-fraction', 'fixture-listener', '2024-06-03 00:00:00.5', 'Aster Vale', 'Unlinked Song',
+        'aster vale', 'unlinked song', 'album-north')`)
+    const changes = await changesSince(since)
+    expect(
+      changes.filter((row) => row.entity.endsWith('_plays')),
+      'no play row of the album or its artist',
+    ).toEqual([])
+    expect(await playRows()).toEqual(before)
+    expect(await markCount()).toBe(0)
+
+    await query(`insert into device_dirty (entity, id)
+      values ('album_plays', 'album-north'), ('artist_plays', 'artist-aster')`)
+    expect((await refreshDeviceFeedForMaintenance()).renderFailures).toEqual({
+      album_plays: 1,
+      artist_plays: 1,
+    })
+    expect(await playRows()).toEqual(before)
+
+    // Without it the rows render again, unchanged.
+    await query("delete from lastfm_scrobble where id = 'scrobble-fraction'")
+    await query(`insert into device_dirty (entity, id)
+      values ('album_plays', 'album-north'), ('artist_plays', 'artist-aster')`)
+    expect(await refreshDeviceFeedForMaintenance()).toEqual({
+      published: false,
+      renderFailures: {},
+    })
+    expect(await playRows()).toEqual(before)
   })
 })

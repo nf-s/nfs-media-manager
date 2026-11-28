@@ -1,4 +1,4 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { DrizzleQueryError, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import type { JsonValue } from '@repo/schemas/common'
 import {
@@ -15,6 +15,7 @@ import {
 } from '@repo/schemas/device'
 import { canReadDatabaseWithoutCache } from '@/lib/database-read-cache'
 import { db } from '@/lib/db'
+import { recordDeviceRenderFailures } from '@/lib/request-log'
 import {
   deviceRowHash,
   groupDeviceMarks,
@@ -102,17 +103,20 @@ const MarkRowsSchema = z.array(
     id: z.string(),
   }),
 )
-const PageRowsSchema = z.array(
-  z.object({
-    entity: z.string(),
-    id: z.string(),
-    seq: z.coerce.number().int(),
-    deleted: z.boolean(),
-    payload: z.unknown(),
-    fetched: z.coerce.number().int(),
-  }),
-)
-const PendingRowSchema = z.object({ pending: z.boolean() })
+const PageRowSchema = z.object({
+  epoch: z.string().min(1),
+  row_version: z.number().int(),
+  min_seq: z.coerce.number().int().nonnegative(),
+  pending: z.boolean(),
+  entity: z.string().nullable(),
+  id: z.string().nullable(),
+  seq: z.coerce.number().int().nullable(),
+  deleted: z.boolean().nullable(),
+  payload: z.unknown(),
+  fetched: z.coerce.number().int().nullable(),
+})
+/** A page's rows with the state they were read in: one row of nulls when the page is empty. */
+const PageRowsSchema = z.tuple([PageRowSchema], PageRowSchema)
 
 const pendingMarks = sql`exists (select 1 from device_dirty)`
 
@@ -141,7 +145,7 @@ async function readMaintenanceState() {
   return MaintenanceStateSchema.parse(result.rows[0])
 }
 
-const isCurrent = (state: StoredState) =>
+const isCurrent = (state: Pick<StoredState, 'row_version'>) =>
   state.row_version === DEVICE_ROW_VERSION
 
 export async function readDeviceFeedState(): Promise<DeviceFeedState> {
@@ -248,15 +252,97 @@ async function tombstone(tx: Transaction, entity: DeviceEntity, where: SQL) {
   return SeqRowsSchema.parse(result.rows).length
 }
 
-async function renderIds(
-  renderer: DeviceFeedRenderer,
+/** Rows that could not be rendered, counted by entity, with no ID or content. */
+export type DeviceRenderFailures = Partial<Record<DeviceEntity, number>>
+
+function addFailures(
+  failures: DeviceRenderFailures,
+  more: DeviceRenderFailures,
+) {
+  for (const entity of DeviceEntitySchema.options) {
+    const count = more[entity]
+    if (count) failures[entity] = (failures[entity] ?? 0) + count
+  }
+}
+
+const ErrorCodeSchema = z.object({ code: z.string() })
+
+/** An error of the database or its connection, not of one row's data. */
+function isDatabaseError(error: unknown) {
+  return (
+    error instanceof DrizzleQueryError ||
+    ErrorCodeSchema.safeParse(error).success ||
+    (error instanceof Error && ErrorCodeSchema.safeParse(error.cause).success)
+  )
+}
+
+/**
+ * Renders `ids`, setting aside the rows that cannot be rendered (DEVICE-04).
+ * When a render throws anything but a database error, the IDs are halved
+ * until each failing ID is alone; past `deadline`, a failing part is set
+ * aside whole. A set-aside row keeps its stored row; the sweep renders it
+ * again.
+ */
+async function renderSettingAside(
+  renderer: DeviceRowRenderer,
   entity: DeviceEntity,
   ids: readonly string[],
+  deadline: number,
+): Promise<{ rendered: Map<string, JsonValue>; failed: string[] }> {
+  try {
+    return { rendered: await renderer.render(entity, ids), failed: [] }
+  } catch (error) {
+    if (isDatabaseError(error)) throw error
+    if (ids.length === 1 || Date.now() >= deadline)
+      return { rendered: new Map(), failed: [...ids] }
+    const middle = Math.ceil(ids.length / 2)
+    const first = await renderSettingAside(
+      renderer,
+      entity,
+      ids.slice(0, middle),
+      deadline,
+    )
+    const second = await renderSettingAside(
+      renderer,
+      entity,
+      ids.slice(middle),
+      deadline,
+    )
+    return {
+      rendered: new Map([...first.rendered, ...second.rendered]),
+      failed: [...first.failed, ...second.failed],
+    }
+  }
+}
+
+/**
+ * Renders `ids` and writes what changed: a stored row whose ID rendered
+ * nothing becomes a tombstone, and a row set aside stays as it is.
+ */
+async function renderAndWrite(
+  tx: Transaction,
+  renderer: DeviceRowRenderer,
+  entity: DeviceEntity,
+  ids: readonly string[],
+  deadline: number,
 ) {
-  const all = renderer.expand
-    ? withExpandedIds(ids, await renderer.expand(entity, ids))
-    : [...ids]
-  return { ids: all, rendered: await renderer.render(entity, all) }
+  const { rendered, failed } = await renderSettingAside(
+    renderer,
+    entity,
+    ids,
+    deadline,
+  )
+  const setAside = new Set(failed)
+  const written = await writeRenderedRows(
+    tx,
+    entity,
+    ids.filter((id) => !setAside.has(id)),
+    rendered,
+  )
+  const failures: DeviceRenderFailures = failed.length
+    ? { [entity]: failed.length }
+    : {}
+  return { written, failures }
 }
 
 /**
@@ -269,7 +355,9 @@ async function renderDirtyBatch(
   options: { wait: boolean; deadline: number; limit: number },
 ) {
   return withFeedLock(options, async (tx) => {
-    if (!isCurrent(await readStoredState(tx))) return { read: 0, written: 0 }
+    const failed: DeviceRenderFailures = {}
+    if (!isCurrent(await readStoredState(tx)))
+      return { read: 0, written: 0, failed }
     const marks = MarkRowsSchema.parse(
       (
         await tx.execute(sql`select key, entity, id from device_dirty
@@ -279,24 +367,30 @@ async function renderDirtyBatch(
     const batch = groupDeviceMarks(marks)
     let written = 0
     for (const { entity, ids } of batch.entities) {
-      const result = await renderIds(renderer, entity, ids)
-      written += await writeRenderedRows(
+      const all = renderer.expand
+        ? withExpandedIds(ids, await renderer.expand(entity, ids))
+        : ids
+      const result = await renderAndWrite(
         tx,
+        renderer,
         entity,
-        result.ids,
-        result.rendered,
+        all,
+        options.deadline,
       )
+      written += result.written
+      addFailures(failed, result.failures)
     }
     if (batch.keys.length > 0)
       await tx.execute(sql`delete from device_dirty
         where key = any(${sql.param(batch.keys)}::bigint[])`)
-    return { read: marks.length, written }
+    return { read: marks.length, written, failed }
   })
 }
 
 /**
  * Renders marked rows in batches until none remain or `deadline` passes.
- * `busy` says another writer held the lock.
+ * `busy` says another writer held the lock; `failed` counts the rows set
+ * aside.
  */
 export async function renderDirtyDeviceRows(
   renderer: DeviceFeedRenderer,
@@ -304,13 +398,15 @@ export async function renderDirtyDeviceRows(
 ) {
   const limit = options.limit ?? maintenanceMarkBatch
   let written = 0
+  const failed: DeviceRenderFailures = {}
   while (Date.now() < options.deadline) {
     const batch = await renderDirtyBatch(renderer, { ...options, limit })
-    if (!batch) return { written, busy: true }
+    if (!batch) return { written, busy: true, failed }
     written += batch.written
+    addFailures(failed, batch.failed)
     if (batch.read < limit) break
   }
-  return { written, busy: false }
+  return { written, busy: false, failed }
 }
 
 /** The entity a sweep walks after `entity`; the first one after null. */
@@ -345,12 +441,13 @@ async function sweepBatchUnderLock(
     if (options.onlyWhenDue && !state.sweep_due) return undefined
     const after = state.sweep_entity ? state.sweep_after : null
     const listed = await renderer.listIds(entity, after, options.limit)
-    const rendered =
+    const result =
       listed.length > 0
-        ? await renderer.render(entity, listed)
-        : new Map<string, JsonValue>()
-    let written = await writeRenderedRows(tx, entity, listed, rendered)
+        ? await renderAndWrite(tx, renderer, entity, listed, options.deadline)
+        : { written: 0, failures: {} }
+    let written = result.written
     const last = listed.length < options.limit ? undefined : listed.at(-1)
+    // A listed row set aside is in `listed`, so it is not tombstoned.
     written += await tombstone(
       tx,
       entity,
@@ -367,11 +464,19 @@ async function sweepBatchUnderLock(
       ready = ready or ${complete},
       swept_at = case when ${complete} then now() else swept_at end
       where singleton`)
-    return { listed: listed.length, written, complete }
+    return {
+      listed: listed.length,
+      written,
+      complete,
+      failed: result.failures,
+    }
   })
 }
 
-/** Sweeps up to `maxRows` IDs before `deadline`; `complete` when a sweep finished. */
+/**
+ * Sweeps up to `maxRows` IDs before `deadline`; `complete` when a sweep
+ * finished, `failed` counting the rows set aside.
+ */
 export async function sweepDeviceFeed(
   renderer: DeviceFeedRenderer,
   options: SweepOptions & { maxRows?: number; limit?: number },
@@ -381,14 +486,16 @@ export async function sweepDeviceFeed(
   let listed = 0
   let written = 0
   let complete = false
+  const failed: DeviceRenderFailures = {}
   while (!complete && listed < maxRows && Date.now() < options.deadline) {
     const batch = await sweepBatchUnderLock(renderer, { ...options, limit })
     if (!batch) break
     listed += batch.listed
     written += batch.written
     complete = batch.complete
+    addFailures(failed, batch.failed)
   }
-  return { written, complete }
+  return { written, complete, failed }
 }
 
 /**
@@ -442,12 +549,14 @@ export async function pruneDeviceTombstones(deadline: number) {
  * The five-minute maintenance task: restarts the feed for a new row
  * version, renders marked rows, continues a due sweep and prunes old
  * tombstones. One read decides which of them has work, so a run with none
- * is one statement. Returns whether it changed the feed.
+ * is one statement. `published` says whether it changed the feed;
+ * `renderFailures` counts the rows set aside.
  */
 export async function refreshDeviceFeedForMaintenance(
   renderer: DeviceFeedRenderer = configuredRenderer,
-): Promise<boolean> {
+): Promise<{ published: boolean; renderFailures: DeviceRenderFailures }> {
   const start = Date.now()
+  const renderFailures: DeviceRenderFailures = {}
   try {
     const state = await readMaintenanceState()
     const restarted =
@@ -458,7 +567,8 @@ export async function refreshDeviceFeedForMaintenance(
           wait: true,
           deadline: start + maintenanceRenderBudgetMs,
         })
-      : { written: 0 }
+      : { written: 0, failed: {} }
+    addFailures(renderFailures, render.failed)
     const sweep =
       restarted || state.sweep_due
         ? await sweepDeviceFeed(renderer, {
@@ -466,49 +576,67 @@ export async function refreshDeviceFeedForMaintenance(
             deadline: start + maintenanceBudgetMs,
             onlyWhenDue: true,
           })
-        : { written: 0 }
+        : { written: 0, failed: {} }
+    addFailures(renderFailures, sweep.failed)
     const pruned = state.prunable
       ? await pruneDeviceTombstones(start + maintenanceBudgetMs)
       : 0
-    return restarted || render.written + sweep.written + pruned > 0
+    return {
+      published: restarted || render.written + sweep.written + pruned > 0,
+      renderFailures,
+    }
   } catch (error) {
     // Lock waits, timeouts and tables not yet migrated leave the work to the
     // next tick.
-    if (canReadDatabaseWithoutCache(error)) return false
+    if (canReadDatabaseWithoutCache(error))
+      return { published: false, renderFailures }
     throw error
   }
 }
 
-function needsReset(state: StoredState, epoch: string) {
+function needsReset(
+  state: Pick<StoredState, 'epoch' | 'row_version'>,
+  epoch: string,
+) {
   return !isCurrent(state) || state.epoch !== epoch
 }
 
 /**
  * One page of `device_row` matching `where`, in `seq` order, bounded by rows
- * and by payload bytes. `hasMore` says the rows read went past the page.
+ * and by payload bytes, with the feed state it was read in: one statement,
+ * so a restart or a prune lands wholly before or after the page.
+ * `hasMore` says the rows read went past the page.
  */
 async function readPage(where: SQL, limit: number) {
   const result = await db.execute(sql`
-    select entity, id, seq, deleted, payload, fetched from (
-      select page.*, count(*) over () as fetched,
-        sum(size) over (order by seq) - size as before
-      from (
-        select entity, id, seq, deleted, payload, size from device_row
-        where ${where} order by seq limit ${limit + 1}
-      ) page
-    ) sized
-    where before < ${pageByteBudget}
-    order by seq limit ${limit}`)
+    with state as (
+      select s.epoch, s.row_version, s.min_seq, ${pendingMarks} as pending
+      from device_feed_state s where s.singleton
+    ), page as (
+      select entity, id, seq, deleted, payload, fetched from (
+        select page.*, count(*) over () as fetched,
+          sum(size) over (order by seq) - size as before
+        from (
+          select entity, id, seq, deleted, payload, size from device_row
+          where ${where} order by seq limit ${limit + 1}
+        ) page
+      ) sized
+      where before < ${pageByteBudget}
+      order by seq limit ${limit}
+    )
+    select state.*, page.* from state left join page on true
+    order by page.seq`)
   const rows = PageRowsSchema.parse(result.rows)
+  const [{ epoch, row_version, min_seq, pending, fetched }] = rows
+  const pageRows = rows.flatMap(({ entity, id, seq, deleted, payload }) =>
+    entity === null || id === null || seq === null || deleted === null
+      ? []
+      : [{ entity, id, seq, deleted, payload }],
+  )
   return {
-    rows: rows.map(({ entity, id, seq, deleted, payload }) => ({
-      entity,
-      id,
-      seq,
-      deleted,
-      payload,
-    })),
-    hasMore: (rows[0]?.fetched ?? 0) > rows.length,
+    state: { epoch, row_version, min_seq, pending },
+    rows: pageRows,
+    hasMore: (fetched ?? 0) > pageRows.length,
   }
 }
 
@@ -516,12 +644,11 @@ async function readPage(where: SQL, limit: number) {
 export async function readDeviceSnapshot(
   query: DeviceSnapshotQuery,
 ): Promise<DeviceSnapshotResponse> {
-  const state = await readStoredState()
-  if (needsReset(state, query.epoch)) return { reset: true }
   const page = await readPage(
     sql`entity = ${query.entity} and not deleted and seq > ${query.after}`,
     query.limit,
   )
+  if (needsReset(page.state, query.epoch)) return { reset: true }
   const rows = page.rows.map((row) => DeviceLiveRowSchema.parse(row))
   return {
     reset: false,
@@ -534,38 +661,40 @@ export async function readDeviceSnapshot(
 /**
  * Rows and tombstones of every entity after `since`, in `seq` order
  * (DEVICE-07). Marked rows are rendered first, within a time budget, when no
- * other writer is rendering; `pending` says marks remain.
+ * other writer is rendering; `pending` says marks remain. The page is
+ * checked against the state it was read in, so a device whose epoch ended
+ * or whose tombstones were pruned meanwhile is told to reset.
  */
 export async function readDeviceChanges(
   query: DeviceChangesQuery,
   renderer: DeviceFeedRenderer = configuredRenderer,
 ): Promise<DeviceChangesResponse> {
+  const resets = (
+    state: Pick<StoredState, 'epoch' | 'row_version' | 'min_seq'>,
+  ) => needsReset(state, query.epoch) || query.since < state.min_seq
   const state = await readStoredState()
-  if (needsReset(state, query.epoch) || query.since < state.min_seq)
-    return { reset: true }
-  let pending = state.pending
-  if (pending) {
+  if (resets(state)) return { reset: true }
+  if (state.pending) {
     try {
-      await renderDirtyDeviceRows(renderer, {
+      const render = await renderDirtyDeviceRows(renderer, {
         wait: false,
         deadline: Date.now() + changesRenderBudgetMs,
         limit: requestMarkBatch,
       })
+      recordDeviceRenderFailures(render.failed)
     } catch (error) {
       // A timeout leaves the marks to maintenance; the page still answers.
       if (!canReadDatabaseWithoutCache(error)) throw error
     }
-    pending = PendingRowSchema.parse(
-      (await db.execute(sql`select ${pendingMarks} as pending`)).rows[0],
-    ).pending
   }
   const page = await readPage(sql`seq > ${query.since}`, query.limit)
+  if (resets(page.state)) return { reset: true }
   const rows = page.rows.map((row) => DeviceRowSchema.parse(row))
   return {
     reset: false,
     rows,
     seq: rows.at(-1)?.seq ?? query.since,
     hasMore: page.hasMore,
-    pending,
+    pending: page.state.pending,
   }
 }

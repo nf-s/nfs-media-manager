@@ -12,6 +12,7 @@ import {
   logApiRequest,
   measureCatalogWriteLock,
   measureRequestPhase,
+  recordDeviceRenderFailures,
   recordRecordingOrderLookup,
   requestQueryLogger,
   setPlaybackLogRole,
@@ -159,6 +160,23 @@ it.each([
       phases: { catalogWriteLock: { drizzleStatementCount: 1 } },
     },
   ])
+})
+
+it('counts the device feed rows a request could not render, by entity', async () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  await logApiRequest(new Request('https://fixture.invalid'), async () => {
+    recordDeviceRenderFailures({ track: 1 })
+    recordDeviceRenderFailures({ track: 1, album_plays: 1, artist: 0 })
+    return new Response(null, { status: 200 })
+  })
+  const FailuresSchema = z.object({
+    renderFailures: z.record(z.string(), z.number()),
+  })
+  expect(
+    info.mock.calls.map(
+      ([line]) => FailuresSchema.parse(JSON.parse(line)).renderFailures,
+    ),
+  ).toEqual([{ track: 2, album_plays: 1 }])
 })
 
 it('counts Drizzle executions and phases separately across concurrent requests', async () => {

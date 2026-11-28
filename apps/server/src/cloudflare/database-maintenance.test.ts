@@ -49,7 +49,7 @@ describe('scheduled database monitoring', () => {
       refreshAlbumFacets.mockResolvedValue(published)
       refreshOrder.mockResolvedValue(published)
       refreshDuplicates.mockResolvedValue(published)
-      refreshDeviceFeed.mockResolvedValue(published)
+      refreshDeviceFeed.mockResolvedValue({ published, renderFailures: {} })
       await runDatabaseMaintenance(dailyTick)
       expect(execute).toHaveBeenCalledOnce()
       expect(log.mock.calls.map(([event]) => event)).toEqual([
@@ -89,6 +89,10 @@ describe('scheduled database monitoring', () => {
   )
 
   it('runs ordinary maintenance between daily probes without the synthetic query', async () => {
+    refreshDeviceFeed.mockResolvedValue({
+      published: false,
+      renderFailures: {},
+    })
     await runDatabaseMaintenance(dailyTick + 5 * 60_000)
     expect(execute).not.toHaveBeenCalled()
     expect(refreshFacets).toHaveBeenCalledOnce()
@@ -173,6 +177,20 @@ describe('scheduled database monitoring', () => {
       'start device feed',
       'finish device feed',
     ])
+  })
+
+  it('counts device feed rows that could not be rendered, by entity', async () => {
+    refreshDeviceFeed.mockResolvedValue({
+      published: true,
+      renderFailures: { track: 2, album_plays: 1 },
+    })
+    await runDatabaseMaintenance(dailyTick + 5 * 60_000)
+    expect(log).toHaveBeenCalledWith({
+      event: 'database.device-feed-maintenance',
+      outcome: 'published',
+      durationMs: expect.any(Number),
+      renderFailures: { track: 2, album_plays: 1 },
+    })
   })
 
   it('distinguishes refresh failure from a successful connection', async () => {

@@ -233,10 +233,12 @@ export async function startJobWorker({
             console.error('Possible duplicates maintenance failed.')
             return false
           }),
-          refreshDeviceFeedForMaintenance().catch(() => {
-            console.error('Device feed maintenance failed.')
-            return false
-          }),
+          refreshDeviceFeedForMaintenance()
+            .then((result) => result.published)
+            .catch(() => {
+              console.error('Device feed maintenance failed.')
+              return false
+            }),
         ]).finally(() => {
           maintenance = undefined
         })

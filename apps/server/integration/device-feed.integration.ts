@@ -104,9 +104,13 @@ let deviceKey = ''
 function stubRenderer() {
   const rows = new Map<DeviceEntity, Map<string, JsonValue>>()
   const hooks: { beforeRender?: () => Promise<void> } = {}
+  // IDs whose render throws, as a payload its schema rejects does.
+  const failing = new Set<string>()
   const renderer: DeviceFeedRenderer = {
     async render(entity, ids) {
       await hooks.beforeRender?.()
+      if (ids.some((id) => failing.has(id)))
+        throw new Error('A fixture row cannot be rendered')
       const published = rows.get(entity) ?? new Map<string, JsonValue>()
       return new Map(
         ids.flatMap((id) => {
@@ -130,7 +134,7 @@ function stubRenderer() {
   function remove(entity: DeviceEntity, id: string) {
     rows.get(entity)?.delete(id)
   }
-  return { renderer, hooks, set, remove }
+  return { renderer, hooks, failing, set, remove }
 }
 
 const plays = (...times: number[]) => ({ plays: times })
@@ -318,7 +322,9 @@ describe('device feed', () => {
       ancestorKeys: ['music'],
     })
 
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(true)
 
     const after = await feedState()
     expect(after.ready).toBe(true)
@@ -331,7 +337,9 @@ describe('device feed', () => {
     ])
     expect(after.seq).toBe(Math.max(...rows.map((row) => row.seq)))
     // A second run finds nothing to change.
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(false)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(false)
     expect(await storedRows()).toEqual(rows)
   })
 
@@ -360,7 +368,7 @@ describe('device feed', () => {
       wait: true,
       deadline: later(),
     })
-    expect(render).toEqual({ written: 1, busy: false })
+    expect(render).toEqual({ written: 1, busy: false, failed: {} })
     const after = await storedRows()
     expect(after.filter((row) => row.id !== 'album-2')).toEqual(
       before.filter((row) => row.id !== 'album-2'),
@@ -600,6 +608,100 @@ describe('device feed', () => {
     })
   })
 
+  it('tells a device to reset when the feed restarts after the state a request read', async () => {
+    const stub = stubRenderer()
+    stub.set('album_plays', 'album-1', plays(1))
+    stub.set('album_plays', 'album-2', plays(2))
+    await sweepAll(stub.renderer)
+    const before = await feedState()
+    // While the request renders a mark, the feed starts again from nothing
+    // and its new rows are numbered after the device's sequence.
+    stub.set('album_plays', 'album-2', plays(2, 20))
+    await mark('album_plays', 'album-2')
+    stub.hooks.beforeRender = async () => {
+      stub.hooks.beforeRender = undefined
+      await pool.query(`update device_feed_state set epoch = 'fixture-restarted',
+          min_seq = (select max(seq) from device_row);
+        delete from device_row`)
+    }
+    expect(
+      await readDeviceChanges(
+        { epoch: before.epoch, since: before.seq, limit: 100 },
+        stub.renderer,
+      ),
+    ).toEqual({ reset: true })
+  })
+
+  it('tells a device to reset when tombstones past its sequence are pruned after the state a request read', async () => {
+    const stub = stubRenderer()
+    stub.set('album_plays', 'album-1', plays(1))
+    stub.set('album_plays', 'album-2', plays(2))
+    await sweepAll(stub.renderer)
+    const { epoch, seq: since } = await feedState()
+    stub.remove('album_plays', 'album-1')
+    await mark('album_plays', 'album-1')
+    await renderDirtyDeviceRows(stub.renderer, {
+      wait: true,
+      deadline: later(),
+    })
+    // While the request renders a mark, the tombstone the device has not
+    // read is pruned and `minSeq` passes its sequence.
+    stub.set('album_plays', 'album-2', plays(2, 20))
+    await mark('album_plays', 'album-2')
+    stub.hooks.beforeRender = async () => {
+      stub.hooks.beforeRender = undefined
+      await pool.query(`update device_feed_state
+          set min_seq = (select max(seq) from device_row where deleted);
+        delete from device_row where deleted`)
+    }
+    expect(
+      await readDeviceChanges({ epoch, since, limit: 100 }, stub.renderer),
+    ).toEqual({ reset: true })
+    expect((await feedState()).minSeq).toBeGreaterThan(since)
+  })
+
+  it('sets aside a row that cannot be rendered and renders the rest', async () => {
+    const stub = stubRenderer()
+    setDeviceFeedRenderer(stub.renderer)
+    const ids = [1, 2, 3, 4, 5].map(fixtureId)
+    for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+    await sweepAll(stub.renderer)
+    const { epoch, seq } = await feedState()
+    const stored = await storedSeq('album_plays', fixtureId(3))
+
+    // Every row changes; one of them cannot be rendered now.
+    for (const [n, id] of ids.entries())
+      stub.set('album_plays', id, plays(n, 100))
+    stub.failing.add(fixtureId(3))
+    await mark('album_plays', ...ids)
+    const page = await changesPage({ epoch, since: seq })
+    expect(page).toMatchObject({ reset: false, pending: false })
+    if (page.reset) throw new Error('The changes were reset')
+    expect(page.rows.map((row) => row.id).sort()).toEqual(
+      ids.filter((id) => id !== fixtureId(3)),
+    )
+    // Its stored row stays and its mark is consumed.
+    expect(await storedSeq('album_plays', fixtureId(3))).toEqual(stored)
+    expect(await markCount()).toBe(0)
+
+    // Maintenance and the sweep count it and carry on.
+    await mark('album_plays', fixtureId(3))
+    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toEqual({
+      published: false,
+      renderFailures: { album_plays: 1 },
+    })
+    expect(
+      await sweepDeviceFeed(stub.renderer, { wait: true, deadline: later() }),
+    ).toEqual({ written: 0, complete: true, failed: { album_plays: 1 } })
+    expect(await storedSeq('album_plays', fixtureId(3))).toEqual(stored)
+
+    // The next sweep renders it.
+    stub.failing.clear()
+    expect(
+      await sweepDeviceFeed(stub.renderer, { wait: true, deadline: later() }),
+    ).toEqual({ written: 1, complete: true, failed: {} })
+  })
+
   it('starts a new epoch when the row version changes', async () => {
     const stub = stubRenderer()
     stub.set('album_plays', 'album-1', plays(1))
@@ -620,7 +722,9 @@ describe('device feed', () => {
       reset: true,
     })
 
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(true)
     const after = await feedState()
     expect(after).toMatchObject({ ready: true, rowVersion: DEVICE_ROW_VERSION })
     expect(after.epoch).not.toBe(before.epoch)
@@ -634,13 +738,17 @@ describe('device feed', () => {
   it('rests a day after a completed sweep and continues one under way in every run', async () => {
     const stub = stubRenderer()
     for (const n of [1, 2, 3]) stub.set('album_plays', fixtureId(n), plays(n))
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(true)
     expect((await feedState()).ready).toBe(true)
 
     // A change no trigger marked waits for the next sweep.
     stub.set('album_plays', fixtureId(1), plays(1, 10))
     const before = await storedSeq('album_plays', fixtureId(1))
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(false)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(false)
     expect(await storedSeq('album_plays', fixtureId(1))).toEqual(before)
 
     // A sweep under way continues, though the last one completed just now.
@@ -650,7 +758,9 @@ describe('device feed', () => {
       [fixtureId(1)],
     )
     stub.set('album_plays', fixtureId(3), plays(3, 30))
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(true)
     expect((await storedSeq('album_plays', fixtureId(3)))?.seq).toBeGreaterThan(
       before?.seq ?? Infinity,
     )
@@ -660,18 +770,24 @@ describe('device feed', () => {
     await pool.query(
       `update device_feed_state set swept_at = now() - interval '23 hours'`,
     )
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(false)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(false)
     await pool.query(
       `update device_feed_state set swept_at = now() - interval '24 hours'`,
     )
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(true)
     expect((await storedSeq('album_plays', fixtureId(1)))?.seq).toBeGreaterThan(
       before?.seq ?? Infinity,
     )
     // Marks are rendered in every run, resting or not.
     stub.set('album_plays', fixtureId(2), plays(2, 20))
     await mark('album_plays', fixtureId(2))
-    expect(await refreshDeviceFeedForMaintenance(stub.renderer)).toBe(true)
+    expect(
+      (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
+    ).toBe(true)
     expect(await markCount()).toBe(0)
   })
 
@@ -1097,7 +1213,12 @@ describe('device feed marks', () => {
     [
       'catalog_observation',
       "insert into catalog_observation (id, target_kind, target_id, provider, operation) values ('observation-1', 'artist', 'artist-a', 'fixture', 'artist')",
-      ['artist:artist-a'],
+      ['artist:artist-a', 'artist_plays:artist-a'],
+    ],
+    [
+      'artist added to the library',
+      "update artist set added_to_library = true where id = 'artist-a'",
+      ['artist:artist-a', 'artist_plays:artist-a'],
     ],
     [
       'scrape_job',
@@ -1303,7 +1424,7 @@ describe('device feed marks', () => {
     [
       'catalog_observation',
       "insert into catalog_observation (id, target_kind, target_id, provider, operation) values ('observation-1', 'artist', 'artist-b', 'fixture', 'artist'), ('observation-2', 'album', 'album-1', 'fixture', 'album')",
-      ['artist:artist-b'],
+      ['artist:artist-b', 'artist_plays:artist-b'],
     ],
     [
       'scrape_job',
@@ -1354,6 +1475,81 @@ describe('device feed marks', () => {
         `scrobble_name:${first}`,
       ].sort(),
     )
+  })
+
+  it('marks the rows whose publication follows a library change', async () => {
+    const first = await nameId('artist a', 'track 1')
+    // An album counts for its artists' scope and plays; its scrobbles lose it.
+    expect(
+      (await marksOf("delete from album where media_item_id = 'album-1'"))
+        .marks,
+    ).toEqual(
+      [
+        'album:album-1',
+        'album_plays:album-1',
+        'artist:artist-a',
+        'artist_plays:artist-a',
+        'meta:listening',
+        'playlist:list-1',
+        `scrobble_name:${first}`,
+        'track:track-1',
+        'track:track-2',
+      ].sort(),
+    )
+    // A name is published while a linked track is a library track in the
+    // library. (Removing the album unlinked Fixture track 1 from it.)
+    const linkedTrack = [
+      'artist:artist-a',
+      'artist_plays:artist-a',
+      `scrobble_name:${first}`,
+      'track:track-1',
+    ].sort()
+    expect(
+      (
+        await marksOf(
+          "update media_item set in_library = false where id = 'track-1'",
+        )
+      ).marks,
+    ).toEqual(linkedTrack)
+    expect(
+      (
+        await marksOf(
+          "delete from library_track where media_item_id = 'track-1'",
+        )
+      ).marks,
+    ).toEqual(linkedTrack)
+    // An observed name keeps the artist it is merged into in scope.
+    await pool.query(
+      "update artist set merged_into_id = 'artist-a' where id = 'artist-b'",
+    )
+    expect(
+      (
+        await marksOf(
+          "insert into catalog_observation (id, target_kind, target_id, provider, operation) values ('observation-merged', 'artist', 'artist-b', 'fixture', 'artist')",
+        )
+      ).marks,
+    ).toEqual([
+      'artist:artist-a',
+      'artist:artist-b',
+      'artist_plays:artist-a',
+      'artist_plays:artist-b',
+    ])
+    // A playlist's presentation reads the length of each album listing a member.
+    await pool.query(
+      "insert into playlist_item (playlist_id, media_item_id) values ('list-2', 'track-3')",
+    )
+    expect(
+      (
+        await marksOf(
+          "insert into track (id, album_media_item_id, track_media_item_id, title, position) values ('entry-2', 'album-2', 'track-2', 'Fixture track 2', 2)",
+        )
+      ).marks,
+    ).toEqual([
+      'album:album-2',
+      'playlist:list-1',
+      'playlist:list-2',
+      'track:track-2',
+    ])
   })
 
   it('inserts each mark of a bulk statement once', async () => {

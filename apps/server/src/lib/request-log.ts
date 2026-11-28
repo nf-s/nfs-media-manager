@@ -81,6 +81,9 @@ interface PhaseMetrics {
   drizzleStatementCount: number
 }
 
+/** Device feed rows that could not be rendered, by entity: no IDs or content. */
+type DeviceRenderFailures = Partial<Record<string, number>>
+
 interface RequestLogContext {
   details: RequestLogDetails
   drizzleStatementCount: number
@@ -88,6 +91,7 @@ interface RequestLogContext {
   browse?: RequestBrowseProfile
   catalogFailure?: CatalogFailure
   recordingOrderRefreshDue?: boolean
+  renderFailures?: DeviceRenderFailures
 }
 
 type CatalogFailure =
@@ -125,11 +129,13 @@ type RequestEvent =
       source?: 'scheduled' | 'browse'
       outcome: 'published' | 'skipped' | 'failed'
       durationMs: number
+      renderFailures?: DeviceRenderFailures
     }
   | ({ event: 'api.request'; method: string; status: number } & PhaseMetrics & {
         phases?: RequestLogContext['phases']
         browse?: RequestBrowseProfile
         catalogFailure?: CatalogFailure
+        renderFailures?: DeviceRenderFailures
       })
   | (SonosDispatch & { event: 'sonos.dispatch' })
   | (SonosDispatch & {
@@ -328,6 +334,18 @@ export function recordRecordingOrderLookup(
   current.recordingOrderRefreshDue = outcome === 'miss' && canRefreshAfterBrowse
 }
 
+/** Adds device feed rows the request could not render to its record. */
+export function recordDeviceRenderFailures(failures: DeviceRenderFailures) {
+  const current = context.getStore()
+  if (!current) return
+  for (const [entity, count] of Object.entries(failures)) {
+    if (!count) continue
+    current.renderFailures ??= {}
+    current.renderFailures[entity] =
+      (current.renderFailures[entity] ?? 0) + count
+  }
+}
+
 /** Drizzle calls the hook at execution time, including for prepared statements. */
 export const requestQueryLogger: Logger = {
   logQuery() {
@@ -388,6 +406,9 @@ export async function logApiRequest(
         ...(current.browse && { browse: current.browse }),
         ...(status >= 500 &&
           current.catalogFailure && { catalogFailure: current.catalogFailure }),
+        ...(current.renderFailures && {
+          renderFailures: current.renderFailures,
+        }),
         ...(Object.keys(current.phases).length && {
           phases: { ...current.phases },
         }),

@@ -36,17 +36,25 @@ async function refreshCache(
         event: 'database.recording-order-maintenance'
         source: RecordingOrderMaintenanceSource
       },
-  refresh: () => Promise<boolean>,
+  refresh: () => Promise<
+    | boolean
+    | { published: boolean; renderFailures: Partial<Record<string, number>> }
+  >,
 ) {
   const refreshStart = performance.now()
   let outcome: 'skipped' | 'published' | 'failed' = 'failed'
+  let renderFailures: Partial<Record<string, number>> = {}
   try {
-    outcome = (await refresh()) ? 'published' : 'skipped'
+    const result = await refresh()
+    if (typeof result === 'object') renderFailures = result.renderFailures
+    const published = typeof result === 'object' ? result.published : result
+    outcome = published ? 'published' : 'skipped'
   } finally {
     writeRequestLog({
       ...event,
       outcome,
       durationMs: performance.now() - refreshStart,
+      ...(Object.keys(renderFailures).length > 0 && { renderFailures }),
     })
   }
 }

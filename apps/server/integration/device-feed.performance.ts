@@ -176,7 +176,7 @@ it('bounds a maintenance run with nothing to do and one rendering 200 marks', as
   await pool.query('vacuum analyze device_dirty')
   // It runs every five minutes, so it is one statement on a few pages.
   await checkBudget('device maintenance run, idle', 20, 1, async () => {
-    expect(await refreshDeviceFeedForMaintenance()).toBe(false)
+    expect((await refreshDeviceFeedForMaintenance()).published).toBe(false)
   })
 
   // Two hundred tracks; each shares its title with another track, which
@@ -189,7 +189,7 @@ it('bounds a maintenance run with nothing to do and one rendering 200 marks', as
     100_000,
     12,
     async () => {
-      expect(await refreshDeviceFeedForMaintenance()).toBe(true)
+      expect((await refreshDeviceFeedForMaintenance()).published).toBe(true)
     },
   )
   const rendered = z
@@ -217,14 +217,29 @@ const writes: { table: string; one: string; many: string }[] = [
     many: `update media_item set title = title || ' (edit)' where id in (select 'track-' || n from (${bulk(2000)}) s)`,
   },
   {
+    table: 'media_item',
+    one: "update media_item set in_library = false where id = 'album-1'",
+    many: `update media_item set in_library = false where id in (select 'track-' || n from (${bulk(2000)}) s)`,
+  },
+  {
     table: 'library_track',
     one: "update library_track set album_media_item_id = 'album-3' where media_item_id = 'track-1'",
     many: `update library_track set album_media_item_id = 'album-3' where media_item_id in (select 'track-' || n from (${bulk(2000)}) s)`,
   },
   {
+    table: 'library_track',
+    one: "update library_track set album_media_item_id = null where media_item_id = 'track-1'",
+    many: `update library_track set album_media_item_id = null where media_item_id in (select 'track-' || n from (${bulk(2000)}) s)`,
+  },
+  {
     table: 'album',
     one: "update album set track_count = track_count + 1 where media_item_id = 'album-1'",
     many: 'update album set track_count = track_count + 1',
+  },
+  {
+    table: 'album',
+    one: "delete from album where media_item_id = 'album-1'",
+    many: `delete from album where media_item_id in (select 'album-' || n from (${bulk(100)}) s)`,
   },
   {
     table: 'film',
@@ -237,6 +252,11 @@ const writes: { table: string; one: string; many: string }[] = [
     many: `update track set position = position + 100000 where id in (select 'entry-' || n from (${bulk(2000)}) s)`,
   },
   {
+    table: 'track',
+    one: "delete from track where id = 'entry-1'",
+    many: `delete from track where id in (select 'entry-' || n from (${bulk(2000)}) s)`,
+  },
+  {
     table: 'media_credit',
     one: "insert into media_credit (media_item_id, artist_id, role) values ('track-1', 'artist-2', 'artist')",
     many: `update media_credit set billing_order = 1 where media_item_id in (select 'track-' || n from (${bulk(2000)}) s)`,
@@ -245,6 +265,11 @@ const writes: { table: string; one: string; many: string }[] = [
     table: 'artist',
     one: "update artist set name = 'Fixture renamed artist' where id = 'artist-1'",
     many: 'update artist set scrobble_count = scrobble_count + 1',
+  },
+  {
+    table: 'artist',
+    one: "update artist set added_to_library = true where id = 'artist-1'",
+    many: 'update artist set added_to_library = true',
   },
   {
     table: 'artist_provider_current_state',

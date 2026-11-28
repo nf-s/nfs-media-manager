@@ -102,7 +102,8 @@ export const deviceRowRenderer: DeviceFeedRenderer = {
     return listPublishedIds(entity, afterId, limit)
   },
   // DEVICE-04: a track's recording group depends on its title-key peers and
-  // on the group it was published in.
+  // on the group it was published in; a placeholder's flag, on the tracks
+  // linked exactly to its names.
   async expand(entity, ids) {
     return entity === 'track' ? listTrackPeerIds(ids) : []
   },

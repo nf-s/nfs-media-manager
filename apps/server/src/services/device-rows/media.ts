@@ -112,11 +112,14 @@ export async function listMediaIds(
 const publishedRecordingKey = sql`(r.payload->'extra'->'recording'->>'key')`
 
 /**
- * Other tracks whose recording group can change with these tracks: the
- * visible tracks they would group with now (recordingPeerIds), and the
- * tracks published in the group each of them is published in, which a
- * title change, archive or delete leaves. The published group is read from
- * the stored rows, before the feed writes the new ones.
+ * Other tracks whose rows can change with these tracks. Their recording
+ * group: the visible tracks they would group with now (recordingPeerIds),
+ * and the tracks published in the group each of them is published in, which
+ * a title change, archive or delete leaves; the published group is read from
+ * the stored rows, before the feed writes the new ones. And the Last.fm
+ * placeholders whose `extra.redundantPlaceholder` asks whether a track
+ * linked exactly to one of their names can play (redundantLastfmTrackIds):
+ * every write that changes that answer marks the linked track.
  */
 export async function listTrackPeerIds(ids: readonly string[]) {
   if (!ids.length) return []
@@ -127,7 +130,11 @@ export async function listTrackPeerIds(ids: readonly string[]) {
     where r.entity = 'track' and ${publishedRecordingKey} is not null
       and ${publishedRecordingKey} = any(array(
         select ${publishedRecordingKey} from device_row r
-        where r.entity = 'track' and r.id = ${anyId(ids)}))`)
+        where r.entity = 'track' and r.id = ${anyId(ids)}))
+    union
+    select s.track_media_item_id from lastfm_track_link l
+    join lastfm_track_source s using (username, artist_key, track_key)
+    where l.track_media_item_id = ${anyId(ids)} and l.strategy = 'exact'`)
   const requested = new Set(ids)
   return IdRowsSchema.parse(result.rows)
     .map((row) => row.id)
