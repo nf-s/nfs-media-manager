@@ -1,6 +1,11 @@
 import { z } from 'zod'
 import { BrowseFieldSchema } from './browse'
 import { ArtistSummarySchema } from './creators'
+import {
+  LibraryPlaylistLibrarySchema,
+  LibraryPlaylistSummarySchema,
+  LibraryPlaylistTypeSchema,
+} from './library-playlists'
 import { AlbumListItemSchema, FilmListItemSchema } from './media'
 import {
   PlaylistSummarySchema,
@@ -47,6 +52,9 @@ export const DeviceEntitySchema = z.enum([
   'album_plays',
   'artist_plays',
   'meta',
+  // Appended: an entity added after a feed was built is swept on its own
+  // (DEVICE-05), which needs it after every entity that build covered.
+  'library_playlist',
 ])
 export type DeviceEntity = z.infer<typeof DeviceEntitySchema>
 
@@ -823,6 +831,69 @@ export const DeviceMetaRowSchema = z.discriminatedUnion('kind', [
 ])
 export type DeviceMetaRow = z.infer<typeof DeviceMetaRowSchema>
 
+// Library playlists
+
+/**
+ * One row per library playlist and smart playlist of any library that is not
+ * deleted (PL-01 to PL-03), keyed by its ID. It holds the playlist as the
+ * Playlists directory and the library playlist list return it, and the items
+ * of its listed entries for the `libraryPlaylist` Browse filter (PL-18).
+ */
+const DeviceLibraryPlaylistSearchSchema = z
+  .object({
+    // libraryDirectoryFilter, playlist-directory.ts, and listLibraryPlaylists: lp.name
+    name: DeviceTextSchema,
+  })
+  .strict()
+
+const DeviceLibraryPlaylistNumberSchema = z
+  .object({
+    // libraryCountColumn, playlist-directory.ts, with no smart count: the listed entries of a playlist; null for a smart playlist
+    count: DeviceNumberSchema,
+    // librarySortColumn updated: lp.updated_at
+    updated: DeviceNumberSchema,
+    // librarySortColumn added: lp.created_at
+    added: DeviceNumberSchema,
+  })
+  .strict()
+
+const DeviceLibraryPlaylistSortSchema = z
+  .object({
+    // librarySortColumn name, playlist-directory.ts: lower(lp.name); also both lists' tie-break
+    name: DeviceSortTextSchema,
+  })
+  .strict()
+
+const DeviceLibraryPlaylistExtraSchema = z
+  .object({
+    library: LibraryPlaylistLibrarySchema,
+    type: LibraryPlaylistTypeSchema,
+    // libraryDirectoryFilter savedView: lp.view is not null
+    hasView: z.boolean(),
+    // entryItem of each listed entry (listedEntry, library-playlist-entries.ts), distinct, in ascending order
+    members: z.array(z.string().min(1)),
+  })
+  .strict()
+
+export const DeviceLibraryPlaylistRowSchema = z
+  .object({
+    // librarySummary, playlist-directory.ts, as listDirectoryPage returns the
+    // row without a count range: `itemCount` is the listed entries of a
+    // playlist and null for a smart playlist.
+    item: PlaylistSummarySchema,
+    // summary, library-playlists.ts, as listLibraryPlaylists returns it without `itemId`.
+    summary: LibraryPlaylistSummarySchema.omit({ containsItem: true }),
+    text: z.object({}).strict(),
+    search: DeviceLibraryPlaylistSearchSchema,
+    num: DeviceLibraryPlaylistNumberSchema,
+    sort: DeviceLibraryPlaylistSortSchema,
+    extra: DeviceLibraryPlaylistExtraSchema,
+  })
+  .strict()
+export type DeviceLibraryPlaylistRow = z.infer<
+  typeof DeviceLibraryPlaylistRowSchema
+>
+
 /** The payload schema of each entity. */
 export const devicePayloadSchemas = {
   track: DeviceTrackRowSchema,
@@ -837,6 +908,7 @@ export const devicePayloadSchemas = {
   album_plays: DeviceAlbumPlaysRowSchema,
   artist_plays: DeviceArtistPlaysRowSchema,
   meta: DeviceMetaRowSchema,
+  library_playlist: DeviceLibraryPlaylistRowSchema,
 } satisfies Record<DeviceEntity, z.ZodType>
 
 // Feed transport
@@ -869,6 +941,7 @@ export const DeviceLiveRowSchema = z.discriminatedUnion('entity', [
   liveRowSchema('album_plays', DeviceAlbumPlaysRowSchema),
   liveRowSchema('artist_plays', DeviceArtistPlaysRowSchema),
   liveRowSchema('meta', DeviceMetaRowSchema),
+  liveRowSchema('library_playlist', DeviceLibraryPlaylistRowSchema),
 ])
 export type DeviceLiveRow = z.infer<typeof DeviceLiveRowSchema>
 
