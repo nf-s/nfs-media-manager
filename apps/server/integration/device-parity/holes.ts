@@ -8,11 +8,20 @@ import { isSpotifyAudioFeatureKey } from '@repo/schemas/audio-features'
 import {
   albumBrowseFields,
   filmBrowseFields,
+  isTagBrowseField,
   LIBRARY_PLAYLIST_FILTER_FIELD,
+  type LibraryPlaylistLibrary,
+  type LibraryPlaylistView,
 } from '@repo/schemas/browse'
 import { memberScope } from '@repo/schemas/catalog'
-import { tagDisplayName } from '@repo/schemas/tags'
-import { PlaylistBrowsePageSchema } from '@repo/schemas/tracks'
+import { parseLibraryBrowseView } from '@repo/schemas/library-playlists'
+import { describeSavedView } from '@repo/schemas/saved-view-sentence'
+import { normalizeTagName, tagDisplayName } from '@repo/schemas/tags'
+import {
+  PlaylistBrowsePageSchema,
+  type PlaylistBrowseQuery,
+} from '@repo/schemas/tracks'
+import { apiPath } from './matrix'
 
 /**
  * The Known holes of docs/requirements/device-store.md as query shapes
@@ -42,6 +51,17 @@ export type DataFacts = {
    * labels of each library and the provider display names.
    */
   facetTexts: Record<Library, readonly string[]>
+  /**
+   * The names of the library playlists that are not deleted, of every
+   * library, by ID: the names a saved view's sentence gives "In playlist".
+   */
+  playlistNames: ReadonlyMap<string, string>
+  /**
+   * For each library, whether the device can count every smart playlist of
+   * it that is not deleted and whose view, without the parameters that only
+   * order it, parses (Known holes, `smart-count`).
+   */
+  smartCountable: Record<LibraryPlaylistLibrary, boolean>
 }
 
 type Library = 'track' | 'album' | 'film' | 'artist'
@@ -150,19 +170,19 @@ function holdsNul(value: unknown): boolean {
   return false
 }
 
-type Observed = {
+export type ApiAnswer = { status: number; data: unknown }
+
+export type Observed = {
   /** The API's status for the path. */
   status: number
   /** The API's data, parsed, when it answered 200. */
   data: unknown
   facts: DataFacts
+  /** Another read of the API, for a hole that the API's rows decide. */
+  readApi: (path: string) => Promise<ApiAnswer>
 }
 
 type Filter = { field: string; value: string; mode?: string }
-
-/** Known holes, `library-playlist`: a libraryPlaylist filter in any mode (PL-18). */
-const libraryPlaylistFilter = (filters: readonly Filter[]) =>
-  filters.some((filter) => filter.field === LIBRARY_PLAYLIST_FILTER_FIELD)
 
 const nonExcludeProvider = (filters: readonly Filter[]) =>
   filters.some(
@@ -195,6 +215,157 @@ function activeImport(data: unknown) {
   )
 }
 
+type ColumnRange = { min?: number | string; max?: number | string }
+
+const hasBound = (range: ColumnRange | undefined) =>
+  range?.min !== undefined || range?.max !== undefined
+
+/** A Playlists directory date range with a bound: a bound that is a date. */
+function holdsDateBound(query: PlaylistBrowseQuery) {
+  const ranges: Record<string, ColumnRange | undefined> =
+    query.columnRanges ?? {}
+  return Object.values(ranges).some(
+    (range) => typeof (range?.min ?? range?.max) === 'string',
+  )
+}
+
+/**
+ * Known holes, `time-zone`: a zone other than `UTC` or an `Area/Location`
+ * name (letters, then one or more `/` parts, not starting `Etc/` in any
+ * case). Without a zone the directory reads UTC.
+ */
+function zoneReadAsServer(zone: string | undefined) {
+  if (zone === undefined || zone === 'UTC') return true
+  return (
+    /^[A-Za-z]+(\/[A-Za-z0-9_+-]+)+$/u.test(zone) &&
+    !zone.toLowerCase().startsWith('etc/')
+  )
+}
+
+/** `types` empty, absent or holding Smart: the directory reads smart rows' views. */
+const readsSmartRows = (query: PlaylistBrowseQuery) =>
+  !query.types?.length || query.types.includes('smart')
+
+/** The punctuation of the sentences outside ASCII, which has no case. */
+const SENTENCE_PUNCTUATION = /[·“”…–]/gu
+
+/** Whether the fold cannot settle `text.toLowerCase()` outside the sentences' punctuation. */
+const unsettledSentence = (text: string, fold: FoldFacts) =>
+  unsettledLowerCase(text.replace(SENTENCE_PUNCTUATION, ''), fold)
+
+/**
+ * The fold's lower case of settled text: U+0130 as the engine writes it,
+ * each code point the database maps to one, and the rest as it is.
+ */
+function foldLower(text: string, fold: FoldFacts) {
+  return [...text]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      if (codePoint === 0x130) return 'i̇'
+      return fold.lower.get(codePoint) ?? character
+    })
+    .join('')
+}
+
+/**
+ * A tag filter value of a view of Albums, Tracks or Films whose
+ * `normalizeTagName` on the device differs from the fold's lower case of its
+ * `tagDisplayName`, or whose lower case the fold cannot settle.
+ */
+function unsettledTagValue(
+  library: LibraryPlaylistLibrary,
+  view: LibraryPlaylistView,
+  fold: FoldFacts,
+) {
+  if (library === 'subscriptions' || library === 'mixes') return false
+  const parsed = parseLibraryBrowseView(library, view)
+  if (!parsed.success) return false
+  return parsed.data.query.filters.some((filter) => {
+    if (
+      filter.field === LIBRARY_PLAYLIST_FILTER_FIELD ||
+      !isTagBrowseField(filter.field)
+    )
+      return false
+    const display = tagDisplayName(filter.value)
+    return (
+      unsettledLowerCase(display, fold) ||
+      normalizeTagName(filter.value) !== foldLower(display, fold)
+    )
+  })
+}
+
+/**
+ * The views of the smart rows of the query's library that pass every
+ * filter but `savedViewText` and the count range, read from the API.
+ */
+async function smartCandidateViews(
+  query: PlaylistBrowseQuery,
+  observed: Observed,
+): Promise<LibraryPlaylistView[]> {
+  const ranges = Object.entries(query.columnRanges ?? {}).filter(
+    ([key]) => key !== 'count',
+  )
+  const views: LibraryPlaylistView[] = []
+  for (let page = 1; ; page += 1) {
+    const answer = await observed.readApi(
+      apiPath('playlists/browse-page', {
+        ...query,
+        savedViewText: undefined,
+        types: ['smart'],
+        columnRanges: ranges.length ? Object.fromEntries(ranges) : undefined,
+        page,
+        size: 100,
+      }),
+    )
+    const parsed = PlaylistBrowsePageSchema.parse(answer.data)
+    for (const item of parsed.items)
+      if (item.type === 'smart' && item.view) views.push(item.view)
+    if (!parsed.hasMore) return views
+  }
+}
+
+/**
+ * Known holes, `server-lower-case` for `savedViewText`: with `library`, and
+ * `types` not leaving Smart out, the text, or the sentence of a smart row
+ * that passes the other filters, holds a code point the fold cannot settle
+ * outside the sentences' punctuation, or such a row's view holds a tag
+ * filter value the fold cannot match (unsettledTagValue).
+ */
+async function unsettledSavedViewText(
+  query: PlaylistBrowseQuery,
+  observed: Observed,
+) {
+  const { library, savedViewText: text } = query
+  const { fold, playlistNames } = observed.facts
+  if (library === undefined || !text || !readsSmartRows(query)) return false
+  if (unsettledSentence(text, fold)) return true
+  const views = await smartCandidateViews(query, observed)
+  return views.some(
+    (view) =>
+      unsettledSentence(
+        describeSavedView({
+          library,
+          view,
+          playlistName: (id) => playlistNames.get(id) ?? null,
+          timeZone: query.timeZone ?? 'UTC',
+          keyNotation: query.keyNotation,
+        }),
+        fold,
+      ) || unsettledTagValue(library, view, fold),
+  )
+}
+
+/**
+ * Known holes, `smart-count`: with `library`, a count range with a bound
+ * and `types` not leaving Smart out, while some smart playlist of the
+ * library cannot be counted on the device.
+ */
+const smartCountHole = (query: PlaylistBrowseQuery, facts: DataFacts) =>
+  query.library !== undefined &&
+  hasBound(query.columnRanges?.count) &&
+  readsSmartRows(query) &&
+  !facts.smartCountable[query.library]
+
 /**
  * Known holes, `unimplemented-field` (DEVICE-34): a key of the read's query
  * that holds a value (anything but undefined) and that the device's table
@@ -224,7 +395,7 @@ export const reasonOrder: readonly UnsupportedReason[] = [
   'nul-text',
   'unimplemented-field',
   'catalog-scope',
-  'library-playlist',
+  'time-zone',
   'grouped-creator-scope',
   'creator-films',
   'invalid-query',
@@ -233,6 +404,7 @@ export const reasonOrder: readonly UnsupportedReason[] = [
   'creator-tag-sort',
   'archived-artist-tags',
   'server-lower-case',
+  'smart-count',
   'active-import',
 ]
 
@@ -240,10 +412,10 @@ export const reasonOrder: readonly UnsupportedReason[] = [
  * The conditions of every Known hole this read holds, each computed on its
  * own from the query, the API's answer and the data facts.
  */
-function heldHoles(
+async function heldHoles(
   read: LibraryRead,
   observed: Observed,
-): Set<UnsupportedReason> {
+): Promise<Set<UnsupportedReason>> {
   const held = new Set<UnsupportedReason>()
   const hold = (reason: UnsupportedReason, condition: boolean) => {
     if (condition) held.add(reason)
@@ -264,7 +436,6 @@ function heldHoles(
         read.method === 'trackRecordings' ? read.query.query : read.query
       const recordings = read.method === 'trackRecordings'
       hold('catalog-scope', !memberScope(query, 'track'))
-      hold('library-playlist', libraryPlaylistFilter(query.filters))
       hold(
         'grouped-creator-scope',
         (recordings || query.groupRecordings === true) &&
@@ -319,7 +490,6 @@ function heldHoles(
     case 'albumList':
     case 'albumHistogram':
       hold('catalog-scope', !memberScope(read.query))
-      hold('library-playlist', libraryPlaylistFilter(read.query.filters))
       hold(
         'unknown-field',
         read.method !== 'albumHistogram' &&
@@ -334,7 +504,6 @@ function heldHoles(
     case 'filmCount':
     case 'filmList':
       hold('catalog-scope', !memberScope(read.query))
-      hold('library-playlist', libraryPlaylistFilter(read.query.filters))
       hold('creator-films', read.query.creatorId !== undefined)
       hold(
         'unknown-field',
@@ -361,13 +530,21 @@ function heldHoles(
     case 'playlistPage':
     case 'playlistCount':
       hold('catalog-scope', !memberScope(read.query))
-      // PL-17: `library` adds that library's playlists, which the feed does not publish.
-      hold('library-playlist', read.query.library !== undefined)
+      hold(
+        'time-zone',
+        holdsDateBound(read.query) && !zoneReadAsServer(read.query.timeZone),
+      )
+      hold(
+        'server-lower-case',
+        await unsettledSavedViewText(read.query, observed),
+      )
+      hold('smart-count', smartCountHole(read.query, observed.facts))
       hold(
         'active-import',
         read.method === 'playlistPage' && activeImport(observed.data),
       )
       break
+    case 'libraryPlaylistList':
     case 'fields':
       break
   }
@@ -378,10 +555,10 @@ function heldHoles(
  * The reason the device must give for this read: the first, in the order
  * of reasons, of the Known holes it holds; undefined when it must serve it.
  */
-export function expectedHole(
+export async function expectedHole(
   read: LibraryRead,
   observed: Observed,
-): UnsupportedReason | undefined {
-  const held = heldHoles(read, observed)
+): Promise<UnsupportedReason | undefined> {
+  const held = await heldHoles(read, observed)
   return reasonOrder.find((reason) => held.has(reason))
 }

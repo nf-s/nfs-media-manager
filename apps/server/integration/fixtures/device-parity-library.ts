@@ -222,12 +222,16 @@ export const parityLibrarySql = `
     ('playlist-queued', 'Queued Mix', 'playlist', false, 'spotify', 'fixturePlaylistId0004', null, null,
       null, null, '6h', true, '2022-11-01'),
     ('playlist-empty', 'Ëmpty', 'playlist', true, null, null, null, 'nothing yet', null, null, 'off', true, '2022-12-01'),
-    ('collection-classics', 'Classics', 'collection', true, null, null, null, null, null, null, 'off', true, '2022-12-02');
+    ('collection-classics', 'Classics', 'collection', true, null, null, null, null, null, null, 'off', true, '2022-12-02'),
+    -- Dates within an hour of midnight UTC, so a zone moves them to another day.
+    ('playlist-late', 'Late Picks', 'playlist', false, 'spotify', 'fixturePlaylistId0005', null, null,
+      '2025-12-31 23:30:00', '2026-03-29 23:45:00', 'daily', false, '2025-07-01 00:20:00');
   insert into playlist_item (playlist_id, media_item_id, position) values
     ('playlist-liked', 'track-liked', 0), ('playlist-liked', 'track-hum-a', 1),
     ('playlist-weekly', 'track-orbit-a', 0), ('playlist-weekly', 'track-drift-a', 1), ('playlist-weekly', 'album-orbit', 2),
     ('playlist-hourly', 'track-hum-a', 0), ('playlist-hourly', 'track-lone-lastfm', 1),
     ('playlist-queued', 'track-istanbul', 0),
+    ('playlist-late', 'track-drift-c', 0),
     ('playlist-morning', 'track-orbit-a', 3), ('playlist-morning', 'album-ridge', 4),
     ('collection-classics', 'film-kestrel', 0), ('collection-films', 'film-lagoon', 1);
 
@@ -281,9 +285,10 @@ export const parityLibrarySql = `
     ('job-hourly', 'spotify', 'cancelled', '{}', '{"task": "spotify-playlist-import", "groupKey": "spotify:fixturePlaylistId0003"}', '2026-03-29'),
     ('job-queued', 'spotify', 'queued', '{}', '{"task": "spotify-playlist-import", "groupKey": "spotify:fixturePlaylistId0004"}', '2026-03-30');
 
-  -- Library playlists (PL-17, PL-18), which the feed does not publish: a
-  -- playlist and a smart playlist of Tracks, one of Albums and Films, a
-  -- deleted one, and entries listed twice, outside the library and removed.
+  -- Library playlists (PL-17, PL-18): a playlist and a smart playlist of
+  -- Tracks, one of Albums and Films, a deleted one, and entries listed
+  -- twice, outside the library and removed. libraryPlaylistSeeds adds the
+  -- smart playlists and the other libraries.
   insert into library_playlist (id, library, type, name, view, deleted_at, created_at, updated_at) values
     ('library-playlist-night', 'tracks', 'playlist', 'Night Drive', null, null, '2025-06-01', '2026-02-01 08:00:00'),
     ('library-playlist-calm', 'tracks', 'smart', 'Calm Picks', '{"q": "drift"}', null, '2025-07-01', '2025-07-01'),
@@ -387,10 +392,334 @@ export async function seedFoldLibrary(pool: pg.Pool, letters: FoldLetters) {
     values ('artist-fold-greek', 'lastfm', 'snapshot-fold-greek')`)
 }
 
-/** The device library and the parity additions, in one statement. */
+type LibraryPlaylistSeed = {
+  id: string
+  library: 'tracks' | 'albums' | 'films' | 'subscriptions' | 'mixes'
+  name: string
+  /** A smart playlist's view, as Browse URL parameters; none for a playlist. */
+  view?: Record<string, string>
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string
+}
+
+const json = (value: unknown) => JSON.stringify(value)
+
+/**
+ * Library playlists of every library (PL-17): names that differ from an
+ * imported playlist's or another library's only by case, times within an
+ * hour of midnight UTC (and of midnight in Havana on its daylight-saving
+ * day), and smart views of each shape the directory reads: groups, limits,
+ * listening rules, tags, ranges, a Provider filter, a musical key, a
+ * search with accents, `libraryPlaylist` filters on a live, a deleted and an
+ * unknown playlist, a view that no longer parses, one the API rejects, one
+ * with a catalog scope, one whose sentence the fold cannot settle and one of
+ * Mixes.
+ */
+export const libraryPlaylistSeeds: LibraryPlaylistSeed[] = [
+  {
+    id: 'library-playlist-weekly-caps',
+    library: 'tracks',
+    name: 'WEEKLY FINDS',
+    createdAt: '2026-01-14 23:30:00',
+    updatedAt: '2026-01-15 00:30:00',
+  },
+  {
+    id: 'library-playlist-kite',
+    library: 'tracks',
+    name: 'Kite Versions',
+    view: {
+      groupRecordings: 'true',
+      filters: json([{ field: 'artist', value: 'Kite' }]),
+      sortBy: 'title',
+    },
+    createdAt: '2025-10-01 00:15:00',
+    updatedAt: '2026-01-15 23:45:00',
+  },
+  {
+    id: 'library-playlist-top',
+    library: 'tracks',
+    name: 'Top Three',
+    view: { sortBy: 'title', direction: 'desc', limitResults: '3' },
+    createdAt: '2025-10-02 12:00:00',
+    updatedAt: '2025-12-31 23:59:00',
+  },
+  {
+    id: 'library-playlist-recent',
+    library: 'tracks',
+    name: 'Heard This Year',
+    view: {
+      listening: json({
+        match: 'all',
+        rules: [
+          { period: { kind: 'rolling', amount: 1, unit: 'years' }, min: 1 },
+        ],
+      }),
+      sortBy: 'listeningScrobbles',
+      listeningSort: json({ kind: 'rolling', amount: 1, unit: 'years' }),
+    },
+    // 23:30 on 7 March and 01:30 on 8 March in Havana, whose clocks move
+    // from midnight to one on 8 March 2026.
+    createdAt: '2026-03-08 04:30:00',
+    updatedAt: '2026-03-08 05:30:00',
+  },
+  {
+    id: 'library-playlist-grouped-heard',
+    library: 'tracks',
+    name: 'Versions Heard Twice',
+    view: {
+      groupRecordings: 'true',
+      listening: json({
+        match: 'all',
+        rules: [{ period: { kind: 'all' }, min: 2 }],
+      }),
+    },
+    createdAt: '2025-11-01 00:00:00',
+    updatedAt: '2025-11-01 00:00:00',
+  },
+  {
+    id: 'library-playlist-in-night',
+    library: 'tracks',
+    name: 'In Night Drive',
+    view: {
+      filters: json([
+        { field: 'libraryPlaylist', value: 'library-playlist-night' },
+      ]),
+    },
+    createdAt: '2025-11-02 00:00:00',
+    updatedAt: '2025-11-02 00:00:00',
+  },
+  {
+    id: 'library-playlist-not-gone',
+    library: 'tracks',
+    name: 'Drift Not Gone',
+    view: {
+      filters: json([
+        {
+          field: 'libraryPlaylist',
+          value: 'library-playlist-gone',
+          mode: 'exclude',
+        },
+        { field: 'title', value: 'Drift' },
+      ]),
+    },
+    createdAt: '2025-11-03 00:00:00',
+    updatedAt: '2025-11-03 00:00:00',
+  },
+  {
+    id: 'library-playlist-nowhere',
+    library: 'tracks',
+    name: 'Nowhere',
+    view: {
+      filters: json([
+        { field: 'libraryPlaylist', value: 'library-playlist-unknown' },
+      ]),
+    },
+    createdAt: '2025-11-04 00:00:00',
+    updatedAt: '2025-11-04 00:00:00',
+  },
+  {
+    id: 'library-playlist-long',
+    library: 'tracks',
+    name: 'Long Ones',
+    view: {
+      q: 'a',
+      ranges: json([{ field: 'durationSec', min: 200 }]),
+    },
+    createdAt: '2025-11-05 00:00:00',
+    updatedAt: '2025-11-05 00:00:00',
+  },
+  {
+    id: 'library-playlist-rock',
+    library: 'tracks',
+    name: 'Rock Tracks',
+    view: {
+      filters: json([{ field: 'genre', value: 'Rock' }]),
+      tagLevels: 'track',
+    },
+    createdAt: '2025-11-06 00:00:00',
+    updatedAt: '2025-11-06 00:00:00',
+  },
+  {
+    id: 'library-playlist-provider',
+    library: 'tracks',
+    name: 'MusicBrainz Tracks',
+    view: { filters: json([{ field: 'provider', value: 'musicbrainz' }]) },
+    createdAt: '2025-11-07 00:00:00',
+    updatedAt: '2025-11-07 00:00:00',
+  },
+  {
+    id: 'library-playlist-key',
+    library: 'tracks',
+    name: 'Key Of 8A',
+    view: { filters: json([{ field: 'musicalKey', value: '8A' }]) },
+    createdAt: '2025-11-08 00:00:00',
+    updatedAt: '2025-11-08 00:00:00',
+  },
+  {
+    id: 'library-playlist-echelle',
+    library: 'tracks',
+    name: 'Échelle Search',
+    view: { q: 'Échelle' },
+    createdAt: '2025-11-09 00:00:00',
+    updatedAt: '2025-11-09 00:00:00',
+  },
+  {
+    id: 'library-playlist-old-smart',
+    library: 'tracks',
+    name: 'old night drive',
+    view: { q: 'hum' },
+    createdAt: '2025-01-01 00:00:00',
+    updatedAt: '2025-01-01 00:00:00',
+    deletedAt: '2026-03-01 00:00:00',
+  },
+  {
+    id: 'library-playlist-night-albums',
+    library: 'albums',
+    name: 'NIGHT DRIVE',
+    createdAt: '2026-01-15 00:05:00',
+    updatedAt: '2026-01-14 23:55:00',
+  },
+  {
+    id: 'library-playlist-archive',
+    library: 'albums',
+    name: 'Everything Kept',
+    view: { includeArchived: 'true', editions: 'true' },
+    createdAt: '2025-12-01 00:00:00',
+    updatedAt: '2025-12-01 00:00:00',
+  },
+  {
+    id: 'library-playlist-orbit-albums',
+    library: 'albums',
+    name: 'Orbit Albums',
+    view: { q: 'orbit', sortBy: 'title' },
+    createdAt: '2025-12-02 00:00:00',
+    updatedAt: '2025-12-02 00:00:00',
+  },
+  {
+    id: 'library-playlist-album-heard',
+    library: 'albums',
+    name: 'Albums Heard In January',
+    view: {
+      listening: json({
+        match: 'all',
+        rules: [
+          {
+            period: { kind: 'dates', from: '2026-01-01', to: '2026-01-31' },
+            min: 1,
+          },
+        ],
+      }),
+    },
+    createdAt: '2025-12-03 00:00:00',
+    updatedAt: '2025-12-03 00:00:00',
+  },
+  {
+    id: 'library-playlist-in-shelf',
+    library: 'albums',
+    name: 'First Of Shelf',
+    view: {
+      filters: json([
+        { field: 'libraryPlaylist', value: 'library-playlist-shelf' },
+      ]),
+      limitResults: '1',
+    },
+    createdAt: '2025-12-04 00:00:00',
+    updatedAt: '2025-12-04 00:00:00',
+  },
+  {
+    id: 'library-playlist-ambient-albums',
+    library: 'albums',
+    name: 'Ambient Albums',
+    view: { filters: json([{ field: 'genre', value: 'Ambient' }]) },
+    createdAt: '2025-12-05 00:00:00',
+    updatedAt: '2025-12-05 00:00:00',
+  },
+  {
+    id: 'library-playlist-broken',
+    library: 'albums',
+    name: 'Broken View',
+    view: { q: 'orbit', notAParameter: '1' },
+    createdAt: '2025-12-06 00:00:00',
+    updatedAt: '2025-12-06 00:00:00',
+  },
+  {
+    id: 'library-playlist-albums-everywhere',
+    library: 'albums',
+    name: 'Albums Everywhere',
+    view: { libraryScope: 'all' },
+    createdAt: '2025-12-07 00:00:00',
+    updatedAt: '2025-12-07 00:00:00',
+  },
+  {
+    id: 'library-playlist-rejected',
+    library: 'films',
+    name: 'Rejected View',
+    view: { filters: json([{ field: 'reviewNoSuchField', value: 'x' }]) },
+    createdAt: '2025-12-08 00:00:00',
+    updatedAt: '2025-12-08 00:00:00',
+  },
+  {
+    id: 'library-playlist-films-kept',
+    library: 'films',
+    name: 'Films Kept',
+    view: { includeArchived: 'true' },
+    createdAt: '2025-12-09 00:00:00',
+    updatedAt: '2025-12-09 00:00:00',
+  },
+  {
+    id: 'library-playlist-greek',
+    library: 'films',
+    name: 'Greek Search',
+    view: { q: 'ΟΔΟΣ' },
+    createdAt: '2025-12-10 00:00:00',
+    updatedAt: '2025-12-10 00:00:00',
+  },
+  {
+    id: 'library-playlist-feeds',
+    library: 'subscriptions',
+    name: 'Feeds',
+    createdAt: '2026-01-15 00:00:00',
+    updatedAt: '2026-01-15 00:00:00',
+  },
+  {
+    id: 'library-playlist-mix-search',
+    library: 'mixes',
+    name: 'Mix Search',
+    view: { q: 'night' },
+    createdAt: '2026-01-14 23:00:00',
+    updatedAt: '2026-01-14 23:00:00',
+  },
+  {
+    id: 'library-playlist-mix-shelf',
+    library: 'mixes',
+    name: 'Mix Shelf',
+    createdAt: '2026-01-15 01:00:00',
+    updatedAt: '2026-01-15 01:00:00',
+  },
+]
+
+async function seedLibraryPlaylists(pool: pg.Pool) {
+  await pool.query(
+    `insert into library_playlist (id, library, type, name, view, deleted_at, created_at, updated_at)
+      select id, library, case when view is null then 'playlist' else 'smart' end,
+        name, view, "deletedAt", "createdAt", "updatedAt"
+      from jsonb_to_recordset($1::jsonb) as seed(id text, library text, name text,
+        view jsonb, "deletedAt" timestamp, "createdAt" timestamp, "updatedAt" timestamp)`,
+    [JSON.stringify(libraryPlaylistSeeds)],
+  )
+  await pool.query(`insert into library_playlist_entry (id, playlist_id, position, media_item_id, batch_id) values
+    ('entry-weekly-caps-1', 'library-playlist-weekly-caps', 0, 'track-echelle', 'batch-7'),
+    ('entry-weekly-caps-2', 'library-playlist-weekly-caps', 1, 'track-aurora', 'batch-7'),
+    ('entry-night-albums-1', 'library-playlist-night-albums', 0, 'album-ridge', 'batch-8'),
+    ('entry-night-albums-2', 'library-playlist-night-albums', 1, 'album-outside', 'batch-8')`)
+}
+
+/** The device library and the parity additions. */
 export async function seedParityLibrary(pool: pg.Pool) {
   await pool.query(deviceLibrarySql)
   await pool.query(parityLibrarySql)
+  await seedLibraryPlaylists(pool)
 }
 
 /**

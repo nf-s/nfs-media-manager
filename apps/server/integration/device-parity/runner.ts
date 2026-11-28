@@ -307,8 +307,7 @@ export async function runLibraryMatrix(
     }
 
   // PL-18: the libraryPlaylist filter in every mode, alone, beside another
-  // filter, under a sort and in a histogram. The device holds no library
-  // playlists and leaves each read to the API.
+  // filter, under a sort and in a histogram, served from the stored members.
   const playlistValues = libraryPlaylistValues[routes.library]
   for (const value of options.reduced
     ? playlistValues.slice(0, 1)
@@ -399,6 +398,9 @@ export const unresolvedPaths = [
   '/api/v1/providers',
   '/api/v1/imports',
   '/api/v1/tracks/match-diagnostics/fields',
+  '/api/v1/library-playlists/library-playlist-night',
+  '/api/v1/library-playlists/library-playlist-night/entries',
+  '/api/v1/library-playlists/memberships?library=tracks&itemIds=%5B%22track-aurora%22%5D',
 ]
 
 export function unresolved(path: string) {

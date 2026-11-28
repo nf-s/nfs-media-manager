@@ -338,8 +338,7 @@ export const tagValues: Record<'music' | 'film', string[]> = {
 /**
  * Values of the `libraryPlaylist` filter (PL-18) per library: a playlist of
  * the library with entries, one of another library, a smart playlist, a
- * deleted one and an unknown ID. The device leaves every such read to the
- * API (`library-playlist`).
+ * deleted one and an unknown ID. Artists do not take the filter.
  */
 export const libraryPlaylistValues: Record<ParityLibrary, string[]> = {
   track: [
@@ -347,10 +346,24 @@ export const libraryPlaylistValues: Record<ParityLibrary, string[]> = {
     'library-playlist-calm',
     'library-playlist-shelf',
     'library-playlist-gone',
+    'library-playlist-weekly-caps',
     absentValue,
   ],
-  album: ['library-playlist-shelf', 'library-playlist-night', absentValue],
-  film: ['library-playlist-screen', 'library-playlist-night', absentValue],
+  album: [
+    'library-playlist-shelf',
+    'library-playlist-night-albums',
+    'library-playlist-archive',
+    'library-playlist-night',
+    'library-playlist-gone',
+    absentValue,
+  ],
+  film: [
+    'library-playlist-screen',
+    'library-playlist-films-kept',
+    'library-playlist-night',
+    'library-playlist-gone',
+    absentValue,
+  ],
   artist: ['library-playlist-night'],
 }
 

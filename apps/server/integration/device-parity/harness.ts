@@ -19,12 +19,13 @@ import {
   type UnsupportedReason,
 } from '@repo/library-source'
 import { openBetterSqliteDriver } from '@repo/library-source/better-sqlite3'
+import { LIBRARY_PLAYLIST_FILTER_FIELD } from '@repo/schemas/browse'
 import type { JsonValue } from '@repo/schemas/common'
 import { DeviceFeedStateSchema } from '@repo/schemas/device'
 import { env } from '@/env'
 import * as schema from '@/schemas/db'
 import { seedParityLibrary } from '../fixtures/device-parity-library'
-import { expectedHole, type DataFacts } from './holes'
+import { expectedHole, type ApiAnswer, type DataFacts } from './holes'
 
 /**
  * The parity suite's set-up (DEVICE-32): a disposable database ordered by
@@ -147,15 +148,34 @@ export async function apiRequest(
   })
 }
 
-export async function apiSend(method: string, path: string, body: JsonValue) {
+const EnvelopeSchema = z.object({ data: z.unknown() })
+
+/** A write through the app; returns the envelope's data. */
+export async function apiSend(
+  method: string,
+  path: string,
+  body?: JsonValue,
+): Promise<unknown> {
   const response = await apiRequest(path, { method, body })
   if (response.status !== 200)
     throw new Error(
       `${method} ${path} answered ${response.status}: ${await response.text()}`,
     )
+  return EnvelopeSchema.parse(await response.json()).data
 }
 
-const EnvelopeSchema = z.object({ data: z.unknown() })
+/** A read of the API: its status and, when it answered, the envelope's data. */
+export async function readApi(path: string): Promise<ApiAnswer> {
+  const response = await apiRequest(path)
+  const envelope = EnvelopeSchema.safeParse(await response.json())
+  return {
+    status: response.status,
+    data:
+      response.status === 200 && envelope.success
+        ? envelope.data.data
+        : undefined,
+  }
+}
 
 /** The feed routes as a device reads them: the envelope's data. */
 async function feedTransport(path: string): Promise<unknown> {
@@ -341,6 +361,23 @@ function asJson(value: unknown): unknown {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
 }
 
+const FiltersSchema = z.object({
+  filters: z.array(z.object({ field: z.string() })),
+})
+
+/** The report's line for a read: its method, apart for reads with a libraryPlaylist filter. */
+function reportKey(read: LibraryRead): string {
+  const query =
+    read.method === 'trackRecordings' ? read.query.query : read.query
+  const filters = FiltersSchema.safeParse(query)
+  return filters.success &&
+    filters.data.filters.some(
+      (filter) => filter.field === LIBRARY_PLAYLIST_FILTER_FIELD,
+    )
+    ? `${read.method} (libraryPlaylist)`
+    : read.method
+}
+
 /** Whether a path segment, or a name or value of the query string, is not valid percent-encoded UTF-8. */
 export function hasMalformedEscape(path: string): boolean {
   const [target = ''] = path.split('#', 1)
@@ -400,13 +437,14 @@ export async function compareRead(
       ? responseSchema.parse(envelope.data.data)
       : undefined
   const result = await readDevice(store.source, read)
-  const expected = expectedHole(read, {
+  const expected = await expectedHole(read, {
     status: response.status,
     data: apiData,
     facts,
+    readApi,
   })
   if (result.served) {
-    report.count(read.method, 'served')
+    report.count(reportKey(read), 'served')
     if (expected !== undefined)
       report.fail(path, `served, but the Known holes say ${expected}`)
     else if (apiData === undefined)
@@ -418,7 +456,7 @@ export async function compareRead(
     }
     return { outcome: { kind: 'served' }, data: apiData }
   }
-  report.count(read.method, result.reason)
+  report.count(reportKey(read), result.reason)
   if (result.reason !== expected)
     report.fail(
       path,

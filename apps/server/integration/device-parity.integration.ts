@@ -12,10 +12,12 @@ import {
   LIBRARY_PLAYLIST_FILTER_FIELD,
   LibraryPlaylistLibrarySchema,
 } from '@repo/schemas/browse'
+import type { JsonValue } from '@repo/schemas/common'
 import {
   ArtistListeningHistogramQuerySchema,
   ArtistQuerySchema,
 } from '@repo/schemas/creators'
+import { LibraryPlaylistListQuerySchema } from '@repo/schemas/library-playlists'
 import {
   AlbumListeningHistogramQuerySchema,
   AlbumQuerySchema,
@@ -531,18 +533,19 @@ const queryKeySchemas: Record<LibraryMethod, { shape: object } | null> = {
   artistHistogram: ArtistListeningHistogramQuerySchema,
   playlistPage: PlaylistBrowseQuerySchema,
   playlistCount: PlaylistBrowseQuerySchema,
+  libraryPlaylistList: LibraryPlaylistListQuerySchema,
   fields: null,
 }
 
-/** Every column filter of the Playlists directory, each with values that match some, all and none. */
+/** Every column filter of the Playlists directory but the ranges, each with values that match some, all and none. */
 const playlistColumnFilters: Params[] = [
   { owner: 'owner' },
   { owner: 'Fixture' },
+  { owner: 'OWNER' },
   { owner: absentValue },
   { description: 'weekly' },
   { description: 'nothing' },
-  { savedViewText: 'mix' },
-  { savedViewText: '' },
+  { description: 'PICKS' },
   { savedView: 'present' },
   { savedView: 'absent' },
   { types: ['playlist'] },
@@ -552,23 +555,113 @@ const playlistColumnFilters: Params[] = [
   { schedules: ['daily'] },
   { schedules: ['weekly', '1h'] },
   { schedules: ['off'] },
-  { columnRanges: { tracks: { min: 2 } } },
-  { columnRanges: { linkedTracks: { max: 1 } } },
-  { columnRanges: { albums: { min: 1 } } },
-  { columnRanges: { duration: { max: 5 } } },
-  { columnRanges: { count: { min: 1 } } },
-  { columnRanges: { imported: { min: '2022-09-01' } } },
-  { columnRanges: { checked: { max: '2026-03-29' } } },
-  { columnRanges: { updated: { min: '2022-09-01', max: '2022-10-01' } } },
-  { columnRanges: { added: { max: '2022-10-01' } } },
-  { columnRanges: { nextSync: { min: '2026-03-31' } } },
-  {
-    columnRanges: { checked: { min: '2026-03-30' } },
-    timeZone: 'Pacific/Kiritimati',
-  },
+  { schedules: ['6h', '3h'] },
   { timeZone: 'Australia/Sydney' },
+  { timeZone: 'EST' },
   { keyNotation: 'camelot' },
+  // savedViewText: a field label, a value, a playlist name inside an "In
+  // playlist" part, case variants, a missing playlist, a non-ASCII needle
+  // the fold settles and one it cannot, and no match.
+  { savedViewText: 'mix' },
+  { savedViewText: '' },
+  { savedViewText: 'title' },
+  { savedViewText: 'Artist' },
+  { savedViewText: 'drift' },
+  { savedViewText: 'Kite' },
+  { savedViewText: 'in playlist' },
+  { savedViewText: 'night drive' },
+  { savedViewText: 'NIGHT DRIVE' },
+  { savedViewText: 'shelf picks' },
+  { savedViewText: 'removed' },
+  { savedViewText: 'search' },
+  { savedViewText: 'all albums' },
+  { savedViewText: 'échelle' },
+  { savedViewText: 'ÉCHELLE' },
+  { savedViewText: 'Σ' },
+  { savedViewText: 'ΟΔΟΣ', types: ['playlist'] },
+  { savedViewText: 'listen' },
+  { savedViewText: 'year' },
+  { savedViewText: 'jan', timeZone: 'Pacific/Kiritimati' },
+  { savedViewText: 'a minor' },
+  { savedViewText: '8a', keyNotation: 'camelot' },
+  { savedViewText: '1m', keyNotation: 'open' },
+  { savedViewText: 'a minor', keyNotation: 'musical' },
+  { savedViewText: 'rock', types: ['smart'] },
+  { savedViewText: 'drift', savedView: 'present' },
+  { savedViewText: 'drift', columnRanges: { count: { min: 1 } } },
+  { savedViewText: 'a', columnRanges: { updated: { min: '2025-11-03' } } },
+  { savedViewText: absentValue },
 ]
+
+/** Number ranges of every column with a minimum, a maximum and both. */
+const playlistNumberRanges: Params[] = [
+  { count: { min: 1 } },
+  { count: { max: 2 } },
+  { count: { min: 2, max: 4 } },
+  { count: { min: 0 } },
+  { count: { max: 0 } },
+  { tracks: { min: 2 } },
+  { tracks: { max: 0 } },
+  { tracks: { min: 1, max: 2 } },
+  { linkedTracks: { max: 1 } },
+  { linkedTracks: { min: 1 } },
+  { linkedTracks: { min: 0, max: 0 } },
+  { albums: { min: 1 } },
+  { albums: { max: 0 } },
+  { albums: { min: 1, max: 1 } },
+  { duration: { max: 5 } },
+  { duration: { min: 3 } },
+  { duration: { min: 0, max: 4.5 } },
+]
+
+/**
+ * Days at whose edges the fixture's times fall, per date column: times
+ * within an hour of midnight UTC, and of midnight in Havana on 8 March 2026.
+ */
+const playlistDateBounds: Record<string, string[]> = {
+  imported: ['2026-01-01', '2025-12-31'],
+  checked: ['2026-03-30', '2026-03-29'],
+  updated: ['2026-01-15', '2026-03-08'],
+  added: ['2026-01-15', '2026-03-08', '2025-07-01'],
+  nextSync: ['2026-03-31'],
+}
+
+/**
+ * Zones: UTC by default and by name, east and west of UTC, Havana (its
+ * clocks move at midnight), and names PostgreSQL may read by other rules
+ * than the device (`time-zone`).
+ */
+const playlistZones = [
+  undefined,
+  'UTC',
+  'Asia/Tokyo',
+  'Pacific/Kiritimati',
+  'America/Los_Angeles',
+  'America/Havana',
+  'EST',
+  'Etc/GMT+3',
+  'etc/GMT+3',
+  'GMT',
+]
+
+const playlistLibraries = [undefined, ...LibraryPlaylistLibrarySchema.options]
+
+/** Every date column with a minimum, a maximum and both, at each edge day. */
+function playlistDateRanges(): Params[] {
+  return Object.entries(playlistDateBounds).flatMap(([column, days]) =>
+    days.flatMap((day) => [
+      { [column]: { min: day } },
+      { [column]: { max: day } },
+      { [column]: { min: day, max: day } },
+    ]),
+  )
+}
+
+/** A page and a count of the directory. */
+async function directoryRead(run: ParityRunner, params: Params) {
+  await run.read(apiPath('playlists/browse-page', params))
+  await run.read(apiPath('playlists/browse-count', params))
+}
 
 async function playlistMatrix(run: ParityRunner, reduced: boolean) {
   const sourceSets = [
@@ -594,50 +687,120 @@ async function playlistMatrix(run: ParityRunner, reduced: boolean) {
     { q: 'MIX' },
     { q: 'owner' },
     { q: 'found' },
+    { q: 'night' },
+    { q: 'WEEKLY' },
     { q: '%' },
     { q: '_' },
     { q: 'ëmpty' },
+    { q: 'É' },
     { name: 'picks' },
     { name: 'weekly', q: 'found' },
+    { name: 'Drive' },
     { ids: ['playlist-morning', 'playlist-weekly'] },
     { ids: ['playlist-missing'] },
+    {
+      ids: [
+        'library-playlist-night',
+        'playlist-weekly',
+        'library-playlist-calm',
+        'library-playlist-feeds',
+      ],
+    },
+    { ids: ['library-playlist-gone', 'library-playlist-old-smart'] },
     { acceptsAdditions: 'true' },
     { acceptsAdditions: 'false' },
     { acceptsAdditions: 'true', sources: ['spotify'] },
     { size: 1 },
     { libraryScope: 'all' },
   ]
-  for (const params of filters) {
-    await run.read(apiPath('playlists/browse-page', params))
-    await run.read(apiPath('playlists/browse-count', params))
+  // Each library's directory (PL-17), and the directory without one:
+  // every sort in both directions paged to the end, and the filters.
+  for (const library of playlistLibraries) {
+    if (library !== undefined)
+      for (const sortBy of playlistSorts)
+        for (const direction of reduced ? ['asc' as const] : directions)
+          await run.pages(
+            'playlists/browse-page',
+            { library, sortBy, direction },
+            3,
+          )
+    for (const params of library === undefined || !reduced
+      ? filters
+      : filters.slice(0, 4))
+      await directoryRead(run, { ...params, library })
+    if (library !== undefined)
+      for (const sources of sourceSets)
+        await directoryRead(run, { library, sources })
   }
-  // The directory's column filters without `library`, alone and with `q`:
-  // the device implements none of them and leaves each read to the API.
-  for (const params of reduced
-    ? playlistColumnFilters.slice(0, 4)
-    : playlistColumnFilters)
-    for (const q of [undefined, 'mix']) {
-      await run.read(apiPath('playlists/browse-page', { ...params, q }))
-      await run.read(apiPath('playlists/browse-count', { ...params, q }))
+  // Every column filter, with `library` and without, alone and with `q`.
+  const columnFilters = [
+    ...playlistColumnFilters,
+    ...[...playlistNumberRanges, ...playlistDateRanges()].map(
+      (columnRanges) => ({ columnRanges }),
+    ),
+  ]
+  for (const library of playlistLibraries)
+    for (const [index, params] of columnFilters.entries()) {
+      if (reduced && index % 4 !== 0) continue
+      for (const q of [undefined, 'mix'])
+        await directoryRead(run, { ...params, library, q })
     }
-  // PL-17: the directory of one library, with its library playlists, which
-  // the device leaves to the API (`library-playlist`), in every form.
-  for (const library of LibraryPlaylistLibrarySchema.options) {
-    for (const sortBy of reduced ? ['name', 'type'] : playlistSorts)
-      for (const direction of reduced ? ['asc' as const] : directions)
+  // Date ranges in each zone.
+  for (const library of playlistLibraries)
+    for (const timeZone of reduced ? playlistZones.slice(0, 6) : playlistZones)
+      for (const [index, columnRanges] of playlistDateRanges().entries()) {
+        if (reduced && index % 3 !== 0) continue
+        await directoryRead(run, { columnRanges, timeZone, library })
+      }
+  // The count sort with and without a count range, which reads the smart
+  // playlists' live counts.
+  for (const library of playlistLibraries)
+    for (const columnRanges of [
+      undefined,
+      { count: { min: 0 } },
+      { count: { min: 1, max: 3 } },
+    ])
+      for (const direction of reduced ? ['asc' as const] : directions) {
         await run.pages(
           'playlists/browse-page',
-          { library, sortBy, direction },
-          2,
+          { library, sortBy: 'count', direction, columnRanges },
           3,
         )
-    for (const params of reduced ? filters.slice(0, 2) : filters) {
-      await run.read(apiPath('playlists/browse-page', { ...params, library }))
-      await run.read(apiPath('playlists/browse-count', { ...params, library }))
-    }
-    for (const sources of sourceSets) {
-      await run.read(apiPath('playlists/browse-page', { library, sources }))
-      await run.read(apiPath('playlists/browse-count', { library, sources }))
+        await run.read(
+          apiPath('playlists/browse-count', { library, columnRanges }),
+        )
+        for (const types of [['smart'], ['playlist'], []])
+          await directoryRead(run, {
+            library,
+            sortBy: 'count',
+            direction,
+            columnRanges,
+            types,
+          })
+      }
+}
+
+/** Values of `itemId` per library: a held item, one outside the library, a removed entry and an unknown item. */
+const listItemIds: Record<string, string[]> = {
+  tracks: ['track-aurora', 'track-outside', 'track-drift-a', absentValue],
+  albums: ['album-orbit', 'album-outside', 'album-ridge', absentValue],
+  films: ['film-kestrel', 'film-lagoon'],
+  subscriptions: [absentValue],
+  mixes: [absentValue],
+}
+
+/** `GET /library-playlists` (PL-10): paging, `type`, `q` and `itemId`, for every library. */
+async function libraryPlaylistListMatrix(run: ParityRunner, reduced: boolean) {
+  for (const library of LibraryPlaylistLibrarySchema.options) {
+    for (const type of [undefined, 'playlist', 'smart']) {
+      for (const size of reduced ? [2] : [1, 3, 100])
+        await run.pages('library-playlists', { library, type }, size)
+      for (const q of reduced
+        ? ['night', 'NIGHT']
+        : ['night', 'NIGHT', 'ight d', 'e', 'É', 'é', '%', '_', absentValue])
+        await run.read(apiPath('library-playlists', { library, type, q }))
+      for (const itemId of listItemIds[library] ?? [])
+        await run.pages('library-playlists', { library, type, itemId }, 4)
     }
   }
 }
@@ -665,45 +828,24 @@ describe('device parity', () => {
   it('answers the first reason in the order when a read holds two', async () => {
     const run = new ParityRunner(currentStore())
     const unknown = { field: 'reviewNoSuchField', value: 'x' }
-    const playlist = (value: string) => ({
+    const night = {
       field: LIBRARY_PLAYLIST_FILTER_FIELD,
-      value,
-    })
-    const night = playlist('library-playlist-night')
-    const cases: [string, Params, UnsupportedReason][] = [
-      ['tracks/browse-page', { filters: [night, unknown] }, 'library-playlist'],
-      [
-        'tracks/browse-count',
-        { filters: [night, unknown] },
-        'library-playlist',
-      ],
-      [
-        'albums/browse-page',
-        { filters: [playlist('library-playlist-shelf'), unknown] },
-        'library-playlist',
-      ],
-      [
-        'films/browse-count',
-        { filters: [playlist('library-playlist-screen'), unknown] },
-        'library-playlist',
-      ],
+      value: 'library-playlist-night',
+    }
+    const estRange = { added: { max: '2026-01-15' } }
+    // Queries the API rejects, holding an earlier reason or none.
+    const rejected: [string, Params, UnsupportedReason][] = [
+      ['tracks/browse-page', { filters: [night, unknown] }, 'invalid-query'],
       [
         'albums/listening-histogram',
         {
           period: { kind: 'all' },
-          filters: [playlist('library-playlist-shelf'), unknown],
+          filters: [
+            { field: LIBRARY_PLAYLIST_FILTER_FIELD, value: 'x' },
+            unknown,
+          ],
         },
-        'library-playlist',
-      ],
-      [
-        'tracks/browse-page',
-        { filters: [night], ranges: [{ field: 'title', min: 1 }] },
-        'library-playlist',
-      ],
-      [
-        'tracks/browse-page',
-        { filters: [night], sortBy: 'reviewNoSuchField' },
-        'library-playlist',
+        'invalid-query',
       ],
       [
         'tracks/browse-count',
@@ -711,7 +853,7 @@ describe('device parity', () => {
         'catalog-scope',
       ],
     ]
-    for (const [route, params, reason] of cases) {
+    for (const [route, params, reason] of rejected) {
       const path = apiPath(route, params)
       expect((await apiRequest(path)).status, path).not.toBe(200)
       expect((await run.read(path))?.outcome, path).toEqual({
@@ -719,6 +861,54 @@ describe('device parity', () => {
         reason,
       })
     }
+    // Directory reads the API answers.
+    const answered: [Params, UnsupportedReason][] = [
+      [
+        {
+          libraryScope: 'all',
+          columnRanges: estRange,
+          timeZone: 'EST',
+          library: 'tracks',
+        },
+        'catalog-scope',
+      ],
+      [
+        {
+          library: 'mixes',
+          columnRanges: { ...estRange, count: { min: 1 } },
+          timeZone: 'EST',
+        },
+        'time-zone',
+      ],
+      [
+        {
+          library: 'films',
+          savedViewText: 'Σ',
+          columnRanges: { count: { min: 1 } },
+        },
+        'server-lower-case',
+      ],
+      // Albums lists Queued Mix, whose import is queued.
+      [
+        { library: 'albums', columnRanges: { count: { min: 0 } } },
+        'smart-count',
+      ],
+    ]
+    for (const [params, reason] of answered) {
+      const path = apiPath('playlists/browse-page', params)
+      expect((await apiRequest(path)).status, path).toBe(200)
+      expect((await run.read(path))?.outcome, path).toEqual({
+        kind: 'fell-through',
+        reason,
+      })
+    }
+    const queued = await run.read(
+      apiPath('playlists/browse-page', { library: 'albums' }),
+    )
+    expect(queued?.outcome).toEqual({
+      kind: 'fell-through',
+      reason: 'active-import',
+    })
     expectParity(run, 'two reasons')
   })
 
@@ -787,6 +977,12 @@ describe('device parity', () => {
       apiPath('artists/browse-page', {
         listening: { match: 'any', rules: [{ period, min: 1 }] },
       }),
+      // The live counts of the smart playlists, one with a rolling rule.
+      apiPath('playlists/browse-page', {
+        library: 'tracks',
+        types: ['smart'],
+        columnRanges: { count: { min: 0 } },
+      }),
     ]) {
       const read = resolveLibraryRead(path)
       if (read === undefined) throw new Error(`${path} maps no read`)
@@ -838,14 +1034,11 @@ describe('device parity', () => {
         (await run.read(apiPath('tracks/facets', { q })))?.outcome,
         q,
       ).toEqual({ kind: 'served' })
-    // The API lists Night Drive's entries; the device leaves the read to it.
+    // Night Drive's listed entries in the library, from the stored members.
     const night = await run.read(
       apiPath('tracks/browse-page', { filters: [nightDrive], size: 50 }),
     )
-    expect(night?.outcome).toEqual({
-      kind: 'fell-through',
-      reason: 'library-playlist',
-    })
+    expect(night?.outcome).toEqual({ kind: 'served' })
     expect(
       z
         .object({ items: z.array(z.object({ id: z.string() })) })
@@ -883,30 +1076,84 @@ describe('device parity', () => {
     })
     await artistSpecifics(run)
     await playlistMatrix(run, false)
-    // The API lists Night Drive in the Tracks directory; the device leaves it.
+    await libraryPlaylistListMatrix(run, false)
+    const outcome = async (params: Params) =>
+      (await run.read(apiPath('playlists/browse-page', params)))?.outcome
+    const served = { kind: 'served' }
+    // Night Drive in the Tracks directory.
     const directory = await run.read(
       apiPath('playlists/browse-page', { library: 'tracks', q: 'night' }),
     )
-    expect(directory?.outcome).toEqual({
-      kind: 'fell-through',
-      reason: 'library-playlist',
-    })
+    expect(directory?.outcome).toEqual(served)
     expect(
       z
         .object({ items: z.array(z.object({ id: z.string() })) })
         .parse(directory?.data)
         .items.map((item) => item.id),
     ).toContain('library-playlist-night')
-    // The API counts the playlists whose owner holds the text; the device,
-    // which does not implement the filter, leaves the read to it.
+    // The playlists whose owner holds the text.
     const owner = await run.read(
       apiPath('playlists/browse-count', { owner: 'owner' }),
     )
-    expect(owner?.outcome).toEqual({
-      kind: 'fell-through',
-      reason: 'unimplemented-field',
-    })
+    expect(owner?.outcome).toEqual(served)
     expect(owner?.data).toEqual({ totalCount: 3 })
+    // Each smart view of Tracks is counted on the device, as a count range
+    // shows it; Albums, Films and Mixes hold a view the device cannot count.
+    // Every smart view of Tracks that parses is counted on the device as the
+    // service counts it (queryBrowseCount): groups, limits and listening
+    // rules included.
+    expect(Object.fromEntries(await smartCounts(run, 'tracks'))).toEqual({
+      'library-playlist-calm': expect.any(Number),
+      'library-playlist-echelle': expect.any(Number),
+      'library-playlist-grouped-heard': expect.any(Number),
+      'library-playlist-in-night': 2,
+      'library-playlist-key': expect.any(Number),
+      'library-playlist-kite': expect.any(Number),
+      'library-playlist-long': expect.any(Number),
+      'library-playlist-not-gone': expect.any(Number),
+      'library-playlist-nowhere': 0,
+      'library-playlist-provider': expect.any(Number),
+      'library-playlist-recent': expect.any(Number),
+      'library-playlist-rock': expect.any(Number),
+      'library-playlist-top': 3,
+    })
+    const counted = {
+      columnRanges: { count: { min: 0 } },
+      sortBy: 'count',
+      types: ['smart'],
+    }
+    expect(await outcome({ ...counted, library: 'subscriptions' })).toEqual(
+      served,
+    )
+    for (const library of ['films', 'mixes'])
+      expect(await outcome({ ...counted, library })).toEqual({
+        kind: 'fell-through',
+        reason: 'smart-count',
+      })
+    // A text the fold settles in Tracks; a sentence it cannot in Films,
+    // unless no smart row of Films passes the other filters.
+    expect(
+      await outcome({ library: 'tracks', savedViewText: 'ÉCHELLE' }),
+    ).toEqual(served)
+    expect(await outcome({ library: 'films', savedViewText: 'e' })).toEqual({
+      kind: 'fell-through',
+      reason: 'server-lower-case',
+    })
+    expect(
+      await outcome({ library: 'films', savedViewText: 'e', q: 'kept' }),
+    ).toEqual(served)
+    // Dates in a zone the device reads, and in one it leaves to the API.
+    const added = { columnRanges: { added: { min: '2026-01-15' } } }
+    expect(
+      await outcome({
+        ...added,
+        library: 'tracks',
+        timeZone: 'America/Havana',
+      }),
+    ).toEqual(served)
+    expect(
+      await outcome({ ...added, library: 'tracks', timeZone: 'Etc/GMT+3' }),
+    ).toEqual({ kind: 'fell-through', reason: 'time-zone' })
     expectParity(run, 'Artists and Playlists')
   })
 
@@ -1150,7 +1397,7 @@ describe('device parity', () => {
     'still holds after edits and a sync of the changes',
     { timeout: 900_000 },
     async () => {
-      await applyEdits()
+      const edited = await applyEdits()
       await renderMarks()
       const synced = await syncParityStore(currentStore())
       expect(synced).toMatchObject({ status: 'synced', refilled: false })
@@ -1161,6 +1408,51 @@ describe('device parity', () => {
       await trackSpecifics(run, true)
       await mediaSpecifics(run, true)
       await playlistMatrix(run, true)
+      await libraryPlaylistListMatrix(run, true)
+      // The playlist made, renamed and edited, and the one made and deleted.
+      const tracks = routesOf('track')
+      for (const value of [edited.playlist, edited.deleted])
+        for (const mode of [undefined, 'required', 'exclude'])
+          await run.query(tracks, {
+            filters: [{ field: LIBRARY_PLAYLIST_FILTER_FIELD, value, mode }],
+          })
+      expect(
+        await trackIds(run, {
+          filters: [
+            { field: LIBRARY_PLAYLIST_FILTER_FIELD, value: edited.playlist },
+          ],
+        }),
+      ).toEqual(
+        expect.arrayContaining([
+          'track-drift-a',
+          'track-hum-a',
+          'track-glitch',
+        ]),
+      )
+      for (const itemId of ['track-glitch', 'track-hum-a', 'track-echelle'])
+        await run.read(
+          apiPath('library-playlists', { library: 'tracks', itemId }),
+        )
+      for (const params of [
+        { q: 'edit' },
+        { ids: [edited.playlist, edited.deleted] },
+        { savedViewText: 'version' },
+      ])
+        await directoryRead(run, { ...params, library: 'tracks' })
+      // The changed and deleted views leave Albums and Films countable:
+      // archived and edition toggles, listening rules and a limit.
+      expect(Object.fromEntries(await smartCounts(run, 'albums'))).toEqual({
+        'library-playlist-album-heard': expect.any(Number),
+        'library-playlist-albums-everywhere': expect.any(Number),
+        'library-playlist-ambient-albums': expect.any(Number),
+        'library-playlist-archive': expect.any(Number),
+        'library-playlist-in-shelf': 1,
+        'library-playlist-orbit-albums': expect.any(Number),
+      })
+      expect([...(await smartCounts(run, 'films')).keys()].sort()).toEqual([
+        'library-playlist-films-kept',
+        'library-playlist-greek',
+      ])
       for (const period of listeningPeriods.slice(0, 4))
         await run.read(apiPath('artists/listening-histogram', { period }))
       // Only Liked One, now outside the library, holds Dream Pop from
@@ -1194,6 +1486,32 @@ describe('device parity', () => {
   )
 })
 
+const CountedPageSchema = z.object({
+  items: z.array(z.object({ id: z.string(), itemCount: z.number() })),
+})
+
+/**
+ * The live count of each smart playlist of a library that has one, from
+ * the directory with a count range, which the device must serve.
+ */
+async function smartCounts(run: ParityRunner, library: string) {
+  const result = await run.read(
+    apiPath('playlists/browse-page', {
+      library,
+      types: ['smart'],
+      sortBy: 'count',
+      columnRanges: { count: { min: 0 } },
+    }),
+  )
+  expect(result?.outcome, library).toEqual({ kind: 'served' })
+  return new Map(
+    CountedPageSchema.parse(result?.data).items.map((item) => [
+      item.id,
+      item.itemCount,
+    ]),
+  )
+}
+
 /** The IDs of the first 50 tracks of a Browse query, read through the runner. */
 async function trackIds(run: ParityRunner, params: Params) {
   const result = await run.read(
@@ -1213,7 +1531,22 @@ async function apiFieldKeys(route: string): Promise<unknown> {
 const query = (statement: string, values: unknown[] = []) =>
   parityPool.query(statement, values).then(() => undefined)
 
-/** The edits of device-feed-end-to-end.integration.ts, through the services and routes. */
+const CreatedPlaylistSchema = z.object({
+  playlist: z.object({ id: z.string() }),
+})
+
+/** Creates a library playlist through the route and returns its ID. */
+async function createLibraryPlaylist(body: JsonValue) {
+  return CreatedPlaylistSchema.parse(
+    await apiSend('POST', '/api/v1/library-playlists', body),
+  ).playlist.id
+}
+
+/**
+ * The edits of device-feed-end-to-end.integration.ts, through the services
+ * and routes. Returns the library playlist made and edited, and the one
+ * made and deleted.
+ */
 async function applyEdits() {
   // A title edit, of a track and of an album.
   await query(
@@ -1266,4 +1599,41 @@ async function applyEdits() {
   )
   await query(`insert into track_tag (media_item_id, tag_id, owner, sonovault, verified)
     values ('track-liked', 'tag-dream', null, true, true)`)
+  // Library playlists (PL-11, PL-14, PL-15): one made with entries, renamed,
+  // given more with a repeat and the repeat removed; one made and deleted;
+  // an entry added to Night Drive; smart views changed and one deleted.
+  const playlists = '/api/v1/library-playlists'
+  const playlist = await createLibraryPlaylist({
+    type: 'playlist',
+    library: 'tracks',
+    name: 'Edit Mix',
+    selection: { ids: ['track-drift-a', 'track-hum-a'] },
+  })
+  await apiSend('PATCH', `${playlists}/${playlist}`, { name: 'edit MIX two' })
+  await apiSend('POST', `${playlists}/${playlist}/entries`, {
+    selection: { ids: ['track-hum-a', 'track-glitch'] },
+    duplicates: 'again',
+  })
+  await apiSend('POST', `${playlists}/${playlist}/entries/remove`, {
+    repeats: true,
+  })
+  const deleted = await createLibraryPlaylist({
+    type: 'smart',
+    library: 'tracks',
+    name: 'Brief View',
+    view: { q: 'hum' },
+  })
+  await apiSend('DELETE', `${playlists}/${deleted}`)
+  await apiSend('POST', `${playlists}/library-playlist-night/entries`, {
+    selection: { ids: ['track-istanbul'] },
+    duplicates: 'skip',
+  })
+  await apiSend('PATCH', `${playlists}/library-playlist-calm`, {
+    view: { q: 'drift', groupRecordings: 'true' },
+  })
+  await apiSend('PATCH', `${playlists}/library-playlist-albums-everywhere`, {
+    view: { q: 'o', editions: 'false' },
+  })
+  await apiSend('DELETE', `${playlists}/library-playlist-rejected`)
+  return { playlist, deleted }
 }
