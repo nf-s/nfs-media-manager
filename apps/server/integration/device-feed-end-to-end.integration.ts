@@ -25,6 +25,7 @@ import {
   DevicePlaylistItemSchema,
   DevicePlaylistJobRowSchema,
   DevicePlaylistRowSchema,
+  DeviceTagRowSchema,
   DeviceTrackItemSchema,
   DeviceTrackRowSchema,
   type DeviceEntity,
@@ -470,6 +471,51 @@ describe('the device feed against real edits', () => {
       send('DELETE', '/api/v1/tracks/track-cold/tags', { tagId: 'tag-pop' }),
     )
     expect(removed.get('track:track-cold')).toBe(false)
+  })
+
+  it('a Sonovault tag on a track outside the library', async () => {
+    const sonovault = async (id: string) =>
+      DeviceTagRowSchema.parse(
+        (await (await renderer()).render('tag', [id])).get(id),
+      ).sonovault
+    // Bright Water has a tag of its own and inherits Synth Pop from its
+    // album while no track holds Synth Pop from Sonovault.
+    expect(await sonovault('tag-synth')).toBe(false)
+    const left = await step('track out of the library', () =>
+      query("update media_item set in_library = false where id = 'track-cold'"),
+    )
+    expect(left.get('track:track-cold')).toBe(true)
+    const gained = await step(
+      'Sonovault tag on a track outside the library',
+      () =>
+        query(`insert into track_tag (media_item_id, tag_id, owner, sonovault, verified)
+        values ('track-cold', 'tag-synth', null, true, true)`),
+    )
+    expect(gained.get('tag:tag-synth')).toBe(false)
+    expect(await sonovault('tag-synth')).toBe(true)
+    // Unverified, the tag leaves Browse.
+    const lost = await step('Sonovault tag unverified', () =>
+      query(`update track_tag set verified = false
+        where media_item_id = 'track-cold' and tag_id = 'tag-synth'`),
+    )
+    expect(lost.get('tag:tag-synth')).toBe(false)
+    expect(await sonovault('tag-synth')).toBe(false)
+    const regained = await step('Sonovault tag verified again', () =>
+      query(`update track_tag set verified = true
+        where media_item_id = 'track-cold' and tag_id = 'tag-synth'`),
+    )
+    expect(regained.get('tag:tag-synth')).toBe(false)
+    const deleted = await step('Sonovault tag deleted', () =>
+      query(
+        "delete from track_tag where media_item_id = 'track-cold' and tag_id = 'tag-synth'",
+      ),
+    )
+    expect(deleted.get('tag:tag-synth')).toBe(false)
+    expect(await sonovault('tag-synth')).toBe(false)
+    const returned = await step('track back in the library', () =>
+      query("update media_item set in_library = true where id = 'track-cold'"),
+    )
+    expect(returned.get('track:track-cold')).toBe(false)
   })
 
   it('a recording group member renamed, archived, restored and deleted', async () => {

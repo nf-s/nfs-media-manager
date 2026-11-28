@@ -303,7 +303,13 @@ BEGIN
         UNION ALL SELECT 'track', lt.media_item_id FROM c JOIN {s}.library_track lt ON lt.album_media_item_id = c.r->>'media_item_id'$r$]
     WHEN 'track_tag' THEN ARRAY[
       every_column, $r$SELECT 'track', c.r->>'media_item_id' FROM c
-        UNION ALL SELECT 'album', lt.album_media_item_id FROM c JOIN {s}.library_track lt ON lt.media_item_id = c.r->>'media_item_id'$r$]
+        UNION ALL SELECT 'album', lt.album_media_item_id FROM c JOIN {s}.library_track lt ON lt.media_item_id = c.r->>'media_item_id'$r$,
+      -- A tag's `sonovault` reads the in-Browse Sonovault tags of every
+      -- library track, published or not: mark the tag of each such row
+      -- that appears, disappears or changes.
+      $r$o->'tag_id' IS DISTINCT FROM n->'tag_id' OR o->'in_browse' IS DISTINCT FROM n->'in_browse'
+        OR o->'sonovault' IS DISTINCT FROM n->'sonovault'$r$,
+      $r$SELECT 'tag', c.r->>'tag_id' FROM c WHERE c.r->>'in_browse' = 'true' AND c.r->>'sonovault' = 'true'$r$]
     WHEN 'tag_occurrence' THEN ARRAY[every_column, owning_item]
     WHEN 'playlist' THEN ARRAY[
       every_column, $r$SELECT 'playlist', c.r->>'id' FROM c$r$,

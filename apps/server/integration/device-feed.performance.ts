@@ -324,6 +324,12 @@ const writes: { table: string; one: string; many: string }[] = [
     one: "insert into track_tag (media_item_id, tag_id, owner) values ('track-1', 'tag-150', 'added')",
     many: `update track_tag set owner = 'removed' where media_item_id in (select 'track-' || n from (${bulk(2000)}) s)`,
   },
+  // Sonovault tags, which also mark the tags they belong to.
+  {
+    table: 'track_tag',
+    one: "insert into track_tag (media_item_id, tag_id, sonovault, verified) values ('track-1', 'tag-150', true, true)",
+    many: `update track_tag set owner = null, sonovault = true, verified = true where media_item_id in (select 'track-' || n from (${bulk(2000)}) s)`,
+  },
   {
     table: 'tag_occurrence',
     one: "update tag_occurrence set kind = 'style' where id = 'occurrence-1'",

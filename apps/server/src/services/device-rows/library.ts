@@ -51,7 +51,12 @@ export function listTagIds(afterId: string | null, limit: number) {
   )
 }
 
-/** canonicalTagRows and matchingTagNames, music-tags.ts, read these per tag. */
+/**
+ * canonicalTagRows and matchingTagNames, music-tags.ts, read these per tag.
+ * `sonovault` is the test trackIdsWithTag (Auto) and
+ * browse_track_sonovault_values, browse.ts, make of a tag: they read every
+ * library_track's track tags, so it covers tracks the feed does not publish.
+ */
 export function renderTags(ids: string[]) {
   const sorted = (rows: SQL) =>
     sql`coalesce((select jsonb_agg(d.value order by d.value) from (${rows}) d), '[]'::jsonb)`
@@ -63,7 +68,9 @@ export function renderTags(ids: string[]) {
       'hidden', t.hidden,
       'aliasTargetId', (select a.target_tag_id from tag_alias a where a.source_tag_id = t.id),
       'identityKeys', ${sorted(sql`select distinct i.normalized_name collate "C" as value
-        from tag_identity i where i.tag_id = t.id and i.media_type = t.media_type`)}
+        from tag_identity i where i.tag_id = t.id and i.media_type = t.media_type`)},
+      'sonovault', exists (select 1 from track_tag sonovault_tag
+        where sonovault_tag.tag_id = t.id and sonovault_tag.in_browse and sonovault_tag.sonovault)
     ) as payload
     from tag t where t.id = ${anyId(ids)} and t.media_type in ${tagMediaTypes}`)
 }

@@ -419,6 +419,14 @@ describe('the device row renderer', () => {
     expect(
       DeviceTagRowSchema.parse(tags.get('tag-electronic')).identityKeys,
     ).toEqual(['electronic music'])
+    // Échelle holds Pop from Sonovault, verified; Dream Pop is the owner's.
+    const sonovault = await device.render('tag', ['tag-pop', 'tag-dream'])
+    expect(DeviceTagRowSchema.parse(sonovault.get('tag-pop')).sonovault).toBe(
+      true,
+    )
+    expect(DeviceTagRowSchema.parse(sonovault.get('tag-dream')).sonovault).toBe(
+      false,
+    )
     const keys = await device.render('tag_key', [
       'album:dream pop',
       'film:noir',

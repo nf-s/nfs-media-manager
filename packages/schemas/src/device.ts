@@ -719,6 +719,10 @@ export const DeviceTagRowSchema = z
     aliasTargetId: z.string().min(1).nullable(),
     // tag_identity.normalized_name of the same media type pointing at this tag: canonicalTagRows
     identityKeys: DeviceTextSchema,
+    // trackIdsWithTag inherits, music-tags.ts, and browse_track_sonovault_values,
+    // browse.ts: a track_tag of this tag with in_browse and sonovault exists, on
+    // any library_track, published or not
+    sonovault: z.boolean(),
   })
   .strict()
 export type DeviceTagRow = z.infer<typeof DeviceTagRowSchema>

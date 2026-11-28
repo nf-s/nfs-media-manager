@@ -415,6 +415,7 @@ const payloads = {
     hidden: false,
     aliasTargetId: null,
     identityKeys: ['ambient music'],
+    sonovault: false,
   },
   tag_key: {
     mediaType: 'album',
