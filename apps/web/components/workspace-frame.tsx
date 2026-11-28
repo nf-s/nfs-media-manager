@@ -18,6 +18,7 @@ import {
 } from '@repo/ui/components/ds/workspace-tabs'
 import { useWorkspaceTabGestures } from '@/hooks/useWorkspaceTabGestures'
 import { detailLocation } from '@/utils/detail-inspector'
+import { useSignedInSession } from '@/utils/device-store/signed-in'
 import { isSystemPath, libraryViewForPath } from '@/utils/media-scope'
 import {
   captureScroll,
@@ -56,6 +57,8 @@ export function WorkspaceFrame({
   owner: string
   children: ReactNode
 }) {
+  // Only the session check renders the workspace, on every signed-in page.
+  useSignedInSession()
   const pathname = usePathname()
   const params = useSearchParams()
   const route = detailLocation(pathname, new URLSearchParams(params))

@@ -1,6 +1,5 @@
 import AppShell from '@/components/app-shell'
 import PageAuthGuard from '@/components/page-auth-guard'
-import { SignedInSession } from '@/components/providers'
 
 export default async function AdminLayout({
   children,
@@ -9,12 +8,7 @@ export default async function AdminLayout({
 }) {
   return (
     <PageAuthGuard>
-      {(owner) => (
-        <>
-          <SignedInSession />
-          <AppShell owner={owner}>{children}</AppShell>
-        </>
-      )}
+      {(owner) => <AppShell owner={owner}>{children}</AppShell>}
     </PageAuthGuard>
   )
 }

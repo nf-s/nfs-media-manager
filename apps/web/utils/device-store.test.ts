@@ -700,6 +700,37 @@ test('a signed-out page does not start the store; a signed-in page starts it wit
   assert.equal(host.destroyed, 0)
 })
 
+// The workspace's signed-in mark is a layout effect of a child of
+// `Providers`, so it runs before `Providers` starts following the setting.
+test('a signed-in mark made before the store follows the setting starts it at once, and only with the setting on', async (t) => {
+  const follow = followSetting(t)
+  const host = fakeHost()
+  const channels = countChannels(t)
+  let loads = 0
+  const options = {
+    apiBaseUrl: '',
+    client: new QueryClient(),
+    loadHost: async () => {
+      loads += 1
+      return host
+    },
+  }
+  t.after(enterSignedInPage())
+  setDeviceStoreSetting('off')
+  const stopOff = startDeviceStore(options)
+  await settle()
+  assert.equal(loads, 0)
+  assert.equal(deviceSeam(), undefined)
+  assert.equal(channels.count, 0)
+  stopOff()
+  setDeviceStoreSetting('on')
+  follow(startDeviceStore(options))
+  assert.ok(deviceSeam())
+  await settle()
+  assert.equal(loads, 1)
+  assert.equal(deviceStoreStatus().state, 'ready')
+})
+
 test('rows the client schema rejects end the fill not ready, with no refill until the next page load', async (t) => {
   const calls = mockApi(t)
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })

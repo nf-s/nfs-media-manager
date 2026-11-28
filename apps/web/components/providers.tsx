@@ -13,10 +13,7 @@ import type { LibraryActionKind } from '@repo/ui/components/ds/library-action'
 import { observeDocumentBrowsePath } from '@/hooks/useBrowsePerformance'
 import { clientQueryDefaults } from '@/utils/query-cache'
 import { initializeKeyNotation } from '@/utils/key-notation'
-import {
-  enterSignedInPage,
-  startDeviceStore,
-} from '@/utils/device-store/bootstrap'
+import { startDeviceStore } from '@/utils/device-store/bootstrap'
 
 initializeKeyNotation()
 
@@ -158,30 +155,19 @@ function BrowseDocumentTiming() {
   return null
 }
 
-/**
- * Marks the page as signed in, so the device store may start. Rendered only
- * behind the session check, before the page's own components, so the store
- * starts before their queries subscribe.
- */
-export function SignedInSession() {
-  useLayoutEffect(() => enterSignedInPage(), [])
-  return null
-}
-
-/** Layout effects run before any query subscribes, so the first Browse read can use the copy. */
-function DeviceStore({ apiBaseUrl }: { apiBaseUrl: string }) {
+const Providers: React.FC<Props> = ({ children, appUrl, apiBaseUrl }) => {
+  // A hook, not an element: an element added here or beside the shell moves
+  // the shell's place in the useId tree, and hydration that waits for part of
+  // the page can then lose it, so every id under the shell differs from the
+  // server's. Layout effects run before any query subscribes, so the first
+  // Browse read can use the copy.
   useLayoutEffect(
     () => startDeviceStore({ apiBaseUrl, client: queryClient }),
     [apiBaseUrl],
   )
-  return null
-}
-
-const Providers: React.FC<Props> = ({ children, appUrl, apiBaseUrl }) => {
   return (
     <ConfigContext.Provider value={{ appUrl, apiBaseUrl }}>
       <QueryClientProvider client={queryClient}>
-        <DeviceStore apiBaseUrl={apiBaseUrl} />
         <BrowseDocumentTiming />
         <LibraryAnnouncementContext.Provider
           value={(kind, title, receiptId) => {
