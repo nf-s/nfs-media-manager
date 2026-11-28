@@ -15,11 +15,30 @@ import { createSerialDriver, toSqlRow } from './shared'
 
 let sqlite3: Promise<Sqlite3Static> | undefined
 
-/** Loads the WebAssembly module once per Worker. */
+/**
+ * The Emscripten module options the package's init reads for its messages
+ * (`Module.print` and `Module.printErr` in its index.mjs), which write to
+ * the console when absent.
+ */
+type SqliteWasmInitOptions = {
+  print: (...messages: unknown[]) => void
+  printErr: (...messages: unknown[]) => void
+}
+
+const discard = () => {}
+
+/**
+ * Loads the WebAssembly module once per Worker. The module's own messages
+ * are discarded; a failed load still rejects with its error.
+ */
 export function loadSqliteWasm(): Promise<Sqlite3Static> {
-  sqlite3 ??= import('@sqlite.org/sqlite-wasm').then((module) =>
-    module.default(),
-  )
+  sqlite3 ??= import('@sqlite.org/sqlite-wasm').then((module) => {
+    // The package declares init without the module argument it accepts; a
+    // function that takes fewer parameters is assignable to this type.
+    const init: (options: SqliteWasmInitOptions) => Promise<Sqlite3Static> =
+      module.default
+    return init({ print: discard, printErr: discard })
+  })
   return sqlite3
 }
 
