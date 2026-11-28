@@ -78,6 +78,13 @@ const pluginTextKeys = new Set(
 const FieldsSchema = z.array(BrowseFieldSchema)
 const FacetsSchema = z.array(z.object({ field: z.string(), value: z.string() }))
 
+/** A query the API rejects: an unknown filter, range or sort field, or a range on a text field. */
+type InvalidQuery = {
+  filters?: FilterChoice[]
+  ranges?: { field: string; min: number }[]
+  sortBy?: string
+}
+
 export type MatrixOptions = {
   /** After edits: fewer modes and values, the same dimensions. */
   reduced: boolean
@@ -336,13 +343,41 @@ export async function runLibraryMatrix(
     { discoverySourceScope: 'selection', discoverySources: 'scrobble' },
   ])
     await run.query(routes, scope)
-  for (const invalid of [
+  const invalidQueries: InvalidQuery[] = [
     { filters: [{ field: 'notAField', value: 'x' }] },
     { ranges: [{ field: 'notAField', min: 1 }] },
     { ranges: [{ field: 'title', min: 1 }] },
     { sortBy: 'notAField' },
-  ])
-    await run.query(routes, invalid)
+  ]
+  for (const invalid of invalidQueries) await run.query(routes, invalid)
+
+  // A rejected query that also holds an earlier reason in the order of
+  // reasons: a libraryPlaylist filter, a catalog scope, a grouped creator
+  // scope on Tracks and a creator scope on Films. The earlier reason applies.
+  const playlistFilter = {
+    field: LIBRARY_PLAYLIST_FILTER_FIELD,
+    value: playlistValues[0] ?? absentValue,
+  }
+  const creatorScope =
+    routes.library === 'track'
+      ? [{ creatorId: 'artist-aster', groupRecordings: true }]
+      : routes.library === 'film'
+        ? [{ creatorId: 'artist-delta' }]
+        : []
+  for (const invalid of invalidQueries) {
+    const withPlaylist = {
+      ...invalid,
+      filters: [playlistFilter, ...(invalid.filters ?? [])],
+    }
+    await run.query(routes, withPlaylist)
+    if (routes.histogram !== undefined && invalid.sortBy === undefined)
+      await run.read(
+        apiPath(routes.histogram, { period: { kind: 'all' }, ...withPlaylist }),
+      )
+    await run.query(routes, { ...invalid, libraryScope: 'all' })
+    for (const scope of creatorScope)
+      await run.query(routes, { ...invalid, ...scope })
+  }
   return fields
 }
 

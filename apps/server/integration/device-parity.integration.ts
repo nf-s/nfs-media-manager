@@ -1,7 +1,11 @@
 import '@hono/zod-openapi'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { deviceQueryKeys, type LibraryMethod } from '@repo/library-source'
+import {
+  deviceQueryKeys,
+  type LibraryMethod,
+  type UnsupportedReason,
+} from '@repo/library-source'
 import {
   ArchivableBrowseFacetQuerySchema,
   BrowseFacetQuerySchema,
@@ -656,6 +660,66 @@ describe('device parity', () => {
         `${method}: the table and the schema name different keys`,
       ).toEqual(schema === null ? [] : Object.keys(schema.shape).sort())
     }
+  })
+
+  it('answers the first reason in the order when a read holds two', async () => {
+    const run = new ParityRunner(currentStore())
+    const unknown = { field: 'reviewNoSuchField', value: 'x' }
+    const playlist = (value: string) => ({
+      field: LIBRARY_PLAYLIST_FILTER_FIELD,
+      value,
+    })
+    const night = playlist('library-playlist-night')
+    const cases: [string, Params, UnsupportedReason][] = [
+      ['tracks/browse-page', { filters: [night, unknown] }, 'library-playlist'],
+      [
+        'tracks/browse-count',
+        { filters: [night, unknown] },
+        'library-playlist',
+      ],
+      [
+        'albums/browse-page',
+        { filters: [playlist('library-playlist-shelf'), unknown] },
+        'library-playlist',
+      ],
+      [
+        'films/browse-count',
+        { filters: [playlist('library-playlist-screen'), unknown] },
+        'library-playlist',
+      ],
+      [
+        'albums/listening-histogram',
+        {
+          period: { kind: 'all' },
+          filters: [playlist('library-playlist-shelf'), unknown],
+        },
+        'library-playlist',
+      ],
+      [
+        'tracks/browse-page',
+        { filters: [night], ranges: [{ field: 'title', min: 1 }] },
+        'library-playlist',
+      ],
+      [
+        'tracks/browse-page',
+        { filters: [night], sortBy: 'reviewNoSuchField' },
+        'library-playlist',
+      ],
+      [
+        'tracks/browse-count',
+        { libraryScope: 'all', filters: [unknown] },
+        'catalog-scope',
+      ],
+    ]
+    for (const [route, params, reason] of cases) {
+      const path = apiPath(route, params)
+      expect((await apiRequest(path)).status, path).not.toBe(200)
+      expect((await run.read(path))?.outcome, path).toEqual({
+        kind: 'fell-through',
+        reason,
+      })
+    }
+    expectParity(run, 'two reasons')
   })
 
   it('serves the field lists as the API lists them', async () => {

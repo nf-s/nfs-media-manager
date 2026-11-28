@@ -214,17 +214,45 @@ function unimplementedKey(read: LibraryRead): string | undefined {
   )?.[0]
 }
 
-/** The reason the device must give for this read, or undefined when it must serve it. */
-export function expectedHole(
+/**
+ * The order of reasons of docs/requirements/device-store.md: when a read
+ * holds the conditions of several Known holes, the device answers the first
+ * of them in this order. `not-ready` and `store-error` describe the store,
+ * not the query, and are not expected of a filled store.
+ */
+export const reasonOrder: readonly UnsupportedReason[] = [
+  'nul-text',
+  'unimplemented-field',
+  'catalog-scope',
+  'library-playlist',
+  'grouped-creator-scope',
+  'creator-films',
+  'invalid-query',
+  'unknown-field',
+  'provider-filter',
+  'creator-tag-sort',
+  'archived-artist-tags',
+  'server-lower-case',
+  'active-import',
+]
+
+/**
+ * The conditions of every Known hole this read holds, each computed on its
+ * own from the query, the API's answer and the data facts.
+ */
+function heldHoles(
   read: LibraryRead,
   observed: Observed,
-): UnsupportedReason | undefined {
+): Set<UnsupportedReason> {
+  const held = new Set<UnsupportedReason>()
+  const hold = (reason: UnsupportedReason, condition: boolean) => {
+    if (condition) held.add(reason)
+  }
   // Text holding U+0000 is left to the API, whatever it answers.
-  if (holdsNul(read.query)) return 'nul-text'
-  // A query key the device does not implement, before every other reason.
-  if (unimplementedKey(read) !== undefined) return 'unimplemented-field'
+  hold('nul-text', holdsNul(read.query))
+  hold('unimplemented-field', unimplementedKey(read) !== undefined)
   // A query the API rejects is left to the API.
-  if (observed.status !== 200) return 'invalid-query'
+  hold('invalid-query', observed.status !== 200)
   switch (read.method) {
     case 'trackPage':
     case 'trackCount':
@@ -235,99 +263,125 @@ export function expectedHole(
       const query =
         read.method === 'trackRecordings' ? read.query.query : read.query
       const recordings = read.method === 'trackRecordings'
-      if (!memberScope(query, 'track')) return 'catalog-scope'
-      if (libraryPlaylistFilter(query.filters)) return 'library-playlist'
-      if (
+      hold('catalog-scope', !memberScope(query, 'track'))
+      hold('library-playlist', libraryPlaylistFilter(query.filters))
+      hold(
+        'grouped-creator-scope',
         (recordings || query.groupRecordings === true) &&
-        query.creatorId !== undefined
+          query.creatorId !== undefined,
       )
-        return 'grouped-creator-scope'
       // Counts, histograms and positions carry no provider links.
       const returnsItems =
         read.method === 'trackPage' ||
         read.method === 'trackList' ||
         read.method === 'trackRecordings'
-      if (returnsItems && nonExcludeProvider(query.filters))
-        return 'provider-filter'
-      if (
+      hold('provider-filter', returnsItems && nonExcludeProvider(query.filters))
+      hold(
+        'creator-tag-sort',
         query.sortBy === 'genre' &&
-        query.tagLevels === undefined &&
-        (query.creatorId !== undefined || recordings)
+          query.tagLevels === undefined &&
+          (query.creatorId !== undefined || recordings),
       )
-        return 'creator-tag-sort'
-      return unsettledFilter('track', query, observed.facts)
-        ? 'server-lower-case'
-        : undefined
+      hold('server-lower-case', unsettledFilter('track', query, observed.facts))
+      break
     }
     case 'trackFacets':
     case 'artistFacets':
     case 'filmFacets': {
-      if (!memberScope(read.query)) return 'catalog-scope'
       const library =
         read.method === 'trackFacets'
           ? 'track'
           : read.method === 'artistFacets'
             ? 'artist'
             : 'film'
-      return unsettledFacetText(library, read.query.q, observed.facts)
-        ? 'server-lower-case'
-        : undefined
+      hold('catalog-scope', !memberScope(read.query))
+      hold(
+        'server-lower-case',
+        unsettledFacetText(library, read.query.q, observed.facts),
+      )
+      break
     }
     case 'albumFacets':
-      if (!memberScope(read.query)) return 'catalog-scope'
-      if (
+      hold('catalog-scope', !memberScope(read.query))
+      hold(
+        'archived-artist-tags',
         read.query.includeArchived === 'true' &&
-        albumFacetsReadArtistTags(read.query.tagLevels) &&
-        observed.facts.archivedOnlyArtistTags
+          albumFacetsReadArtistTags(read.query.tagLevels) &&
+          observed.facts.archivedOnlyArtistTags,
       )
-        return 'archived-artist-tags'
-      return unsettledFacetText('album', read.query.q, observed.facts)
-        ? 'server-lower-case'
-        : undefined
+      hold(
+        'server-lower-case',
+        unsettledFacetText('album', read.query.q, observed.facts),
+      )
+      break
     case 'albumPage':
     case 'albumCount':
     case 'albumList':
     case 'albumHistogram':
-      if (!memberScope(read.query)) return 'catalog-scope'
-      if (libraryPlaylistFilter(read.query.filters)) return 'library-playlist'
-      if (unsettledFilter('album', read.query, observed.facts))
-        return 'server-lower-case'
-      return read.method !== 'albumHistogram' &&
-        isPluginTextSort('album', read.query.sortBy, observed.facts)
-        ? 'unknown-field'
-        : undefined
+      hold('catalog-scope', !memberScope(read.query))
+      hold('library-playlist', libraryPlaylistFilter(read.query.filters))
+      hold(
+        'unknown-field',
+        read.method !== 'albumHistogram' &&
+          isPluginTextSort('album', read.query.sortBy, observed.facts),
+      )
+      hold(
+        'server-lower-case',
+        unsettledFilter('album', read.query, observed.facts),
+      )
+      break
     case 'filmPage':
     case 'filmCount':
     case 'filmList':
-      if (!memberScope(read.query)) return 'catalog-scope'
-      if (libraryPlaylistFilter(read.query.filters)) return 'library-playlist'
-      if (read.query.creatorId !== undefined) return 'creator-films'
-      if (unsettledFilter('film', read.query, observed.facts))
-        return 'server-lower-case'
-      return isPluginTextSort('film', read.query.sortBy, observed.facts)
-        ? 'unknown-field'
-        : undefined
+      hold('catalog-scope', !memberScope(read.query))
+      hold('library-playlist', libraryPlaylistFilter(read.query.filters))
+      hold('creator-films', read.query.creatorId !== undefined)
+      hold(
+        'unknown-field',
+        isPluginTextSort('film', read.query.sortBy, observed.facts),
+      )
+      hold(
+        'server-lower-case',
+        unsettledFilter('film', read.query, observed.facts),
+      )
+      break
     case 'artistPage':
     case 'artistCount':
     case 'artistHistogram':
-      if (!memberScope(read.query)) return 'catalog-scope'
-      if (
-        read.method === 'artistPage' &&
-        nonExcludeProvider(read.query.filters)
+      hold('catalog-scope', !memberScope(read.query))
+      hold(
+        'provider-filter',
+        read.method === 'artistPage' && nonExcludeProvider(read.query.filters),
       )
-        return 'provider-filter'
-      return unsettledFilter('artist', read.query, observed.facts)
-        ? 'server-lower-case'
-        : undefined
+      hold(
+        'server-lower-case',
+        unsettledFilter('artist', read.query, observed.facts),
+      )
+      break
     case 'playlistPage':
-      if (!memberScope(read.query)) return 'catalog-scope'
-      // PL-17: `library` adds that library's playlists, which the feed does not publish.
-      if (read.query.library !== undefined) return 'library-playlist'
-      return activeImport(observed.data) ? 'active-import' : undefined
     case 'playlistCount':
-      if (!memberScope(read.query)) return 'catalog-scope'
-      return read.query.library === undefined ? undefined : 'library-playlist'
+      hold('catalog-scope', !memberScope(read.query))
+      // PL-17: `library` adds that library's playlists, which the feed does not publish.
+      hold('library-playlist', read.query.library !== undefined)
+      hold(
+        'active-import',
+        read.method === 'playlistPage' && activeImport(observed.data),
+      )
+      break
     case 'fields':
-      return undefined
+      break
   }
+  return held
+}
+
+/**
+ * The reason the device must give for this read: the first, in the order
+ * of reasons, of the Known holes it holds; undefined when it must serve it.
+ */
+export function expectedHole(
+  read: LibraryRead,
+  observed: Observed,
+): UnsupportedReason | undefined {
+  const held = heldHoles(read, observed)
+  return reasonOrder.find((reason) => held.has(reason))
 }
