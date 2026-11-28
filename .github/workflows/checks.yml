@@ -89,6 +89,7 @@ jobs:
         run: |
           pnpm --filter @repo/server typecheck
           pnpm --filter web typecheck
+          pnpm --filter @repo/library-source typecheck
       - name: Build and start the API Worker locally
         env:
           NODE_ENV: production
@@ -101,6 +102,8 @@ jobs:
         run: pnpm --filter @repo/schemas test:unit
       - name: Server unit tests
         run: pnpm --filter @repo/server test:unit
+      - name: Device store unit tests
+        run: pnpm --filter @repo/library-source test:unit
       - name: Web component and utility tests
         run: >-
           apps/server/node_modules/.bin/tsx

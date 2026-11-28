@@ -54,11 +54,13 @@
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
+    "@repo/library-source": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/eslint": "catalog:",
     "@types/node": "catalog:",
     "@types/papaparse": "catalog:",
     "@types/pg": "^8.11.11",
+    "better-sqlite3": "13.2.0",
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "^4.1.12"

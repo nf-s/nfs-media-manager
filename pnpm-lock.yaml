@@ -157,6 +157,9 @@ importers:
       '@repo/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config
+      '@repo/library-source':
+        specifier: workspace:*
+        version: link:../../packages/library-source
       '@repo/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
@@ -172,6 +175,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.11
         version: 8.20.0
+      better-sqlite3:
+        specifier: 13.2.0
+        version: 13.2.0
       eslint:
         specifier: 'catalog:'
         version: 8.57.1
