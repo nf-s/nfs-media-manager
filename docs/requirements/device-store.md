@@ -129,17 +129,18 @@ Check in a browser at desktop and phone widths on the preview: with the setting 
 
 These reads go to the API. Each is asserted by DEVICE-33.
 
-| Read                                                                                                                              | Reason                                                                                   |
-| --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| AI search                                                                                                                         | Runs on the server.                                                                      |
-| Any catalog scope other than the library (`libraryScope`, discovery)                                                              | The device holds library rows only.                                                      |
-| Subscriptions and Mixes                                                                                                           | Search uses PostgreSQL full-text ranking and stemming; the largest table; not requested. |
-| Grouped Tracks inside a creator scope                                                                                             | Groups are formed from that artist's tracks only, not the library-wide key.              |
-| A Provider filter on Tracks or Artists, other than an exclude filter                                                              | The rows then carry provider links chosen per request.                                   |
-| A Playlists page that holds a playlist whose import is queued or running                                                          | The API has the job's progress.                                                          |
-| A query the API rejects: an unknown filter, range or sort field, or a range on a text field                                       | The API returns the error.                                                               |
-| Detail pages and the lists owned by a detail (playlist entries, collection entries, album track lists, People, Collections, Tags) | Not in this version.                                                                     |
-| Metadata selection, Matches, Jobs, Providers, Imports                                                                             | Server state and evidence.                                                               |
-| Fields added by a private plugin whose values are not in the row                                                                  | Checked per query: an unknown field falls through.                                       |
+| Read                                                                                                                              | Reason                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| AI search                                                                                                                         | Runs on the server.                                                                                    |
+| Any catalog scope other than the library (`libraryScope`, discovery)                                                              | The device holds library rows only.                                                                    |
+| Subscriptions and Mixes                                                                                                           | Search uses PostgreSQL full-text ranking and stemming; the largest table; not requested.               |
+| Grouped Tracks inside a creator scope                                                                                             | Groups are formed from that artist's tracks only, not the library-wide key.                            |
+| A Provider filter on Tracks or Artists, other than an exclude filter, on a read that returns items                                | The rows then carry provider links chosen per request. Counts and positions carry none and are served. |
+| The Tags sort at Auto on Tracks inside a creator scope or in a recordings list                                                    | The service orders these by a different first-tag expression from the one the row carries.             |
+| A Playlists page that holds a playlist whose import is queued or running                                                          | The API has the job's progress.                                                                        |
+| A query the API rejects: an unknown filter, range or sort field, or a range on a text field                                       | The API returns the error.                                                                             |
+| Detail pages and the lists owned by a detail (playlist entries, collection entries, album track lists, People, Collections, Tags) | Not in this version.                                                                                   |
+| Metadata selection, Matches, Jobs, Providers, Imports                                                                             | Server state and evidence.                                                                             |
+| Fields added by a private plugin whose values are not in the row                                                                  | Checked per query: an unknown field falls through.                                                     |
 
 This table is updated when a hole is filled or found.
