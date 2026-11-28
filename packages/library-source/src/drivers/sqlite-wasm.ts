@@ -28,8 +28,23 @@ type SqliteWasmInitOptions = {
 const discard = () => {}
 
 /**
- * Loads the WebAssembly module once per Worker. The module's own messages
- * are discarded; a failed load still rejects with its error.
+ * The library's logger, which sqlite3ApiBootstrap (in the package's
+ * index.mjs and node.mjs) reads from `globalThis.sqlite3ApiConfig` while
+ * init runs, then deletes. Without it the logger is the console: a failed
+ * step logs its result code and SQL, and the OPFS pool logs its I/O errors.
+ * Failures still throw from the call that met them.
+ */
+const silentApiConfig = {
+  debug: discard,
+  log: discard,
+  warn: discard,
+  error: discard,
+}
+
+/**
+ * Loads the WebAssembly module once per Worker, or once per process in
+ * Node. The module's own messages are discarded; a failed load still
+ * rejects with its error.
  */
 export function loadSqliteWasm(): Promise<Sqlite3Static> {
   sqlite3 ??= import('@sqlite.org/sqlite-wasm').then((module) => {
@@ -37,7 +52,10 @@ export function loadSqliteWasm(): Promise<Sqlite3Static> {
     // function that takes fewer parameters is assignable to this type.
     const init: (options: SqliteWasmInitOptions) => Promise<Sqlite3Static> =
       module.default
-    return init({ print: discard, printErr: discard })
+    Object.assign(globalThis, { sqlite3ApiConfig: silentApiConfig })
+    return init({ print: discard, printErr: discard }).finally(() => {
+      Reflect.deleteProperty(globalThis, 'sqlite3ApiConfig')
+    })
   })
   return sqlite3
 }
