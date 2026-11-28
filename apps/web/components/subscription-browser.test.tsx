@@ -153,7 +153,7 @@ test('the table view uses the one table with a pinned title, right-aligned numbe
   assert.match(html, /aria-label="Record search"/)
   assert.match(
     html,
-    /<td data-sticky="edge" style="--ds-sticky-left:0px" title="Bread basics"><span class="ds-cell-id">/,
+    /<td data-sticky="edge" style="--ds-sticky-left:36px" title="Bread basics"><span class="ds-cell-id">/,
   )
   assert.match(html, /title="Filter Type: YouTube"/)
   assert.match(html, /title="Filter Type: Podcast"/)
@@ -363,7 +363,14 @@ test('the grid view shows clean video cards with a duration badge, meta line and
   assert.match(html, /<span>2024<\/span><span>Podcast<\/span>/)
   assert.match(html, /title="Tag: baking"/)
   assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 0)
-  assert.doesNotMatch(html, /ds-play/)
+  // Items cannot be played: artwork without a badge holds More alone, and a
+  // card with a duration badge has none until its place is decided.
+  assert.match(
+    html,
+    /<span class="ds-play" data-place="tile"><button[^>]*aria-label="More actions for Orbits"/,
+  )
+  assert.doesNotMatch(html, /More actions for Bread basics/)
+  assert.doesNotMatch(html, /aria-label="Play |to queue/)
 })
 
 test('an empty library points to Imports and a search without results offers to clear it', async () => {
@@ -910,7 +917,7 @@ test('Subscriptions inside a detail are held to their source, which is not a fil
   // The search is a pill on the line under the toolbar, before the count and the link.
   assert.match(
     searched,
-    /<div class="ds-filterline">.*?Search: bread.*?>Clear all<\/button><span class="ds-toolbar-count" role="status">[^<]*<\/span><a [^>]*>Show in Subscriptions<\/a><\/div>/,
+    /<div class="ds-filterline">.*?Search: bread.*?>Clear all<\/button><span class="ds-toolbar-count" role="status">[^<]*<\/span>(<button [^>]*>Select all matching<\/button>)?<a [^>]*>Show in Subscriptions<\/a><\/div>/,
   )
   assert.doesNotMatch(searched, /Remove channel filter/)
 
@@ -988,13 +995,141 @@ test('a list inside a detail leaves the page drawer and its selected row to the 
   assert.match(page, /inspector-backdrop/)
 })
 
-test('subscription items have no More actions yet', async () => {
+test('subscription items and mixes carry More alone in every view, with no play group', async () => {
   const { default: SubscriptionBrowser } =
     await import('./subscription-browser')
   for (const view of ['grid', 'list', 'table']) {
     const search = `view=${view}`
-    const html = render(<SubscriptionBrowser />, browseData(search, 2), search)
-    assert.match(html, /Bread basics/)
-    assert.doesNotMatch(html, /More actions/)
+    const place = view === 'grid' ? 'tile' : 'row'
+    const items = render(<SubscriptionBrowser />, browseData(search, 2), search)
+    const mixes = render(
+      <SubscriptionBrowser library="mixes" />,
+      mixBrowseData(search, 1),
+      search,
+      '/mixes',
+    )
+    for (const [html, title] of [
+      // Bread basics' card carries its duration badge, so its More is a row's.
+      [items, view === 'grid' ? 'Orbits' : 'Bread basics'],
+      [mixes, 'Example Breakfast with Guest Selector'],
+    ] as const) {
+      assert.match(
+        html,
+        new RegExp(
+          `<span class="ds-play" data-place="${place}"><button[^>]*aria-label="More actions for ${title}"`,
+        ),
+      )
+      assert.match(html, />Add to playlist…<\/button>.*?Open details</)
+      assert.doesNotMatch(html, /aria-label="Play |to queue/)
+    }
+  }
+})
+
+test('the Subscriptions and Mixes tables have the checkbox column; Grid and List do not', async () => {
+  const { default: SubscriptionBrowser } =
+    await import('./subscription-browser')
+  const table = render(
+    <SubscriptionBrowser />,
+    browseData('view=table', 250),
+    'view=table',
+  )
+  assert.match(
+    table,
+    /<th scope="col" data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select loaded items"/,
+  )
+  assert.match(table, /aria-label="Select Bread basics"/)
+  // The bar shows only for a selection; Select all matching follows the count.
+  assert.doesNotMatch(table, /ds-selectbar/)
+  assert.match(
+    table,
+    /<span class="ds-toolbar-count" role="status">250 items<\/span><button class="ds-btn" data-variant="link" type="button" title="Select all 250 items that match, including rows not loaded yet">Select all matching<\/button>/,
+  )
+  const mixes = render(
+    <SubscriptionBrowser library="mixes" />,
+    mixBrowseData('view=table', 1),
+    'view=table',
+    '/mixes',
+  )
+  assert.match(mixes, /aria-label="Select loaded mixes"/)
+  for (const view of ['grid', 'list']) {
+    const html = render(
+      <SubscriptionBrowser />,
+      browseData(`view=${view}`, 2),
+      `view=${view}`,
+    )
+    assert.doesNotMatch(html, /Select loaded|Select all matching|Select Bread/)
+  }
+})
+
+test('item and mix details offer Add to playlist and list the playlists that hold them', async () => {
+  const { SubscriptionItemDetails } =
+    await import('./subscription-item-details')
+  const noNavigation = () => {
+    throw new Error('Unexpected navigation')
+  }
+  const router = {
+    back: noNavigation,
+    forward: noNavigation,
+    refresh: noNavigation,
+    hmrRefresh: noNavigation,
+    push: noNavigation,
+    replace: noNavigation,
+    prefetch: noNavigation,
+  }
+  const playlist = (library: 'subscriptions' | 'mixes') => ({
+    id: `pl-${library}`,
+    library,
+    type: 'playlist',
+    name: 'Watch later',
+    entryCount: 7,
+    view: null,
+    updatedAt: '2026-11-25T00:00:00.000Z',
+  })
+  for (const [library, item, path, line] of [
+    ['subscriptions', video, '/subscriptions', 'Library · 7 items'],
+    ['mixes', mix, '/mixes', 'Library · 7 mixes'],
+  ] as const) {
+    const html = render(
+      <AppRouterContext.Provider value={router}>
+        <SubscriptionItemDetails
+          id={item.id}
+          library={library}
+          initialItem={item}
+        />
+      </AppRouterContext.Provider>,
+      [
+        [[library, 'item', item.id], item],
+        [
+          ['library-playlists', 'memberships', library, item.id],
+          [playlist(library)],
+        ],
+      ],
+      '',
+      `${path}/${item.id}`,
+    )
+    assert.match(
+      html,
+      /<button[^>]*aria-haspopup="dialog"[^>]*><svg[^>]*lucide-list-music[\s\S]*?<\/svg>Add to playlist<svg/,
+    )
+    assert.match(html, />Add to playlist…</)
+    assert.match(html, /<h3>Playlists<\/h3>/)
+    assert.match(
+      html,
+      new RegExp(`href="/playlists/library/pl-${library}">Watch later</a>`),
+    )
+    assert.match(html, new RegExp(line))
+    const outside = render(
+      <AppRouterContext.Provider value={router}>
+        <SubscriptionItemDetails
+          id={item.id}
+          library={library}
+          initialItem={{ ...item, inLibrary: false }}
+        />
+      </AppRouterContext.Provider>,
+      [[[library, 'item', item.id], { ...item, inLibrary: false }]],
+      '',
+      `${path}/${item.id}`,
+    )
+    assert.doesNotMatch(outside, /Add to playlist|<h3>Playlists<\/h3>/)
   }
 })

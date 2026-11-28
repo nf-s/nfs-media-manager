@@ -49,6 +49,9 @@ import { fetchApiData } from '@/utils/api'
 import { useConfig } from './providers'
 import ServiceIconLinks from './service-icon-links'
 import { MediaThumb } from './media-artwork'
+import { ItemPlaylistsSection, useItemAddToPlaylist } from './item-playlists'
+
+type AddToPlaylist = ReturnType<typeof useItemAddToPlaylist>
 
 type ItemTab = 'overview' | 'sources'
 const itemTabs: readonly [ItemTab, ...ItemTab[]] = ['overview', 'sources']
@@ -158,6 +161,10 @@ function ItemDetails({
   filterHref: BrowseFilterHref
 }) {
   const { tab, setTab } = useDetailTab(itemTabs)
+  const library = subscriptionLibraryOf(item.type)
+  const addToPlaylist = useItemAddToPlaylist(library, item)
+  // PL-02: only an item in the library can be in a playlist.
+  const playlists = item.inLibrary !== false
   if (item.type !== 'youtube' && item.type !== 'spotify')
     return (
       <MixDetails
@@ -166,6 +173,7 @@ function ItemDetails({
         filterHref={filterHref}
         tab={tab}
         setTab={setTab}
+        addToPlaylist={playlists ? addToPlaylist : null}
       />
     )
   const typeLabel = subscriptionTypeLabels[item.type]
@@ -231,8 +239,12 @@ function ItemDetails({
               title={item.title}
               inLibrary={item.inLibrary !== false}
             />
+            {playlists && addToPlaylist.action}
             <DetailActionsSpacer />
-            <DetailMore crumb={{ title: item.title }} />
+            <DetailMore
+              crumb={{ title: item.title }}
+              items={playlists ? [addToPlaylist.menuItem] : []}
+            />
           </>
         }
       />
@@ -308,6 +320,13 @@ function ItemDetails({
               ]}
             />
           </Section>
+          {playlists && (
+            <ItemPlaylistsSection
+              key={item.id}
+              library={library}
+              itemId={item.id}
+            />
+          )}
         </TabsContent>
         <TabsContent value="sources">
           <CatalogDiscoveries kind="subscription-item" id={item.id} />
@@ -370,12 +389,15 @@ function MixDetails({
   filterHref,
   tab,
   setTab,
+  addToPlaylist,
 }: {
   item: MixItem
   onFilter: (filter: BrowseFilter) => void
   filterHref: BrowseFilterHref
   tab: ItemTab
   setTab: (tab: string) => void
+  /** Add to playlist, for a mix in the library. */
+  addToPlaylist: AddToPlaylist | null
 }) {
   const station = subscriptionTypeLabels[item.type]
   const duration = formatSubscriptionDuration(item)
@@ -426,6 +448,7 @@ function MixDetails({
               title={item.title}
               inLibrary={item.inLibrary !== false}
             />
+            {addToPlaylist?.action}
             <DetailActionsSpacer />
             {item.audioUrl && (
               <OpenAtProvider
@@ -434,7 +457,10 @@ function MixDetails({
                 url={item.audioUrl}
               />
             )}
-            <DetailMore crumb={{ title: item.title }} />
+            <DetailMore
+              crumb={{ title: item.title }}
+              items={addToPlaylist ? [addToPlaylist.menuItem] : []}
+            />
           </>
         }
       />
@@ -541,6 +567,13 @@ function MixDetails({
                 <p className="dtl-text">{item.description}</p>
               </Section>
             )
+          )}
+          {addToPlaylist && (
+            <ItemPlaylistsSection
+              key={item.id}
+              library="mixes"
+              itemId={item.id}
+            />
           )}
         </TabsContent>
         <TabsContent value="sources">

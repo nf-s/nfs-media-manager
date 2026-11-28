@@ -260,3 +260,68 @@ test('the sentence names each plural field in the singular; others as labelled',
     'Country: France · Director: Ada Lune · Released, newest first',
   )
 })
+
+test('Films, Subscriptions and Mixes views read in their own fields and sorts', () => {
+  const lookup = (id: string) => (id === 'pl-watch' ? 'Watch later' : null)
+  assert.equal(
+    describeSavedView({
+      library: 'subscriptions',
+      view: {
+        filters: filters([
+          { field: 'source', value: 'Example Cooking', mode: 'any' },
+          { field: 'type', value: 'YouTube', mode: 'any' },
+          { field: 'watched', value: 'No', mode: 'required' },
+          { field: 'libraryPlaylist', value: 'pl-watch', mode: 'exclude' },
+        ]),
+        ranges: JSON.stringify([{ field: 'durationSec', min: 600 }]),
+        sortBy: 'durationSec',
+        direction: 'desc',
+      },
+      playlistName: lookup,
+    }),
+    'Channel: Example Cooking · Type: YouTube · Watched: No · In playlist: Not Watch later · Duration: 10:00 to * · Duration, longest first',
+  )
+  assert.equal(
+    describeSavedView({
+      library: 'mixes',
+      view: {
+        filters: filters([
+          { field: 'hasRecording', value: 'Yes', mode: 'any' },
+        ]),
+        ranges: JSON.stringify([
+          { field: 'publishedAt', min: Date.UTC(2026, 0, 1) },
+        ]),
+        sortBy: 'publishedAt',
+        direction: 'asc',
+      },
+      playlistName: lookup,
+    }),
+    'Has recording: Yes · Broadcast: 2026-01-01 to * · Broadcast, oldest first',
+  )
+  assert.equal(
+    describeSavedView({
+      library: 'films',
+      view: {
+        filters: filters([
+          { field: 'actor', value: 'Ada Lune', mode: 'exclude' },
+        ]),
+        ranges: JSON.stringify([{ field: 'runtimeMinutes', max: 100 }]),
+        sortBy: 'title',
+        direction: 'asc',
+        libraryScope: 'all',
+      },
+      playlistName: lookup,
+    }),
+    'Actor: Not Ada Lune · Runtime: * to 100 · Title, A to Z',
+  )
+  // With no order saved, each library's Browse default is named.
+  for (const [library, text] of [
+    ['films', 'All films · Released, newest first'],
+    ['subscriptions', 'All items · Published, newest first'],
+    ['mixes', 'All mixes · Broadcast, newest first'],
+  ] as const)
+    assert.equal(
+      describeSavedView({ library, view: {}, playlistName: lookup }),
+      text,
+    )
+})

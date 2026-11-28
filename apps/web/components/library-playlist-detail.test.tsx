@@ -229,6 +229,20 @@ test('the header has the kind, the name, its facts and the Filter action', () =>
     { field: 'libraryPlaylist', value: 'pl-tracks', mode: 'required' },
   ])
   assert.match(render('albums'), />Filter albums<\/a>/)
+  for (const [library, label] of [
+    ['films', 'Filter films'],
+    ['subscriptions', 'Filter items'],
+    ['mixes', 'Filter mixes'],
+  ] as const) {
+    const link = render(library).match(
+      new RegExp(`<a[^>]*href="([^"]+)"[^>]*>${label}</a>`),
+    )
+    assert.ok(link?.[1], label)
+    assert.equal(
+      new URL(link[1].replaceAll('&amp;', '&'), 'http://x').pathname,
+      `/${library}`,
+    )
+  }
 })
 
 test('More has Rename and Delete playlist', () => {

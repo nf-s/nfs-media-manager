@@ -1016,6 +1016,56 @@ export function describeMergeProgress(waiting: number) {
     : `Merging ${formatItemCount(waiting, { one: 'selection', other: 'selections' })}…`
 }
 
+/** PL-30: the bar's offer to select every match once every loaded row is ticked. */
+function SelectMatchingOffer({
+  selection,
+  total,
+}: {
+  selection: RowSelection
+  total?: number
+}) {
+  if (!selection.offerMatching || total === undefined) return null
+  return (
+    <Button
+      type="button"
+      className="ds-selectbar-offer"
+      onClick={selection.selectMatching}
+    >
+      {`Select all ${formatCount(total)} matching`}
+    </Button>
+  )
+}
+
+/**
+ * PL-33: the bar under a table of a library without Merge: the selection
+ * and the offer to select every match, then its actions, such as Add to
+ * playlist as the primary button, and Clear selection. It is hidden while
+ * nothing is selected.
+ */
+export function SelectionBar({
+  selection,
+  total,
+  actions,
+}: {
+  selection: RowSelection
+  /** How many rows the table lists. */
+  total?: number
+  actions: ReactNode
+}) {
+  if (selection.count === 0) return null
+  return (
+    <SecondaryTableSelectionBar selectedCount={selection.count} total={total}>
+      <SelectMatchingOffer selection={selection} total={total} />
+      <span className="ds-actions ds-toolbar-end">
+        {actions}
+        <Button icon aria-label="Clear selection" onClick={selection.clear}>
+          <X className="ds-i" aria-hidden="true" />
+        </Button>
+      </span>
+    </SecondaryTableSelectionBar>
+  )
+}
+
 /** PL-32: Merge's title while the whole result is selected. */
 export const mergeNeedsTickedRows =
   'Merge needs ticked rows. Clear the selection and tick the rows to merge.'
@@ -1076,15 +1126,7 @@ export function MergeBar<Plan>({
       >
         {selection.count > 0 ? (
           <>
-            {selection.offerMatching && total !== undefined && (
-              <Button
-                type="button"
-                className="ds-selectbar-offer"
-                onClick={selection.selectMatching}
-              >
-                {`Select all ${formatCount(total)} matching`}
-              </Button>
-            )}
+            <SelectMatchingOffer selection={selection} total={total} />
             {progress && <span role="status">{progress}</span>}
             {error && <span role="alert">{error}</span>}
             <span className="ds-actions ds-toolbar-end">

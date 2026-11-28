@@ -209,3 +209,44 @@ for (const item of [film, album]) {
     })
   }
 }
+
+test('film details offer Add to playlist and list the playlists that hold the film', async () => {
+  const { default: MediaDetail } = await import('./media-detail')
+  const shortlist = {
+    id: 'pl-films',
+    library: 'films',
+    type: 'playlist',
+    name: 'Weekend shortlist',
+    entryCount: 6,
+    view: null,
+    updatedAt: '2026-11-22T00:00:00.000Z',
+  }
+  const html = render({
+    search: new URLSearchParams(),
+    cache: [
+      [['film', film.id], film],
+      [['films', 'fields'], filmBrowseFields],
+      [['library-playlists', 'memberships', 'films', film.id], [shortlist]],
+    ],
+    children: <MediaDetail mediaType="film" id={film.id} />,
+  })
+  assert.match(
+    html,
+    /<button[^>]*aria-haspopup="dialog"[^>]*><svg[^>]*lucide-list-music[\s\S]*?<\/svg>Add to playlist<svg/,
+  )
+  assert.match(html, />Add to playlist…</)
+  assert.match(html, /<h3>Playlists<\/h3>/)
+  assert.match(
+    html,
+    /href="[^"]*">Weekend shortlist<\/a><span class="ds-row-by">Library · 6 films<\/span>/,
+  )
+  const outside = render({
+    search: new URLSearchParams(),
+    cache: [
+      [['film', film.id], { ...film, inLibrary: false }],
+      [['films', 'fields'], filmBrowseFields],
+    ],
+    children: <MediaDetail mediaType="film" id={film.id} />,
+  })
+  assert.doesNotMatch(outside, /Add to playlist|<h3>Playlists<\/h3>/)
+})

@@ -13,6 +13,7 @@ import {
 import { subscriptionBrowseFieldsFor } from '@repo/schemas/subscriptions'
 import {
   CreateLibraryPlaylistSchema,
+  libraryBrowseParams,
   LibraryPlaylistAdditionUndoneSchema,
   LibraryPlaylistCreatedSchema,
   LibraryPlaylistDetailSchema,
@@ -130,6 +131,8 @@ export function selectionSubject(
  * PL-32: the subject of Select all matching, every match of the view's Browse
  * query (its parameters as Browse sends them) less the unticked rows. `count`
  * is how many the server will add: those Browse lists at the In library scope.
+ * Parameters that are not part of the library's view, such as the `library`
+ * Subscriptions and Mixes Browse send, are left out: the playlist names it.
  */
 export function matchingSubject(
   library: LibraryPlaylistLibrary,
@@ -140,7 +143,11 @@ export function matchingSubject(
   return {
     library,
     selection: {
-      query: Object.fromEntries(params),
+      query: Object.fromEntries(
+        [...params].filter(([key]) =>
+          libraryBrowseParams[library].includes(key),
+        ),
+      ),
       excludeIds: [...excludeIds],
     },
     count,
@@ -710,6 +717,14 @@ export function playableLibrary(
   library: LibraryPlaylistLibrary,
 ): PlayableLibrary | null {
   return library === 'albums' || library === 'tracks' ? library : null
+}
+
+/**
+ * PL-17: whether a library's Playlists page lists imported playlists beside
+ * its own, and so offers Import playlists and the imported-playlist columns.
+ */
+export function listsImportedPlaylists(library: LibraryPlaylistLibrary) {
+  return library === 'albums' || library === 'tracks'
 }
 
 /** The playlist library of the library a page is scoped to; Artists has none. */

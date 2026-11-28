@@ -17,6 +17,7 @@ import {
   mergeNeedsTickedRows,
   RowSelectAll,
   SelectAllMatching,
+  SelectionBar,
   useMerge,
   type MergeAdapter,
   type RowSelection,
@@ -662,6 +663,54 @@ test('Add to playlist is disabled with the reason a whole-result selection canno
     const counting = button(null, true)
     assert.match(counting, /<button[^>]*disabled=""/)
     assert.doesNotMatch(counting, /title=/)
+    assert.equal(network.mock.callCount(), 0)
+  } finally {
+    client.clear()
+  }
+})
+
+test('without Merge the bar has Add to playlist as its primary button, the offer and Clear selection', (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Network forbidden in UI tests')
+  })
+  const client = new QueryClient()
+  const subject: PlaylistSubject = {
+    library: 'films',
+    selection: { ids: loaded },
+    count: 3,
+    title: null,
+  }
+  const bar = (state: RowSelectionState) =>
+    renderToStaticMarkup(
+      <Providers client={client}>
+        <SelectionBar
+          selection={selectionFrom(state)}
+          total={128}
+          actions={<AddToPlaylistButton subject={subject} primary />}
+        />
+      </Providers>,
+    )
+  try {
+    assert.equal(bar(emptyRowSelection()), '')
+    const loadedRows = bar(
+      setLoadedRows(emptyRowSelection(), matchingRows, true),
+    )
+    assert.match(
+      loadedRows,
+      /<b>3 selected<\/b><span class="ds-muted"> of 128<\/span><\/span><button class="ds-btn ds-selectbar-offer" type="button">Select all 128 matching<\/button>/,
+    )
+    assert.deepEqual(
+      [...loadedRows.matchAll(/<button\b[^>]*>(.*?)<\/button>/g)].map(
+        (match) => match[1]?.replace(/<[^>]+>/g, '') || 'icon',
+      ),
+      ['Select all 128 matching', 'Add to playlist', 'icon'],
+    )
+    assert.match(loadedRows, /data-variant="primary"[^>]*>Add to playlist/)
+    assert.match(loadedRows, /aria-label="Clear selection"/)
+    assert.doesNotMatch(loadedRows, />Merge</)
+    const all = bar(selectMatchingRows(emptyRowSelection(), matchingRows))
+    assert.match(all, /<b>128 selected<\/b><span class="ds-muted"> of 128/)
+    assert.doesNotMatch(all, /ds-selectbar-offer/)
     assert.equal(network.mock.callCount(), 0)
   } finally {
     client.clear()

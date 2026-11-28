@@ -84,6 +84,7 @@ import {
   playlistTypeLabel,
 } from './playlist-directory-cells'
 import {
+  listsImportedPlaylists,
   playableLibrary,
   playlistLibraryForView,
   smartPlaylistHref,
@@ -152,7 +153,7 @@ const ACTIONS_WIDTH = 44
 export function playlistColumnsFor(
   library: LibraryPlaylistLibrary,
 ): readonly PlaylistColumn[] {
-  return [
+  const columns: readonly PlaylistColumn[] = [
     {
       key: 'name',
       sortable: true,
@@ -250,6 +251,11 @@ export function playlistColumnsFor(
     },
     { key: 'actions', sortable: false, label: 'Actions' },
   ]
+  // The columns hidden by default are imported playlists'; a library without
+  // imported playlists has none of them.
+  return listsImportedPlaylists(library)
+    ? columns
+    : columns.filter((column) => column.defaultVisible !== false)
 }
 
 export default function PlaylistsWorkspace() {
@@ -275,6 +281,7 @@ export default function PlaylistsWorkspace() {
   // The page lists the playlists of the library it is scoped to.
   const library = playlistLibraryForView(view) ?? 'tracks'
   const playable = playableLibrary(library)
+  const imports = listsImportedPlaylists(library)
   const importHref = scopedHref(
     '/imports/spotify-playlists',
     view === 'album' ? 'album' : 'track',
@@ -391,9 +398,11 @@ export default function PlaylistsWorkspace() {
               <Plus className="ds-i" data-size="sm" aria-hidden />
               New playlist
             </Button>
-            <Button asChild>
-              <Link href={importHref}>Import playlists</Link>
-            </Button>
+            {imports && (
+              <Button asChild>
+                <Link href={importHref}>Import playlists</Link>
+              </Button>
+            )}
           </>
         }
       />
@@ -503,7 +512,7 @@ export default function PlaylistsWorkspace() {
                     stickyEdge={column.key === 'name'}
                     resizer={columns.resizer(column.key)}
                     filter={
-                      column.key === 'source' ? (
+                      column.key === 'source' && imports ? (
                         <SecondaryColumnFilter
                           label="Source"
                           options={[
@@ -529,11 +538,13 @@ export default function PlaylistsWorkspace() {
               <TableState colSpan={columns.count}>
                 {q || sources.length ? (
                   'No playlists match.'
-                ) : (
+                ) : imports ? (
                   <>
                     No playlists.{' '}
                     <Link href={importHref}>Import playlists</Link>
                   </>
+                ) : (
+                  'No playlists.'
                 )}
               </TableState>
             )}

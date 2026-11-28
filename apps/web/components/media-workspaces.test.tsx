@@ -578,12 +578,19 @@ test('main navigation has one Browse destination and preserves current browse fi
   assert.doesNotMatch(html, />Albums<|>Films<|href="\/films/)
   const detail = renderNavigation('/films/one', '')
   assert.match(detail, /aria-current="page" href="\/films">Browse/)
-  assert.equal(navLinks(detail).length, 9)
+  assert.equal(navLinks(detail).length, 10)
   assert.match(detail, /href="\/films\/ratings">Ratings/)
   assert.match(detail, /href="\/films\/matches">Matches/)
-  assert.match(detail, /href="\/people\?mediaType=film">People/)
-  assert.match(detail, /href="\/collections\?mediaType=film">Collections/)
-  assert.doesNotMatch(detail, />Playlists</)
+  assert.match(
+    detail,
+    /href="\/people\?mediaType=film">People.*href="\/playlists\?mediaType=film">Playlists.*href="\/collections\?mediaType=film">Collections/,
+  )
+  const playlists = renderNavigation('/playlists', 'mediaType=film')
+  assert.match(
+    playlists,
+    /aria-current="page" href="\/playlists\?mediaType=film">Playlists/,
+  )
+  assert.match(playlists, /href="\/films">Browse/)
 })
 
 test('main navigation browses tracks from the track and playlist pages', () => {
@@ -827,24 +834,28 @@ test('Spotify configuration names exact API callback without switching the signe
   )
 })
 
-test('Subscriptions navigation has Browse, Matches, Channels, Imports, Jobs and Providers', () => {
+test('Subscriptions navigation has Browse, Matches, Channels, Playlists, Imports, Jobs and Providers', () => {
   const html = renderNavigation('/subscriptions', 'q=talk')
-  assert.equal(navLinks(html).length, 6)
+  assert.equal(navLinks(html).length, 7)
   assert.match(html, /href="\/subscriptions\/matches">Matches/)
   assert.match(
     html,
     /aria-current="page" href="\/subscriptions\?q=talk">Browse/,
   )
-  assert.match(html, /href="\/subscriptions\/channels">Channels/)
   assert.match(
     html,
-    /href="\/imports\/youtube\?mediaType=subscription">Imports/,
+    /href="\/subscriptions\/channels">Channels.*href="\/playlists\?mediaType=subscription">Playlists.*href="\/imports\/youtube\?mediaType=subscription">Imports/,
   )
   assert.match(html, /href="\/jobs">Jobs/)
   assert.match(html, /href="\/providers">Providers/)
   assert.doesNotMatch(
     html,
-    /Tags|Playlists|Collections|href="\/(albums|films|tags|collections)/,
+    /Tags|Collections|href="\/(albums|films|tags|collections)/,
+  )
+  const playlists = renderNavigation('/playlists', 'mediaType=subscription')
+  assert.match(
+    playlists,
+    /aria-current="page" href="\/playlists\?mediaType=subscription">Playlists/,
   )
   const channels = renderNavigation('/subscriptions/channels', '')
   assert.match(
@@ -1012,17 +1023,19 @@ test('the shared metadata toolbar places active chips above search and count', a
   assert.ok(toolbar < search && search < count)
 })
 
-test('Mixes navigation has Browse, Shows and Imports, then Jobs and Providers, and no Matches', () => {
+test('Mixes navigation has Browse, Shows, Playlists and Imports, then Jobs and Providers, and no Matches', () => {
   const html = renderNavigation('/mixes', 'q=late')
-  assert.equal(navLinks(html).length, 5)
+  assert.equal(navLinks(html).length, 6)
   assert.match(html, /aria-current="page" href="\/mixes\?q=late">Browse/)
-  assert.match(html, /href="\/mixes\/shows">Shows/)
-  assert.match(html, /href="\/imports\/rinse\?mediaType=mix">Imports/)
+  assert.match(
+    html,
+    /href="\/mixes\/shows">Shows.*href="\/playlists\?mediaType=mix">Playlists.*href="\/imports\/rinse\?mediaType=mix">Imports/,
+  )
   assert.match(html, /href="\/jobs">Jobs/)
   assert.match(html, /href="\/providers">Providers/)
   assert.doesNotMatch(
     html,
-    /Matches|Tags|Playlists|Collections|Channels|href="\/(albums|films|subscriptions)/,
+    /Matches|Tags|Collections|Channels|href="\/(albums|films|subscriptions)/,
   )
   const shows = renderNavigation('/mixes/shows', '')
   assert.match(shows, /aria-current="page" href="\/mixes\/shows">Shows/)

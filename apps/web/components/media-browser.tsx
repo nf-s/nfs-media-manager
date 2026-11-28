@@ -35,6 +35,7 @@ import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { normalizeTagName } from '@repo/schemas/tags'
 import { Button } from '@repo/ui/components/ui/button'
+import { BrowseActions } from '@repo/ui/components/ds/play'
 import {
   TableBody,
   TableCell,
@@ -188,6 +189,7 @@ import {
   RowSelectRow,
   rowSelectionWidth,
   SelectAllMatching,
+  SelectionBar,
   useRowSelection,
 } from './merge-bar'
 import { albumMergeAdapter } from './album-merge-review'
@@ -816,14 +818,13 @@ function MediaBrowse({
           : tableHeaderHeight,
   })
   const { total, slots, padTop, padBottom } = query
-  // Albums Table rows can be ticked for a merge.
-  const selectable = mediaType === 'album'
+  // Table rows can be ticked to add to a playlist, and albums for a merge.
   const loadedIds = slots.flatMap(({ item }) => (item ? [item.id] : []))
-  // Another search, filter, sort, scope or view lists other albums.
+  // Another search, filter, sort, scope or view lists other items.
   const selection = useRowSelection(loadedIds, {
     identity: scrollIdentity,
     result:
-      selectable && view === 'table'
+      view === 'table'
         ? { ids: loadedIds, total: query.hasTotal ? total : undefined }
         : undefined,
     outside: slots.flatMap(({ item }) =>
@@ -837,7 +838,31 @@ function MediaBrowse({
     enabled: selection.matching,
     total: selection.total,
   })
-  const selectionColumns = selectable ? 1 : 0
+  const selectionColumns = 1
+  // In Albums beside Merge; in Films, which has none, the bar's primary button.
+  const addToPlaylist = (
+    <AddToPlaylistButton
+      subject={
+        selection.matching
+          ? matchingSubject(
+              collection,
+              params,
+              selection.excludeIds,
+              matchingCount(inLibraryCount.total ?? 0, selection),
+            )
+          : selectionSubject(
+              collection,
+              selection.ids,
+              slots.map(({ item }) => item),
+            )
+      }
+      suggestedName={suggestedPlaylistName(filters, q)}
+      primary={mediaType === 'film'}
+      counting={selection.matching && inLibraryCount.total === undefined}
+      blocked={selection.matching ? matchingBlocked(inLibraryCount) : null}
+      onAdded={selection.clear}
+    />
+  )
   const selectedItem = slots.find(({ item }) => item?.id === selectedId)?.item
   const selectedListeningCount =
     selectedItem?.mediaType === 'album'
@@ -1165,10 +1190,20 @@ function MediaBrowse({
         links={mediaBrowseLinkCandidates(item)}
         itemTitle={item.title}
         fields={fields}
-        place={item.mediaType === 'film' ? place : undefined}
       />
     ) : undefined
-    if (item.mediaType === 'film') return providerLinks
+    // A film cannot be played: More alone, then the provider marks. A card
+    // whose artwork carries a badge has no More until its place is decided.
+    if (item.mediaType === 'film') {
+      const badged = place === 'tile' && needsId(item)
+      const more = badged ? undefined : libraryItemMore('films', item)
+      return more || providerLinks ? (
+        <BrowseActions place={place}>
+          {more}
+          {providerLinks}
+        </BrowseActions>
+      ) : undefined
+    }
     const Controls = place === 'tile' ? TilePlayControls : AlbumInlinePlayButton
     return (
       <Controls
@@ -1618,7 +1653,6 @@ function MediaBrowse({
             )
           }
           countAction={
-            selectable &&
             view === 'table' && (
               <SelectAllMatching selection={selection} noun={noun} />
             )
@@ -1667,7 +1701,7 @@ function MediaBrowse({
               </div>
             )}
         {beforeResults}
-        <DetailListFrame framed={embedded && selectable} frame={frame}>
+        <DetailListFrame framed={embedded} frame={frame}>
           <div
             className={`browse-scroller${embedded ? ` ${embeddedScrollClass}` : ''}`}
             data-view={view}
@@ -1802,7 +1836,7 @@ function MediaBrowse({
                   <ListHead
                     title={mediaType === 'album' ? 'Album' : 'Film'}
                     tags="Tags"
-                    playWidth={mediaType === 'album' ? 50 : 0}
+                    playWidth={mediaType === 'album' ? 50 : 24}
                     meta={
                       <>
                         <RowValue kind="rating">
@@ -1901,14 +1935,14 @@ function MediaBrowse({
                 aria-rowcount={query.hasTotal ? total + 1 : undefined}
                 style={{
                   minWidth: columnsWidth([
-                    ...(selectable ? [rowSelectionWidth] : []),
+                    rowSelectionWidth,
                     ...columns.map((field) => widthFor(field)),
                   ]),
                 }}
               >
                 <TableColumns
                   widths={[
-                    ...(selectable ? [rowSelectionWidth] : []),
+                    rowSelectionWidth,
                     ...columns.map((field, column) =>
                       column === columns.length - 1 &&
                       pillColumns.has(field.key) &&
@@ -1920,16 +1954,14 @@ function MediaBrowse({
                 />
                 <TableHeader>
                   <TableRow>
-                    {selectable && (
-                      <TableHead sticky={0}>
-                        <RowSelectAll
-                          selection={selection}
-                          label="Select loaded albums"
-                          matchingLabel="Select all matching albums"
-                          disabled={!loadedIds.length}
-                        />
-                      </TableHead>
-                    )}
+                    <TableHead sticky={0}>
+                      <RowSelectAll
+                        selection={selection}
+                        label={`Select loaded ${noun.other}`}
+                        matchingLabel={`Select all matching ${noun.other}`}
+                        disabled={!loadedIds.length}
+                      />
+                    </TableHead>
                     {columns.map((field, column) => (
                       <BrowseSortHead
                         key={field.key}
@@ -1945,13 +1977,7 @@ function MediaBrowse({
                           saveWidths({ ...widths, [field.key]: width })
                         }
                         align={field.type === 'text' ? undefined : 'end'}
-                        sticky={
-                          column === 0
-                            ? selectable
-                              ? rowSelectionWidth
-                              : 0
-                            : undefined
-                        }
+                        sticky={column === 0 ? rowSelectionWidth : undefined}
                         stickyEdge={column === 0}
                       />
                     ))}
@@ -1974,25 +2000,19 @@ function MediaBrowse({
                         data-state={isPlaying(item) ? 'playing' : undefined}
                         aria-rowindex={index + 2}
                       >
-                        {selectable && (
-                          <TableCell sticky={0}>
-                            <RowSelectRow
-                              selection={selection}
-                              id={item.id}
-                              title={item.title}
-                            />
-                          </TableCell>
-                        )}
+                        <TableCell sticky={0}>
+                          <RowSelectRow
+                            selection={selection}
+                            id={item.id}
+                            title={item.title}
+                          />
+                        </TableCell>
                         {columns.map((field, column) =>
                           field.key === 'title' ? (
                             <TableCell
                               key={field.key}
                               sticky={
-                                column === 0
-                                  ? selectable
-                                    ? rowSelectionWidth
-                                    : 0
-                                  : undefined
+                                column === 0 ? rowSelectionWidth : undefined
                               }
                               stickyEdge={column === 0}
                             >
@@ -2045,39 +2065,21 @@ function MediaBrowse({
               hidden={view === 'table' && selection.count > 0}
             />
           )}
-          {selectable && view === 'table' && (
-            <MergeBar
-              selection={selection}
-              total={query.hasTotal ? total : undefined}
-              adapter={albumMergeAdapter}
-              actions={
-                <AddToPlaylistButton
-                  subject={
-                    selection.matching
-                      ? matchingSubject(
-                          'albums',
-                          params,
-                          selection.excludeIds,
-                          matchingCount(inLibraryCount.total ?? 0, selection),
-                        )
-                      : selectionSubject(
-                          'albums',
-                          selection.ids,
-                          slots.map(({ item }) => item),
-                        )
-                  }
-                  suggestedName={suggestedPlaylistName(filters, q)}
-                  counting={
-                    selection.matching && inLibraryCount.total === undefined
-                  }
-                  blocked={
-                    selection.matching ? matchingBlocked(inLibraryCount) : null
-                  }
-                  onAdded={selection.clear}
-                />
-              }
-            />
-          )}
+          {view === 'table' &&
+            (mediaType === 'album' ? (
+              <MergeBar
+                selection={selection}
+                total={query.hasTotal ? total : undefined}
+                adapter={albumMergeAdapter}
+                actions={addToPlaylist}
+              />
+            ) : (
+              <SelectionBar
+                selection={selection}
+                total={query.hasTotal ? total : undefined}
+                actions={addToPlaylist}
+              />
+            ))}
         </DetailListFrame>
       </div>
       {adding && (

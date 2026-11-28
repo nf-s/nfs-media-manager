@@ -12,6 +12,7 @@ import {
   libraryPlaylistFilterHref,
   matchingBlocked,
   matchingCount,
+  listsImportedPlaylists,
   matchingSubject,
   playableLibrary,
   playlistLibraryForView,
@@ -446,4 +447,43 @@ test('every playlist of a library is read page by page until none remain', async
       ['albums', 'smart', '3', '100'],
     ],
   )
+})
+
+test('a Mixes whole-result selection sends the view without the library Browse adds', () => {
+  const params = new URLSearchParams({
+    library: 'mixes',
+    filters: '[]',
+    ranges: '[]',
+    sortBy: 'publishedAt',
+    direction: 'desc',
+    libraryScope: 'all',
+  })
+  const subject = matchingSubject('mixes', params, ['mix-1'], 95)
+  assert.deepEqual(subject.selection, {
+    query: {
+      filters: '[]',
+      ranges: '[]',
+      sortBy: 'publishedAt',
+      direction: 'desc',
+      libraryScope: 'all',
+    },
+    excludeIds: ['mix-1'],
+  })
+  assert.equal(pickerHeading(subject), 'Add 95 mixes to a playlist')
+  assert.equal(
+    pickerHeading(matchingSubject('subscriptions', params, [], 2)),
+    'Add 2 items to a playlist',
+  )
+  assert.equal(
+    pickerHeading(matchingSubject('films', new URLSearchParams(), [], 1)),
+    'Add 1 film to a playlist',
+  )
+})
+
+test('only Albums and Tracks list imported playlists beside their own', () => {
+  assert.equal(listsImportedPlaylists('albums'), true)
+  assert.equal(listsImportedPlaylists('tracks'), true)
+  assert.equal(listsImportedPlaylists('films'), false)
+  assert.equal(listsImportedPlaylists('subscriptions'), false)
+  assert.equal(listsImportedPlaylists('mixes'), false)
 })

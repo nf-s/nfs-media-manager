@@ -10,16 +10,13 @@ import { scopedHref } from './media-scope'
 import { trackGroupingEnabled } from './track-browse'
 
 /**
- * The libraries whose Browse offers smart playlists in its rail and Filters
- * drawer. Films, Subscriptions and Mixes join in a later stage.
+ * Whether a library's Browse offers smart playlists in its rail and Filters
+ * drawer: every library with playlists does; Artists has none.
  */
-const browseSmartPlaylistLibraries: ReadonlySet<LibraryPlaylistLibrary> =
-  new Set(['albums', 'tracks'])
-
 export function browseHasSmartPlaylists(
   library: LibraryPlaylistLibrary | null,
 ): library is LibraryPlaylistLibrary {
-  return library !== null && browseSmartPlaylistLibraries.has(library)
+  return library !== null
 }
 
 /**

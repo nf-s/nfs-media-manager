@@ -107,7 +107,11 @@ export function libraryViewForPath(
   path: string,
   value: string | null,
 ): Library {
-  if (isUnder(path, '/playlists') && value === 'album') return 'album'
+  // Playlists belong to the library that opened them, Tracks by default.
+  if (isUnder(path, '/playlists')) {
+    const view = parseLibraryView(value)
+    return view && view !== 'artist' ? view : 'track'
+  }
   if (isUnder(path, '/artists')) return 'artist'
   return trackViewPaths.some((root) => isUnder(path, root)) ||
     (value === 'track' &&
@@ -248,10 +252,11 @@ export function switchLibraryHref(path: string, search: string, view: Library) {
   if (shown !== 'mix' && view !== 'mix' && path === libraryMatchesHref(shown))
     return libraryMatchesHref(view)
   if (view === 'artist') return switchMediaScopeHref(path, search, view)
+  // Albums and Tracks keep the page; another library opens its Playlists.
   if (isUnder(path, '/playlists'))
     return view === 'album' || view === 'track'
       ? scopedHref(`${path}${current.size ? `?${current}` : ''}`, view)
-      : libraryHome(view)
+      : scopedHref('/playlists', view)
   if (
     path !== '/imports' &&
     trackImportPaths.includes(path) &&

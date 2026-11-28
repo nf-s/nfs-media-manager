@@ -62,6 +62,12 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
         section: '/mixes/shows',
       },
       {
+        href: scopedHref('/playlists', 'mix'),
+        label: 'Playlists',
+        Icon: ListMusic,
+        section: '/playlists',
+      },
+      {
         href: scopedHref(libraryImportsHome('mix'), 'mix'),
         label: 'Imports',
         Icon: Download,
@@ -136,6 +142,12 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
         section: '/subscriptions/channels',
       },
       {
+        href: scopedHref('/playlists', 'subscription'),
+        label: 'Playlists',
+        Icon: ListMusic,
+        section: '/playlists',
+      },
+      {
         href: scopedHref('/imports/youtube', 'subscription'),
         label: 'Imports',
         Icon: Download,
@@ -178,16 +190,12 @@ export function libraryNavigation(view: LibraryName): NavItem[] {
           },
         ]
       : []),
-    ...(film
-      ? []
-      : [
-          {
-            href: scopedHref('/playlists', 'album'),
-            label: 'Playlists',
-            Icon: ListMusic,
-            section: '/playlists',
-          },
-        ]),
+    {
+      href: scopedHref('/playlists', view),
+      label: 'Playlists',
+      Icon: ListMusic,
+      section: '/playlists',
+    },
     {
       href: scopedHref('/collections', view),
       label: 'Collections',

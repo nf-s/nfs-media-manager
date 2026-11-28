@@ -90,7 +90,7 @@ import { FieldProvenance } from './field-provenance'
 import ServiceIconLinks, { serviceLinks } from './service-icon-links'
 import { AlbumHeaderPlay } from './detail-play'
 import { DetailMore } from './detail-more'
-import { useItemAddToPlaylist } from './item-playlists'
+import { ItemPlaylistsSection, useItemAddToPlaylist } from './item-playlists'
 import { useDetailInspector, useDetailView } from './detail-inspector-context'
 import { WatchedToggle } from './watched-button'
 import { SimilarItems } from './similar-items'
@@ -651,7 +651,7 @@ export default function MediaDetail({
       : EMPTY_VALUE
   }
   useDetailPerformance(mediaType === 'album' ? 'albums' : undefined, id, detail)
-  const addToPlaylist = useItemAddToPlaylist('albums', {
+  const addToPlaylist = useItemAddToPlaylist(collection, {
     id,
     title: detail.data?.title ?? '',
   })
@@ -702,7 +702,7 @@ export default function MediaDetail({
         : []
   }
   const [country] = textValues('country')
-  const playlistActions = item.mediaType === 'album' && item.inLibrary !== false
+  const playlistActions = item.inLibrary !== false
 
   const header = (
     <DetailHeader
@@ -1138,6 +1138,13 @@ export default function MediaDetail({
               max: 6,
             },
           ])}
+          {playlistActions && (
+            <ItemPlaylistsSection
+              key={item.id}
+              library="films"
+              itemId={item.id}
+            />
+          )}
           <DetailsSection mediaItemId={item.id} facts={facts} />
           {collections.length > 0 && (
             <Section title="Collections">

@@ -377,3 +377,71 @@ test('playlist imports preserve Albums', () => {
   )
   assert.match(html, /href="\/imports\/spotify-playlists\?mediaType=album"/)
 })
+
+const ownRow = (
+  library: 'films' | 'subscriptions' | 'mixes',
+  type: 'playlist' | 'smart',
+) =>
+  PlaylistSummarySchema.parse({
+    ...libraryRow('tracks'),
+    id: `${library}-${type}`,
+    name: type === 'smart' ? 'Saved search' : 'Weekend shortlist',
+    library,
+    type,
+    view: type === 'smart' ? { sortBy: 'title', direction: 'asc' } : null,
+    itemCount: type === 'smart' ? null : 6,
+  })
+
+test('Films, Subscriptions and Mixes list their own playlists with no import control', () => {
+  for (const [search, library, noun, view] of [
+    ['mediaType=film', 'films', 'Films', 'All films · Title, A to Z'],
+    ['mediaType=subscription', 'subscriptions', 'Items', 'All items'],
+    ['mediaType=mix', 'mixes', 'Mixes', 'All mixes'],
+  ] as const) {
+    const html = render(
+      <PlaylistsWorkspace />,
+      [
+        playlistPage(
+          [ownRow(library, 'playlist'), ownRow(library, 'smart')],
+          false,
+          library,
+        ),
+      ],
+      search,
+    )
+    const head = html.match(/<thead>[\s\S]*?<\/thead>/)?.[0] ?? ''
+    assert.match(head, new RegExp(`title="Sort by ${noun}"`))
+    assert.match(html, />New playlist<\/button>/)
+    assert.doesNotMatch(html, /Import playlists|spotify-playlists/)
+    assert.doesNotMatch(html, /aria-label="Filter Source"/)
+    // The imported-playlist columns are not offered.
+    for (const label of [
+      'Owner',
+      'In album library',
+      'Schedule',
+      'Next import',
+    ])
+      assert.doesNotMatch(html, new RegExp(`/>${label}</label>`))
+    const playlistCells = cellsOf(rowOf(html, 'Weekend shortlist'))
+    assert.deepEqual(playlistCells.slice(1, 4), ['Playlist', 'Library', '6'])
+    assert.match(rowOf(html, 'Saved search'), new RegExp(view))
+    // No Play or Add to queue for libraries the app cannot play.
+    assert.doesNotMatch(html, /aria-label="Play /)
+    assert.match(
+      rowOf(html, 'Saved search'),
+      new RegExp(
+        `href="/${library}\\?sortBy=title&amp;direction=asc&amp;smartPlaylist=${library}-smart"`,
+      ),
+    )
+  }
+})
+
+test('an empty Films playlist table has no import link', () => {
+  const html = render(
+    <PlaylistsWorkspace />,
+    [playlistPage([], false, 'films')],
+    'mediaType=film',
+  )
+  assert.match(html, /No playlists\./)
+  assert.doesNotMatch(html, /Import playlists/)
+})

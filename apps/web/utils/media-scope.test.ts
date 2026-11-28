@@ -237,7 +237,7 @@ test('tracks have their own library view while album metadata retains its scope'
     '/imports/spotify-playlists',
   ])
     assert.equal(mediaScopeForPath(path, 'film'), 'album')
-  for (const path of ['/tracks', '/tracks/first', '/playlists'])
+  for (const path of ['/tracks', '/tracks/first'])
     assert.equal(libraryViewForPath(path, 'film'), 'track')
   assert.equal(libraryViewForPath('/albums', null), 'album')
   assert.equal(libraryViewForPath('/imports/spotify-playlists', null), 'album')
@@ -272,11 +272,16 @@ test('track imports retain their library across shared music import routes', () 
   )
 })
 
-test('playlists retain the Albums or Tracks context that opened them', () => {
+test('playlists retain the library that opened them', () => {
   assert.equal(libraryViewForPath('/playlists', 'album'), 'album')
   assert.equal(libraryViewForPath('/playlists', 'track'), 'track')
   assert.equal(libraryViewForPath('/playlists', null), 'track')
   assert.equal(libraryViewForPath('/playlists/example', 'album'), 'album')
+  assert.equal(libraryViewForPath('/playlists', 'film'), 'film')
+  assert.equal(libraryViewForPath('/playlists', 'subscription'), 'subscription')
+  assert.equal(libraryViewForPath('/playlists/library/pl-1', 'mix'), 'mix')
+  // Artists have no playlists.
+  assert.equal(libraryViewForPath('/playlists', 'artist'), 'track')
   assert.equal(
     switchLibraryHref(
       '/playlists',
@@ -295,11 +300,19 @@ test('playlists retain the Albums or Tracks context that opened them', () => {
   )
   assert.equal(
     switchLibraryHref('/playlists', 'mediaType=album', 'film'),
-    '/films',
+    '/playlists?mediaType=film',
   )
   assert.equal(
-    switchLibraryHref('/playlists', 'mediaType=album', 'subscription'),
-    '/subscriptions',
+    switchLibraryHref(
+      '/playlists/library/pl-1',
+      'mediaType=album',
+      'subscription',
+    ),
+    '/playlists?mediaType=subscription',
+  )
+  assert.equal(
+    switchLibraryHref('/playlists', 'mediaType=film', 'artist'),
+    '/artists',
   )
 })
 
@@ -384,7 +397,10 @@ test('the library selector moves between albums, tracks and films', () => {
   )
   assert.equal(switchLibraryHref('/tags', 'mediaType=film', 'track'), '/tracks')
   assert.equal(switchLibraryHref('/tracks', 'q=title', 'album'), '/albums')
-  assert.equal(switchLibraryHref('/playlists', '', 'film'), '/films')
+  assert.equal(
+    switchLibraryHref('/playlists', '', 'film'),
+    '/playlists?mediaType=film',
+  )
   assert.equal(
     switchLibraryHref('/tracks', 'q=title&sortBy=scrobbles', 'track'),
     '/tracks?q=title&sortBy=scrobbles',
@@ -426,18 +442,16 @@ test('Subscriptions is a separate library scoped by path or mediaType', () => {
   )
 })
 
-test('switching to Subscriptions keeps Imports and otherwise browses', () => {
-  for (const path of [
-    '/albums',
-    '/films/one',
-    '/tracks',
-    '/tags',
-    '/playlists',
-  ])
+test('switching to Subscriptions keeps Imports and Playlists and otherwise browses', () => {
+  for (const path of ['/albums', '/films/one', '/tracks', '/tags'])
     assert.equal(
       switchLibraryHref(path, 'mediaType=album&q=title', 'subscription'),
       '/subscriptions',
     )
+  assert.equal(
+    switchLibraryHref('/playlists', 'mediaType=album&q=title', 'subscription'),
+    '/playlists?mediaType=subscription',
+  )
   assert.equal(
     switchLibraryHref('/imports/spotify', '', 'subscription'),
     '/imports/youtube?mediaType=subscription',

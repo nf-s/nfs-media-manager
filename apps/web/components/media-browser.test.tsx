@@ -64,6 +64,19 @@ const film = FilmListItemSchema.parse({
   budget: null,
   boxOffice: null,
 })
+// An identified film has no Needs ID badge on its card.
+const identified = FilmListItemSchema.parse({
+  ...film,
+  providerReferences: [
+    {
+      provider: 'tmdb',
+      referenceType: 'tmdb',
+      externalId: '101',
+      isPrimary: true,
+      metadata: null,
+    },
+  ],
+})
 
 async function render(
   mediaType: 'album' | 'film',
@@ -163,23 +176,28 @@ test('an Albums row says how many editions it stands for, and an edition row say
   assert.match(rows, /aria-label="Select Harbour Lights \(Deluxe\)"/)
 })
 
-test('Albums Grid and List have no selection, and Films never do', async () => {
+test('Albums and Films Grid and List have no selection', async () => {
   for (const view of ['grid', 'list']) {
     const other = await render('album', `view=${view}`, [album])
     assert.doesNotMatch(other, /Select loaded albums|Select Harbour Lights/)
     assert.doesNotMatch(other, /ds-selectbar/)
+    const films = await render('film', `view=${view}`, [film])
+    assert.match(films, /Harbour Film/)
+    assert.doesNotMatch(films, /Select loaded films|Select Harbour Film/)
+    assert.doesNotMatch(films, /ds-selectbar/)
   }
+})
+
+test('the Films table has the checkbox column and no bar until a row is ticked', async () => {
   const films = await render('film', 'view=table', [film])
-  assert.match(films, /Harbour Film/)
-  assert.doesNotMatch(
-    films,
-    /type="checkbox" class="ds-check" aria-label="Select/,
-  )
-  assert.doesNotMatch(films, /ds-selectbar/)
   assert.match(
     films,
-    /<thead><tr><th scope="col" data-sticky="edge" style="--ds-sticky-left:0px"/,
+    /<thead><tr><th scope="col" data-sticky="" style="--ds-sticky-left:0px"><input type="checkbox" class="ds-check" aria-label="Select loaded films"/,
   )
+  assert.match(films, /aria-label="Select Harbour Film"/)
+  assert.match(films, /data-sticky="edge" style="--ds-sticky-left:36px"/)
+  // Films has no Merge; the bar, with Add to playlist, shows for a selection.
+  assert.doesNotMatch(films, /ds-selectbar|>Merge</)
 })
 
 async function renderEmbedded(mediaType: 'album' | 'film') {
@@ -223,12 +241,16 @@ test('inside a detail the Albums list and its Merge bar share one frame', async 
     albums,
     /<div class="dtl-browse-frame"><div class="browse-scroller dtl-browse-entries".*<\/table><\/div><div class="ds-selectbar sec-selectbar"><\/div><\/div>/,
   )
+  // Films share the frame; their bar shows only for a selection.
   const films = await renderEmbedded('film')
-  assert.doesNotMatch(films, /dtl-browse-frame|ds-selectbar/)
-  assert.match(films, /class="browse-scroller dtl-browse-entries"/)
+  assert.match(
+    films,
+    /<div class="dtl-browse-frame"><div class="browse-scroller dtl-browse-entries"/,
+  )
+  assert.doesNotMatch(films, /ds-selectbar/)
 })
 
-test('Albums tiles, list rows and table rows end the play group with More; Films have none', async () => {
+test('Albums tiles, list rows and table rows end the play group with More; Films have More alone', async () => {
   for (const view of ['grid', 'list', 'table']) {
     const html = await render('album', `view=${view}`, [album])
     assert.match(
@@ -236,8 +258,25 @@ test('Albums tiles, list rows and table rows end the play group with More; Films
       /aria-label="Add Harbour Lights to queue[^"]*"[^>]*>.*?<\/button><button[^>]*aria-label="More actions for Harbour Lights"/,
     )
     assert.match(html, />Add to playlist…<\/button>.*?Open details</)
-    const films = await render('film', `view=${view}`, [film])
-    assert.match(films, /Harbour Film/)
-    assert.doesNotMatch(films, /More actions/)
+    const films = await render('film', `view=${view}`, [identified])
+    assert.match(
+      films,
+      new RegExp(
+        `<span class="ds-play" data-place="${view === 'grid' ? 'tile' : 'row'}"><button[^>]*aria-label="More actions for Harbour Film"`,
+      ),
+    )
+    assert.match(films, />Add to playlist…<\/button>.*?Open details</)
+    assert.doesNotMatch(films, /aria-label="Play |to queue/)
   }
+})
+
+test('a film card whose artwork carries Needs ID has no More; its list and table rows keep it', async () => {
+  const grid = await render('film', 'view=grid', [film])
+  assert.match(grid, /<span class="ds-art-badge">Needs ID<\/span>/)
+  assert.doesNotMatch(grid, /More actions for Harbour Film/)
+  for (const view of ['list', 'table'])
+    assert.match(
+      await render('film', `view=${view}`, [film]),
+      /More actions for Harbour Film/,
+    )
 })

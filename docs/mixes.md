@@ -6,7 +6,7 @@ The library is separate from Subscriptions, which holds what one account follows
 
 ## Navigation
 
-- **Mixes** is a choice in the library selector, with **Browse** (`/mixes`), **Shows** (`/mixes/shows`) and **Imports**. Tags, Playlists and Matches are not shown. **Jobs** and **Providers** sit once under System and filter by library; `mediaType=mix` selects Mixes.
+- **Mixes** is a choice in the library selector, with **Browse** (`/mixes`), **Shows** (`/mixes/shows`), **Playlists** (`/playlists?mediaType=mix`) and **Imports**. Tags and Matches are not shown. **Jobs** and **Providers** sit once under System and filter by library; `mediaType=mix` selects Mixes.
 - **Imports** has one page per station: `/imports/rinse`, `/imports/nts` and `/imports/lotradio`. Each shows that station's sync and schedule. There is no import history.
 - **Jobs** filtered to Mixes (`/jobs?mediaType=mix`) lists the station sync jobs: **Rinse FM mix sync**, **NTS mix sync** and **The Lot Radio mix sync**. The activity popover lists them with every other library's work.
 - **Providers** filtered to Mixes lists the three stations. They are not listed for other libraries.
@@ -93,8 +93,9 @@ Filters follow the [browse filter rules](requirements/search.md):
 `/mixes` works like the other Browse pages: Grid, List and Table views, suggestions with counts for titles, shows, stations, artists, tags, Listened and Has recording, filter chips, ranges, AI search and URL state (`q`, `fields`, `filters`, `ranges`, `sortBy`, `direction`, `view`, `columns`, `item`).
 
 - **Grid** is the default: square artwork with the length as a badge, then title, show, broadcast date and tags. A mix without artwork uses its show's.
-- **Table** columns default to Title, Show, Station, Artist, Broadcast, Duration and Listened; Has recording and Tags can be added.
-- Selecting a mix opens details: its show (which opens show details), station, broadcast date, length, artists, tags (each a filter), description, **Open on** the station and, when there is a recording link, **Open recording**. The header leads with **Listened**, which records or clears the current time. `/mixes/:id` is the standalone page.
+- **Table** columns default to Title, Show, Station, Artist, Broadcast, Duration and Listened; Has recording and Tags can be added. A checkbox column comes first; ticked rows, or **Select all matching** after the count, open the selection bar with **Add to playlist** ([library playlists](tracks-and-playlists.md#library-playlists-and-smart-playlists)).
+- The app does not play mixes: each row, card and list row has the three-dot **More actions** button alone, with **Add to playlist…** and **Open details**. Filters → **Smart playlists** and **Save as smart playlist** under the active filters save the view as a smart playlist, and the chip "Playlist: Name" filters by a library playlist.
+- Selecting a mix opens details: its show (which opens show details), station, broadcast date, length, artists, tags (each a filter), description, **Open on** the station and, when there is a recording link, **Open recording**. The header leads with **Listened**, which records or clears the current time. A mix in the library also has **Add to playlist** and a **Playlists** section listing the library playlists that hold it. `/mixes/:id` is the standalone page.
 - With nothing synced, the page says "No mixes yet" with Open Imports.
 
 `/mixes/shows` lists every stored show in the shared table, filterable by name and station, with Stored mixes and Latest mix; Episodes (the station's own count), Description and History can be added. A name opens show details with its mixes and a **Filter mixes** action. The mixes are the Mixes browser held to the show ([BROWSE-03c](requirements/browsing.md)), starting newest first in Table; **Show in Mixes** opens the same result on the page. `/mixes/shows/:id` is the standalone page.

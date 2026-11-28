@@ -21,13 +21,42 @@ const filters = (...list: object[]) => JSON.stringify(list)
 const ambient = { field: 'genre', value: 'ambient', mode: 'any' }
 const jazz = { field: 'genre', value: 'jazz', mode: 'any' }
 
-test('Albums and Tracks Browse offer smart playlists; the other libraries do not yet', () => {
+test('every library with playlists offers smart playlists in Browse; Artists does not', () => {
   assert.equal(browseHasSmartPlaylists('albums'), true)
   assert.equal(browseHasSmartPlaylists('tracks'), true)
-  assert.equal(browseHasSmartPlaylists('films'), false)
-  assert.equal(browseHasSmartPlaylists('subscriptions'), false)
-  assert.equal(browseHasSmartPlaylists('mixes'), false)
+  assert.equal(browseHasSmartPlaylists('films'), true)
+  assert.equal(browseHasSmartPlaylists('subscriptions'), true)
+  assert.equal(browseHasSmartPlaylists('mixes'), true)
   assert.equal(browseHasSmartPlaylists(null), false)
+})
+
+test('a Subscriptions or Mixes view leaves out the library its Browse sends', () => {
+  const params = new URLSearchParams({
+    library: 'mixes',
+    filters: filters({ field: 'genre', value: 'dub', mode: 'any' }),
+    ranges: '[]',
+    libraryScope: 'all',
+    view: 'table',
+  })
+  const view = browseView('mixes', params, {
+    sortBy: 'durationSec',
+    direction: 'asc',
+  })
+  assert.deepEqual(view, {
+    filters: filters({ field: 'genre', value: 'dub', mode: 'any' }),
+    libraryScope: 'all',
+    sortBy: 'durationSec',
+    direction: 'asc',
+  })
+  assert.equal(browseViewHasCriteria('mixes', view), true)
+  assert.equal(
+    sameBrowseView('mixes', view, { ...view, libraryScope: 'all' }),
+    true,
+  )
+  assert.equal(
+    libraryPlaylistsHref('subscriptions'),
+    '/playlists?mediaType=subscription',
+  )
 })
 
 test('a view keeps the parameters the server keeps, with the order Browse shows', () => {

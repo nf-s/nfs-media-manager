@@ -12,6 +12,7 @@ import { Button } from '@repo/ui/components/ui/button'
 import {
   TableBody,
   TableCell,
+  TableHead,
   TableHeader,
   TableRow,
   TableScroll,
@@ -26,6 +27,7 @@ import {
   RowValue,
 } from '@repo/ui/components/ds/list-row'
 import { EmptyValue, Pill, PillLabel, Pills } from '@repo/ui/components/ds/pill'
+import { BrowseActions } from '@repo/ui/components/ds/play'
 import { Skeleton, State } from '@repo/ui/components/ds/feedback'
 import { EMPTY_VALUE, formatCount } from '@repo/ui/lib/format'
 import {
@@ -46,7 +48,10 @@ import {
 } from '@repo/schemas/subscriptions'
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
-import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
+import {
+  useInLibraryBrowseCount,
+  useVirtualBrowse,
+} from '@/hooks/useVirtualBrowse'
 import { useBrowseFacets } from '@/hooks/useBrowseFacets'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import { useGridDensity } from '@/hooks/useGridDensity'
@@ -143,6 +148,30 @@ import {
   VirtualCards,
   VirtualRows,
 } from './browse-items'
+import {
+  RowSelectAll,
+  RowSelectRow,
+  rowSelectionWidth,
+  SelectAllMatching,
+  SelectionBar,
+  useRowSelection,
+} from './merge-bar'
+import { libraryItemMore } from './item-more'
+import { AddToPlaylistButton } from './library-playlist-picker'
+import { ResultLineSlot } from './result-line'
+import {
+  SmartPlaylistActions,
+  SmartPlaylistName,
+  SmartPlaylistsSection,
+  useSmartPlaylistBrowse,
+} from './smart-playlist-controls'
+import {
+  matchingBlocked,
+  matchingCount,
+  matchingSubject,
+  selectionSubject,
+  suggestedPlaylistName,
+} from '@/utils/library-playlists'
 
 /** --ds-head, --ds-row-media and --ds-row. */
 const headerHeight = 28
@@ -281,6 +310,13 @@ function SubscriptionBrowse({
   )
   const sortField = fields.find((field) => field.key === sortBy)
   const sortLabels = subscriptionSortLabelsFor(library)
+  const smart = useSmartPlaylistBrowse({
+    library,
+    host,
+    order: { sortBy, direction },
+    fields,
+    suggestedName: suggestedPlaylistName(filters, q),
+  })
   // Watched Yes/No is a filter; the Watched column shows the date.
   const columnFields = fields.filter(
     (field) => field.key !== 'description' && field.key !== 'watched',
@@ -452,6 +488,30 @@ function SubscriptionBrowse({
     itemSchema: SubscriptionItemSchema,
   })
   const { total, slots, padTop, padBottom } = query
+  // Table rows can be ticked to add to a playlist (PL-33).
+  const loadedIds = slots.flatMap(({ item }) => (item ? [item.id] : []))
+  const selection = useRowSelection(loadedIds, {
+    identity: scrollIdentity,
+    result:
+      view === 'table'
+        ? { ids: loadedIds, total: query.hasTotal ? total : undefined }
+        : undefined,
+    outside: slots.flatMap(({ item }) =>
+      item?.inLibrary === false ? [item.id] : [],
+    ),
+  })
+  const inLibraryCount = useInLibraryBrowseCount({
+    apiBaseUrl,
+    collection,
+    endpoint: 'subscriptions',
+    params,
+    enabled: selection.matching,
+    total: selection.total,
+  })
+  const tableWidths = [
+    rowSelectionWidth,
+    ...columns.map((field) => widths.widthFor(field)),
+  ]
   const activeItem =
     inspector?.active?.kind === itemKind
       ? slots.find(({ item }) => item?.id === inspector.active?.id)?.item
@@ -590,6 +650,12 @@ function SubscriptionBrowse({
     )
   }
 
+  /** More alone, as these items cannot be played; none outside the library. */
+  function itemMore(item: SubscriptionItem, place: 'tile' | 'row') {
+    const more = libraryItemMore(library, item)
+    return more && <BrowseActions place={place}>{more}</BrowseActions>
+  }
+
   function thumb(item: SubscriptionItem) {
     return (
       <ItemThumb
@@ -608,6 +674,7 @@ function SubscriptionBrowse({
         <span className="ds-cell-id">
           {thumb(item)}
           {itemLink(item, 'ds-cell-title')}
+          {itemMore(item, 'row')}
         </span>
       )
     if (field.key === 'source') return channelLink(item)
@@ -799,6 +866,7 @@ function SubscriptionBrowse({
           }}
           filters={
             <>
+              {smart && <SmartPlaylistsSection smart={smart} />}
               {view === 'table' && (
                 <BrowseColumnsSection>
                   <ColumnChoices
@@ -876,6 +944,11 @@ function SubscriptionBrowse({
               noun={page.items}
             />
           }
+          countAction={
+            view === 'table' && (
+              <SelectAllMatching selection={selection} noun={page.items} />
+            )
+          }
           end={
             host.browseHref && (
               <Button variant="link" asChild>
@@ -892,8 +965,23 @@ function SubscriptionBrowse({
             )
           }
         />
-        {filterPills && !embedded && (
-          <PlacedFilters railSlot={railSlot} onClear={clearFilters}>
+        {(filterPills || smart?.open) && !embedded && (
+          <PlacedFilters
+            railSlot={railSlot}
+            onClear={clearFilters}
+            view={
+              smart
+                ? (place) => <SmartPlaylistName smart={smart} place={place} />
+                : undefined
+            }
+            actions={
+              smart
+                ? (place) => (
+                    <SmartPlaylistActions smart={smart} place={place} />
+                  )
+                : undefined
+            }
+          >
             {filterPills}
           </PlacedFilters>
         )}
@@ -952,6 +1040,8 @@ function SubscriptionBrowse({
                     />
                   )
                 const duration = formatSubscriptionDuration(item)
+                const badge =
+                  mixes || duration === EMPTY_VALUE ? undefined : duration
                 return (
                   <Card
                     key={item.id}
@@ -964,11 +1054,10 @@ function SubscriptionBrowse({
                         title={item.title}
                         target={{ kind: itemKind, id: item.id }}
                         contain={item.type === 'spotify'}
-                        badge={
-                          mixes || duration === EMPTY_VALUE
-                            ? undefined
-                            : duration
-                        }
+                        // A card whose artwork carries a badge has no More
+                        // until its place is decided.
+                        overlay={badge ? undefined : itemMore(item, 'tile')}
+                        badge={badge}
                       />
                     }
                     title={<CardTitle>{itemLink(item)}</CardTitle>}
@@ -988,7 +1077,7 @@ function SubscriptionBrowse({
                 <ListHead
                   title="Title"
                   tags="Tags"
-                  playWidth={0}
+                  playWidth={24}
                   meta={
                     <>
                       <RowValue kind="date">{labels.published}</RowValue>
@@ -1008,6 +1097,7 @@ function SubscriptionBrowse({
                     thumb={thumb(item)}
                     title={<RowTitle>{itemLink(item)}</RowTitle>}
                     by={channelLink(item)}
+                    play={<span>{itemMore(item, 'row')}</span>}
                     tags={itemTags(item)}
                     meta={
                       <>
@@ -1039,22 +1129,25 @@ function SubscriptionBrowse({
               data-layout="fixed"
               aria-label={page.name}
               aria-rowcount={query.hasTotal ? total + 1 : undefined}
-              style={{
-                width: columnsWidth(
-                  columns.map((field) => widths.widthFor(field)),
-                ),
-              }}
+              style={{ width: columnsWidth(tableWidths) }}
             >
-              <TableColumns
-                widths={columns.map((field) => widths.widthFor(field))}
-              />
+              <TableColumns widths={tableWidths} />
               <TableHeader>
                 <TableRow>
+                  <TableHead sticky={0}>
+                    <RowSelectAll
+                      selection={selection}
+                      label={`Select loaded ${page.items.other}`}
+                      matchingLabel={`Select all matching ${page.items.other}`}
+                      disabled={!loadedIds.length}
+                    />
+                  </TableHead>
                   {columns.map((field) => (
                     <BrowseItemsHead
                       key={field.key}
                       field={field}
                       identity={field.key === 'title'}
+                      sticky={rowSelectionWidth}
                       sortable={isSubscriptionSort(field.key, library)}
                       sortBy={sortBy}
                       direction={sortBy === 'relevance' ? undefined : direction}
@@ -1067,7 +1160,10 @@ function SubscriptionBrowse({
               <TableBody>
                 {padTop > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
-                    <td colSpan={columns.length} style={{ height: padTop }} />
+                    <td
+                      colSpan={columns.length + 1}
+                      style={{ height: padTop }}
+                    />
                   </tr>
                 )}
                 {slots.map(({ item, index }) =>
@@ -1075,14 +1171,27 @@ function SubscriptionBrowse({
                     <TableRow
                       key={item.id}
                       data-item-index={index}
-                      selected={item.id === selectedId}
+                      selected={
+                        item.id === selectedId || selection.has(item.id)
+                      }
                       aria-rowindex={index + 2}
                     >
+                      <TableCell sticky={0}>
+                        <RowSelectRow
+                          selection={selection}
+                          id={item.id}
+                          title={item.title}
+                        />
+                      </TableCell>
                       {columns.map((field) => (
                         <TableCell
                           key={field.key}
                           align={field.type === 'number' ? 'end' : undefined}
-                          sticky={field.key === 'title' ? 0 : undefined}
+                          sticky={
+                            field.key === 'title'
+                              ? rowSelectionWidth
+                              : undefined
+                          }
                           stickyEdge={field.key === 'title'}
                           title={cellText(item, field)}
                         >
@@ -1096,6 +1205,7 @@ function SubscriptionBrowse({
                       aria-hidden="true"
                       data-placeholder=""
                     >
+                      <TableCell />
                       {columns.map((field) => (
                         <TableCell key={field.key}>
                           <Skeleton height={10} width="70%" />
@@ -1107,7 +1217,7 @@ function SubscriptionBrowse({
                 {padBottom > 0 && (
                   <tr className="bi-spacer" aria-hidden="true">
                     <td
-                      colSpan={columns.length}
+                      colSpan={columns.length + 1}
                       style={{ height: padBottom }}
                     />
                   </tr>
@@ -1116,6 +1226,45 @@ function SubscriptionBrowse({
             </table>
           )}
         </TableScroll>
+        {!embedded && (
+          <ResultLineSlot
+            place="content"
+            hidden={view === 'table' && selection.count > 0}
+          />
+        )}
+        {view === 'table' && (
+          <SelectionBar
+            selection={selection}
+            total={query.hasTotal ? total : undefined}
+            actions={
+              <AddToPlaylistButton
+                subject={
+                  selection.matching
+                    ? matchingSubject(
+                        library,
+                        params,
+                        selection.excludeIds,
+                        matchingCount(inLibraryCount.total ?? 0, selection),
+                      )
+                    : selectionSubject(
+                        library,
+                        selection.ids,
+                        slots.map(({ item }) => item),
+                      )
+                }
+                suggestedName={suggestedPlaylistName(filters, q)}
+                primary
+                counting={
+                  selection.matching && inLibraryCount.total === undefined
+                }
+                blocked={
+                  selection.matching ? matchingBlocked(inLibraryCount) : null
+                }
+                onAdded={selection.clear}
+              />
+            }
+          />
+        )}
       </div>
       {embedded ? null : mixes ? (
         <DetailInspector
