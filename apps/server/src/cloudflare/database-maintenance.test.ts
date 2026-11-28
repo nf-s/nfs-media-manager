@@ -32,7 +32,7 @@ vi.mock('@/services/track-duplicates', () => ({
   refreshTrackDuplicatesForMaintenance: refreshDuplicates,
 }))
 vi.mock('@/services/device-feed', () => ({
-  refreshDeviceFeedForMaintenance: refreshDeviceFeed,
+  runDeviceFeedMaintenance: refreshDeviceFeed,
 }))
 
 const dailyTick = Date.UTC(2026, 0, 1, 20, 0)
@@ -190,6 +190,31 @@ describe('scheduled database monitoring', () => {
       outcome: 'published',
       durationMs: expect.any(Number),
       renderFailures: { track: 2, album_plays: 1 },
+    })
+  })
+
+  it('gives the device feed the scheduled time and records its run in counts', async () => {
+    const run = {
+      marksRead: 3000,
+      idsSwept: 20_500,
+      rowsRendered: 24_000,
+      rowsWritten: 23_000,
+      stoppedAtCeiling: true,
+    }
+    refreshDeviceFeed.mockResolvedValue({
+      published: true,
+      renderFailures: {},
+      run,
+    })
+    await runDatabaseMaintenance(dailyTick + 5 * 60_000)
+    expect(refreshDeviceFeed).toHaveBeenCalledExactlyOnceWith({
+      scheduledTime: dailyTick + 5 * 60_000,
+    })
+    expect(log).toHaveBeenCalledWith({
+      event: 'database.device-feed-maintenance',
+      outcome: 'published',
+      durationMs: expect.any(Number),
+      ...run,
     })
   })
 

@@ -54,7 +54,7 @@ const pageByteBudget = 4 * 1024 * 1024
 const maintenanceMarkBatch = 1000
 const requestMarkBatch = 200
 const requestFirstMarkBatch = 20
-/** IDs listed per sweep batch, and at most per maintenance run. */
+/** IDs listed per sweep batch, and at most per maintenance run without a backlog. */
 const sweepBatch = 500
 const sweepRowsPerRun = 20_000
 /**
@@ -68,6 +68,19 @@ const changesRenderBudgetMs = 2_000
 /** Within the five-minute maintenance invocation. */
 const maintenanceRenderBudgetMs = 15_000
 const maintenanceBudgetMs = 30_000
+/**
+ * While a backlog remains after `maintenanceBudgetMs`, a run goes on in
+ * phases of rendering and building of at most `backlogPhaseMs` each, so no
+ * batch is given longer than one within the first 30 seconds. It stops
+ * `backlogBudgetMs` after it started, `runEndsAfterTickMs` after its
+ * scheduled time, so that it ends before the next tick, and once it has
+ * rendered `backlogRowsPerRun` rows: about 0.18 ms of CPU a track row in
+ * Node, so about 9 seconds of the Worker's 30.
+ */
+const backlogPhaseMs = 15_000
+const backlogBudgetMs = 240_000
+const runEndsAfterTickMs = 270_000
+const backlogRowsPerRun = 50_000
 const tombstonesPrunedPerRun = 10_000
 
 let configuredRenderer: DeviceFeedRenderer = deviceRowRenderer
@@ -398,7 +411,7 @@ async function renderDirtyBatch(
   return withFeedLock(options, async (tx) => {
     const failed: DeviceRenderFailures = {}
     if (!isCurrent(await readStoredState(tx)))
-      return { read: 0, written: 0, failed }
+      return { read: 0, rendered: 0, written: 0, failed }
     const marks = MarkRowsSchema.parse(
       (
         await tx.execute(sql`select key, entity, id from device_dirty
@@ -406,6 +419,7 @@ async function renderDirtyBatch(
       ).rows,
     )
     const batch = groupDeviceMarks(marks)
+    let rendered = 0
     let written = 0
     for (const { entity, ids } of batch.entities) {
       const all = renderer.expand
@@ -418,14 +432,24 @@ async function renderDirtyBatch(
         all,
         options.deadline,
       )
+      rendered += all.length
       written += result.written
       addFailures(failed, result.failures)
     }
     if (batch.keys.length > 0)
       await tx.execute(sql`delete from device_dirty
         where key = any(${sql.param(batch.keys)}::bigint[])`)
-    return { read: marks.length, written, failed }
+    return { read: marks.length, rendered, written, failed }
   })
+}
+
+type RenderOptions = {
+  wait: boolean
+  deadline: number
+  limit?: number
+  first?: number
+  /** No batch is started once this many rows were rendered. */
+  maxRows?: number
 }
 
 /**
@@ -436,30 +460,55 @@ async function renderDirtyBatch(
  * mark fits. With a small first batch, a slow render overruns the deadline
  * by about one small batch, and a run that finds marks always renders some.
  * `busy` says another writer held the lock; `failed` counts the rows set
- * aside.
+ * aside; `marks` counts the marks read, `rendered` the rows rendered with
+ * the IDs a renderer adds, and `remaining` says the last batch read as many
+ * marks as it asked for, so more may wait.
  */
-export async function renderDirtyDeviceRows(
+async function renderMarks(
   renderer: DeviceFeedRenderer,
-  options: { wait: boolean; deadline: number; limit?: number; first?: number },
+  options: RenderOptions,
 ) {
   const limit = options.limit ?? maintenanceMarkBatch
-  let size = Math.min(limit, options.first ?? limit)
-  let read = 0
+  const maxRows = options.maxRows ?? Infinity
+  let size = Math.min(limit, options.first ?? limit, maxRows)
+  let timed = 0
   const started = Date.now()
+  let marks = 0
+  let rendered = 0
   let written = 0
   const failed: DeviceRenderFailures = {}
   while (size > 0 && Date.now() < options.deadline) {
     const batch = await renderDirtyBatch(renderer, { ...options, limit: size })
-    if (!batch) return { written, busy: true, failed }
+    if (!batch)
+      return {
+        written,
+        busy: true,
+        failed,
+        marks,
+        rendered,
+        remaining: false,
+      }
+    marks += batch.read
+    rendered += batch.rendered
     written += batch.written
     addFailures(failed, batch.failed)
-    if (batch.read < size) break
-    read += batch.read
-    const msPerMark = Math.max(1, Date.now() - started) / read
+    if (batch.read < size)
+      return { written, busy: false, failed, marks, rendered, remaining: false }
+    timed += batch.read
+    const msPerMark = Math.max(1, Date.now() - started) / timed
     const fits = Math.floor((options.deadline - Date.now()) / msPerMark)
-    size = Math.min(limit, 2 * size, fits)
+    size = Math.min(limit, 2 * size, fits, maxRows - rendered)
   }
-  return { written, busy: false, failed }
+  return { written, busy: false, failed, marks, rendered, remaining: true }
+}
+
+/** Renders marked rows as `renderMarks` does (DEVICE-04). */
+export async function renderDirtyDeviceRows(
+  renderer: DeviceFeedRenderer,
+  options: { wait: boolean; deadline: number; limit?: number; first?: number },
+) {
+  const { written, busy, failed } = await renderMarks(renderer, options)
+  return { written, busy, failed }
 }
 
 /** The entity a sweep walks after `entity`; the first one after null. */
@@ -505,6 +554,12 @@ type SweepOptions = {
  * rows in the listed range that were not listed. Every ID comparison happens
  * here in SQL, in the collation `listIds` orders by. Completing the last
  * entity marks the feed ready.
+ *
+ * The cursor never names an entity none of whose IDs it has passed: an
+ * entity ends at an empty listing, and the batch goes on with the next
+ * entity in the same transaction. A server without an added entity can then
+ * read the state until the sweep is within that entity, and not at all
+ * while the entity has fewer IDs than a batch.
  */
 async function sweepBatchUnderLock(
   renderer: DeviceFeedRenderer,
@@ -513,49 +568,59 @@ async function sweepBatchUnderLock(
   return withFeedLock(options, async (tx) => {
     const state = await readStoredState(tx)
     // A feed of another row version is restarted before it is swept.
-    const { entity, after } = sweepCursor(state)
+    let { entity, after } = sweepCursor(state)
     if (!isCurrent(state) || !entity) return undefined
     if (options.onlyWhenDue && !state.sweep_due) return undefined
-    const listed = await renderer.listIds(entity, after, options.limit)
-    const result =
-      listed.length > 0
-        ? await renderAndWrite(tx, renderer, entity, listed, options.deadline)
-        : { written: 0, failures: {} }
-    let written = result.written
-    const last = listed.length < options.limit ? undefined : listed.at(-1)
-    // A listed row set aside is in `listed`, so it is not tombstoned.
-    written += await tombstone(
-      tx,
-      entity,
-      sql`(${after}::text is null or id > ${after})
-        and (${last ?? null}::text is null or id <= ${last ?? null})
-        and id <> all(${sql.param(listed)}::text[])`,
-    )
-    const next = last
-      ? { entity, after: last }
-      : { entity: sweptAfter(entity), after: null }
-    const complete = next.entity === undefined
-    await tx.execute(sql`update device_feed_state set
-      sweep_entity = ${next.entity ?? null}, sweep_after = ${next.after},
-      ready = ready or ${complete},
-      swept_at = case when ${complete} then now() else swept_at end,
-      built_entities = case when ${complete} then ${sweepOrder.length}
-        else built_entities end
-      where singleton`)
-    return {
-      listed: listed.length,
-      written,
-      complete,
-      failed: result.failures,
+    const failed: DeviceRenderFailures = {}
+    let written = 0
+    for (;;) {
+      const listed = await renderer.listIds(entity, after, options.limit)
+      const result =
+        listed.length > 0
+          ? await renderAndWrite(tx, renderer, entity, listed, options.deadline)
+          : { written: 0, failures: {} }
+      written += result.written
+      addFailures(failed, result.failures)
+      const following = sweptAfter(entity)
+      // Past the end of the entity only from an empty listing, or the last.
+      const last =
+        listed.length < options.limit &&
+        (listed.length === 0 || following === undefined)
+          ? undefined
+          : listed.at(-1)
+      // A listed row set aside is in `listed`, so it is not tombstoned.
+      written += await tombstone(
+        tx,
+        entity,
+        sql`(${after}::text is null or id > ${after})
+          and (${last ?? null}::text is null or id <= ${last ?? null})
+          and id <> all(${sql.param(listed)}::text[])`,
+      )
+      if (last || !following) {
+        const next = last ? { entity, after: last } : undefined
+        const complete = next === undefined
+        await tx.execute(sql`update device_feed_state set
+          sweep_entity = ${next?.entity ?? null}, sweep_after = ${next?.after ?? null},
+          ready = ready or ${complete},
+          swept_at = case when ${complete} then now() else swept_at end,
+          built_entities = case when ${complete} then ${sweepOrder.length}
+            else built_entities end
+          where singleton`)
+        return { listed: listed.length, written, complete, failed }
+      }
+      entity = following
+      after = null
     }
   })
 }
 
 /**
  * Sweeps up to `maxRows` IDs before `deadline`; `complete` when a sweep
- * finished, `failed` counting the rows set aside.
+ * finished, `failed` counting the rows set aside, `listed` the IDs swept,
+ * and `remaining` says the sweep stopped at `maxRows` or `deadline` with
+ * more to do.
  */
-export async function sweepDeviceFeed(
+async function sweepRows(
   renderer: DeviceFeedRenderer,
   options: SweepOptions & { maxRows?: number; limit?: number },
 ) {
@@ -567,12 +632,21 @@ export async function sweepDeviceFeed(
   const failed: DeviceRenderFailures = {}
   while (!complete && listed < maxRows && Date.now() < options.deadline) {
     const batch = await sweepBatchUnderLock(renderer, { ...options, limit })
-    if (!batch) break
+    if (!batch) return { written, complete, failed, listed, remaining: false }
     listed += batch.listed
     written += batch.written
     complete = batch.complete
     addFailures(failed, batch.failed)
   }
+  return { written, complete, failed, listed, remaining: !complete }
+}
+
+/** Sweeps as `sweepRows` does (DEVICE-05). */
+export async function sweepDeviceFeed(
+  renderer: DeviceFeedRenderer,
+  options: SweepOptions & { maxRows?: number; limit?: number },
+) {
+  const { written, complete, failed } = await sweepRows(renderer, options)
   return { written, complete, failed }
 }
 
@@ -626,52 +700,151 @@ export async function pruneDeviceTombstones(deadline: number) {
 }
 
 /**
+ * What one maintenance run did, in counts only: marks read, IDs swept, rows
+ * rendered (marks with the IDs a renderer adds, and IDs swept), rows written
+ * and pruned, and whether it stopped at its time or row ceiling with a
+ * backlog left.
+ */
+export interface DeviceFeedRunCounts {
+  marksRead: number
+  idsSwept: number
+  rowsRendered: number
+  rowsWritten: number
+  stoppedAtCeiling: boolean
+}
+
+export interface DeviceFeedMaintenance {
+  published: boolean
+  renderFailures: DeviceRenderFailures
+  run: DeviceFeedRunCounts
+}
+
+/**
  * The five-minute maintenance task: restarts the feed for a new row
  * version, renders marked rows, continues a due sweep and prunes old
  * tombstones. One read decides which of them has work, so a run with none
- * is one statement. `published` says whether it changed the feed;
- * `renderFailures` counts the rows set aside.
+ * is one statement. It renders for 15 seconds and sweeps until 30, as long
+ * as a run without a backlog takes. While marks remain after that, or a
+ * build is unfinished (a first build, one after a restart, or an entity
+ * added since the last completed sweep), it goes on in alternating phases
+ * up to its ceiling. A routine sweep of a built feed is no backlog.
+ * `published` says whether it changed the feed; `renderFailures` counts the
+ * rows set aside.
  */
+export async function runDeviceFeedMaintenance(
+  options: { renderer?: DeviceFeedRenderer; scheduledTime?: number } = {},
+): Promise<DeviceFeedMaintenance> {
+  const renderer = options.renderer ?? configuredRenderer
+  const start = Date.now()
+  const ceiling = Math.min(
+    start + backlogBudgetMs,
+    options.scheduledTime === undefined
+      ? Infinity
+      : options.scheduledTime + runEndsAfterTickMs,
+  )
+  const renderFailures: DeviceRenderFailures = {}
+  const run: DeviceFeedRunCounts = {
+    marksRead: 0,
+    idsSwept: 0,
+    rowsRendered: 0,
+    rowsWritten: 0,
+    stoppedAtCeiling: false,
+  }
+  let restarted = false
+  let renderMs = 0
+  /**
+   * Renders marks until `deadline`; true when marks may remain. With
+   * `fitted`, the first batch reads as many marks as the run's time per mark
+   * so far fits before `deadline`.
+   */
+  const render = async (deadline: number, maxRows?: number, fitted = false) => {
+    const began = Date.now()
+    const done = await renderMarks(renderer, {
+      wait: true,
+      deadline,
+      maxRows,
+      first:
+        fitted && run.marksRead > 0
+          ? Math.max(
+              1,
+              Math.floor(
+                ((deadline - began) * run.marksRead) / Math.max(1, renderMs),
+              ),
+            )
+          : undefined,
+    })
+    renderMs += Date.now() - began
+    run.marksRead += done.marks
+    run.rowsRendered += done.rendered
+    run.rowsWritten += done.written
+    addFailures(renderFailures, done.failed)
+    return done.remaining
+  }
+  /** Sweeps until `deadline`; true when the sweep stopped with more to do. */
+  const sweep = async (deadline: number, maxRows?: number) => {
+    const done = await sweepRows(renderer, {
+      wait: true,
+      deadline,
+      onlyWhenDue: true,
+      maxRows,
+    })
+    run.idsSwept += done.listed
+    run.rowsRendered += done.listed
+    run.rowsWritten += done.written
+    addFailures(renderFailures, done.failed)
+    return done.remaining
+  }
+  const result = () => ({
+    published: restarted || run.rowsWritten > 0,
+    renderFailures,
+    run,
+  })
+  try {
+    const state = await readMaintenanceState()
+    const budgetEnd = Math.min(start + maintenanceBudgetMs, ceiling)
+    restarted = !isCurrent(state) && (await startCurrentDeviceFeed(budgetEnd))
+    let marksRemain = state.pending
+      ? await render(Math.min(start + maintenanceRenderBudgetMs, ceiling))
+      : false
+    const building = restarted || !isReady(state)
+    const sweepRemains =
+      restarted || state.sweep_due ? await sweep(budgetEnd) : false
+    if (state.prunable)
+      run.rowsWritten += await pruneDeviceTombstones(budgetEnd)
+    let buildRemains = building && sweepRemains
+    const phaseEnd = () => Math.min(Date.now() + backlogPhaseMs, ceiling)
+    const underCeiling = () =>
+      Date.now() < ceiling && run.rowsRendered < backlogRowsPerRun
+    while ((marksRemain || buildRemains) && underCeiling()) {
+      marksRemain = await render(
+        phaseEnd(),
+        backlogRowsPerRun - run.rowsRendered,
+        true,
+      )
+      if (buildRemains && underCeiling())
+        buildRemains = await sweep(
+          phaseEnd(),
+          backlogRowsPerRun - run.rowsRendered,
+        )
+    }
+    run.stoppedAtCeiling = marksRemain || buildRemains
+    return result()
+  } catch (error) {
+    // Lock waits, timeouts and tables not yet migrated leave the rest of the
+    // work to the next tick; what earlier calls committed counts.
+    if (canReadDatabaseWithoutCache(error)) return result()
+    throw error
+  }
+}
+
+/** One maintenance run, as `runDeviceFeedMaintenance` without its counts. */
 export async function refreshDeviceFeedForMaintenance(
   renderer: DeviceFeedRenderer = configuredRenderer,
 ): Promise<{ published: boolean; renderFailures: DeviceRenderFailures }> {
-  const start = Date.now()
-  const renderFailures: DeviceRenderFailures = {}
-  try {
-    const state = await readMaintenanceState()
-    const restarted =
-      !isCurrent(state) &&
-      (await startCurrentDeviceFeed(start + maintenanceBudgetMs))
-    const render = state.pending
-      ? await renderDirtyDeviceRows(renderer, {
-          wait: true,
-          deadline: start + maintenanceRenderBudgetMs,
-        })
-      : { written: 0, failed: {} }
-    addFailures(renderFailures, render.failed)
-    const sweep =
-      restarted || state.sweep_due
-        ? await sweepDeviceFeed(renderer, {
-            wait: true,
-            deadline: start + maintenanceBudgetMs,
-            onlyWhenDue: true,
-          })
-        : { written: 0, failed: {} }
-    addFailures(renderFailures, sweep.failed)
-    const pruned = state.prunable
-      ? await pruneDeviceTombstones(start + maintenanceBudgetMs)
-      : 0
-    return {
-      published: restarted || render.written + sweep.written + pruned > 0,
-      renderFailures,
-    }
-  } catch (error) {
-    // Lock waits, timeouts and tables not yet migrated leave the work to the
-    // next tick.
-    if (canReadDatabaseWithoutCache(error))
-      return { published: false, renderFailures }
-    throw error
-  }
+  const { published, renderFailures } = await runDeviceFeedMaintenance({
+    renderer,
+  })
+  return { published, renderFailures }
 }
 
 function needsReset(

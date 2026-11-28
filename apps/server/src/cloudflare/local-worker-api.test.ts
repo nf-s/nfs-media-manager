@@ -253,16 +253,10 @@ afterEach(() => {
 })
 
 describe('scheduled Worker tasks', () => {
-  it('flushes due Sonos scrobbles with scraping disabled and isolates failures from imports', async () => {
+  function scheduled(scheduledTime: number, background: Promise<unknown>[]) {
     const bindings = bindingContext.getStore()
     if (!bindings) throw new Error('Missing test worker bindings')
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-    mocks.env.SCRAPING_ENABLED = false
-    mocks.flushDueLastfmPlays.mockRejectedValue(new Error('Provider failure'))
-    const background: Promise<unknown>[] = []
-    const scheduledTime = Date.now()
-
-    await worker.scheduled(
+    return worker.scheduled(
       { cron: '*/5 * * * *', scheduledTime, noRetry: vi.fn() },
       bindings,
       {
@@ -278,6 +272,16 @@ describe('scheduled Worker tasks', () => {
         abort: vi.fn(),
       },
     )
+  }
+
+  it('flushes due Sonos scrobbles with scraping disabled and isolates failures from imports', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.env.SCRAPING_ENABLED = false
+    mocks.flushDueLastfmPlays.mockRejectedValue(new Error('Provider failure'))
+    const background: Promise<unknown>[] = []
+    const scheduledTime = Date.now()
+
+    await scheduled(scheduledTime, background)
     await Promise.all(background)
 
     expect(mocks.flushDueLastfmPlays).toHaveBeenCalledTimes(1)
@@ -288,6 +292,49 @@ describe('scheduled Worker tasks', () => {
     expect(log).toHaveBeenCalledExactlyOnceWith(
       'Last.fm scrobble flush failed.',
     )
+  })
+
+  it('awaits maintenance with the dispatch, so neither failure stops the other', async () => {
+    mocks.env.SCRAPING_ENABLED = false
+    let finishMaintenance = () => {}
+    mocks.runDatabaseMaintenance.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishMaintenance = resolve
+      }),
+    )
+    const background: Promise<unknown>[] = []
+    let settled = false
+    const handler = scheduled(Date.now(), background).finally(() => {
+      settled = true
+    })
+    await vi.waitFor(() =>
+      expect(mocks.dispatchQueuedImports).toHaveBeenCalledOnce(),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Only the Last.fm flush is left to `waitUntil`.
+    expect(background).toHaveLength(1)
+    expect(settled).toBe(false)
+    finishMaintenance()
+    await handler
+
+    // A failing dispatch fails the invocation; maintenance still runs.
+    const dispatchFailure = new Error('fixture dispatch failure')
+    mocks.dispatchQueuedImports.mockRejectedValue(dispatchFailure)
+    mocks.runDatabaseMaintenance.mockResolvedValue(undefined)
+    await expect(scheduled(Date.now(), background)).rejects.toBe(
+      dispatchFailure,
+    )
+    expect(mocks.runDatabaseMaintenance).toHaveBeenCalledTimes(2)
+
+    // A failing maintenance run leaves the dispatch to finish, and fails it.
+    const maintenanceFailure = new Error('fixture maintenance failure')
+    mocks.dispatchQueuedImports.mockResolvedValue(undefined)
+    mocks.runDatabaseMaintenance.mockRejectedValue(maintenanceFailure)
+    await expect(scheduled(Date.now(), background)).rejects.toBe(
+      maintenanceFailure,
+    )
+    expect(mocks.dispatchQueuedImports).toHaveBeenCalledTimes(3)
+    await Promise.all(background)
   })
 })
 

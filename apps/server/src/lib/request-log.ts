@@ -130,6 +130,12 @@ type RequestEvent =
       outcome: 'published' | 'skipped' | 'failed'
       durationMs: number
       renderFailures?: DeviceRenderFailures
+      // Device feed maintenance: counts only, never IDs or content.
+      marksRead?: number
+      idsSwept?: number
+      rowsRendered?: number
+      rowsWritten?: number
+      stoppedAtCeiling?: boolean
     }
   | ({ event: 'api.request'; method: string; status: number } & PhaseMetrics & {
         phases?: RequestLogContext['phases']

@@ -33,6 +33,7 @@ import {
   readDeviceChanges,
   refreshDeviceFeedForMaintenance,
   renderDirtyDeviceRows,
+  runDeviceFeedMaintenance,
   setDeviceFeedRenderer,
   sweepDeviceFeed,
   type DeviceFeedRenderer,
@@ -924,6 +925,211 @@ describe('device feed', () => {
     expect(await markCount()).toBe(0)
   })
 
+  describe('a maintenance run with a backlog', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const backlogId = (n: number) => `album-${String(n).padStart(5, '0')}`
+
+    /**
+     * A built feed of `count` rows, each changed and marked since. Each row
+     * renders in `msPerRow` by the clock, which the renderer moves on itself.
+     */
+    async function markedBacklog(count: number, msPerRow: number) {
+      const stub = stubRenderer()
+      const ids = Array.from({ length: count }, (_, n) => backlogId(n + 1))
+      for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+      await sweepAll(stub.renderer)
+      for (const [n, id] of ids.entries())
+        stub.set('album_plays', id, plays(n, 100))
+      await pool.query(
+        `insert into device_dirty (entity, id) select 'album_plays', id from unnest($1::text[]) id`,
+        [ids],
+      )
+      vi.useFakeTimers({ toFake: ['Date'] })
+      stub.hooks.beforeRender = async (renderIds) => {
+        vi.setSystemTime(Date.now() + msPerRow * renderIds.length)
+      }
+      return stub
+    }
+
+    /** A renderer listing `count` track IDs that render nothing, so writes nothing. */
+    function listingOnly(count: number): DeviceFeedRenderer {
+      const ids = Array.from({ length: count }, (_, n) => backlogId(n + 1))
+      return {
+        async render() {
+          return new Map()
+        },
+        async listIds(entity, afterId, limit) {
+          if (entity !== 'track') return []
+          const from = afterId === null ? 0 : ids.indexOf(afterId) + 1
+          return ids.slice(from, from + limit)
+        },
+      }
+    }
+
+    it('renders marks past the first 30 seconds until none remain', async () => {
+      // 30 seconds of rendering: twice the 15 seconds a run rendered for.
+      const stub = await markedBacklog(3000, 10)
+      const started = Date.now()
+      const { run, published } = await runDeviceFeedMaintenance({
+        renderer: stub.renderer,
+      })
+      expect(Date.now() - started).toBeGreaterThanOrEqual(30_000)
+      expect(published).toBe(true)
+      expect(run).toEqual({
+        marksRead: 3000,
+        idsSwept: 0,
+        rowsRendered: 3000,
+        rowsWritten: 3000,
+        stoppedAtCeiling: false,
+      })
+      expect(await markCount()).toBe(0)
+    })
+
+    it('stops 240 seconds after it started', async () => {
+      const stub = await markedBacklog(3000, 100)
+      const started = Date.now()
+      const { run } = await runDeviceFeedMaintenance({
+        renderer: stub.renderer,
+      })
+      expect(Date.now() - started).toBeLessThanOrEqual(240_000)
+      expect(run.stoppedAtCeiling).toBe(true)
+      // A first batch of 1000 marks, then batches fitted to the time left.
+      expect(run.marksRead).toBeGreaterThan(2300)
+      expect(await markCount()).toBe(3000 - run.marksRead)
+    })
+
+    it('stops 270 seconds after its scheduled time', async () => {
+      const stub = await markedBacklog(3000, 20)
+      const started = Date.now()
+      const { run } = await runDeviceFeedMaintenance({
+        renderer: stub.renderer,
+        scheduledTime: started - 230_000,
+      })
+      expect(Date.now() - started).toBeLessThanOrEqual(40_000)
+      expect(run.stoppedAtCeiling).toBe(true)
+      expect(run.marksRead).toBeGreaterThan(1900)
+      expect(await markCount()).toBe(3000 - run.marksRead)
+    })
+
+    it('builds past 20,000 IDs in a run, up to its row cap', async () => {
+      const { run } = await runDeviceFeedMaintenance({
+        renderer: listingOnly(60_000),
+      })
+      expect(run).toMatchObject({ marksRead: 0, stoppedAtCeiling: true })
+      // The cap is 50,000 rows; the last sweep batch may pass it.
+      expect(run.idsSwept).toBeGreaterThanOrEqual(50_000)
+      expect(run.idsSwept).toBeLessThan(50_500)
+      expect(await feedState()).toMatchObject({ ready: false })
+      // The next run continues the build.
+      const next = await runDeviceFeedMaintenance({
+        renderer: listingOnly(60_000),
+      })
+      expect(run.idsSwept + next.run.idsSwept).toBe(60_000)
+      expect(next.run.stoppedAtCeiling).toBe(false)
+      expect(await feedState()).toMatchObject({ ready: true })
+    })
+
+    it('keeps a routine sweep of a built feed to 20,000 IDs a run', async () => {
+      await pool.query(`update device_feed_state set ready = true,
+        swept_at = now() - interval '25 hours'`)
+      const { run } = await runDeviceFeedMaintenance({
+        renderer: listingOnly(60_000),
+      })
+      expect(run).toEqual({
+        marksRead: 0,
+        idsSwept: 20_000,
+        rowsRendered: 20_000,
+        rowsWritten: 0,
+        stoppedAtCeiling: false,
+      })
+    })
+
+    it('leaves changes and ordinary writes unblocked while a batch holds the lock', async () => {
+      const stub = stubRenderer()
+      const ids = Array.from({ length: 200 }, (_, n) => backlogId(n + 1))
+      for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+      await sweepAll(stub.renderer)
+      const { epoch, seq } = await feedState()
+      await mark('album_plays', ...ids)
+      let rendering = () => {}
+      const held = new Promise<void>((resolve) => {
+        rendering = resolve
+      })
+      let release = () => {}
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      stub.hooks.beforeRender = async () => {
+        stub.hooks.beforeRender = undefined
+        rendering()
+        await released
+      }
+      const running = runDeviceFeedMaintenance({ renderer: stub.renderer })
+      await held
+      try {
+        // `changes` only tries the lock, so it answers at once.
+        const asked = performance.now()
+        const page = await readDeviceChanges(
+          { epoch, since: seq, limit: 100 },
+          stub.renderer,
+        )
+        expect(performance.now() - asked).toBeLessThan(1_000)
+        expect(page).toMatchObject({ reset: false, rows: [], pending: true })
+        // A write's trigger marks its row without waiting for the lock.
+        const writer = new pg.Client({
+          ...connection,
+          database,
+          statement_timeout: 1_000,
+        })
+        await writer.connect()
+        try {
+          await writer.query(`insert into library_playlist (id, library, type, name)
+            values ('lp-during', 'tracks', 'playlist', 'During')`)
+        } finally {
+          await writer.end()
+        }
+        const marked = await pool.query(
+          "select 1 from device_dirty where entity = 'library_playlist' and id = 'lp-during'",
+        )
+        expect(marked.rows).toHaveLength(1)
+      } finally {
+        release()
+        await running
+        await pool.query("delete from library_playlist where id = 'lp-during'")
+      }
+    })
+
+    it('takes turns with an overlapping run, each mark rendered once', async () => {
+      const stub = stubRenderer()
+      const ids = Array.from({ length: 2000 }, (_, n) => backlogId(n + 1))
+      for (const [n, id] of ids.entries()) stub.set('album_plays', id, plays(n))
+      await sweepAll(stub.renderer)
+      const { seq } = await feedState()
+      for (const [n, id] of ids.entries())
+        stub.set('album_plays', id, plays(n, 100))
+      await pool.query(
+        `insert into device_dirty (entity, id) select 'album_plays', id from unnest($1::text[]) id`,
+        [ids],
+      )
+      stub.hooks.beforeRender = () =>
+        new Promise((resolve) => setTimeout(resolve, 5))
+      const runs = await Promise.all([
+        runDeviceFeedMaintenance({ renderer: stub.renderer }),
+        runDeviceFeedMaintenance({ renderer: stub.renderer }),
+      ])
+      // Each took batches in turn; no mark was read twice.
+      for (const { run } of runs) expect(run.marksRead).toBeGreaterThan(0)
+      expect(runs.reduce((sum, { run }) => sum + run.marksRead, 0)).toBe(2000)
+      expect(runs.reduce((sum, { run }) => sum + run.rowsWritten, 0)).toBe(2000)
+      expect(await markCount()).toBe(0)
+      const renumbered = (await storedRows()).filter((row) => row.seq > seq)
+      expect(renumbered).toHaveLength(2000)
+    })
+  })
+
   describe('an entity added after the feed was built', () => {
     // A feed built before library playlists covered the entities before it.
     const covered = DeviceEntitySchema.options.indexOf('library_playlist')
@@ -1065,6 +1271,35 @@ describe('device feed', () => {
         before.get(changed) ?? Infinity,
       )
       before.delete(changed)
+      await expectBuilt(before)
+    })
+
+    it('never leaves the cursor at the new entity while it has fewer IDs than a batch', async () => {
+      const { renderer, before } = await builtBeforeLibraryPlaylists()
+      await pool.query(
+        `update device_feed_state set ready = false, sweep_entity = 'album_plays',
+          sweep_after = $1, swept_at = null`,
+        [fixtureId(1)],
+      )
+      // The cursor each batch starts from, as another connection reads it.
+      const cursors: (string | null)[] = []
+      const watched: DeviceFeedRenderer = {
+        ...renderer,
+        async listIds(entity, afterId, limit) {
+          const state = await pool.query(
+            'select sweep_entity from device_feed_state',
+          )
+          cursors.push(
+            z
+              .object({ sweep_entity: z.string().nullable() })
+              .parse(state.rows[0]).sweep_entity,
+          )
+          return renderer.listIds(entity, afterId, limit)
+        },
+      }
+      await sweepAll(watched)
+      expect(cursors).not.toContain('library_playlist')
+      expect(new Set(cursors)).toEqual(new Set(['album_plays']))
       await expectBuilt(before)
     })
   })
