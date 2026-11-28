@@ -51,3 +51,18 @@ test('In the drawer, More actions adds Open page', () => {
   assert.deepEqual(labels, ['Open page', 'Copy link'])
   assert.match(html, /href="\/albums\/album-1\?tab=edit"/)
 })
+
+test('the detail menu stays beside its button and is not a row sheet', () => {
+  const html = renderToStaticMarkup(
+    <DetailMore crumb={{ title: 'Fixture album' }} />,
+  )
+  assert.match(
+    html,
+    /<div id="[^"]+" popover="auto" role="menu" aria-label="More actions" class="ds-pop dtl-more-pop">/,
+  )
+  assert.doesNotMatch(html, /data-sheet/)
+  assert.match(
+    html,
+    /<button class="ds-btn" data-variant="ghost" data-size="md"/,
+  )
+})

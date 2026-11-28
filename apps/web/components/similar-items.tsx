@@ -186,9 +186,11 @@ export function spotifyAlbumPlayable(
 function SpotifyPlayButton({
   item,
   place,
+  more,
 }: {
   item: PlayableItem
   place: 'row' | 'tile'
+  more?: ReactNode
 }) {
   const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
@@ -202,6 +204,7 @@ function SpotifyPlayButton({
         disabledReason={unavailableReason(true, view)}
         onPlay={() => undefined}
         onQueue={() => undefined}
+        more={more}
       />
     )
   const { snapshot } = view
@@ -219,6 +222,7 @@ function SpotifyPlayButton({
         )
       }
       onQueue={() => pair.enqueue(item, () => controls.enqueue(item))}
+      more={more}
     />
   )
 }

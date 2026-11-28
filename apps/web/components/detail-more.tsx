@@ -1,39 +1,18 @@
 'use client'
 
-import Link from 'next/link'
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Ellipsis } from 'lucide-react'
+import { Ellipsis } from 'lucide-react'
 import {
   Button,
   type ButtonFeedback,
   type ButtonSize,
 } from '@repo/ui/components/ui/button'
 import type { DetailCrumb } from '@/utils/detail-inspector'
-import { workspaceTabLinkProps } from '@/utils/workspace-tab-destination'
+import { ActionMenu, type DetailMenuItem } from './action-menu'
 import { useInspectorPage } from './detail-inspector-context'
 
-/**
- * A secondary action of an item: something to do, somewhere to go, or a
- * setting chosen from a named group, the current choice ticked.
- */
-export type DetailMenuItem =
-  | {
-      label: string
-      onSelect: () => void
-      disabled?: boolean
-      workspaceHref?: string
-    }
-  | { label: string; href: string; workspaceLabel?: string }
-  | {
-      group: string
-      choices: readonly {
-        label: string
-        checked: boolean
-        onSelect: () => void
-      }[]
-      disabled?: boolean
-    }
+export type { DetailMenuItem } from './action-menu'
 
 /**
  * More actions, the last button of every detail header: the item's own
@@ -100,45 +79,9 @@ function MoreMenu({
   className?: string
   feedback?: ButtonFeedback
 }) {
-  const id = useId()
-  const trigger = useRef<HTMLButtonElement>(null)
-  const panel = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
   const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>(
     'idle',
   )
-  useEffect(() => {
-    if (!open) {
-      setCopy('idle')
-      return
-    }
-    panel.current
-      ?.querySelector<HTMLElement>('[role^="menuitem"]:not([disabled])')
-      ?.focus({ preventScroll: true })
-    function position() {
-      if (!trigger.current || !panel.current) return
-      const rect = trigger.current.getBoundingClientRect()
-      const box = panel.current.getBoundingClientRect()
-      panel.current.style.left = `${Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8))}px`
-      const below = rect.bottom + 4
-      panel.current.style.top = `${
-        below + box.height > window.innerHeight - 8
-          ? Math.max(8, rect.top - box.height - 4)
-          : below
-      }px`
-    }
-    position()
-    window.addEventListener('resize', position)
-    window.addEventListener('scroll', position, true)
-    return () => {
-      window.removeEventListener('resize', position)
-      window.removeEventListener('scroll', position, true)
-    }
-  }, [open])
-  function close() {
-    panel.current?.hidePopover()
-    trigger.current?.focus({ preventScroll: true })
-  }
   async function copyLink() {
     setCopy('copying')
     const url = pageHref
@@ -151,153 +94,52 @@ function MoreMenu({
       setCopy('failed')
     }
   }
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      close()
-      return
-    }
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const options = [
-      ...(panel.current?.querySelectorAll<HTMLElement>(
-        '[role^="menuitem"]:not([disabled])',
-      ) ?? []),
-    ]
-    if (!options.length) return
-    event.preventDefault()
-    const current = options.findIndex(
-      (option) => option === document.activeElement,
-    )
-    const next =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? options.length - 1
-          : event.key === 'ArrowDown'
-            ? (current + 1) % options.length
-            : (current - 1 + options.length) % options.length
-    options[next]?.focus()
-  }
   return (
-    <>
-      <Button
-        ref={trigger}
-        type="button"
-        variant="ghost"
-        size={size}
-        icon
-        feedback={feedback}
-        className={className}
-        aria-label="More actions"
-        title="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={id}
-        popoverTarget={id}
-      >
-        <Ellipsis className="ds-i" aria-hidden="true" />
-      </Button>
-      <div
-        id={id}
-        ref={panel}
-        popover="auto"
-        role="menu"
-        aria-label="More actions"
-        className="ds-pop dtl-more-pop"
-        onToggle={(event) => setOpen(event.newState === 'open')}
-        onKeyDown={onKeyDown}
-      >
-        {items.map((item) =>
-          'choices' in item ? (
-            <div
-              key={item.group}
-              role="group"
-              aria-label={item.group}
-              className="ds-menu-group"
-            >
-              <div className="ds-pop-head" aria-hidden="true">
-                {item.group}
-              </div>
-              {item.choices.map((choice) => (
-                <button
-                  key={choice.label}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={choice.checked}
-                  className="ds-menu-item"
-                  disabled={item.disabled}
-                  onClick={() => {
-                    close()
-                    if (!choice.checked) choice.onSelect()
-                  }}
-                >
-                  {choice.checked ? (
-                    <Check className="ds-i" data-size="sm" aria-hidden />
-                  ) : (
-                    <span className="ds-menu-slot" />
-                  )}
-                  {choice.label}
-                </button>
-              ))}
-            </div>
-          ) : 'href' in item ? (
-            <Link
-              key={item.label}
-              {...(item.workspaceLabel
-                ? workspaceTabLinkProps(item.href, item.workspaceLabel)
-                : undefined)}
-              href={item.href}
-              prefetch={false}
-              role="menuitem"
-              className="ds-menu-item"
-              onClick={() => panel.current?.hidePopover()}
-            >
-              {item.label}
-            </Link>
-          ) : (
-            <button
-              key={item.label}
-              {...(item.workspaceHref
-                ? workspaceTabLinkProps(item.workspaceHref, item.label)
-                : undefined)}
-              type="button"
-              role="menuitem"
-              className="ds-menu-item"
-              disabled={item.disabled}
-              onClick={() => {
-                close()
-                item.onSelect()
-              }}
-            >
-              {item.label}
-            </button>
-          ),
-        )}
-        <button
+    <ActionMenu
+      items={items}
+      className="dtl-more-pop"
+      onOpenChange={(open) => {
+        if (!open) setCopy('idle')
+      }}
+      trigger={(props) => (
+        <Button
           type="button"
-          role="menuitem"
-          className="ds-menu-item"
-          onClick={() => void copyLink()}
-          disabled={copy === 'copying'}
-          aria-busy={copy === 'copying'}
+          variant="ghost"
+          size={size}
+          icon
+          feedback={feedback}
+          className={className}
+          aria-label="More actions"
+          title="More actions"
+          {...props}
         >
-          {copy === 'copied'
-            ? 'Link copied'
-            : copy === 'failed'
-              ? 'Could not copy link'
-              : copy === 'copying'
-                ? 'Copying…'
-                : 'Copy link'}
-        </button>
-        <span className="sr-only" role="status">
-          {copy === 'copied'
-            ? 'Link copied'
-            : copy === 'failed'
-              ? 'Could not copy link'
-              : ''}
-        </span>
-      </div>
-    </>
+          <Ellipsis className="ds-i" aria-hidden="true" />
+        </Button>
+      )}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className="ds-menu-item"
+        onClick={() => void copyLink()}
+        disabled={copy === 'copying'}
+        aria-busy={copy === 'copying'}
+      >
+        {copy === 'copied'
+          ? 'Link copied'
+          : copy === 'failed'
+            ? 'Could not copy link'
+            : copy === 'copying'
+              ? 'Copying…'
+              : 'Copy link'}
+      </button>
+      <span className="sr-only" role="status">
+        {copy === 'copied'
+          ? 'Link copied'
+          : copy === 'failed'
+            ? 'Could not copy link'
+            : ''}
+      </span>
+    </ActionMenu>
   )
 }

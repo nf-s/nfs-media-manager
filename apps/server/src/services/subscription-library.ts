@@ -154,6 +154,7 @@ function searchQuery(text: string) {
 
 const LexemeRowsSchema = z.array(z.object({ nodes: z.coerce.number() }))
 const TotalRowsSchema = z.array(z.object({ total: z.coerce.number() }))
+const IdRowsSchema = z.array(z.object({ id: z.string() }))
 const countCache = createDatabaseReadCache<number>({
   maxEntries: 128,
   maxValueBytes: 64,
@@ -290,6 +291,13 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
       limit ${size} offset ${offset}`)
     return ItemRowsSchema.parse(result.rows)
   }
+  /** The IDs of a page in its order, without the display columns. */
+  async function readIds(size: number) {
+    const prefix = candidateIds ? sql`with ${matchingIds}` : sql``
+    const result = await db.execute(sql`${prefix} select i.id ${pageMembers}
+      ${order} limit ${size} offset ${offset}`)
+    return IdRowsSchema.parse(result.rows).map((row) => row.id)
+  }
   async function readPageWithCount() {
     // Count and page share a snapshot. The count reads no display payload and
     // still returns a row when the requested page has no matches.
@@ -314,7 +322,7 @@ async function subscriptionSearchQueries(search: SubscriptionItemSearch) {
     const result = await db.execute(sql`${prefix} ${count}`)
     return TotalRowsSchema.parse(result.rows)[0]?.total ?? 0
   }
-  return { members, readPage, readCount, readPageWithCount }
+  return { members, readPage, readIds, readCount, readPageWithCount }
 }
 
 type LibraryArtist = { id: string; name: string }
@@ -691,6 +699,37 @@ export async function listSubscriptionBrowsePage(query: SubscriptionItemQuery) {
     size: query.size,
     hasMore: rows.length > query.size,
   }
+}
+
+/** The IDs of a Browse query in its order from the first row, at most `limit`. */
+export async function querySubscriptionSelectionIds(
+  query: SubscriptionItemQuery,
+  limit: number,
+) {
+  const { readIds } = await subscriptionSearchQueries(
+    subscriptionBrowseSearch({ ...query, page: 1, size: limit }),
+  )
+  return readIds(limit)
+}
+
+/** Browse rows of stored items of either library, in the order of `ids`. */
+export async function loadSubscriptionItems(ids: string[]) {
+  if (!ids.length) return []
+  const { readPage } = await subscriptionSearchQueries({
+    scope: { libraryScope: 'all' },
+    fields: 'all',
+    conditions: [sql`i.id = any(${sql.param(ids)}::text[])`],
+    order: () => sql`i.published_at desc`,
+    page: 1,
+    size: ids.length,
+  })
+  const rows = new Map(
+    (await readPage(ids.length)).map((row) => [row.id, subscriptionItem(row)]),
+  )
+  return ids.flatMap((id) => {
+    const item = rows.get(id)
+    return item ? [item] : []
+  })
 }
 
 export async function countSubscriptionBrowseItems(

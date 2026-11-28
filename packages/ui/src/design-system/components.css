@@ -83,6 +83,11 @@
   fill: currentColor;
   stroke: none;
 }
+/* The More dots: filled and heavier than the stroke so they read at 14px */
+.ds-i[data-dots] {
+  fill: currentColor;
+  stroke-width: 2.5;
+}
 
 /* 2 Button --------------------------------------------------------------- */
 
@@ -247,18 +252,21 @@
 }
 
 /* 3 Play control ---------------------------------------------------------
-   One component, three placements. Order is always Play, then Queue.
+   One component, three placements. Order is always Play, Queue, More, then
+   any provider marks. An item that cannot be played keeps More alone.
    tile   floats on artwork, shown on hover or focus (always on touch)
    row    sits at the end of the title cell, shown on row hover or focus
-   header the same pair as labelled buttons in a detail header
-   Artwork and titles open the item. Only this pair plays. */
+   header Play and Queue as labelled buttons in a detail header; More stays
+          in the header's actions
+   Artwork and titles open the item. Only this group plays. The group stays
+   shown while More's menu, or a popover opened from it, is open. */
 
 .ds-play {
   display: inline-flex;
   align-items: center;
   gap: var(--ds-1);
 }
-.ds-play :is(button, a) {
+.ds-play > :is(button, a) {
   display: inline-grid;
   place-items: center;
   width: var(--ds-h-xs);
@@ -270,14 +278,15 @@
   color: var(--ds-ink-2);
   cursor: pointer;
 }
-.ds-play :is(button, a):hover {
+.ds-play > :is(button, a):hover,
+.ds-play > button[aria-expanded='true'] {
   background: var(--ds-chip);
   color: var(--ds-ink);
 }
-.ds-play button[aria-pressed='true'] {
+.ds-play > button[aria-pressed='true'] {
   color: var(--ds-accent);
 }
-.ds-play button:disabled {
+.ds-play > button:disabled {
   color: var(--ds-ink-4);
   cursor: not-allowed;
 }
@@ -295,7 +304,7 @@
   opacity: 0;
   transition: opacity 0.12s;
 }
-.ds-play[data-place='tile'] :is(button, a) {
+.ds-play[data-place='tile'] > :is(button, a) {
   width: 26px;
   height: 26px;
   border-radius: 50%;
@@ -312,6 +321,7 @@
 .ds-card:focus-within .ds-play[data-place='tile'],
 .ds-card[data-state='hover'] .ds-play[data-place='tile'],
 .ds-card[data-state='playing'] .ds-play[data-place='tile'],
+.ds-play[data-place='tile']:has(> [aria-expanded='true']),
 [data-touch] .ds-play[data-place='tile'] {
   opacity: 1;
 }
@@ -333,6 +343,7 @@ tr:focus-within .ds-play[data-place='row'],
 .ds-row:focus-within .ds-play[data-place='row'],
 [data-state='hover'] .ds-play[data-place='row'],
 [data-state='playing'] .ds-play[data-place='row'],
+.ds-play[data-place='row']:has(> [aria-expanded='true']),
 [data-touch] .ds-play[data-place='row'] {
   visibility: visible;
 }
@@ -341,7 +352,7 @@ tr:focus-within .ds-play[data-place='row'],
     visibility: visible;
   }
 }
-[data-state='playing'] .ds-play button:first-child {
+[data-state='playing'] .ds-play > button:first-child {
   color: var(--ds-accent);
 }
 
@@ -1300,6 +1311,14 @@ a:focus-visible > .ds-logo[data-none] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A bar holding a result stays one line at every width, even where a page
+   lets the bar wrap: the text gives way, the buttons keep their place */
+.ds-selectbar:has(> .ds-selectbar-result) {
+  flex-wrap: nowrap;
+}
+.ds-selectbar-result ~ .ds-actions {
+  flex: none;
+}
 
 /* 10 Card and grid --------------------------------------------------------- */
 
@@ -2188,6 +2207,33 @@ a:focus-visible > .ds-logo[data-none] {
   }
   .ds-sortpop .ds-menu-item {
     height: var(--ds-h-md);
+  }
+}
+/* A menu or picker opened from a row's or card's play group (data-sheet):
+   beside its button, and on a phone a sheet from the bottom edge over the
+   scrim with touch-height items */
+.ds-pop[data-sheet] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+}
+@media (max-width: 700px) {
+  .ds-pop[data-sheet] {
+    inset: auto 0 0;
+    width: auto;
+    max-height: 70dvh;
+    overflow-y: auto;
+    padding: var(--ds-5) var(--ds-5)
+      calc(var(--ds-5) + env(safe-area-inset-bottom));
+    border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
+    overscroll-behavior: contain;
+  }
+  .ds-pop[data-sheet]::backdrop {
+    background: var(--ds-scrim);
+  }
+  .ds-pop[data-sheet] .ds-menu-item {
+    height: var(--ds-h-touch);
   }
 }
 .ds-notice {

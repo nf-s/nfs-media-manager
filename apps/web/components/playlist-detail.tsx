@@ -4,7 +4,13 @@ import { ResultFeedbackScope, ResultSegmented } from './result-feedback'
 
 import { ReadButton } from '@/components/read-button'
 import Link from 'next/link'
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import {
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ListMusic } from 'lucide-react'
 import { CoverageEntriesSchema } from '@repo/schemas/coverage'
@@ -159,6 +165,7 @@ export function PlaylistPlayButton({
   total,
   compact = true,
   presentation,
+  more,
 }: {
   playlist: Pick<PlaylistSummary, 'id' | 'name'> &
     Partial<Pick<PlaylistSummary, 'trackCount' | 'albumCount'>>
@@ -166,6 +173,8 @@ export function PlaylistPlayButton({
   /** The row pair; without it, the labelled buttons of a detail header. */
   compact?: boolean
   presentation?: BrowseView
+  /** More actions after Queue, in the row pair only. */
+  more?: ReactNode
 }) {
   const { apiBaseUrl } = useConfig()
   const view = usePlayback()
@@ -291,7 +300,7 @@ export function PlaylistPlayButton({
   return (
     <>
       {compact ? (
-        <PlayPair place="row" {...pair} />
+        <PlayPair place="row" {...pair} more={more} />
       ) : (
         <PlayHeaderButtons {...pair} />
       )}

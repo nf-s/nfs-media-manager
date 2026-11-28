@@ -8,6 +8,7 @@ import {
   ImportStatusQuerySchema,
   type ImportRun,
   StartImportSchema,
+  convertSavedView,
   normalizeSavedView,
 } from '@repo/schemas/imports'
 import { JsonValueSchema } from '@repo/media-plugin-sdk'
@@ -559,7 +560,7 @@ export async function executeQueuedImport(importId: string) {
   await queue.send({ type: 'import', importId })
 }
 
-export async function listSavedViews() {
+async function readLegacySavedViews() {
   const [snapshot] = await db
     .select()
     .from(providerSnapshot)
@@ -567,8 +568,17 @@ export async function listSavedViews() {
     .orderBy(desc(providerSnapshot.createdAt))
     .limit(1)
   if (!snapshot) return []
-  return z
-    .array(JsonValueSchema)
-    .parse(snapshot.payload)
-    .map(normalizeSavedView)
+  return z.array(JsonValueSchema).parse(snapshot.payload)
+}
+
+export async function listSavedViews() {
+  return (await readLegacySavedViews()).map(normalizeSavedView)
+}
+
+/** The newest legacy saved views that convert, leaving out any that do not. */
+export async function listConvertibleSavedViews() {
+  return (await readLegacySavedViews()).flatMap((value) => {
+    const view = convertSavedView(value)
+    return view ? [view] : []
+  })
 }

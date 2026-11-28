@@ -19,7 +19,7 @@ Each story gives the path before the design system, the path now and the mockup 
 > I want Play and Queue in the same place on every album, track and playlist, so I never hunt for them.
 
 - **Before.** The buttons sit over the artwork, before the title, in their own column, in place of the track number or at the end of the row, in nine styles.
-- **Now.** One Play and Queue pair. On a card it sits on the artwork. In a row it sits at the end of the title cell. In a header it sits under the artwork, as wide as it. Artwork and titles open the item and never play it.
+- **Now.** One group: Play, Queue, then More. On a card it sits on the artwork. In a row it sits at the end of the title cell. In a header Play and Queue sit under the artwork, as wide as it, and More stays in the header's actions. Artwork and titles open the item and never play it.
 - **See.** [Play control](components.html#play).
 
 ### 3. Read a table without losing my place
@@ -35,7 +35,7 @@ Each story gives the path before the design system, the path now and the mockup 
 > I want to browse, open and play from my phone with nothing cut off.
 
 - **Before.** The rail's status lines and filter chips disappear, and tables scroll sideways.
-- **Now.** A bottom tab bar, a two-column grid or list rows, Play and Queue always visible, toolbars that wrap with the search on its own line, and the drawer as a sheet. Filters open in the same sheet. Jobs and Providers carry their counts on the corner of their tabs, and the Jobs count opens Activity above the bar.
+- **Now.** A bottom tab bar, a two-column grid or list rows, Play, Queue and More always visible, toolbars that wrap with the search on its own line, and the drawer as a sheet. Filters open in the same sheet. Jobs and Providers carry their counts on the corner of their tabs, and the Jobs count opens Activity above the bar.
 - **See.** [Phone](screens-browse.html#phone).
 
 ## Understand an item

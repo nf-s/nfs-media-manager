@@ -342,7 +342,7 @@ The code reading explains these; the walk made them obvious.
 | Finding                                  | Answer                                          | Page                                                 |
 | ---------------------------------------- | ----------------------------------------------- | ---------------------------------------------------- |
 | Five tables                              | One table                                       | [Components](components.html#table)                  |
-| Nine play variants                       | One pair, three placements                      | [Components](components.html#play)                   |
+| Nine play variants                       | One group, three placements                     | [Components](components.html#play)                   |
 | Ten pills                                | One pill, three filter modes                    | [Components](components.html#pill)                   |
 | Eight status displays                    | One status mark, eight states                   | [Foundations](foundations.html#wording)              |
 | Two charts                               | One trend chart and sparkline                   | [Components](components.html#chart)                  |

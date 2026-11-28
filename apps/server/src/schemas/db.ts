@@ -742,6 +742,114 @@ export const playlistItem = pgTable(
   ],
 )
 
+// A playlist or smart playlist made in the app for one library. Imported
+// playlists stay in `playlist`.
+export const libraryPlaylist = pgTable(
+  'library_playlist',
+  {
+    id: text('id').primaryKey(),
+    library: text('library', {
+      enum: ['albums', 'tracks', 'films', 'subscriptions', 'mixes'],
+    }).notNull(),
+    type: text('type', { enum: ['playlist', 'smart'] }).notNull(),
+    name: text('name').notNull(),
+    // A smart playlist's Browse URL parameters; validated when written.
+    view: jsonb('view').$type<Record<string, string>>(),
+    // The legacy saved view a smart playlist was made from.
+    legacyKey: text('legacy_key'),
+    createdByUserId: text('created_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    deletedAt: timestamp('deleted_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    // Moves when the name, the view or the entries change.
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('library_playlist_name_uidx')
+      .on(table.library, sql`lower(${table.name})`)
+      .where(sql`${table.deletedAt} is null`),
+    uniqueIndex('library_playlist_legacy_key_uidx').on(table.legacyKey),
+    index('library_playlist_deleted_idx')
+      .on(table.deletedAt)
+      .where(sql`${table.deletedAt} is not null`),
+    check(
+      'library_playlist_library_check',
+      sql`${table.library} in ('albums', 'tracks', 'films', 'subscriptions', 'mixes')`,
+    ),
+    check(
+      'library_playlist_type_check',
+      sql`${table.type} in ('playlist', 'smart')`,
+    ),
+    check(
+      'library_playlist_name_check',
+      sql`char_length(${table.name}) between 1 and 200 and ${table.name} = btrim(${table.name})`,
+    ),
+    check(
+      'library_playlist_view_check',
+      sql`(${table.type} = 'smart') = (${table.view} is not null) and (${table.view} is null or jsonb_typeof(${table.view}) = 'object')`,
+    ),
+    check(
+      'library_playlist_legacy_key_check',
+      sql`${table.legacyKey} is null or ${table.type} = 'smart'`,
+    ),
+  ],
+)
+
+// An item in a library playlist. The same item can appear more than once.
+export const libraryPlaylistEntry = pgTable(
+  'library_playlist_entry',
+  {
+    id: text('id').primaryKey(),
+    playlistId: text('playlist_id')
+      .notNull()
+      .references(() => libraryPlaylist.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    // Albums, Tracks and Films.
+    mediaItemId: text('media_item_id').references(() => mediaItem.id, {
+      onDelete: 'cascade',
+    }),
+    // Subscriptions and Mixes.
+    subscriptionItemId: text('subscription_item_id').references(
+      () => subscriptionItem.id,
+      { onDelete: 'cascade' },
+    ),
+    addedAt: timestamp('added_at').defaultNow().notNull(),
+    // The addition that created the entry.
+    batchId: text('batch_id').notNull(),
+    // Set while a removal can be undone; such an entry is not listed.
+    removedBatchId: text('removed_batch_id'),
+    removedAt: timestamp('removed_at'),
+  },
+  (table) => [
+    uniqueIndex('library_playlist_entry_position_uidx').on(
+      table.playlistId,
+      table.position,
+    ),
+    index('library_playlist_entry_batch_idx').on(
+      table.playlistId,
+      table.batchId,
+    ),
+    index('library_playlist_entry_removed_idx')
+      .on(table.removedAt)
+      .where(sql`${table.removedAt} is not null`),
+    index('library_playlist_entry_media_item_idx')
+      .on(table.mediaItemId, table.playlistId)
+      .where(sql`${table.mediaItemId} is not null`),
+    index('library_playlist_entry_subscription_item_idx')
+      .on(table.subscriptionItemId, table.playlistId)
+      .where(sql`${table.subscriptionItemId} is not null`),
+    check(
+      'library_playlist_entry_item_check',
+      sql`num_nonnulls(${table.mediaItemId}, ${table.subscriptionItemId}) = 1`,
+    ),
+    check(
+      'library_playlist_entry_removed_check',
+      sql`(${table.removedBatchId} is null) = (${table.removedAt} is null)`,
+    ),
+  ],
+)
+
 // The connected account's playlist list as the last listing job read it.
 export const spotifyPlaylistListing = pgTable('spotify_playlist_listing', {
   userId: text('user_id')
@@ -2419,6 +2527,35 @@ export const playlistItemRelations = relations(playlistItem, ({ one }) => ({
     references: [mediaItem.id],
   }),
 }))
+
+export const libraryPlaylistRelations = relations(
+  libraryPlaylist,
+  ({ many, one }) => ({
+    entries: many(libraryPlaylistEntry),
+    createdBy: one(user, {
+      fields: [libraryPlaylist.createdByUserId],
+      references: [user.id],
+    }),
+  }),
+)
+
+export const libraryPlaylistEntryRelations = relations(
+  libraryPlaylistEntry,
+  ({ one }) => ({
+    playlist: one(libraryPlaylist, {
+      fields: [libraryPlaylistEntry.playlistId],
+      references: [libraryPlaylist.id],
+    }),
+    mediaItem: one(mediaItem, {
+      fields: [libraryPlaylistEntry.mediaItemId],
+      references: [mediaItem.id],
+    }),
+    subscriptionItem: one(subscriptionItem, {
+      fields: [libraryPlaylistEntry.subscriptionItemId],
+      references: [subscriptionItem.id],
+    }),
+  }),
+)
 
 export const externalLinkRelations = relations(externalLink, ({ one }) => ({
   mediaItem: one(mediaItem, {

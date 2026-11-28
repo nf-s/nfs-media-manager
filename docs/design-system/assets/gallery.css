@@ -291,6 +291,25 @@ body.g {
 .g-phone .ds-table[data-scrolled] [data-sticky='edge'] {
   box-shadow: none;
 }
+/* A row menu on a phone, drawn at desktop width: the sheet rules of the
+   700px media query in components.css, scoped to the frame */
+.g-phone:has(> .g-phone-scrim) {
+  position: relative;
+}
+.g-phone-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--ds-scrim);
+}
+.g-phone > .ds-pop[data-sheet] {
+  position: absolute;
+  inset: auto 0 0;
+  padding: var(--ds-5);
+  border-radius: var(--ds-r-lg) var(--ds-r-lg) 0 0;
+}
+.g-phone > .ds-pop[data-sheet] .ds-menu-item {
+  height: var(--ds-h-touch);
+}
 .g-phone-tabs {
   display: grid;
   grid-auto-columns: 1fr;

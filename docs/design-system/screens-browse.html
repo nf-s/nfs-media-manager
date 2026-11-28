@@ -201,7 +201,7 @@
                     ],
                     [
                       'Play and Queue circles',
-                      'One pill on the artwork, shown on hover, focus and touch.',
+                      'One pill on the artwork with Play, Queue and More, shown on hover, focus and touch.',
                     ],
                     [
                       'Tag pills over the artwork',
@@ -358,7 +358,7 @@
                   )}</div>`,
               ) +
               g.rules([
-                '<b>The 96px Artwork and playback column is gone.</b> Artwork is the 24px thumbnail in the title cell and the play pair follows the title.',
+                '<b>The 96px Artwork and playback column is gone.</b> Artwork is the 24px thumbnail in the title cell and the play group follows the title.',
                 '<b>Album and playlist names are plain links.</b> The extra play icons inside those cells are removed.',
                 '<b>No provider badge on every row.</b> A track without a Last.fm match shows in the Metadata page and in its Sources tab.',
                 '<b>Filters → View → Group recordings</b> groups release versions. In Grid, List and Table, the versions button sits immediately after the title text.',
@@ -378,7 +378,7 @@
                 }) +
                   `<div class="ds-grid" style="--ds-card-min:120px">${AR.map(artistCard).join('')}</div>`,
               )}${panel(
-                `<div class="ds-list">${D.listHead(['Artist', 'Tags', '<span class="ds-w-num">Albums</span>', '<span class="ds-w-num">Scrobbles</span>', '<span class="ds-w-spark">All time</span>'])}${AR.slice(
+                `<div class="ds-list">${D.listHead(['Artist', 'Tags', '<span class="ds-w-num">Albums</span>', '<span class="ds-w-num">Scrobbles</span>', '<span class="ds-w-spark">All time</span>'], { play: 50 })}${AR.slice(
                   0,
                   6,
                 )
@@ -492,7 +492,7 @@
                         .map((a) => albumCard(a))
                         .join('')}</div></div>`,
                     ),
-                    'Grid: compact by default, three columns, play pair always visible',
+                    'Grid: compact by default, three columns, play group always visible',
                   ),
                   g.item(
                     phone(
@@ -503,7 +503,7 @@
                         .map((a) => albumRow(a))
                         .join('')}</div></div>`,
                     ),
-                    'List: artwork, two lines, play pair',
+                    'List: artwork, two lines, play group',
                   ),
                   g.item(
                     phone(

@@ -66,12 +66,15 @@ function UnavailablePlayButton({
   position,
   compact = true,
   place = 'row',
+  more,
 }: {
   title: string
   available: boolean
   position?: number
   compact?: boolean
   place?: 'row' | 'tile'
+  /** More actions after Queue, in the compact pair only. */
+  more?: ReactNode
 }) {
   const playback = usePlaybackForPlayButton()
   const reason = unavailableReason(available, playback)
@@ -95,6 +98,7 @@ function UnavailablePlayButton({
         disabledReason={reason}
         onPlay={() => undefined}
         onQueue={() => undefined}
+        more={more}
       />
     </>
   )
@@ -104,10 +108,12 @@ function UnavailablePlayButton({
 export function AlbumInlinePlayButton({
   album,
   source,
+  more,
   afterQueue,
 }: {
   album: AlbumSource
   source?: PlaybackSourceFactory
+  more?: ReactNode
   afterQueue?: ReactNode
 }) {
   return (
@@ -115,6 +121,7 @@ export function AlbumInlinePlayButton({
       album={album}
       source={source}
       place="row"
+      more={more}
       afterQueue={afterQueue}
     />
   )
@@ -126,11 +133,13 @@ export function AlbumReferencePlayButton({
   title,
   source,
   place = 'row',
+  more,
 }: {
   id: string
   title: string
   source?: PlaybackSourceFactory
   place?: 'row' | 'tile'
+  more?: ReactNode
 }) {
   const { apiBaseUrl } = useConfig()
   const client = useQueryClient()
@@ -176,6 +185,7 @@ export function AlbumReferencePlayButton({
         title={title}
         available={playback.data !== null}
         place={place}
+        more={more}
       />
     )
   return (
@@ -208,6 +218,7 @@ export function AlbumReferencePlayButton({
           }
         }}
         onQueue={() => playback.mutate('queue')}
+        more={more}
       />
     </>
   )
@@ -290,11 +301,13 @@ function AlbumPair({
   album,
   source,
   place,
+  more,
   afterQueue,
 }: {
   album: AlbumSource
   source?: PlaybackSourceFactory
   place: 'tile' | 'row'
+  more?: ReactNode
   afterQueue?: ReactNode
 }) {
   const view = usePlaybackForPlayButton()
@@ -304,6 +317,7 @@ function AlbumPair({
       <PlayPair
         place={place}
         title={album.title}
+        more={more}
         afterQueue={afterQueue}
         disabled
         disabledReason={unavailableReason(albumPlayable(album) !== null, view)}
@@ -316,6 +330,7 @@ function AlbumPair({
     <PlayPair
       place={place}
       title={album.title}
+      more={more}
       afterQueue={afterQueue}
       playing={playing}
       {...buttons}
@@ -329,10 +344,12 @@ function AlbumPair({
 export function TilePlayControls({
   album,
   source,
+  more,
   afterQueue,
 }: {
   album: AlbumSource
   source?: PlaybackSourceFactory
+  more?: ReactNode
   afterQueue?: ReactNode
 }) {
   return (
@@ -340,6 +357,7 @@ export function TilePlayControls({
       album={album}
       source={source}
       place="tile"
+      more={more}
       afterQueue={afterQueue}
     />
   )
@@ -382,10 +400,12 @@ export function TrackPlayButton({
   album,
   track,
   source,
+  more,
 }: {
   album: AlbumSource
   track: Track
   source?: PlaybackSourceFactory
+  more?: ReactNode
 }) {
   const view = usePlaybackForPlayButton()
   const controls = usePlaybackControls()
@@ -404,6 +424,7 @@ export function TrackPlayButton({
           trackPlayable(album, track) !== null
         }
         position={track.position}
+        more={more}
       />
     )
   const uri = spotifyTrackUri(track.externalId)
@@ -424,6 +445,7 @@ export function TrackPlayButton({
           )
         }
         onQueue={() => pair.enqueue(queued, () => controls.enqueue(queued))}
+        more={more}
       />
     </>
   )
@@ -464,12 +486,14 @@ export function LibraryTrackPlayButton({
   position,
   source,
   place = 'row',
+  more,
   afterQueue,
 }: {
   track: LibraryTrackSource
   position?: number
   source?: PlaybackSourceInput
   place?: 'tile' | 'row'
+  more?: ReactNode
   afterQueue?: ReactNode
 }) {
   const view = usePlaybackForPlayButton()
@@ -481,6 +505,7 @@ export function LibraryTrackPlayButton({
         <PlayPair
           place={place}
           title={track.title}
+          more={more}
           afterQueue={afterQueue}
           disabled
           disabledReason={unavailableReason(
@@ -499,6 +524,7 @@ export function LibraryTrackPlayButton({
       <PlayPair
         place={place}
         title={track.title}
+        more={more}
         afterQueue={afterQueue}
         playing={playing && !isDifferentPlaybackSource(view, source)}
         {...buttons}
@@ -514,13 +540,20 @@ export function LibraryTrackInlinePlayButtons({
   track,
   position,
   source,
+  more,
 }: {
   track: LibraryTrackSource
   position?: number
   source?: PlaybackSourceFactory
+  more?: ReactNode
 }) {
   return (
-    <LibraryTrackPlayButton track={track} position={position} source={source} />
+    <LibraryTrackPlayButton
+      track={track}
+      position={position}
+      source={source}
+      more={more}
+    />
   )
 }
 

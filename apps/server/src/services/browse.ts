@@ -2292,6 +2292,24 @@ export async function queryBrowsePageIds(
   return readPage(Math.min(query.size + 1, remaining))
 }
 
+/**
+ * The IDs of a browse query in its order from the first row, at most `limit`
+ * and within its result cap, in one page read.
+ */
+export async function queryBrowseSelectionIds(
+  mediaType: MediaType,
+  query: BrowseQuery,
+  limit: number,
+) {
+  const size = Math.min(limit, query.limitResults ?? limit)
+  const { readPage } = await browseQueries(mediaType, {
+    ...query,
+    page: 1,
+    size,
+  })
+  return (await readPage(size)).ids
+}
+
 /** Bounded pages of release rows from the current recording's filtered membership. */
 export async function queryTrackRecordingVersions(
   id: string,

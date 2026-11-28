@@ -154,6 +154,8 @@ const automaticPlaylistPresentation = sql`case when p.source = 'spotify-liked' t
 
 const playlistMember = sql`(p.added_to_library or p.source is not null or exists (${playlistAlbumMembers}))`
 const visiblePlaylists = sql`p.kind = 'playlist' and (${playlistMember} or p.catalog_provider is not null)`
+/** An imported playlist the directory lists by default, as `p`. */
+export const listedImportedPlaylist = sql`(${visiblePlaylists} and ${playlistMember})`
 const playlistCanAcceptAdditions = sql`(p.source = 'spotify' and p.spotify_id is not null and p.spotify_editable)`
 const playlistGroup = sql`case
   when p.source = 'spotify-liked' then ${LIKED_SONGS_KEY}

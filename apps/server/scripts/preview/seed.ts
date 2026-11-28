@@ -3006,6 +3006,181 @@ async function main() {
     },
   ])
 
+  // ---------------------------------------------------------------- mixes
+  await db.execute(sql`
+    insert into subscription_source (id, type, title, handle, url, item_total, subscribed, history_complete)
+    values
+      ('nts.pv-tidal-hours', 'nts', 'Tidal Hours', 'pv-tidal-hours', 'https://www.nts.live/shows/pv-tidal-hours', 5, true, true),
+      ('rinse.pv-lantern-club', 'rinse', 'Lantern Club', 'pv-lantern-club', 'https://www.rinse.fm/shows/pv-lantern-club', 4, true, true)`)
+  await db.execute(sql`
+    with rows as (
+      select 'nts.pv-tidal-hours-' || n as id, 'nts.pv-tidal-hours' as source_id, 'nts' as type,
+        'Tidal Hours w/ ' || (array['Mara Quill','Odd Weather','Mara Quill','Fen Static','Odd Weather'])[n] as title,
+        jsonb_build_array((array['Mara Quill','Odd Weather','Mara Quill','Fen Static','Odd Weather'])[n]) as artists,
+        jsonb_build_array((array['ambient','dub','ambient','techno','dub'])[n]) as tags,
+        (now() at time zone 'utc') - (n * 6 || ' days')::interval as published_at,
+        3600 + n * 600 as duration_sec
+      from generate_series(1, 5) n
+      union all
+      select 'rinse.pv-lantern-club-' || n, 'rinse.pv-lantern-club', 'rinse',
+        'Lantern Club ' || (array['warm-up','late set','b2b','closing set'])[n],
+        jsonb_build_array((array['Juno Vale','Fen Static','Juno Vale','Odd Weather'])[n]),
+        jsonb_build_array((array['house','techno','house','dub'])[n]),
+        (now() at time zone 'utc') - (n * 9 + 2 || ' days')::interval,
+        5400
+      from generate_series(1, 4) n
+    )
+    insert into subscription_item
+      (id, source_id, type, title, tags, artists, published_at, duration_sec, url, search)
+    select r.id, r.source_id, r.type, r.title, r.tags, r.artists, r.published_at, r.duration_sec,
+      s.url || '/episodes/' || r.id,
+      setweight(to_tsvector('english', r.title), 'A') ||
+      setweight(to_tsvector('english', s.title || ' ' || (select string_agg(t, ' ') from jsonb_array_elements_text(r.tags || r.artists) t)), 'B') ||
+      setweight(to_tsvector('simple', r.title), 'A') ||
+      setweight(to_tsvector('simple', s.title || ' ' || (select string_agg(t, ' ') from jsonb_array_elements_text(r.tags || r.artists) t)), 'B')
+    from rows r join subscription_source s on s.id = r.source_id`)
+
+  // ---------------------------------------------------- library playlists
+  const { addLibraryPlaylistEntries, createLibraryPlaylist } =
+    await import('@/services/library-playlists')
+  const { CreateLibraryPlaylistSchema } =
+    await import('@repo/schemas/library-playlists')
+  const visibleTrackIds = shuffle(
+    (
+      await db
+        .select({ id: schema.libraryTrack.mediaItemId })
+        .from(schema.libraryTrack)
+        .innerJoin(
+          schema.mediaItem,
+          eq(schema.mediaItem.id, schema.libraryTrack.mediaItemId),
+        )
+        .where(
+          sql`${schema.mediaItem.metadata}->>'legacyHidden' is distinct from 'true'`,
+        )
+    ).map((row) => row.id),
+  )
+  const albumIds = shuffle([...visibleAlbumIds])
+  const filmIds = shuffle(films.map((film) => film.id))
+  const itemIds = async (type: string) =>
+    z
+      .array(z.object({ id: z.string() }))
+      .parse(
+        (
+          await db.execute(
+            sql`select id from subscription_item where type = ${type} order by published_at desc`,
+          )
+        ).rows,
+      )
+      .map((row) => row.id)
+  const [videoIds, episodeIds, ntsIds, rinseIds] = await Promise.all([
+    itemIds('youtube'),
+    itemIds('spotify'),
+    itemIds('nts'),
+    itemIds('rinse'),
+  ])
+  const allMixIds = [...ntsIds, ...rinseIds]
+  const libraryPlaylists = [
+    { library: 'albums', name: 'Rainy Sundays', ids: albumIds.slice(0, 9) },
+    { library: 'albums', name: 'Desert Island', ids: albumIds.slice(9, 14) },
+    {
+      library: 'tracks',
+      name: 'Late Shift',
+      ids: visibleTrackIds.slice(0, 24),
+    },
+    {
+      library: 'tracks',
+      name: 'Road Trip',
+      ids: visibleTrackIds.slice(24, 42),
+    },
+    { library: 'films', name: 'Double Bills', ids: filmIds.slice(0, 6) },
+    { library: 'films', name: 'Watch Next', ids: filmIds.slice(6, 10) },
+    {
+      library: 'subscriptions',
+      name: 'Repair Evenings',
+      ids: videoIds.slice(0, 7),
+    },
+    {
+      library: 'subscriptions',
+      name: 'Commute Listening',
+      ids: episodeIds.slice(0, 5),
+    },
+    { library: 'mixes', name: 'After Midnight', ids: allMixIds.slice(0, 5) },
+    { library: 'mixes', name: 'Warm-ups', ids: allMixIds.slice(5, 8) },
+  ]
+  const smartPlaylists = [
+    {
+      library: 'albums',
+      name: 'Dream Pop, Newest First',
+      view: {
+        filters: JSON.stringify([
+          { field: 'genre', value: 'dream pop', mode: 'any' },
+        ]),
+        sortBy: 'dateAdded',
+        direction: 'desc',
+      },
+    },
+    {
+      library: 'tracks',
+      name: 'Night Titles',
+      view: { q: 'Night', sortBy: 'title', direction: 'asc' },
+    },
+    {
+      library: 'films',
+      name: 'Winter Films',
+      view: { q: 'Winter', sortBy: 'releaseDate', direction: 'desc' },
+    },
+    {
+      library: 'subscriptions',
+      name: 'Radio Repairs',
+      view: { q: 'radios' },
+    },
+    {
+      library: 'mixes',
+      name: 'Odd Weather Sets',
+      view: {
+        filters: JSON.stringify([
+          { field: 'artist', value: 'Odd Weather', mode: 'required' },
+        ]),
+      },
+    },
+  ]
+  for (const [index, entry] of [
+    ...libraryPlaylists.map((playlist) => ({
+      type: 'playlist',
+      library: playlist.library,
+      name: playlist.name,
+      selection: { ids: playlist.ids },
+    })),
+    ...smartPlaylists.map((playlist) => ({ type: 'smart', ...playlist })),
+  ].entries()) {
+    const { playlist } = await createLibraryPlaylist(
+      CreateLibraryPlaylistSchema.parse(entry),
+      USER_ID,
+    )
+    await db.execute(sql`update library_playlist
+      set created_at = now() - make_interval(days => ${between(40, 400)}::int),
+        updated_at = now() - make_interval(days => ${index + between(1, 20)}::int)
+      where id = ${playlist.id}`)
+  }
+  // Late Shift holds three tracks a second time.
+  const [lateShift] = await db
+    .select({ id: schema.libraryPlaylist.id })
+    .from(schema.libraryPlaylist)
+    .where(
+      and(
+        eq(schema.libraryPlaylist.library, 'tracks'),
+        eq(schema.libraryPlaylist.name, 'Late Shift'),
+      ),
+    )
+  if (lateShift)
+    await addLibraryPlaylistEntries(
+      lateShift.id,
+      { ids: visibleTrackIds.slice(3, 6) },
+      'again',
+    )
+  await db.execute(sql`update library_playlist_entry
+    set added_at = now() - ((position * 7 + length(id)) % 300 || ' hours')::interval`)
+
   console.log('jobs:', jobCount)
   await db.$client.end()
 }

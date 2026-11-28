@@ -54,6 +54,19 @@
       ]
       const fixed = (html, width) =>
         `<div style="width:${width}px">${html}</div>`
+      /* A row's More menu, each item with its icon */
+      const ROW_MENU_ICON = {
+        'Add to playlist…': 'listMusic',
+        'Add to another playlist…': 'listMusic',
+        'Remove from this playlist': 'x',
+        'Open details': 'expand',
+      }
+      const rowMenu = (labels, o = {}) =>
+        D.menu(
+          labels.map((label) => [ROW_MENU_ICON[label], label]),
+          '',
+          { label: 'More actions', sheet: o.sheet },
+        )
       const sortFields = [
         ['Added', true],
         ['Released'],
@@ -372,9 +385,9 @@
           },
           {
             id: 'play',
-            title: 'Play control',
+            title: 'Play group',
             body:
-              `<p>Play comes first, followed by Add to queue. In Browse, selecting a provider adds its item link after Queue. Films and artists show the link on its own. Each provider link opens a new tab.</p>` +
+              `<p>Play comes first, then Add to queue, then More actions. Films, subscription items and mixes cannot be played and keep More alone in the same place. In Browse, selecting a provider adds its item link after the group; artists show the link on its own. Each provider link opens a new tab.</p>` +
               g.spec(
                 g.flow(
                   [
@@ -428,16 +441,88 @@
                   { top: true },
                 ),
               ) +
+              g.spec(
+                g.flow(
+                  [
+                    g.item(
+                      fixed(
+                        `<div class="ds-list" data-compact>${row(T[0], { open: true })}</div><div style="display:flex;justify-content:flex-end;margin-top:4px">${rowMenu(['Add to playlist…', 'Open details'])}</div>`,
+                        330,
+                      ),
+                      'row · More open',
+                    ),
+                    g.item(
+                      fixed(
+                        table(
+                          [
+                            D.COLS.albumTracks[0],
+                            {
+                              h: 'Title',
+                              c: (r) =>
+                                D.idCell(r, { thumb: false, open: r.n === 2 }),
+                            },
+                            {
+                              h: 'Added to playlist',
+                              w: 128,
+                              c: () => '2026-11-02',
+                            },
+                          ],
+                          D.data.ALBUM_TRACKS.slice(0, 3),
+                        ) +
+                          `<div style="display:flex;justify-content:flex-end;margin-top:4px">${rowMenu(['Add to another playlist…', 'Remove from this playlist', 'Open details'])}</div>`,
+                        330,
+                      ),
+                      'inside a playlist · More open',
+                    ),
+                    g.item(
+                      fixed(
+                        card(F[0], {
+                          meta: [`<span>${F[0].year}</span>`],
+                          state: 'hover',
+                        }),
+                        120,
+                      ),
+                      'film tile · More alone',
+                    ),
+                    g.item(
+                      fixed(
+                        `<div class="ds-list" data-compact>${row(F[1], { state: 'hover' })}</div>`,
+                        330,
+                      ),
+                      'film row · More alone',
+                    ),
+                    g.item(
+                      `<div class="g-phone" style="height:360px"><div class="g-phone-scroll" data-touch><div class="ds-list" data-compact>${T.slice(
+                        0,
+                        5,
+                      )
+                        .map((t) => row(t, { open: t === T[1] }))
+                        .join(
+                          '',
+                        )}</div></div><div class="g-phone-scrim"></div>${rowMenu(['Add to playlist…', 'Open details'], { sheet: true })}</div>`,
+                      'phone · the menu is a sheet',
+                    ),
+                  ],
+                  { top: true },
+                ),
+              ) +
               g.rules([
-                '<b>Tile.</b> One white pill at the bottom right of the artwork. Hidden at rest on pointer devices, shown on hover and keyboard focus, always shown on touch and while the item is playing.',
-                '<b>Row.</b> The same pair at the end of the title cell, in lists and tables alike. The space is reserved, so nothing moves when it appears.',
-                '<b>Header.</b> Under the artwork and exactly as wide as it. Play is the labelled primary button and takes the room that Queue, a square icon button, leaves.',
+                '<b>Order.</b> Play, Add to queue, then More, the three-dot button (<code>PlayPair more</code>, <code>MoreButton</code>). Provider marks follow the group (<code>afterQueue</code>). Nothing sits between the three.',
+                '<b>Tile.</b> One white pill at the bottom right of the artwork. Hidden at rest on pointer devices, shown on hover and keyboard focus, always shown on touch, while the item is playing and while its menu is open.',
+                '<b>Row.</b> The same group at the end of the title cell, in lists and tables alike. The space is reserved, so nothing moves when it appears.',
+                '<b>The group stays shown while its menu is open,</b> and while a popover opened from the menu, such as the playlist picker, is open: More has <code>aria-expanded="true"</code> and keeps the hover look.',
+                '<b>More alone.</b> Films, subscription items and mixes, which the app cannot play, keep More by itself in the same place (<code>BrowseActions</code> holding a <code>MoreButton</code>; <code>RowMoreMenu place</code>). More stays enabled when Play and Add to queue are disabled. Artists, playlists in the Playlists table and suggestions outside the library have no More in the group.',
+                '<b>The menu.</b> Add to playlist… and Open details. Inside a playlist it has Add to another playlist… and, for a library playlist, Remove from this playlist. Add to playlist… replaces the menu with its picker, opened from the same button.',
+                '<b>On a phone</b> a menu or picker opened from a row or card is a sheet at the bottom edge over the scrim, with 40px items (<code>ds-pop[data-sheet]</code>, as <code>RowMoreMenu</code> draws it). Tapping the scrim closes it.',
+                '<b>Header.</b> Under the artwork and exactly as wide as it. Play is the labelled primary button and takes the room that Queue, a square icon button, leaves. More stays at the end of the header’s actions.',
+                '<b>Player.</b> The current track in the player has More after its title.',
+                '<b>The dots</b> are filled and heavier than the icon stroke (<code>data-dots</code>) so they read at 14px.',
                 '<b>No inline play icons</b> beside album or playlist names inside another row. Follow the link, then play.',
-                '<b>Playing state.</b> The pair stays visible and Play becomes Pause.',
+                '<b>Playing state.</b> The group stays visible and Play becomes Pause.',
               ]) +
               g.note(
                 'Replaces',
-                'nine play controls in four positions: dark circles over artwork, bare icons before the title, a dedicated playback column, and trailing icons at the far end of the row.',
+                'nine play controls in four positions: dark circles over artwork, bare icons before the title, a dedicated playback column, and trailing icons at the far end of the row; and the play pair, which left an item’s other actions to its detail header.',
               ),
           },
           {
@@ -1180,7 +1265,7 @@
                 '<b>Grouped tracks</b> open their versions as part rows in a table, from the chevron before the thumbnail. In List and Grid the release versions button follows the title link.',
                 "<b>Inside another item</b> the table drops the columns that the parent already answers: no Album or Artist column in an album's track list.",
                 '<b>Selection</b> shows the one inverse bar, attached to the bottom of the table, with the count on the left and actions on the right. The bar appears with a selection or a result to report and is hidden otherwise. An import preview keeps it, reading <code>0 selected of 128</code>, because choosing rows is the task.',
-                '<b>A change made from the bar reports itself there.</b> When the selection is gone the bar holds one line saying what changed (<code>TableSelectionResult</code>, <code>ds-selectbar-result</code>), then Undo and Dismiss. After Undo the line starts with <code>Undone:</code> and the button is Redo. Undo and Redo are disabled, with the reason as their title, when a later change stands in the way. The line is cut with an ellipsis; the buttons are never pushed out.',
+                '<b>A change made from the bar reports itself there.</b> When the selection is gone the bar holds one line saying what changed (<code>TableSelectionResult</code>, <code>ds-selectbar-result</code>), then Undo and Dismiss. After Undo the line starts with <code>Undone:</code> and the button is Redo. Undo and Redo are disabled, with the reason as their title, when a later change stands in the way. The line stays on one line at every width, phones included: the text is cut with an ellipsis and the buttons keep their place, never pushed out or onto a second line.',
                 '<b>Merge in a table of tracks</b> (<code>TrackMergeBar</code>) is the primary action of the bar and needs two or more rows. It is made at once and in the background: the selection clears and the bar says Merging…, then the result. A review opens first only when something speaks against it: a version word such as Live or Demo in some titles only, lengths more than ten seconds apart, different artists, two positions on one album, or tracks that were kept separate.',
                 '<b>What a record is made of shows under its row.</b> A ghost chevron before the thumbnail (<code>TablePartToggle</code>, <code>ds-part-toggle</code>) opens one row per part (<code>TableRow part</code>): a provider’s mark and the part’s title in the secondary ink, indented past the chevron (<code>TablePartTitle</code>, <code>ds-part-title</code>). A record with one part keeps the chevron’s space (<code>TablePartSlot</code>) so titles line up. A part row’s other cells hold that part’s own values or nothing.',
                 '<b>A group row can carry actions</b> for the rows under it (<code>TableGroupActions</code>, <code>ds-group-actions</code>): small buttons, a default one first, such as Merge and Keep separate, then an info icon that opens what the default action does and the evidence that put the rows together. Text follows on the same line only when something speaks against the default action, and says what; a group with nothing against it has no text. The line is cut with an ellipsis and shows in full on hover; the buttons are never pushed out. While an action on the group is running or done, the line says so instead.',
@@ -1792,7 +1877,7 @@
                 '<b>A notice holds two controls</b> in two cases only, in one <code>ds-actions</code> group. A suggestion the owner takes or declines has its action, then the other as a ghost button: Merge and Keep separate on a possible duplicate. The result of a change has Undo, or Redo once it is undone, then a Dismiss icon button where the notice can be closed.',
                 '<b>Empty and error states</b> use the same block: what happened, what to do, one button. No illustrations.',
                 '<b>Loading</b> is a skeleton of the content that will appear, not a spinner or the word Loading.',
-                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button.',
+                '<b>Popover and menu</b> share one shell: 8px radius, hairline, one shadow. The sort list, a table’s Columns list, devices, activity and confirmations all use it. A menu item that is a link looks the same as one that is a button. A menu or picker opened from a row or card (<code>data-sheet</code>) is a sheet on a phone; see the play group.',
                 '<b>A choice group</b> holds a setting inside a menu, such as Playlist type in a playlist’s More: its name, then the choices, the current one ticked, set apart by a hairline above and below. Choosing one saves it and closes the menu.',
               ]) +
               g.note(

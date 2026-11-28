@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { PlayHeaderButtons, PlayPair } from '@repo/ui/components/ds/play'
 import {
   playbackItemFeedbackKey,
@@ -106,9 +107,11 @@ export function AlbumHeaderPlay({
 export function AlbumPlay({
   album,
   place,
+  more,
 }: {
   album: AlbumSource
   place: 'tile' | 'row'
+  more?: ReactNode
 }) {
   const playback = useAlbumPlayback(album)
   return (
@@ -121,6 +124,7 @@ export function AlbumPlay({
       disabledReason={playback.reason}
       onPlay={() => playback.play()}
       onQueue={playback.queue}
+      more={more}
     />
   )
 }
@@ -151,10 +155,12 @@ export function TrackHeaderPlay({
 export function TrackRowPlay({
   track,
   source,
+  more,
 }: {
   track: LibraryTrackSource
   /** Plays the track within its album or playlist. */
   source?: () => PlaybackSource
+  more?: ReactNode
 }) {
   const playback = useTrackPlayback(track)
   return (
@@ -167,6 +173,7 @@ export function TrackRowPlay({
       disabledReason={playback.reason}
       onPlay={() => playback.play(source)}
       onQueue={playback.queue}
+      more={more}
     />
   )
 }

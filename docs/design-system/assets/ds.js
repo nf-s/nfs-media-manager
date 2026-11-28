@@ -45,7 +45,7 @@
       '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 10h17M3.5 15h17M10 4.5v15"/>',
     columns:
       '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15M14.5 4.5v15"/>',
-    more: '<path d="M5 12h.01M12 12h.01M19 12h.01"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
     chevR: '<path d="m9 6 6 6-6 6"/>',
@@ -90,8 +90,9 @@
   }
   const FILLED = new Set(['play', 'pause', 'prev', 'next'])
 
+  /* More's dots are filled and heavier than the stroke (data-dots) */
   function icon(name, o = {}) {
-    return `<svg class="ds-i"${attrs({ 'data-size': o.size, 'data-fill': FILLED.has(name) })} viewBox="0 0 24 24" aria-hidden="true">${ICON[name] || ''}</svg>`
+    return `<svg class="ds-i"${attrs({ 'data-size': o.size, 'data-fill': FILLED.has(name), 'data-dots': name === 'more' })} viewBox="0 0 24 24" aria-hidden="true">${ICON[name] || ''}</svg>`
   }
 
   /* Mock artwork: flat shapes from a fixed set of palettes */
@@ -144,7 +145,7 @@
       item.art === null
         ? `<span class="ds-art-fallback">${icon(o.icon || KIND_ICON[item.kind] || 'disc')}</span>`
         : art(item.seed)
-    return `<span class="ds-art"${attrs({ 'data-ratio': ratio, 'data-size': o.size })}>${inner}${o.badge ? `<span class="ds-art-badge">${esc(o.badge)}</span>` : ''}${o.play ? play('tile', { playing: o.playing }) : ''}</span>`
+    return `<span class="ds-art"${attrs({ 'data-ratio': ratio, 'data-size': o.size })}>${inner}${o.badge ? `<span class="ds-art-badge">${esc(o.badge)}</span>` : ''}${o.controls || ''}</span>`
   }
 
   function thumb(item, o = {}) {
@@ -163,6 +164,8 @@
       'data-icon': !label && Boolean(o.icon),
       'aria-label': o.aria,
       'aria-pressed': o.pressed ? 'true' : undefined,
+      'aria-haspopup': o.menu ? 'menu' : undefined,
+      'aria-expanded': o.menu ? 'false' : undefined,
       disabled: o.disabled,
       title: o.title,
     })}>${inner}</button>`
@@ -194,17 +197,42 @@
     )}>${icon(o.action === 'find' ? 'search' : 'bookPlus')}<span>${o.action === 'find' ? (o.short ? 'Find' : 'Find in library') : o.short ? 'Add' : 'Add to Library'}</span></button>`
   }
 
-  /* The header pair goes under the artwork (detailHead's o.play): a labelled
-     Play that takes the artwork's width and a square Queue button. */
+  /* The play group: Play, Add to queue, More, then a provider link
+     (o.provider). o.more: false leaves More out where the app has no menu;
+     o.playable: false keeps More alone, for an item that cannot be played;
+     o.open draws More with its menu open. The header pair goes under the
+     artwork (detailHead's o.play): a labelled Play that takes the artwork's
+     width and a square Queue button; More stays in the header's actions. */
   function play(place = 'row', o = {}) {
     if (place === 'header') {
       return `${btn('Play', { icon: 'play', variant: 'primary', size: 'md' })}${btn('', { icon: 'queue', size: 'md', aria: 'Add to queue', title: 'Add to queue' })}`
     }
     const controls = attrs({ disabled: o.disabled })
+    const pair =
+      o.playable === false
+        ? ''
+        : `<button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}"${controls}>${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue"${controls}>${icon('queue', { size: 'sm' })}</button>`
+    const more =
+      o.more === false
+        ? ''
+        : `<button type="button" aria-haspopup="menu" aria-expanded="${Boolean(o.open)}" aria-label="More actions" title="More actions">${icon('more', { size: 'sm' })}</button>`
     const link = o.provider
       ? `<a href="#" aria-label="Open on ${esc(PROVIDERS[o.provider].name)} (opens in a new tab)" target="_blank" rel="noopener noreferrer">${mark(o.provider, { size: 'sm', hidden: true })}</a>`
       : ''
-    return `<span class="ds-play" data-place="${place}"><button type="button" aria-label="${o.playing ? 'Pause' : 'Play'}"${controls}>${icon(o.playing ? 'pause' : 'play', { size: 'sm' })}</button><button type="button" aria-label="Add to queue"${controls}>${icon('queue', { size: 'sm' })}</button>${link}</span>`
+    return `<span class="ds-play" data-place="${place}">${pair}${more}${link}</span>`
+  }
+
+  /* An item's group in a row or on its artwork. Albums and tracks have Play,
+     Add to queue and More; films and subscription items, which cannot be
+     played, have More alone; other kinds keep the pair. o.play: false draws
+     no group, o.more: false leaves More out. Empty when there is nothing. */
+  const MORE_KINDS = new Set(['album', 'track', 'film', 'video'])
+  function itemPlay(item, place, o = {}) {
+    if (o.play === false) return ''
+    const playable = item.kind !== 'film' && item.kind !== 'video'
+    const more = o.more !== false && MORE_KINDS.has(item.kind)
+    if (!playable && !more) return ''
+    return play(place, { playable, more, playing: o.playing, open: o.open })
   }
 
   function pill(label, o = {}) {
@@ -513,7 +541,7 @@
   })
 
   function idCell(item, o = {}) {
-    return `<span class="ds-cell-id">${o.thumb === false ? '' : thumb(item)}<a class="ds-cell-title" href="#">${esc(item.title)}</a>${o.play === false ? '' : play('row', { playing: o.playing })}</span>`
+    return `<span class="ds-cell-id">${o.thumb === false ? '' : thumb(item)}<a class="ds-cell-title" href="#">${esc(item.title)}</a>${itemPlay(item, 'row', o)}</span>`
   }
 
   /* What a record is made of. partToggle: the chevron before the title,
@@ -538,15 +566,23 @@
     `<button type="button" class="ds-btn" aria-pressed="${Boolean(o.pressed)}"${attrs(o.iconOnly ? { 'aria-label': label, title: label, 'data-icon': true } : {})}>${o.icon ? icon(o.icon, { size: 'sm' }) : ''}${o.iconOnly ? '' : esc(label)}${o.count === undefined ? '' : count(Number(o.count).toLocaleString('en'))}</button>`
 
   function card(item, o = {}) {
-    const playable =
-      item.kind !== 'film' && item.kind !== 'video' && o.play !== false
-    return `<article class="ds-card"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${artBox(item, { play: playable, badge: o.badge, playing: o.state === 'playing' })}<a class="ds-card-title" href="#">${esc(item.title)}</a>${item.by ? `<span class="ds-card-by">${esc(item.by)}</span>` : ''}<span class="ds-card-meta">${(o.meta || []).join('')}</span>${o.tags !== false && item.tags && item.tags.length ? pills(item.tags, { max: 2 }) : ''}</article>`
+    const controls = itemPlay(item, 'tile', {
+      play: o.play,
+      more: o.more,
+      open: o.open,
+      playing: o.state === 'playing',
+    })
+    return `<article class="ds-card"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${artBox(item, { controls, badge: o.badge })}<a class="ds-card-title" href="#">${esc(item.title)}</a>${item.by ? `<span class="ds-card-by">${esc(item.by)}</span>` : ''}<span class="ds-card-meta">${(o.meta || []).join('')}</span>${o.tags !== false && item.tags && item.tags.length ? pills(item.tags, { max: 2 }) : ''}</article>`
   }
 
   function row(item, o = {}) {
-    const playable =
-      item.kind !== 'film' && item.kind !== 'video' && o.play !== false
-    return `<div class="ds-row"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${thumb(item)}<div class="ds-row-main"><a class="ds-row-title" href="#">${esc(item.title)}</a><span class="ds-row-by">${esc(o.by || item.by || '')}</span></div>${playable ? play('row', { playing: o.state === 'playing' }) : '<span></span>'}<div class="ds-row-tags">${item.tags ? pills(item.tags, { max: o.maxTags || 3 }) : ''}</div><div class="ds-row-meta">${(o.meta || []).join('')}</div></div>`
+    const controls = itemPlay(item, 'row', {
+      play: o.play,
+      more: o.more,
+      open: o.open,
+      playing: o.state === 'playing',
+    })
+    return `<div class="ds-row"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${thumb(item)}<div class="ds-row-main"><a class="ds-row-title" href="#">${esc(item.title)}</a><span class="ds-row-by">${esc(o.by || item.by || '')}</span></div>${controls || '<span></span>'}<div class="ds-row-tags">${item.tags ? pills(item.tags, { max: o.maxTags || 3 }) : ''}</div><div class="ds-row-meta">${(o.meta || []).join('')}</div></div>`
   }
 
   /* Similar albums use a compact row. Tracks reuse the track detail header. */
@@ -598,7 +634,8 @@
       return `<section class="ds-section">${header}${evidence.length ? `<div class="ds-actions">${evidence.join(' ')} </div>` : ''}</section>`
     }
     const by = esc([SUGGESTION[s.state], s.by, s.meta].join(' · '))
-    const controls = playable ? play('row') : '<span></span>'
+    // Only a library item has More: nothing else can join a playlist.
+    const controls = playable ? play('row', { more: linked }) : '<span></span>'
     return `<div class="ds-row ds-suggestion" data-action${attrs({ 'data-state': o.state })}>${thumb(s)}<div class="ds-row-main">${title}<span class="ds-row-by">${by}</span>${badges}</div>${controls}<div class="ds-row-tags"></div><div class="ds-row-meta"></div><span class="ds-actions">${open}${add}</span></div>`
   }
   /* A list row still loading, in a compact list with a trailing action */
@@ -606,7 +643,7 @@
     `<div class="ds-row" data-action aria-hidden="true"><span class="ds-thumb ds-skel"></span><div class="ds-row-main ds-skel-lines"><span class="ds-skel" style="width:60%"></span><span class="ds-skel" style="width:38%"></span></div><span></span><span></span></div>`
 
   const listHead = (labels, o = {}) =>
-    `<div class="ds-listhead"><span style="width:${o.thumb || 40}px"></span><span>${labels[0]}</span><span style="width:${o.play === undefined ? 50 : o.play}px"></span><span>${labels[1] || ''}</span><div class="ds-row-meta">${labels.slice(2).join('')}</div></div>`
+    `<div class="ds-listhead"><span style="width:${o.thumb || 40}px"></span><span>${labels[0]}</span><span style="width:${o.play === undefined ? 76 : o.play}px"></span><span>${labels[1] || ''}</span><div class="ds-row-meta">${labels.slice(2).join('')}</div></div>`
 
   /* Facts, stats, sections */
 
@@ -659,7 +696,8 @@
 
   /* Menu. An item is [icon, label, hint, hover], or a named group of
      choices, { group, choices: [[label, chosen]] }, with the chosen one
-     ticked. o.label names a menu of actions, such as More. */
+     ticked. o.label names a menu of actions, such as More. o.sheet marks a
+     menu opened from a row's or card's group, a sheet on a phone. */
   const choiceGroup = (item) =>
     `<div class="ds-menu-group" role="group" aria-label="${esc(item.group)}"><div class="ds-pop-head" aria-hidden="true">${esc(item.group)}</div>${item.choices
       .map(
@@ -668,7 +706,7 @@
       )
       .join('')}</div>`
   const menu = (items, head, o = {}) =>
-    `<div class="ds-pop"${attrs({ role: o.label ? 'menu' : undefined, 'aria-label': o.label })}>${head ? `<div class="ds-pop-head">${esc(head)}</div>` : ''}${items
+    `<div class="ds-pop"${attrs({ role: o.label ? 'menu' : undefined, 'aria-label': o.label, 'data-sheet': o.sheet })}>${head ? `<div class="ds-pop-head">${esc(head)}</div>` : ''}${items
       .map((item) =>
         item.group
           ? choiceGroup(item)
@@ -728,7 +766,7 @@
     const device = o.needsDevice
       ? `<span class="ds-dock-status" data-tone="attention">Choose a device to play</span>${btn('Devices', { icon: 'speaker', variant: 'primary' })}`
       : `${btn('Kitchen', { icon: 'speaker' })}`
-    return `<footer class="ds-dock"><div class="ds-dock-now">${artBox(ALBUMS[0])}<div class="ds-row-main"><a class="ds-row-title" href="#">Sodium Glow</a><span class="ds-row-by">Mira Kestrel</span></div></div><div class="ds-dock-transport"><div class="ds-dock-buttons">${ghost('shuffle', 'Shuffle')}${ghost('prev', 'Previous')}<button type="button" class="ds-dock-toggle" aria-label="Pause">${icon('pause', { size: 'sm' })}</button>${ghost('next', 'Next')}${ghost('repeat', 'Repeat')}</div><div class="ds-dock-scrub"><span>1:24</span>${meter(34)}<span>4:10</span></div></div><div class="ds-dock-tools">${device}${ghost('queue', 'Queue')}</div></footer>`
+    return `<footer class="ds-dock"><div class="ds-dock-now">${artBox(ALBUMS[0])}<div class="ds-row-main"><a class="ds-row-title" href="#">Sodium Glow</a><span class="ds-row-by">Mira Kestrel</span></div>${btn('', { icon: 'more', variant: 'ghost', aria: 'More actions for Sodium Glow', title: 'More actions', menu: true })}</div><div class="ds-dock-transport"><div class="ds-dock-buttons">${ghost('shuffle', 'Shuffle')}${ghost('prev', 'Previous')}<button type="button" class="ds-dock-toggle" aria-label="Pause">${icon('pause', { size: 'sm' })}</button>${ghost('next', 'Next')}${ghost('repeat', 'Repeat')}</div><div class="ds-dock-scrub"><span>1:24</span>${meter(34)}<span>4:10</span></div></div><div class="ds-dock-tools">${device}${ghost('queue', 'Queue')}</div></footer>`
   }
 
   function shell(o) {
@@ -1700,7 +1738,7 @@
       { h: 'Tags', c: (r) => pills(r.tags, { max: 2 }) },
     ],
     films: [
-      { h: 'Title', sort: '', c: (r) => idCell(r, { play: false }) },
+      { h: 'Title', sort: '', c: (r) => idCell(r) },
       { h: 'Directors', sort: '', c: (r) => link(r.by) },
       { h: 'Released', sort: '', c: (r) => r.year },
       { h: 'Runtime', sort: '', end: true, c: (r) => r.runtime },
@@ -1748,6 +1786,7 @@
     thumb,
     btn,
     play,
+    itemPlay,
     libraryAction,
     pill,
     pills,

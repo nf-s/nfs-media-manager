@@ -25,6 +25,7 @@ import spotifyAlbumReference from '@/routes/spotify-album-reference'
 import films from '@/routes/films'
 import tracks from '@/routes/tracks'
 import playlists from '@/routes/playlists'
+import libraryPlaylists from '@/routes/library-playlists'
 import { albumCollections, filmCollections } from '@/routes/collections'
 import { artists, people } from '@/routes/creators'
 import jobs from '@/routes/jobs'
@@ -129,6 +130,7 @@ v1ApiBase.route('/films', films)
 v1ApiBase.route('/ratings', ratingsExplorer)
 v1ApiBase.route('/tracks', tracks)
 v1ApiBase.route('/playlists', playlists)
+v1ApiBase.route('/library-playlists', libraryPlaylists)
 v1ApiBase.route('/collections', filmCollections)
 v1ApiBase.route('/album-collections', albumCollections)
 v1ApiBase.route('/artists', artists)

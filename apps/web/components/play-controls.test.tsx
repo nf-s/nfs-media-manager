@@ -11,7 +11,8 @@ import {
   TrackPlayButton,
 } from './play-controls'
 import { PlaybackViewContext, type PlaybackView } from './playback-provider'
-import { TrackHeaderPlay } from './detail-play'
+import { AlbumPlay, TrackHeaderPlay, TrackRowPlay } from './detail-play'
+import { MoreButton } from '@repo/ui/components/ds/play'
 import {
   albumPlayable,
   libraryTrackPlayable,
@@ -186,6 +187,36 @@ function libraryControls(track: LibraryTrackSource = libraryTrack) {
     </>
   )
 }
+
+test('More follows Queue in every row and tile control, playable or not', () => {
+  const more = <MoreButton title="Fixture item" />
+  const group = (
+    <>
+      <TilePlayControls album={album} more={more} />
+      <TrackPlayButton album={album} track={track} more={more} />
+      <LibraryTrackPlayButton track={libraryTrack} more={more} />
+      <AlbumPlay album={album} place="row" more={more} />
+      <TrackRowPlay track={libraryTrack} more={more} />
+    </>
+  )
+  for (const view of [on, undefined]) {
+    const html = render(group, view)
+    const pairs =
+      html.match(
+        /<span class="ds-play"[^>]*>(?:(?!<span class="ds-play").)*/g,
+      ) ?? []
+    assert.equal(pairs.length, 5)
+    for (const pair of pairs)
+      assert.match(
+        pair,
+        /aria-label="(Play|Pause) [^"]+".*aria-label="Add [^"]+".*aria-label="More actions for Fixture item"/,
+      )
+    assert.doesNotMatch(
+      html,
+      /aria-label="More actions for Fixture item"[^>]*disabled=""/,
+    )
+  }
+})
 
 test('library track controls explain disconnected playback and retain the row number', () => {
   const html = render(libraryControls())

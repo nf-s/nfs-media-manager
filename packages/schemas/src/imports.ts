@@ -173,9 +173,24 @@ export const LegacySavedViewSchema = z.object({
 })
 
 export function normalizeSavedView(input: unknown): SavedView {
-  const value = LegacySavedViewSchema.parse(
+  return SavedViewSchema.parse(
+    savedViewInput(
+      LegacySavedViewSchema.parse(removeSpotifyAudioFeatures(input).value),
+    ),
+  )
+}
+
+/** A legacy saved view in the current form, or null when it does not convert. */
+export function convertSavedView(input: unknown): SavedView | null {
+  const legacy = LegacySavedViewSchema.safeParse(
     removeSpotifyAudioFeatures(input).value,
   )
+  if (!legacy.success) return null
+  const view = SavedViewSchema.safeParse(savedViewInput(legacy.data))
+  return view.success ? view.data : null
+}
+
+function savedViewInput(value: z.infer<typeof LegacySavedViewSchema>) {
   const aliases: Record<string, string> = {
     genres: 'genre',
     artists: 'artist',
@@ -199,7 +214,7 @@ export function normalizeSavedView(input: unknown): SavedView {
           },
         ],
   )
-  return SavedViewSchema.parse({
+  return {
     name: value.name,
     sortBy: key(value.sort[0]),
     direction: value.sort[1].toLowerCase(),
@@ -221,5 +236,5 @@ export function normalizeSavedView(input: unknown): SavedView {
         max: filter.max,
         includeMissing: filter.includeUndefined ?? false,
       })),
-  })
+  }
 }

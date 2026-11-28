@@ -432,7 +432,7 @@ export async function listAlbumBrowsePage(query: AlbumQuery) {
   }
 }
 
-async function loadAlbums(
+export async function loadAlbums(
   ids: string[],
   listeningScrobbles: ReadonlyMap<string, number> | undefined,
 ) {
@@ -530,7 +530,7 @@ export async function listFilmBrowsePage(query: FilmQuery) {
   }
 }
 
-async function loadFilms(ids: string[]) {
+export async function loadFilms(ids: string[]) {
   if (!ids.length) return []
 
   const records = await db.query.mediaItem.findMany({
