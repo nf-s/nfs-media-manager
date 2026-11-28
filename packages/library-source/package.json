@@ -10,6 +10,16 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js"
     },
+    "./better-sqlite3": {
+      "types": "./dist/drivers/better-sqlite3.d.ts",
+      "import": "./dist/drivers/better-sqlite3.js",
+      "require": "./dist/drivers/better-sqlite3.js"
+    },
+    "./sqlite-wasm": {
+      "types": "./dist/drivers/sqlite-wasm.d.ts",
+      "import": "./dist/drivers/sqlite-wasm.js",
+      "require": "./dist/drivers/sqlite-wasm.js"
+    },
     "./*": {
       "types": "./dist/*.d.ts",
       "import": "./dist/*.js",
@@ -21,16 +31,21 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest run --passWithNoTests"
+    "test:unit": "vitest run",
+    "measure": "vitest run --mode measure"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "catalog:",
+    "better-sqlite3": "13.2.0",
     "typescript": "catalog:",
     "vitest": "^4.1.12"
   },
   "dependencies": {
     "@repo/schemas": "workspace:*",
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
     "zod": "catalog:"
   }
 }
