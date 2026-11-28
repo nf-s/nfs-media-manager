@@ -517,6 +517,7 @@ test("the review opens from the track's loaded detail", () => {
       lastfmSources: [],
       spotifyAlbumId: null,
       scrobbledAlbums: [],
+      listedInLibrary: true,
       isrcs: [],
       listening: {
         total: 0,

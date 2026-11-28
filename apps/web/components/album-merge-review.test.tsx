@@ -19,6 +19,7 @@ import {
   albumNameMoveAdapter,
 } from './album-merge-review'
 import { MergeBar, useMerge, type MergeAdapter } from './merge-bar'
+import { describeRowSelection, emptyRowSelection } from '@/utils/row-selection'
 import { ConfigContext } from './providers'
 
 const apiBaseUrl = 'http://localhost:4001'
@@ -198,13 +199,11 @@ test('the album Merge bar asks for two albums, then offers Merge', (t) => {
   })
   const client = new QueryClient()
   const selection = (ids: string[]) => ({
-    ids,
-    count: ids.length,
-    has: (id: string) => ids.includes(id),
-    all: false,
+    ...describeRowSelection({ ...emptyRowSelection(), ids }, { ordered: [] }),
     some: ids.length > 0,
     toggle: () => undefined,
     setAll: () => undefined,
+    selectMatching: () => undefined,
     replace: () => undefined,
     clear: () => undefined,
   })

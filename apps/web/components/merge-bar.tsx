@@ -3,7 +3,6 @@
 import {
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -27,8 +26,17 @@ import {
   type ButtonFeedback,
 } from '@repo/ui/components/ui/button'
 import { TableSelectionResult } from '@repo/ui/components/ui/table'
-import { formatItemCount } from '@repo/ui/lib/format'
-import { updateJobSelection } from '@/utils/job-selection'
+import { formatCount, formatItemCount } from '@repo/ui/lib/format'
+import {
+  describeRowSelection,
+  emptyRowSelection,
+  replaceRows,
+  rowSelectionFor,
+  selectMatchingRows,
+  setLoadedRows,
+  toggleRow,
+  type SelectionRows,
+} from '@/utils/row-selection'
 import {
   invalidateLibraryRecords,
   libraryChangeBlock,
@@ -44,56 +52,79 @@ export const rowSelectionWidth = 36
 /**
  * Row selection for a table, by record ID. `orderedIds` are the rows the
  * table has, in display order; a shift-click selects the range between.
+ * With `result`, the whole result of the view can be selected (Select all
+ * matching): its rows are ticked as they load and unticking one excludes it.
+ * With `identity`, the selection is cleared when the view changes.
  */
-export function useRowSelection(orderedIds: readonly string[]) {
-  const [ids, setIds] = useState<string[]>([])
-  const [anchor, setAnchor] = useState<string | null>(null)
-  const picked = useMemo(() => new Set(ids), [ids])
-  const shown = orderedIds.filter((id) => picked.has(id)).length
+export function useRowSelection(
+  orderedIds: readonly string[],
+  {
+    identity = '',
+    result,
+    outside,
+  }: Pick<SelectionRows, 'result' | 'outside'> & { identity?: string } = {},
+) {
+  const [stored, setStored] = useState(() => emptyRowSelection(identity))
+  const state = rowSelectionFor(stored, identity)
+  const rows: SelectionRows = { ordered: orderedIds, result, outside }
   return {
-    ids,
-    count: ids.length,
-    has: (id: string) => picked.has(id),
-    /** Every row the table has is selected. */
-    all: orderedIds.length > 0 && shown === orderedIds.length,
-    /** Some of the table's rows are selected. */
-    some: shown > 0 && shown < orderedIds.length,
+    ...describeRowSelection(state, rows),
     toggle(id: string, checked: boolean, shift: boolean) {
-      setIds(
-        updateJobSelection(ids, [...orderedIds], id, anchor, shift, checked),
-      )
-      setAnchor(id)
+      setStored(toggleRow(state, rows, id, checked, shift))
     },
     setAll(checked: boolean) {
-      const rows = new Set(orderedIds)
-      setIds(
-        checked
-          ? [...new Set([...ids, ...orderedIds])]
-          : ids.filter((id) => !rows.has(id)),
-      )
-      setAnchor(null)
+      setStored(setLoadedRows(state, rows, checked))
+    },
+    selectMatching() {
+      setStored(selectMatchingRows(state, rows))
     },
     replace(next: string[]) {
-      setIds(next)
-      setAnchor(null)
+      setStored(replaceRows(state, next))
     },
     clear() {
-      setIds([])
-      setAnchor(null)
+      setStored(emptyRowSelection(identity))
     },
   }
 }
 export type RowSelection = ReturnType<typeof useRowSelection>
 
+/**
+ * PL-30: Select all matching, after the Browse toolbar's count in Table view,
+ * while there is a result that is not wholly selected.
+ */
+export function SelectAllMatching({
+  selection,
+  noun,
+}: {
+  selection: RowSelection
+  /** The rows' noun, as in "128 tracks". */
+  noun: { one: string; other: string }
+}) {
+  if (!selection.canSelectMatching || selection.total === undefined) return null
+  return (
+    <Button
+      type="button"
+      variant="link"
+      title={`Select all ${formatItemCount(selection.total, noun)} that match, including rows not loaded yet`}
+      onClick={selection.selectMatching}
+    >
+      Select all matching
+    </Button>
+  )
+}
+
 /** The tri-state checkbox of the selection column's header. */
 export function RowSelectAll({
   selection,
   label,
+  matchingLabel = label,
   disabled = false,
 }: {
   selection: RowSelection
   /** States the scope, such as "Select loaded tracks". */
   label: string
+  /** The scope while the whole result is selected: "Select all matching tracks". */
+  matchingLabel?: string
   disabled?: boolean
 }) {
   const input = useRef<HTMLInputElement>(null)
@@ -105,7 +136,7 @@ export function RowSelectAll({
       ref={input}
       type="checkbox"
       className="ds-check"
-      aria-label={label}
+      aria-label={selection.everyMatch ? matchingLabel : label}
       checked={selection.all}
       disabled={disabled}
       onChange={(event) => selection.setAll(event.target.checked)}
@@ -132,7 +163,7 @@ export function RowSelectRow({
       className="ds-check"
       aria-label={`Select ${title}`}
       checked={selection.has(id)}
-      disabled={disabled}
+      disabled={disabled || !selection.selectable(id)}
       onClick={(event) => event.stopPropagation()}
       onChange={(event) =>
         selection.toggle(
@@ -985,6 +1016,10 @@ export function describeMergeProgress(waiting: number) {
     : `Merging ${formatItemCount(waiting, { one: 'selection', other: 'selections' })}…`
 }
 
+/** PL-32: Merge's title while the whole result is selected. */
+export const mergeNeedsTickedRows =
+  'Merge needs ticked rows. Clear the selection and tick the rows to merge.'
+
 /**
  * The bar under a table: the selection with Merge, then the result of the
  * last merge with Undo. Merge returns at once: the selection clears and the
@@ -1041,15 +1076,28 @@ export function MergeBar<Plan>({
       >
         {selection.count > 0 ? (
           <>
+            {selection.offerMatching && total !== undefined && (
+              <Button
+                type="button"
+                className="ds-selectbar-offer"
+                onClick={selection.selectMatching}
+              >
+                {`Select all ${formatCount(total)} matching`}
+              </Button>
+            )}
             {progress && <span role="status">{progress}</span>}
             {error && <span role="alert">{error}</span>}
             <span className="ds-actions ds-toolbar-end">
               {actions}
               <Button
                 variant="primary"
-                disabled={selection.count < 2}
+                disabled={selection.matching || selection.count < 2}
                 title={
-                  selection.count < 2 ? adapter.wording.selectMore : undefined
+                  selection.matching
+                    ? mergeNeedsTickedRows
+                    : selection.count < 2
+                      ? adapter.wording.selectMore
+                      : undefined
                 }
                 onClick={() => {
                   setError(null)

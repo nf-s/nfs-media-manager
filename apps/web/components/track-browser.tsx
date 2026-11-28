@@ -65,7 +65,10 @@ import {
   type TrackListItem,
 } from '@repo/schemas/tracks'
 import { useConfig } from './providers'
-import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
+import {
+  useInLibraryBrowseCount,
+  useVirtualBrowse,
+} from '@/hooks/useVirtualBrowse'
 import { useRailSlot } from '@/hooks/useRailSlot'
 import {
   useEmbeddedBrowse,
@@ -140,6 +143,7 @@ import {
   RowSelectAll,
   RowSelectRow,
   rowSelectionWidth,
+  SelectAllMatching,
   useRowSelection,
 } from './merge-bar'
 import { TrackMergeBar } from './track-merge-bar'
@@ -147,6 +151,9 @@ import { libraryItemMore } from './item-more'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { ResultLineSlot } from './result-line'
 import {
+  matchingBlocked,
+  matchingCount,
+  matchingSubject,
   selectionSubject,
   suggestedPlaylistName,
 } from '@/utils/library-playlists'
@@ -613,17 +620,39 @@ function TrackBrowse({
       ),
     ),
   ]
-  const selection = useRowSelection(loadedIds)
-  const playlistSubject = selectionSubject('tracks', selection.ids, [
-    ...slots.map(({ item }) => item),
+  const loadedRows = [
+    ...slots.flatMap(({ item }) => (item ? [item] : [])),
     ...versions.items,
-  ])
+  ]
   // Another search, filter, sort, scope or view lists other tracks.
-  const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
-  if (selectionIdentity !== scrollIdentity) {
-    setSelectionIdentity(scrollIdentity)
-    selection.clear()
-  }
+  const selection = useRowSelection(loadedIds, {
+    identity: scrollIdentity,
+    result:
+      view === 'table'
+        ? {
+            ids: slots.flatMap(({ item }) => (item ? [item.id] : [])),
+            total: query.hasTotal ? total : undefined,
+          }
+        : undefined,
+    outside: loadedRows.flatMap((item) =>
+      item.inLibrary === false ? [item.id] : [],
+    ),
+  })
+  const inLibraryCount = useInLibraryBrowseCount({
+    apiBaseUrl,
+    collection,
+    params,
+    enabled: selection.matching,
+    total: selection.total,
+  })
+  const playlistSubject = selection.matching
+    ? matchingSubject(
+        'tracks',
+        params,
+        selection.excludeIds,
+        matchingCount(inLibraryCount.total ?? 0, selection),
+      )
+    : selectionSubject('tracks', selection.ids, loadedRows)
   const gridPanelAfter = Math.min(query.end, (gridRow + 1) * grid.columns) - 1
   const gridRowTemplate = expandedVisible
     ? `repeat(${gridRow - query.start / grid.columns + 1}, ${grid.cardHeight}px) ${versionsHeight}px`
@@ -1132,6 +1161,11 @@ function TrackBrowse({
               noun={noun}
             />
           }
+          countAction={
+            view === 'table' && (
+              <SelectAllMatching selection={selection} noun={noun} />
+            )
+          }
           end={
             host.browseHref && (
               <Button variant="link" asChild>
@@ -1287,6 +1321,7 @@ function TrackBrowse({
                       <RowSelectAll
                         selection={selection}
                         label="Select loaded tracks"
+                        matchingLabel="Select all matching tracks"
                         disabled={!loadedIds.length}
                       />
                     </TableHead>
@@ -1397,6 +1432,12 @@ function TrackBrowse({
                 <AddToPlaylistButton
                   subject={playlistSubject}
                   suggestedName={suggestedPlaylistName(filters, q)}
+                  counting={
+                    selection.matching && inLibraryCount.total === undefined
+                  }
+                  blocked={
+                    selection.matching ? matchingBlocked(inLibraryCount) : null
+                  }
                   onAdded={selection.clear}
                 />
               }

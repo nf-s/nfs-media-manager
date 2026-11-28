@@ -35,7 +35,6 @@ import {
 import { useConfig } from './providers'
 import { fetchApiData } from '@/utils/api'
 import { providerLabel } from '@/utils/field-provenance'
-import { trackDetailListed } from '@/utils/library-playlists'
 import { trackServiceLinks } from '@/utils/track-links'
 import { useKeyNotation } from '@/utils/key-notation'
 import {
@@ -622,7 +621,6 @@ function TrackDetailContent({
   const [merging, setMerging] = useState(false)
   const albumAddition = useTrackAlbumAddition(item)
   const addToPlaylist = useItemAddToPlaylist('tracks', item)
-  const addable = trackDetailListed(item)
   function openResolvedTrack(targetId: string, tab?: 'sources') {
     if (onMerged) onMerged(targetId, tab)
     else
@@ -667,12 +665,12 @@ function TrackDetailContent({
               title={item.title}
               inLibrary={item.inLibrary ?? true}
             />
-            {addable && addToPlaylist.action}
+            {item.listedInLibrary && addToPlaylist.action}
             <DetailActionsSpacer />
             <DetailMore
               crumb={{ title: item.title }}
               items={[
-                ...(addable ? [addToPlaylist.menuItem] : []),
+                ...(item.listedInLibrary ? [addToPlaylist.menuItem] : []),
                 ...(canMergeLastfmTrack(item)
                   ? [
                       {

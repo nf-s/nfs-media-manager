@@ -49,6 +49,7 @@ import {
 } from './library-playlist-names'
 import {
   parseLibraryPlaylistView,
+  onlyInLibraryMessage,
   resolveLibraryPlaylistSelection,
 } from './library-playlist-selection'
 import { loadAlbums, loadFilms } from './media'
@@ -301,7 +302,7 @@ function requireListedItems(row: { outside: number; unlisted: number }) {
   if (row.unlisted > 0)
     throw new ServerError({
       statusCode: 422,
-      message: 'Only items in the library can be added to a playlist.',
+      message: onlyInLibraryMessage,
     })
 }
 

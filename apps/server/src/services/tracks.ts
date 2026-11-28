@@ -44,6 +44,7 @@ import {
 import { playlist } from '@/schemas/db'
 import {
   listBrowseFacets,
+  listedInLibraryBrowse,
   queryBrowseIds,
   queryBrowsePageIds,
   queryBrowsePositions,
@@ -437,6 +438,7 @@ const ListeningDetailSchema = z.object({
   isrcs: z.array(TrackIsrcSchema),
   facts: z.array(TrackFactSchema),
   tags: TrackTagGroupsSchema,
+  listed: z.boolean(),
 })
 const isoSeconds = (value: number | null) =>
   value === null ? null : new Date(value * 1000).toISOString()
@@ -500,7 +502,8 @@ async function getTrackListeningDetail(id: string) {
       coalesce((select jsonb_agg(scrobbled_albums order by scrobbles desc, title, id) from scrobbled_albums), '[]'::jsonb) as scrobbled_albums,
       ${trackIsrcsExpression(sql`${id}::text`)} as isrcs,
       ${trackFactsExpression(sql`${id}::text`)} as facts,
-      ${trackTagGroupsExpression(sql`${id}::text`)} as tags
+      ${trackTagGroupsExpression(sql`${id}::text`)} as tags,
+      ${listedInLibraryBrowse('track', sql`${id}::text`)} as listed
     from linked`)
   return ListeningDetailSchema.parse(result.rows[0])
 }
@@ -539,6 +542,7 @@ export async function getTrackDetail(
     lastfmSources,
     scrobbledAlbums: listening.scrobbled_albums,
     isrcs: listening.isrcs,
+    listedInLibrary: listening.listed,
     facts: listening.facts,
     tags: listening.tags,
     listening: {

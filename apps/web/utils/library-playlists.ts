@@ -124,34 +124,55 @@ export function selectionSubject(
 }
 
 /**
- * PL-02, as far as a track's details tell: Tracks Browse at the In library
- * scope lists it. Browse hides a Last.fm row with no Spotify ID, album,
- * album name, track list or imported playlist when its recorded names are
- * counted on another listed track; its details show that as Last.fm names,
- * none matched by hand, with no listening of their own. The server rejects
- * what this cannot tell.
+ * PL-32: the subject of Select all matching, every match of the view's Browse
+ * query (its parameters as Browse sends them) less the unticked rows. `count`
+ * is how many the server will add: those Browse lists at the In library scope.
  */
-export function trackDetailListed(track: {
-  inLibrary?: boolean
-  spotifyTrackId: string | null
-  album: unknown
-  albumName: string | null
-  playlists: readonly unknown[]
-  sources: readonly string[]
-  lastfmSources: readonly { manuallyMatched: boolean }[]
-  listening: { total: number }
+export function matchingSubject(
+  library: LibraryPlaylistLibrary,
+  params: URLSearchParams,
+  excludeIds: readonly string[],
+  count: number,
+): PlaylistSubject {
+  return {
+    library,
+    selection: {
+      query: Object.fromEntries(params),
+      excludeIds: [...excludeIds],
+    },
+    count,
+    title: null,
+  }
+}
+
+/** PL-02: why Add to playlist cannot take items outside the library. */
+export const outsideLibraryReason =
+  'Items outside the library cannot be added to a playlist.'
+
+/**
+ * Why Add to playlist cannot take a whole-result selection, or null: at the
+ * Outside scope the view shows no item in the library (PL-32), and a failed
+ * count gives its request's message.
+ */
+export function matchingBlocked(count: {
+  outside: boolean
+  error: string | null
 }) {
-  if (track.inLibrary === false) return false
-  const repeatedLastfmRow =
-    track.spotifyTrackId === null &&
-    track.album === null &&
-    !track.albumName?.trim() &&
-    track.playlists.length === 0 &&
-    !track.sources.includes('album') &&
-    track.lastfmSources.length > 0 &&
-    track.lastfmSources.every((source) => !source.manuallyMatched) &&
-    track.listening.total === 0
-  return !repeatedLastfmRow
+  return count.outside ? outsideLibraryReason : count.error
+}
+
+/**
+ * How many items a whole-result selection adds: the view's count at the In
+ * library scope less the unticked rows in the library.
+ */
+export function matchingCount(
+  inLibraryTotal: number,
+  selection: { excludeIds: readonly string[]; outsideExcluded: number },
+) {
+  return Math.max(
+    0,
+    inLibraryTotal - (selection.excludeIds.length - selection.outsideExcluded),
+  )
 }
 
 /** The one item's title, when the subject is a single named item. */

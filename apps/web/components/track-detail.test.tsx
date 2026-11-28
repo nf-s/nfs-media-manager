@@ -77,6 +77,7 @@ const scrobbled = TrackDetailSchema.parse({
   ],
   spotifyAlbumId: null,
   scrobbledAlbums: [],
+  listedInLibrary: true,
   isrcs: [],
   listening: {
     total: 3,
@@ -752,4 +753,15 @@ test('a cached album outside the library opens by release ID and can be added', 
       /is in the library|Find album in library|href="\/albums\/cached-release"/,
     )
   }
+})
+
+test('details offer Add to playlist only for a track Tracks Browse lists', () => {
+  const addButton =
+    /<button[^>]*aria-haspopup="dialog"[^>]*>(?:(?!<\/button>).)*Add to playlist/
+  assert.match(render(scrobbled), addButton)
+  // The server says Browse hides it, as for a Last.fm row with scrobbles of its own.
+  assert.doesNotMatch(
+    render({ ...scrobbled, listedInLibrary: false }),
+    addButton,
+  )
 })

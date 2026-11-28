@@ -485,7 +485,7 @@ test('Tracks inside a detail are held to their creator, which is not a filter', 
   // The search is a pill on the line under the toolbar, before the count and the link.
   assert.match(
     searched,
-    /<div class="ds-filterline">.*?Search: Example.*?>Clear all<\/button><span class="ds-toolbar-count" role="status">[^<]*<\/span><a [^>]*>Show in Tracks<\/a><\/div>/,
+    /<div class="ds-filterline">.*?Search: Example.*?>Clear all<\/button><span class="ds-toolbar-count" role="status">[^<]*<\/span>(?:<button [^>]*>Select all matching<\/button>)?<a [^>]*>Show in Tracks<\/a><\/div>/,
   )
   assert.doesNotMatch(searched, /Remove artist filter/)
 

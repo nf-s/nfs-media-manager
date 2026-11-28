@@ -48,6 +48,7 @@ import {
   invalidateLibraryPlaylists,
   libraryItemCount,
   libraryPlaylistPickerKey,
+  outsideLibraryReason,
   pickerHeading,
   playlistNameTaken,
   selectionRejection,
@@ -172,34 +173,36 @@ export function LibraryPlaylistPicker({
 /**
  * The selection bar's Add to playlist, which opens the picker for the
  * selection. `primary` where the bar has no Merge. With none of the ticked
- * rows in the library (PL-02), it is disabled and its title says why.
+ * rows in the library (PL-02), or a `blocked` reason, it is disabled and its
+ * title says why. It is disabled while the selection's count is `counting`.
  */
 export function AddToPlaylistButton({
   subject,
   suggestedName,
   primary = false,
+  counting = false,
+  blocked = null,
   onAdded,
 }: {
   subject: PlaylistSubject
   suggestedName?: string
   primary?: boolean
+  counting?: boolean
+  blocked?: string | null
   onAdded?: () => void
 }) {
   const id = useId()
   const button = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
-  const none = subject.count === 0
+  const reason =
+    blocked ?? (!counting && subject.count === 0 ? outsideLibraryReason : null)
   return (
     <>
       <Button
         ref={button}
         variant={primary ? 'primary' : 'default'}
-        disabled={none}
-        title={
-          none
-            ? 'Items outside the library cannot be added to a playlist.'
-            : undefined
-        }
+        disabled={reason !== null || counting}
+        title={reason ?? undefined}
         popoverTarget={id}
         aria-haspopup="dialog"
         aria-expanded={open}

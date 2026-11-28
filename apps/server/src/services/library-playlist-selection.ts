@@ -25,9 +25,14 @@ export function parseLibraryPlaylistView(
   return parsed.data
 }
 
+/** PL-02: the reason a selection holds an item that cannot be added. */
+export const onlyInLibraryMessage =
+  'Only items in the library can be added to a playlist.'
+
 /**
- * PL-02: a query selection resolves at the In library scope whatever scope
- * the query carries, so it holds only items that can be added.
+ * PL-02: a query selection adds the rows of the query that are in the
+ * library, so it resolves at the In library scope. At the Outside scope the
+ * view shows none of them, and the selection is refused.
  */
 function readBrowseIds({ library, query }: LibraryBrowseQuery, limit: number) {
   const libraryScope = 'library'
@@ -47,7 +52,8 @@ function readBrowseIds({ library, query }: LibraryBrowseQuery, limit: number) {
 /**
  * PL-13: the items of a selection in selection order, each once. A query is
  * resolved from its filters on the server in Browse order, in one page read
- * whatever its size, less `excludeIds`. More than 10,000 items is a 422.
+ * whatever its size, less `excludeIds`. More than 10,000 items, or a query at
+ * the Outside scope, is a 422.
  */
 export async function resolveLibraryPlaylistSelection(
   library: LibraryPlaylistLibrary,
@@ -55,8 +61,11 @@ export async function resolveLibraryPlaylistSelection(
 ) {
   if ('ids' in selection) return [...new Set(selection.ids)]
   const excluded = new Set(selection.excludeIds)
+  const query = parseLibraryPlaylistView(library, selection.query)
+  if (query.query.libraryScope === 'outside')
+    throw new ServerError({ statusCode: 422, message: onlyInLibraryMessage })
   const ids = await readBrowseIds(
-    parseLibraryPlaylistView(library, selection.query),
+    query,
     LIBRARY_PLAYLIST_SELECTION_MAX + excluded.size + 1,
   )
   const selected = [...new Set(ids.filter((id) => !excluded.has(id)))]

@@ -1298,6 +1298,13 @@ a:focus-visible > .ds-logo[data-none] {
 .ds-selectbar .ds-check {
   accent-color: var(--ds-surface);
 }
+/* Select all N matching after the count. Phones keep the toolbar's link
+   instead, so the bar's actions stay on one line */
+@media (max-width: 700px) {
+  .ds-selectbar-offer {
+    display: none;
+  }
+}
 /* What the last action from the bar changed: an icon and one line, which is
    cut short before the buttons are pushed out */
 .ds-selectbar-result {

@@ -157,18 +157,20 @@
 
   function btn(label, o = {}) {
     const inner = `${o.icon ? icon(o.icon, { size: 'sm' }) : ''}${label ? esc(label) : ''}${o.end ? icon(o.end, { size: 'sm' }) : ''}`
-    return `<button type="button" class="ds-btn"${attrs({
-      'data-variant': o.variant,
-      'data-feedback': o.feedback,
-      'data-size': o.size,
-      'data-icon': !label && Boolean(o.icon),
-      'aria-label': o.aria,
-      'aria-pressed': o.pressed ? 'true' : undefined,
-      'aria-haspopup': o.menu ? 'menu' : undefined,
-      'aria-expanded': o.menu ? 'false' : undefined,
-      disabled: o.disabled,
-      title: o.title,
-    })}>${inner}</button>`
+    return `<button type="button" class="ds-btn${o.cls ? ` ${o.cls}` : ''}"${attrs(
+      {
+        'data-variant': o.variant,
+        'data-feedback': o.feedback,
+        'data-size': o.size,
+        'data-icon': !label && Boolean(o.icon),
+        'aria-label': o.aria,
+        'aria-pressed': o.pressed ? 'true' : undefined,
+        'aria-haspopup': o.menu ? 'menu' : undefined,
+        'aria-expanded': o.menu ? 'false' : undefined,
+        disabled: o.disabled,
+        title: o.title,
+      },
+    )}>${inner}</button>`
   }
 
   function libraryAction(kind, name, o = {}) {

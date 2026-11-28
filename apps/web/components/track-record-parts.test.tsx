@@ -38,6 +38,7 @@ const item = TrackDetailSchema.parse({
   lastfmSources: [],
   spotifyAlbumId: null,
   scrobbledAlbums: [],
+  listedInLibrary: true,
   isrcs: [],
   listening: {
     total: 0,

@@ -32,6 +32,7 @@ import { TrackListItemSchema } from '@repo/schemas/tracks'
 import { DuplicateReviewPageSchema } from '@repo/schemas/track-duplicates'
 import type { LibraryView } from '@/utils/media-scope'
 import type { RowSelection } from './merge-bar'
+import { describeRowSelection, emptyRowSelection } from '@/utils/row-selection'
 import { ConfigContext } from './providers'
 
 require.extensions['.css'] = (module) => {
@@ -1140,13 +1141,11 @@ test('Possible duplicates group rows and the empty state span the selection colu
 
 function selectionOf(ids: string[]): RowSelection {
   return {
-    ids,
-    count: ids.length,
-    has: (id) => ids.includes(id),
-    all: false,
+    ...describeRowSelection({ ...emptyRowSelection(), ids }, { ordered: [] }),
     some: ids.length > 0,
     toggle: () => undefined,
     setAll: () => undefined,
+    selectMatching: () => undefined,
     replace: () => undefined,
     clear: () => undefined,
   }

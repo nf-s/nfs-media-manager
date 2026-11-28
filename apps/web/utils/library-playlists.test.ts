@@ -10,6 +10,9 @@ import {
   libraryPlaylistChipValue,
   libraryPlaylistFacts,
   libraryPlaylistFilterHref,
+  matchingBlocked,
+  matchingCount,
+  matchingSubject,
   playableLibrary,
   playlistLibraryForView,
   playlistNotFound,
@@ -18,7 +21,6 @@ import {
   repeatsNoticeText,
   selectionRejection,
   selectionSubject,
-  trackDetailListed,
   smartPlaylistHref,
   allPresent,
   createButtonLabel,
@@ -316,37 +318,6 @@ test('the bar adds only the ticked rows in the library, in selection order', () 
   assert.equal(selectionSubject('albums', ['track-2'], rows).count, 0)
 })
 
-test('a track’s details offer Add to playlist only for a track Browse lists', () => {
-  const track = {
-    inLibrary: true,
-    spotifyTrackId: null,
-    album: null,
-    albumName: null,
-    playlists: [],
-    sources: ['lastfm'],
-    lastfmSources: [{ manuallyMatched: false }],
-    listening: { total: 0 },
-  }
-  // A Last.fm row whose recorded names are counted on another track.
-  assert.equal(trackDetailListed(track), false)
-  assert.equal(trackDetailListed({ ...track, inLibrary: false }), false)
-  assert.equal(trackDetailListed({ ...track, listening: { total: 4 } }), true)
-  assert.equal(
-    trackDetailListed({ ...track, spotifyTrackId: 'spotify1' }),
-    true,
-  )
-  assert.equal(trackDetailListed({ ...track, albumName: 'Tidewater' }), true)
-  assert.equal(
-    trackDetailListed({ ...track, lastfmSources: [{ manuallyMatched: true }] }),
-    true,
-  )
-  assert.equal(trackDetailListed({ ...track, lastfmSources: [] }), true)
-  assert.equal(
-    trackDetailListed({ ...track, sources: ['album', 'lastfm'] }),
-    true,
-  )
-})
-
 test('a rejected selection reads the server’s reason', () => {
   assert.equal(
     selectionRejection({
@@ -357,4 +328,70 @@ test('a rejected selection reads the server’s reason', () => {
   )
   assert.equal(selectionRejection({ statusCode: 500, message: 'Failed' }), null)
   assert.equal(selectionRejection(new Error('Request failed')), null)
+})
+
+test('Select all matching adds the view’s Browse query less the unticked rows', () => {
+  const params = new URLSearchParams({
+    libraryScope: 'all',
+    q: 'rain',
+    filters: '[]',
+    ranges: '[]',
+    sortBy: 'dateAdded',
+    direction: 'desc',
+  })
+  // 128 match at the In library scope; of three unticked rows one is outside.
+  const count = matchingCount(128, {
+    excludeIds: ['track-1', 'track-2', 'track-3'],
+    outsideExcluded: 1,
+  })
+  assert.equal(count, 126)
+  const subject = matchingSubject(
+    'tracks',
+    params,
+    ['track-1', 'track-2', 'track-3'],
+    count,
+  )
+  assert.deepEqual(subject.selection, {
+    query: {
+      libraryScope: 'all',
+      q: 'rain',
+      filters: '[]',
+      ranges: '[]',
+      sortBy: 'dateAdded',
+      direction: 'desc',
+    },
+    excludeIds: ['track-1', 'track-2', 'track-3'],
+  })
+  assert.equal(pickerHeading(subject), 'Add 126 tracks to a playlist')
+  assert.equal(createButtonLabel(subject), 'Create and add 126')
+  assert.equal(singleItemId(subject), undefined)
+  assert.equal(
+    additionResultText(subject, 'Late shift', {
+      added: 120,
+      skipped: 6,
+      repeated: 0,
+    }),
+    'Added 120 tracks to “Late shift”. Skipped 6 already there.',
+  )
+  // One match is still a count, not a title.
+  assert.equal(
+    pickerHeading(matchingSubject('albums', params, [], 1)),
+    'Add 1 album to a playlist',
+  )
+  assert.equal(
+    matchingCount(2, { excludeIds: ['a', 'b', 'c'], outsideExcluded: 0 }),
+    0,
+  )
+})
+
+test('a whole-result selection at the Outside scope, or with a failed count, says why it cannot be added', () => {
+  assert.equal(
+    matchingBlocked({ outside: true, error: null }),
+    'Items outside the library cannot be added to a playlist.',
+  )
+  assert.equal(
+    matchingBlocked({ outside: false, error: 'Count timed out' }),
+    'Count timed out',
+  )
+  assert.equal(matchingBlocked({ outside: false, error: null }), null)
 })

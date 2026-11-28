@@ -40,7 +40,7 @@ All routes are under `/api/v1/library-playlists`, require the session, validate 
 
 - PL-30: In Table view the Browse toolbar shows **Select all matching** after the count, with the title "Select all 128 tracks that match, including rows not loaded yet". It selects the whole result of the active search and filters on the server (PL-13); rows are shown ticked as they load, and unticking one excludes it. Once every loaded row is ticked and more match, the bar also offers **Select all 128 matching** (hidden on phones, where the toolbar link remains). The bar reads "128 selected of 128".
 - PL-31: The header checkbox is labelled "Select loaded tracks" and, while the whole result is selected, "Select all matching tracks". Changing the search, a filter or the sort clears the selection.
-- PL-32: **Add to playlist** accepts a whole-result selection. **Merge** needs ticked rows: while the whole result is selected it is disabled and its title says so. Artists Browse, which has only Merge, does not offer Select all matching.
+- PL-32: **Add to playlist** accepts a whole-result selection. It adds the rows of the view's query that are in the library, so at the Outside scope a whole-result selection adds nothing: the server refuses it with the PL-02 message and the button is disabled with the title "Items outside the library cannot be added to a playlist." **Merge** needs ticked rows: while the whole result is selected it is disabled and its title says so. Artists Browse, which has only Merge, does not offer Select all matching.
 - PL-33: Films, Subscriptions and Mixes have the checkbox column, the header checkbox and the selection bar in Table view. Grid and List have no checkboxes in any library.
 
 ## Smart playlists

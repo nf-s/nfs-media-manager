@@ -95,7 +95,10 @@ import {
 import { useConfig } from './providers'
 import { usePlayback } from './playback-provider'
 import { fetchApiData } from '@/utils/api'
-import { useVirtualBrowse } from '@/hooks/useVirtualBrowse'
+import {
+  useInLibraryBrowseCount,
+  useVirtualBrowse,
+} from '@/hooks/useVirtualBrowse'
 import {
   useEmbeddedBrowse,
   usePageBrowse,
@@ -188,6 +191,7 @@ import {
   RowSelectAll,
   RowSelectRow,
   rowSelectionWidth,
+  SelectAllMatching,
   useRowSelection,
 } from './merge-bar'
 import { albumMergeAdapter } from './album-merge-review'
@@ -195,6 +199,9 @@ import { libraryItemMore } from './item-more'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { ResultLineSlot } from './result-line'
 import {
+  matchingBlocked,
+  matchingCount,
+  matchingSubject,
   selectionSubject,
   suggestedPlaylistName,
 } from '@/utils/library-playlists'
@@ -812,13 +819,24 @@ function MediaBrowse({
   // Albums Table rows can be ticked for a merge.
   const selectable = mediaType === 'album'
   const loadedIds = slots.flatMap(({ item }) => (item ? [item.id] : []))
-  const selection = useRowSelection(loadedIds)
   // Another search, filter, sort, scope or view lists other albums.
-  const [selectionIdentity, setSelectionIdentity] = useState(scrollIdentity)
-  if (selectionIdentity !== scrollIdentity) {
-    setSelectionIdentity(scrollIdentity)
-    selection.clear()
-  }
+  const selection = useRowSelection(loadedIds, {
+    identity: scrollIdentity,
+    result:
+      selectable && view === 'table'
+        ? { ids: loadedIds, total: query.hasTotal ? total : undefined }
+        : undefined,
+    outside: slots.flatMap(({ item }) =>
+      item?.inLibrary === false ? [item.id] : [],
+    ),
+  })
+  const inLibraryCount = useInLibraryBrowseCount({
+    apiBaseUrl,
+    collection,
+    params,
+    enabled: selection.matching,
+    total: selection.total,
+  })
   const selectionColumns = selectable ? 1 : 0
   const selectedItem = slots.find(({ item }) => item?.id === selectedId)?.item
   const selectedListeningCount =
@@ -1667,6 +1685,12 @@ function MediaBrowse({
               'Counting...'
             )
           }
+          countAction={
+            selectable &&
+            view === 'table' && (
+              <SelectAllMatching selection={selection} noun={noun} />
+            )
+          }
           end={
             (countActions || host.browseHref) && (
               <>
@@ -1961,6 +1985,7 @@ function MediaBrowse({
                         <RowSelectAll
                           selection={selection}
                           label="Select loaded albums"
+                          matchingLabel="Select all matching albums"
                           disabled={!loadedIds.length}
                         />
                       </TableHead>
@@ -2087,12 +2112,27 @@ function MediaBrowse({
               adapter={albumMergeAdapter}
               actions={
                 <AddToPlaylistButton
-                  subject={selectionSubject(
-                    'albums',
-                    selection.ids,
-                    slots.map(({ item }) => item),
-                  )}
+                  subject={
+                    selection.matching
+                      ? matchingSubject(
+                          'albums',
+                          params,
+                          selection.excludeIds,
+                          matchingCount(inLibraryCount.total ?? 0, selection),
+                        )
+                      : selectionSubject(
+                          'albums',
+                          selection.ids,
+                          slots.map(({ item }) => item),
+                        )
+                  }
                   suggestedName={suggestedPlaylistName(filters, q)}
+                  counting={
+                    selection.matching && inLibraryCount.total === undefined
+                  }
+                  blocked={
+                    selection.matching ? matchingBlocked(inLibraryCount) : null
+                  }
                   onAdded={selection.clear}
                 />
               }

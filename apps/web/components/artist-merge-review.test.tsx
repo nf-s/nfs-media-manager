@@ -14,6 +14,7 @@ import {
 import { artistMergeAdapter } from './artist-merge-review'
 import { MergeBar, useMerge, type MergeAdapter } from './merge-bar'
 import type { MergeRequest, RowSelection } from './merge-bar'
+import { describeRowSelection, emptyRowSelection } from '@/utils/row-selection'
 import { ConfigContext } from './providers'
 
 const apiBaseUrl = 'http://localhost:4001'
@@ -229,13 +230,11 @@ function Providers({
 
 function selectionOf(ids: string[]): RowSelection {
   return {
-    ids,
-    count: ids.length,
-    has: (id) => ids.includes(id),
-    all: false,
+    ...describeRowSelection({ ...emptyRowSelection(), ids }, { ordered: [] }),
     some: ids.length > 0,
     toggle: () => undefined,
     setAll: () => undefined,
+    selectMatching: () => undefined,
     replace: () => undefined,
     clear: () => undefined,
   }

@@ -4,6 +4,7 @@ import {
   hashKey,
   QueryObserver,
   queryOptions,
+  skipToken,
   useQueries,
   useQuery,
   useQueryClient,
@@ -46,6 +47,81 @@ type VirtualBrowseOptions = {
   extraRowHeights?: ReadonlyMap<number, number>
 }
 
+/** The parameters of a Browse count: the page's, less order and paging. */
+function browseCountParams(params: URLSearchParams) {
+  const countParams = new URLSearchParams(params)
+  for (const key of ['sortBy', 'direction', 'listeningSort', 'page', 'size'])
+    countParams.delete(key)
+  countParams.sort()
+  return countParams
+}
+
+/** The Browse count request for a page's parameters. */
+function browseCountOptions({
+  apiBaseUrl,
+  collection,
+  endpoint = collection,
+  params,
+}: Pick<
+  VirtualBrowseOptions,
+  'apiBaseUrl' | 'collection' | 'endpoint' | 'params'
+>) {
+  const countParams = browseCountParams(params)
+  return queryOptions({
+    queryKey: [collection, 'browse-count', countParams.toString()],
+    queryFn: ({ signal }) =>
+      fetchApiData(
+        apiBaseUrl,
+        `/api/v1/${endpoint}/browse-count?${countParams}`,
+        BrowseCountSchema,
+        { signal, priority: 'low' },
+      ),
+    ...clientQueryDefaults,
+    retry: false,
+  })
+}
+
+const RequestErrorSchema = z.object({ message: z.string().min(1) })
+
+/**
+ * PL-02: how many items of a Browse view its library's Browse lists at the
+ * In library scope, the existing Browse count with the scope forced as the
+ * server forces it when it resolves a whole-result selection. At the In
+ * library scope that is the view's own count, `total`; at another it is read.
+ * At the Outside scope the view shows none and nothing is read. `error` is
+ * the failed request's message.
+ */
+export function useInLibraryBrowseCount({
+  enabled,
+  total,
+  ...options
+}: Pick<
+  VirtualBrowseOptions,
+  'apiBaseUrl' | 'collection' | 'endpoint' | 'params'
+> & { enabled: boolean; total: number | undefined }) {
+  const params = new URLSearchParams(options.params)
+  const scope = params.get('libraryScope') ?? 'library'
+  const outside = scope === 'outside'
+  const scoped = scope !== 'library' && !outside
+  params.set('libraryScope', 'library')
+  const countOptions = browseCountOptions({ ...options, params })
+  const count = useQuery({
+    ...countOptions,
+    queryFn: enabled && scoped ? countOptions.queryFn : skipToken,
+  })
+  const failure = RequestErrorSchema.safeParse(count.error)
+  return {
+    total: outside ? 0 : scoped ? count.data?.totalCount : total,
+    outside,
+    error:
+      scoped && count.isError
+        ? failure.success
+          ? failure.data.message
+          : 'Request failed'
+        : null,
+  }
+}
+
 function useBrowsePages<Item extends z.ZodTypeAny>(
   itemSchema: Item,
   {
@@ -65,24 +141,14 @@ function useBrowsePages<Item extends z.ZodTypeAny>(
   }: VirtualBrowseOptions,
 ) {
   const PageSchema = BrowsePageSliceSchema(itemSchema)
-  const countParams = new URLSearchParams(params)
-  for (const key of ['sortBy', 'direction', 'listeningSort', 'page', 'size'])
-    countParams.delete(key)
-  countParams.sort()
-  const countIdentity = countParams.toString()
+  const countIdentity = browseCountParams(params).toString()
   const client = useQueryClient()
   const pageKey = [collection, 'browse', identity]
-  const countOptions = queryOptions({
-    queryKey: [collection, 'browse-count', countIdentity],
-    queryFn: ({ signal }) =>
-      fetchApiData(
-        apiBaseUrl,
-        `/api/v1/${endpoint}/browse-count?${countParams}`,
-        BrowseCountSchema,
-        { signal, priority: 'low' },
-      ),
-    ...clientQueryDefaults,
-    retry: false,
+  const countOptions = browseCountOptions({
+    apiBaseUrl,
+    collection,
+    endpoint,
+    params,
   })
   async function loadPage(page: number, size: number, signal: AbortSignal) {
     const query = new URLSearchParams(params)

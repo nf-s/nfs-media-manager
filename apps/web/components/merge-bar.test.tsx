@@ -14,14 +14,27 @@ import {
   createMergeQueue,
   describeMergeProgress,
   LibraryChangeReport,
+  mergeNeedsTickedRows,
+  RowSelectAll,
+  SelectAllMatching,
   useMerge,
   type MergeAdapter,
   type RowSelection,
 } from './merge-bar'
+import {
+  describeRowSelection,
+  emptyRowSelection,
+  selectMatchingRows,
+  setLoadedRows,
+  toggleRow,
+  type RowSelectionState,
+  type SelectionRows,
+} from '@/utils/row-selection'
 import { ConfigContext } from './providers'
 import { TrackMergeBar } from './track-merge-bar'
 import { AddToPlaylistButton } from './library-playlist-picker'
 import { trackMergeAdapter } from './track-merge-review'
+import type { PlaylistSubject } from '@/utils/library-playlists'
 
 const apiBaseUrl = 'http://localhost:4001'
 
@@ -118,13 +131,11 @@ function Providers({
 
 function selectionOf(ids: string[]): RowSelection {
   return {
-    ids,
-    count: ids.length,
-    has: (id) => ids.includes(id),
-    all: false,
+    ...describeRowSelection({ ...emptyRowSelection(), ids }, { ordered: [] }),
     some: ids.length > 0,
     toggle: () => undefined,
     setAll: () => undefined,
+    selectMatching: () => undefined,
     replace: () => undefined,
     clear: () => undefined,
   }
@@ -512,6 +523,145 @@ test('the Tracks bar offers Add to playlist, then Merge, then Clear selection', 
       ['Add to playlist', 'Merge', 'icon'],
     )
     assert.match(html, /aria-label="Clear selection"/)
+    assert.equal(network.mock.callCount(), 0)
+  } finally {
+    client.clear()
+  }
+})
+
+const loaded = ['track-1', 'track-2', 'track-3']
+const matchingRows: SelectionRows = {
+  ordered: loaded,
+  result: { ids: loaded, total: 128 },
+}
+
+function selectionFrom(state: RowSelectionState): RowSelection {
+  return {
+    ...describeRowSelection(state, matchingRows),
+    toggle: () => undefined,
+    setAll: () => undefined,
+    selectMatching: () => undefined,
+    replace: () => undefined,
+    clear: () => undefined,
+  }
+}
+
+const noun = { one: 'track', other: 'tracks' }
+
+test('Select all matching follows the count until the whole result is selected', () => {
+  const link = (state: RowSelectionState) =>
+    renderToStaticMarkup(
+      <SelectAllMatching selection={selectionFrom(state)} noun={noun} />,
+    )
+  const empty = emptyRowSelection()
+  assert.equal(
+    link(empty),
+    '<button class="ds-btn" data-variant="link" type="button" title="Select all 128 tracks that match, including rows not loaded yet">Select all matching</button>',
+  )
+  const whole = selectMatchingRows(empty, matchingRows)
+  assert.equal(link(whole), '')
+  // Unticking a row offers it again, to take every match back.
+  assert.match(
+    link(toggleRow(whole, matchingRows, 'track-2', false, false)),
+    />Select all matching</,
+  )
+})
+
+test('the header checkbox names its scope: loaded tracks, or all matching tracks', () => {
+  const header = (state: RowSelectionState) =>
+    renderToStaticMarkup(
+      <RowSelectAll
+        selection={selectionFrom(state)}
+        label="Select loaded tracks"
+        matchingLabel="Select all matching tracks"
+      />,
+    )
+  assert.match(header(emptyRowSelection()), /aria-label="Select loaded tracks"/)
+  const whole = selectMatchingRows(emptyRowSelection(), matchingRows)
+  assert.match(header(whole), /aria-label="Select all matching tracks"/)
+  assert.match(header(whole), /checked=""/)
+  const unticked = toggleRow(whole, matchingRows, 'track-2', false, false)
+  assert.match(header(unticked), /aria-label="Select loaded tracks"/)
+  assert.doesNotMatch(header(unticked), /checked=""/)
+})
+
+test('the bar offers all 128 matching once every loaded row is ticked, and reads the whole result once selected', (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Network forbidden in UI tests')
+  })
+  const client = new QueryClient()
+  const bar = (state: RowSelectionState) =>
+    renderToStaticMarkup(
+      <Providers client={client}>
+        <TrackMergeBar selection={selectionFrom(state)} total={128} />
+      </Providers>,
+    )
+  try {
+    const one = bar(
+      toggleRow(emptyRowSelection(), matchingRows, 'track-1', true, false),
+    )
+    assert.doesNotMatch(one, /matching/)
+    const loadedRows = bar(
+      setLoadedRows(emptyRowSelection(), matchingRows, true),
+    )
+    assert.match(
+      loadedRows,
+      /<b>3 selected<\/b><span class="ds-muted"> of 128<\/span><\/span><button class="ds-btn ds-selectbar-offer" type="button">Select all 128 matching<\/button>/,
+    )
+    const whole = selectMatchingRows(emptyRowSelection(), matchingRows)
+    const all = bar(whole)
+    assert.match(all, /<b>128 selected<\/b><span class="ds-muted"> of 128/)
+    assert.doesNotMatch(all, /ds-selectbar-offer/)
+    assert.match(
+      all,
+      new RegExp(
+        `<button[^>]*disabled=""[^>]*title="${mergeNeedsTickedRows}"[^>]*>Merge</button>`,
+      ),
+    )
+    assert.match(
+      bar(toggleRow(whole, matchingRows, 'track-2', false, false)),
+      /<b>127 selected<\/b><span class="ds-muted"> of 128/,
+    )
+    assert.equal(network.mock.callCount(), 0)
+  } finally {
+    client.clear()
+  }
+})
+
+test('Add to playlist is disabled with the reason a whole-result selection cannot be added', (t) => {
+  const network = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Network forbidden in UI tests')
+  })
+  const client = new QueryClient()
+  const subject: PlaylistSubject = {
+    library: 'tracks',
+    selection: { query: { libraryScope: 'outside' }, excludeIds: [] },
+    count: 0,
+    title: null,
+  }
+  const button = (blocked: string | null, counting = false) =>
+    renderToStaticMarkup(
+      <Providers client={client}>
+        <AddToPlaylistButton
+          subject={subject}
+          blocked={blocked}
+          counting={counting}
+        />
+      </Providers>,
+    )
+  try {
+    assert.match(
+      button('Items outside the library cannot be added to a playlist.'),
+      /<button[^>]*disabled=""[^>]*title="Items outside the library cannot be added to a playlist\."/,
+    )
+    assert.match(
+      button('Count timed out', true),
+      /<button[^>]*disabled=""[^>]*title="Count timed out"/,
+    )
+    // While counting, it waits without a reason.
+    const counting = button(null, true)
+    assert.match(counting, /<button[^>]*disabled=""/)
+    assert.doesNotMatch(counting, /title=/)
     assert.equal(network.mock.callCount(), 0)
   } finally {
     client.clear()

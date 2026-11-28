@@ -94,7 +94,7 @@ export function BrowseViewSection({
 
 /**
  * The browse toolbar. Order: actions, search, sort, direction, view, the
- * Filters button, count, end. Grid size is the first control of the View
+ * Filters button, count, `countAction`, end. Grid size is the first control of the View
  * section in the Filters drawer, followed by `viewOptions`.
  *
  * With `compact`, for a list inside a detail, the Filters button is the icon
@@ -113,6 +113,7 @@ export default function BrowseToolbar<Key extends string>({
   density,
   viewOptions,
   count,
+  countAction,
   end,
   compact = false,
   activeFilters,
@@ -134,6 +135,8 @@ export default function BrowseToolbar<Key extends string>({
   /** The list's own controls of the View section, after grid size. */
   viewOptions?: ReactNode
   count?: ReactNode
+  /** An action on the whole result, after the count: Select all matching. */
+  countAction?: ReactNode
   /** Links that leave the list, such as Show in Tracks inside a detail. */
   end?: ReactNode
   /** Inside a detail. */
@@ -202,12 +205,14 @@ export default function BrowseToolbar<Key extends string>({
           </BrowseFilterPanel>
         )}
         {!line && count != null && <ToolbarCount>{count}</ToolbarCount>}
+        {!line && countAction}
         {!line && end && <ToolbarEnd>{end}</ToolbarEnd>}
       </Toolbar>
       {line && (
         <FilterLine>
           {activeFilters}
           {count != null && <ToolbarCount>{count}</ToolbarCount>}
+          {countAction}
           {end}
         </FilterLine>
       )}

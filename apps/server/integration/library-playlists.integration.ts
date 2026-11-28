@@ -770,12 +770,17 @@ describe('library playlists', () => {
       'borrowed-in',
       'borrowed-peer',
     ])
-    expect(
-      await checkLibraryPlaylistEntries(
-        playlist.id,
-        matching({ ...query, libraryScope: 'outside' }),
-      ),
-    ).toMatchObject({ total: 2, present: 2 })
+    // At the Outside scope the view shows no row in the library, so a query
+    // selection there adds nothing and is refused on create, check and add.
+    const outsideQuery = matching({ ...query, libraryScope: 'outside' })
+    await expect(
+      checkLibraryPlaylistEntries(playlist.id, outsideQuery),
+    ).rejects.toThrow(onlyInLibrary)
+    await expect(add(playlist.id, outsideQuery)).rejects.toEqual(status(422))
+    await expect(
+      create('tracks', 'Borrowed outside', outsideQuery),
+    ).rejects.toThrow(onlyInLibrary)
+    expect((await entryIds(playlist.id)).length).toBe(3)
 
     // Filter tracks lists every distinct item the playlist holds.
     const { queryBrowseCount } = await import('@/services/browse')
@@ -790,5 +795,55 @@ describe('library playlists', () => {
     )
     expect(totalCount).toBe(detail.entryCount - detail.repeatCount)
     expect(totalCount).toBe(2)
+  })
+
+  it('says in a track’s details whether Tracks Browse lists it', async () => {
+    // A listed track, one outside the library, and a Last.fm row that Browse
+    // hides because its recorded name is counted on a playable listed track,
+    // although another name's scrobbles are counted on the row itself.
+    await pool.query(`
+      insert into media_item (id, slug, media_type, title, in_library, source_label) values
+        ('detail-listed', 'detail-listed', 'track', 'Detail tune one', true, null),
+        ('detail-peer', 'detail-peer', 'track', 'Detail tune two', true, null),
+        ('detail-out', 'detail-out', 'track', 'Detail tune three', false, null),
+        ('detail-hidden', 'detail-hidden', 'track', 'Detail tune two', true, 'lastfm');
+      insert into library_track (media_item_id, spotify_track_id, duration_sec) values
+        ('detail-listed', null, 200), ('detail-peer', 'detailpeer000000000001', 200),
+        ('detail-out', null, 200), ('detail-hidden', null, null);
+      insert into lastfm_track_source (username, artist_key, track_key, track_media_item_id) values
+        ('listener', 'detail artist', 'detail tune two', 'detail-hidden');
+      insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy) values
+        ('listener', 'detail artist', 'detail tune two', 'detail-peer', 'exact'),
+        ('listener', 'detail artist', 'detail tune two live', 'detail-hidden', 'exact');
+      insert into lastfm_scrobble (id, username, listened_at, artist_name, artist_key, track_name, track_key) values
+        ('detail-live-1', 'listener', '2026-03-01', 'Detail artist', 'detail artist', 'Detail tune two live', 'detail tune two live'),
+        ('detail-live-2', 'listener', '2026-03-02', 'Detail artist', 'detail artist', 'Detail tune two live', 'detail tune two live');
+    `)
+    const { getTrackDetail } = await import('@/services/tracks')
+    const listed = async (id: string) => {
+      const detail = await getTrackDetail(id)
+      return {
+        listed: detail?.listedInLibrary,
+        scrobbles: detail?.listening.total,
+      }
+    }
+    expect(await listed('detail-listed')).toEqual({
+      listed: true,
+      scrobbles: 0,
+    })
+    expect(await listed('detail-out')).toEqual({ listed: false, scrobbles: 0 })
+    expect(await listed('detail-hidden')).toEqual({
+      listed: false,
+      scrobbles: 2,
+    })
+    // The server's own check agrees with each answer.
+    const playlist = (await create('tracks', 'Detail check')).playlist
+    await expect(add(playlist.id, ids('detail-hidden'))).rejects.toEqual(
+      status(422),
+    )
+    await expect(add(playlist.id, ids('detail-out'))).rejects.toEqual(
+      status(422),
+    )
+    expect((await add(playlist.id, ids('detail-listed'))).added).toBe(1)
   })
 })

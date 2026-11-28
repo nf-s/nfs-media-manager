@@ -403,6 +403,8 @@ export const TrackDetailSchema = TrackListItemSchema.extend({
   ),
   /** Every ISRC recorded for the track, in code order. */
   isrcs: z.array(TrackIsrcSchema),
+  /** PL-02: Tracks Browse at the In library scope lists the track. */
+  listedInLibrary: z.boolean(),
   /** Tempo and key by provider, verified records first. */
   facts: z.array(TrackFactSchema).default([]),
   listening: z.object({
