@@ -767,7 +767,33 @@ export const DeviceBrowseLibrarySchema = z.enum([
 ])
 export type DeviceBrowseLibrary = z.infer<typeof DeviceBrowseLibrarySchema>
 
-/** Keyed `fields:<library>`, `listening` and `providers`. */
+/**
+ * The database's case folding: each code point that `lower(chr(c))` changes,
+ * with its result. A device folds text with this mapping and nothing else.
+ */
+export const DeviceFoldRowSchema = z
+  .object({
+    kind: z.literal('fold'),
+    // foldMapping, device-rows/library.ts: every c from 1 to U+10FFFF outside
+    // the surrogates with lower(chr(c)) <> chr(c), in ascending order
+    codePoints: z.array(z.number().int().min(1).max(0x10ffff)),
+    // lower(chr(c)) of each code point at the same index; a string, since a
+    // database's lower() may yield more than one character
+    lower: z.array(z.string().min(1)),
+  })
+  .strict()
+  .refine(
+    (row) =>
+      row.codePoints.length === row.lower.length &&
+      row.codePoints.every(
+        (codePoint, index) =>
+          index === 0 || codePoint > (row.codePoints[index - 1] ?? 0),
+      ),
+    'Each code point appears once, in ascending order, with one result.',
+  )
+export type DeviceFoldRow = z.infer<typeof DeviceFoldRowSchema>
+
+/** Keyed `fields:<library>`, `listening`, `providers` and `fold`. */
 export const DeviceMetaRowSchema = z.discriminatedUnion('kind', [
   z
     .object({
@@ -793,6 +819,7 @@ export const DeviceMetaRowSchema = z.discriminatedUnion('kind', [
       ),
     })
     .strict(),
+  DeviceFoldRowSchema,
 ])
 export type DeviceMetaRow = z.infer<typeof DeviceMetaRowSchema>
 

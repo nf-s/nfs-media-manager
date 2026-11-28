@@ -82,9 +82,11 @@ beforeAll(async () => {
 })
 
 /**
- * Shared blocks and statements for 100 rows of each entity (meta has six).
+ * Shared blocks and statements for 100 rows of each entity (meta has seven).
  * The statement count is fixed per batch: the list loader and one projection
- * statement, never one per row. Item rows include their list loader, which
+ * statement, never one per row. Meta reads the listening start and computes
+ * the `fold` mapping, which reads no table: about 0.2 s of `lower()` over
+ * every code point, once per sweep. Item rows include their list loader, which
  * costs what the list endpoint pays for a page: on this fixture about 2,400
  * blocks for Tracks, 7,500 for Artists and 38,000 for Playlists.
  */
@@ -100,7 +102,7 @@ const budgets: Record<DeviceEntity, { blocks: number; statements: number }> = {
   scrobble_name: { blocks: 1_500, statements: 1 },
   album_plays: { blocks: 2_600, statements: 1 },
   artist_plays: { blocks: 5_500, statements: 1 },
-  meta: { blocks: 50, statements: 1 },
+  meta: { blocks: 50, statements: 2 },
 }
 
 it('bounds a render batch of each entity', async () => {
@@ -146,7 +148,7 @@ const sweepBudgets: Record<
   scrobble_name: { listing: 3_600, batch: 7_000, statements: 2 },
   album_plays: { listing: 250, batch: 3_000, statements: 2 },
   artist_plays: { listing: 1_300, batch: 4_000, statements: 2 },
-  meta: { listing: 50, batch: 50, statements: 2 },
+  meta: { listing: 50, batch: 50, statements: 3 },
 }
 
 it('bounds a sweep batch of each entity', async () => {

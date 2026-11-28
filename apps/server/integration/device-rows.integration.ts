@@ -20,6 +20,7 @@ import {
   DeviceArtistRowSchema,
   DeviceFilmItemSchema,
   DeviceFilmRowSchema,
+  DeviceFoldRowSchema,
   DeviceMetaRowSchema,
   DevicePlaylistItemSchema,
   DevicePlaylistJobRowSchema,
@@ -204,6 +205,13 @@ function trackNatural(row: DeviceTrackRow, primary: string): OrderKey[] {
     natural.position,
     row.sort.title,
   ].map((value) => ({ value }))
+}
+
+function chunks<T>(list: readonly T[], size: number): T[][] {
+  const runs: T[][] = []
+  for (let start = 0; start < list.length; start += size)
+    runs.push(list.slice(start, start + size))
+  return runs
 }
 
 const visibleTrack = (row: DeviceTrackRow) =>
@@ -478,6 +486,57 @@ describe('the device row renderer', () => {
       kind: 'fields',
       fields: artistBrowseFields,
     })
+    expect(DeviceMetaRowSchema.parse(meta.get('fold'))).toMatchObject({
+      kind: 'fold',
+    })
+  })
+
+  it('publishes a fold that gives what lower() gives', async () => {
+    const device = await renderer()
+    expect(await device.listIds('meta', null, 10)).toContain('fold')
+    const fold = DeviceFoldRowSchema.parse(
+      (await device.render('meta', ['fold'])).get('fold'),
+    )
+    // ASCII capitals and at least the Latin-1 capitals are mapped by any
+    // UTF-8 database.
+    expect(fold.codePoints).toContain(0x41)
+    expect(fold.codePoints).toContain(0xc9)
+    const mapping = new Map(
+      fold.codePoints.map((codePoint, index) => [
+        codePoint,
+        fold.lower[index] ?? '',
+      ]),
+    )
+    const folded = (value: string) =>
+      [...value]
+        .map(
+          (character) =>
+            mapping.get(character.codePointAt(0) ?? 0) ?? character,
+        )
+        .join('')
+    const unmapped: number[] = []
+    for (let codePoint = 1; codePoint <= 0x10ffff; codePoint += 211) {
+      const surrogate = codePoint >= 0xd800 && codePoint <= 0xdfff
+      if (!surrogate && !mapping.has(codePoint)) unmapped.push(codePoint)
+    }
+    // Every mapped code point, alone and in runs with unmapped ones and ASCII.
+    const samples = [
+      ...fold.codePoints.map((codePoint) => String.fromCodePoint(codePoint)),
+      ...chunks(fold.codePoints, 50).map((run) => String.fromCodePoint(...run)),
+      ...chunks(unmapped, 50).map((run) => String.fromCodePoint(...run)),
+      ...chunks(
+        fold.codePoints.flatMap((codePoint, index) => [
+          codePoint,
+          unmapped[index % unmapped.length] ?? 0x20,
+        ]),
+        40,
+      ).map((run) => `Mixed ${String.fromCodePoint(...run)} END`),
+    ]
+    const { rows: lowered } = await pool.query<{ value: string }>(
+      'select lower(value) as value from unnest($1::text[]) with ordinality s(value, n) order by n',
+      [samples],
+    )
+    expect(lowered.map((row) => row.value)).toEqual(samples.map(folded))
   })
 
   it('keys scrobbled names as the feed marks them and expands title peers', async () => {

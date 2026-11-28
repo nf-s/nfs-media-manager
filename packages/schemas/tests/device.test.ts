@@ -4,6 +4,7 @@ import {
   DeviceChangesQuerySchema,
   DeviceChangesResponseSchema,
   DeviceFeedStateSchema,
+  DeviceMetaRowSchema,
   DeviceRowSchema,
   DeviceSnapshotQuerySchema,
   DeviceSnapshotResponseSchema,
@@ -464,6 +465,23 @@ describe('device rows', () => {
         },
       }).data?.item.sync,
     ).not.toHaveProperty('job')
+  })
+
+  it('reads a fold mapping with one result per code point, in order', () => {
+    const fold = {
+      kind: 'fold',
+      codePoints: [0x41, 0x130, 0x3a3],
+      lower: ['a', 'i̇', 'σ'],
+    }
+    expect(DeviceMetaRowSchema.parse(fold)).toEqual(fold)
+    for (const invalid of [
+      { ...fold, lower: ['a', 'i'] },
+      { ...fold, codePoints: [0x41, 0x3a3, 0x130] },
+      { ...fold, codePoints: [0x41, 0x41, 0x3a3] },
+      { ...fold, codePoints: [0, 0x130, 0x3a3] },
+      { ...fold, lower: ['a', '', 'σ'] },
+    ])
+      expect(DeviceMetaRowSchema.safeParse(invalid).success).toBe(false)
   })
 
   it('reads every Tags sort location', () => {

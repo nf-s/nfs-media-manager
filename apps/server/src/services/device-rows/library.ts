@@ -122,6 +122,7 @@ const metaIds = [
   ...DeviceBrowseLibrarySchema.options.map((library) => `fields:${library}`),
   'listening',
   'providers',
+  'fold',
 ]
 
 export function listMetaIds(afterId: string | null, limit: number) {
@@ -139,6 +140,23 @@ async function libraryFields(library: DeviceBrowseLibrary) {
 const HistoryStartSchema = z.array(
   z.object({ history_start: z.string().nullable() }),
 )
+
+const FoldRowsSchema = z.array(
+  z.object({ code_points: z.array(z.number()), lower: z.array(z.string()) }),
+)
+
+/**
+ * The `fold` row: every code point this database's `lower()` changes, with
+ * its result, so a device folds text as the Browse services' `lower()` and
+ * `ILIKE` do on this server. The surrogates and zero have no `chr()`. About
+ * 1,500 code points (14 kB of JSON) and 0.2 to 0.4 s of one CPU, without
+ * reading a table; it is rendered once per sweep.
+ */
+const foldMapping = sql`select
+    coalesce(array_agg(c order by c), '{}') as code_points,
+    coalesce(array_agg(lower(chr(c)) order by c), '{}') as lower
+  from (select generate_series(1, 1114111) as c) code_point
+  where (c < 55296 or c > 57343) and lower(chr(c)) <> chr(c)`
 
 async function renderMetaRow(id: string): Promise<JsonObject | undefined> {
   const library = DeviceBrowseLibrarySchema.safeParse(
@@ -166,6 +184,14 @@ async function renderMetaRow(id: string): Promise<JsonObject | undefined> {
         .sort(([a], [b]) => compareCodePoints(a, b))
         .map(([providerId, displayName]) => ({ id: providerId, displayName })),
     }
+  if (id === 'fold') {
+    const [row] = FoldRowsSchema.parse((await db.execute(foldMapping)).rows)
+    return {
+      kind: 'fold',
+      codePoints: row?.code_points ?? [],
+      lower: row?.lower ?? [],
+    }
+  }
 }
 
 export async function renderMeta(ids: string[]) {
