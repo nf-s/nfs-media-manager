@@ -72,7 +72,14 @@ export function createTrackPerformanceFixture() {
     await admin.connect()
     await admin.query('create database ' + name)
     created = true
-    await migrate(database, { migrationsFolder: './drizzle' })
+    // Migrations create temporary tables. End their session so measured
+    // reads share the application's search path on every pooled connection.
+    const migrationClient = await pool.connect()
+    try {
+      await migrate(drizzle(migrationClient), { migrationsFolder: './drizzle' })
+    } finally {
+      migrationClient.release(true)
+    }
     // A database read cache entry ends when any transaction commits in the
     // server, so autovacuum must find no work here while a file runs: an
     // analyze it commits between a read and its cached repeat fails the
