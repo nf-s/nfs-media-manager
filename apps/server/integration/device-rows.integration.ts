@@ -8,6 +8,7 @@ import { artistBrowseFields } from '@repo/schemas/artist-browse'
 import {
   albumBrowseFields,
   filmBrowseFields,
+  LibraryPlaylistLibrarySchema,
   trackBrowseFields,
   type BrowseFilter,
   type BrowseRange,
@@ -21,6 +22,7 @@ import {
   DeviceFilmItemSchema,
   DeviceFilmRowSchema,
   DeviceFoldRowSchema,
+  DeviceLibraryPlaylistRowSchema,
   DeviceMetaRowSchema,
   DevicePlaylistItemSchema,
   DevicePlaylistJobRowSchema,
@@ -37,6 +39,7 @@ import {
   type DeviceTagLocation,
   type DeviceTrackRow,
 } from '@repo/schemas/device'
+import { LibraryPlaylistListQuerySchema } from '@repo/schemas/library-playlists'
 import { AlbumQuerySchema, FilmQuerySchema } from '@repo/schemas/media'
 import {
   PlaylistBrowseQuerySchema,
@@ -77,6 +80,39 @@ vi.mock('@/plugins/registry', () => ({
 
 const at = (iso: string) => Date.parse(iso)
 
+// Library playlists of every library: entries listed twice and removed, a
+// smart playlist, one without entries, a deleted one, and Subscriptions and
+// Mixes playlists whose members are subscription items.
+const libraryPlaylistSql = `
+  insert into subscription_source (id, type, title) values
+    ('source-channel', 'youtube', 'Synthetic channel'),
+    ('source-show', 'nts', 'Synthetic show');
+  insert into subscription_item (id, source_id, type, title, artists, published_at, duration_sec, search) values
+    ('video-one', 'source-channel', 'youtube', 'Synthetic video one', '[]', '2026-01-01', 600, to_tsvector('simple', 'one')),
+    ('video-two', 'source-channel', 'youtube', 'Synthetic video two', '[]', '2026-01-02', 600, to_tsvector('simple', 'two')),
+    ('mix-one', 'source-show', 'nts', 'Synthetic mix one', '["Synthetic DJ"]', '2026-02-01', 3600, to_tsvector('simple', 'mix'));
+  insert into library_playlist (id, library, type, name, view, deleted_at, created_at, updated_at) values
+    ('lp-night', 'tracks', 'playlist', 'Night Drive', null, null, '2025-06-01 01:02:03.456789', '2026-02-01 08:00:00.123456'),
+    ('lp-calm', 'tracks', 'smart', 'Calm Picks', '{"q": "aurora"}', null, '2025-07-01', '2025-07-02'),
+    ('lp-gone', 'tracks', 'playlist', 'Gone Mix', null, '2025-02-01', '2025-01-01', '2025-01-01'),
+    ('lp-shelf', 'albums', 'playlist', 'Shelf Picks', null, null, '2025-08-01', '2026-01-15'),
+    ('lp-screen', 'films', 'playlist', 'Empty Screen', null, null, '2025-09-01', '2025-09-01'),
+    ('lp-watch', 'subscriptions', 'playlist', 'Watch Later', null, null, '2025-10-01', '2025-10-02'),
+    ('lp-set', 'mixes', 'playlist', 'Weekend Set', null, null, '2025-11-01', '2025-11-02');
+  insert into library_playlist_entry (id, playlist_id, position, media_item_id, subscription_item_id, batch_id, removed_batch_id, removed_at) values
+    ('entry-night-1', 'lp-night', 1, 'track-bright', null, 'batch-1', null, null),
+    ('entry-night-2', 'lp-night', 2, 'track-aurora', null, 'batch-1', null, null),
+    ('entry-night-3', 'lp-night', 3, 'track-bright', null, 'batch-2', null, null),
+    ('entry-night-4', 'lp-night', 4, 'track-echo', null, 'batch-2', 'batch-3', '2026-02-01 08:00:00'),
+    ('entry-gone-1', 'lp-gone', 1, 'track-aurora', null, 'batch-4', null, null),
+    ('entry-shelf-1', 'lp-shelf', 1, 'album-quiet', null, 'batch-5', null, null),
+    ('entry-shelf-2', 'lp-shelf', 2, 'album-north', null, 'batch-5', null, null),
+    ('entry-watch-1', 'lp-watch', 1, null, 'video-two', 'batch-6', null, null),
+    ('entry-watch-2', 'lp-watch', 2, null, 'video-one', 'batch-6', null, null),
+    ('entry-watch-3', 'lp-watch', 3, null, 'video-two', 'batch-7', null, null),
+    ('entry-set-1', 'lp-set', 1, null, 'mix-one', 'batch-8', null, null);
+`
+
 let created = false
 beforeAll(async () => {
   vi.stubGlobal(
@@ -102,6 +138,7 @@ beforeAll(async () => {
   created = true
   await migrate(fixture, { migrationsFolder: './drizzle' })
   await seedDeviceLibrary(pool)
+  await pool.query(libraryPlaylistSql)
 })
 afterAll(async () => {
   await pool.end()
@@ -1295,5 +1332,91 @@ describe('a plugin text field holding a number', () => {
           [id],
         )
     }
+  })
+})
+
+describe('library playlist rows', () => {
+  const libraryPlaylistRows = () =>
+    rows('library_playlist', (v) => DeviceLibraryPlaylistRowSchema.parse(v))
+
+  it('equal the directory row and the list summary of each library', async () => {
+    const { listPlaylistBrowsePage } =
+      await import('@/services/playlist-directory')
+    const { listLibraryPlaylists } =
+      await import('@/services/library-playlists')
+    const playlists = await libraryPlaylistRows()
+    expect([...playlists.keys()].sort(codePoints)).toEqual([
+      'lp-calm',
+      'lp-night',
+      'lp-screen',
+      'lp-set',
+      'lp-shelf',
+      'lp-watch',
+    ])
+    for (const library of LibraryPlaylistLibrarySchema.options) {
+      const own = [...playlists]
+        .filter(([, row]) => row.extra.library === library)
+        .map(([id]) => id)
+        .sort(codePoints)
+      const directory = await listPlaylistBrowsePage(
+        PlaylistBrowseQuerySchema.parse({ library, size: 100 }),
+      )
+      const items = directory.items.filter((item) => item.origin === 'library')
+      expect(items.map((item) => item.id).sort(codePoints), library).toEqual(
+        own,
+      )
+      for (const item of items)
+        expect(playlists.get(item.id)?.item, item.id).toEqual(
+          JSON.parse(JSON.stringify(item)),
+        )
+      const list = await listLibraryPlaylists(
+        LibraryPlaylistListQuerySchema.parse({ library, size: 100 }),
+      )
+      expect(list.items.map((item) => item.id).sort(codePoints)).toEqual(own)
+      for (const summary of list.items)
+        expect(playlists.get(summary.id)?.summary, summary.id).toEqual(
+          JSON.parse(JSON.stringify(summary)),
+        )
+    }
+  })
+
+  it('project the count, dates, name and listed members', async () => {
+    const playlists = await libraryPlaylistRows()
+    expect(playlists.get('lp-night')).toMatchObject({
+      text: {},
+      search: { name: ['Night Drive'] },
+      num: {
+        count: 3,
+        updated: at('2026-02-01T08:00:00.123Z') * 1000 + 456,
+        added: at('2025-06-01T01:02:03.456Z') * 1000 + 789,
+      },
+      sort: { name: 'night drive' },
+      extra: {
+        library: 'tracks',
+        type: 'playlist',
+        hasView: false,
+        members: ['track-aurora', 'track-bright'],
+      },
+    })
+    expect(playlists.get('lp-calm')).toMatchObject({
+      num: { count: null },
+      extra: { type: 'smart', hasView: true, members: [] },
+    })
+    expect(playlists.get('lp-screen')?.num.count).toBe(0)
+    expect(playlists.get('lp-screen')?.extra.members).toEqual([])
+    expect(playlists.get('lp-shelf')?.extra.members).toEqual([
+      'album-north',
+      'album-quiet',
+    ])
+    expect(playlists.get('lp-watch')).toMatchObject({
+      num: { count: 3 },
+      extra: { library: 'subscriptions', members: ['video-one', 'video-two'] },
+    })
+    expect(playlists.get('lp-set')?.extra.members).toEqual(['mix-one'])
+    // A deleted playlist renders nothing, so the feed holds its tombstone.
+    const device = await renderer()
+    expect([...(await device.render('library_playlist', ['lp-gone']))]).toEqual(
+      [],
+    )
   })
 })

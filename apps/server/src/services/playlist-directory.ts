@@ -45,7 +45,7 @@ import {
 } from './spotify-playlist-state'
 import { countSubscriptionBrowseItems } from './subscription-library'
 
-const isoTimestamp = (column: SQL) =>
+export const isoTimestamp = (column: SQL) =>
   sql`to_char(${column}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
 
 const CountRowsSchema = z.array(z.object({ count: z.coerce.number() }))
@@ -499,11 +499,14 @@ export async function countPlaylists(query: PlaylistBrowseQuery) {
 const libraryEntryCount = sql`(select count(*)::int from library_playlist_entry e
   where ${listedEntry(sql`lp.id`)})`
 
-const libraryCountColumn = (smartCount: SQL) =>
+export const libraryCountColumn = (smartCount: SQL) =>
   sql`case when lp.type = 'playlist' then ${libraryEntryCount} else ${smartCount} end`
 
 /** A library row's value for a sort; null, ordered last, for an imported-playlist field. */
-function librarySortColumn(sortBy: PlaylistBrowseSort, smartCount: SQL): SQL {
+export function librarySortColumn(
+  sortBy: PlaylistBrowseSort,
+  smartCount: SQL,
+): SQL {
   switch (sortBy) {
     case 'name':
       return sql`lower(lp.name)`
@@ -800,7 +803,7 @@ async function libraryDirectoryRead(
   }
 }
 
-const DirectoryRowsSchema = z.array(
+export const DirectoryRowsSchema = z.array(
   z.object({
     origin: z.enum(['imported', 'library']),
     id: z.string(),
@@ -815,7 +818,7 @@ const DirectoryRowsSchema = z.array(
 )
 type DirectoryRow = z.infer<typeof DirectoryRowsSchema>[number]
 
-function librarySummary(
+export function librarySummary(
   row: DirectoryRow,
   library: LibraryPlaylistLibrary,
 ): PlaylistSummary {

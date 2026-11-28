@@ -92,6 +92,7 @@ const StoredStateSchema = z.object({
   sweep_entity: DeviceEntitySchema.nullable(),
   sweep_after: z.string().nullable(),
   sweep_due: z.boolean(),
+  built_entities: z.number().int().nonnegative(),
 })
 type StoredState = z.infer<typeof StoredStateSchema>
 
@@ -125,13 +126,18 @@ const PageRowsSchema = z.tuple([PageRowSchema], PageRowSchema)
 
 const pendingMarks = sql`exists (select 1 from device_dirty)`
 
-// A sweep is due while the feed is being built or a sweep is under way, and
-// once the last completed sweep has rested.
+/** Entities in sweep order; one added since the last completed sweep is built first. */
+const sweepOrder: readonly DeviceEntity[] = DeviceEntitySchema.options
+
+// A sweep is due while the feed is being built, an entity added since the
+// last completed sweep is not built or a sweep is under way, and once the
+// last completed sweep has rested.
 const stateColumns = sql`s.epoch, s.row_version, s.min_seq, s.ready,
-  s.sweep_entity, s.sweep_after,
+  s.sweep_entity, s.sweep_after, s.built_entities,
   greatest(s.min_seq, coalesce((select max(seq) from device_row), 0)) as seq,
   ${pendingMarks} as pending,
-  (not s.ready or s.sweep_entity is not null or s.swept_at is null
+  (not s.ready or s.built_entities < ${sweepOrder.length}
+    or s.sweep_entity is not null or s.swept_at is null
     or s.swept_at <= now() - make_interval(hours => ${SWEEP_REST_HOURS})) as sweep_due`
 
 async function readStoredState(reader: Pick<typeof db, 'execute'> = db) {
@@ -153,10 +159,16 @@ async function readMaintenanceState() {
 const isCurrent = (state: Pick<StoredState, 'row_version'>) =>
   state.row_version === DEVICE_ROW_VERSION
 
+/** Built, of this row version, with every entity this server publishes. */
+const isReady = (
+  state: Pick<StoredState, 'ready' | 'row_version' | 'built_entities'>,
+) =>
+  state.ready && isCurrent(state) && state.built_entities >= sweepOrder.length
+
 export async function readDeviceFeedState(): Promise<DeviceFeedState> {
   const state = await readStoredState()
   return {
-    ready: state.ready && isCurrent(state),
+    ready: isReady(state),
     epoch: state.epoch,
     seq: state.seq,
     minSeq: state.min_seq,
@@ -452,8 +464,32 @@ export async function renderDirtyDeviceRows(
 
 /** The entity a sweep walks after `entity`; the first one after null. */
 function sweptAfter(entity: DeviceEntity | null): DeviceEntity | undefined {
-  const order: readonly DeviceEntity[] = DeviceEntitySchema.options
-  return order[entity === null ? 0 : order.indexOf(entity) + 1]
+  return sweepOrder[entity === null ? 0 : sweepOrder.indexOf(entity) + 1]
+}
+
+/**
+ * Where the next sweep batch starts (DEVICE-05). On a built feed, an entity
+ * added since the last completed sweep is built first: the cursor moves to
+ * the first entity not covered, abandoning a routine sweep before it. A
+ * first build continues where it is, since new entities come last.
+ */
+function sweepCursor(
+  state: Pick<
+    StoredState,
+    'ready' | 'built_entities' | 'sweep_entity' | 'sweep_after'
+  >,
+) {
+  const unbuilt = sweepOrder[state.built_entities]
+  if (
+    state.ready &&
+    unbuilt &&
+    (state.sweep_entity === null ||
+      sweepOrder.indexOf(state.sweep_entity) < state.built_entities)
+  )
+    return { entity: unbuilt, after: null }
+  return state.sweep_entity
+    ? { entity: state.sweep_entity, after: state.sweep_after }
+    : { entity: sweptAfter(null), after: null }
 }
 
 type SweepOptions = {
@@ -477,10 +513,9 @@ async function sweepBatchUnderLock(
   return withFeedLock(options, async (tx) => {
     const state = await readStoredState(tx)
     // A feed of another row version is restarted before it is swept.
-    const entity = state.sweep_entity ?? sweptAfter(null)
+    const { entity, after } = sweepCursor(state)
     if (!isCurrent(state) || !entity) return undefined
     if (options.onlyWhenDue && !state.sweep_due) return undefined
-    const after = state.sweep_entity ? state.sweep_after : null
     const listed = await renderer.listIds(entity, after, options.limit)
     const result =
       listed.length > 0
@@ -503,7 +538,9 @@ async function sweepBatchUnderLock(
     await tx.execute(sql`update device_feed_state set
       sweep_entity = ${next.entity ?? null}, sweep_after = ${next.after},
       ready = ready or ${complete},
-      swept_at = case when ${complete} then now() else swept_at end
+      swept_at = case when ${complete} then now() else swept_at end,
+      built_entities = case when ${complete} then ${sweepOrder.length}
+        else built_entities end
       where singleton`)
     return {
       listed: listed.length,

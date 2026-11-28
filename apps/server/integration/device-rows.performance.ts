@@ -61,6 +61,18 @@ beforeAll(async () => {
     insert into lastfm_track_link (username, artist_key, track_key, track_media_item_id, strategy)
     select 'fixture-listener', 'fixture artist', 'fixture track ' || n, 'track-' || n, 'exact'
     from generate_series(1, 4000) n;
+
+    -- Library playlists: 800 of Tracks with 25 entries each, one removed,
+    -- and 200 smart Albums playlists.
+    insert into library_playlist (id, library, type, name, view)
+    select 'library-list-' || n, case when n <= 800 then 'tracks' else 'albums' end,
+      case when n <= 800 then 'playlist' else 'smart' end, 'Fixture library playlist ' || n,
+      case when n > 800 then jsonb_build_object('q', 'fixture ' || n) end
+    from generate_series(1, 1000) n;
+    insert into library_playlist_entry (id, playlist_id, position, media_item_id, batch_id, removed_batch_id, removed_at)
+    select 'library-entry-' || n, 'library-list-' || (1 + n % 800), n, 'track-' || n, 'batch',
+      case when n % 25 = 0 then 'removal' end, case when n % 25 = 0 then now() end
+    from generate_series(1, 20000) n;
   `)
   for (const table of [
     'media_item',
@@ -77,6 +89,8 @@ beforeAll(async () => {
     'scrape_job',
     'lastfm_scrobble',
     'lastfm_track_link',
+    'library_playlist',
+    'library_playlist_entry',
   ])
     await pool.query(`vacuum analyze ${table}`)
 })
@@ -88,7 +102,9 @@ beforeAll(async () => {
  * the `fold` mapping, which reads no table: about 0.2 s of `lower()` over
  * every code point, once per sweep. Item rows include their list loader, which
  * costs what the list endpoint pays for a page: on this fixture about 2,400
- * blocks for Tracks, 7,500 for Artists and 38,000 for Playlists.
+ * blocks for Tracks, 7,500 for Artists and 38,000 for Playlists. A library
+ * playlist reads its listed entries for each count, its members and its list
+ * summary: about 85 blocks a row with 25 entries.
  */
 const budgets: Record<DeviceEntity, { blocks: number; statements: number }> = {
   track: { blocks: 20_000, statements: 2 },
@@ -103,6 +119,7 @@ const budgets: Record<DeviceEntity, { blocks: number; statements: number }> = {
   album_plays: { blocks: 2_600, statements: 1 },
   artist_plays: { blocks: 5_500, statements: 1 },
   meta: { blocks: 50, statements: 2 },
+  library_playlist: { blocks: 12_000, statements: 2 },
 }
 
 it('bounds a render batch of each entity', async () => {
@@ -149,6 +166,7 @@ const sweepBudgets: Record<
   album_plays: { listing: 250, batch: 3_000, statements: 2 },
   artist_plays: { listing: 1_300, batch: 4_000, statements: 2 },
   meta: { listing: 50, batch: 50, statements: 3 },
+  library_playlist: { listing: 200, batch: 60_000, statements: 3 },
 }
 
 it('bounds a sweep batch of each entity', async () => {

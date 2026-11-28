@@ -107,7 +107,7 @@ const playlistIdColumn = sql`${libraryPlaylist.id}`
 const entryCount = sql<number>`(select count(*)::int from library_playlist_entry e
   where ${listedEntry(playlistIdColumn)})`
 
-const summaryColumns = {
+export const summaryColumns = {
   id: libraryPlaylist.id,
   library: libraryPlaylist.library,
   type: libraryPlaylist.type,
@@ -128,7 +128,7 @@ type SummaryRow = {
   containsItem?: boolean | null
 }
 
-function summary(row: SummaryRow): LibraryPlaylistSummary {
+export function summary(row: SummaryRow): LibraryPlaylistSummary {
   return LibraryPlaylistSummarySchema.parse({
     id: row.id,
     library: row.library,

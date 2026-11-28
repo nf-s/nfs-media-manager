@@ -19,6 +19,7 @@ import type { JsonValue } from '@repo/schemas/common'
 import {
   DEVICE_ROW_VERSION,
   DeviceChangesResponseSchema,
+  DeviceEntitySchema,
   DeviceFeedStateSchema,
   DeviceSnapshotResponseSchema,
   type DeviceEntity,
@@ -223,7 +224,8 @@ async function markCount() {
 async function resetFeed() {
   await pool.query(`delete from device_row; delete from device_dirty;
     update device_feed_state set epoch = 'fixture-epoch', row_version = ${DEVICE_ROW_VERSION},
-      min_seq = 0, ready = false, sweep_entity = null, sweep_after = null, swept_at = null`)
+      min_seq = 0, ready = false, sweep_entity = null, sweep_after = null, swept_at = null,
+      built_entities = ${DeviceEntitySchema.options.length}`)
 }
 
 async function sweepAll(renderer: DeviceFeedRenderer) {
@@ -920,6 +922,151 @@ describe('device feed', () => {
       (await refreshDeviceFeedForMaintenance(stub.renderer)).published,
     ).toBe(true)
     expect(await markCount()).toBe(0)
+  })
+
+  describe('an entity added after the feed was built', () => {
+    // A feed built before library playlists covered the entities before it.
+    const covered = DeviceEntitySchema.options.indexOf('library_playlist')
+
+    /** The stub's rows, with library playlists rendered from the database. */
+    async function builtBeforeLibraryPlaylists() {
+      const { deviceRowRenderer } = await import('@/services/device-rows')
+      const stub = stubRenderer()
+      for (const n of [1, 2, 3]) stub.set('album_plays', fixtureId(n), plays(n))
+      stub.set('tag_key', 'album:rock', {
+        mediaType: 'album',
+        key: 'rock',
+        ancestorKeys: ['music'],
+      })
+      const renderer: DeviceFeedRenderer = {
+        render: (entity, ids) =>
+          entity === 'library_playlist'
+            ? deviceRowRenderer.render(entity, ids)
+            : stub.renderer.render(entity, ids),
+        listIds: (entity, afterId, limit) =>
+          entity === 'library_playlist'
+            ? deviceRowRenderer.listIds(entity, afterId, limit)
+            : stub.renderer.listIds(entity, afterId, limit),
+      }
+      await pool.query('delete from library_playlist')
+      expect((await refreshDeviceFeedForMaintenance(renderer)).published).toBe(
+        true,
+      )
+      // Playlists made before the migration carry no marks.
+      await pool.query(`insert into library_playlist (id, library, type, name) values
+          ('lp-1', 'tracks', 'playlist', 'First'), ('lp-2', 'films', 'playlist', 'Second');
+        delete from device_dirty;
+        update device_feed_state set built_entities = ${covered}`)
+      return { stub, renderer, before: await liveFeed() }
+    }
+
+    async function expectAnswering(epoch: string) {
+      expect(
+        await snapshotPage({ epoch, entity: 'album_plays' }),
+      ).toMatchObject({ reset: false })
+      expect(await changesPage({ epoch, since: 0 })).toMatchObject({
+        reset: false,
+      })
+    }
+
+    /** Sweeps one ID per call until the sweep completes, checking the state on the way. */
+    async function sweepOneAtATime(renderer: DeviceFeedRenderer) {
+      for (let run = 0; run < 20; run += 1) {
+        const state = await feedState()
+        const sweep = await sweepDeviceFeed(renderer, {
+          wait: true,
+          deadline: later(),
+          onlyWhenDue: true,
+          limit: 1,
+          maxRows: 1,
+        })
+        if (sweep.complete) return
+        expect(state.ready, `run ${run}`).toBe(false)
+        await expectAnswering(state.epoch)
+      }
+      throw new Error('The sweep did not complete')
+    }
+
+    const SweepStateSchema = z.array(
+      z.object({
+        sweep_entity: z.string().nullable(),
+        built_entities: z.number(),
+        resting: z.boolean(),
+      }),
+    )
+    const sweepState = async () =>
+      SweepStateSchema.parse(
+        (
+          await pool.query(`select sweep_entity, built_entities,
+            swept_at > now() - interval '1 minute' as resting from device_feed_state`)
+        ).rows,
+      )[0]
+
+    async function expectBuilt(before: Map<string, number>) {
+      expect(await feedState()).toMatchObject({ ready: true })
+      const after = await liveFeed()
+      for (const [key, seq] of before) expect(after.get(key), key).toBe(seq)
+      expect(
+        [...after.keys()].filter((key) => key.startsWith('library_playlist:')),
+      ).toEqual(['library_playlist:lp-1', 'library_playlist:lp-2'])
+      expect(await sweepState()).toEqual({
+        sweep_entity: null,
+        built_entities: DeviceEntitySchema.options.length,
+        resting: true,
+      })
+    }
+
+    it('builds the new entity on a ready feed with no sweep under way', async () => {
+      const { renderer, before } = await builtBeforeLibraryPlaylists()
+      const state = await feedState()
+      expect(state.ready).toBe(false)
+      await expectAnswering(state.epoch)
+      // The last sweep completed just now, but the new entity is due.
+      await sweepOneAtATime(renderer)
+      await expectBuilt(before)
+      expect(await feedState()).toMatchObject({ epoch: state.epoch })
+    })
+
+    it('abandons a routine sweep under way to build the new entity', async () => {
+      const { stub, renderer, before } = await builtBeforeLibraryPlaylists()
+      await pool.query(
+        `update device_feed_state set sweep_entity = 'album_plays',
+          sweep_after = $1, swept_at = now() - interval '25 hours'`,
+        [fixtureId(1)],
+      )
+      // A change the routine sweep would have written next.
+      stub.set('album_plays', fixtureId(3), plays(3, 30))
+      expect((await feedState()).ready).toBe(false)
+      await sweepOneAtATime(renderer)
+      await expectBuilt(before)
+      // The next routine sweep starts after the rest and writes it then.
+      expect((await refreshDeviceFeedForMaintenance(renderer)).published).toBe(
+        false,
+      )
+    })
+
+    it('continues a first build under way, which builds the new entity last', async () => {
+      const { stub, renderer, before } = await builtBeforeLibraryPlaylists()
+      await pool.query(
+        `update device_feed_state set ready = false, sweep_entity = 'album_plays',
+          sweep_after = $1, swept_at = null`,
+        [fixtureId(1)],
+      )
+      // Behind the cursor, left; after it, written.
+      stub.set('tag_key', 'album:rock', {
+        mediaType: 'album',
+        key: 'rock',
+        ancestorKeys: ['music', 'sound'],
+      })
+      stub.set('album_plays', fixtureId(3), plays(3, 30))
+      await sweepOneAtATime(renderer)
+      const changed = `album_plays:${fixtureId(3)}`
+      expect((await liveFeed()).get(changed)).toBeGreaterThan(
+        before.get(changed) ?? Infinity,
+      )
+      before.delete(changed)
+      await expectBuilt(before)
+    })
   })
 
   it('keeps a mark made while its row renders', async () => {
@@ -1681,6 +1828,50 @@ describe('device feed marks', () => {
       'playlist:list-2',
       'track:track-2',
     ])
+  })
+
+  it('marks a library playlist for its writes and its entries, cascades included', async () => {
+    await pool.query(`delete from library_playlist; delete from subscription_source;
+      insert into subscription_source (id, type, title) values ('source-1', 'youtube', 'Fixture channel');
+      insert into subscription_item (id, source_id, type, title, artists, published_at, duration_sec, search)
+        values ('video-1', 'source-1', 'youtube', 'Fixture video', '[]', '2026-01-01', 60, to_tsvector('simple', 'video'));
+      insert into library_playlist (id, library, type, name) values
+        ('lp-tracks', 'tracks', 'playlist', 'Tracks'), ('lp-videos', 'subscriptions', 'playlist', 'Videos')`)
+    expect(
+      await marksOf(
+        "update library_playlist set name = 'Renamed' where id = 'lp-tracks'",
+      ),
+    ).toEqual({ marks: ['library_playlist:lp-tracks'], rows: 1 })
+    expect(
+      await marksOf(`insert into library_playlist_entry
+        (id, playlist_id, position, media_item_id, subscription_item_id, batch_id) values
+        ('e-1', 'lp-tracks', 1, 'track-1', null, 'b-1'), ('e-2', 'lp-tracks', 2, 'track-1', null, 'b-1'),
+        ('e-3', 'lp-videos', 1, null, 'video-1', 'b-2')`),
+    ).toEqual({
+      marks: ['library_playlist:lp-tracks', 'library_playlist:lp-videos'],
+      rows: 2,
+    })
+    // Positions and addition times are not part of the row.
+    expect(
+      await marksOf(
+        'update library_playlist_entry set position = position + 10, added_at = now()',
+      ),
+    ).toEqual({ marks: [], rows: 0 })
+    expect(
+      await marksOf(
+        "update library_playlist_entry set removed_batch_id = 'r-1', removed_at = now() where id = 'e-1'",
+      ),
+    ).toEqual({ marks: ['library_playlist:lp-tracks'], rows: 1 })
+    expect(
+      (await marksOf("delete from media_item where id = 'track-1'")).marks,
+    ).toContain('library_playlist:lp-tracks')
+    expect(
+      await marksOf("delete from subscription_item where id = 'video-1'"),
+    ).toEqual({ marks: ['library_playlist:lp-videos'], rows: 1 })
+    expect(
+      (await marksOf("delete from library_playlist where id = 'lp-tracks'"))
+        .marks,
+    ).toEqual(['library_playlist:lp-tracks'])
   })
 
   it('inserts each mark of a bulk statement once', async () => {

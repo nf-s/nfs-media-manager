@@ -22,6 +22,7 @@ import {
   DeviceEntitySchema,
   DeviceFeedStateSchema,
   DeviceFilmItemSchema,
+  DeviceLibraryPlaylistRowSchema,
   DevicePlaylistItemSchema,
   DevicePlaylistJobRowSchema,
   DevicePlaylistRowSchema,
@@ -577,78 +578,162 @@ describe('the device feed against real edits', () => {
     expect(renamed.get('playlist:playlist-morning')).toBe(false)
   })
 
-  // Library playlists are not in the feed yet (Known holes): their reads go
-  // to the API, and no published row reads their tables, so their writes
-  // mark nothing and change no row.
-  it('a library playlist created, edited and deleted', async () => {
+  it('library playlists created, edited, deleted and restored', async () => {
     const {
       addLibraryPlaylistEntries,
       createLibraryPlaylist,
       deleteLibraryPlaylist,
       listLibraryPlaylistEntries,
       removeLibraryPlaylistEntries,
+      restoreLibraryPlaylist,
+      restoreLibraryPlaylistEntries,
+      undoLibraryPlaylistAddition,
       updateLibraryPlaylist,
     } = await import('@/services/library-playlists')
-    const unmarked = (write: () => Promise<unknown>) => async () => {
-      await write()
-      expect(await markCount()).toBe(0)
+    const create = async (input: unknown) =>
+      (
+        await createLibraryPlaylist(
+          CreateLibraryPlaylistSchema.parse(input),
+          ownerId,
+        )
+      ).playlist.id
+    const StoredSchema = z.array(z.object({ payload: z.unknown() })).length(1)
+    /** The route's item of `id` in the directory or the list of `library`. */
+    const routeItem = async (path: string, id: string) => {
+      const response = await request(path)
+      expect(response.status, path).toBe(200)
+      return ItemsSchema.parse(await response.json()).data.items.find(
+        (item) => item.id === id,
+      )
     }
-    let playlistId = ''
-    const steps: Array<[string, () => Promise<unknown>]> = [
-      [
-        'library playlist created',
-        async () => {
-          playlistId = (
-            await createLibraryPlaylist(
-              CreateLibraryPlaylistSchema.parse({
-                type: 'playlist',
-                library: 'tracks',
-                name: 'Evening',
-                selection: { ids: ['track-bright'] },
-              }),
-              ownerId,
+    /**
+     * A step whose changes are library playlist rows only, unless `others`;
+     * each live one equal to the directory's row and the list's summary.
+     */
+    const playlistStep = async (
+      label: string,
+      write: () => Promise<unknown>,
+      others = false,
+    ) => {
+      const changes = await step(label, async () => {
+        await write()
+      })
+      const keys = [...changes.keys()]
+      const own = keys.filter((key) => key.startsWith('library_playlist:'))
+      expect(own.length, label).toBeGreaterThan(0)
+      if (!others) expect(keys, label).toEqual(own)
+      for (const key of own) {
+        if (changes.get(key)) continue
+        const id = key.slice('library_playlist:'.length)
+        const [stored] = StoredSchema.parse(
+          (
+            await pool.query(
+              "select payload from device_row where entity = 'library_playlist' and id = $1",
+              [id],
             )
-          ).playlist.id
-          await createLibraryPlaylist(
-            CreateLibraryPlaylistSchema.parse({
-              type: 'playlist',
-              library: 'albums',
-              name: 'Evening albums',
-              selection: { ids: ['album-quiet'] },
-            }),
-            ownerId,
-          )
-        },
-      ],
-      [
-        'library playlist entry added',
-        () =>
-          addLibraryPlaylistEntries(
-            playlistId,
-            LibraryPlaylistSelectionSchema.parse({ ids: ['track-echo'] }),
-            'skip',
+          ).rows,
+        )
+        const row = DeviceLibraryPlaylistRowSchema.parse(stored?.payload)
+        const library = row.extra.library
+        expect(row.item, `${label}: the directory row of ${id}`).toEqual(
+          await routeItem(
+            `/api/v1/playlists/browse-page?library=${library}&size=100`,
+            id,
           ),
-      ],
-      [
-        'library playlist entry removed',
-        async () => {
-          const entries = await listLibraryPlaylistEntries(playlistId, {
-            page: 1,
-            size: 10,
-          })
-          await removeLibraryPlaylistEntries(playlistId, {
-            entryIds: entries.items.map((entry) => entry.id).slice(0, 1),
-          })
-        },
-      ],
-      [
-        'library playlist renamed',
-        () => updateLibraryPlaylist(playlistId, { name: 'Late Evening' }),
-      ],
-      ['library playlist deleted', () => deleteLibraryPlaylist(playlistId)],
-    ]
-    for (const [label, write] of steps)
-      expect((await step(label, unmarked(write))).size, label).toBe(0)
+        )
+        expect(row.summary, `${label}: the list summary of ${id}`).toEqual(
+          await routeItem(
+            `/api/v1/library-playlists?library=${library}&size=100`,
+            id,
+          ),
+        )
+      }
+      return changes
+    }
+
+    let playlistId = ''
+    const created = await playlistStep('library playlist created', async () => {
+      playlistId = await create({
+        type: 'playlist',
+        library: 'tracks',
+        name: 'Evening',
+        selection: { ids: ['track-bright', 'track-echo'] },
+      })
+    })
+    expect([...created]).toEqual([[`library_playlist:${playlistId}`, false]])
+    await playlistStep('smart playlist created', () =>
+      create({
+        type: 'smart',
+        library: 'tracks',
+        name: 'Evening water',
+        view: { q: 'water' },
+      }),
+    )
+    await playlistStep('library playlist renamed', () =>
+      updateLibraryPlaylist(playlistId, { name: 'Late Evening' }),
+    )
+    let additionBatch = ''
+    await playlistStep('library playlist entries added', async () => {
+      additionBatch = (
+        await addLibraryPlaylistEntries(
+          playlistId,
+          LibraryPlaylistSelectionSchema.parse({
+            ids: ['track-bright', 'track-echo'],
+          }),
+          'again',
+        )
+      ).batchId
+    })
+    await playlistStep('library playlist addition undone', () =>
+      undoLibraryPlaylistAddition(playlistId, additionBatch),
+    )
+    let removalBatch = ''
+    await playlistStep('library playlist entry removed', async () => {
+      const entries = await listLibraryPlaylistEntries(playlistId, {
+        page: 1,
+        size: 10,
+      })
+      removalBatch = (
+        await removeLibraryPlaylistEntries(playlistId, {
+          entryIds: entries.items.map((entry) => entry.id).slice(0, 1),
+        })
+      ).batchId
+    })
+    await playlistStep('library playlist removal restored', () =>
+      restoreLibraryPlaylistEntries(playlistId, removalBatch),
+    )
+    const deleted = await playlistStep('library playlist deleted', () =>
+      deleteLibraryPlaylist(playlistId),
+    )
+    expect(deleted.get(`library_playlist:${playlistId}`)).toBe(true)
+    const restored = await playlistStep('library playlist restored', () =>
+      restoreLibraryPlaylist(playlistId),
+    )
+    expect(restored.get(`library_playlist:${playlistId}`)).toBe(false)
+
+    // Deleting an item deletes its entries by a cascade, which marks the
+    // playlist holding it.
+    await step('film added', () =>
+      query(`insert into media_item (id, slug, media_type, title)
+          values ('film-spare', 'film-spare', 'film', 'Spare Reel');
+        insert into film (media_item_id) values ('film-spare')`),
+    )
+    let filmsId = ''
+    await playlistStep('films playlist created', async () => {
+      filmsId = await create({
+        type: 'playlist',
+        library: 'films',
+        name: 'Evening films',
+        selection: { ids: ['film-spare', 'film-harbor'] },
+      })
+    })
+    const cascade = await playlistStep(
+      'film held by a library playlist deleted',
+      () => query("delete from media_item where id = 'film-spare'"),
+      true,
+    )
+    expect(cascade.get('film:film-spare')).toBe(true)
+    expect(cascade.get(`library_playlist:${filmsId}`)).toBe(false)
   })
 
   it('a Spotify playlist import queued, running with progress and finished', async () => {

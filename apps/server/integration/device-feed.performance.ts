@@ -1,7 +1,7 @@
 import pg from 'pg'
 import { beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { DEVICE_ROW_VERSION } from '@repo/schemas/device'
+import { DEVICE_ROW_VERSION, DeviceEntitySchema } from '@repo/schemas/device'
 import { createTrackPerformanceFixture } from './fixtures/track-performance'
 
 const { name, connection, pool, database, checkBudget } =
@@ -104,13 +104,21 @@ beforeAll(async () => {
     select 'job-' || n, 'spotify', 'queued', '{}',
       jsonb_build_object('task', 'spotify-playlist-import', 'groupKey', 'spotify:fixture-' || n)
     from generate_series(1, 2000) n;
+    -- A thousand library playlists of twenty tracks each.
+    insert into library_playlist (id, library, type, name)
+    select 'library-list-' || n, 'tracks', 'playlist', 'Fixture library playlist ' || n
+    from generate_series(1, 1000) n;
+    insert into library_playlist_entry (id, playlist_id, position, media_item_id, batch_id)
+    select 'library-entry-' || n, 'library-list-' || (1 + n % 1000), n, 'track-' || n, 'batch-' || (1 + n % 1000)
+    from generate_series(1, 20000) n;
     delete from device_dirty;
     insert into device_row (entity, id, payload, hash, seq, size)
     select 'album_plays', 'album-' || lpad(n::text, 5, '0'),
       jsonb_build_object('plays', (select jsonb_agg(1700000000 + n * 100 + p) from generate_series(1, 20) p)),
       md5(n::text), nextval('device_row_seq'), 260
     from generate_series(1, 20000) n;
-    update device_feed_state set epoch = 'fixture-epoch', row_version = ${DEVICE_ROW_VERSION}, ready = true;
+    update device_feed_state set epoch = 'fixture-epoch', row_version = ${DEVICE_ROW_VERSION}, ready = true,
+      built_entities = ${DeviceEntitySchema.options.length};
   `)
   for (const table of [
     'device_row',
@@ -132,6 +140,8 @@ beforeAll(async () => {
     'lastfm_scrobble',
     'catalog_observation',
     'scrape_job',
+    'library_playlist',
+    'library_playlist_entry',
   ])
     await pool.query(`vacuum analyze ${table}`)
 })
@@ -415,6 +425,22 @@ const writes: { table: string; one: string; many: string }[] = [
     one: "insert into catalog_observation (id, target_kind, target_id, provider, operation) values ('observation-new', 'artist', 'artist-1', 'fixture', 'artist')",
     many: `insert into catalog_observation (id, target_kind, target_id, provider, operation)
       select 'observation-new-' || n, 'artist', 'artist-' || (1 + n % 1000), 'fixture', 'artist' from (${bulk(2000)}) s`,
+  },
+  {
+    table: 'library_playlist',
+    one: "update library_playlist set name = 'Fixture renamed library playlist' where id = 'library-list-1'",
+    many: 'update library_playlist set updated_at = now()',
+  },
+  {
+    table: 'library_playlist_entry',
+    one: "insert into library_playlist_entry (id, playlist_id, position, media_item_id, batch_id) values ('library-entry-new', 'library-list-1', 100000, 'album-1', 'batch-new')",
+    many: `update library_playlist_entry set removed_batch_id = 'removal', removed_at = now()
+      where playlist_id in (select 'library-list-' || n from (${bulk(100)}) s)`,
+  },
+  {
+    table: 'library_playlist_entry',
+    one: "delete from library_playlist_entry where id = 'library-entry-1'",
+    many: `delete from library_playlist_entry where playlist_id in (select 'library-list-' || n from (${bulk(100)}) s)`,
   },
   {
     table: 'scrape_job',

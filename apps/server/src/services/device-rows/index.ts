@@ -11,6 +11,10 @@ import {
   renderTagKeys,
   renderTags,
 } from './library'
+import {
+  listLibraryPlaylistIds,
+  renderLibraryPlaylists,
+} from './library-playlists'
 import { listMediaIds, listTrackPeerIds, renderMedia } from './media'
 import { listPlaysIds, renderPlays } from './plays'
 import {
@@ -52,6 +56,8 @@ function renderPayloads(
       return renderPlays(entity, ids)
     case 'meta':
       return renderMeta(ids)
+    case 'library_playlist':
+      return renderLibraryPlaylists(ids)
   }
 }
 
@@ -81,6 +87,8 @@ function listPublishedIds(
       return listPlaysIds(entity, afterId, limit)
     case 'meta':
       return listMetaIds(afterId, limit)
+    case 'library_playlist':
+      return listLibraryPlaylistIds(afterId, limit)
   }
 }
 

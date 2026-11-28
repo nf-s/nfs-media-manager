@@ -472,6 +472,9 @@ export const deviceFeedState = pgTable(
     rebuiltAt: timestamp('rebuilt_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
+    // How many entities, in DeviceEntitySchema order, the last completed
+    // sweep covered; an entity added since is built before `ready`.
+    builtEntities: integer('built_entities').default(12).notNull(),
   },
   (table) => [check('device_feed_state_singleton', sql`${table.singleton}`)],
 )
