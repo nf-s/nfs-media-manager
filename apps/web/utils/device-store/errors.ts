@@ -38,7 +38,7 @@ export function storeErrorOf(
   const code = sqliteCode(error)
   if (code === SQLITE_FULL) return 'storage-full'
   if (code === SQLITE_CORRUPT || code === SQLITE_NOTADB) return 'unreadable'
-  if (error instanceof z.ZodError) return 'newer-version'
+  if (error instanceof z.ZodError) return 'version-mismatch'
   if (error instanceof FeedUnreachableError) return 'unreachable'
   if (error instanceof FeedStatusError)
     return error.status >= 500 ? 'unreachable' : 'failed'

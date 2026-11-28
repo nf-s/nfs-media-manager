@@ -23,8 +23,8 @@ const options: { value: Setting; label: string }[] = [
 
 /** One fixed sentence per failure; exception text is never shown. */
 export const storeErrorText: Record<StoreError, string> = {
-  'newer-version':
-    "The server's library rows are newer than this page understands. Reload the page.",
+  'version-mismatch':
+    "The server's library rows do not match this page's version. Reloading may fix it.",
   'not-loaded': "The copy's code could not be loaded.",
   'storage-unavailable': 'This browser cannot store the copy.',
   'storage-full': 'Storage in this browser is full.',

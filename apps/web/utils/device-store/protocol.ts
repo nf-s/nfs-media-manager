@@ -13,8 +13,11 @@ const RequestId = z.number().int().nonnegative()
  * sends a category, never an exception's text.
  */
 export const StoreErrorSchema = z.enum([
-  /** The feed's rows or pages do not match this page's schemas. */
-  'newer-version',
+  /**
+   * The feed's rows or pages do not match this page's schemas: the server
+   * is newer or older than the page.
+   */
+  'version-mismatch',
   /** The SQLite WebAssembly or the Worker's code did not load. */
   'not-loaded',
   /** The browser refused the store's OPFS pool. */

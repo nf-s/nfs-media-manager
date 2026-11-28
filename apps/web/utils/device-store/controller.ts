@@ -158,7 +158,7 @@ export function createDeviceController(
   let verified = false
   let syncedAt: number | null = null
   let lastFailure: StoreError | undefined
-  /** The feed's rows are newer than this page: no sync until Retry or a reload. */
+  /** The feed's rows do not match this page's schemas: no sync until Retry or a reload. */
   let incompatible = false
   let pendingWrites = 0
   let writeGeneration = 0
@@ -269,7 +269,7 @@ export function createDeviceController(
         failures += 1
         lastFailure = outcome.error
         filling = false
-        if (outcome.error === 'newer-version') {
+        if (outcome.error === 'version-mismatch') {
           // The copy cannot apply these rows; refilling in this page load would fail again.
           incompatible = true
           ready = false

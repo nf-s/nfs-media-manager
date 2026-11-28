@@ -711,10 +711,13 @@ test('rows the client schema rejects end the fill not ready, with no refill unti
   })
   host.nextSync = async () => {
     host.events?.progress({ phase: 'snapshot', rows: 500 })
-    return { outcome: 'failed', error: 'newer-version' }
+    return { outcome: 'failed', error: 'version-mismatch' }
   }
   const { controller, statuses } = await startController(t, host)
-  assert.deepEqual(statuses.at(-1), { state: 'error', error: 'newer-version' })
+  assert.deepEqual(statuses.at(-1), {
+    state: 'error',
+    error: 'version-mismatch',
+  })
   assert.equal(host.syncs, 1)
   await fetchApiData('', countPath, CountSchema)
   assert.deepEqual(host.reads, [])
@@ -742,9 +745,12 @@ test('a ready copy whose change rows the client rejects stops serving', async (t
   const calls = mockApi(t)
   const host = fakeHost()
   const { controller, statuses } = await startController(t, host)
-  host.nextSync = async () => ({ outcome: 'failed', error: 'newer-version' })
+  host.nextSync = async () => ({ outcome: 'failed', error: 'version-mismatch' })
   await controller.requestSync('interval')
-  assert.deepEqual(statuses.at(-1), { state: 'error', error: 'newer-version' })
+  assert.deepEqual(statuses.at(-1), {
+    state: 'error',
+    error: 'version-mismatch',
+  })
   await fetchApiData('', countPath, CountSchema)
   assert.deepEqual(host.reads, [])
   assert.equal(calls.length, 1)
@@ -770,6 +776,11 @@ test('the state line shows a fixed sentence for each failure, never exception te
     )
   }
   assert.equal(sentences.size, StoreErrorSchema.options.length)
+  // The server may be newer or older than the page: the sentence names neither.
+  assert.equal(
+    deviceStoreStatusText('on', { state: 'error', error: 'version-mismatch' }),
+    "The server's library rows do not match this page's version. Reloading may fix it. Browse pages read from the server.",
+  )
   // The Worker cannot send text: a failure carries only its category.
   assert.equal(
     WorkerMessageSchema.safeParse({
@@ -794,7 +805,7 @@ test('Worker failures are named by category', () => {
     rows: [{ unexpected: true }],
   })
   assert.ok(!rejected.success)
-  assert.equal(storeErrorOf(rejected.error, 'failed'), 'newer-version')
+  assert.equal(storeErrorOf(rejected.error, 'failed'), 'version-mismatch')
   assert.equal(
     storeErrorOf(new DOMException('full', 'QuotaExceededError'), 'failed'),
     'storage-full',
