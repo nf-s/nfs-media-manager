@@ -1014,6 +1014,61 @@ describe('device feed', () => {
       expect(await markCount()).toBe(3000 - run.marksRead)
     })
 
+    /** `markedBacklog` with the feed's first build not started. */
+    async function markedFirstBuild(count: number, msPerRow: number) {
+      const stub = await markedBacklog(count, msPerRow)
+      await pool.query(`update device_feed_state set ready = false,
+        sweep_entity = null, sweep_after = null, swept_at = null`)
+      return stub
+    }
+
+    it.each([270_000, 400_000])(
+      'renders for 15 seconds and builds until 30 when it starts %i ms after its scheduled time',
+      async (late) => {
+        // 30 seconds of marks and 30 of building.
+        const stub = await markedFirstBuild(3000, 10)
+        const started = Date.now()
+        const { run } = await runDeviceFeedMaintenance({
+          renderer: stub.renderer,
+          scheduledTime: started - late,
+        })
+        expect(Date.now() - started).toBe(30_000)
+        expect(run).toEqual({
+          marksRead: 1500,
+          idsSwept: 1500,
+          rowsRendered: 3000,
+          rowsWritten: 1500,
+          stoppedAtCeiling: true,
+        })
+        expect(await markCount()).toBe(1500)
+        vi.useRealTimers()
+        expect(await feedState()).toMatchObject({ ready: false })
+      },
+    )
+
+    it.each([undefined, 0])(
+      'goes on past 30 seconds when it starts on time (%s ms late)',
+      async (late) => {
+        const stub = await markedFirstBuild(3000, 10)
+        const started = Date.now()
+        const { run } = await runDeviceFeedMaintenance({
+          renderer: stub.renderer,
+          scheduledTime: late === undefined ? undefined : started - late,
+        })
+        expect(Date.now() - started).toBe(60_000)
+        expect(run).toEqual({
+          marksRead: 3000,
+          idsSwept: 3000,
+          rowsRendered: 6000,
+          rowsWritten: 3000,
+          stoppedAtCeiling: false,
+        })
+        expect(await markCount()).toBe(0)
+        vi.useRealTimers()
+        expect(await feedState()).toMatchObject({ ready: true })
+      },
+    )
+
     it('builds past 20,000 IDs in a run, up to its row cap', async () => {
       const { run } = await runDeviceFeedMaintenance({
         renderer: listingOnly(60_000),

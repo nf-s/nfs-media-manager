@@ -75,7 +75,8 @@ const maintenanceBudgetMs = 30_000
  * `backlogBudgetMs` after it started, `runEndsAfterTickMs` after its
  * scheduled time, so that it ends before the next tick, and once it has
  * rendered `backlogRowsPerRun` rows: about 0.18 ms of CPU a track row in
- * Node, so about 9 seconds of the Worker's 30.
+ * Node, so about 9 seconds of the Worker's 30. These ceilings bound only
+ * the phases: a run that starts late still has its first 30 seconds.
  */
 const backlogPhaseMs = 15_000
 const backlogBudgetMs = 240_000
@@ -723,11 +724,12 @@ export interface DeviceFeedMaintenance {
  * The five-minute maintenance task: restarts the feed for a new row
  * version, renders marked rows, continues a due sweep and prunes old
  * tombstones. One read decides which of them has work, so a run with none
- * is one statement. It renders for 15 seconds and sweeps until 30, as long
- * as a run without a backlog takes. While marks remain after that, or a
- * build is unfinished (a first build, one after a restart, or an entity
- * added since the last completed sweep), it goes on in alternating phases
- * up to its ceiling. A routine sweep of a built feed is no backlog.
+ * is one statement. It renders for 15 seconds and sweeps until 30 from its
+ * own start, however late it starts, as long as a run without a backlog
+ * takes. While marks remain after that, or a build is unfinished (a first
+ * build, one after a restart, or an entity added since the last completed
+ * sweep), it goes on in alternating phases up to its ceiling. A routine
+ * sweep of a built feed is no backlog.
  * `published` says whether it changed the feed; `renderFailures` counts the
  * rows set aside.
  */
@@ -801,10 +803,10 @@ export async function runDeviceFeedMaintenance(
   })
   try {
     const state = await readMaintenanceState()
-    const budgetEnd = Math.min(start + maintenanceBudgetMs, ceiling)
+    const budgetEnd = start + maintenanceBudgetMs
     restarted = !isCurrent(state) && (await startCurrentDeviceFeed(budgetEnd))
     let marksRemain = state.pending
-      ? await render(Math.min(start + maintenanceRenderBudgetMs, ceiling))
+      ? await render(start + maintenanceRenderBudgetMs)
       : false
     const building = restarted || !isReady(state)
     const sweepRemains =
