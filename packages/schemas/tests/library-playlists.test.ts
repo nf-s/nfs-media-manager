@@ -7,6 +7,59 @@ import {
 } from '../src/library-playlists'
 import { SourceDescriptorSchema } from '../src/playback'
 import { PlaybackDiagnosticInputSchema } from '../src/playback-diagnostics'
+import { PlaylistBrowseQuerySchema } from '../src/tracks'
+
+describe('playlist directory query', () => {
+  it('parses column filters from URL parameters', () => {
+    const columns = {
+      count: { min: 0, max: 2 },
+      duration: { min: 0.5 },
+      checked: { max: '2024-02-29' },
+    }
+    expect(
+      PlaylistBrowseQuerySchema.parse({
+        types: '["playlist","smart"]',
+        schedules: '["off","daily"]',
+        columnRanges: JSON.stringify(columns),
+        savedView: 'present',
+        savedViewText: '  blue  ',
+        timeZone: 'Australia/Hobart',
+      }),
+    ).toMatchObject({
+      types: ['playlist', 'smart'],
+      schedules: ['off', 'daily'],
+      columnRanges: columns,
+      savedView: 'present',
+      savedViewText: 'blue',
+      timeZone: 'Australia/Hobart',
+    })
+  })
+
+  it('rejects malformed filters at the boundary', () => {
+    const invalid = [
+      { types: '["imported"]' },
+      { schedules: '["sometimes"]' },
+      { savedView: 'yes' },
+      { timeZone: 'Unknown/Zone' },
+      { timeZone: '+05:00' },
+      { keyNotation: 'other' },
+      { columnRanges: '{' },
+      { columnRanges: { actions: { min: 0 } } },
+      { columnRanges: { albums: { min: 0.5 } } },
+      { columnRanges: { tracks: { min: '1' } } },
+      { columnRanges: { duration: { max: -1 } } },
+      { columnRanges: { count: { min: 2, max: 1 } } },
+      { columnRanges: { added: { min: '2025-02-29' } } },
+      { columnRanges: { added: { min: '0000-01-01' } } },
+      { columnRanges: { imported: { min: '2025-01-02', max: '2025-01-01' } } },
+    ]
+    for (const params of invalid)
+      expect(
+        PlaylistBrowseQuerySchema.safeParse(params).success,
+        JSON.stringify(params),
+      ).toBe(false)
+  })
+})
 
 describe('library playlist views', () => {
   it('writes a legacy saved view as the Albums Browse parameters', () => {

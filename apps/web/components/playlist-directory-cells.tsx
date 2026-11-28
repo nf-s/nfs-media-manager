@@ -56,7 +56,7 @@ export function playlistRowCount(
   row: PlaylistSummary,
   library: LibraryPlaylistLibrary,
 ) {
-  if (row.type === 'smart') return null
+  if (row.type === 'smart') return row.itemCount ?? null
   return (
     row.itemCount ?? (library === 'albums' ? row.albumCount : row.trackCount)
   )

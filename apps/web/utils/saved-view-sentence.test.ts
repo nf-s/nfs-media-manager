@@ -157,6 +157,62 @@ test('ranges and listening conditions use their chip labels', () => {
   )
 })
 
+test('a Track date range uses the supplied browser time zone', () => {
+  const view = {
+    ranges: JSON.stringify([
+      { field: 'dateAdded', min: Date.parse('2020-01-01T00:30:00Z') },
+    ]),
+  }
+  assert.equal(
+    describeSavedView({
+      library: 'tracks',
+      view,
+      playlistName: names,
+      timeZone: 'America/Los_Angeles',
+    }),
+    'Added: 2019-12-31 to * · Added, newest first',
+  )
+  assert.equal(
+    describeSavedView({
+      library: 'tracks',
+      view,
+      playlistName: names,
+      timeZone: 'UTC',
+    }),
+    'Added: 2020-01-01 to * · Added, newest first',
+  )
+  assert.equal(
+    describeSavedView({
+      library: 'albums',
+      view,
+      playlistName: names,
+      timeZone: 'America/Los_Angeles',
+    }),
+    'Added: 2020-01-01 to * · Added, newest first',
+  )
+})
+
+test('a Track key filter uses the supplied browser key notation', () => {
+  const view = {
+    filters: filters([{ field: 'musicalKey', value: '8A' }]),
+  }
+  for (const [keyNotation, label] of [
+    ['musical', 'Am'],
+    ['camelot', '8A'],
+    ['open', '1m'],
+  ] as const) {
+    assert.equal(
+      describeSavedView({
+        library: 'tracks',
+        view,
+        playlistName: names,
+        keyNotation,
+      }),
+      `Key: ${label} · Added, newest first`,
+    )
+  }
+})
+
 test('each direction is written in the words of its kind of field', () => {
   const order = (library: 'tracks' | 'films', sortBy: string) =>
     ['asc', 'desc'].map((direction) =>

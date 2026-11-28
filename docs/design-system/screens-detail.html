@@ -682,7 +682,7 @@
               ],
               D.data.TRACKS.slice(0, 6),
             )}</div>`,
-            { flush: true },
+            { flush: true, aside: linkBtn('Show in Tracks') },
           ),
       })
 
@@ -880,7 +880,7 @@
                 '<b>The same toolbar as Browse:</b> search, sort picker, direction, view switch and the Filters button, in that order. The Filters button is short: the icon and the number of filters that are on.',
                 '<b>The filter line</b> holds the active filters and Clear all, then the count and Show in Albums, Show in Tracks or the like, which opens the same result on the Browse page. The count and the link are on this line, not in the toolbar, and the line is there with no filter on.',
                 '<b>Lists with only a count,</b> such as a playlist’s tracks, keep the count at the end of the toolbar and have no filter line.',
-                '<b>A playlist made in the app</b> lists its entries in position order in one table: position, the title with Play, Add to queue and More, the creator and Added to playlist. Filter tracks is in the header, Rename and Delete playlist under More, and a notice offers Remove repeats when an item is in it more than once.',
+                '<b>A playlist made in the app</b> lists its entries in position order in one table: position, the title with Play, Add to queue and More, the creator and Added to playlist. Show in Tracks beside the entries heading opens Browse with the playlist filter. Filter tracks is in the header, Rename and Delete playlist under More, and a notice offers Remove repeats when an item is in it more than once.',
                 '<b>Grid size and columns</b> are in the Filters drawer, as on Browse pages.',
               ]),
           },

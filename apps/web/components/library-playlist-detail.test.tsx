@@ -245,6 +245,24 @@ test('the header has the kind, the name, its facts and the Filter action', () =>
   }
 })
 
+test('the entries section links to Browse in each library for this playlist', () => {
+  for (const [library, title] of libraries) {
+    const name = library === 'subscriptions' ? 'Subscriptions' : title
+    const heading = render(library).match(
+      new RegExp(
+        `<h3>${title}</h3><span class="ds-section-aside"><a[^>]*href="([^"]+)"[^>]*>Show in ${name}</a>`,
+      ),
+    )
+    assert.ok(heading?.[1], `Show in ${name}`)
+    const url = new URL(heading[1].replaceAll('&amp;', '&'), 'http://x')
+    assert.equal(url.pathname, `/${library}`)
+    assert.deepEqual(JSON.parse(url.searchParams.get('filters') ?? ''), [
+      { field: 'libraryPlaylist', value: `pl-${library}`, mode: 'required' },
+    ])
+  }
+  assert.doesNotMatch(render('tracks', 0), />Show in Tracks<\/a>/)
+})
+
 test('More has Rename and Delete playlist', () => {
   const html = render('tracks')
   const menu = html.match(

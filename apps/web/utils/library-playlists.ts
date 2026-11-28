@@ -41,6 +41,7 @@ import {
   type LibraryPlaylistListQuery,
   type LibraryPlaylistSummary,
   type LibraryPlaylistSelection,
+  libraryPlaylistNouns,
   type LibraryPlaylistView,
 } from '@repo/schemas/library-playlists'
 import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
@@ -51,16 +52,7 @@ import type {
 } from './browse-suggestions'
 import type { Library } from './media-scope'
 
-type Noun = { one: string; other: string }
-
-/** The noun for one library's items, in counts such as "40 tracks". */
-export const libraryPlaylistNouns: Record<LibraryPlaylistLibrary, Noun> = {
-  albums: { one: 'album', other: 'albums' },
-  tracks: { one: 'track', other: 'tracks' },
-  films: { one: 'film', other: 'films' },
-  subscriptions: { one: 'item', other: 'items' },
-  mixes: { one: 'mix', other: 'mixes' },
-}
+export { libraryPlaylistNouns } from '@repo/schemas/library-playlists'
 
 /** "40 tracks", "1 album", or "6 of 40 tracks" with a total. */
 export function libraryItemCount(

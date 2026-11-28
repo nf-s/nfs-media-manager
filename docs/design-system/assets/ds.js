@@ -520,7 +520,11 @@
         const resizer = c.resize
           ? `<span class="ds-th-resizer" role="separator" aria-orientation="vertical" aria-label="Resize ${esc(c.h || '')}" tabindex="0"></span>`
           : ''
-        return `<th${attrs({ 'data-align': c.end ? 'end' : undefined, style: c.w ? `width:${c.w}px` : undefined, 'aria-sort': c.sort || undefined, ...stick(c) })}>${inner}${resizer}</th>`
+        const heading =
+          o.columnFilters && c.h
+            ? `<div class="secondary-table-heading">${inner}<button type="button" class="secondary-cell-action" aria-label="Filter ${esc(c.h)}">${icon('filter')}</button></div>`
+            : inner
+        return `<th${attrs({ 'data-align': c.end ? 'end' : undefined, style: c.w ? `width:${c.w}px` : undefined, 'aria-sort': c.sort || undefined, ...stick(c) })}>${heading}${resizer}</th>`
       })
       .join('')
     const body = rows

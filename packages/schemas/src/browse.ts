@@ -4,7 +4,11 @@ import type { AlbumListItem, FilmListItem } from './media'
 import { isSpotifyAudioFeatureKey } from './audio-features'
 import { musicDisplayTags } from './music-tags'
 import { formatTagName } from './tags'
-import { formatMusicalKey, keyDisplayNotation } from './musical-keys'
+import {
+  formatMusicalKey,
+  keyDisplayNotation,
+  type KeyNotation,
+} from './musical-keys'
 
 export const RatingDisplaySchema = z.object({
   provider: z.string().min(1),
@@ -328,9 +332,13 @@ export function isTagBrowseField(key: string): boolean {
 }
 
 /** A filter value as the interface shows it: a tag in its display form, a key in the chosen notation. */
-export function formatBrowseFilterValue(field: string, value: string): string {
+export function formatBrowseFilterValue(
+  field: string,
+  value: string,
+  keyNotation?: KeyNotation,
+): string {
   if (field === 'musicalKey')
-    return formatMusicalKey(value, keyDisplayNotation())
+    return formatMusicalKey(value, keyNotation ?? keyDisplayNotation())
   return isTagBrowseField(field) ? formatTagName(value) : value
 }
 

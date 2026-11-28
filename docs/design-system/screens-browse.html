@@ -446,7 +446,7 @@
                 D.toolbar({
                   placeholder: 'Search playlists',
                   ai: false,
-                  filters: false,
+                  filters: true,
                   columns: true,
                   count: '3 playlists',
                 }) +
@@ -488,12 +488,14 @@
                       },
                     ],
                     PL,
+                    { columnFilters: true },
                   )}</div>`,
               )}</div>` +
               g.rules([
                 '<b>Playlists, Tags, People, Channels and Collections</b> use the same toolbar and the same table. Their items open in the shared drawer, including tags, which use a separate dialog today.',
                 '<b>One Updated date</b> replaces the three timestamp columns in Playlists. Imported playlists, playlists made in the app and smart playlists share one table: Type says which, Source says where it came from, and Saved view writes out a smart playlist’s view. The other imported-playlist columns are under Columns.',
                 '<b>New playlist</b> is in the page head. A row made in the app has a three-dot menu: Open in Browse for a smart playlist, Rename and Delete.',
+                'Filter a data column from its heading or choose it in Filters. Type includes Smart playlist. Active filters stay visible above the table when their columns are hidden.',
               ]),
           },
           {

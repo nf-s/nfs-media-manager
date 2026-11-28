@@ -1,25 +1,37 @@
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  LIBRARY_PLAYLIST_FILTER_FIELD,
   LibraryPlaylistLibrarySchema,
   LibraryPlaylistTypeSchema,
   LibraryPlaylistViewSchema,
   type LibraryPlaylistLibrary,
 } from '@repo/schemas/browse'
 import {
+  parseLibraryBrowseView,
+  type LibraryBrowseQuery,
+} from '@repo/schemas/library-playlists'
+import { describeSavedView } from '@repo/schemas/saved-view-sentence'
+import {
   PlaylistBrowsePageSchema,
   PlaylistBrowseQuerySchema,
+  PlaylistColumnRangesSchema,
   PlaylistPresentationSchema,
   PlaylistSummarySchema,
+  PlaylistSyncScheduleSchema,
   SPOTIFY_PLAYLIST_IMPORT_TASK,
   type PlaylistBrowseQuery,
   type PlaylistBrowseSort,
+  type PlaylistColumnRanges,
   type PlaylistPresentation,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
+import { createDatabaseReadCache } from '@/lib/database-read-cache'
 import { db } from '@/lib/db'
 import { ServerError } from '@/lib/error'
+import { checksumJson } from '@/lib/media-utils'
 import { playlistScheduleMinutes } from '@/lib/playlist-sync'
+import { queryBrowseCount } from './browse'
 import { catalogScopeCondition } from './catalog-scope'
 import { listedEntry } from './library-playlist-entries'
 import { ensureLegacySavedViews } from './library-playlist-legacy-views'
@@ -31,6 +43,7 @@ import {
   playlistSync,
   storedGroupKey,
 } from './spotify-playlist-state'
+import { countSubscriptionBrowseItems } from './subscription-library'
 
 const isoTimestamp = (column: SQL) =>
   sql`to_char(${column}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
@@ -172,6 +185,7 @@ export const playlistGroup = sql`case
   when p.source = 'spotify' and nullif(p.spotify_id, '') is not null then ${PLAYLIST_KEY_PREFIX} || p.spotify_id
   end`
 const playlistLastCheck = sql`coalesce(p.checked_at, p.imported_at)`
+const playlistAdded = sql`case when ${playlistMember} then p.created_at end`
 const playlistImportJobs = sql`
   left join (
     select distinct on (j.options->>'groupKey') j.options->>'groupKey' as group_key, j.status
@@ -186,6 +200,9 @@ const scheduleDelay = sql`case p.sync_schedule ${sql.join(
   ),
   sql` `,
 )} end`
+
+const directorySource = sql`coalesce(p.source,
+  case when p.spotify_url is not null then 'spotify' else 'library' end)`
 
 // Sort by the labels used in the table: Library, Liked Songs, Spotify.
 const sourceOrder = (source: SQL) =>
@@ -224,16 +241,73 @@ function importedSortColumn(query: PlaylistBrowseQuery): SQL {
     case 'type':
       return typeOrder(sql`'playlist'`)
     case 'count':
-      return query.library === 'tracks'
-        ? playlistSortColumns.tracks
-        : query.library === 'albums'
-          ? playlistSortColumns.albums
-          : sql`null::int`
+      return importedCountColumn(query.library)
+    case 'source':
+      return query.library
+        ? sourceOrder(directorySource)
+        : playlistSortColumns.source
     case 'updated':
       return sql`p.imported_at`
     default:
       return playlistSortColumns[query.sortBy]
   }
+}
+
+function importedCountColumn(library: PlaylistBrowseQuery['library']) {
+  if (library === 'tracks') return playlistSortColumns.tracks
+  if (library === 'albums') return playlistSortColumns.albums
+  return sql`null::int`
+}
+
+const escapedSubstring = (value: string) =>
+  `%${value.replace(/[\\%_]/g, '\\$&')}%`
+
+const matchesSubstring = (column: SQL, value: string) =>
+  sql`${column} ilike ${escapedSubstring(value)}`
+
+const oneOf = (column: SQL, choices: string[]) =>
+  sql`${column} = any(${sql.param(choices)}::text[])`
+
+const rangeFields = PlaylistColumnRangesSchema.keyof().options
+
+function columnRangeConditions(
+  query: PlaylistBrowseQuery,
+  columns: Record<keyof PlaylistColumnRanges, SQL | undefined>,
+) {
+  const ranges = query.columnRanges
+  if (!ranges) return []
+  const timeZone = query.timeZone ?? 'UTC'
+  return rangeFields.flatMap((key) => {
+    const range = ranges[key]
+    const column = columns[key]
+    if (!range || !column) return []
+    const { min, max } = range
+    const isDate = typeof (min ?? max) === 'string'
+    // Stored timestamps are UTC. Compare the displayed local calendar date.
+    const value = isDate
+      ? timeZone === 'UTC'
+        ? sql`(${column})::date`
+        : sql`((${column}) at time zone 'UTC' at time zone ${timeZone})::date`
+      : column
+    const bound = (input: string | number) =>
+      typeof input === 'number' ? sql`${input}::numeric` : sql`${input}::date`
+    return [
+      ...(min === undefined ? [] : [sql`${value} >= ${bound(min)}`]),
+      ...(max === undefined ? [] : [sql`${value} <= ${bound(max)}`]),
+    ]
+  })
+}
+
+/** Join the latest job when sorting or filtering by the next import. */
+function importJobsJoin(query: PlaylistBrowseQuery, sorting = false) {
+  return hasRange(query.columnRanges?.nextSync) ||
+    (sorting && query.sortBy === 'nextSync')
+    ? playlistImportJobs
+    : sql``
+}
+
+function hasRange(range?: { min?: number | string; max?: number | string }) {
+  return range?.min !== undefined || range?.max !== undefined
 }
 
 function playlistDirectoryFilter(query: PlaylistBrowseQuery) {
@@ -242,22 +316,47 @@ function playlistDirectoryFilter(query: PlaylistBrowseQuery) {
     catalogScopeCondition(sql`p.id`, playlistMember, query, 'playlist'),
   ]
   if (query.q) {
-    const pattern = `%${query.q.replace(/[\\%_]/g, '\\$&')}%`
+    const pattern = escapedSubstring(query.q)
     conditions.push(
       sql`(p.name ilike ${pattern} or p.owner_name ilike ${pattern} or p.description ilike ${pattern})`,
     )
   }
-  if (query.name) {
-    const pattern = `%${query.name.replace(/[\\%_]/g, '\\$&')}%`
-    conditions.push(sql`p.name ilike ${pattern}`)
-  }
+  if (query.name) conditions.push(matchesSubstring(sql`p.name`, query.name))
+  if (query.owner)
+    conditions.push(matchesSubstring(sql`p.owner_name`, query.owner))
+  if (query.description)
+    conditions.push(matchesSubstring(sql`p.description`, query.description))
   if (query.sources?.length)
     conditions.push(
-      sql`coalesce(p.source, 'library') in (${sql.join(
-        query.sources.map((source) => sql`${source}`),
-        sql`, `,
-      )})`,
+      oneOf(
+        query.library ? directorySource : sql`coalesce(p.source, 'library')`,
+        query.sources,
+      ),
     )
+  if (query.types?.length && !query.types.includes('playlist'))
+    conditions.push(sql`false`)
+  if (query.savedView === 'present' || query.savedViewText)
+    conditions.push(sql`false`)
+  if (query.schedules?.length)
+    conditions.push(
+      sql`(${playlistGroup}) is not null`,
+      oneOf(
+        sql`case when ${oneOf(sql`p.sync_schedule`, PlaylistSyncScheduleSchema.options)}
+          then p.sync_schedule else 'off' end`,
+        query.schedules,
+      ),
+    )
+  conditions.push(
+    ...columnRangeConditions(query, {
+      ...playlistSortColumns,
+      count: importedCountColumn(query.library),
+      linkedTracks: sql`(select case when stats.track_count > 0 then stats.linked_track_count end
+      from (${playlistTrackStats}) stats)`,
+      duration: sql`round(${playlistSortColumns.duration}::numeric / 60)`,
+      updated: sql`p.imported_at`,
+      added: playlistAdded,
+    }),
+  )
   if (query.ids?.length)
     conditions.push(
       sql`p.id in (${sql.join(
@@ -286,7 +385,7 @@ export async function loadPlaylistSummaries(
           p.name, p.source, p.spotify_id, p.owner_name, p.description,
           p.artwork_url, p.spotify_url,
           ${isoTimestamp(sql`p.imported_at`)} as imported_at,
-          case when ${playlistMember} then ${isoTimestamp(sql`p.created_at`)} end as created_at,
+          ${isoTimestamp(playlistAdded)} as created_at,
           ${isoTimestamp(sql`p.checked_at`)} as checked_at,
           p.sync_schedule, p.spotify_editable,
           stats.track_count, stats.linked_track_count, stats.duration_sec,
@@ -363,7 +462,7 @@ export async function listPlaylistBrowsePage(query: PlaylistBrowseQuery) {
       await db.execute(sql`
     select p.id
     from playlist p
-    ${query.sortBy === 'nextSync' ? playlistImportJobs : sql``}
+    ${importJobsJoin(query, true)}
     where ${playlistDirectoryFilter(query)}
     order by ${sort} ${direction} nulls last, lower(p.name), p.id
     limit ${query.size + 1} offset ${(query.page - 1) * query.size}
@@ -386,7 +485,8 @@ export async function countPlaylists(query: PlaylistBrowseQuery) {
   const [matching] = CountRowsSchema.parse(
     (
       await db.execute(sql`
-    select count(*) as count from playlist p where ${playlistDirectoryFilter(query)}
+    select count(*) as count from playlist p ${importJobsJoin(query)}
+    where ${playlistDirectoryFilter(query)}
   `)
     ).rows,
   )
@@ -399,8 +499,11 @@ export async function countPlaylists(query: PlaylistBrowseQuery) {
 const libraryEntryCount = sql`(select count(*)::int from library_playlist_entry e
   where ${listedEntry(sql`lp.id`)})`
 
+const libraryCountColumn = (smartCount: SQL) =>
+  sql`case when lp.type = 'playlist' then ${libraryEntryCount} else ${smartCount} end`
+
 /** A library row's value for a sort; null, ordered last, for an imported-playlist field. */
-function librarySortColumn(sortBy: PlaylistBrowseSort): SQL {
+function librarySortColumn(sortBy: PlaylistBrowseSort, smartCount: SQL): SQL {
   switch (sortBy) {
     case 'name':
       return sql`lower(lp.name)`
@@ -409,7 +512,7 @@ function librarySortColumn(sortBy: PlaylistBrowseSort): SQL {
     case 'source':
       return sourceOrder(sql`'library'`)
     case 'count':
-      return sql`case when lp.type = 'playlist' then ${libraryEntryCount} end`
+      return libraryCountColumn(smartCount)
     case 'updated':
       return sql`lp.updated_at`
     case 'added':
@@ -426,6 +529,8 @@ function librarySortColumn(sortBy: PlaylistBrowseSort): SQL {
 function libraryDirectoryFilter(
   query: PlaylistBrowseQuery,
   library: LibraryPlaylistLibrary,
+  count?: SQL,
+  savedViewTextMatch?: SQL,
 ) {
   const conditions = [
     sql`lp.library = ${library}`,
@@ -433,12 +538,34 @@ function libraryDirectoryFilter(
     catalogScopeCondition(sql`lp.id`, sql`true`, query, 'playlist'),
   ]
   for (const text of [query.q, query.name])
-    if (text)
-      conditions.push(
-        sql`lp.name ilike ${`%${text.replace(/[\\%_]/g, '\\$&')}%`}`,
-      )
+    if (text) conditions.push(matchesSubstring(sql`lp.name`, text))
   if (query.sources?.length && !query.sources.includes('library'))
     conditions.push(sql`false`)
+  if (query.types?.length) conditions.push(oneOf(sql`lp.type`, query.types))
+  if (query.owner || query.description || query.schedules?.length)
+    conditions.push(sql`false`)
+  if (query.savedView)
+    conditions.push(
+      query.savedView === 'present'
+        ? sql`lp.view is not null`
+        : sql`lp.view is null`,
+    )
+  if (savedViewTextMatch) conditions.push(savedViewTextMatch)
+  const missing = sql`null::timestamp`
+  conditions.push(
+    ...columnRangeConditions(query, {
+      count,
+      tracks: sql`0`,
+      linkedTracks: sql`null`,
+      albums: sql`0`,
+      duration: sql`0`,
+      imported: missing,
+      checked: missing,
+      updated: sql`lp.updated_at`,
+      added: sql`lp.created_at`,
+      nextSync: missing,
+    }),
+  )
   if (query.ids?.length)
     conditions.push(
       sql`lp.id in (${sql.join(
@@ -448,6 +575,229 @@ function libraryDirectoryFilter(
     )
   if (query.acceptsAdditions === 'true') conditions.push(sql`false`)
   return sql.join(conditions, sql` and `)
+}
+
+const SmartCandidateRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    view: LibraryPlaylistViewSchema,
+    updated_at: z.string(),
+  }),
+)
+type SmartCandidate = z.infer<typeof SmartCandidateRowsSchema>[number]
+const PlaylistNameRowsSchema = z.array(
+  z.object({ id: z.string(), name: z.string() }),
+)
+
+async function filterSavedViewText(
+  candidates: SmartCandidate[],
+  library: LibraryPlaylistLibrary,
+  text: string,
+  {
+    timeZone = 'UTC',
+    keyNotation,
+  }: Pick<PlaylistBrowseQuery, 'timeZone' | 'keyNotation'>,
+  names: Map<string, string | null>,
+) {
+  const ids = new Set<string>()
+  for (const { view } of candidates) {
+    const parsed = parseLibraryBrowseView(library, view)
+    if (!parsed.success) continue
+    for (const filter of parsed.data.query.filters)
+      if (
+        filter.field === LIBRARY_PLAYLIST_FILTER_FIELD &&
+        !names.has(filter.value)
+      )
+        ids.add(filter.value)
+  }
+  const references = [...ids]
+  const batchSize = 500
+  for (let start = 0; start < references.length; start += batchSize) {
+    const batch = references.slice(start, start + batchSize)
+    const result =
+      await db.execute(sql`select lp.id, lp.name from library_playlist lp
+      where ${oneOf(sql`lp.id`, batch)} and lp.deleted_at is null`)
+    for (const id of batch) names.set(id, null)
+    for (const row of PlaylistNameRowsSchema.parse(result.rows))
+      names.set(row.id, row.name)
+  }
+  const playlistName = (id: string) => names.get(id) ?? null
+  const needle = text.toLowerCase()
+  return candidates.filter(({ view }) =>
+    describeSavedView({ library, view, playlistName, timeZone, keyNotation })
+      .toLowerCase()
+      .includes(needle),
+  )
+}
+
+async function readSmartCandidates(
+  query: PlaylistBrowseQuery,
+  library: LibraryPlaylistLibrary,
+) {
+  const candidates = sql`select lp.id, lp.view, lp.updated_at::text as updated_at
+    from library_playlist lp
+    where lp.type = 'smart' and ${libraryDirectoryFilter(query, library)}`
+  if (!query.savedViewText)
+    return SmartCandidateRowsSchema.parse((await db.execute(candidates)).rows)
+
+  const matches: SmartCandidate[] = []
+  const names = new Map<string, string | null>()
+  const batchSize = 200
+  let afterId: string | undefined
+  do {
+    const batch = SmartCandidateRowsSchema.parse(
+      (
+        await db.execute(sql`${candidates}
+        ${afterId === undefined ? sql`` : sql`and lp.id > ${afterId}`}
+        order by lp.id limit ${batchSize}`)
+      ).rows,
+    )
+    matches.push(
+      ...(await filterSavedViewText(
+        batch,
+        library,
+        query.savedViewText,
+        query,
+        names,
+      )),
+    )
+    afterId = batch.length === batchSize ? batch.at(-1)?.id : undefined
+  } while (afterId !== undefined)
+  return matches
+}
+
+const smartCountCache = createDatabaseReadCache<Array<[string, number | null]>>(
+  {
+    maxEntries: 32,
+    maxValueBytes: 256_000,
+  },
+)
+
+/** The filtered total used by the smart playlist's Browse count cell. */
+async function smartPlaylistCount({ library, query }: LibraryBrowseQuery) {
+  try {
+    switch (library) {
+      case 'albums':
+        return (await queryBrowseCount('album', query)).totalCount
+      case 'tracks':
+        return (await queryBrowseCount('track', query)).totalCount
+      case 'films':
+        return (await queryBrowseCount('film', query)).totalCount
+      case 'subscriptions':
+      case 'mixes':
+        return (await countSubscriptionBrowseItems(query)).totalCount
+    }
+  } catch (error) {
+    // A saved view can refer to a field that Browse no longer supports.
+    if (error instanceof ServerError && error.response.statusCode === 422)
+      return null
+    throw error
+  }
+}
+
+async function readSmartPlaylistCounts(
+  library: LibraryPlaylistLibrary,
+  views: Map<string, LibraryBrowseQuery>,
+) {
+  if (!views.size) return new Map<string, number | null>()
+  const entries = [...views]
+  const load = async () => {
+    const results: Array<[string, number | null]> = []
+    // Leave a connection free in the Worker's four-connection pool.
+    const batchSize = 3
+    for (let start = 0; start < entries.length; start += batchSize) {
+      const batch = entries.slice(start, start + batchSize)
+      results.push(
+        ...(await Promise.all(
+          batch.map(
+            async ([key, view]): Promise<[string, number | null]> => [
+              key,
+              await smartPlaylistCount(view),
+            ],
+          ),
+        )),
+      )
+    }
+    return results
+  }
+  const rolling = entries.some(
+    ([, { query }]) =>
+      'listening' in query &&
+      query.listening?.rules.some(({ period }) => period.kind === 'rolling'),
+  )
+  const key = checksumJson([library, [...views.keys()].sort()])
+  return new Map(rolling ? await load() : await smartCountCache(key, load))
+}
+
+async function countSmartCandidates(
+  candidates: SmartCandidate[],
+  library: LibraryPlaylistLibrary,
+) {
+  const views = new Map<string, LibraryBrowseQuery>()
+  const keyedCandidates = candidates.flatMap(({ id, view, updated_at }) => {
+    const criteria = { ...view }
+    delete criteria.sortBy
+    delete criteria.direction
+    delete criteria.listeningSort
+    const key = checksumJson(
+      JSON.stringify(criteria, Object.keys(criteria).sort()),
+    )
+    if (!views.has(key)) {
+      const parsed = parseLibraryBrowseView(library, criteria)
+      if (!parsed.success) return []
+      views.set(key, parsed.data)
+    }
+    return [{ id, updated_at, key }]
+  })
+  const countsByView = await readSmartPlaylistCounts(library, views)
+  return keyedCandidates.flatMap(({ id, updated_at, key }) => {
+    const count = countsByView.get(key)
+    return count == null ? [] : [{ id, updated_at, item_count: count }]
+  })
+}
+
+/** Resolve application-level smart view filters before the SQL page or count. */
+async function libraryDirectoryRead(
+  query: PlaylistBrowseQuery,
+  library: LibraryPlaylistLibrary,
+) {
+  const filterCount = hasRange(query.columnRanges?.count)
+  const viewText = query.savedViewText
+  const emptyCount = sql`null::int`
+  const empty = {
+    join: sql``,
+    count: emptyCount,
+    where: libraryDirectoryFilter(
+      query,
+      library,
+      libraryCountColumn(emptyCount),
+      viewText ? sql`false` : undefined,
+    ),
+  }
+  if (
+    (!filterCount && !viewText) ||
+    (query.types?.length && !query.types.includes('smart'))
+  )
+    return empty
+  // Evaluate live Browse counts only for smart rows passing every other filter.
+  const matches = await readSmartCandidates(query, library)
+  const rows = filterCount
+    ? await countSmartCandidates(matches, library)
+    : matches.map(({ id, updated_at }) => ({ id, updated_at }))
+  if (!rows.length) return empty
+  const count = filterCount ? sql`smart.item_count` : emptyCount
+  return {
+    join: sql`left join jsonb_to_recordset(${JSON.stringify(rows)}::jsonb)
+      as smart(id text, updated_at timestamp, item_count int)
+      on smart.id = lp.id and smart.updated_at = lp.updated_at`,
+    count,
+    where: libraryDirectoryFilter(
+      query,
+      library,
+      libraryCountColumn(count),
+      viewText ? sql`smart.id is not null` : undefined,
+    ),
+  }
 }
 
 const DirectoryRowsSchema = z.array(
@@ -504,13 +854,15 @@ async function listDirectoryPage(
   library: LibraryPlaylistLibrary,
 ) {
   if (library === 'albums') await ensureLegacySavedViews()
+  const smart = await libraryDirectoryRead(query, library)
   const direction = query.direction === 'asc' ? sql`asc` : sql`desc`
   const imported = listsImportedPlaylists(library)
     ? sql`select 'imported' as origin, p.id, p.name, null as library,
         'playlist' as type, null::jsonb as view, null::timestamp as created_at,
-        null::timestamp as updated_at, ${importedSortColumn(query)} as sort_value
+        null::timestamp as updated_at, null::int as smart_count,
+        ${importedSortColumn(query)} as sort_value
       from playlist p
-      ${query.sortBy === 'nextSync' ? playlistImportJobs : sql``}
+      ${importJobsJoin(query, true)}
       where ${playlistDirectoryFilter(query)}
       union all`
     : sql``
@@ -523,15 +875,15 @@ async function listDirectoryPage(
       ${isoTimestamp(sql`updated_at`)} as updated_at,
       case when origin = 'library' and type = 'playlist' then (
         select count(*)::int from library_playlist_entry e where ${listedEntry(sql`page.id`)}
-      ) end as entry_count
+      ) else smart_count end as entry_count
     from (
       select * from (
         ${imported}
         select 'library' as origin, lp.id, lp.name, lp.library, lp.type,
-          lp.view, lp.created_at, lp.updated_at,
-          ${librarySortColumn(query.sortBy)} as sort_value
-        from library_playlist lp
-        where ${libraryDirectoryFilter(query, library)}
+          lp.view, lp.created_at, lp.updated_at, ${smart.count} as smart_count,
+          ${librarySortColumn(query.sortBy, smart.count)} as sort_value
+        from library_playlist lp ${smart.join}
+        where ${smart.where}
       ) directory
       ${order}
       limit ${query.size + 1} offset ${(query.page - 1) * query.size}
@@ -580,14 +932,16 @@ async function countDirectory(
   library: LibraryPlaylistLibrary,
 ) {
   if (library === 'albums') await ensureLegacySavedViews()
+  const smart = await libraryDirectoryRead(query, library)
   const imported = listsImportedPlaylists(library)
-    ? sql`(select count(*) from playlist p where ${playlistDirectoryFilter(query)})`
+    ? sql`(select count(*) from playlist p ${importJobsJoin(query)}
+      where ${playlistDirectoryFilter(query)})`
     : sql`0`
   const [matching] = CountRowsSchema.parse(
     (
       await db.execute(sql`select ${imported} + (
-        select count(*) from library_playlist lp
-        where ${libraryDirectoryFilter(query, library)}
+        select count(*) from library_playlist lp ${smart.join}
+        where ${smart.where}
       ) as count`)
     ).rows,
   )

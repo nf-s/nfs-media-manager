@@ -1,7 +1,5 @@
 import {
-  formatBrowseValue,
   sameBrowseFilter,
-  type BrowseField,
   type BrowseFilter,
   type BrowseRange,
 } from '@repo/schemas/browse'
@@ -12,7 +10,7 @@ import {
   SubscriptionSortSchema,
   SubscriptionSourceIdSchema,
   SubscriptionTypeSchema,
-  subscriptionLibraryLabels,
+  subscriptionSort,
   subscriptionLibraryTypes,
   subscriptionLiveLabels,
   subscriptionTypeLabels,
@@ -39,6 +37,13 @@ import {
 } from './media-grid'
 import { libraryImportsHome, scopedHref } from './media-scope'
 import { formatVideoDuration } from './youtube'
+
+export {
+  subscriptionSort,
+  subscriptionSortLabels,
+  subscriptionSortLabelsFor,
+} from '@repo/schemas/subscriptions'
+export { subscriptionRangeLabel } from '@repo/schemas/browse-display'
 
 type Noun = { one: string; other: string }
 type SubscriptionLibraryPage = {
@@ -198,40 +203,6 @@ export function parseSubscriptionBrowseState(
   }
 }
 
-/** Relevance needs a search; without a chosen sort, searches rank by relevance and browsing shows the newest first. */
-export function subscriptionSort(
-  state: Pick<SubscriptionBrowseState, 'q' | 'sortBy'>,
-): SubscriptionSort {
-  if (state.sortBy && (state.sortBy !== 'relevance' || state.q))
-    return state.sortBy
-  return state.q ? 'relevance' : 'publishedAt'
-}
-
-export const subscriptionSortLabels: Record<SubscriptionSort, string> = {
-  relevance: 'Relevance',
-  publishedAt: 'Published',
-  title: 'Title',
-  source: 'Channel',
-  durationSec: 'Duration',
-  watchedAt: 'Watched',
-  viewCount: 'Views',
-  likeCount: 'Likes',
-  commentCount: 'Comments',
-}
-
-/** Sort labels in the library's own words: a mix's show, broadcast and listened dates. */
-export function subscriptionSortLabelsFor(
-  library: SubscriptionLibrary,
-): Record<SubscriptionSort, string> {
-  const labels = subscriptionLibraryLabels[library]
-  return {
-    ...subscriptionSortLabels,
-    publishedAt: labels.published,
-    source: labels.source,
-    watchedAt: labels.watched,
-  }
-}
-
 export function subscriptionSortOptions(
   q: string,
   library: SubscriptionLibrary = 'subscriptions',
@@ -385,23 +356,6 @@ export function formatCompactSubscriptionCount(
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value)
-}
-
-function rangeBound(field: BrowseField | undefined, value: number) {
-  if (field?.key === 'durationSec') return formatVideoDuration(value)
-  if (field) return formatBrowseValue(field, value)
-  return String(value)
-}
-
-/** "Published: 2024-01-01 to *", with durations as m:ss. */
-export function subscriptionRangeLabel(
-  range: BrowseRange,
-  fields: BrowseField[],
-) {
-  const field = fields.find((field) => field.key === range.field)
-  const bound = (value: number | undefined) =>
-    value === undefined ? '*' : rangeBound(field, value)
-  return `${field?.label ?? range.field}: ${bound(range.min)} to ${bound(range.max)}${range.includeMissing ? ' + missing' : ''}`
 }
 
 /** Labels "Title · Channel · Year", with the ID when two labels are equal. */

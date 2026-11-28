@@ -12,7 +12,8 @@ import { createTrackPerformanceFixture } from './fixtures/track-performance'
 // playlists added below. Each library has 30 playlists of 300 to 330
 // entries, a few removed, and a smart playlist, named among the imported
 // playlists so that a directory page holds both. Every name is invented.
-const { pool, database, checkBudget } = createTrackPerformanceFixture()
+const { pool, database, checkBudget, logQuery } =
+  createTrackPerformanceFixture()
 
 vi.mock('@/lib/db', () => ({
   get db() {
@@ -190,7 +191,7 @@ it('bounds Playlists directory pages and counts of a library', async () => {
   // Each after the imported-only page of the nearest sort, which hydrates
   // the imported rows the same way. Budgets are 1.5 times the shared blocks
   // measured when these workloads were added; a page of library rows only is
-  // one statement, and the count always is.
+  // one statement, and the counts here do not evaluate smart views.
   const importedBudgets: Record<string, number> = {
     name: 64_300,
     tracks: 110_500,
@@ -238,4 +239,64 @@ it('bounds Playlists directory pages and counts of a library', async () => {
       expect(await countPlaylists(query)).toEqual({ totalCount: rows })
     })
   }
+})
+
+it('bounds reads of a directory filtered by smart counts', async () => {
+  const { countPlaylists, listPlaylistBrowsePage } =
+    await import('@/services/playlist-directory')
+  await pool.query(`
+    insert into library_playlist (id, library, type, name, view)
+    select 'measured-smart-' || n, 'films', 'smart',
+      'Measured count ' || lpad(n::text, 2, '0'),
+      jsonb_build_object('q', 'Synthetic film ' || n, 'limitResults', '1')
+    from generate_series(1, 30) n
+  `)
+  const query = PlaylistBrowseQuerySchema.parse({
+    library: 'films',
+    types: ['smart'],
+    name: 'Measured count',
+    columnRanges: { count: { min: 1, max: 1 } },
+    size: 6,
+  })
+  const snapshot = async () =>
+    (
+      await pool.query<{ version: string }>(
+        'select pg_current_snapshot()::text as version',
+      )
+    ).rows[0]?.version
+  const before = await snapshot()
+  // Each distinct view uses its Browse full-text count and cache version
+  // checks on the first request. Paging the same views reuses their totals.
+  await checkBudget(
+    'Cold count of 30 distinct smart views',
+    2_900_000,
+    94,
+    async () => {
+      expect(await countPlaylists(query)).toEqual({ totalCount: 30 })
+    },
+  )
+  const secondPageStatements = await checkBudget(
+    'Second page of a directory filtered by smart count',
+    // A commit on the same PostgreSQL server can invalidate the cache.
+    2_900_000,
+    94,
+    async () => {
+      const page = await listPlaylistBrowsePage({ ...query, page: 2 })
+      expect(page.hasMore).toBe(true)
+      expect(
+        page.items.map(({ name, itemCount }) => [name, itemCount]),
+      ).toEqual(
+        ['07', '08', '09', '10', '11', '12'].map((n) => [
+          `Measured count ${n}`,
+          1,
+        ]),
+      )
+      return logQuery.mock.calls.length
+    },
+  )
+  if (before === (await snapshot()))
+    expect(
+      secondPageStatements,
+      'Statements with an unchanged snapshot',
+    ).toBeLessThanOrEqual(3)
 })

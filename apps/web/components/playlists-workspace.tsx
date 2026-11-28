@@ -12,9 +12,7 @@ import { BrowseCountSchema } from '@repo/schemas/browse'
 import {
   PlaylistBrowsePageSchema,
   PlaylistRemovalSchema,
-  PlaylistSourceSchema,
   type PlaylistBrowseSort,
-  type PlaylistSource,
   type PlaylistSummary,
 } from '@repo/schemas/tracks'
 import { Button, mutationFeedback } from '@repo/ui/components/ui/button'
@@ -45,7 +43,6 @@ import {
 import { useConfig } from './providers'
 import {
   SecondaryCell,
-  SecondaryColumnFilter,
   SecondaryTableHead,
   SecondaryTableScroll,
   SecondaryTableSearch,
@@ -72,6 +69,12 @@ import { MediaThumb } from './media-artwork'
 import { LibraryPlaylistPlayButton } from './library-playlist-detail'
 import { useLibraryPlaylistActions } from './library-playlist-actions'
 import { PlaylistNamePopover } from './playlist-name-popover'
+import {
+  usePlaylistDirectoryFilters,
+  PlaylistFilterChips,
+  PlaylistFilterSection,
+  PlaylistHeaderFilter,
+} from './playlist-directory-filters'
 import { ResultLineSlot } from './result-line'
 import {
   PlaylistCountCell,
@@ -182,7 +185,7 @@ export function playlistColumnsFor(
     {
       key: 'tracks',
       sortable: true,
-      label: 'Tracks',
+      label: library === 'tracks' ? 'Imported tracks' : 'Tracks',
       width: 80,
       defaultVisible: false,
     },
@@ -196,7 +199,7 @@ export function playlistColumnsFor(
     {
       key: 'albums',
       sortable: true,
-      label: 'Albums',
+      label: library === 'albums' ? 'Imported albums' : 'Albums',
       width: 80,
       defaultVisible: false,
     },
@@ -265,11 +268,9 @@ export default function PlaylistsWorkspace() {
   const [direction, setDirection] = useState<Direction>('asc')
   const [search, setSearch] = useState('')
   const q = useDeferredValue(search.trim())
-  const [sources, setSources] = useState<Array<PlaylistSource | 'library'>>([])
   const host = usePageBrowse('playlists')
   const scope = readLibraryScope(host.params)
   const scopeQuery = libraryScopeQuery(scope)
-  const scopeKey = Object.keys(scopeQuery).length ? [scopeQuery] : []
   const onScope = (next: LibraryScopeState) =>
     host.update((params) => {
       Object.entries(libraryScopeUpdates(next)).forEach(([key, value]) => {
@@ -282,11 +283,16 @@ export default function PlaylistsWorkspace() {
   const library = playlistLibraryForView(view) ?? 'tracks'
   const playable = playableLibrary(library)
   const imports = listsImportedPlaylists(library)
+  const directory = usePlaylistDirectoryFilters(host, library)
   const importHref = scopedHref(
     '/imports/spotify-playlists',
     view === 'album' ? 'album' : 'track',
   )
   const playlistColumns = playlistColumnsFor(library)
+  const filterColumns = playlistColumns.flatMap(({ key, label }) =>
+    key === 'actions' ? [] : [{ key, label }],
+  )
+  const active = filterColumns.filter(({ key }) => directory.summary(key))
   const actions = useLibraryPlaylistActions()
   const newPlaylistId = useId()
   const newPlaylistButton = useRef<HTMLButtonElement>(null)
@@ -307,7 +313,7 @@ export default function PlaylistsWorkspace() {
   const filters = {
     q,
     library,
-    ...(sources.length ? { sources: JSON.stringify(sources) } : {}),
+    ...directory.params,
     ...scopeQuery,
   }
   const {
@@ -317,17 +323,8 @@ export default function PlaylistsWorkspace() {
     retryCount,
   } = useCountedVirtualTable({
     performanceScreen: 'playlists',
-    queryKey: [
-      'playlists',
-      'browse',
-      library,
-      q,
-      sources,
-      sortBy,
-      direction,
-      ...scopeKey,
-    ],
-    countKey: ['playlists', 'browse-count', library, q, sources, ...scopeKey],
+    queryKey: ['playlists', 'browse', filters, sortBy, direction],
+    countKey: ['playlists', 'browse-count', filters],
     loadCount: (signal) =>
       fetchApiData(
         apiBaseUrl,
@@ -446,6 +443,7 @@ export default function PlaylistsWorkspace() {
         )}
         {outcome && <Notice>{outcome.message}</Notice>}
       </div>
+      <PlaylistFilterChips active={active} state={directory} />
       <Toolbar>
         <SecondaryTableSearch
           label="Search playlists"
@@ -468,7 +466,15 @@ export default function PlaylistsWorkspace() {
         </ToolbarCount>
         <ToolbarEnd>
           <LibraryScopeToggle value={scope} onChange={onScope} />
-          <BrowseFilterPanel short count={libraryScopeFilterCount(scope)}>
+          <BrowseFilterPanel
+            short
+            count={active.length + libraryScopeFilterCount(scope)}
+          >
+            <PlaylistFilterSection
+              columns={filterColumns}
+              state={directory}
+              imports={imports}
+            />
             <LibraryScopeSections value={scope} onChange={onScope} />
           </BrowseFilterPanel>
           {columns.controls}
@@ -496,7 +502,14 @@ export default function PlaylistsWorkspace() {
                     key={column.key}
                     resizer={columns.resizer(column.key)}
                   >
-                    {column.label}
+                    <div className="secondary-table-heading">
+                      <span>{column.label}</span>
+                      <PlaylistHeaderFilter
+                        column={{ key: column.key, label: column.label }}
+                        state={directory}
+                        imports={imports}
+                      />
+                    </div>
                   </TableHead>
                 ) : !column.sortable ? (
                   <TableHead key={column.key}>
@@ -512,20 +525,11 @@ export default function PlaylistsWorkspace() {
                     stickyEdge={column.key === 'name'}
                     resizer={columns.resizer(column.key)}
                     filter={
-                      column.key === 'source' && imports ? (
-                        <SecondaryColumnFilter
-                          label="Source"
-                          options={[
-                            { value: 'library', label: 'Library' },
-                            ...PlaylistSourceSchema.options.map((value) => ({
-                              value,
-                              label: playlistSourceLabel(value),
-                            })),
-                          ]}
-                          value={sources}
-                          onChange={(next) => setSources([...next].sort())}
-                        />
-                      ) : undefined
+                      <PlaylistHeaderFilter
+                        column={column}
+                        state={directory}
+                        imports={imports}
+                      />
                     }
                     {...sorting}
                   />
@@ -536,7 +540,7 @@ export default function PlaylistsWorkspace() {
           <TableBody>
             {query.hasTotal && query.total === 0 && (
               <TableState colSpan={columns.count}>
-                {q || sources.length ? (
+                {q || active.length || libraryScopeFilterCount(scope) ? (
                   'No playlists match.'
                 ) : imports ? (
                   <>

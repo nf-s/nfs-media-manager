@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { CatalogScopeQuerySchema } from './catalog'
 import { musicDisplayTags } from './music-tags'
-import { CamelotKeySchema } from './musical-keys'
+import { CamelotKeySchema, KeyNotationSchema } from './musical-keys'
 import {
   BrowseFilterSchema,
   BrowseKeySchema,
@@ -601,8 +601,8 @@ export const PlaylistSummarySchema = z.object({
   updatedAt: z.string().datetime().nullable().optional(),
   /**
    * The count in the library's noun: a playlist's listed entries, an
-   * imported playlist's tracks in Tracks and albums in Albums. Null for a
-   * smart playlist, whose count is the Browse count of its view.
+   * imported playlist's tracks in Tracks and albums in Albums. A smart
+   * playlist's count is included when the directory filters by it.
    */
   itemCount: z.number().int().nonnegative().nullable().optional(),
 })
@@ -638,10 +638,59 @@ function readJsonQuery(value: unknown): unknown {
   }
 }
 
+function columnRange<T extends z.ZodType<number | string>>(bound: T) {
+  return z
+    .object({ min: bound.optional(), max: bound.optional() })
+    .strict()
+    .refine(
+      ({ min, max }) => min === undefined || max === undefined || min <= max,
+      'The minimum must not exceed the maximum',
+    )
+}
+
+const PlaylistItemCountRangeSchema = columnRange(z.number().int().nonnegative())
+const PlaylistDateRangeSchema = columnRange(
+  z
+    .string()
+    .date()
+    .refine((date) => !date.startsWith('0000-')),
+)
+
+export const PlaylistColumnRangesSchema = z
+  .object({
+    count: PlaylistItemCountRangeSchema.optional(),
+    tracks: PlaylistItemCountRangeSchema.optional(),
+    linkedTracks: PlaylistItemCountRangeSchema.optional(),
+    albums: PlaylistItemCountRangeSchema.optional(),
+    duration: columnRange(z.number().nonnegative()).optional(),
+    imported: PlaylistDateRangeSchema.optional(),
+    checked: PlaylistDateRangeSchema.optional(),
+    updated: PlaylistDateRangeSchema.optional(),
+    added: PlaylistDateRangeSchema.optional(),
+    nextSync: PlaylistDateRangeSchema.optional(),
+  })
+  .strict()
+export type PlaylistColumnRanges = z.infer<typeof PlaylistColumnRangesSchema>
+
+export const PlaylistSavedViewFilterSchema = z.enum(['present', 'absent'])
+
+function isPlaylistTimeZone(value: string) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const PlaylistBrowseQuerySchema = PaginationQuerySchema.extend({
   ...CatalogScopeQuerySchema.shape,
   q: z.string().trim().max(200).optional(),
   name: z.string().trim().max(200).optional(),
+  owner: z.string().trim().max(200).optional(),
+  description: z.string().trim().max(200).optional(),
+  savedViewText: z.string().trim().max(200).optional(),
+  savedView: PlaylistSavedViewFilterSchema.optional(),
   size: PaginationQuerySchema.shape.size.default(100),
   sortBy: PlaylistBrowseSortSchema.default('name'),
   direction: DirectionSchema.default('asc'),
@@ -652,6 +701,25 @@ export const PlaylistBrowseQuerySchema = PaginationQuerySchema.extend({
       .max(3)
       .optional(),
   ),
+  types: z.preprocess(
+    readJsonQuery,
+    z.array(LibraryPlaylistTypeSchema).max(2).optional(),
+  ),
+  schedules: z.preprocess(
+    readJsonQuery,
+    z.array(PlaylistSyncScheduleSchema).max(6).optional(),
+  ),
+  columnRanges: z.preprocess(
+    readJsonQuery,
+    PlaylistColumnRangesSchema.optional(),
+  ),
+  timeZone: z
+    .string()
+    .max(100)
+    .regex(/^[A-Za-z][A-Za-z0-9_+/-]*$/)
+    .refine(isPlaylistTimeZone, 'Unknown time zone')
+    .optional(),
+  keyNotation: KeyNotationSchema.optional(),
   ids: z.preprocess(
     readJsonQuery,
     z.array(z.string().min(1).max(500)).min(1).max(100).optional(),

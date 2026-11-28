@@ -142,7 +142,7 @@ async function render(
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(
-    ['playlists', 'browse', 'tracks', '', [], 'name', 'asc', 1],
+    ['playlists', 'browse', { library: 'tracks', q: '' }, 'name', 'asc', 1],
     {
       items: [summary],
       page: 1,

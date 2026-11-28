@@ -71,7 +71,7 @@ function playlistPage(
   library = 'tracks',
 ): [unknown[], unknown] {
   return [
-    ['playlists', 'browse', library, '', [], 'name', 'asc', 1],
+    ['playlists', 'browse', { library, q: '' }, 'name', 'asc', 1],
     {
       items,
       page: 1,
@@ -154,10 +154,11 @@ test('the default columns are Playlist, Type, Source, the count, Saved view and 
     // A header's label is its sort button's, or its text without one.
     const labels = [...head.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map(
       ([, cell = '']) =>
-        (/class="ds-th-sort"[^>]*>([^<]+)/.exec(cell)?.[1] ?? cell).replace(
-          /<[^>]+>/g,
-          '',
-        ),
+        (
+          /class="ds-th-sort"[^>]*>([^<]+)/.exec(cell)?.[1] ??
+          cell.split('<span class="secondary-header-filter">')[0] ??
+          ''
+        ).replace(/<[^>]+>/g, ''),
     )
     assert.deepEqual(labels, [
       'Playlist',
@@ -178,7 +179,7 @@ test('every column the page had stays available under Columns, hidden by default
   const html = render(<PlaylistsWorkspace />, [playlistPage([importedRow])])
   for (const label of [
     'Owner',
-    'Tracks',
+    'Imported tracks',
     'In album library',
     'Albums',
     'Duration',
@@ -190,9 +191,7 @@ test('every column the page had stays available under Columns, hidden by default
     'Next import',
   ]) {
     assert.match(html, new RegExp(`/>${label}</label>`))
-    // In Tracks the count column is headed Tracks too.
-    if (label !== 'Tracks')
-      assert.doesNotMatch(html, new RegExp(`title="Sort by ${label}"`))
+    assert.doesNotMatch(html, new RegExp(`title="Sort by ${label}"`))
   }
   assert.equal((html.match(/title="Sort by Tracks"/g) ?? []).length, 1)
 })
@@ -312,7 +311,7 @@ test('the playlists directory renders only its visible rows while counting and a
     const data = [playlistPage(rows, true)]
     if (totalCount)
       data.push([
-        ['playlists', 'browse-count', 'tracks', '', []],
+        ['playlists', 'browse-count', { library: 'tracks', q: '' }],
         { totalCount },
       ])
     const html = render(<PlaylistsWorkspace />, data)
@@ -413,7 +412,7 @@ test('Films, Subscriptions and Mixes list their own playlists with no import con
     assert.match(head, new RegExp(`title="Sort by ${noun}"`))
     assert.match(html, />New playlist<\/button>/)
     assert.doesNotMatch(html, /Import playlists|spotify-playlists/)
-    assert.doesNotMatch(html, /aria-label="Filter Source"/)
+    assert.match(html, /aria-label="Filter Source"/)
     // The imported-playlist columns are not offered.
     for (const label of [
       'Owner',

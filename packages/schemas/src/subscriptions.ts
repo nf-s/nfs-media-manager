@@ -484,6 +484,41 @@ export const SubscriptionSortSchema = z.enum([
   'commentCount',
 ])
 export type SubscriptionSort = z.infer<typeof SubscriptionSortSchema>
+
+/** Relevance needs a search; without a chosen sort, searches rank by relevance and browsing shows the newest first. */
+export function subscriptionSort(state: {
+  q: string
+  sortBy: SubscriptionSort | null
+}): SubscriptionSort {
+  if (state.sortBy && (state.sortBy !== 'relevance' || state.q))
+    return state.sortBy
+  return state.q ? 'relevance' : 'publishedAt'
+}
+
+export const subscriptionSortLabels: Record<SubscriptionSort, string> = {
+  relevance: 'Relevance',
+  publishedAt: 'Published',
+  title: 'Title',
+  source: 'Channel',
+  durationSec: 'Duration',
+  watchedAt: 'Watched',
+  viewCount: 'Views',
+  likeCount: 'Likes',
+  commentCount: 'Comments',
+}
+
+/** Sort labels in the library's own words: a mix's show, broadcast and listened dates. */
+export function subscriptionSortLabelsFor(
+  library: SubscriptionLibrary,
+): Record<SubscriptionSort, string> {
+  const labels = subscriptionLibraryLabels[library]
+  return {
+    ...subscriptionSortLabels,
+    publishedAt: labels.published,
+    source: labels.source,
+    watchedAt: labels.watched,
+  }
+}
 /** Mixes have no view, like or comment counts to sort by. */
 export const MixSortSchema = SubscriptionSortSchema.exclude([
   'viewCount',

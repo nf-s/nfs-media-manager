@@ -50,7 +50,10 @@ import {
   type PlayableLibrary,
 } from '@/utils/library-playlists'
 import { createLibraryPlaylistPlaybackSource } from '@/utils/playback-source'
-import { subscriptionArtworkUrl } from '@/utils/subscriptions'
+import {
+  subscriptionArtworkUrl,
+  subscriptionLibraryPages,
+} from '@/utils/subscriptions'
 import { CreatorDetailState } from './creator-detail-state'
 import { DetailArt } from './detail-frame'
 import { useDetailInspector } from './detail-inspector-context'
@@ -202,6 +205,11 @@ export function LibraryPlaylistView({
   retry?: () => Promise<unknown>
   onDeleted?: () => void
 }) {
+  const itemsTitle = libraryItemsTitle(playlist.library)
+  const browseTitle =
+    playlist.library === 'subscriptions'
+      ? subscriptionLibraryPages.subscriptions.name
+      : itemsTitle
   return (
     <article className="dtl-detail">
       {stale && <CreatorDetailState stale retry={retry} subject="playlist" />}
@@ -210,7 +218,22 @@ export function LibraryPlaylistView({
         // A new count, as after Undo, starts the button afresh.
         <RepeatsNotice key={playlist.updatedAt} playlist={playlist} />
       )}
-      <Section title={libraryItemsTitle(playlist.library)} flush>
+      <Section
+        title={itemsTitle}
+        aside={
+          playlist.entryCount ? (
+            <Button asChild size="xs" variant="link">
+              <Link
+                href={libraryPlaylistFilterHref(playlist.library, playlist.id)}
+                prefetch={false}
+              >
+                {`Show in ${browseTitle}`}
+              </Link>
+            </Button>
+          ) : undefined
+        }
+        flush
+      >
         {playlist.entryCount ? (
           <LibraryPlaylistEntries playlist={playlist} />
         ) : (

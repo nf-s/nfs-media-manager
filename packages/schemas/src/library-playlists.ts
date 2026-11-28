@@ -47,6 +47,18 @@ export const LibraryPlaylistIdSchema = z.string().min(1).max(100)
 const ItemIdSchema = z.string().min(1).max(200)
 export const LibraryPlaylistNameSchema = z.string().trim().min(1).max(200)
 
+/** The noun for one library's items, in counts such as "40 tracks". */
+export const libraryPlaylistNouns: Record<
+  LibraryPlaylistLibrary,
+  { one: string; other: string }
+> = {
+  albums: { one: 'album', other: 'albums' },
+  tracks: { one: 'track', other: 'tracks' },
+  films: { one: 'film', other: 'films' },
+  subscriptions: { one: 'item', other: 'items' },
+  mixes: { one: 'mix', other: 'mixes' },
+}
+
 /** Browse URL parameters for layout and paging; never part of a view. */
 export const browsePresentationParams: readonly string[] = [
   'view',

@@ -1,22 +1,21 @@
 import {
   canonicalBrowseKey,
-  formatBrowseFilterValue,
-  formatBrowseValue,
   TagLevelsParamSchema,
   type BrowseField,
   type BrowseFilter,
-  type BrowseRange,
   type BrowseValues,
   type TagLevel,
   type TagLevels,
 } from '@repo/schemas/browse'
-import {
-  EMPTY_VALUE,
-  formatCount,
-  formatDate,
-  formatTrackLength,
-} from '@repo/ui/lib/format'
+import { formatFieldValue } from '@repo/schemas/browse-display'
+import { EMPTY_VALUE } from '@repo/ui/lib/format'
 import { detailLocation, withoutDetailEntries } from './detail-inspector'
+
+export {
+  formatFieldValue,
+  mediaRangeLabel,
+  trackRangeLabel,
+} from '@repo/schemas/browse-display'
 
 /** Copy a Browse destination, keeping its settings and scope outside the inspector. */
 export function browseSearchHref(
@@ -215,54 +214,6 @@ export function nextSortDirection(
   if (current.sortBy === key)
     return current.direction === 'desc' ? 'asc' : 'desc'
   return initialSortDirection(fields.find((field) => field.key === key))
-}
-
-/** A browse value in the app's formats: ISO dates, counts, track lengths, en dash when empty. */
-export function formatFieldValue(
-  field: BrowseField,
-  value: BrowseValues[string] | undefined,
-) {
-  if (value === null || value === undefined || value === '') return EMPTY_VALUE
-  if (Array.isArray(value)) return value.length ? value.join(', ') : EMPTY_VALUE
-  if (typeof value !== 'number')
-    return formatBrowseFilterValue(field.key, value)
-  if (!Number.isFinite(value)) return EMPTY_VALUE
-  if (field.type === 'date') return formatDate(value)
-  if (field.format === 'seconds') return formatTrackLength(value * 1000)
-  if (field.format === undefined || field.format === 'number')
-    return formatCount(value)
-  return formatBrowseValue(field, value)
-}
-
-function rangeText(
-  range: BrowseRange,
-  fields: readonly BrowseField[],
-  bound: (field: BrowseField | undefined, value: number) => string,
-) {
-  const field = fields.find((field) => field.key === range.field)
-  const side = (value: number | undefined) =>
-    value === undefined ? '*' : bound(field, value)
-  return `${field?.label ?? range.field}: ${side(range.min)} to ${side(range.max)}${range.includeMissing ? ' + missing' : ''}`
-}
-
-/** A Tracks range as its chip reads: "Duration: 3:00 to *". */
-export function trackRangeLabel(
-  range: BrowseRange,
-  fields: readonly BrowseField[],
-) {
-  return rangeText(range, fields, (field, value) =>
-    field ? formatFieldValue(field, value) : String(value),
-  )
-}
-
-/** An Albums or Films range as its chip reads: dates in ISO form, other values as entered. */
-export function mediaRangeLabel(
-  range: BrowseRange,
-  fields: readonly BrowseField[],
-) {
-  return rangeText(range, fields, (field, value) =>
-    field?.type === 'date' ? formatBrowseValue(field, value) : String(value),
-  )
 }
 
 /** The sorted field's value for a card's meta line, such as `Added 2026-11-16`. */
