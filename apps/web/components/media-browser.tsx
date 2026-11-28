@@ -200,6 +200,7 @@ import {
   SmartPlaylistActions,
   SmartPlaylistName,
   SmartPlaylistsSection,
+  useLibraryPlaylistSuggestions,
   useSmartPlaylistBrowse,
 } from './smart-playlist-controls'
 import {
@@ -916,7 +917,14 @@ function MediaBrowse({
     !titlesLoading && draft.trim() && titleFilters.length > 0
       ? titleSuggestions(titleMatches.data?.items ?? [])
       : []
-  const options = (facets.data ?? []).filter(
+  const playlistSuggestions = useLibraryPlaylistSuggestions(
+    smart,
+    facets.isDebouncing ? '' : facets.search,
+  )
+  const options = [
+    ...(facets.data ?? []),
+    ...playlistSuggestions.options,
+  ].filter(
     (option) =>
       !filters.some(
         (filter) =>
@@ -1456,9 +1464,17 @@ function MediaBrowse({
               autocomplete={{
                 items: titleItems,
                 itemKind: mediaType,
+                smartPlaylists: playlistSuggestions.smartPlaylists,
+                onOpenSmartPlaylist: smart
+                  ? (playlist) => {
+                      smart.choose(playlist)
+                      setDraft('')
+                    }
+                  : undefined,
                 titlesLoading,
                 titlesError:
                   facets.isError ||
+                  playlistSuggestions.isError ||
                   (titleFilters.length > 0 && titleMatches.isError),
                 onOpenItem: openDetail,
                 options,

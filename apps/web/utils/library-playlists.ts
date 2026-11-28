@@ -45,6 +45,10 @@ import {
 } from '@repo/schemas/library-playlists'
 import { formatCount, formatDate, formatItemCount } from '@repo/ui/lib/format'
 import { fetchApiData } from './api'
+import type {
+  FilterSuggestion,
+  SmartPlaylistSuggestion,
+} from './browse-suggestions'
 import type { Library } from './media-scope'
 
 type Noun = { one: string; other: string }
@@ -786,6 +790,44 @@ export function smartPlaylistHref(
   const params = new URLSearchParams(view)
   params.set(SMART_PLAYLIST_PARAM, id)
   return `${libraryBrowsePaths[library]}?${params}`
+}
+
+/**
+ * PL-44: one library's playlists as Browse search suggestions: a playlist as
+ * its filter, "Playlist: Name" with its entry count, and a smart playlist as
+ * "Smart playlist: Name", which opens its view.
+ */
+export function libraryPlaylistSuggestions(
+  library: LibraryPlaylistLibrary,
+  playlists: readonly Pick<
+    LibraryPlaylistSummary,
+    'id' | 'type' | 'name' | 'entryCount' | 'view'
+  >[],
+): {
+  options: FilterSuggestion[]
+  smartPlaylists: SmartPlaylistSuggestion[]
+} {
+  const options: FilterSuggestion[] = []
+  const smartPlaylists: SmartPlaylistSuggestion[] = []
+  for (const { id, type, name, entryCount, view } of playlists) {
+    if (type === 'playlist')
+      options.push({
+        field: LIBRARY_PLAYLIST_FILTER_FIELD,
+        value: id,
+        name,
+        label: `Playlist: ${name}`,
+        count: entryCount ?? 0,
+      })
+    else if (view)
+      smartPlaylists.push({
+        id,
+        name,
+        label: `Smart playlist: ${name}`,
+        view,
+        href: smartPlaylistHref(library, id, view),
+      })
+  }
+  return { options, smartPlaylists }
 }
 
 /** The Browse chip of a playlist filter: "Playlist: Name", or "Playlist: removed". */

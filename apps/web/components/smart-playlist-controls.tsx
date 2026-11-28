@@ -30,6 +30,7 @@ import {
   libraryBrowsePaths,
   libraryPlaylistKey,
   libraryPlaylistsKey,
+  libraryPlaylistSuggestions,
   playlistNotFound,
   SMART_PLAYLIST_PARAM,
   updateLibraryPlaylistView,
@@ -448,6 +449,36 @@ function useSmartPlaylistChoices(
     enabled,
     ...clientQueryDefaults,
   })
+}
+
+const noPlaylistSuggestions = { options: [], smartPlaylists: [] }
+
+/**
+ * PL-44: the Browse search box's suggestions from the library's playlists
+ * and smart playlists. They are read once per library, when text is first
+ * searched, and matched in the browser like the other suggestions. None
+ * without text or outside a library's Browse.
+ */
+export function useLibraryPlaylistSuggestions(
+  smart: SmartPlaylistBrowse | null,
+  search: string,
+) {
+  const { apiBaseUrl } = useConfig()
+  const library = smart?.library ?? null
+  const enabled = library !== null && search.trim() !== ''
+  const read = useQuery({
+    queryKey: [...libraryPlaylistsKey, 'suggestions', library],
+    queryFn: ({ signal }) =>
+      library ? fetchAllLibraryPlaylists(apiBaseUrl, { library }, signal) : [],
+    enabled,
+    ...clientQueryDefaults,
+  })
+  return {
+    ...(enabled && library && read.data
+      ? libraryPlaylistSuggestions(library, read.data)
+      : noPlaylistSuggestions),
+    isError: enabled && read.isError,
+  }
 }
 
 /**

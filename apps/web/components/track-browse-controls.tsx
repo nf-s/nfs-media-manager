@@ -25,6 +25,10 @@ import AiSearch from './ai-search'
 import { BrowseFilterChips, BrowseFilterPill } from './browse-controls'
 import { CreatorScopeChip } from './creator-scope-chip'
 import { useConfig } from './providers'
+import {
+  useLibraryPlaylistSuggestions,
+  type SmartPlaylistBrowse,
+} from './smart-playlist-controls'
 
 export function TrackBrowseSearch({
   fields,
@@ -41,6 +45,7 @@ export function TrackBrowseSearch({
   matches = false,
   tagLevels,
   catalogParams,
+  smart = null,
 }: {
   fields: BrowseField[]
   filters: BrowseFilter[]
@@ -57,6 +62,8 @@ export function TrackBrowseSearch({
   /** Where the Tags suggestions are counted; left out for Auto. */
   tagLevels?: TagLevels
   catalogParams?: Readonly<Record<string, string>>
+  /** Tracks Browse: the search box also offers its playlists (PL-44). */
+  smart?: SmartPlaylistBrowse | null
 }) {
   const { apiBaseUrl } = useConfig()
   const [draft, setDraft] = useState('')
@@ -120,7 +127,14 @@ export function TrackBrowseSearch({
     !titlesLoading && draft.trim() && titleFilters.length > 0
       ? trackTitleSuggestions(titleMatches.data?.items ?? [])
       : []
-  const options = (facets.data ?? []).filter(
+  const playlistSuggestions = useLibraryPlaylistSuggestions(
+    smart,
+    facets.isDebouncing ? '' : facets.search,
+  )
+  const options = [
+    ...(facets.data ?? []),
+    ...playlistSuggestions.options,
+  ].filter(
     (option) =>
       !filters.some(
         (filter) =>
@@ -138,9 +152,18 @@ export function TrackBrowseSearch({
       autocomplete={{
         items,
         itemKind: 'track',
+        smartPlaylists: playlistSuggestions.smartPlaylists,
+        onOpenSmartPlaylist: smart
+          ? (playlist) => {
+              smart.choose(playlist)
+              setDraft('')
+            }
+          : undefined,
         titlesLoading,
         titlesError:
-          facets.isError || (titleFilters.length > 0 && titleMatches.isError),
+          facets.isError ||
+          playlistSuggestions.isError ||
+          (titleFilters.length > 0 && titleMatches.isError),
         onOpenItem,
         options,
         placeholder: 'Search titles, artists, albums, playlists...',

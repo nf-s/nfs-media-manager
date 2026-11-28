@@ -125,6 +125,7 @@ import { useDetailInspector } from './detail-inspector-context'
 import { detailPageHref, sameDetail } from '@/utils/detail-inspector'
 import { fitDetailList } from '@/utils/detail-list-space'
 import AiSearch from './ai-search'
+import type { BrowseFilterAutocompleteProps } from './browse-filter-autocomplete'
 import {
   BrowseFilterChips,
   BrowseFilterPill,
@@ -163,6 +164,7 @@ import {
   SmartPlaylistActions,
   SmartPlaylistName,
   SmartPlaylistsSection,
+  useLibraryPlaylistSuggestions,
   useSmartPlaylistBrowse,
 } from './smart-playlist-controls'
 import {
@@ -563,7 +565,14 @@ function SubscriptionBrowse({
     !titlesLoading && draft.trim() && titleFilters.length > 0
       ? subscriptionTitleSuggestions(titleMatches.data?.items ?? [])
       : []
-  const options = (facets.data ?? []).filter(
+  const playlistSuggestions = useLibraryPlaylistSuggestions(
+    smart,
+    facets.isDebouncing ? '' : facets.search,
+  )
+  const options = [
+    ...(facets.data ?? []),
+    ...playlistSuggestions.options,
+  ].filter(
     (option) =>
       !filters.some(
         (filter) =>
@@ -795,12 +804,21 @@ function SubscriptionBrowse({
       </>
     ) : null
 
-  const autocomplete = {
+  const autocomplete: BrowseFilterAutocompleteProps = {
     items: titleItems,
     itemKind,
+    smartPlaylists: playlistSuggestions.smartPlaylists,
+    onOpenSmartPlaylist: smart
+      ? (playlist) => {
+          smart.choose(playlist)
+          setDraft('')
+        }
+      : undefined,
     titlesLoading,
     titlesError:
-      facets.isError || (titleFilters.length > 0 && titleMatches.isError),
+      facets.isError ||
+      playlistSuggestions.isError ||
+      (titleFilters.length > 0 && titleMatches.isError),
     onOpenItem: openDetail,
     options,
     placeholder: searchPlaceholders[library],

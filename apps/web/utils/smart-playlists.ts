@@ -2,11 +2,13 @@ import { defaultListeningPeriod } from '@repo/schemas/listening'
 import {
   libraryBrowseParams,
   parseLibraryBrowseView,
+  type LibraryBrowseQuery,
   type LibraryPlaylistLibrary,
   type LibraryPlaylistView,
 } from '@repo/schemas/library-playlists'
 import { playlistLibraryViews, SMART_PLAYLIST_PARAM } from './library-playlists'
 import { scopedHref } from './media-scope'
+import { subscriptionSort } from './subscriptions'
 import { trackGroupingEnabled } from './track-browse'
 
 /**
@@ -104,6 +106,21 @@ const absentValues: Record<string, unknown> = {
 }
 
 /**
+ * The order Subscriptions and Mixes Browse applies to a view: without a
+ * chosen sort, a search by relevance and otherwise newest first; relevance
+ * is always highest first.
+ */
+function appliedOrder(parsed: LibraryBrowseQuery) {
+  if (parsed.library !== 'subscriptions' && parsed.library !== 'mixes')
+    return {}
+  const sortBy = subscriptionSort({
+    q: parsed.query.q ?? '',
+    sortBy: parsed.query.sortBy ?? null,
+  })
+  return sortBy === 'relevance' ? { sortBy, direction: 'desc' } : { sortBy }
+}
+
+/**
  * One view in one canonical form: the parameters the server keeps, read with
  * the library's Browse query, so the order of values, a filter's Any mode
  * left out and parameters left at their defaults compare equal. A view the
@@ -122,7 +139,10 @@ export function canonicalBrowseView(
         ),
       ),
     )
-  const query: Record<string, unknown> = { ...parsed.data.query }
+  const query: Record<string, unknown> = {
+    ...parsed.data.query,
+    ...appliedOrder(parsed.data),
+  }
   const sortBy = typeof query.sortBy === 'string' ? query.sortBy : 'dateAdded'
   const canonical: Record<string, unknown> = {}
   for (const key of libraryBrowseParams[library]) {

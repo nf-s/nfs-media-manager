@@ -11,6 +11,7 @@ import {
   type FilterSuggestion,
   type TitleSuggestion,
 } from './browse-suggestions'
+import { libraryPlaylistSuggestions } from './library-playlists'
 
 const facets: FilterSuggestion[] = [
   { field: 'title', value: 'Solaris', label: 'Title: Solaris', count: 2 },
@@ -294,4 +295,126 @@ test('a tag suggestion with subtags notes the count and the subtag count', () =>
   assert.equal(filterSuggestionNote({ count: 5, subtags: 1 }), '5 · 1 subtag')
   assert.equal(filterSuggestionNote({ count: 1204 }), '1,204')
   assert.equal(filterSuggestionNote({ count: 7, subtags: 0 }), '7')
+})
+
+const lateShiftView = {
+  q: 'late',
+  sortBy: 'title',
+  direction: 'asc' as const,
+}
+const playlists = libraryPlaylistSuggestions('tracks', [
+  {
+    id: 'pl-late',
+    type: 'playlist',
+    name: 'Late Shift',
+    entryCount: 27,
+    view: null,
+  },
+  {
+    id: 'smart-late',
+    type: 'smart',
+    name: 'Late Titles',
+    entryCount: null,
+    view: lateShiftView,
+  },
+  {
+    id: 'pl-road',
+    type: 'playlist',
+    name: 'Road Trip',
+    entryCount: 0,
+    view: null,
+  },
+])
+
+test('PL-44: library playlists become playlist filters and smart playlists open their view', () => {
+  assert.deepEqual(playlists.options, [
+    {
+      field: 'libraryPlaylist',
+      value: 'pl-late',
+      name: 'Late Shift',
+      label: 'Playlist: Late Shift',
+      count: 27,
+    },
+    {
+      field: 'libraryPlaylist',
+      value: 'pl-road',
+      name: 'Road Trip',
+      label: 'Playlist: Road Trip',
+      count: 0,
+    },
+  ])
+  assert.deepEqual(playlists.smartPlaylists, [
+    {
+      id: 'smart-late',
+      name: 'Late Titles',
+      label: 'Smart playlist: Late Titles',
+      view: lateShiftView,
+      href: '/tracks?q=late&sortBy=title&direction=asc&smartPlaylist=smart-late',
+    },
+  ])
+})
+
+test('PL-44: playlists rank by name, with the field words as a prefix, beside the imported ones', () => {
+  const imported: FilterSuggestion = {
+    field: 'playlist',
+    value: 'Late Shift',
+    label: 'Playlists: Late Shift',
+    count: 12,
+  }
+  const options = [imported, ...playlists.options]
+  const items: TitleSuggestion[] = [
+    { id: 'late-show', title: 'Late Show', label: 'Late Show' },
+  ]
+  assert.deepEqual(
+    browseSuggestions(options, items, 'late', playlists.smartPlaylists).map(
+      suggestionKey,
+    ),
+    [
+      'smart:smart-late',
+      'filter:libraryPlaylist:pl-late',
+      'filter:playlist:Late Shift',
+      'item:late-show',
+    ],
+  )
+  // The playlist's ID is not matched as text.
+  assert.deepEqual(
+    browseSuggestions(options, [], 'pl-road', playlists.smartPlaylists),
+    [],
+  )
+  assert.deepEqual(
+    browseSuggestions(
+      options,
+      [],
+      'smart playlist late',
+      playlists.smartPlaylists,
+    ).map(suggestionKey),
+    ['smart:smart-late'],
+  )
+  assert.deepEqual(
+    browseSuggestions(
+      options,
+      [],
+      'playlist road',
+      playlists.smartPlaylists,
+    ).map(suggestionKey),
+    ['filter:libraryPlaylist:pl-road'],
+  )
+})
+
+test('PL-44: an exact smart playlist name ranks before a broader filter of the same name', () => {
+  const smart = libraryPlaylistSuggestions('albums', [
+    {
+      id: 'smart-ambient',
+      type: 'smart',
+      name: 'Ambient',
+      entryCount: null,
+      view: { filters: '[]' },
+    },
+  ]).smartPlaylists
+  assert.deepEqual(
+    browseSuggestions(tags([['Ambient', 400]]), [], 'ambient', smart).map(
+      suggestionKey,
+    ),
+    ['smart:smart-ambient', 'filter:genre:Ambient'],
+  )
 })

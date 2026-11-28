@@ -1067,6 +1067,7 @@ function TrackBrowse({
               setParams={setParams}
               ready={ready}
               tagLevels={tagLevels}
+              smart={smart}
             />
           }
           sort={{

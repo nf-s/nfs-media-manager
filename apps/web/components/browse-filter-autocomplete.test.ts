@@ -4,10 +4,15 @@ import { test } from 'node:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
-import type { BrowseSuggestion } from '@/utils/browse-suggestions'
+import type { BrowseFilter } from '@repo/schemas/browse'
+import type {
+  BrowseSuggestion,
+  SmartPlaylistSuggestion,
+} from '@/utils/browse-suggestions'
 import BrowseFilterAutocomplete, {
   autocompleteEnterOption,
   autocompleteOptions,
+  chooseSuggestion,
   type BrowseFilterAutocompleteProps,
 } from './browse-filter-autocomplete'
 
@@ -81,6 +86,76 @@ test('active suggestion remains attached to its identity when results change ord
     'item:album-1',
   )
   assert.equal(autocompleteEnterOption(options, 'item:removed'), undefined)
+})
+
+const lateTitles: SmartPlaylistSuggestion = {
+  id: 'smart-late',
+  name: 'Late Titles',
+  label: 'Smart playlist: Late Titles',
+  view: { q: 'late', sortBy: 'title', direction: 'asc' },
+  href: '/tracks?q=late&sortBy=title&direction=asc&smartPlaylist=smart-late',
+}
+const lateShift: BrowseSuggestion = {
+  kind: 'filter',
+  filter: {
+    field: 'libraryPlaylist',
+    value: 'pl-late',
+    name: 'Late Shift',
+    label: 'Playlist: Late Shift',
+    count: 27,
+  },
+}
+
+function choose(suggestion: BrowseSuggestion) {
+  const opened: SmartPlaylistSuggestion[] = []
+  const added: BrowseFilter[] = []
+  const items: string[] = []
+  const result = chooseSuggestion(suggestion, {
+    openItem: (id) => items.push(id),
+    openSmartPlaylist: (playlist) => opened.push(playlist),
+    addFilter: (filter) => added.push(filter),
+  })
+  return { result, opened, added, items }
+}
+
+test('PL-44: choosing a smart playlist opens its view and closes the menu', () => {
+  const smart: BrowseSuggestion = { kind: 'smart', playlist: lateTitles }
+  assert.deepEqual(choose(smart), {
+    result: 'close',
+    opened: [lateTitles],
+    added: [],
+    items: [],
+  })
+  const options = autocompleteOptions([smart, lateShift], 'late', true)
+  assert.deepEqual(
+    options.map((option) => option.key),
+    [
+      'smart:smart-late',
+      'filter:libraryPlaylist:pl-late',
+      'action:text',
+      'action:ai',
+    ],
+  )
+  assert.equal(autocompleteEnterOption(options, 'smart:smart-late'), options[0])
+})
+
+test('PL-44: choosing a playlist adds its filter like any other value and keeps the menu open', () => {
+  assert.deepEqual(choose(lateShift), {
+    result: 'keep',
+    opened: [],
+    added: [{ field: 'libraryPlaylist', value: 'pl-late' }],
+    items: [],
+  })
+  const [album, rock] = suggestions
+  if (!album || !rock) throw new Error('Fixture has a title and a filter')
+  assert.deepEqual(choose(rock), {
+    result: 'keep',
+    opened: [],
+    added: [{ field: 'genre', value: 'Rock' }],
+    items: [],
+  })
+  assert.deepEqual(choose(album).items, ['album-1'])
+  assert.equal(choose(album).result, 'close')
 })
 
 test('input actions and interpretation content share the search root without opening suggestions', () => {

@@ -16,12 +16,16 @@ import {
   suggestionKey,
   type BrowseSuggestion,
   type FilterSuggestion,
+  type SmartPlaylistSuggestion,
   type TitleSuggestion,
 } from '@/utils/browse-suggestions'
 
 export type BrowseFilterAutocompleteProps = {
   options: FilterSuggestion[]
   items: TitleSuggestion[]
+  /** The library's smart playlists, offered when they can be opened (PL-44). */
+  smartPlaylists?: SmartPlaylistSuggestion[]
+  onOpenSmartPlaylist?: (playlist: SmartPlaylistSuggestion) => void
   itemKind?: DetailTarget['kind']
   titlesLoading: boolean
   titlesError: boolean
@@ -69,6 +73,46 @@ export function autocompleteOptions(
   return options
 }
 
+function suggestionLabel(suggestion: BrowseSuggestion) {
+  switch (suggestion.kind) {
+    case 'item':
+      return suggestion.item.label
+    case 'filter':
+      return suggestion.filter.label
+    case 'smart':
+      return suggestion.playlist.label
+  }
+}
+
+/**
+ * Choosing a suggestion: a title opens its item and a smart playlist its
+ * view, and both close the menu; a filter, a playlist's included, is added
+ * and the menu stays open.
+ */
+export function chooseSuggestion(
+  suggestion: BrowseSuggestion,
+  actions: {
+    openItem: (id: string) => void
+    openSmartPlaylist: (playlist: SmartPlaylistSuggestion) => void
+    addFilter: (filter: BrowseFilter) => void
+  },
+): 'close' | 'keep' {
+  switch (suggestion.kind) {
+    case 'item':
+      actions.openItem(suggestion.item.id)
+      return 'close'
+    case 'smart':
+      actions.openSmartPlaylist(suggestion.playlist)
+      return 'close'
+    case 'filter':
+      actions.addFilter({
+        field: suggestion.filter.field,
+        value: suggestion.filter.value,
+      })
+      return 'keep'
+  }
+}
+
 /** Enter selects only an option highlighted with the arrow keys; otherwise it searches the text. */
 export function autocompleteEnterOption(
   options: SearchMenuOption[],
@@ -80,6 +124,8 @@ export function autocompleteEnterOption(
 export default function BrowseFilterAutocomplete({
   options,
   items,
+  smartPlaylists = [],
+  onOpenSmartPlaylist,
   itemKind,
   titlesLoading,
   titlesError,
@@ -103,7 +149,12 @@ export default function BrowseFilterAutocomplete({
   const id = useId()
   const [open, setOpen] = useState(false)
   const [activeKey, setActiveKey] = useState<string | null>(null)
-  const suggestions = browseSuggestions(options, items, value)
+  const suggestions = browseSuggestions(
+    options,
+    items,
+    value,
+    onOpenSmartPlaylist ? smartPlaylists : [],
+  )
   const menuOptions = autocompleteOptions(
     suggestions,
     value,
@@ -133,6 +184,11 @@ export default function BrowseFilterAutocomplete({
             suggestion.filter.label,
           )
         : undefined
+    if (suggestion.kind === 'smart')
+      return workspaceTabLinkProps(
+        suggestion.playlist.href,
+        suggestion.playlist.name,
+      )
     if (!itemKind) return undefined
     return workspaceTabLinkProps(
       detailPageHref({ kind: itemKind, id: suggestion.item.id }),
@@ -140,12 +196,13 @@ export default function BrowseFilterAutocomplete({
     )
   }
   function select(option: BrowseSuggestion) {
-    if (option.kind === 'item') {
-      setOpen(false)
-      const trigger = document.getElementById(`${id}-input`)
-      onOpenItem(option.item.id, trigger ?? undefined)
-    } else
-      onAddFilter({ field: option.filter.field, value: option.filter.value })
+    const trigger = document.getElementById(`${id}-input`) ?? undefined
+    const result = chooseSuggestion(option, {
+      openItem: (itemId) => onOpenItem(itemId, trigger),
+      openSmartPlaylist: (playlist) => onOpenSmartPlaylist?.(playlist),
+      addFilter: onAddFilter,
+    })
+    if (result === 'close') setOpen(false)
     setActiveKey(null)
   }
   function selectMenuOption(option: SearchMenuOption) {
@@ -296,14 +353,12 @@ export default function BrowseFilterAutocomplete({
                   <>
                     {option.suggestion.kind === 'filter' && <FilterIndicator />}
                     <span className="ds-truncate">
-                      {option.suggestion.kind === 'item'
-                        ? option.suggestion.item.label
-                        : option.suggestion.filter.label}
+                      {suggestionLabel(option.suggestion)}
                     </span>
                     <span className="ds-muted">
-                      {option.suggestion.kind === 'item'
-                        ? 'Open'
-                        : filterSuggestionNote(option.suggestion.filter)}
+                      {option.suggestion.kind === 'filter'
+                        ? filterSuggestionNote(option.suggestion.filter)
+                        : 'Open'}
                     </span>
                   </>
                 ) : option.kind === 'text' ? (

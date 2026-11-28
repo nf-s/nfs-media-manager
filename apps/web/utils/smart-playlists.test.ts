@@ -30,6 +30,43 @@ test('every library with playlists offers smart playlists in Browse; Artists doe
   assert.equal(browseHasSmartPlaylists(null), false)
 })
 
+test('a Subscriptions or Mixes view saved without a sort is unchanged when opened', () => {
+  const searched = browseView(
+    'subscriptions',
+    new URLSearchParams({ q: 'radios' }),
+    { sortBy: 'relevance', direction: 'desc' },
+  )
+  assert.equal(sameBrowseView('subscriptions', { q: 'radios' }, searched), true)
+  const browsed = browseView(
+    'mixes',
+    new URLSearchParams({ filters: filters(ambient) }),
+    { sortBy: 'publishedAt', direction: 'desc' },
+  )
+  assert.equal(
+    sameBrowseView('mixes', { filters: filters(ambient) }, browsed),
+    true,
+  )
+  assert.equal(
+    sameBrowseView(
+      'mixes',
+      { filters: filters(ambient) },
+      {
+        ...browsed,
+        sortBy: 'durationSec',
+      },
+    ),
+    false,
+  )
+  assert.equal(
+    sameBrowseView(
+      'subscriptions',
+      { q: 'radios', sortBy: 'relevance', direction: 'asc' },
+      searched,
+    ),
+    true,
+  )
+})
+
 test('a Subscriptions or Mixes view leaves out the library its Browse sends', () => {
   const params = new URLSearchParams({
     library: 'mixes',

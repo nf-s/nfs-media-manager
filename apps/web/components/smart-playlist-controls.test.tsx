@@ -16,9 +16,11 @@ import {
   SmartPlaylistName,
   SmartPlaylistsSection,
   smartPlaylistChoicesKey,
+  useLibraryPlaylistSuggestions,
   type OpenSmartPlaylist,
   type SmartPlaylistBrowse,
 } from './smart-playlist-controls'
+import { libraryPlaylistsKey } from '@/utils/library-playlists'
 import { ConfigContext } from './providers'
 import type { ResultReport } from './result-line'
 
@@ -358,4 +360,67 @@ test('Saved view lists every smart playlist of the library, beyond the first pag
     html,
     /<option value="smart-120" selected="">Saved view 120<\/option>/,
   )
+})
+
+function SuggestionProbe({
+  browse,
+  search,
+}: {
+  browse: SmartPlaylistBrowse | null
+  search: string
+}) {
+  const result = useLibraryPlaylistSuggestions(browse, search)
+  return (
+    <output>
+      {JSON.stringify({
+        options: result.options.map((option) => option.label),
+        smart: result.smartPlaylists.map((playlist) => playlist.href),
+        isError: result.isError,
+      })}
+    </output>
+  )
+}
+
+test('PL-44: the search box offers the library’s playlists from one cached read, only while text is searched', (t) => {
+  const client = new QueryClient()
+  t.after(() => client.clear())
+  client.setQueryData(
+    [...libraryPlaylistsKey, 'suggestions', 'albums'],
+    [
+      LibraryPlaylistSummarySchema.parse({
+        id: 'pl-1',
+        library: 'albums',
+        type: 'playlist',
+        name: 'Desert Island',
+        entryCount: 5,
+        view: null,
+        updatedAt: '2026-11-28T00:00:00.000Z',
+      }),
+      manySmart[0],
+    ],
+  )
+  const probe = (browse: SmartPlaylistBrowse | null, search: string) =>
+    JSON.parse(
+      render(<SuggestionProbe browse={browse} search={search} />, client)
+        .replace(/^<output>|<\/output>$/g, '')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&amp;', '&'),
+    )
+  assert.deepEqual(probe(smart({ library: 'albums' }), 'desert'), {
+    options: ['Playlist: Desert Island'],
+    smart: [
+      `/albums?${new URLSearchParams({ ...ambientView, smartPlaylist: 'smart-1' })}`,
+    ],
+    isError: false,
+  })
+  assert.deepEqual(probe(smart({ library: 'albums' }), ' '), {
+    options: [],
+    smart: [],
+    isError: false,
+  })
+  assert.deepEqual(probe(null, 'desert'), {
+    options: [],
+    smart: [],
+    isError: false,
+  })
 })

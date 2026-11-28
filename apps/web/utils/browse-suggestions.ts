@@ -1,5 +1,6 @@
 import type { AlbumListItem, FilmListItem } from '@repo/schemas/media'
 import type { BrowseFilter } from '@repo/schemas/browse'
+import type { LibraryPlaylistView } from '@repo/schemas/library-playlists'
 import { formatCount, formatItemCount } from '@repo/ui/lib/format'
 
 export type FilterSuggestion = BrowseFilter & {
@@ -7,11 +8,22 @@ export type FilterSuggestion = BrowseFilter & {
   count: number
   /** Visible tags beneath a tag value; `count` covers them too. */
   subtags?: number
+  /** Ranked in place of `value` when the value is an ID: a playlist's name. */
+  name?: string
 }
 export type TitleSuggestion = { id: string; title: string; label: string }
+/** A smart playlist: choosing it opens its saved view (PL-44). */
+export type SmartPlaylistSuggestion = {
+  id: string
+  name: string
+  label: string
+  view: LibraryPlaylistView
+  href: string
+}
 export type BrowseSuggestion =
   | { kind: 'item'; item: TitleSuggestion }
   | { kind: 'filter'; filter: FilterSuggestion }
+  | { kind: 'smart'; playlist: SmartPlaylistSuggestion }
 
 export function matchingTitleFilters(
   options: FilterSuggestion[],
@@ -109,19 +121,27 @@ const kindRunLimit = 3
 
 type RankedSuggestion = { suggestion: BrowseSuggestion; tier: number }
 
+/** Titles are one kind; filters and smart playlists, which change the view, the other. */
+const rankKind = (suggestion: BrowseSuggestion) =>
+  suggestion.kind === 'item' ? 'item' : 'filter'
+
 /**
- * One list of filters and titles ranked by match tier. Within a tier, filters
- * come before titles and broader filters (higher count) before narrower ones.
- * After three of one kind in a row, the best of the other kind follows if it
- * matches at word-prefix level or better, so neither kind fills the first
- * screen alone. Ties fall back to label and key, so the order is stable.
+ * One list of filters, smart playlists and titles ranked by match tier.
+ * Within a tier, smart playlists come first, then filters, broader ones
+ * (higher count) before narrower ones, then titles. After three of one kind
+ * in a row, the best of the other kind follows if it matches at word-prefix
+ * level or better, so neither kind fills the first screen alone. Ties fall
+ * back to label and key, so the order is stable.
  */
 export function browseSuggestions(
   options: FilterSuggestion[],
   items: TitleSuggestion[],
   query: string,
+  smartPlaylists: SmartPlaylistSuggestion[] = [],
 ): BrowseSuggestion[] {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const labelMatches = (label: string) =>
+    words.every((word) => label.toLowerCase().includes(word))
   const titles: RankedSuggestion[] = items
     .map((item) => ({ item, tier: matchTier(item.title, query) }))
     .sort(
@@ -136,13 +156,21 @@ export function browseSuggestions(
         tier,
       }),
     )
-  const filters: RankedSuggestion[] = options
-    .filter(
-      (option) =>
-        option.field !== 'title' &&
-        words.every((word) => option.label.toLowerCase().includes(word)),
+  const views = smartPlaylists
+    .filter((playlist) => labelMatches(playlist.label))
+    .map((playlist) => ({ playlist, tier: matchTier(playlist.name, query) }))
+    .sort(
+      (a, b) =>
+        b.tier - a.tier ||
+        a.playlist.name.localeCompare(b.playlist.name) ||
+        a.playlist.id.localeCompare(b.playlist.id),
     )
-    .map((filter) => ({ filter, tier: matchTier(filter.value, query) }))
+  const filters: RankedSuggestion[] = options
+    .filter((option) => option.field !== 'title' && labelMatches(option.label))
+    .map((filter) => ({
+      filter,
+      tier: matchTier(filter.name ?? filter.value, query),
+    }))
     .sort(
       (a, b) =>
         b.tier - a.tier ||
@@ -157,26 +185,40 @@ export function browseSuggestions(
         tier,
       }),
     )
+  const changes: RankedSuggestion[] = [
+    ...views.map(
+      ({ playlist, tier }): RankedSuggestion => ({
+        suggestion: { kind: 'smart', playlist },
+        tier,
+      }),
+    ),
+    ...filters,
+  ].sort(
+    (a, b) =>
+      b.tier - a.tier ||
+      Number(b.suggestion.kind === 'smart') -
+        Number(a.suggestion.kind === 'smart'),
+  )
   const ranked: BrowseSuggestion[] = []
   const next = { item: 0, filter: 0 }
   let run = 0
-  let previous: BrowseSuggestion['kind'] | undefined
+  let previous: 'item' | 'filter' | undefined
   while (ranked.length < 100) {
     const title = titles[next.item]
-    const filter = filters[next.filter]
+    const change = changes[next.filter]
     let pick: RankedSuggestion | undefined =
-      title && (!filter || title.tier > filter.tier) ? title : filter
-    const other = pick === title ? filter : title
+      title && (!change || title.tier > change.tier) ? title : change
+    const other = pick === title ? change : title
     if (
       pick &&
       other &&
-      pick.suggestion.kind === previous &&
+      rankKind(pick.suggestion) === previous &&
       run >= kindRunLimit &&
       other.tier >= matchTiers.wordPrefix
     )
       pick = other
     if (!pick) break
-    const kind = pick.suggestion.kind
+    const kind = rankKind(pick.suggestion)
     next[kind] += 1
     run = kind === previous ? run + 1 : 1
     previous = kind
@@ -195,7 +237,12 @@ export function filterSuggestionNote(
 }
 
 export function suggestionKey(option: BrowseSuggestion) {
-  return option.kind === 'item'
-    ? `item:${option.item.id}`
-    : `filter:${option.filter.field}:${option.filter.value}`
+  switch (option.kind) {
+    case 'item':
+      return `item:${option.item.id}`
+    case 'filter':
+      return `filter:${option.filter.field}:${option.filter.value}`
+    case 'smart':
+      return `smart:${option.playlist.id}`
+  }
 }
