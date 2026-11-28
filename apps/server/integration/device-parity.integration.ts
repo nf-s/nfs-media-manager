@@ -873,13 +873,45 @@ describe('device parity', () => {
         await run.read(apiPath('playlists/browse-count', params))
       }
     }
-    // The API rejects U+0000 in any text; the device leaves it to the API.
+    // PostgreSQL text cannot hold U+0000: the API rejects such text where it
+    // reaches the database and answers where the service compares it in
+    // TypeScript. The device leaves both to the API.
     const nul = apiPath('tracks/browse-count', { q: 'hum\u0000' })
     expect((await apiRequest(nul)).status).not.toBe(200)
     expect((await run.read(nul))?.outcome).toEqual({
       kind: 'fell-through',
-      reason: 'invalid-query',
+      reason: 'nul-text',
     })
+    const comparedInTypeScript = [
+      apiPath('tracks/browse-page', {
+        filters: [{ field: 'source', value: 'Last.fm\u0000' }],
+      }),
+      apiPath('tracks/browse-count', {
+        filters: [{ field: 'source', value: 'x\u0000', mode: 'exclude' }],
+      }),
+      apiPath('albums/browse-page', {
+        filters: [{ field: 'edition', value: 'Edition\u0000' }],
+      }),
+    ]
+    for (const filter of [
+      { field: 'musicalKey', value: '8A\u0000' },
+      { field: 'musicalKey', value: '8A\u0000', mode: 'exclude' },
+      { field: 'hasTrackTags', value: 'Yes\u0000' },
+      { field: 'hasTrackTags', value: 'No\u0000', mode: 'required' },
+    ])
+      comparedInTypeScript.push(
+        apiPath('tracks/browse-page', { filters: [filter] }),
+        apiPath('tracks/browse-count', { filters: [filter] }),
+      )
+    for (const path of comparedInTypeScript)
+      expect((await run.read(path))?.outcome, path).toEqual({
+        kind: 'fell-through',
+        reason: 'nul-text',
+      })
+    expect(
+      (await apiRequest(comparedInTypeScript[0] ?? nul)).status,
+      'the API answers a source filter holding U+0000',
+    ).toBe(200)
     // A malformed escape maps no read, whatever the API answers.
     for (const path of [
       '/api/v1/tracks/browse-page?q=%E0%A4%A',

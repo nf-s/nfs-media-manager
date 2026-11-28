@@ -112,6 +112,13 @@ export type UnsupportedReason =
   | 'unknown-field'
   /** The API answers the query with an error, which the device leaves to it. */
   | 'invalid-query'
+  /**
+   * Text of the query holds U+0000. PostgreSQL text cannot hold it, so the
+   * API rejects such a value where it reaches the database and answers where
+   * the service compares it in TypeScript; the device leaves every such read
+   * to the API.
+   */
+  | 'nul-text'
 
 export type SourceResult<T> =
   | { served: true; data: T }

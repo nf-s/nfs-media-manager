@@ -56,7 +56,7 @@ async function readReadyFold(
   return fold
 }
 
-/** Whether a string of the parsed query holds U+0000, which the API's database rejects in any text. */
+/** Whether a string of the parsed query holds U+0000, which PostgreSQL text cannot hold. */
 function holdsNul(value: unknown): boolean {
   if (typeof value === 'string') return value.includes('\u0000')
   if (Array.isArray(value)) return value.some(holdsNul)
@@ -67,7 +67,7 @@ function holdsNul(value: unknown): boolean {
 
 /**
  * Runs one read in a transaction, so it sees one complete sync state. A
- * query holding U+0000 is `invalid-query`, as the API rejects it. The store
+ * query holding U+0000 is `nul-text`, whatever the API answers. The store
  * must have completed a fill for this package's row and schema versions
  * and hold the fold, or the read is `not-ready`; a query the device does
  * not serve exactly answers its reason; any other failure is `store-error`.
@@ -78,7 +78,7 @@ export async function serveRead<T>(
   query: unknown,
   work: (read: DeviceRead) => Promise<T>,
 ): Promise<SourceResult<T>> {
-  if (holdsNul(query)) return { served: false, reason: 'invalid-query' }
+  if (holdsNul(query)) return { served: false, reason: 'nul-text' }
   try {
     const data = await driver.transaction(async (tx) => {
       const fold = await readReadyFold(driver, tx)

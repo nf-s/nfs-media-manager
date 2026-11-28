@@ -136,6 +136,15 @@ function albumFacetsReadArtistTags(levels: readonly string[] | undefined) {
   )
 }
 
+/** Known holes, `nul-text`: some text of the parsed query holds U+0000. */
+function holdsNul(value: unknown): boolean {
+  if (typeof value === 'string') return value.includes('\u0000')
+  if (Array.isArray(value)) return value.some(holdsNul)
+  if (typeof value === 'object' && value !== null)
+    return Object.values(value).some(holdsNul)
+  return false
+}
+
 type Observed = {
   /** The API's status for the path. */
   status: number
@@ -186,6 +195,8 @@ export function expectedHole(
   read: LibraryRead,
   observed: Observed,
 ): UnsupportedReason | undefined {
+  // Text holding U+0000 is left to the API, whatever it answers.
+  if (holdsNul(read.query)) return 'nul-text'
   // A query the API rejects is left to the API.
   if (observed.status !== 200) return 'invalid-query'
   switch (read.method) {

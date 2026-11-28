@@ -95,18 +95,41 @@ const nulPaths = [
     JSON.stringify([{ field: 'title', value: 'Hum\u0000' }]),
   )}`,
   `albums/browse-count?tag=${encodeURIComponent('rock\u0000')}`,
+  // Values the service compares in TypeScript, which the API answers.
+  ...[
+    'tracks/browse-page',
+    'tracks/browse-count',
+    'tracks',
+    'tracks/positions',
+  ].flatMap((route) =>
+    [
+      { field: 'source', value: 'Last.fm\u0000' },
+      { field: 'source', value: 'x\u0000', mode: 'exclude' },
+      { field: 'musicalKey', value: '8A\u0000' },
+      { field: 'hasTrackTags', value: 'Yes\u0000', mode: 'required' },
+    ].map(
+      (filter) =>
+        `${route}?filters=${encodeURIComponent(JSON.stringify([filter]))}${
+          route === 'tracks/positions' ? '&positions=0' : ''
+        }`,
+    ),
+  ),
+  ...['albums/browse-page', 'albums/browse-count', 'albums'].map(
+    (route) =>
+      `${route}?filters=${encodeURIComponent(
+        JSON.stringify([{ field: 'edition', value: 'Edition\u0000' }]),
+      )}`,
+  ),
 ]
 
-describe('text the API rejects', () => {
-  it('falls through as invalid-query in every read that takes text', async () => {
+describe('text holding U+0000', () => {
+  it('falls through as nul-text in every read that takes text', async () => {
     const device = await open()
     for (const path of nulPaths) {
       const request = resolveLibraryRead(`/api/v1/${path}`)
       expect(request, path).toBeDefined()
       if (request === undefined) continue
-      expect(reason(await read(device.source, request)), path).toBe(
-        'invalid-query',
-      )
+      expect(reason(await read(device.source, request)), path).toBe('nul-text')
     }
   })
 
@@ -118,7 +141,7 @@ describe('text the API rejects', () => {
       )
       if (request === undefined) continue
       expect(reason(await read(device.source, request)), path).not.toBe(
-        'invalid-query',
+        'nul-text',
       )
     }
   })
