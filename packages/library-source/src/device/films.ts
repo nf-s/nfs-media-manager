@@ -219,7 +219,7 @@ async function planFilms(
     unsupported('invalid-query')
   // A creator scope also takes films whose catalog observations name the
   // person, in every scope; the device holds no catalog observations.
-  if (query.creatorId !== undefined) unsupported('catalog-scope')
+  if (query.creatorId !== undefined) unsupported('creator-films')
   const fields: BrowseField[] = await readBrowseFields(read.tx, 'film')
   const table = withPluginFields(filmFields, fields, filmBrowseFields)
   // The `tag` navigation scope is a required Tags filter.

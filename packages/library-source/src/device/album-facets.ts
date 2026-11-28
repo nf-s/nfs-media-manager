@@ -138,7 +138,7 @@ async function checkArchivedArtistTags(
             AND listed.artist_id = c.artist_id AND v.archived = 0)
       LIMIT 1`,
   )
-  if (rows.length > 0) unsupported('catalog-scope')
+  if (rows.length > 0) unsupported('archived-artist-tags')
 }
 
 const LabelRowSchema = z.object({ value: z.string() })

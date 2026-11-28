@@ -438,6 +438,18 @@ describe('tag facets', () => {
     track('archived', {
       extra: { albumTagIds: ['tag-rock'], archived: true },
     }),
+    // Not counted, but its Sonovault tags stop tracks with tags of their
+    // own inheriting post-rock and jazz, so every Auto count is decided.
+    track('archived-sonovault', {
+      extra: {
+        archived: true,
+        hasOwnTags: true,
+        ownTagIds: ['tag-post', 'tag-jazz'],
+        ownSonovaultTagIds: ['tag-post', 'tag-jazz'],
+        albumTagIds: [],
+        artistTagLabelKeys: [],
+      },
+    }),
     track('placeholder', {
       extra: { albumTagIds: ['tag-rock'], redundantPlaceholder: true },
     }),
@@ -480,13 +492,32 @@ describe('tag facets', () => {
       // a and b inherit it; c, d and f have it themselves; e does not inherit it.
       rock: 5,
       'indie rock': 2,
-      // c's own tag, d's album, and f once.
-      'post-rock': 3,
+      // c's own tag and f once; d has tags of its own and does not inherit it.
+      'post-rock': 2,
       jazz: 1,
       // b, d and e: artist tags count on albums with too few release tags.
       drone: 3,
       electronic: 3,
     })
+  })
+
+  it('falls through at Auto when only a track outside the library can decide inheritance', async () => {
+    // Without the archived track's Sonovault tags, d (tags of its own)
+    // inherits post-rock, which a track outside the library may hold.
+    const device = await open(
+      [
+        ...tagRows(),
+        ...tracks().filter((row) => row.id !== 'archived-sonovault'),
+      ],
+      { trackFields: fields },
+    )
+    const read = (input: Record<string, unknown>) =>
+      device.source.trackFacets(BrowseFacetQuerySchema.parse(input))
+    expect(reason(await read({}))).toBe('sonovault-tags')
+    expect(reason(await read({ q: 'post' }))).toBe('sonovault-tags')
+    // Other locations, and keys with no tag row (drone), are decided.
+    expect(reason(await read({ tagLevels: 'track,album,artist' }))).toBe(null)
+    expect(reason(await read({ q: 'drone' }))).toBe(null)
   })
 
   it('counts Tags at each location', async () => {

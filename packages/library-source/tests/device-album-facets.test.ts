@@ -453,7 +453,7 @@ describe('tag facets', () => {
     const device = await open([...tagRows(), ...albums(), orphan], tagFields())
     const archived = facetQuery({ includeArchived: 'true' })
     expect(reason(await device.source.albumFacets(archived))).toBe(
-      'catalog-scope',
+      'archived-artist-tags',
     )
     expect(
       reason(
@@ -461,7 +461,7 @@ describe('tag facets', () => {
           facetQuery({ includeArchived: 'true', tagLevels: 'album' }),
         ),
       ),
-    ).toBe('catalog-scope')
+    ).toBe('archived-artist-tags')
     expect(await facets(device)).toEqual(
       await facets(device, { includeArchived: 'false' }),
     )

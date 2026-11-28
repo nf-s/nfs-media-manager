@@ -516,10 +516,10 @@ describe('reads the device does not serve', () => {
       { creatorId: 'person-2', creatorRole: 'actor' },
     ]) {
       expect(reason(await device.source.filmPage(filmQuery(input)))).toBe(
-        'catalog-scope',
+        'creator-films',
       )
       expect(reason(await device.source.filmCount(filmQuery(input)))).toBe(
-        'catalog-scope',
+        'creator-films',
       )
     }
   })

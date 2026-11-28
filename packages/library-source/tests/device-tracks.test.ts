@@ -481,17 +481,46 @@ describe('tags', () => {
   const genre = (value: string) => [{ field: 'genre', value }]
 
   it('matches the tag and its visible descendants at Auto', async () => {
-    expect(await ids(genre('ambient'))).toEqual(['g1', 'g2', 'g4', 'g8'])
-    expect(await ids(genre('  AMBIENT '))).toEqual(['g1', 'g2', 'g4', 'g8'])
+    expect(await ids(genre('ambient'), {}, true)).toEqual(['g1', 'g2', 'g4'])
+    expect(await ids(genre('  AMBIENT '), {}, true)).toEqual(['g1', 'g2', 'g4'])
   })
 
   it('stops inheriting a tag Sonovault uses for a track with tags of its own', async () => {
     expect(await ids(genre('ambient'), {}, true)).toEqual(['g1', 'g2', 'g4'])
+    expect(await ids(genre('rock'), {}, true)).toEqual(['g5', 'g8'])
+  })
+
+  it('falls through at Auto when only a track outside the library can decide inheritance', async () => {
+    // No library track holds Ambient from Sonovault, and g8 has tags of its
+    // own and inherits Ambient: a track outside the library may hold it.
+    const device = await open([...tags(), ...tracks(false)])
+    for (const value of ['ambient', 'Ambience', 'chill'])
+      expect(
+        reason(
+          await device.source.trackPage(trackQuery({ filters: genre(value) })),
+        ),
+        value,
+      ).toBe('sonovault-tags')
+    // No track with tags of its own inherits Rock without carrying it.
+    expect(await ids(genre('rock'))).toEqual(['g5', 'g8'])
+    expect(
+      reason(
+        await device.source.trackCount(
+          trackQuery({ filters: genre('ambient'), tagLevels: 'album' }),
+        ),
+      ),
+    ).toBe(null)
+    await device.close()
   })
 
   it('resolves identity keys and aliases, hidden targets included', async () => {
-    expect(await ids(genre('Ambience'))).toEqual(['g1', 'g2', 'g4', 'g8'])
-    expect(await ids(genre('chill'))).toEqual(['g1', 'g2', 'g4', 'g6', 'g8'])
+    expect(await ids(genre('Ambience'), {}, true)).toEqual(['g1', 'g2', 'g4'])
+    expect(await ids(genre('chill'), {}, true)).toEqual([
+      'g1',
+      'g2',
+      'g4',
+      'g6',
+    ])
     expect(await ids(genre('old noise'))).toEqual(['g7'])
   })
 

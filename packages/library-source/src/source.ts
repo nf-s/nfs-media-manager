@@ -88,6 +88,17 @@ export type UnsupportedReason =
   | 'creator-tag-sort'
   /** A non-exclude Provider filter on Tracks or Artists: rows carry per-request links. */
   | 'provider-filter'
+  /** Films inside a creator scope: the service adds films linked through catalog observations. */
+  | 'creator-films'
+  /** Album facets with archived albums whose artist tags the service leaves out. */
+  | 'archived-artist-tags'
+  /**
+   * Tracks at Auto (a Tags filter, or Tags suggestions) where a track with
+   * tags of its own would inherit a tag no library track holds from
+   * Sonovault: the service also reads the Sonovault tags of tracks outside
+   * the library, which the store does not hold.
+   */
+  | 'sonovault-tags'
   /** A Playlists page holding a playlist whose import is queued or running: the API has its progress. */
   | 'active-import'
   /** Detail pages and the lists owned by a detail. */

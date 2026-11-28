@@ -47,6 +47,14 @@ type TagCounts = {
   inherited: number
   /** Own tags also inherited, for keys no in-Browse Sonovault tag rolls up to. */
   inheritedOverlap: number
+  /**
+   * Tracks with tags of their own that inherit the key without carrying it,
+   * for a key of a tag row that no library track's in-Browse Sonovault tag
+   * rolls up to. The service also reads the Sonovault tags of tracks outside
+   * the library, which can stop these tracks inheriting the key; a key with
+   * no tag row cannot be a Sonovault tag's.
+   */
+  undecided: number
 }
 
 type TrackFacetContext = {
@@ -86,6 +94,7 @@ function counted(
 function tagsCount(counts: TagCounts, levels: TagLevels | undefined): number {
   switch (levels?.join(',')) {
     case undefined:
+      if (counts.undecided > 0) return unsupported('sonovault-tags')
       return counts.inherited + counts.own - counts.inheritedOverlap
     case 'track':
       return counts.own
@@ -148,6 +157,7 @@ const TagCountRowSchema = z.object({
   own_without_either: z.number().int(),
   inherited: z.number().int(),
   inherited_overlap: z.number().int(),
+  undecided: z.number().int(),
 })
 
 /** Every key a tag facet can list: visible album tags, ancestors and projected artist tags. */
@@ -241,7 +251,10 @@ async function readTagCounts(
         sum((NOT f.has_own OR s.value IS NULL)
           AND (f.album OR (f.sparse AND f.artist))) AS inherited,
         sum(f.own AND (f.album OR (f.artist AND f.sparse))
-          AND s.value IS NULL) AS inherited_overlap
+          AND s.value IS NULL) AS inherited_overlap,
+        sum(f.has_own AND NOT f.own AND (f.album OR (f.sparse AND f.artist))
+          AND s.value IS NULL
+          AND f.value IN (SELECT value FROM release_values)) AS undecided
       FROM flags f LEFT JOIN sonovault s ON s.value = f.value
       WHERE f.value <> ''
       GROUP BY f.value`,
@@ -261,6 +274,7 @@ async function readTagCounts(
           ownWithoutEither: parsed.own_without_either,
           inherited: parsed.inherited,
           inheritedOverlap: parsed.inherited_overlap,
+          undecided: parsed.undecided,
         },
       ]
     }),
