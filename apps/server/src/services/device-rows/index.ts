@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type { JsonValue } from '@repo/schemas/common'
 import { devicePayloadSchemas, type DeviceEntity } from '@repo/schemas/device'
-import type { DeviceRowRenderer } from '../device-renderer'
+import type { DeviceFeedRenderer } from '../device-feed'
 import { listArtistIds, renderArtists } from './artists'
 import {
   listMetaIds,
@@ -11,7 +11,7 @@ import {
   renderTagKeys,
   renderTags,
 } from './library'
-import { listMediaIds, renderMedia } from './media'
+import { listMediaIds, listTrackPeerIds, renderMedia } from './media'
 import { listPlaysIds, renderPlays } from './plays'
 import {
   listPlaylistIds,
@@ -88,7 +88,7 @@ function validated(schema: z.ZodType, payload: JsonObject): JsonValue {
   return toJson(schema.parse(payload))
 }
 
-export const deviceRowRenderer: DeviceRowRenderer = {
+export const deviceRowRenderer: DeviceFeedRenderer = {
   async render(entity, ids) {
     const unique = [...new Set(ids)]
     const rows = new Map<string, JsonValue>()
@@ -100,5 +100,9 @@ export const deviceRowRenderer: DeviceRowRenderer = {
   },
   listIds(entity, afterId, limit) {
     return listPublishedIds(entity, afterId, limit)
+  },
+  // DEVICE-04: a track's recording group depends on its title-key peers.
+  async expand(entity, ids) {
+    return entity === 'track' ? listTrackPeerIds(ids) : []
   },
 }

@@ -310,6 +310,25 @@ export function recordingGroupKeys(ids: SQL): SQL {
     left join recording_group_members members using (id)`
 }
 
+/**
+ * The visible tracks whose recording group can change with the tracks `ids`
+ * selects (as `= any(...)`): those with the same title key, and those in
+ * the same stored version group.
+ */
+export function recordingPeerIds(ids: SQL): SQL {
+  const title = exactName(sql`mi.title`)
+  return sql`select mi.id from media_item mi
+    where ${visibleLibraryTrack} and ${title} = any(array(
+      select ${exactName(sql`target.title`)} from media_item target
+      where target.id = ${ids} and target.media_type = 'track'))
+    union
+    select lt.media_item_id from library_track lt
+    join media_item mi on mi.id = lt.media_item_id
+    where ${visibleLibraryTrack} and lt.version_group_id in (
+      select target.version_group_id from library_track target
+      where target.media_item_id = ${ids} and target.version_group_id is not null)`
+}
+
 export const recordingCount = sql`
   select ((select count(*) from recording_matches)
     - (select count(*) - count(distinct group_key) from recording_group_members))::int as value`

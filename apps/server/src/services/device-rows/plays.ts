@@ -13,13 +13,16 @@ import { anyId, type JsonObject } from './projection'
 
 export type PlaysEntity = 'scrobble_name' | 'album_plays' | 'artist_plays'
 
-/** The `scrobble_name` ID of a listener, artist key and track key. */
+/**
+ * The `scrobble_name` ID of a listener, artist key and track key: the
+ * function the feed's triggers mark names with (migration 0079).
+ */
 export function scrobbleNameId(
   username: SQL,
   artistKey: SQL,
   trackKey: SQL,
 ): SQL {
-  return sql`md5(jsonb_build_array(${username}, ${artistKey}, ${trackKey})::text)`
+  return sql`device_scrobble_name_id(${username}, ${artistKey}, ${trackKey})`
 }
 
 const defaultScope: CatalogScopeQuery = {}

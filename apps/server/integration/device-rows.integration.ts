@@ -604,6 +604,24 @@ describe('the device row renderer', () => {
     })
   })
 
+  it('keys scrobbled names as the feed marks them and expands title peers', async () => {
+    const device = await renderer()
+    const { rows: marked } = await pool.query<{ id: string }>(
+      `select device_scrobble_name_id(username, artist_key, track_key) as id
+        from lastfm_track_link where track_media_item_id = 'track-aurora'`,
+    )
+    expect(
+      (await trackRows()).get('track-aurora')?.extra.scrobbleNameIds,
+    ).toEqual(marked.map((row) => row.id))
+    expect(await device.listIds('scrobble_name', null, 10)).toContain(
+      marked[0]?.id,
+    )
+    expect(await device.expand?.('track', ['track-aurora'])).toEqual([
+      'track-aurora-live',
+    ])
+    expect(await device.expand?.('album', ['album-north'])).toEqual([])
+  })
+
   it('fails loudly on a fractional play time', async () => {
     const device = await renderer()
     await pool.query(

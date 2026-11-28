@@ -40,7 +40,7 @@ import {
   creditedArtistProfiles,
   releaseTagMemberships,
 } from '../music-tags'
-import { recordingGroupKeys } from '../recording-groups'
+import { recordingGroupKeys, recordingPeerIds } from '../recording-groups'
 import { loadTracks } from '../tracks'
 import { redundantLastfmTrackIds } from '../track-values'
 import {
@@ -107,6 +107,18 @@ export async function listMediaIds(
       ${afterId === null ? sql`` : sql`and ${mediaItem.id} collate "C" > ${afterId}`}
     order by ${mediaItem.id} collate "C" limit ${limit}`)
   return IdRowsSchema.parse(result.rows).map((row) => row.id)
+}
+
+/** Other visible tracks whose recording group can change with these tracks. */
+export async function listTrackPeerIds(ids: readonly string[]) {
+  if (!ids.length) return []
+  const result = await db.execute(
+    sql`select id from (${recordingPeerIds(anyId(ids))}) peers`,
+  )
+  const requested = new Set(ids)
+  return IdRowsSchema.parse(result.rows)
+    .map((row) => row.id)
+    .filter((id) => !requested.has(id))
 }
 
 const archived = sql`coalesce(${mediaItem.metadata}->>'legacyHidden' = 'true', false)`
