@@ -1072,9 +1072,7 @@ function SubscriptionBrowse({
                         title={item.title}
                         target={{ kind: itemKind, id: item.id }}
                         contain={item.type === 'spotify'}
-                        // A card whose artwork carries a badge has no More
-                        // until its place is decided.
-                        overlay={badge ? undefined : itemMore(item, 'tile')}
+                        overlay={itemMore(item, 'tile')}
                         badge={badge}
                       />
                     }

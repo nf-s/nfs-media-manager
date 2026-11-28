@@ -506,9 +506,11 @@
                   { top: true },
                 ),
               ) +
+              g.spec(g.flow(D.badgeCards(), { top: true })) +
               g.rules([
                 '<b>Order.</b> Play, Add to queue, then More, the three-dot button (<code>PlayPair more</code>, <code>MoreButton</code>). Provider marks follow the group (<code>afterQueue</code>). Nothing sits between the three.',
                 '<b>Tile.</b> One white pill at the bottom right of the artwork. Hidden at rest on pointer devices, shown on hover and keyboard focus, always shown on touch, while the item is playing and while its menu is open.',
+                '<b>On artwork that carries a badge</b> the group sits above the badge; it never covers it, and on short artwork the gap closes before the group leaves the artwork (<code>Art badge</code> marks the artwork <code>data-badge</code>).',
                 '<b>Row.</b> The same group at the end of the title cell, in lists and tables alike. The space is reserved, so nothing moves when it appears.',
                 '<b>The group stays shown while its menu is open,</b> and while a popover opened from the menu, such as the playlist picker, is open: More has <code>aria-expanded="true"</code> and keeps the hover look.',
                 '<b>More alone.</b> Films, subscription items and mixes, which the app cannot play, keep More by itself in the same place (<code>BrowseActions</code> holding a <code>MoreButton</code>; <code>RowMoreMenu place</code>). More stays enabled when Play and Add to queue are disabled. Artists, playlists in the Playlists table and suggestions outside the library have no More in the group.',
@@ -1343,8 +1345,10 @@
                   { top: true },
                 ),
               ) +
+              g.spec(g.flow(D.badgeCards(), { top: true })) +
               g.rules([
-                '<b>Artwork is left clean.</b> Nothing sits on it at rest. The play pair appears on hover; a duration badge is allowed on video.',
+                '<b>Artwork is left clean.</b> Nothing sits on it at rest. The play pair appears on hover; one small badge is allowed, such as a video’s duration or a film’s Needs ID.',
+                '<b>On artwork that carries a badge</b> the group sits above the badge; it never covers it, and on short artwork the gap closes before the group leaves the artwork.',
                 '<b>Text under the artwork:</b> title, creator, then one meta line with the year on the left and one value on the right. That value is the headline rating by default, or whatever the grid is sorted by.',
                 '<b>Tags take one more line,</b> on by default: the pills that fit and a count of the rest. Filters → View → On cards can turn the line off. An item without tags has no empty line.',
                 '<b>Same anatomy for every resource.</b> Only the artwork shape changes: square, poster, round, 16:9.',

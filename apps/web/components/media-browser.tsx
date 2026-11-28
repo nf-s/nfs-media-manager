@@ -1200,11 +1200,9 @@ function MediaBrowse({
         fields={fields}
       />
     ) : undefined
-    // A film cannot be played: More alone, then the provider marks. A card
-    // whose artwork carries a badge has no More until its place is decided.
+    // A film cannot be played: More alone, then the provider marks.
     if (item.mediaType === 'film') {
-      const badged = place === 'tile' && needsId(item)
-      const more = badged ? undefined : libraryItemMore('films', item)
+      const more = libraryItemMore('films', item)
       return more || providerLinks ? (
         <BrowseActions place={place}>
           {more}

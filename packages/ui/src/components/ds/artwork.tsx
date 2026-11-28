@@ -6,7 +6,8 @@ export type ArtRatio = 'poster' | 'video' | 'round'
 /**
  * Artwork for a card or detail header. Square unless `ratio` says otherwise.
  * Children are the image (class `ds-artimg`) or an `ArtFallback`; `badge` is a
- * short label such as a video length; `overlay` is the tile play pair.
+ * short label such as a video length; `overlay` is the tile play pair, which
+ * sits above the badge when there is one.
  */
 export function Art({
   ratio,
@@ -23,16 +24,16 @@ export function Art({
   className?: string
   children: ReactNode
 }) {
+  const hasBadge = badge != null && badge !== false
   return (
     <span
       className={cn('ds-art', className)}
       data-ratio={ratio}
       data-size={size}
+      data-badge={hasBadge ? '' : undefined}
     >
       {children}
-      {badge != null && badge !== false && (
-        <span className="ds-art-badge">{badge}</span>
-      )}
+      {hasBadge && <span className="ds-art-badge">{badge}</span>}
       {overlay}
     </span>
   )

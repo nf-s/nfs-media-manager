@@ -270,10 +270,13 @@ test('Albums tiles, list rows and table rows end the play group with More; Films
   }
 })
 
-test('a film card whose artwork carries Needs ID has no More; its list and table rows keep it', async () => {
+test('a film card whose artwork carries Needs ID keeps the badge and More, as its list and table rows do', async () => {
   const grid = await render('film', 'view=grid', [film])
-  assert.match(grid, /<span class="ds-art-badge">Needs ID<\/span>/)
-  assert.doesNotMatch(grid, /More actions for Harbour Film/)
+  // The artwork is marked so the tile group sits above the badge.
+  assert.match(
+    grid,
+    /<span class="ds-art" data-ratio="poster" data-badge="">.*?<span class="ds-art-badge">Needs ID<\/span><span class="ds-play" data-place="tile"><button[^>]*aria-label="More actions for Harbour Film"/,
+  )
   for (const view of ['list', 'table'])
     assert.match(
       await render('film', `view=${view}`, [film]),

@@ -363,13 +363,16 @@ test('the grid view shows clean video cards with a duration badge, meta line and
   assert.match(html, /<span>2024<\/span><span>Podcast<\/span>/)
   assert.match(html, /title="Tag: baking"/)
   assert.ok((html.match(/data-placeholder=""/g) ?? []).length > 0)
-  // Items cannot be played: artwork without a badge holds More alone, and a
-  // card with a duration badge has none until its place is decided.
+  // Items cannot be played: every card holds More alone, and on a card with
+  // a duration badge it follows the badge on artwork marked to lift it above.
   assert.match(
     html,
     /<span class="ds-play" data-place="tile"><button[^>]*aria-label="More actions for Orbits"/,
   )
-  assert.doesNotMatch(html, /More actions for Bread basics/)
+  assert.match(
+    html,
+    /<span class="ds-art" data-ratio="video" data-badge="">.*?<span class="ds-art-badge">12:34<\/span><span class="ds-play" data-place="tile"><button[^>]*aria-label="More actions for Bread basics"/,
+  )
   assert.doesNotMatch(html, /aria-label="Play |to queue/)
 })
 
@@ -1009,8 +1012,7 @@ test('subscription items and mixes carry More alone in every view, with no play 
       '/mixes',
     )
     for (const [html, title] of [
-      // Bread basics' card carries its duration badge, so its More is a row's.
-      [items, view === 'grid' ? 'Orbits' : 'Bread basics'],
+      [items, 'Bread basics'],
       [mixes, 'Example Breakfast with Guest Selector'],
     ] as const) {
       assert.match(

@@ -89,11 +89,15 @@
   --ds-8: 24px;
   --ds-9: 32px;
 
-  /* Control heights: three steps, plus touch */
+  /* Control heights: three steps, plus touch, the artwork badge and the
+     play group on artwork */
   --ds-h-xs: 24px; /* controls inside table rows */
   --ds-h-sm: 28px; /* toolbars, default */
   --ds-h-md: 32px; /* forms, detail headers */
   --ds-h-touch: 40px; /* phone tab bar and sheet actions */
+  --ds-h-badge: 18px; /* the badge on artwork; the tile play group sits above it */
+  /* 26px: buttons in the play group on artwork */
+  --ds-h-tile: calc(var(--ds-h-xs) + var(--ds-1));
 
   /* Radius: four steps and the pill */
   --ds-r-xs: 4px; /* thumbnails, checkboxes */

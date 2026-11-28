@@ -145,7 +145,7 @@
       item.art === null
         ? `<span class="ds-art-fallback">${icon(o.icon || KIND_ICON[item.kind] || 'disc')}</span>`
         : art(item.seed)
-    return `<span class="ds-art"${attrs({ 'data-ratio': ratio, 'data-size': o.size })}>${inner}${o.badge ? `<span class="ds-art-badge">${esc(o.badge)}</span>` : ''}${o.controls || ''}</span>`
+    return `<span class="ds-art"${attrs({ 'data-ratio': ratio, 'data-size': o.size, 'data-badge': Boolean(o.badge) })}>${inner}${o.badge ? `<span class="ds-art-badge">${esc(o.badge)}</span>` : ''}${o.controls || ''}</span>`
   }
 
   function thumb(item, o = {}) {
@@ -575,6 +575,47 @@
       playing: o.state === 'playing',
     })
     return `<article class="ds-card"${attrs({ 'data-state': o.state, 'aria-selected': o.selected ? 'true' : undefined })}>${artBox(item, { controls, badge: o.badge })}<a class="ds-card-title" href="#">${esc(item.title)}</a>${item.by ? `<span class="ds-card-by">${esc(item.by)}</span>` : ''}<span class="ds-card-meta">${(o.meta || []).join('')}</span>${o.tags !== false && item.tags && item.tags.length ? pills(item.tags, { max: 2 }) : ''}</article>`
+  }
+
+  /* Cards whose artwork carries a badge, at rest and on hover, as gallery
+     items: a video with its duration and a film poster with Needs ID, then
+     the video at the smallest grid size, where the gap closes. The tile
+     group sits above the badge (ds-art[data-badge]). */
+  function badgeCards() {
+    const [video] = VIDEOS
+    const [film] = FILMS
+    const item = (entry, badge, meta, width, state, caption) =>
+      g.item(
+        `<div style="width:${width}px">${card(entry, { badge, meta: [meta], tags: false, state })}</div>`,
+        caption,
+      )
+    const videoMeta = `<span>${video.published}</span>`
+    return [
+      [video, video.duration, videoMeta, 220, 'video'],
+      [film, 'Needs ID', `<span>${film.year}</span>`, 132, 'poster'],
+    ]
+      .flatMap(([entry, badge, meta, width, kind]) =>
+        [undefined, 'hover'].map((state) =>
+          item(
+            entry,
+            badge,
+            meta,
+            width,
+            state,
+            `${kind} · ${state ? 'hover, focus, touch' : 'at rest'}`,
+          ),
+        ),
+      )
+      .concat(
+        item(
+          video,
+          video.duration,
+          videoMeta,
+          104,
+          'hover',
+          'video · smallest size, the gap closes',
+        ),
+      )
   }
 
   function row(item, o = {}) {
@@ -1876,6 +1917,7 @@
     groupActions,
     toolbarToggle,
     card,
+    badgeCards,
     row,
     suggestion,
     SUGGESTION,

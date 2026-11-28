@@ -254,7 +254,8 @@
 /* 3 Play control ---------------------------------------------------------
    One component, three placements. Order is always Play, Queue, More, then
    any provider marks. An item that cannot be played keeps More alone.
-   tile   floats on artwork, shown on hover or focus (always on touch)
+   tile   floats on artwork, shown on hover or focus (always on touch);
+          above the artwork's badge when it has one
    row    sits at the end of the title cell, shown on row hover or focus
    header Play and Queue as labelled buttons in a detail header; More stays
           in the header's actions
@@ -305,8 +306,8 @@
   transition: opacity 0.12s;
 }
 .ds-play[data-place='tile'] > :is(button, a) {
-  width: 26px;
-  height: 26px;
+  width: var(--ds-h-tile);
+  height: var(--ds-h-tile);
   border-radius: 50%;
   color: var(--ds-ink);
 }
@@ -315,6 +316,17 @@
   transform: translateX(50%);
   max-width: 70%;
   justify-content: center;
+}
+/* On artwork that carries a badge the group sits above the badge, in the
+   same corner: the badge's inset and height, then a gap. On short artwork
+   the gap closes, to no less than --ds-1, so that the group (its buttons
+   and padding) stays --ds-1 clear of the artwork's top edge. */
+.ds-art[data-badge] .ds-play[data-place='tile'] {
+  bottom: clamp(
+    calc(var(--ds-3) + var(--ds-h-badge) + var(--ds-1)),
+    calc(100% - var(--ds-h-tile) - 2 * var(--ds-1) - var(--ds-1)),
+    calc(var(--ds-3) + var(--ds-h-badge) + var(--ds-4))
+  );
 }
 .ds-card:hover .ds-play[data-place='tile'],
 .ds-play[data-place='tile']:has([data-feedback]),
@@ -1385,13 +1397,13 @@ a:focus-visible > .ds-logo[data-none] {
   position: absolute;
   right: var(--ds-3);
   bottom: var(--ds-3);
-  height: 18px;
+  height: var(--ds-h-badge);
   padding: 0 5px;
   border-radius: var(--ds-r-xs);
   background: var(--ds-surface);
   box-shadow: var(--ds-shadow-float);
   color: var(--ds-ink);
-  font: 500 var(--ds-text-xs) / 18px var(--ds-mono);
+  font: 500 var(--ds-text-xs) / var(--ds-h-badge) var(--ds-mono);
 }
 .ds-card[aria-selected='true'] .ds-art {
   outline: 2px solid var(--ds-accent);

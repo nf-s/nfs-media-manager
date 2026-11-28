@@ -792,7 +792,7 @@ test('person films are the Films browser held to the person and the chosen role'
   assertNestedViewControls(html, 'Grid')
   assert.match(
     html,
-    /<article class="ds-card" data-item-index="0"[^>]*><span class="ds-art" data-ratio="poster">/,
+    /<article class="ds-card" data-item-index="0"[^>]*><span class="ds-art" data-ratio="poster" data-badge="">/,
   )
   // The role control counts; the person is not a removable filter.
   assert.match(html, /<span>Filters · 1<\/span>/)
@@ -947,7 +947,7 @@ test('channel details show saved podcast episodes and scope Browse to the exact 
   assertNestedViewControls(html, 'Grid')
   assert.match(
     html,
-    /<article class="ds-card" data-item-index="0"><span class="ds-art" data-ratio="video">/,
+    /<article class="ds-card" data-item-index="0"><span class="ds-art" data-ratio="video" data-badge="">/,
   )
   // The channel is not a removable filter.
   assert.doesNotMatch(html, /Remove channel filter/)
